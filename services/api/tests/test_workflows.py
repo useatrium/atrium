@@ -1682,6 +1682,45 @@ async def test_child_workflow_lineage_and_waiting_state(db_pool):
 
 
 @pytest.mark.asyncio
+async def test_post_to_slack_raises_on_tool_error(db_pool):
+    """Slack delivery errors returned by the tool must fail the workflow step."""
+    from api.workflow_engine import WorkflowContext
+
+    run_id = f"wfr_{uuid.uuid4().hex[:16]}"
+    await db_pool.execute(
+        "INSERT INTO workflow_runs ("
+        "run_id, workflow_name, workflow_version, request_hash, root_run_id, "
+        "status, input_json, worker_id"
+        ") VALUES ($1, 'test', 'test-v1', 'hash', $1, 'running', '{}'::jsonb, 'w1')",
+        run_id,
+    )
+
+    ctx = WorkflowContext(
+        pool=db_pool,
+        run_id=run_id,
+        checkpoints={},
+        lease_s=30.0,
+        worker_id="w1",
+    )
+    tool_manager = AsyncMock()
+    tool_manager.call_tool.return_value = json.dumps({
+        "error": "Channel 'investing' not found or bot not a member",
+        "tool": "slack",
+        "method": "send_message",
+    })
+
+    with patch("api.app.get_tool_manager", return_value=tool_manager):
+        with pytest.raises(RuntimeError, match="not found or bot not a member"):
+            await ctx.post_to_slack("investing", "hello")
+
+    checkpoint = await db_pool.fetchrow(
+        "SELECT checkpoint_name FROM workflow_checkpoints WHERE run_id = $1",
+        run_id,
+    )
+    assert checkpoint is None
+
+
+@pytest.mark.asyncio
 async def test_step_retry_with_backoff(db_pool):
     """ctx.step() retries on failure with configured policy."""
     from api.workflow_engine import RetryPolicy, WorkflowContext

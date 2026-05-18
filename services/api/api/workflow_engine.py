@@ -805,9 +805,12 @@ class WorkflowContext:
             raw = await tm.call_tool("slack", "send_message", args)
             import json as _json
             try:
-                return _json.loads(raw) if isinstance(raw, str) else raw
+                result = _json.loads(raw) if isinstance(raw, str) else raw
             except (ValueError, TypeError):
-                return {"raw": raw}
+                result = {"raw": raw}
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(str(result["error"]))
+            return result
 
         step_name = f"post_slack_{channel}"
         return await self.step(step_name, _post, step_kind="slack_post")
