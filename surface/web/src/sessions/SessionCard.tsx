@@ -93,6 +93,14 @@ export function SessionCard({
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500">
         <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
+        {session.driverId !== null && session.driverId !== session.spawnedBy && (
+          <>
+            <span className="text-zinc-700">·</span>
+            <span className="truncate text-zinc-400">
+              driver: {session.driverName ?? session.driverId}
+            </span>
+          </>
+        )}
         <span className="text-zinc-700">·</span>
         <span>{session.harness}</span>
         <span className="text-zinc-700">·</span>

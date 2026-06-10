@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { looksLikeAgentCommand } from '../sessions/spawn';
 
 export function Composer({
@@ -8,6 +8,7 @@ export function Composer({
   agentAware,
   disabled,
   disabledHint,
+  footer,
 }: {
   placeholder: string;
   onSend: (text: string) => void;
@@ -16,6 +17,8 @@ export function Composer({
   agentAware?: boolean;
   disabled?: boolean;
   disabledHint?: string;
+  /** Replaces the default hint line (e.g. seat request controls in the pane). */
+  footer?: ReactNode;
 }) {
   const [text, setText] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -75,6 +78,8 @@ export function Composer({
           <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 font-medium text-indigo-300">
             @agent — spawns an agent session
           </span>
+        ) : footer !== undefined ? (
+          footer
         ) : (
           <span>
             {disabled ? (disabledHint ?? '') : 'Enter to send · Shift+Enter for a new line'}
