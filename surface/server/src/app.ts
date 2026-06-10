@@ -7,6 +7,7 @@ import { signSession, verifySession } from './cookie.js';
 import {
   DomainError,
   createChannel,
+  editMessage,
   listChannelMessages,
   listChannels,
   listThreadMessages,
@@ -88,7 +89,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.post('/auth/login', async (req, reply) => {
     const body = (req.body ?? {}) as { handle?: string; displayName?: string };
     const handle = String(body.handle ?? '').trim().toLowerCase();
-    const displayName = String(body.displayName ?? '').trim() || handle;
+    const displayName = String(body.displayName ?? '').trim();
     if (!HANDLE_RE.test(handle)) {
       return reply.code(400).send({
         error: 'invalid_handle',
@@ -98,9 +99,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (displayName.length > 64) {
       return reply.code(400).send({ error: 'invalid_display_name', message: 'display name too long' });
     }
+    // A blank display name means "keep what I had" for returning users —
+    // re-logins must not silently rewrite attribution across history.
     const user = await pool.query<{ id: string; handle: string; display_name: string }>(
-      `INSERT INTO users (handle, display_name) VALUES ($1, $2)
-       ON CONFLICT (handle) DO UPDATE SET display_name = EXCLUDED.display_name
+      `INSERT INTO users (handle, display_name) VALUES ($1, COALESCE(NULLIF($2, ''), $1))
+       ON CONFLICT (handle) DO UPDATE SET display_name = COALESCE(NULLIF($2, ''), users.display_name)
        RETURNING id, handle, display_name`,
       [handle, displayName],
     );
@@ -247,6 +250,26 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(201).send({ event });
   });
 
+  app.patch('/api/messages/:id', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const targetEventId = Number((req.params as { id: string }).id);
+    if (!Number.isFinite(targetEventId)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
+    }
+    const body = (req.body ?? {}) as { text?: string };
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (text.trim().length === 0) {
+      return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
+    }
+    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
+    }
+    const event = await editMessage(pool, { targetEventId, actorId: user.id, text });
+    hub.publishEvent(event);
+    return { event };
+  });
+
   // -------------------------------------------------------------------------
   // Agent sessions
   // -------------------------------------------------------------------------
@@ -382,7 +405,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         client.isAlive = true;
       });
       socket.on('message', (raw: Buffer) => {
-        let msg: { type?: string; channelIds?: unknown };
+        let msg: { type?: string; channelIds?: unknown; channelId?: unknown };
         try {
           msg = JSON.parse(raw.toString());
         } catch {
@@ -393,6 +416,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             .filter((c): c is string => typeof c === 'string')
             .slice(0, 500);
           hub.subscribe(client, ids);
+        } else if (msg.type === 'focus') {
+          hub.setFocus(client, typeof msg.channelId === 'string' ? msg.channelId : null);
         } else if (msg.type === 'ping') {
           hub.sendTo(client, { type: 'pong', t: Date.now() });
         }

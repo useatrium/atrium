@@ -21,7 +21,9 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     setBusy(true);
     setError(null);
     try {
-      const { user } = await api.login(handle.trim(), displayName.trim() || handle.trim());
+      // Blank display name = server keeps the existing one (or defaults to
+      // the handle for brand-new users) — re-logins don't rewrite history.
+      const { user } = await api.login(handle.trim(), displayName.trim());
       onLogin(user);
     } catch (err) {
       setError(friendlyLoginError(err));
@@ -54,7 +56,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
           className="mb-3 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
         />
         <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-          Display name
+          Display name <span className="font-normal normal-case text-zinc-600">· optional</span>
         </label>
         <input
           value={displayName}

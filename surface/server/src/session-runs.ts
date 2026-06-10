@@ -552,6 +552,9 @@ export class SessionRuns {
   }
 
   private async getSessionRow(id: string): Promise<SessionRow | null> {
+    // Non-UUID ids (hand-mangled permalinks) are "not found", not a Postgres
+    // cast error surfacing as a 500.
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
     const res = await this.pool.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
     return res.rows[0] ?? null;
   }

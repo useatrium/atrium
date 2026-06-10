@@ -10,10 +10,12 @@ export function Timeline({
   hasMoreBefore,
   sessions,
   spectators,
+  meId,
   onLoadEarlier,
   onOpenThread,
   onOpenSession,
   onRetry,
+  onEdit,
 }: {
   messages: ChatMessage[];
   /** History fetched at least once — gates the empty state vs. the skeleton. */
@@ -21,10 +23,12 @@ export function Timeline({
   hasMoreBefore: boolean;
   sessions: Record<string, Session>;
   spectators: Record<string, number>;
+  meId?: string;
   onLoadEarlier: () => Promise<void>;
   onOpenThread: (rootEventId: number) => void;
   onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
+  onEdit?: (message: ChatMessage, text: string) => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -110,9 +114,11 @@ export function Timeline({
             spectators={
               item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0
             }
+            meId={meId}
             onOpenThread={onOpenThread}
             onOpenSession={onOpenSession}
             onRetry={onRetry}
+            onEdit={onEdit}
           />
         ),
       )}

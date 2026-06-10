@@ -15,11 +15,21 @@ const PING_INTERVAL_MS = 25_000;
 const IDLE_TIMEOUT_MS = 60_000;
 const MAX_BACKOFF_MS = 10_000;
 
-/** Reconnecting WebSocket subscribed to a set of channels. */
-export function useWs(enabled: boolean, channelIds: string[], callbacks: WsCallbacks): void {
+/**
+ * Reconnecting WebSocket subscribed to a set of channels. `focusChannelId`
+ * tells the server which channel this client is actually viewing — channel
+ * presence is focus-based, not subscription-based.
+ */
+export function useWs(
+  enabled: boolean,
+  channelIds: string[],
+  callbacks: WsCallbacks,
+  focusChannelId: string | null = null,
+): void {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
   const channelsRef = useRef(channelIds);
+  const focusRef = useRef(focusChannelId);
   const socketRef = useRef<WebSocket | null>(null);
 
   // Re-subscribe when the channel set changes on a live socket.
@@ -32,6 +42,15 @@ export function useWs(enabled: boolean, channelIds: string[], callbacks: WsCallb
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelsKey]);
+
+  // Tell the server where we're looking when the active channel changes.
+  useEffect(() => {
+    focusRef.current = focusChannelId;
+    const ws = socketRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'focus', channelId: focusChannelId }));
+    }
+  }, [focusChannelId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -65,6 +84,7 @@ export function useWs(enabled: boolean, channelIds: string[], callbacks: WsCallb
         attempt = 0;
         cbRef.current.onStatus('open');
         ws!.send(JSON.stringify({ type: 'subscribe', channelIds: channelsRef.current }));
+        ws!.send(JSON.stringify({ type: 'focus', channelId: focusRef.current }));
         cbRef.current.onOpen();
         resetIdle();
         pingTimer = setInterval(() => {

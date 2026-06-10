@@ -129,23 +129,40 @@ describe('fanout ordering', () => {
     expect(otherChannelSub.received.filter((m) => m.type === 'event')).toHaveLength(0);
   });
 
-  it('tracks presence per channel and clears on disconnect', async () => {
+  it('tracks channel presence by focus (viewing), not subscription, and clears on disconnect', async () => {
     const hub = new WsHub();
     const s1 = fakeSocket();
     const s2 = fakeSocket();
     const c1 = hub.addClient(s1, { id: 'u1', handle: 'alice', displayName: 'Alice' });
     const c2 = hub.addClient(s2, { id: 'u2', handle: 'bob', displayName: 'Bob' });
-    hub.subscribe(c1, [fx.channelId]);
-    hub.subscribe(c2, [fx.channelId]);
-    expect(hub.presenceFor(fx.channelId).map((u) => u.handle)).toEqual(['alice', 'bob']);
 
-    // both clients heard about bob joining
+    // Everyone subscribes to every channel for event fanout — subscription
+    // alone must NOT count as presence (it made all counts identical noise).
+    hub.subscribe(c1, [fx.channelId, fx.otherChannelId]);
+    hub.subscribe(c2, [fx.channelId, fx.otherChannelId]);
+    expect(hub.presenceFor(fx.channelId)).toEqual([]);
+
+    hub.setFocus(c1, fx.channelId);
+    hub.setFocus(c2, fx.channelId);
+    expect(hub.presenceFor(fx.channelId).map((u) => u.handle)).toEqual(['alice', 'bob']);
     const lastPresence = s1.received.filter((m) => m.type === 'presence').at(-1);
     expect(lastPresence.users.map((u: any) => u.handle)).toEqual(['alice', 'bob']);
 
+    // Switching focus moves presence between channels.
+    hub.setFocus(c2, fx.otherChannelId);
+    expect(hub.presenceFor(fx.channelId).map((u) => u.handle)).toEqual(['alice']);
+    expect(hub.presenceFor(fx.otherChannelId).map((u) => u.handle)).toEqual(['bob']);
+
+    // session:* keys stay subscription-based: pane open = watching.
+    hub.subscribe(c2, [fx.channelId, fx.otherChannelId, 'session:s1']);
+    expect(hub.isUserPresent('session:s1', 'u2')).toBe(true);
+    expect(hub.presenceFor('session:s1').map((u) => u.handle)).toEqual(['bob']);
+
     hub.removeClient(c2);
+    expect(hub.presenceFor(fx.otherChannelId)).toEqual([]);
+    expect(hub.presenceFor('session:s1')).toEqual([]);
     expect(hub.presenceFor(fx.channelId).map((u) => u.handle)).toEqual(['alice']);
     const afterLeave = s1.received.filter((m) => m.type === 'presence').at(-1);
-    expect(afterLeave.users.map((u: any) => u.handle)).toEqual(['alice']);
+    expect(afterLeave).toBeTruthy();
   });
 });

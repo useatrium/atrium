@@ -248,6 +248,45 @@ export async function postMessage(
   });
 }
 
+/**
+ * Append a message.edited event for an existing message.posted. Reads fold
+ * the latest edit into the message text (see MESSAGE_SELECT); live clients
+ * fold the fanned-out event directly.
+ */
+export async function editMessage(
+  pool: Db,
+  args: { targetEventId: number; actorId: string; text: string },
+): Promise<WireEvent> {
+  return withTx(pool, async (client) => {
+    const target = await client.query<{
+      workspace_id: string;
+      channel_id: string | null;
+      thread_root_event_id: number | null;
+      type: string;
+      actor_id: string | null;
+    }>(
+      'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+      [args.targetEventId],
+    );
+    const t = target.rows[0];
+    if (!t || t.type !== 'message.posted') {
+      throw new DomainError(404, 'message_not_found', 'message not found');
+    }
+    if (t.actor_id !== args.actorId) {
+      throw new DomainError(403, 'forbidden', 'only the author may edit a message');
+    }
+    const ev = await insertEvent(client, {
+      workspaceId: t.workspace_id,
+      channelId: t.channel_id,
+      threadRootEventId: t.thread_root_event_id,
+      type: 'message.edited',
+      actorId: args.actorId,
+      payload: { target_event_id: args.targetEventId, text: args.text },
+    });
+    return toWireEvent(await attachAuthor(client, ev));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reads (straight off the events table)
 // ---------------------------------------------------------------------------
@@ -276,8 +315,10 @@ const MESSAGE_SELECT = `
   ) edit ON true
 `;
 
+// message.edited is included so after_id catch-up heals edits made while a
+// client was disconnected (live clients fold the same event from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed')";
+  "('message.posted', 'message.edited', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed')";
 
 function foldEdit(row: EventDbRow & { edited_text?: string | null }): EventDbRow {
   if (row.edited_text != null && row.type === 'message.posted') {

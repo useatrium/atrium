@@ -14,18 +14,35 @@ export interface HubClient {
   socket: HubSocket;
   user: UserRef;
   channels: Set<string>;
+  /** Channel the user is actively viewing — drives channel presence. */
+  focusedChannelId: string | null;
   isAlive: boolean;
 }
 
+/** `session:<id>` keys are subscribed only while the pane is open. */
+function isSessionKey(key: string): boolean {
+  return key.startsWith('session:');
+}
+
 /**
- * In-memory fanout + presence. Presence for a channel = unique users among
- * currently-connected sockets subscribed to that channel.
+ * In-memory fanout + presence.
+ * - Channel presence = unique users among sockets *focused* on that channel
+ *   (viewing it), not merely subscribed — every client subscribes to every
+ *   channel for event fanout, so subscription-based counts were pure noise.
+ * - `session:<id>` presence stays subscription-based: clients subscribe that
+ *   key only while the pane is open, which already means "watching".
  */
 export class WsHub {
   private clients = new Set<HubClient>();
 
   addClient(socket: HubSocket, user: UserRef): HubClient {
-    const client: HubClient = { socket, user, channels: new Set(), isAlive: true };
+    const client: HubClient = {
+      socket,
+      user,
+      channels: new Set(),
+      focusedChannelId: null,
+      isAlive: true,
+    };
     this.clients.add(client);
     return client;
   }
@@ -33,6 +50,22 @@ export class WsHub {
   removeClient(client: HubClient): void {
     if (!this.clients.delete(client)) return;
     for (const channelId of client.channels) this.broadcastPresence(channelId);
+    if (client.focusedChannelId && !client.channels.has(client.focusedChannelId)) {
+      this.broadcastPresence(client.focusedChannelId);
+    }
+  }
+
+  /** Move a client's viewing focus; emit presence for both affected channels. */
+  setFocus(client: HubClient, channelId: string | null): void {
+    const prev = client.focusedChannelId;
+    if (prev === channelId) return;
+    client.focusedChannelId = channelId;
+    if (prev) this.broadcastPresence(prev);
+    if (channelId) this.broadcastPresence(channelId);
+  }
+
+  private isMember(client: HubClient, key: string): boolean {
+    return isSessionKey(key) ? client.channels.has(key) : client.focusedChannelId === key;
   }
 
   /** Replace a client's subscription set; emit presence for changed channels. */
@@ -67,14 +100,14 @@ export class WsHub {
   presenceFor(channelId: string): UserRef[] {
     const byId = new Map<string, UserRef>();
     for (const client of this.clients) {
-      if (client.channels.has(channelId)) byId.set(client.user.id, client.user);
+      if (this.isMember(client, channelId)) byId.set(client.user.id, client.user);
     }
     return [...byId.values()].sort((a, b) => a.handle.localeCompare(b.handle));
   }
 
   isUserPresent(channelId: string, userId: string): boolean {
     for (const client of this.clients) {
-      if (client.user.id === userId && client.channels.has(channelId)) return true;
+      if (client.user.id === userId && this.isMember(client, channelId)) return true;
     }
     return false;
   }

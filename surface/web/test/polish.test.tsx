@@ -2,11 +2,13 @@
 // Audit-driven polish: message formatting, loading-vs-empty gating, permalink
 // failure state, status non-regression, terminal pane read-only.
 
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appReducer, initialAppState, type AppState } from '../src/appState';
+import { MessageRow } from '../src/components/MessageRow';
 import { MessageText } from '../src/components/MessageText';
 import { Timeline } from '../src/components/Timeline';
+import type { ChatMessage } from '../src/state';
 import { SessionPane } from '../src/sessions/SessionPane';
 import {
   isStalledSessionStatus,
@@ -144,6 +146,46 @@ describe('stalled session detection', () => {
     expect(isStalledSessionStatus(session('queued', STALLED_AFTER_MS + 1000), now)).toBe(true);
     expect(isStalledSessionStatus(session('spawning', 5000), now)).toBe(false);
     expect(isStalledSessionStatus(session('running', STALLED_AFTER_MS + 1000), now)).toBe(false);
+  });
+});
+
+describe('message editing', () => {
+  const msg = (authorId: string): ChatMessage => ({
+    id: 42,
+    clientMsgId: 'c1',
+    channelId: 'ch-1',
+    threadRootEventId: null,
+    text: 'typo here',
+    edited: false,
+    author: { id: authorId, handle: 'me', displayName: 'Me' },
+    createdAt: new Date().toISOString(),
+    replyCount: 0,
+    lastReplyId: 0,
+    status: 'confirmed',
+  });
+
+  it('Edit → modify → Enter calls onEdit and closes the editor on success', async () => {
+    const onEdit = vi.fn(async () => {});
+    render(<MessageRow message={msg(me.id)} grouped={false} meId={me.id} onEdit={onEdit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
+    const box = screen.getByRole('textbox', { name: 'Edit message text' });
+    fireEvent.change(box, { target: { value: 'typo fixed' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), 'typo fixed'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Edit message text' })).toBeNull(),
+    );
+  });
+
+  it('offers no Edit button on other people’s messages', () => {
+    render(
+      <MessageRow message={msg('u-other')} grouped={false} meId={me.id} onEdit={async () => {}} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
   });
 });
 

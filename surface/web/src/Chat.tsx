@@ -118,12 +118,17 @@ export function Chat({
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, []);
 
-  useWs(true, wsKeys, {
-    onEvent: (event: WireEvent) => dispatch({ type: 'server-event', event }),
-    onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
-    onOpen: catchUp,
-    onStatus: (status) => dispatch({ type: 'ws-status', status }),
-  });
+  useWs(
+    true,
+    wsKeys,
+    {
+      onEvent: (event: WireEvent) => dispatch({ type: 'server-event', event }),
+      onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
+      onOpen: catchUp,
+      onStatus: (status) => dispatch({ type: 'ws-status', status }),
+    },
+    state.activeChannelId,
+  );
 
   // ---- channel selection & history ----
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
@@ -215,6 +220,9 @@ export function Chat({
       .catch(() => dispatch({ type: 'send-failed', channelId, clientMsgId }));
   };
 
+  const editMessage = (m: ChatMessage, text: string): Promise<void> =>
+    api.editMessage(m.id!, text).then(({ event }) => dispatch({ type: 'server-event', event }));
+
   const retry = (m: ChatMessage) => {
     if (!m.clientMsgId) return;
     dispatch({ type: 'retry-remove', channelId: m.channelId, clientMsgId: m.clientMsgId });
@@ -292,7 +300,7 @@ export function Chat({
           {presentUsers.length > 0 && (
             <div
               className="ml-auto flex items-center gap-2"
-              title="Teammates connected to the workspace"
+              title="Viewing this channel right now"
             >
               <div className="flex -space-x-1.5">
                 {presentUsers.slice(0, 8).map((u) => (
@@ -302,7 +310,7 @@ export function Chat({
                 ))}
               </div>
               <span className="text-[11px] tabular-nums text-zinc-500">
-                {presentUsers.length} online
+                {presentUsers.length} here
               </span>
             </div>
           )}
@@ -323,10 +331,12 @@ export function Chat({
           hasMoreBefore={timeline.hasMoreBefore}
           sessions={state.sessions}
           spectators={spectators}
+          meId={me.id}
           onLoadEarlier={loadEarlier}
           onOpenThread={openThread}
           onOpenSession={openSession}
           onRetry={retry}
+          onEdit={editMessage}
         />
 
         {active && (
@@ -388,10 +398,12 @@ export function Chat({
             loaded={threadLoaded}
             sessions={state.sessions}
             spectators={spectators}
+            meId={me.id}
             onClose={() => dispatch({ type: 'close-thread' })}
             onSend={(text) => send(active.id, text, openThreadRoot.id!)}
             onOpenSession={openSession}
             onRetry={retry}
+            onEdit={editMessage}
           />
         )
       )}
