@@ -15,6 +15,7 @@ import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
 import { isPendingSessionId, sessionFromWire } from './sessions/types';
 
 const PAGE_SIZE = 50;
+const NO_WATCHERS: UserRef[] = [];
 
 export function Chat({
   me,
@@ -153,6 +154,10 @@ export function Chat({
   };
 
   const paneSession = state.openSessionId ? state.sessions[state.openSessionId] ?? null : null;
+  // Watching presence for the open pane (drives seat take-vs-request UX).
+  const paneWatchers = paneSession
+    ? state.presence[`session:${paneSession.id}`] ?? NO_WATCHERS
+    : NO_WATCHERS;
 
   // Spectator counts ride the existing presence map under `session:<id>` keys.
   const spectators = useMemo(() => {
@@ -271,9 +276,10 @@ export function Chat({
 
       {paneSession ? (
         <SessionPane
+          key={paneSession.id} // full reset (stream, seat anchors, tool state) per session
           session={paneSession}
           me={me}
-          spectators={spectators[paneSession.id] ?? 0}
+          watchers={paneWatchers}
           onClose={() => dispatch({ type: 'close-session' })}
         />
       ) : state.openSessionId ? (

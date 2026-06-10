@@ -20,9 +20,18 @@
 //   - pane composer send         → appends a synthetic ack turn
 //   - cancel                     → emits a terminal cancelled execution_state
 //   - unknown session ids (e.g. /s/whatever) → synthesized completed B session
+//
+// Seat-flow simulation (Phase 3) — driven by a simulated teammate "Sam":
+//   - `@agent <task with "seat">`→ ~4s in, Sam requests the seat (grant banner)
+//   - grant to Sam               → Sam drives: steers one synthetic turn and
+//                                  "watches" for 8s, during which seat/take
+//                                  → 409 seat_held (exercises the fallback);
+//                                  after 8s a take succeeds
+//   - seat/request while Sam drives → Sam grants the seat back after ~2.5s
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CentaurEventFrame } from '@atrium/centaur-client';
+import { ApiError } from '../api';
 import type { UserRef, WireEvent } from '../state';
 import type { SessionStreamCallbacks, SessionStreamHandle, CreateSessionBody } from './api';
 import { normalizeExecutionStatus, type SessionStatus, type SessionWire } from './types';
@@ -81,6 +90,43 @@ async function mockMe(): Promise<UserRef> {
   }
   cachedMe ??= { id: 'mock-user', handle: 'mock', displayName: 'Mock User' };
   return cachedMe;
+}
+
+// ---- simulated teammate for the seat flow -----------------------------------
+
+const SAM: UserRef = { id: 'mock-sam', handle: 'sam', displayName: 'Sam' };
+const SAM_REQUEST_DELAY_MS = 4_000; // task contains "seat" → Sam asks for it
+const SAM_HOLD_MS = 8_000; // after a grant, Sam "watches" → take 409s
+const SAM_GRANT_BACK_MS = 2_500; // Sam grants a pending request back
+
+function emitSeatRequested(run: MockRun, by: UserRef): void {
+  const pending = (run.wire.pendingSeatRequests ??= []);
+  if (run.wire.driverId === by.id || pending.some((r) => r.userId === by.id)) return;
+  pending.push({ userId: by.id, displayName: by.displayName });
+  emitWire('session.seat_requested', run.wire.channelId, run.wire.threadRootEventId, by, {
+    sessionId: run.wire.id,
+    by: by.id,
+  });
+}
+
+function emitSeatChanged(
+  run: MockRun,
+  to: UserRef,
+  reason: 'granted' | 'taken',
+  actor: UserRef,
+): void {
+  const from = run.wire.driverId;
+  run.wire.driverId = to.id;
+  run.wire.driver = { userId: to.id, displayName: to.displayName };
+  run.wire.pendingSeatRequests = (run.wire.pendingSeatRequests ?? []).filter(
+    (r) => r.userId !== to.id,
+  );
+  emitWire('session.seat_changed', run.wire.channelId, run.wire.threadRootEventId, actor, {
+    sessionId: run.wire.id,
+    from,
+    to: to.id,
+    reason,
+  });
 }
 
 // ---- fixture scripts --------------------------------------------------------
@@ -222,6 +268,8 @@ interface MockRun {
   framesPerTick: number;
   tickMs: number;
   timer: ReturnType<typeof setInterval> | null;
+  /** While in the future, the sim driver "is watching" → seat/take 409s. */
+  seatHeldUntil?: number;
 }
 
 const runs = new Map<string, MockRun>();
@@ -292,7 +340,9 @@ function synthesizeCompletedRun(id: string): MockRun {
       status: 'spawning',
       harness: 'claude-code',
       spawnedBy: me.id,
-      driverId: null,
+      driverId: me.id,
+      driver: { userId: me.id, displayName: me.displayName },
+      pendingSeatRequests: [],
       costUsd: 0,
       resultText: null,
       createdAt: new Date(Date.now() - 60_000).toISOString(),
@@ -334,6 +384,9 @@ export interface SessionsMockApi {
   getSession(id: string): Promise<{ session: SessionWire }>;
   sendMessage(id: string, text: string): Promise<void>;
   cancel(id: string): Promise<void>;
+  requestSeat(id: string): Promise<void>;
+  grantSeat(id: string, userId: string): Promise<void>;
+  takeSeat(id: string): Promise<void>;
   openStream(
     sessionId: string,
     afterEventId: number,
@@ -358,7 +411,9 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
             status: 'spawning',
             harness: body.harness ?? 'claude-code',
             spawnedBy: me.id,
-            driverId: null,
+            driverId: me.id,
+            driver: { userId: me.id, displayName: me.displayName },
+            pendingSeatRequests: [],
             costUsd: 0,
             resultText: null,
             createdAt: new Date().toISOString(),
@@ -382,6 +437,10 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
           });
           ensureRunning(run);
         }, 300);
+        // Seat sim: a "seat" task gets Sam asking for the driver seat shortly in.
+        if (/seat/i.test(body.task)) {
+          setTimeout(() => emitSeatRequested(run, SAM), SAM_REQUEST_DELAY_MS);
+        }
         return { session: { ...run.wire } };
       },
 
@@ -419,6 +478,66 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
           },
         } as CentaurEventFrame);
         ensureRunning(run);
+      },
+
+      async requestSeat(id) {
+        const me = await mockMe();
+        const run = getRun(id);
+        emitSeatRequested(run, me);
+        // Sam is a friendly driver: grants a pending request back shortly.
+        if (run.wire.driverId === SAM.id) {
+          setTimeout(() => {
+            if (run.wire.driverId === SAM.id) emitSeatChanged(run, me, 'granted', SAM);
+          }, SAM_GRANT_BACK_MS);
+        }
+      },
+
+      async grantSeat(id, userId) {
+        const me = await mockMe();
+        const run = getRun(id);
+        if (run.wire.driverId !== me.id) {
+          throw new ApiError(403, 'forbidden', 'only the current driver may grant the seat');
+        }
+        const grantee: UserRef =
+          userId === SAM.id
+            ? SAM
+            : userId === me.id
+              ? me
+              : {
+                  id: userId,
+                  handle: userId,
+                  displayName:
+                    (run.wire.pendingSeatRequests ?? []).find((r) => r.userId === userId)
+                      ?.displayName ?? userId,
+                };
+        emitSeatChanged(run, grantee, 'granted', me);
+        if (grantee.id === SAM.id) {
+          // Sam "watches" for a while (take → 409) and drives one steer turn.
+          run.seatHeldUntil = Date.now() + SAM_HOLD_MS;
+          setTimeout(() => {
+            if (run.wire.driverId !== SAM.id) return;
+            run.script.push(
+              ...synthTurn(maxEventId(run) + 1, `mock-${id}`, '(Sam) taking a look from the seat'),
+            );
+            if (run.framesPerTick === 0) {
+              run.framesPerTick = 2;
+              run.tickMs = 80;
+            }
+            ensureRunning(run);
+          }, 1_500);
+        }
+      },
+
+      async takeSeat(id) {
+        const me = await mockMe();
+        const run = getRun(id);
+        if (run.wire.driverId === me.id) {
+          throw new ApiError(409, 'seat_held', 'you already hold the seat');
+        }
+        if ((run.seatHeldUntil ?? 0) > Date.now()) {
+          throw new ApiError(409, 'seat_held', 'current driver is watching');
+        }
+        emitSeatChanged(run, me, 'taken', me);
       },
 
       openStream(sessionId, afterEventId, cb) {

@@ -122,6 +122,28 @@ export const sessionsApi = {
     return reqAccepted(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' });
   },
 
+  // ---- driver seat (Phase 3) ----
+
+  requestSeat(id: string): Promise<void> {
+    if (sessionsMock) return sessionsMock.requestSeat(id);
+    return reqAccepted(`/api/sessions/${id}/seat/request`, { method: 'POST', body: '{}' });
+  },
+
+  /** Driver-only. */
+  grantSeat(id: string, userId: string): Promise<void> {
+    if (sessionsMock) return sessionsMock.grantSeat(id, userId);
+    return reqAccepted(`/api/sessions/${id}/seat/grant`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  },
+
+  /** Rejects with ApiError(409, 'seat_held') while the driver is watching. */
+  takeSeat(id: string): Promise<void> {
+    if (sessionsMock) return sessionsMock.takeSeat(id);
+    return reqAccepted(`/api/sessions/${id}/seat/take`, { method: 'POST', body: '{}' });
+  },
+
   /** Cookie-authed SSE of Centaur frames, resumable via after_event_id. */
   openStream(
     sessionId: string,

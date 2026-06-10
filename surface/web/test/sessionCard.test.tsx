@@ -111,6 +111,48 @@ describe('session card transitions across session.* events', () => {
     expect(screen.getByText(/harness crashed/)).toBeTruthy();
   });
 
+  it('shows the current driver in the subtitle when it differs from the spawner', () => {
+    const bob = { id: 'u-bob', handle: 'bob', displayName: 'Bob' };
+    let s = spawned(loadedState());
+    const { rerender } = render(cardFor(s));
+    // Driver defaults to the spawner → no separate driver chip.
+    expect(screen.queryByText(/driver:/)).toBeNull();
+
+    s = appReducer(s, {
+      type: 'server-event',
+      event: {
+        ...wire(105, 'session.seat_changed', {
+          sessionId: 'sess-1',
+          from: spawner.id,
+          to: bob.id,
+          reason: 'taken',
+        }),
+        actorId: bob.id,
+        author: bob,
+      },
+    });
+    rerender(cardFor(s));
+    expect(screen.getByText('driver: Bob')).toBeTruthy();
+
+    // Seat returns to the spawner → subtitle drops the driver again.
+    s = appReducer(s, {
+      type: 'server-event',
+      event: {
+        ...wire(106, 'session.seat_changed', {
+          sessionId: 'sess-1',
+          from: bob.id,
+          to: spawner.id,
+          reason: 'granted',
+        }),
+        actorId: bob.id,
+        author: bob,
+      },
+    });
+    rerender(cardFor(s));
+    expect(screen.queryByText(/driver:/)).toBeNull();
+    expect(s.sessions['sess-1']!.seatEvents).toHaveLength(2);
+  });
+
   it('ignores status events for unknown sessions and duplicate event ids', () => {
     let s = spawned(loadedState());
     const before = s.sessions;

@@ -11,6 +11,27 @@ export type SessionStatus =
   | 'failed'
   | 'cancelled';
 
+/** Seat-related user reference as serialized by the server. */
+export interface SessionSeatUser {
+  userId: string;
+  displayName: string;
+}
+
+export type SeatChangeReason = 'granted' | 'taken';
+
+/** One audit entry folded from a `session.seat_changed` wire event. */
+export interface SeatAuditEntry {
+  /** Workspace event id — dedupe key across WS fanout + catch-up overlap. */
+  id: number;
+  from: string | null;
+  to: string;
+  reason: SeatChangeReason;
+  /** Display names resolved at fold time when the event carried them. */
+  fromName?: string;
+  toName?: string;
+  at: string;
+}
+
 /** Session JSON as served by POST/GET /api/sessions. */
 export interface SessionWire {
   id: string;
@@ -22,6 +43,9 @@ export interface SessionWire {
   harness: string;
   spawnedBy: string;
   driverId: string | null;
+  /** Driver display info (Phase 3 server; may be absent on older payloads). */
+  driver?: SessionSeatUser | null;
+  pendingSeatRequests?: SessionSeatUser[];
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -43,12 +67,27 @@ export interface Session {
   /** Display name of the spawner when known (from WS author / me). */
   spawnerName?: string;
   driverId: string | null;
+  /** Display name of the current driver when known. */
+  driverName?: string;
+  /** Open seat requests, oldest-first (deduped by userId). */
+  pendingSeatRequests: SessionSeatUser[];
+  /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
+  seatEvents: SeatAuditEntry[];
   costUsd: number;
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
   lastEventId: number;
   permalink: string;
+}
+
+/**
+ * Effective driver: the server seeds driver_id with the spawner at insert, so
+ * a null driverId (optimistic rows, pre-Phase-3 payloads) falls back to the
+ * spawner. Steer permission follows this id; cancel = spawner OR driver.
+ */
+export function sessionDriverId(s: Session): string {
+  return s.driverId ?? s.spawnedBy;
 }
 
 /** Optimistic sessions (pre-POST-response) use this id prefix. */
@@ -120,7 +159,10 @@ export function sessionFromWire(w: SessionWire): Session {
     status: asSessionStatus(w.status) ?? 'spawning',
     harness: w.harness,
     spawnedBy: w.spawnedBy,
-    driverId: w.driverId ?? null,
+    driverId: w.driverId ?? w.driver?.userId ?? null,
+    driverName: w.driver?.displayName,
+    pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
+    seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
     resultText: w.resultText ?? null,
     createdAt: w.createdAt,
@@ -144,6 +186,13 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     resultText: live.resultText ?? resp.resultText,
     completedAt: live.completedAt ?? resp.completedAt,
     spawnerName: live.spawnerName ?? resp.spawnerName,
+    // Seat state that moved via WS while the POST was in flight wins over the
+    // insert-time snapshot (which always says driver = spawner, no requests).
+    driverId: live.driverId ?? resp.driverId,
+    driverName: live.driverName ?? resp.driverName,
+    pendingSeatRequests:
+      live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
+    seatEvents: live.seatEvents.length > 0 ? live.seatEvents : resp.seatEvents,
     lastEventId: Math.max(live.lastEventId, resp.lastEventId),
   };
 }
@@ -172,6 +221,8 @@ export function applySessionEvent(
       harness: typeof p.harness === 'string' ? p.harness : 'claude-code',
       spawnedBy: typeof p.by === 'string' ? p.by : (ev.actorId ?? ''),
       driverId: null,
+      pendingSeatRequests: [],
+      seatEvents: [],
       costUsd: 0,
       resultText: null,
       createdAt: ev.createdAt,
@@ -203,6 +254,59 @@ export function applySessionEvent(
         resultText: excerpt ?? prev.resultText,
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,
+      },
+    };
+  }
+
+  if (ev.type === 'session.seat_requested') {
+    const by = typeof p.by === 'string' ? p.by : ev.actorId;
+    if (!by || by === sessionDriverId(prev)) return sessions;
+    if (prev.pendingSeatRequests.some((r) => r.userId === by)) return sessions;
+    const displayName = ev.author?.id === by ? ev.author.displayName : by;
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        pendingSeatRequests: [...prev.pendingSeatRequests, { userId: by, displayName }],
+      },
+    };
+  }
+
+  if (ev.type === 'session.seat_changed') {
+    const to = typeof p.to === 'string' ? p.to : null;
+    if (!to) return sessions;
+    if (prev.seatEvents.some((e) => e.id === ev.id)) return sessions; // WS + catch-up overlap
+    const from = typeof p.from === 'string' ? p.from : null;
+    const reason: SeatChangeReason = p.reason === 'taken' ? 'taken' : 'granted';
+    // Best-effort name resolution from what the entity already knows; the
+    // event author is the old driver for grants and the new driver for takes.
+    const nameOf = (id: string | null): string | undefined => {
+      if (!id) return undefined;
+      if (ev.author?.id === id) return ev.author.displayName;
+      const req = prev.pendingSeatRequests.find((r) => r.userId === id);
+      if (req) return req.displayName;
+      if (id === prev.driverId && prev.driverName) return prev.driverName;
+      if (id === prev.spawnedBy) return prev.spawnerName;
+      return undefined;
+    };
+    const entry: SeatAuditEntry = {
+      id: ev.id,
+      from,
+      to,
+      reason,
+      fromName: nameOf(from),
+      toName: nameOf(to),
+      at: ev.createdAt,
+    };
+    const seatEvents = [...prev.seatEvents, entry].sort((a, b) => a.id - b.id);
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        driverId: to,
+        driverName: nameOf(to),
+        pendingSeatRequests: prev.pendingSeatRequests.filter((r) => r.userId !== to),
+        seatEvents,
       },
     };
   }

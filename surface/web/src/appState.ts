@@ -232,18 +232,26 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'session-upsert':
+    case 'session-upsert': {
+      const existing = state.sessions[action.session.id];
       return {
         ...state,
         sessions: {
           ...state.sessions,
           [action.session.id]: {
             ...action.session,
-            spawnerName:
-              action.session.spawnerName ?? state.sessions[action.session.id]?.spawnerName,
+            spawnerName: action.session.spawnerName ?? existing?.spawnerName,
+            driverName: action.session.driverName ?? existing?.driverName,
+            // GET /api/sessions/:id carries no audit history — keep what the
+            // live seat_changed folds already accumulated.
+            seatEvents:
+              action.session.seatEvents.length > 0
+                ? action.session.seatEvents
+                : existing?.seatEvents ?? [],
           },
         },
       };
+    }
 
     case 'open-session':
       return { ...state, openSessionId: action.sessionId, openThreadRootId: null };
