@@ -1,0 +1,436 @@
+[
+  {
+    "event": "execution_state",
+    "event_id": 55,
+    "t": 192104.2463805,
+    "data": {
+      "type": "execution.state",
+      "status": "queued",
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538"
+    }
+  },
+  {
+    "event": "execution_state",
+    "event_id": 56,
+    "t": 192104.248483541,
+    "data": {
+      "type": "execution.state",
+      "status": "running",
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538"
+    }
+  },
+  {
+    "event": "execution_started",
+    "event_id": 57,
+    "t": 192104.755125166,
+    "data": {
+      "type": "obs.execution_started",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "user_id": "probe",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "runtime_id": "centaur-centaur-sandbox-probe-b-1781124507-692a64e5-67de3356e4",
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "queue_delay_s": 0.003,
+      "delivery_platform": "dev",
+      "execution_sequence": 0,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 58,
+    "t": 192104.755162666,
+    "data": {
+      "type": "system",
+      "subtype": "init",
+      "session_id": "80e3dbbd-a048-4025-8e30-267eea82456a"
+    }
+  },
+  {
+    "event": "system_event_observed",
+    "event_id": 59,
+    "t": 192104.75538025,
+    "data": {
+      "type": "obs.system",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "subtype": "init",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "session_id": "80e3dbbd-a048-4025-8e30-267eea82456a",
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 60,
+    "t": 192104.756048833,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_mock000023",
+            "name": "Bash",
+            "type": "tool_use",
+            "input": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_tool_use_observed",
+    "event_id": 61,
+    "t": 192104.756099291,
+    "data": {
+      "type": "obs.assistant_tool_use",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "tool_name": "Bash",
+      "input_keys": [],
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-b-1781124507",
+      "tool_use_id": "toolu_mock000023",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "input_size_bytes": 2,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 62,
+    "t": 192104.756238583,
+    "data": {
+      "type": "assistant",
+      "uuid": "7752d2bc-c9bc-4e98-af19-e7f59c0c4826",
+      "message": {
+        "id": "msg_mock000021",
+        "role": "assistant",
+        "type": "message",
+        "model": "claude-fable-5",
+        "usage": {
+          "input_tokens": 42,
+          "output_tokens": 1
+        },
+        "content": [
+          {
+            "id": "toolu_mock000023",
+            "name": "Bash",
+            "type": "tool_use",
+            "input": {
+              "command": "echo atrium-roundtrip-ok && uname -m && pwd"
+            }
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "context_management": null
+      },
+      "request_id": "req_mock000022",
+      "session_id": "80e3dbbd-a048-4025-8e30-267eea82456a",
+      "parent_tool_use_id": null
+    }
+  },
+  {
+    "event": "assistant_tool_use_observed",
+    "event_id": 63,
+    "t": 192104.757099416,
+    "data": {
+      "type": "obs.assistant_tool_use",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "tool_name": "Bash",
+      "input_keys": [
+        "command"
+      ],
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-b-1781124507",
+      "tool_use_id": "toolu_mock000023",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "input_size_bytes": 57,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "usage_observed",
+    "event_id": 64,
+    "t": 192104.757253375,
+    "data": {
+      "type": "obs.usage",
+      "model": "claude-fable-5",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "cost_usd": 0.0,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "input_tokens": 42,
+      "total_tokens": 43,
+      "authoritative": false,
+      "output_tokens": 1,
+      "assignment_generation": 1,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 65,
+    "t": 192104.75769825,
+    "data": {
+      "type": "tool",
+      "content": [
+        {
+          "content": "atrium-roundtrip-ok\naarch64\n/home/agent/workspace",
+          "is_error": false,
+          "tool_use_id": "toolu_mock000023"
+        }
+      ]
+    }
+  },
+  {
+    "event": "tool_result_observed",
+    "event_id": 66,
+    "t": 192104.757800208,
+    "data": {
+      "type": "obs.tool_result",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "is_error": false,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-b-1781124507",
+      "tool_use_id": "toolu_mock000023",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "content_size_bytes": 53,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 67,
+    "t": 192104.758465833,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "TOOLCHAIN_OK: atrium-roundtrip-ok\naarch64\n/home/agent/workspace",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 68,
+    "t": 192104.758562458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 63,
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 69,
+    "t": 192104.759383208,
+    "data": {
+      "type": "assistant",
+      "uuid": "7f490e96-d304-4ec5-bde4-6742db99fdd2",
+      "message": {
+        "id": "msg_mock000024",
+        "role": "assistant",
+        "type": "message",
+        "model": "claude-fable-5",
+        "usage": {
+          "input_tokens": 42,
+          "output_tokens": 1
+        },
+        "content": [
+          {
+            "text": "TOOLCHAIN_OK: atrium-roundtrip-ok\naarch64\n/home/agent/workspace",
+            "type": "text"
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "context_management": null
+      },
+      "request_id": "req_mock000025",
+      "session_id": "80e3dbbd-a048-4025-8e30-267eea82456a",
+      "parent_tool_use_id": null
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 70,
+    "t": 192104.759482458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 63,
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "usage_observed",
+    "event_id": 71,
+    "t": 192104.760106916,
+    "data": {
+      "type": "obs.usage",
+      "model": "claude-fable-5",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "cost_usd": 0.0,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "input_tokens": 42,
+      "total_tokens": 43,
+      "authoritative": false,
+      "output_tokens": 1,
+      "assignment_generation": 1,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 72,
+    "t": 192104.760225083,
+    "data": {
+      "text": "TOOLCHAIN_OK: atrium-roundtrip-ok\naarch64\n/home/agent/workspace",
+      "type": "result"
+    }
+  },
+  {
+    "event": "result_observed",
+    "event_id": 73,
+    "t": 192104.760920458,
+    "data": {
+      "type": "obs.result",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 63,
+      "thread_key": "probe-b-1781124507",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 74,
+    "t": 192104.761012458,
+    "data": {
+      "type": "turn.done",
+      "result": "TOOLCHAIN_OK: atrium-roundtrip-ok\naarch64\n/home/agent/workspace",
+      "turn_id": 1,
+      "agent_thread_id": "80e3dbbd-a048-4025-8e30-267eea82456a"
+    }
+  },
+  {
+    "event": "execution_summary",
+    "event_id": 75,
+    "t": 192104.761748541,
+    "data": {
+      "type": "obs.execution_summary",
+      "engine": "claude-code",
+      "models": [
+        "claude-fable-5"
+      ],
+      "status": "completed",
+      "harness": "claude-code",
+      "ttft_ms": 160.0,
+      "user_id": "probe",
+      "cost_usd": 0.0,
+      "duration_s": 0.245,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-b-1781124507",
+      "error_events": 0,
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "input_tokens": 84,
+      "total_tokens": 86,
+      "output_tokens": 2,
+      "result_events": 1,
+      "command_events": 0,
+      "raw_event_count": 8,
+      "subagent_events": 0,
+      "terminal_reason": "completed",
+      "reasoning_events": 0,
+      "tool_retry_count": 0,
+      "subagent_failures": 0,
+      "tool_error_events": 0,
+      "execution_sequence": 0,
+      "file_change_events": 0,
+      "tool_calls_by_name": {
+        "Bash": 2
+      },
+      "tool_result_events": 1,
+      "tool_errors_by_name": {},
+      "assistant_text_chars": 126,
+      "command_error_events": 0,
+      "assignment_generation": 1,
+      "assistant_text_events": 2,
+      "tool_error_categories": {},
+      "cache_read_input_tokens": 0,
+      "observation_event_count": 9,
+      "assistant_tool_use_events": 2,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "execution_state",
+    "event_id": 76,
+    "t": 192104.761780708,
+    "data": {
+      "type": "execution.state",
+      "status": "completed",
+      "thread_key": "probe-b-1781124507",
+      "result_text": "TOOLCHAIN_OK: atrium-roundtrip-ok\naarch64\n/home/agent/workspace",
+      "execution_id": "exe_d3b2ed6da2d04538",
+      "agent_thread_id": "80e3dbbd-a048-4025-8e30-267eea82456a",
+      "terminal_reason": "completed"
+    }
+  }
+]

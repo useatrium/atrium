@@ -1,0 +1,208 @@
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: unknown;
+}
+
+export type ExecutionStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "failed_permanent"
+  | "cancelled"
+  | (string & {});
+
+export interface ExecutionState {
+  type: "execution.state";
+  status: ExecutionStatus;
+  thread_key: string;
+  execution_id: string;
+  result_text?: string;
+  agent_thread_id?: string;
+  terminal_reason?: string;
+  [key: string]: unknown;
+}
+
+export interface AnthropicTextBlock {
+  type: "text";
+  text: string;
+  [key: string]: unknown;
+}
+
+export interface AnthropicToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: JsonObject;
+  [key: string]: unknown;
+}
+
+export type AnthropicMessageBlock =
+  | AnthropicTextBlock
+  | AnthropicToolUseBlock
+  | ({ type: string } & JsonObject);
+
+export interface AnthropicMessage {
+  id?: string;
+  role?: "assistant" | string;
+  type?: "message" | string;
+  model?: string;
+  usage?: JsonObject;
+  content: AnthropicMessageBlock[];
+  stop_reason?: string | null;
+  stop_sequence?: string | null;
+  context_management?: JsonValue;
+  [key: string]: unknown;
+}
+
+export interface AmpSystemEvent {
+  type: "system";
+  subtype: string;
+  session_id?: string;
+  [key: string]: unknown;
+}
+
+export interface AmpAssistantEvent {
+  type: "assistant";
+  message: AnthropicMessage;
+  uuid?: string;
+  request_id?: string;
+  session_id?: string;
+  parent_tool_use_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface AmpToolResultContent {
+  content: string;
+  is_error: boolean;
+  tool_use_id?: string;
+  [key: string]: unknown;
+}
+
+export interface AmpToolEvent {
+  type: "tool";
+  content: AmpToolResultContent[];
+  [key: string]: unknown;
+}
+
+export interface AmpResultEvent {
+  type: "result";
+  text: string;
+  [key: string]: unknown;
+}
+
+export interface AmpTurnDoneEvent {
+  type: "turn.done";
+  result: string;
+  turn_id: number;
+  agent_thread_id?: string;
+  [key: string]: unknown;
+}
+
+export type AmpRawEvent =
+  | AmpSystemEvent
+  | AmpAssistantEvent
+  | AmpToolEvent
+  | AmpResultEvent
+  | AmpTurnDoneEvent;
+
+interface ObservationBase {
+  engine: string;
+  harness: string;
+  thread_key: string;
+  execution_id: string;
+  persona_id?: string | null;
+  prompt_ref?: string;
+  prompt_sha?: string;
+  assignment_generation?: number;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface AssistantTextObserved extends ObservationBase {
+  type: "obs.assistant_text";
+  text_chars: number;
+  text_block_count: number;
+}
+
+export interface AssistantToolUseObserved extends ObservationBase {
+  type: "obs.assistant_tool_use";
+  tool_name: string;
+  tool_use_id: string;
+  input_keys: string[];
+  input_size_bytes: number;
+}
+
+export interface ToolResultObserved extends ObservationBase {
+  type: "obs.tool_result";
+  tool_use_id: string;
+  is_error: boolean;
+  content_size_bytes: number;
+}
+
+export interface UsageObserved extends ObservationBase {
+  type: "obs.usage";
+  model: string;
+  cost_usd: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  authoritative?: boolean;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+export interface ExecutionSummaryObserved extends ObservationBase {
+  type: "obs.execution_summary";
+  models: string[];
+  status: ExecutionStatus;
+  cost_usd?: number;
+  duration_s?: number;
+  terminal_reason?: string;
+}
+
+export interface ExecutionStartedObserved extends ObservationBase {
+  type: "obs.execution_started";
+  user_id: string;
+  runtime_id?: string;
+  queue_delay_s?: number;
+  delivery_platform?: string;
+  execution_sequence?: number;
+}
+
+export interface SystemObserved extends ObservationBase {
+  type: "obs.system";
+  subtype: string;
+  session_id?: string;
+}
+
+export interface ResultObserved extends ObservationBase {
+  type: "obs.result";
+  text_chars: number;
+}
+
+export type ProjectionEvent =
+  | AssistantTextObserved
+  | AssistantToolUseObserved
+  | ToolResultObserved
+  | UsageObserved
+  | ExecutionSummaryObserved
+  | ExecutionStartedObserved
+  | SystemObserved
+  | ResultObserved;
+
+export type CentaurEventFrame =
+  | { event: "execution_state"; event_id: number; data: ExecutionState }
+  | { event: "execution_started"; event_id: number; data: ExecutionStartedObserved }
+  | { event: "amp_raw_event"; event_id: number; data: AmpRawEvent }
+  | { event: "system_event_observed"; event_id: number; data: SystemObserved }
+  | { event: "assistant_text_observed"; event_id: number; data: AssistantTextObserved }
+  | { event: "assistant_tool_use_observed"; event_id: number; data: AssistantToolUseObserved }
+  | { event: "tool_result_observed"; event_id: number; data: ToolResultObserved }
+  | { event: "usage_observed"; event_id: number; data: UsageObserved }
+  | { event: "result_observed"; event_id: number; data: ResultObserved }
+  | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved };
+
+export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
+  return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";
+}
