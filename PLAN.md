@@ -89,7 +89,19 @@ Stretch: fork-by-replay into a new thread_key.
 **Done when:** request/grant/steer flow works; concurrent seat-grabs resolve
 deterministically (tested); handoff < 1s, no dropped in-flight events.
 
+**RESULT (2026-06-10): done-when ✅** — live e2e 14/14: grant flips driver in
+35ms, audit lines on both clients, take-seat when driver away, new driver
+steers. Concurrency determinism unit-tested (FOR UPDATE, single seat_changed).
+Live e2e also caught + fixed a real leak: terminal sessions now release their
+sandbox after a 60s idle window (cancel-on-steer) — before this, every session
+pinned a pod forever and the node hit 92% memory. Fork-by-replay stretch: not
+built (deferred).
+
 ## Phase 4 — Instrument + dogfood (2–4 wk usage; human part hands to Gary)
+
+**BUILDABLE HALF DONE (2026-06-10):** session_views durable spectate tracking +
+viewerCount shipped; metrics SQL from phase4/DOGFOOD.md tested against seeded
+data. Remaining: the human part — see phase4/DOGFOOD.md runbook + scorecard.
 
 Metrics: sessions/day, % sessions viewed by non-spawner, spectate duration, organic
 take-overs, card→transcript clickthrough.

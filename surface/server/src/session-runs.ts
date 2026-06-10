@@ -74,11 +74,15 @@ interface SessionUserRow {
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
 
+// Idle window before a terminal session's sandbox assignment is released.
+const RELEASE_IDLE_MS = Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
+
 export class SessionRuns {
   private readonly centaur: CentaurClient;
   private readonly harness: string;
   private readonly autoResume: boolean;
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly pool: Db,
@@ -202,6 +206,7 @@ export class SessionRuns {
   }
 
   async postUserMessage(id: string, userId: string, text: string): Promise<void> {
+    this.cancelScheduledRelease(id);
     const row = await this.requireDriver(id, userId);
     let generation = row.assignment_generation;
     if (generation == null) {
@@ -331,6 +336,8 @@ export class SessionRuns {
   }
 
   async close(): Promise<void> {
+    for (const timer of this.releaseTimers.values()) clearTimeout(timer);
+    this.releaseTimers.clear();
     const handles = [...this.tailers.values()];
     for (const handle of handles) handle.controller.abort();
     this.tailers.clear();
@@ -357,7 +364,8 @@ export class SessionRuns {
       const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness);
       await this.updateExecution(id, exec.execution_id, generation);
       this.startTailer(id);
-    } catch {
+    } catch (err) {
+      console.error('session start failed', { id, err });
       await this.updateStatus(id, 'failed').catch(() => {});
     }
   }
@@ -484,6 +492,40 @@ export class SessionRuns {
       });
     });
     if (event) this.hub.publishEvent(event);
+    if (event) this.scheduleRelease(id);
+  }
+
+  // Free the sandbox after an idle window: terminal sessions must not pin a
+  // warm runtime forever (pods accumulate and exhaust the node — found by live
+  // e2e). The delay + cancel-on-steer avoids racing a follow-up turn that
+  // arrives right after completion; the re-check makes a late fire harmless.
+  private scheduleRelease(id: string): void {
+    this.cancelScheduledRelease(id);
+    const timer = setTimeout(() => {
+      this.releaseTimers.delete(id);
+      void this.releaseAssignment(id);
+    }, RELEASE_IDLE_MS);
+    timer.unref?.();
+    this.releaseTimers.set(id, timer);
+  }
+
+  private cancelScheduledRelease(id: string): void {
+    const existing = this.releaseTimers.get(id);
+    if (existing) {
+      clearTimeout(existing);
+      this.releaseTimers.delete(id);
+    }
+  }
+
+  private async releaseAssignment(id: string): Promise<void> {
+    try {
+      const row = await this.getSessionRow(id);
+      if (!row || !TERMINAL_STATUSES.has(row.status)) return;
+      await this.centaur.release(row.centaur_thread_key, `rel-${id}-${Date.now()}`, false);
+      await this.pool.query('UPDATE sessions SET assignment_generation = NULL WHERE id = $1', [id]);
+    } catch (err) {
+      console.warn('session release failed', { id, err });
+    }
   }
 
   private async persistLastEventId(id: string, lastEventId: number): Promise<void> {

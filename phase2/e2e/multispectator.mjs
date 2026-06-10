@@ -155,6 +155,68 @@ try {
     record("steer after completion streams new turn into open pane", false, "pane composer not enabled for spawner");
   }
 
+  // --- Phase 3: seat handoff (request → grant), then take-seat when driver away ---
+  {
+    // B requests the seat on the (now completed) session; A grants; B can steer.
+    const reqBtn = b.getByRole("button", { name: /request seat/i }).first();
+    await reqBtn.waitFor({ timeout: 10000 });
+    await reqBtn.click();
+    const grantBtn = a.getByRole("button", { name: /grant/i }).first();
+    await grantBtn.waitFor({ timeout: 10000 });
+    const tGrant = Date.now();
+    await grantBtn.click();
+    // B's composer enables (driver flip) — handoff latency gate < 1s after grant.
+    await b.waitForFunction(
+      () => {
+        const tas = [...document.querySelectorAll("textarea")];
+        return tas.length > 1 && !tas[tas.length - 1].disabled;
+      },
+      null,
+      { timeout: 10000 },
+    );
+    const handoffMs = Date.now() - tGrant;
+    record("seat grant flips driver to spectator's composer", true, `${handoffMs}ms after grant click`);
+    record("handoff latency < 1s", handoffMs < 1000, `${handoffMs}ms`);
+    const auditA = /seat/i.test(await a.innerText("body"));
+    const auditB = /seat/i.test(await b.innerText("body"));
+    record("seat audit line visible to both", auditA && auditB);
+    await snap(b, "after-grant-new-driver");
+
+    // New driver B steers.
+    const bComposer = b.locator("textarea").last();
+    await bComposer.fill("Reply with exactly PONG and nothing else.");
+    await bComposer.press("Enter");
+    const bSteer = await b
+      .waitForFunction(() => document.body.innerText.split("PONG").length > 1, null, { timeout: 90000 })
+      .then(() => true)
+      .catch(() => false);
+    record("new driver can steer after handoff", bSteer);
+
+    // Take-seat path: B (driver) closes pane; A takes the seat without a grant.
+    await b.goto(BASE);
+    await new Promise((r) => setTimeout(r, 1500));
+    const takeBtn = a.getByRole("button", { name: /take seat/i }).first();
+    const takeVisible = await takeBtn.waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+    if (takeVisible) {
+      await takeBtn.click();
+      const aDriving = await a
+        .waitForFunction(
+          () => {
+            const tas = [...document.querySelectorAll("textarea")];
+            return tas.length > 1 && !tas[tas.length - 1].disabled;
+          },
+          null,
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      record("take seat succeeds when driver not watching", aDriving);
+    } else {
+      record("take seat succeeds when driver not watching", false, "Take seat button never appeared");
+    }
+    await snap(a, "after-take-seat");
+  }
+
   // Live tool-card check: spawn a TOOLTEST session and assert a Bash tool card
   // renders with the roundtripped output.
   await a.goto(BASE);
