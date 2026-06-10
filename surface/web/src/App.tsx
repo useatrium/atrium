@@ -4,7 +4,14 @@ import { Chat } from './Chat';
 import { Login } from './Login';
 import type { UserRef } from './state';
 
+/** /s/:id — session permalink; opens the app with that session's pane open. */
+function sessionIdFromPath(pathname: string): string | null {
+  const m = /^\/s\/([^/]+)$/.exec(pathname);
+  return m?.[1] ?? null;
+}
+
 export function App() {
+  const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [checked, setChecked] = useState(false);
@@ -38,6 +45,7 @@ export function App() {
     <Chat
       me={me}
       workspace={workspace}
+      initialSessionId={initialSessionId}
       onLogout={() => {
         api.logout().finally(() => location.reload());
       }}
