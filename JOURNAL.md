@@ -104,3 +104,22 @@ Next: Phase 2 per phase2/DESIGN.md, split: codex → surface/server sessions
 module (migration, SessionService, tailer, stream proxy); Claude agent →
 surface/web session card + pane; me → integration + live-cluster e2e.
 Both blocked on packages/centaur-client (codex task-mq8jugan-biywsm, in flight).
+
+## 2026-06-10 — Phase 2 server half: reviewed, committed, LIVE-VERIFIED
+
+Codex delivered surface/server sessions module (again finished without
+committing — watch for this pattern). Review found+fixed: fire-and-forget
+tailer shutdown (abort not awaited → write/TRUNCATE race, real shutdown bug).
+19/19 tests x3. Commit 36f0683.
+
+Live e2e against kind cluster (no UI): POST /api/sessions with a TOOLTEST task
+→ session.spawned became thread root (event 80) → Centaur sandbox → Claude Code
+→ mock LLM → real Bash roundtrip → tailer → status_changed events in thread →
+completed with result_text TOOLCHAIN_OK in <3s. Stream proxy replays full
+transcript with event_ids injected. Contract shapes match the pinned spec
+exactly. Recipe: kubectl port-forward deploy/centaur-centaur-api 18000:8000;
+CENTAUR_BASE_URL=http://127.0.0.1:18000 CENTAUR_API_KEY=$LOCAL_DEV_API_KEY
+PORT=3001 pnpm start (surface/server has no /health route — check stdout).
+
+Remaining for Phase-2 gate: web pane (agent in flight), then multi-spectator
+live verification + reload-recovery + perf bar (500-item scroll).
