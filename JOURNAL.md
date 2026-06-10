@@ -138,3 +138,20 @@ Next: Phase 3 (driver seat) — same split: codex=server seats, claude=web,
 me=review+live e2e. Contract: POST /api/sessions/:id/seat/{request,grant,take};
 session.seat_requested/.seat_changed events; tx + FOR UPDATE determinism;
 steer permission moves spawner→driver_id.
+
+## 2026-06-10 — Phases 3 + 4(buildable) CLOSED — final e2e 14/14
+
+Seat UX landed (web b4b3685, 29/29 web tests; also fixed pre-existing pane
+state leak via key={session.id}). Server seats reviewed earlier (ec5d5e1).
+session_views instrumentation reviewed + fixed (count() string coercion).
+
+Live e2e caught a REAL bug neither unit suites nor agents saw: sessions never
+released Centaur assignments → pods accumulated → node at 92% mem → spawn
+timeouts. Fixed: idle-delayed release (60s, cancel-on-steer, terminal re-check,
+SESSION_RELEASE_IDLE_MS env). Also cleaned 10 stale assignments (6 surface + 4
+from my own Phase-0 probes — probe.py has the same leak, acceptable for a
+probe). Final run: 14/14 incl. 35ms seat handoff.
+
+Dev stack LEFT RUNNING for Gary: web http://127.0.0.1:5173 (login with any
+handle), server :3001, port-forward :18000. Restart recipe in this journal
+(Phase-2 entry). Cluster: kind "centaur" w/ mock LLM.
