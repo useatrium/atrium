@@ -90,3 +90,17 @@ finding: text streaming is PER-DELTA (1.005 events/model delta), so Phase-2
 panes can render true token streaming off the durable stream. Codex agent did
 the dump analysis (its sandbox could not write into the repo; doc written by
 main session from its findings + direct dump inspection).
+
+## 2026-06-10 — Phase 1 CLOSED (technical gate)
+
+Surface agent delivered Places chat: event-sourced log, optimistic reconciliation
+(pure reducer, tested), WS fanout + presence + unread, after_id catch-up healing
+reconnects. 26/26 tests green (re-verified by main session), p50 7.5ms local.
+Day-of-use gate moves to Phase 4. Process note: use SCOPED git adds while
+parallel agents share this repo (a git add -A swept agent WIP into Phase-0
+commits; content verified identical at HEAD, no rewrite).
+
+Next: Phase 2 per phase2/DESIGN.md, split: codex → surface/server sessions
+module (migration, SessionService, tailer, stream proxy); Claude agent →
+surface/web session card + pane; me → integration + live-cluster e2e.
+Both blocked on packages/centaur-client (codex task-mq8jugan-biywsm, in flight).
