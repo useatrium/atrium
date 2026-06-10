@@ -1,3 +1,9 @@
 packages:
   - server
   - web
+
+# pnpm's trust heuristic flags old-but-canonical packages (published before npm
+# provenance existed) when a newer sibling version has provenance. These pinned
+# legacy versions are well-known safe transitive deps (Babel/npm ecosystem).
+trustPolicyExclude:
+  - semver@6.3.1

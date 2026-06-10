@@ -47,7 +47,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return reply.code(err.statusCode).send({ error: err.code, message: err.message });
     }
     app.log.error(err);
-    return reply.code(err.statusCode ?? 500).send({ error: 'internal', message: 'internal error' });
+    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
 
   async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
