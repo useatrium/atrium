@@ -7,3 +7,4 @@ dist/
 __pycache__/
 .DS_Store
 infra/iron-proxy-trust/fw-ca.crt
+phase2/e2e/artifacts/

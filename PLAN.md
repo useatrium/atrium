@@ -71,6 +71,14 @@ reload mid-session recovers transcript; completion card lands with working perma
 **Quality bar:** @agent → visible "running" < 5s; 200+ event transcript scrolls
 without jank; a non-spawner can explain what the agent did from the pane alone.
 
+**RESULT (2026-06-10): done-when ✅** — live e2e vs kind cluster 9/9
+(phase2/e2e/multispectator.mjs): spectators track spawner with worst token gap 1,
+"2 watching" presence, mid-run reload catches up past pre-reload position, late
+joiner renders full transcript via permalink, steer-after-completion streams,
+live Bash tool card + TOOLCHAIN_OK. Perf: 500+ items at ~p95 9ms/frame (web
+agent's stress run). "Non-spawner explains" gate → Phase-4 dogfood. 42/42 unit
+tests across workspace.
+
 ## Phase 3 — Driver seat & handoff v0 (~1 wk)
 
 One driver steers; spectators request the seat; grant or auto-grant on idle. Role

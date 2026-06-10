@@ -123,3 +123,18 @@ PORT=3001 pnpm start (surface/server has no /health route — check stdout).
 
 Remaining for Phase-2 gate: web pane (agent in flight), then multi-spectator
 live verification + reload-recovery + perf bar (500-item scroll).
+
+## 2026-06-10 — Phase 2 CLOSED (gate green on live stack)
+
+Web pane agent delivered sessions UI (commit a1a3473, reviewed: stream hook is
+clean — rAF batching, resume-from-last-id, terminal guard). Live e2e 9/9 incl.
+the steer-after-completion edge I suspected would break (it does not). The
+mid-run-spectator screenshot in phase2/e2e/artifacts is the product thesis
+working: Bob watching Alice's live session next to #general.
+Stack recipe for e2e: pf 18000 + server 3001 (CENTAUR_* env) + web 5173, then
+`node phase2/e2e/multispectator.mjs`.
+
+Next: Phase 3 (driver seat) — same split: codex=server seats, claude=web,
+me=review+live e2e. Contract: POST /api/sessions/:id/seat/{request,grant,take};
+session.seat_requested/.seat_changed events; tx + FOR UPDATE determinism;
+steer permission moves spawner→driver_id.
