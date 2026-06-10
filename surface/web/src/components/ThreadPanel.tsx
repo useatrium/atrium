@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { ChatMessage } from '../state';
+import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '../util';
 import { Composer } from './Composer';
 import { MessageRow } from './MessageRow';
@@ -7,16 +8,26 @@ import { MessageRow } from './MessageRow';
 export function ThreadPanel({
   root,
   replies,
+  sessions,
+  spectators,
   onClose,
   onSend,
+  onOpenSession,
   onRetry,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
+  sessions: Record<string, Session>;
+  spectators: Record<string, number>;
   onClose: () => void;
   onSend: (text: string) => void;
+  onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
 }) {
+  const sessionFor = (m: ChatMessage) =>
+    m.sessionId != null ? sessions[m.sessionId] : undefined;
+  const spectatorsFor = (m: ChatMessage) =>
+    m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const count = replies.length;
   useLayoutEffect(() => {
@@ -44,7 +55,15 @@ export function ThreadPanel({
         </button>
       </header>
       <div ref={scrollRef} className="flex-1 overflow-y-auto py-2">
-        <MessageRow message={root} grouped={false} inThread onRetry={onRetry} />
+        <MessageRow
+          message={root}
+          grouped={false}
+          inThread
+          session={sessionFor(root)}
+          spectators={spectatorsFor(root)}
+          onOpenSession={onOpenSession}
+          onRetry={onRetry}
+        />
         <div className="my-2 flex items-center gap-2 px-4">
           <div className="h-px flex-1 bg-zinc-800" />
           <span className="text-[10px] uppercase tracking-wide text-zinc-600">replies</span>
@@ -57,6 +76,9 @@ export function ThreadPanel({
               message={item.message!}
               grouped={item.grouped ?? false}
               inThread
+              session={sessionFor(item.message!)}
+              spectators={spectatorsFor(item.message!)}
+              onOpenSession={onOpenSession}
               onRetry={onRetry}
             />
           ),
@@ -67,7 +89,7 @@ export function ThreadPanel({
           </div>
         )}
       </div>
-      <Composer placeholder="Reply…" onSend={onSend} autoFocus />
+      <Composer placeholder="Reply…" onSend={onSend} autoFocus agentAware />
     </aside>
   );
 }

@@ -1,0 +1,460 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚠️  DEV MOCK — sessions API stand-in. NOT PRODUCTION CODE.
+//
+// Serves the exact /api/sessions shapes from the Phase-0 capture fixtures in
+// packages/centaur-client/test/fixtures so the Sessions UI can be exercised
+// before the real server endpoints exist.
+//
+// Enabled ONLY when the dev server runs with VITE_SESSIONS_MOCK=1:
+//
+//   VITE_SESSIONS_MOCK=1 pnpm --filter @atrium/web dev
+//
+// To use the real endpoints: start without the flag. To remove the mock for
+// good: delete this file and the `sessionsMock` / `sessionsMockBus` references
+// in ./api.ts and ../Chat.tsx (plus the `mock` field on WireEvent in
+// ../state.ts and its one use in ../appState.ts).
+//
+// Mock behavior:
+//   - `@agent <task>`            → replays the B_tooltest fixture (Bash tool call)
+//   - `@agent <task with "long">`→ replays C_longstream 3x (~1,240 frames)
+//   - pane composer send         → appends a synthetic ack turn
+//   - cancel                     → emits a terminal cancelled execution_state
+//   - unknown session ids (e.g. /s/whatever) → synthesized completed B session
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { CentaurEventFrame } from '@atrium/centaur-client';
+import type { UserRef, WireEvent } from '../state';
+import type { SessionStreamCallbacks, SessionStreamHandle, CreateSessionBody } from './api';
+import { normalizeExecutionStatus, type SessionStatus, type SessionWire } from './types';
+import rawB from '../../../../packages/centaur-client/test/fixtures/B_tooltest.json';
+import rawC from '../../../../packages/centaur-client/test/fixtures/C_longstream.json';
+
+const ENABLED =
+  typeof import.meta.env !== 'undefined' &&
+  import.meta.env.DEV === true &&
+  import.meta.env.VITE_SESSIONS_MOCK === '1';
+
+const B = rawB as unknown as CentaurEventFrame[];
+const C = rawC as unknown as CentaurEventFrame[];
+
+// ---- wire-event bus (stands in for the WS session.* fanout) ----------------
+
+type WireListener = (ev: WireEvent) => void;
+const busListeners = new Set<WireListener>();
+let wireSeq = 9_000_000_000; // far above real event ids; flagged mock anyway
+
+function emitWire(
+  type: string,
+  channelId: string,
+  threadRootEventId: number | null,
+  author: UserRef | null,
+  payload: Record<string, unknown>,
+): void {
+  const ev: WireEvent = {
+    id: ++wireSeq,
+    workspaceId: 'mock-ws',
+    channelId,
+    threadRootEventId,
+    type,
+    actorId: author?.id ?? null,
+    payload,
+    createdAt: new Date().toISOString(),
+    author,
+    mock: true,
+  };
+  for (const fn of busListeners) fn(ev);
+}
+
+// ---- current user (real /auth/me via the dev proxy; fallback stub) ----------
+
+let cachedMe: UserRef | null = null;
+async function mockMe(): Promise<UserRef> {
+  if (cachedMe) return cachedMe;
+  try {
+    const res = await fetch('/auth/me', { credentials: 'same-origin' });
+    if (res.ok) {
+      const body = (await res.json()) as { user?: UserRef };
+      if (body.user) cachedMe = body.user;
+    }
+  } catch {
+    /* server not up — use stub */
+  }
+  cachedMe ??= { id: 'mock-user', handle: 'mock', displayName: 'Mock User' };
+  return cachedMe;
+}
+
+// ---- fixture scripts --------------------------------------------------------
+
+/** C_longstream replayed 3x: re-numbered event ids, fresh uuids per replay. */
+function longstream3(): CentaurEventFrame[] {
+  const out: CentaurEventFrame[] = [];
+  for (let k = 0; k < 3; k++) {
+    for (const f of C) {
+      const clone = JSON.parse(JSON.stringify(f)) as CentaurEventFrame & {
+        data: Record<string, unknown> & { message?: { id?: string } };
+      };
+      clone.event_id = f.event_id + k * 100_000;
+      if (k > 0) {
+        if (typeof clone.data.uuid === 'string') clone.data.uuid = `${clone.data.uuid}-r${k}`;
+        if (clone.data.message?.id) clone.data.message.id = `${clone.data.message.id}-r${k}`;
+      }
+      out.push(clone);
+    }
+  }
+  return out;
+}
+
+/** 250 tool calls + 250 text messages → 500+ rendered items (scroll stress). */
+function stressScript(): CentaurEventFrame[] {
+  let id = 1000;
+  const frames: CentaurEventFrame[] = [];
+  frames.push({
+    event: 'execution_state',
+    event_id: id++,
+    data: { type: 'execution.state', status: 'running', thread_key: 'mock-stress', execution_id: 'exe_stress' },
+  } as CentaurEventFrame);
+  for (let i = 0; i < 250; i++) {
+    frames.push({
+      event: 'amp_raw_event',
+      event_id: id++,
+      data: {
+        type: 'assistant',
+        uuid: `stress-tool-${i}`,
+        message: {
+          id: `msg_stress_tool_${i}`,
+          content: [
+            { type: 'tool_use', id: `toolu_stress_${i}`, name: 'Bash', input: { command: `echo step-${i}` } },
+          ],
+        },
+      },
+    } as CentaurEventFrame);
+    frames.push({
+      event: 'amp_raw_event',
+      event_id: id++,
+      data: {
+        type: 'tool',
+        content: [{ content: `step-${i}\n`, is_error: i % 50 === 49, tool_use_id: `toolu_stress_${i}` }],
+      },
+    } as CentaurEventFrame);
+    frames.push({
+      event: 'amp_raw_event',
+      event_id: id++,
+      data: {
+        type: 'assistant',
+        uuid: `stress-text-${i}`,
+        message: { id: `msg_stress_text_${i}`, content: [{ type: 'text', text: `step ${i} done — proceeding to ${i + 1}.` }] },
+      },
+    } as CentaurEventFrame);
+  }
+  frames.push({
+    event: 'execution_state',
+    event_id: id++,
+    data: {
+      type: 'execution.state',
+      status: 'completed',
+      thread_key: 'mock-stress',
+      execution_id: 'exe_stress',
+      result_text: 'stress run: 250 tool calls + 250 texts (500+ items).',
+    },
+  } as CentaurEventFrame);
+  return frames;
+}
+
+function pickScript(task: string): CentaurEventFrame[] {
+  if (/stress/i.test(task)) return stressScript();
+  return /long/i.test(task) ? longstream3() : JSON.parse(JSON.stringify(B));
+}
+
+/** A small synthetic follow-up turn acknowledging a pane-composer message. */
+function synthTurn(baseId: number, threadKey: string, text: string): CentaurEventFrame[] {
+  const ack = `steer ack: "${text}" — multi-turn execution is mocked; the real tailer arrives with the server half.`;
+  const words = ack.split(/(?<= )/); // keep trailing spaces so deltas concat exactly
+  let id = baseId;
+  const frames: CentaurEventFrame[] = [];
+  const state = (status: string, extra: Record<string, unknown> = {}) =>
+    frames.push({
+      event: 'execution_state',
+      event_id: id++,
+      data: { type: 'execution.state', status, thread_key: threadKey, execution_id: `exe_mock_${baseId}`, ...extra },
+    } as CentaurEventFrame);
+  state('running');
+  for (const w of words) {
+    frames.push({
+      event: 'amp_raw_event',
+      event_id: id++,
+      data: { type: 'assistant', message: { content: [{ type: 'text', text: w }] } },
+    } as CentaurEventFrame);
+  }
+  frames.push({
+    event: 'amp_raw_event',
+    event_id: id++,
+    data: {
+      type: 'assistant',
+      uuid: `mock-turn-${baseId}`,
+      message: { id: `msg_mock_${baseId}`, content: [{ type: 'text', text: ack }] },
+    },
+  } as CentaurEventFrame);
+  frames.push({
+    event: 'usage_observed',
+    event_id: id++,
+    data: {
+      type: 'obs.usage',
+      engine: 'mock',
+      harness: 'claude-code',
+      thread_key: threadKey,
+      execution_id: `exe_mock_${baseId}`,
+      model: 'claude-mock',
+      cost_usd: 0.0042,
+    },
+  } as CentaurEventFrame);
+  state('completed', { result_text: ack });
+  return frames;
+}
+
+// ---- mock session runs ------------------------------------------------------
+
+interface MockRun {
+  wire: SessionWire;
+  /** Durable log: everything emitted so far. */
+  frames: CentaurEventFrame[];
+  /** Remaining frames to emit. */
+  script: CentaurEventFrame[];
+  framesPerTick: number;
+  tickMs: number;
+  timer: ReturnType<typeof setInterval> | null;
+}
+
+const runs = new Map<string, MockRun>();
+let seq = 0;
+
+function maxEventId(run: MockRun): number {
+  const last = run.frames[run.frames.length - 1] ?? run.script[run.script.length - 1];
+  return last?.event_id ?? 0;
+}
+
+function onFrameEmitted(run: MockRun, frame: CentaurEventFrame): void {
+  const { wire } = run;
+  wire.lastEventId = Math.max(wire.lastEventId, frame.event_id);
+  if (frame.event === 'usage_observed' && typeof frame.data.cost_usd === 'number') {
+    wire.costUsd = Number(wire.costUsd ?? 0) + frame.data.cost_usd;
+  }
+  if (frame.event !== 'execution_state') return;
+  const status: SessionStatus = normalizeExecutionStatus(frame.data.status);
+  const terminal = status === 'completed' || status === 'failed' || status === 'cancelled';
+  if (status !== wire.status) {
+    wire.status = status;
+    if (!terminal) {
+      emitWire('session.status_changed', wire.channelId, wire.threadRootEventId, null, {
+        sessionId: wire.id,
+        status,
+      });
+    }
+  }
+  if (terminal) {
+    if (typeof frame.data.result_text === 'string') wire.resultText = frame.data.result_text;
+    wire.completedAt = new Date().toISOString();
+    emitWire('session.completed', wire.channelId, wire.threadRootEventId, null, {
+      sessionId: wire.id,
+      status,
+      resultExcerpt: (wire.resultText ?? '').slice(0, 240),
+      permalink: `/s/${wire.id}`,
+    });
+  }
+}
+
+function ensureRunning(run: MockRun): void {
+  if (run.timer || run.script.length === 0) return;
+  run.timer = setInterval(() => {
+    for (let i = 0; i < run.framesPerTick; i++) {
+      const frame = run.script.shift();
+      if (!frame) break;
+      run.frames.push(frame);
+      onFrameEmitted(run, frame);
+    }
+    if (run.script.length === 0 && run.timer) {
+      clearInterval(run.timer);
+      run.timer = null;
+    }
+  }, run.tickMs);
+}
+
+/** Unknown ids (permalinks into sessions from "before") → completed B replay. */
+function synthesizeCompletedRun(id: string): MockRun {
+  const me = cachedMe ?? { id: 'mock-user', handle: 'mock', displayName: 'Mock User' };
+  const frames = JSON.parse(JSON.stringify(B)) as CentaurEventFrame[];
+  const run: MockRun = {
+    wire: {
+      id,
+      workspaceId: 'mock-ws',
+      channelId: '',
+      threadRootEventId: null,
+      title: 'replayed mock session (B_tooltest)',
+      status: 'spawning',
+      harness: 'claude-code',
+      spawnedBy: me.id,
+      driverId: null,
+      costUsd: 0,
+      resultText: null,
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      completedAt: null,
+      lastEventId: 0,
+      permalink: `/s/${id}`,
+    },
+    frames: [],
+    script: [],
+    framesPerTick: 0,
+    tickMs: 0,
+    timer: null,
+  };
+  for (const f of frames) {
+    run.frames.push(f);
+    // Fold status/cost silently (no bus events for pre-existing history).
+    run.wire.lastEventId = Math.max(run.wire.lastEventId, f.event_id);
+    if (f.event === 'usage_observed' && typeof f.data.cost_usd === 'number') {
+      run.wire.costUsd = Number(run.wire.costUsd ?? 0) + f.data.cost_usd;
+    }
+    if (f.event === 'execution_state') {
+      run.wire.status = normalizeExecutionStatus(f.data.status);
+      if (typeof f.data.result_text === 'string') run.wire.resultText = f.data.result_text;
+    }
+  }
+  run.wire.completedAt = new Date(Date.now() - 30_000).toISOString();
+  runs.set(id, run);
+  return run;
+}
+
+function getRun(id: string): MockRun {
+  return runs.get(id) ?? synthesizeCompletedRun(id);
+}
+
+// ---- the mock API -----------------------------------------------------------
+
+export interface SessionsMockApi {
+  createSession(body: CreateSessionBody): Promise<{ session: SessionWire }>;
+  getSession(id: string): Promise<{ session: SessionWire }>;
+  sendMessage(id: string, text: string): Promise<void>;
+  cancel(id: string): Promise<void>;
+  openStream(
+    sessionId: string,
+    afterEventId: number,
+    cb: SessionStreamCallbacks,
+  ): SessionStreamHandle;
+}
+
+export const sessionsMock: SessionsMockApi | null = ENABLED
+  ? {
+      async createSession(body) {
+        const me = await mockMe();
+        const id = `mock-${++seq}`;
+        const script = pickScript(body.task);
+        const longRun = script.length > 100; // big captures stream fast
+        const run: MockRun = {
+          wire: {
+            id,
+            workspaceId: 'mock-ws',
+            channelId: body.channelId,
+            threadRootEventId: body.threadRootEventId ?? null,
+            title: body.task.slice(0, 80),
+            status: 'spawning',
+            harness: body.harness ?? 'claude-code',
+            spawnedBy: me.id,
+            driverId: null,
+            costUsd: 0,
+            resultText: null,
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+            lastEventId: 0,
+            permalink: `/s/${id}`,
+          },
+          frames: [],
+          script,
+          framesPerTick: longRun ? 8 : 1,
+          tickMs: longRun ? 15 : 110,
+          timer: null,
+        };
+        runs.set(id, run);
+        setTimeout(() => {
+          emitWire('session.spawned', body.channelId, body.threadRootEventId ?? null, me, {
+            sessionId: id,
+            title: run.wire.title,
+            harness: run.wire.harness,
+            by: me.id,
+          });
+          ensureRunning(run);
+        }, 300);
+        return { session: { ...run.wire } };
+      },
+
+      async getSession(id) {
+        await mockMe(); // synthesized sessions get attributed to the real user
+        return { session: { ...getRun(id).wire } };
+      },
+
+      async sendMessage(id, text) {
+        const run = getRun(id);
+        run.script.push(...synthTurn(maxEventId(run) + 1, `mock-${id}`, text));
+        if (run.framesPerTick === 0) {
+          run.framesPerTick = 2;
+          run.tickMs = 80;
+        }
+        ensureRunning(run);
+      },
+
+      async cancel(id) {
+        const run = getRun(id);
+        const terminal =
+          run.wire.status === 'completed' ||
+          run.wire.status === 'failed' ||
+          run.wire.status === 'cancelled';
+        if (terminal) return;
+        run.script.length = 0; // drop whatever was still streaming
+        run.script.push({
+          event: 'execution_state',
+          event_id: maxEventId(run) + 1,
+          data: {
+            type: 'execution.state',
+            status: 'cancelled',
+            thread_key: `mock-${id}`,
+            execution_id: 'exe_mock_cancel',
+          },
+        } as CentaurEventFrame);
+        ensureRunning(run);
+      },
+
+      openStream(sessionId, afterEventId, cb) {
+        const run = getRun(sessionId);
+        let cursor = 0;
+        let closed = false;
+        setTimeout(() => !closed && cb.onOpen?.(), 0);
+        const pump = setInterval(() => {
+          let delivered = 0;
+          while (cursor < run.frames.length && delivered < 50) {
+            const frame = run.frames[cursor++];
+            if (frame && frame.event_id > afterEventId) {
+              cb.onFrame(frame);
+              delivered++;
+            }
+          }
+        }, 20);
+        return {
+          close: () => {
+            closed = true;
+            clearInterval(pump);
+          },
+        };
+      },
+    }
+  : null;
+
+/**
+ * DEV MOCK bus: synthetic `session.*` WireEvents that the real server would
+ * fan out over the channel WS. Chat.tsx subscribes when non-null.
+ */
+export const sessionsMockBus = ENABLED
+  ? {
+      subscribe(fn: WireListener): () => void {
+        busListeners.add(fn);
+        return () => busListeners.delete(fn);
+      },
+    }
+  : null;

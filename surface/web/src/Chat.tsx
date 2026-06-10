@@ -8,16 +8,24 @@ import { Composer } from './components/Composer';
 import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
+import { sessionsApi } from './sessions/api';
+import { sessionsMockBus } from './sessions/devMock';
+import { SessionPane } from './sessions/SessionPane';
+import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
+import { isPendingSessionId, sessionFromWire } from './sessions/types';
 
 const PAGE_SIZE = 50;
 
 export function Chat({
   me,
   workspace,
+  initialSessionId,
   onLogout,
 }: {
   me: UserRef;
   workspace: Workspace;
+  /** From the /s/:id permalink route — open this session's pane on load. */
+  initialSessionId?: string | null;
   onLogout: () => void;
 }) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
@@ -29,8 +37,44 @@ export function Chat({
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, []);
 
+  // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
+  useEffect(() => {
+    if (!initialSessionId) return;
+    sessionsApi
+      .get(initialSessionId)
+      .then(({ session }) => {
+        dispatch({ type: 'session-upsert', session: sessionFromWire(session) });
+        if (session.channelId) dispatch({ type: 'select-channel', channelId: session.channelId });
+        dispatch({ type: 'open-session', sessionId: session.id });
+      })
+      .catch(() => {});
+  }, [initialSessionId]);
+
+  // Keep the URL in sync with the open pane so it is copyable as a permalink.
+  useEffect(() => {
+    const path =
+      state.openSessionId && !isPendingSessionId(state.openSessionId)
+        ? `/s/${state.openSessionId}`
+        : '/';
+    if (location.pathname !== path) history.replaceState(null, '', path);
+  }, [state.openSessionId]);
+
+  // ---- DEV MOCK (sessions): fold synthetic session.* events; no-op without
+  // VITE_SESSIONS_MOCK=1. Delete with src/sessions/devMock.ts. ----
+  useEffect(
+    () => sessionsMockBus?.subscribe((event: WireEvent) => dispatch({ type: 'server-event', event })),
+    [],
+  );
+
   // ---- websocket ----
-  const channelIds = useMemo(() => state.channels.map((c) => c.id), [state.channels]);
+  // Channels for fanout + a `session:<id>` presence key while spectating a pane.
+  const wsKeys = useMemo(() => {
+    const keys = state.channels.map((c) => c.id);
+    if (state.openSessionId && !isPendingSessionId(state.openSessionId)) {
+      keys.push(`session:${state.openSessionId}`);
+    }
+    return keys;
+  }, [state.channels, state.openSessionId]);
 
   const catchUp = useCallback(() => {
     // On (re)connect: refetch anything we might have missed per loaded channel.
@@ -52,7 +96,7 @@ export function Chat({
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, []);
 
-  useWs(true, channelIds, {
+  useWs(true, wsKeys, {
     onEvent: (event: WireEvent) => dispatch({ type: 'server-event', event }),
     onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
     onOpen: catchUp,
@@ -98,8 +142,30 @@ export function Chat({
       .then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }));
   };
 
+  // ---- session pane ----
+  const openSession = (sessionId: string) => {
+    if (isPendingSessionId(sessionId)) return;
+    dispatch({ type: 'open-session', sessionId });
+    sessionsApi
+      .get(sessionId)
+      .then(({ session }) => dispatch({ type: 'session-upsert', session: sessionFromWire(session) }))
+      .catch(() => {});
+  };
+
+  const paneSession = state.openSessionId ? state.sessions[state.openSessionId] ?? null : null;
+
+  // Spectator counts ride the existing presence map under `session:<id>` keys.
+  const spectators = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [key, users] of Object.entries(state.presence)) {
+      if (key.startsWith('session:')) out[key.slice('session:'.length)] = users.length;
+    }
+    return out;
+  }, [state.presence]);
+
   // ---- sending ----
   const send = (channelId: string, text: string, threadRootEventId?: number) => {
+    if (trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch })) return;
     const clientMsgId = crypto.randomUUID();
     const message: ChatMessage = {
       id: null,
@@ -124,6 +190,16 @@ export function Chat({
   const retry = (m: ChatMessage) => {
     if (!m.clientMsgId) return;
     dispatch({ type: 'retry-remove', channelId: m.channelId, clientMsgId: m.clientMsgId });
+    if (m.sessionId != null) {
+      // Failed spawn: re-run the @agent flow with the original task text.
+      spawnSession(m.text, {
+        channelId: m.channelId,
+        threadRootEventId: m.threadRootEventId ?? undefined,
+        me,
+        dispatch,
+      });
+      return;
+    }
     send(m.channelId, m.text, m.threadRootEventId ?? undefined);
   };
 
@@ -175,8 +251,11 @@ export function Chat({
         <Timeline
           messages={timeline.main}
           hasMoreBefore={timeline.hasMoreBefore}
+          sessions={state.sessions}
+          spectators={spectators}
           onLoadEarlier={loadEarlier}
           onOpenThread={openThread}
+          onOpenSession={openSession}
           onRetry={retry}
         />
 
@@ -185,18 +264,48 @@ export function Chat({
             placeholder={`Message #${active.name}`}
             onSend={(text) => send(active.id, text)}
             autoFocus
+            agentAware
           />
         )}
       </main>
 
-      {openThreadRoot && active && (
-        <ThreadPanel
-          root={openThreadRoot}
-          replies={threadReplies}
-          onClose={() => dispatch({ type: 'close-thread' })}
-          onSend={(text) => send(active.id, text, openThreadRoot.id!)}
-          onRetry={retry}
+      {paneSession ? (
+        <SessionPane
+          session={paneSession}
+          me={me}
+          spectators={spectators[paneSession.id] ?? 0}
+          onClose={() => dispatch({ type: 'close-session' })}
         />
+      ) : state.openSessionId ? (
+        <aside className="flex w-[520px] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
+          <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
+            <span className="text-sm font-semibold text-zinc-100">Session</span>
+            <button
+              onClick={() => dispatch({ type: 'close-session' })}
+              title="Close session pane"
+              className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              ✕
+            </button>
+          </header>
+          <div className="flex flex-1 items-center justify-center text-sm text-zinc-600">
+            Loading session…
+          </div>
+        </aside>
+      ) : (
+        openThreadRoot &&
+        active && (
+          <ThreadPanel
+            root={openThreadRoot}
+            replies={threadReplies}
+            sessions={state.sessions}
+            spectators={spectators}
+            onClose={() => dispatch({ type: 'close-thread' })}
+            onSend={(text) => send(active.id, text, openThreadRoot.id!)}
+            onOpenSession={openSession}
+            onRetry={retry}
+          />
+        )
       )}
     </div>
   );

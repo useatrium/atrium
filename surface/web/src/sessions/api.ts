@@ -1,0 +1,145 @@
+// /api/sessions client + proxied Centaur SSE stream.
+//
+// Every function delegates to the DEV MOCK (./devMock) when the dev server is
+// started with VITE_SESSIONS_MOCK=1; otherwise it talks to the real endpoints.
+
+import type { CentaurEventFrame } from '@atrium/centaur-client';
+import { ApiError } from '../api';
+import { sessionsMock } from './devMock';
+import type { SessionWire } from './types';
+
+export interface CreateSessionBody {
+  channelId: string;
+  threadRootEventId?: number;
+  task: string;
+  harness?: string;
+}
+
+export interface SessionStreamHandle {
+  close(): void;
+}
+
+export interface SessionStreamCallbacks {
+  onFrame: (frame: CentaurEventFrame) => void;
+  onOpen?: () => void;
+  /** Stream broke — caller decides whether to recreate with a fresh cursor. */
+  onError?: () => void;
+}
+
+/** Every event name the Centaur durable stream emits (phase0 event-schema.md). */
+export const FRAME_EVENT_NAMES = [
+  'execution_state',
+  'execution_started',
+  'amp_raw_event',
+  'system_event_observed',
+  'assistant_text_observed',
+  'assistant_tool_use_observed',
+  'tool_result_observed',
+  'usage_observed',
+  'result_observed',
+  'execution_summary',
+] as const;
+
+async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await doFetch(path, init);
+  return res.json() as Promise<T>;
+}
+
+/** For 202 endpoints whose body may be empty. */
+async function reqAccepted(path: string, init?: RequestInit): Promise<void> {
+  await doFetch(path, init);
+}
+
+async function doFetch(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+    ...init,
+  });
+  if (!res.ok) {
+    let code = 'http_error';
+    let message = res.statusText;
+    try {
+      const body = await res.json();
+      code = body.error ?? code;
+      message = body.message ?? message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, code, message);
+  }
+  return res;
+}
+
+/**
+ * Parse one SSE frame. The server proxies Centaur frames verbatim
+ * (`event: <name>` / `data: <json incl event_id>`); tolerate both
+ * `{event_id, data}` envelopes and flat `{event_id, ...payload}` bodies.
+ */
+export function parseFrame(name: string, raw: string): CentaurEventFrame | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const data =
+      parsed.data && typeof parsed.data === 'object'
+        ? (parsed.data as Record<string, unknown>)
+        : parsed;
+    const eventId =
+      typeof parsed.event_id === 'number'
+        ? parsed.event_id
+        : typeof data.event_id === 'number'
+          ? data.event_id
+          : 0;
+    return { event: name, event_id: eventId, data } as CentaurEventFrame;
+  } catch {
+    return null;
+  }
+}
+
+export const sessionsApi = {
+  create(body: CreateSessionBody): Promise<{ session: SessionWire }> {
+    if (sessionsMock) return sessionsMock.createSession(body);
+    return reqJson<{ session: SessionWire }>('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  get(id: string): Promise<{ session: SessionWire }> {
+    if (sessionsMock) return sessionsMock.getSession(id);
+    return reqJson<{ session: SessionWire }>(`/api/sessions/${id}`);
+  },
+
+  sendMessage(id: string, text: string): Promise<void> {
+    if (sessionsMock) return sessionsMock.sendMessage(id, text);
+    return reqAccepted(`/api/sessions/${id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  },
+
+  cancel(id: string): Promise<void> {
+    if (sessionsMock) return sessionsMock.cancel(id);
+    return reqAccepted(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' });
+  },
+
+  /** Cookie-authed SSE of Centaur frames, resumable via after_event_id. */
+  openStream(
+    sessionId: string,
+    afterEventId: number,
+    cb: SessionStreamCallbacks,
+  ): SessionStreamHandle {
+    if (sessionsMock) return sessionsMock.openStream(sessionId, afterEventId, cb);
+    const es = new EventSource(
+      `/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`,
+    );
+    es.onopen = () => cb.onOpen?.();
+    es.onerror = () => cb.onError?.();
+    for (const name of FRAME_EVENT_NAMES) {
+      es.addEventListener(name, (e) => {
+        const frame = parseFrame(name, (e as MessageEvent<string>).data);
+        if (frame) cb.onFrame(frame);
+      });
+    }
+    return { close: () => es.close() };
+  },
+};

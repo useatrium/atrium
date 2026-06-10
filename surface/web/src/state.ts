@@ -18,6 +18,9 @@ export interface WireEvent {
   author: UserRef | null;
   replyCount?: number;
   lastReplyId?: number;
+  /** DEV MOCK only (sessions/devMock.ts): synthetic events that must not
+   * advance the catch-up cursor. Never set on real server events. */
+  mock?: boolean;
 }
 
 export type MessageStatus = 'pending' | 'failed' | 'confirmed';
@@ -36,6 +39,9 @@ export interface ChatMessage {
   /** Highest reply event id already included in replyCount. */
   lastReplyId: number;
   status: MessageStatus;
+  /** Set for agent-session rows (type session.spawned / optimistic spawns):
+   * the row renders as a SessionCard looked up by this id. */
+  sessionId?: string;
 }
 
 export interface ChannelTimeline {
@@ -60,20 +66,36 @@ export const emptyTimeline: ChannelTimeline = {
   loaded: false,
 };
 
+/** Event types that produce a timeline row. */
+function isRowEvent(type: string): boolean {
+  return type === 'message.posted' || type === 'session.spawned';
+}
+
 export function messageFromEvent(ev: WireEvent): ChatMessage {
   const payload = ev.payload ?? {};
+  const sessionId =
+    ev.type === 'session.spawned' && typeof payload.sessionId === 'string'
+      ? payload.sessionId
+      : undefined;
+  const text =
+    typeof payload.text === 'string'
+      ? payload.text
+      : typeof payload.title === 'string'
+        ? payload.title
+        : '';
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
     channelId: ev.channelId ?? '',
     threadRootEventId: ev.threadRootEventId,
-    text: typeof payload.text === 'string' ? payload.text : '',
+    text,
     edited: payload.edited === true,
     author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
     lastReplyId: ev.lastReplyId ?? 0,
     status: 'confirmed',
+    ...(sessionId !== undefined ? { sessionId } : {}),
   };
 }
 
@@ -88,20 +110,22 @@ function resort(list: ChatMessage[]): ChatMessage[] {
 
 /**
  * Insert a confirmed message: if a pending message with the same clientMsgId
- * exists it is replaced in-place (optimistic reconciliation — no dupes, and
- * because pendings sit at the tail and new ids are maximal, no reorder flicker).
+ * (or, for session rows, the same sessionId) exists it is replaced in-place
+ * (optimistic reconciliation — no dupes, and because pendings sit at the tail
+ * and new ids are maximal, no reorder flicker).
  */
 function upsertConfirmed(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  if (msg.clientMsgId) {
-    const i = list.findIndex(
-      (m) => m.status !== 'confirmed' && m.clientMsgId === msg.clientMsgId,
-    );
-    if (i >= 0) {
-      const copy = [...list];
-      // Preserve optimistic reply count bookkeeping if the pending had none.
-      copy[i] = msg;
-      return resort(copy);
-    }
+  const i = list.findIndex(
+    (m) =>
+      m.status !== 'confirmed' &&
+      ((msg.clientMsgId != null && m.clientMsgId === msg.clientMsgId) ||
+        (msg.sessionId != null && m.sessionId === msg.sessionId)),
+  );
+  if (i >= 0) {
+    const copy = [...list];
+    // Preserve optimistic reply count bookkeeping if the pending had none.
+    copy[i] = msg;
+    return resort(copy);
   }
   return resort([...list, msg]);
 }
@@ -127,6 +151,29 @@ export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTime
   const threads: Record<number, ChatMessage[]> = {};
   for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = mark(v);
   return { ...t, main: mark(t.main), threads };
+}
+
+/**
+ * POST /api/sessions resolved: point the optimistic spawn row (sessionId ===
+ * tempId) at the real session id — unless the WS `session.spawned` event beat
+ * the response, in which case the confirmed row already exists and the
+ * optimistic one is dropped.
+ */
+export function resolveSpawn(
+  t: ChannelTimeline,
+  tempId: string,
+  sessionId: string,
+): ChannelTimeline {
+  const hasConfirmed = (list: ChatMessage[]) =>
+    list.some((m) => m.status === 'confirmed' && m.sessionId === sessionId);
+  const confirmed = hasConfirmed(t.main) || Object.values(t.threads).some(hasConfirmed);
+  const fix = (list: ChatMessage[]) =>
+    confirmed
+      ? list.filter((m) => !(m.sessionId === tempId && m.status !== 'confirmed'))
+      : list.map((m) => (m.sessionId === tempId ? { ...m, sessionId } : m));
+  const threads: Record<number, ChatMessage[]> = {};
+  for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fix(v);
+  return { ...t, main: fix(t.main), threads };
 }
 
 export function removeByClientMsgId(t: ChannelTimeline, clientMsgId: string): ChannelTimeline {
@@ -162,7 +209,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     );
   }
 
-  if (ev.type !== 'message.posted') {
+  if (!isRowEvent(ev.type)) {
     return bumpLastEvent({ ...t, seenIds: new Set(t.seenIds).add(ev.id) }, ev.id);
   }
 
@@ -197,7 +244,7 @@ export function mergeHistory(
   let main = t.main;
   const seenIds = new Set(t.seenIds);
   for (const ev of events) {
-    if (ev.type !== 'message.posted' || ev.threadRootEventId != null) continue;
+    if (!isRowEvent(ev.type) || ev.threadRootEventId != null) continue;
     if (seenIds.has(ev.id)) continue;
     seenIds.add(ev.id);
     main = upsertConfirmed(main, messageFromEvent(ev));
@@ -222,6 +269,7 @@ export function mergeThread(
   const seenIds = new Set(t.seenIds);
   let thread = t.threads[rootEventId] ?? [];
   for (const ev of events) {
+    if (!isRowEvent(ev.type)) continue;
     if (seenIds.has(ev.id)) continue;
     seenIds.add(ev.id);
     thread = upsertConfirmed(thread, messageFromEvent(ev));

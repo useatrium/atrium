@@ -1,4 +1,6 @@
 import type { ChatMessage } from '../state';
+import { SessionCard } from '../sessions/SessionCard';
+import type { Session } from '../sessions/types';
 import { formatTime } from '../util';
 import { Avatar } from './Avatar';
 
@@ -6,19 +8,27 @@ export function MessageRow({
   message,
   grouped,
   inThread,
+  session,
+  spectators = 0,
   onOpenThread,
+  onOpenSession,
   onRetry,
 }: {
   message: ChatMessage;
   grouped: boolean;
   inThread?: boolean;
+  /** Session entity when this row is a session card (message.sessionId set). */
+  session?: Session;
+  spectators?: number;
   onOpenThread?: (rootEventId: number) => void;
+  onOpenSession?: (sessionId: string) => void;
   onRetry?: (message: ChatMessage) => void;
 }) {
   const m = message;
   const dim = m.status === 'pending';
   const failed = m.status === 'failed';
   const canThread = !inThread && m.id != null && onOpenThread;
+  const isSessionRow = m.sessionId != null && session != null;
 
   return (
     <div
@@ -43,16 +53,25 @@ export function MessageRow({
             </span>
           </div>
         )}
-        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200">
-          {m.text}
-          {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
-        </div>
+        {isSessionRow ? (
+          <SessionCard
+            session={session}
+            spectators={spectators}
+            spawnFailed={failed}
+            onOpenPane={(id) => onOpenSession?.(id)}
+          />
+        ) : (
+          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200">
+            {m.text}
+            {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
+          </div>
+        )}
         {failed && (
           <button
             onClick={() => onRetry?.(m)}
             className="mt-0.5 text-xs font-medium text-red-400 hover:underline"
           >
-            Failed to send — click to retry
+            {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
         {!inThread && m.replyCount > 0 && m.id != null && (

@@ -10,11 +10,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@atrium/centaur-client": "file:../../packages/centaur-client",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.6",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.2.0",
+    "jsdom": "^26.0.0",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.3.4",

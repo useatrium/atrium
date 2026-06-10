@@ -1,19 +1,26 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { ChatMessage } from '../state';
+import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '../util';
 import { MessageRow } from './MessageRow';
 
 export function Timeline({
   messages,
   hasMoreBefore,
+  sessions,
+  spectators,
   onLoadEarlier,
   onOpenThread,
+  onOpenSession,
   onRetry,
 }: {
   messages: ChatMessage[];
   hasMoreBefore: boolean;
+  sessions: Record<string, Session>;
+  spectators: Record<string, number>;
   onLoadEarlier: () => void;
   onOpenThread: (rootEventId: number) => void;
+  onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -82,7 +89,14 @@ export function Timeline({
             key={item.key}
             message={item.message!}
             grouped={item.grouped ?? false}
+            session={
+              item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined
+            }
+            spectators={
+              item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0
+            }
             onOpenThread={onOpenThread}
+            onOpenSession={onOpenSession}
             onRetry={onRetry}
           />
         ),
