@@ -283,7 +283,90 @@ describe('Phase 2 sessions', () => {
     expect(streamed.statusCode).toBe(200);
     expect(streamed.body).toContain('event: execution_summary');
     expect(streamed.body).toContain('"event_id":54');
+    await waitFor(async () => {
+      const views = await pool.query(
+        'SELECT session_id, user_id, opened_at, closed_at FROM session_views WHERE session_id = $1',
+        [id],
+      );
+      expect(views.rows).toHaveLength(1);
+      expect(views.rows[0]).toMatchObject({ session_id: id, user_id: fx.userId });
+      expect(views.rows[0].opened_at).toBeInstanceOf(Date);
+      expect(views.rows[0].closed_at).toBeInstanceOf(Date);
+    });
     await app.close();
+  });
+
+  it('GET /api/sessions/:id includes viewerCount excluding the spawner', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertRunningSession(alice.userId);
+    await pool.query(
+      `INSERT INTO session_views (session_id, user_id)
+       VALUES ($1, $2), ($1, $2), ($1, $3)`,
+      [id, alice.userId, bob.userId],
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}`,
+      headers: { cookie: alice.cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().session.viewerCount).toBe(1);
+    await app.close();
+  });
+
+  it('dogfood spectate metrics queries run against seeded session_views data', async () => {
+    const bob = await pool.query<{ id: string }>(
+      `INSERT INTO users (handle, display_name) VALUES ('bob', 'Bob') RETURNING id`,
+    );
+    const carol = await pool.query<{ id: string }>(
+      `INSERT INTO users (handle, display_name) VALUES ('carol', 'Carol') RETURNING id`,
+    );
+    const sessions = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by, driver_id
+       )
+       VALUES
+         ($1, $2, 'thread-metrics-1', 'claude-code', 'metrics 1', 'completed', $3, $3),
+         ($1, $2, 'thread-metrics-2', 'claude-code', 'metrics 2', 'completed', $3, $3),
+         ($1, $2, 'thread-metrics-3', 'claude-code', 'metrics 3', 'completed', $3, $3)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const [viewedBySpawnerAndBob, viewedByCarol] = sessions.rows;
+    await pool.query(
+      `INSERT INTO session_views (session_id, user_id)
+       VALUES
+         ($1, $3),
+         ($1, $4),
+         ($2, $5),
+         ($2, $5)`,
+      [viewedBySpawnerAndBob!.id, viewedByCarol!.id, fx.userId, bob.rows[0]!.id, carol.rows[0]!.id],
+    );
+
+    const pctViewed = await pool.query<{ pct: string }>(
+      `SELECT round(100.0 * count(DISTINCT v.session_id) / NULLIF(count(DISTINCT s.id),0), 1) AS pct
+       FROM sessions s LEFT JOIN session_views v
+         ON v.session_id = s.id AND v.user_id <> s.spawned_by`,
+    );
+    expect(Number(pctViewed.rows[0]!.pct)).toBe(66.7);
+
+    const distribution = await pool.query<{ viewer_count: number; count: number }>(
+      `SELECT viewer_count, count(*) FROM (
+         SELECT session_id, count(DISTINCT user_id) viewer_count
+         FROM session_views GROUP BY 1) t GROUP BY 1 ORDER BY 1`,
+    );
+    expect(distribution.rows).toEqual([
+      { viewer_count: 1, count: 1 },
+      { viewer_count: 2, count: 1 },
+    ]);
   });
 
   it('cancel calls release with cancel_inflight and marks the session cancelled', async () => {

@@ -309,7 +309,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
     });
-    await sessionRuns.streamCentaurEvents(session, afterEventId, reply.raw, abort.signal);
+    await sessionRuns.streamCentaurEvents(session, user.id, afterEventId, reply.raw, abort.signal);
   });
 
   app.post('/api/sessions/:id/messages', async (req, reply) => {
