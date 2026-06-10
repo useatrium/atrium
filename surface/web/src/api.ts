@@ -84,4 +84,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  editMessage: (eventId: number, text: string) =>
+    req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ text }),
+    }),
 };
