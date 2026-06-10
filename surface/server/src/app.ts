@@ -15,6 +15,7 @@ import {
   type UserRef,
 } from './events.js';
 import { WsHub } from './hub.js';
+import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -26,6 +27,7 @@ export interface AppDeps {
   pool: Db;
   hub?: WsHub;
   sessionSecret?: string;
+  sessionRuns?: SessionRunsOptions;
 }
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
@@ -35,6 +37,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
+  const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   await app.register(fastifyCookie);
@@ -57,7 +60,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
     const res = await pool.query<{ id: string; handle: string; display_name: string }>(
       `SELECT u.id, u.handle, u.display_name
-       FROM sessions s JOIN users u ON u.id = s.user_id
+       FROM auth_sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = $1`,
       [sessionId],
     );
@@ -103,7 +106,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     );
     const u = user.rows[0]!;
     const session = await pool.query<{ id: string }>(
-      'INSERT INTO sessions (user_id) VALUES ($1) RETURNING id',
+      'INSERT INTO auth_sessions (user_id) VALUES ($1) RETURNING id',
       [u.id],
     );
     reply.setCookie(config.sessionCookie, signSession(session.rows[0]!.id, secret), {
@@ -124,7 +127,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.post('/auth/logout', async (req, reply) => {
     const sessionId = verifySession(req.cookies[config.sessionCookie], secret);
     if (sessionId && /^[0-9a-f-]{36}$/i.test(sessionId)) {
-      await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
+      await pool.query('DELETE FROM auth_sessions WHERE id = $1', [sessionId]);
     }
     reply.clearCookie(config.sessionCookie, { path: '/' });
     return { ok: true };
@@ -244,6 +247,95 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(201).send({ event });
   });
 
+  // -------------------------------------------------------------------------
+  // Agent sessions
+  // -------------------------------------------------------------------------
+
+  app.post('/api/sessions', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as {
+      channelId?: string;
+      threadRootEventId?: number;
+      task?: string;
+      harness?: string;
+    };
+    const task = typeof body.task === 'string' ? body.task : '';
+    if (!body.channelId || typeof body.channelId !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
+    }
+    if (task.trim().length === 0) {
+      return reply.code(400).send({ error: 'empty_task', message: 'task is empty' });
+    }
+    if (Buffer.byteLength(task, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'task_too_large', message: 'task exceeds 8KB' });
+    }
+    const threadRootEventId =
+      body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
+    if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
+    }
+    const session = await sessionRuns.createSession({
+      channelId: body.channelId,
+      threadRootEventId,
+      task,
+      harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+      user,
+    });
+    return reply.code(201).send({ session });
+  });
+
+  app.get('/api/sessions/:id', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { session: await sessionRuns.getSessionForUser(id, user.id) };
+  });
+
+  app.get('/api/sessions/:id/stream', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { after_event_id?: string };
+    const afterEventId = q.after_event_id ? Number(q.after_event_id) : 0;
+    if (!Number.isFinite(afterEventId)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'after_event_id must be numeric' });
+    }
+    const session = await sessionRuns.getSessionForUser(id, user.id);
+    const abort = new AbortController();
+    req.raw.on('close', () => abort.abort());
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    });
+    await sessionRuns.streamCentaurEvents(session, afterEventId, reply.raw, abort.signal);
+  });
+
+  app.post('/api/sessions/:id/messages', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { text?: string };
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (text.trim().length === 0) {
+      return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
+    }
+    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
+    }
+    await sessionRuns.postUserMessage(id, user.id, text);
+    return reply.code(202).send({ ok: true });
+  });
+
+  app.post('/api/sessions/:id/cancel', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    await sessionRuns.cancelSession(id, user.id);
+    return reply.code(202).send({ ok: true });
+  });
+
   app.get('/healthz', async () => ({ ok: true }));
 
   // -------------------------------------------------------------------------
@@ -281,6 +373,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       socket.on('close', cleanup);
       socket.on('error', cleanup);
     });
+  });
+
+  app.addHook('onReady', async () => {
+    await sessionRuns.resumeActiveSessions();
+  });
+  app.addHook('onClose', async () => {
+    await sessionRuns.close();
   });
 
   return app;

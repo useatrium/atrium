@@ -100,6 +100,10 @@ async function insertEvent(client: DbClient, args: InsertEventArgs): Promise<Eve
   return res.rows[0]!;
 }
 
+export async function appendEvent(client: DbClient, args: InsertEventArgs): Promise<WireEvent> {
+  return toWireEvent(await attachAuthor(client, await insertEvent(client, args)));
+}
+
 async function attachAuthor(client: DbClient, row: EventDbRow): Promise<EventDbRow> {
   if (!row.actor_id) return row;
   const u = await client.query<{ handle: string; display_name: string }>(
@@ -220,7 +224,7 @@ export async function postMessage(
         [args.threadRootEventId],
       );
       const r = root.rows[0];
-      if (!r || r.type !== 'message.posted') {
+      if (!r || (r.type !== 'message.posted' && r.type !== 'session.spawned')) {
         throw new DomainError(404, 'thread_root_not_found', 'thread root message not found');
       }
       if (r.channel_id !== args.channelId) {
@@ -272,6 +276,8 @@ const MESSAGE_SELECT = `
   ) edit ON true
 `;
 
+const TIMELINE_EVENT_TYPES = "('message.posted', 'session.spawned', 'session.status_changed', 'session.completed')";
+
 function foldEdit(row: EventDbRow & { edited_text?: string | null }): EventDbRow {
   if (row.edited_text != null && row.type === 'message.posted') {
     row.payload = { ...row.payload, text: row.edited_text, edited: true };
@@ -301,7 +307,7 @@ export async function listChannelMessages(
     params.push(args.afterId);
     const res = await pool.query<EventDbRow>(
       `${MESSAGE_SELECT}
-       WHERE e.channel_id = $1 AND e.type = 'message.posted' AND e.id > $3
+       WHERE e.channel_id = $1 AND e.type IN ${TIMELINE_EVENT_TYPES} AND e.id > $3
        ORDER BY e.id ASC
        LIMIT $2`,
       params,
@@ -315,7 +321,7 @@ export async function listChannelMessages(
   const res = await pool.query<EventDbRow>(
     `${MESSAGE_SELECT}
      WHERE e.channel_id = $1
-       AND e.type = 'message.posted'
+       AND e.type IN ('message.posted', 'session.spawned')
        AND e.thread_root_event_id IS NULL
        ${args.beforeId !== undefined ? 'AND e.id < $3' : ''}
      ORDER BY e.id DESC
@@ -336,7 +342,7 @@ export async function listThreadMessages(
 ): Promise<{ events: WireEvent[] }> {
   const res = await pool.query<EventDbRow>(
     `${MESSAGE_SELECT}
-     WHERE e.thread_root_event_id = $1 AND e.type = 'message.posted'
+     WHERE e.thread_root_event_id = $1 AND e.type IN ${TIMELINE_EVENT_TYPES}
      ORDER BY e.id ASC
      LIMIT $2`,
     [args.rootEventId, 1000],

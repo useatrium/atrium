@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@atrium/centaur-client": "file:../../packages/centaur-client",
     "@fastify/cookie": "^11.0.2",
     "@fastify/websocket": "^11.0.2",
     "fastify": "^5.2.1",

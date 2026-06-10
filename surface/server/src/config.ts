@@ -7,4 +7,7 @@ export const config = {
   sessionSecret: process.env.SESSION_SECRET ?? 'atrium-dev-secret-change-me',
   sessionCookie: 'atrium_session',
   maxMessageBytes: 8 * 1024,
+  centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
+  centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
+  centaurHarness: process.env.CENTAUR_HARNESS ?? 'claude-code',
 };
