@@ -276,7 +276,8 @@ const MESSAGE_SELECT = `
   ) edit ON true
 `;
 
-const TIMELINE_EVENT_TYPES = "('message.posted', 'session.spawned', 'session.status_changed', 'session.completed')";
+const TIMELINE_EVENT_TYPES =
+  "('message.posted', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed')";
 
 function foldEdit(row: EventDbRow & { edited_text?: string | null }): EventDbRow {
   if (row.edited_text != null && row.type === 'message.posted') {
