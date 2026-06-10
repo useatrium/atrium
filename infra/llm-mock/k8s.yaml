@@ -19,12 +19,17 @@ spec:
         - name: mock
           image: atrium-llm-mock:latest
           imagePullPolicy: IfNotPresent
-          ports: [{containerPort: 8081}]
+          ports: [{containerPort: 8081}, {containerPort: 443}]
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
           readinessProbe:
             httpGet: {path: /health, port: 8081}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 500m, memory: 256Mi}
+      volumes:
+        - name: tls
+          secret: {secretName: llm-mock-tls, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -33,7 +38,7 @@ metadata:
   namespace: centaur
 spec:
   selector: {app: centaur-llm-mock}
-  ports: [{port: 8081, targetPort: 8081}]
+  ports: [{name: http, port: 8081, targetPort: 8081}, {name: https, port: 443, targetPort: 443}]
 ---
 # Allow sandbox pods to egress to the mock.
 apiVersion: networking.k8s.io/v1
@@ -49,7 +54,7 @@ spec:
     - to:
         - podSelector:
             matchLabels: {app: centaur-llm-mock}
-      ports: [{protocol: TCP, port: 8081}]
+      ports: [{protocol: TCP, port: 8081}, {protocol: TCP, port: 443}]
 ---
 # Allow ingress to the mock from sandboxes and iron-proxy pods.
 apiVersion: networking.k8s.io/v1
@@ -67,4 +72,4 @@ spec:
             matchLabels: {centaur.ai/managed: "true"}
         - podSelector:
             matchLabels: {centaur.ai/iron-proxy: "true"}
-      ports: [{protocol: TCP, port: 8081}]
+      ports: [{protocol: TCP, port: 8081}, {protocol: TCP, port: 443}]

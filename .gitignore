@@ -6,3 +6,4 @@ node_modules/
 dist/
 __pycache__/
 .DS_Store
+infra/iron-proxy-trust/fw-ca.crt

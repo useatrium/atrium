@@ -292,10 +292,22 @@ def test_c_reconnect():
                             overall_timeout=900, read_timeout=900))
     dump_frames("C_first", first)
     dump_frames("C_rest", rest)
-    all_ids = ids + [eid for _, _, eid, _ in rest if eid is not None]
-    monotonic = all(b > a for a, b in zip(all_ids, all_ids[1:]))
-    record("C", "resumed ids strictly increasing, no dupes", monotonic,
-           f"{len(all_ids)} ids, span {all_ids[0]}..{all_ids[-1]}" if all_ids else "none")
+    # Terminal execution_state snapshots may legitimately re-emit on resume;
+    # require: non-decreasing ids, and any duplicate must be an execution_state frame.
+    all_frames = first + rest
+    all_ids = [eid for _, _, eid, _ in all_frames if eid is not None]
+    nondecreasing = all(b >= a for a, b in zip(all_ids, all_ids[1:]))
+    seen_ids, bad_dupes = set(), []
+    for ev, _, eid, _ in all_frames:
+        if eid is None:
+            continue
+        if eid in seen_ids and ev != "execution_state":
+            bad_dupes.append((eid, ev))
+        seen_ids.add(eid)
+    record("C", "resumed ids non-decreasing, no non-terminal dupes",
+           nondecreasing and not bad_dupes,
+           f"{len(all_ids)} ids span {all_ids[0]}..{all_ids[-1]} bad_dupes={bad_dupes[:3]}"
+           if all_ids else "none")
     # replay determinism: two cold replays must match
     r1 = list(tail_events(tk, exec_id, after_event_id=0, overall_timeout=900,
                           read_timeout=900))
