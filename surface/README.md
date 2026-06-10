@@ -56,8 +56,9 @@ Use two different browsers (or one normal + one private window — sessions are
 cookie-based, two tabs in the same profile share one login).
 
 1. Browser A: log in as `ana` / "Ana". Browser B: log in as `ben` / "Ben".
-2. Both land in **#general**. Header should show **2 here** with both initial
-   dots; the sidebar shows a green presence count on each channel.
+2. Both land in **#general**. Header should show **2 online** with both
+   initial dots. (Per-channel presence counts were dropped from the sidebar —
+   subscription-based presence made every channel show the same number.)
 3. B types "hello from ben" + Enter → appears instantly in A with author +
    time, no reload. A's message renders in B the same way.
 4. A sends several messages quickly → they appear grouped under one author

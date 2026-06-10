@@ -15,7 +15,12 @@ import {
   type UserRef,
   type WireEvent,
 } from './state';
-import { applySessionEvent, mergeSpawnResponse, type Session } from './sessions/types';
+import {
+  applySessionEvent,
+  maxSessionStatus,
+  mergeSpawnResponse,
+  type Session,
+} from './sessions/types';
 
 export interface AppState {
   channels: Channel[];
@@ -26,6 +31,8 @@ export interface AppState {
   activeChannelId: string | null;
   openThreadRootId: number | null;
   openSessionId: string | null;
+  /** The open pane's session couldn't be fetched (bad permalink, deleted). */
+  openSessionError: boolean;
   unread: Record<string, boolean>;
   wsStatus: 'connecting' | 'open' | 'closed';
 }
@@ -38,6 +45,7 @@ export const initialAppState: AppState = {
   activeChannelId: null,
   openThreadRootId: null,
   openSessionId: null,
+  openSessionError: false,
   unread: {},
   wsStatus: 'connecting',
 };
@@ -62,6 +70,7 @@ export type AppAction =
   | { type: 'session-spawn-failed'; channelId: string; tempId: string }
   | { type: 'session-upsert'; session: Session }
   | { type: 'open-session'; sessionId: string }
+  | { type: 'session-load-failed'; sessionId: string }
   | { type: 'close-session' };
 
 function timeline(state: AppState, channelId: string): ChannelTimeline {
@@ -240,6 +249,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.sessions,
           [action.session.id]: {
             ...action.session,
+            // A slow GET must never roll back a status WS already advanced.
+            status: existing
+              ? maxSessionStatus(existing.status, action.session.status)
+              : action.session.status,
             spawnerName: action.session.spawnerName ?? existing?.spawnerName,
             driverName: action.session.driverName ?? existing?.driverName,
             // GET /api/sessions/:id carries no audit history — keep what the
@@ -254,10 +267,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'open-session':
-      return { ...state, openSessionId: action.sessionId, openThreadRootId: null };
+      return {
+        ...state,
+        openSessionId: action.sessionId,
+        openSessionError: false,
+        openThreadRootId: null,
+      };
+
+    case 'session-load-failed':
+      // Only matters while that session is the open pane and has no entity to
+      // render from — the pane placeholder switches to a not-found state.
+      if (state.openSessionId !== action.sessionId) return state;
+      return { ...state, openSessionError: true };
 
     case 'close-session':
-      return { ...state, openSessionId: null };
+      return { ...state, openSessionId: null, openSessionError: false };
 
     default:
       return state;

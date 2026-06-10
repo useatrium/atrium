@@ -7,7 +7,6 @@ export function Sidebar({
   channels,
   activeChannelId,
   unread,
-  presence,
   me,
   wsStatus,
   onSelect,
@@ -18,7 +17,6 @@ export function Sidebar({
   channels: Channel[];
   activeChannelId: string | null;
   unread: Record<string, boolean>;
-  presence: Record<string, UserRef[]>;
   me: UserRef;
   wsStatus: 'connecting' | 'open' | 'closed';
   onSelect: (channelId: string) => void;
@@ -50,15 +48,18 @@ export function Sidebar({
           {workspaceName}
         </span>
         <span
+          role="status"
           title={`connection: ${wsStatus}`}
-          className={`ml-auto h-2 w-2 shrink-0 rounded-full ${
+          className={`ml-auto size-2 shrink-0 rounded-full ${
             wsStatus === 'open'
               ? 'bg-emerald-500'
               : wsStatus === 'connecting'
                 ? 'animate-pulse bg-amber-500'
                 : 'bg-red-500'
           }`}
-        />
+        >
+          <span className="sr-only">connection: {wsStatus}</span>
+        </span>
       </header>
 
       <div className="flex-1 overflow-y-auto py-3">
@@ -72,6 +73,7 @@ export function Sidebar({
               setError(null);
             }}
             title="Create channel"
+            aria-label="Create channel"
             className="rounded px-1.5 text-sm leading-5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
           >
             +
@@ -84,7 +86,11 @@ export function Sidebar({
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Escape' && setCreating(false)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape') return;
+                e.stopPropagation(); // don't also close an open side panel
+                setCreating(false);
+              }}
               placeholder="new-channel-name"
               className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
             />
@@ -95,7 +101,6 @@ export function Sidebar({
         <ul>
           {channels.map((c) => {
             const active = c.id === activeChannelId;
-            const here = (presence[c.id] ?? []).length;
             const isUnread = unread[c.id] && !active;
             return (
               <li key={c.id}>
@@ -111,11 +116,9 @@ export function Sidebar({
                 >
                   <span className="text-zinc-500">#</span>
                   <span className="truncate">{c.name}</span>
-                  {isUnread && <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-indigo-400" />}
-                  {!isUnread && here > 0 && (
-                    <span className="ml-auto flex items-center gap-1 text-[10px] tabular-nums text-emerald-500">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      {here}
+                  {isUnread && (
+                    <span className="ml-auto size-2 shrink-0 rounded-full bg-indigo-400">
+                      <span className="sr-only">unread</span>
                     </span>
                   )}
                 </button>

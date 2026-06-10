@@ -279,7 +279,10 @@ describe('driver seat', () => {
     render(<SessionPane session={session} me={me} watchers={[me]} onClose={() => {}} />);
 
     expect(screen.queryByText('Request seat')).toBeNull();
+    // Two-step: Take seat asks for confirmation before posting.
     fireEvent.click(screen.getByText('Take seat'));
+    expect(screen.getByText(/take the seat from Alice/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Confirm'));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
@@ -301,8 +304,24 @@ describe('driver seat', () => {
     });
     render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} />);
     fireEvent.click(screen.getByText('Take seat'));
+    fireEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/sessions/s-b/seat/take');
+  });
+
+  it('declining the take-seat confirm keeps spectating without posting', () => {
+    const fetchMock = stub202();
+    const session = bSession({
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      driverId: alice.id,
+      driverName: alice.displayName,
+    });
+    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} />);
+    fireEvent.click(screen.getByText('Take seat'));
+    fireEvent.click(screen.getByText('Keep watching'));
+    expect(screen.getByText('Take seat')).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('(d) renders a compact audit line from seat_changed', () => {

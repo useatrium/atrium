@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type Workspace } from './api';
 import { appReducer, initialAppState } from './appState';
 import { emptyTimeline, type ChatMessage, type UserRef, type WireEvent } from './state';
 import { useWs } from './useWs';
 import { Avatar } from './components/Avatar';
 import { Composer } from './components/Composer';
+import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
@@ -12,7 +13,7 @@ import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
-import { isPendingSessionId, sessionFromWire } from './sessions/types';
+import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 
 const PAGE_SIZE = 50;
 const NO_WATCHERS: UserRef[] = [];
@@ -41,6 +42,7 @@ export function Chat({
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
     if (!initialSessionId) return;
+    dispatch({ type: 'open-session', sessionId: initialSessionId });
     sessionsApi
       .get(initialSessionId)
       .then(({ session }) => {
@@ -48,8 +50,27 @@ export function Chat({
         if (session.channelId) dispatch({ type: 'select-channel', channelId: session.channelId });
         dispatch({ type: 'open-session', sessionId: session.id });
       })
-      .catch(() => {});
+      .catch(() => dispatch({ type: 'session-load-failed', sessionId: initialSessionId }));
   }, [initialSessionId]);
+
+  // ---- heal stale session entities ----
+  // Cards folded from history only move via live WS events; a session whose
+  // terminal event predates our page never updates. Refetch each non-terminal
+  // session once so dead "starting/running" chips converge on server truth.
+  const reconciledRef = useRef(new Set<string>());
+  useEffect(() => {
+    for (const [id, session] of Object.entries(state.sessions)) {
+      if (isPendingSessionId(id) || isTerminalSessionStatus(session.status)) continue;
+      if (reconciledRef.current.has(id)) continue;
+      reconciledRef.current.add(id);
+      sessionsApi
+        .get(id)
+        .then(({ session: wire }) =>
+          dispatch({ type: 'session-upsert', session: sessionFromWire(wire) }),
+        )
+        .catch(() => {}); // unreachable server — the stalled display covers it
+    }
+  }, [state.sessions]);
 
   // Keep the URL in sync with the open pane so it is copyable as a permalink.
   useEffect(() => {
@@ -116,14 +137,16 @@ export function Chat({
       .then(({ events, hasMore }) => dispatch({ type: 'history-loaded', channelId, events, hasMore }));
   }, [active?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadEarlier = () => {
-    if (!active) return;
+  const loadEarlier = (): Promise<void> => {
+    if (!active) return Promise.resolve();
     const oldest = timeline.main.find((m) => m.status === 'confirmed');
-    if (!oldest?.id) return;
+    if (!oldest?.id) return Promise.resolve();
     const channelId = active.id;
-    api
+    return api
       .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
-      .then(({ events, hasMore }) => dispatch({ type: 'history-loaded', channelId, events, hasMore }));
+      .then(({ events, hasMore }) =>
+        dispatch({ type: 'history-loaded', channelId, events, hasMore }),
+      );
   };
 
   // ---- thread panel ----
@@ -216,14 +239,43 @@ export function Chat({
 
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
 
+  // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSwitcherOpen((v) => !v);
+        return;
+      }
+      if (e.key !== 'Escape' || switcherOpen) return;
+      const s = stateRef.current;
+      if (s.openSessionId) dispatch({ type: 'close-session' });
+      else if (s.openThreadRootId != null) dispatch({ type: 'close-thread' });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [switcherOpen]);
+
+  // ---- unread badge in the tab title ----
+  const unreadCount = Object.values(state.unread).filter(Boolean).length;
+  useEffect(() => {
+    document.title = unreadCount > 0 ? `(${unreadCount}) Atrium` : 'Atrium';
+    return () => {
+      document.title = 'Atrium';
+    };
+  }, [unreadCount]);
+
+  const threadLoaded =
+    state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
+
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       <Sidebar
         workspaceName={workspace.name}
         channels={state.channels}
         activeChannelId={state.activeChannelId}
         unread={state.unread}
-        presence={state.presence}
         me={me}
         wsStatus={state.wsStatus}
         onSelect={(channelId) => dispatch({ type: 'select-channel', channelId })}
@@ -238,7 +290,10 @@ export function Chat({
             {active?.name ?? '…'}
           </h1>
           {presentUsers.length > 0 && (
-            <div className="ml-auto flex items-center gap-2">
+            <div
+              className="ml-auto flex items-center gap-2"
+              title="Teammates connected to the workspace"
+            >
               <div className="flex -space-x-1.5">
                 {presentUsers.slice(0, 8).map((u) => (
                   <div key={u.id} className="rounded-md ring-2 ring-zinc-950">
@@ -247,14 +302,24 @@ export function Chat({
                 ))}
               </div>
               <span className="text-[11px] tabular-nums text-zinc-500">
-                {presentUsers.length} here
+                {presentUsers.length} online
               </span>
             </div>
           )}
         </header>
 
+        {state.wsStatus === 'closed' && (
+          <div
+            role="status"
+            className="flex shrink-0 items-center justify-center border-b border-amber-900/40 bg-amber-950/30 px-4 py-1 text-[11px] text-amber-300"
+          >
+            Connection lost — reconnecting…
+          </div>
+        )}
+
         <Timeline
           messages={timeline.main}
+          loaded={timeline.loaded}
           hasMoreBefore={timeline.hasMoreBefore}
           sessions={state.sessions}
           spectators={spectators}
@@ -283,20 +348,36 @@ export function Chat({
           onClose={() => dispatch({ type: 'close-session' })}
         />
       ) : state.openSessionId ? (
-        <aside className="flex w-[520px] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
+        <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
             <span className="text-sm font-semibold text-zinc-100">Session</span>
             <button
               onClick={() => dispatch({ type: 'close-session' })}
               title="Close session pane"
+              aria-label="Close session pane"
               className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             >
               ✕
             </button>
           </header>
-          <div className="flex flex-1 items-center justify-center text-sm text-zinc-600">
-            Loading session…
-          </div>
+          {state.openSessionError ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
+              <div className="text-sm font-medium text-zinc-300">Session not found</div>
+              <div className="text-xs text-zinc-500">
+                It may have been removed, or the link is wrong.
+              </div>
+              <button
+                onClick={() => dispatch({ type: 'close-session' })}
+                className="mt-2 rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                Close
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
+              Loading session…
+            </div>
+          )}
         </aside>
       ) : (
         openThreadRoot &&
@@ -304,6 +385,7 @@ export function Chat({
           <ThreadPanel
             root={openThreadRoot}
             replies={threadReplies}
+            loaded={threadLoaded}
             sessions={state.sessions}
             spectators={spectators}
             onClose={() => dispatch({ type: 'close-thread' })}
@@ -312,6 +394,18 @@ export function Chat({
             onRetry={retry}
           />
         )
+      )}
+
+      {switcherOpen && (
+        <QuickSwitcher
+          channels={state.channels}
+          activeChannelId={state.activeChannelId}
+          onSelect={(channelId) => {
+            dispatch({ type: 'select-channel', channelId });
+            setSwitcherOpen(false);
+          }}
+          onClose={() => setSwitcherOpen(false)}
+        />
       )}
     </div>
   );

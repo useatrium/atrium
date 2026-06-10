@@ -1,11 +1,12 @@
 import type { ChatMessage } from './state';
 
-/** Deterministic accent color per user (no avatars — colored initials). */
+/** Deterministic accent color per user (no avatars — colored initials).
+ * Lightness 42% keeps white initials readable across the whole hue wheel. */
 export function userColor(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   const hue = h % 360;
-  return `hsl(${hue} 55% 55%)`;
+  return `hsl(${hue} 50% 42%)`;
 }
 
 export function initials(name: string): string {

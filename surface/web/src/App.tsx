@@ -32,11 +32,11 @@ export function App() {
     }
   }, [me]);
 
-  if (!checked) return <div className="h-screen bg-zinc-950" />;
+  if (!checked) return <div className="h-dvh bg-zinc-950" />;
   if (!me) return <Login onLogin={setMe} />;
   if (!workspace)
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950 text-sm text-zinc-500">
+      <div className="flex h-dvh items-center justify-center bg-zinc-950 text-sm text-zinc-500">
         Loading workspace…
       </div>
     );

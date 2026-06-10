@@ -18,6 +18,13 @@ body {
     sans-serif;
 }
 
+/* Visible keyboard focus on click targets (mouse clicks stay quiet).
+ * Inputs/textareas keep their border-color focus treatment instead. */
+:where(button, [role='button'], a, select):focus-visible {
+  outline: 2px solid var(--color-indigo-400);
+  outline-offset: 1px;
+}
+
 /* Thin dark scrollbars */
 * {
   scrollbar-width: thin;

@@ -3,6 +3,7 @@ import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatTime } from '../util';
 import { Avatar } from './Avatar';
+import { MessageText } from './MessageText';
 
 export function MessageRow({
   message,
@@ -44,7 +45,7 @@ export function MessageRow({
           </span>
         )}
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="relative min-w-0 max-w-3xl flex-1">
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-zinc-100">{m.author.displayName}</span>
@@ -62,7 +63,7 @@ export function MessageRow({
           />
         ) : (
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200">
-            {m.text}
+            <MessageText text={m.text} />
             {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
           </div>
         )}
@@ -82,16 +83,17 @@ export function MessageRow({
             {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
           </button>
         )}
+        {canThread && (
+          <button
+            onClick={() => onOpenThread!(m.id!)}
+            title="Reply in thread"
+            aria-label="Reply in thread"
+            className="pointer-events-none absolute -top-3 right-0 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 opacity-0 shadow-sm hover:bg-zinc-700 hover:text-zinc-100 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
+          >
+            ↩ Reply
+          </button>
+        )}
       </div>
-      {canThread && (
-        <button
-          onClick={() => onOpenThread!(m.id!)}
-          title="Reply in thread"
-          className="invisible absolute -top-3 right-3 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 shadow-sm hover:bg-zinc-700 hover:text-zinc-100 group-hover:visible"
-        >
-          ↩ Reply
-        </button>
-      )}
     </div>
   );
 }

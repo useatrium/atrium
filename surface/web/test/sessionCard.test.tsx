@@ -21,7 +21,9 @@ function wire(id: number, type: string, payload: Record<string, unknown>): WireE
     type,
     actorId: spawner.id,
     payload,
-    createdAt: new Date(id * 1000).toISOString(),
+    // Recent timestamps, ordered by id — ancient createdAt would (correctly)
+    // render non-terminal sessions as stalled.
+    createdAt: new Date(Date.now() - (200 - id) * 1000).toISOString(),
     author: spawner,
   };
 }
@@ -62,7 +64,7 @@ describe('session card transitions across session.* events', () => {
     expect(s.sessions['sess-1']!.spawnerName).toBe('Kay');
 
     const { rerender } = render(cardFor(s));
-    expect(screen.getByText('spawning')).toBeTruthy();
+    expect(screen.getByText('starting')).toBeTruthy();
     expect(screen.getByText('fix the flaky build')).toBeTruthy();
 
     s = appReducer(s, {
