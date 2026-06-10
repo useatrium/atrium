@@ -8,6 +8,7 @@ import { MessageRow } from './MessageRow';
 export function ThreadPanel({
   root,
   replies,
+  loaded,
   sessions,
   spectators,
   onClose,
@@ -17,6 +18,8 @@ export function ThreadPanel({
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
+  /** The thread fetch resolved — gates the empty state vs. the loading hint. */
+  loaded: boolean;
   sessions: Record<string, Session>;
   spectators: Record<string, number>;
   onClose: () => void;
@@ -38,7 +41,7 @@ export function ThreadPanel({
   const items = buildTimelineItems(replies);
 
   return (
-    <aside className="flex w-[380px] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
+    <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
         <div className="text-sm font-semibold text-zinc-100">
           Thread
@@ -49,6 +52,7 @@ export function ThreadPanel({
         <button
           onClick={onClose}
           title="Close thread"
+          aria-label="Close thread"
           className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
         >
           ✕
@@ -84,8 +88,8 @@ export function ThreadPanel({
           ),
         )}
         {replies.length === 0 && (
-          <div className="px-4 py-6 text-center text-xs text-zinc-600">
-            No replies yet. Start the thread.
+          <div className="px-4 py-6 text-center text-xs text-zinc-500">
+            {loaded ? 'No replies yet. Start the thread.' : 'Loading replies…'}
           </div>
         )}
       </div>

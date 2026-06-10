@@ -1,6 +1,14 @@
 import { useState, type FormEvent } from 'react';
-import { api } from './api';
+import { api, ApiError } from './api';
 import type { UserRef } from './state';
+
+function friendlyLoginError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 400) return err.message || 'That handle won’t work — try another.';
+    return 'Something went wrong on the server — try again.';
+  }
+  return 'Can’t reach the server — check your connection and try again.';
+}
 
 export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
   const [handle, setHandle] = useState('');
@@ -16,21 +24,21 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
       const { user } = await api.login(handle.trim(), displayName.trim() || handle.trim());
       onLogin(user);
     } catch (err) {
-      setError((err as Error).message);
+      setError(friendlyLoginError(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="flex h-screen items-center justify-center bg-zinc-950">
+    <div className="flex h-dvh items-center justify-center bg-zinc-950">
       <form
         onSubmit={submit}
         className="w-80 rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-2xl"
       >
         <h1 className="text-lg font-bold tracking-tight text-zinc-100">Atrium</h1>
-        <p className="mb-5 mt-1 text-xs text-zinc-500">
-          Places — pick a handle to join the workspace.
+        <p className="mb-5 mt-1 text-xs text-pretty text-zinc-500">
+          Pick a handle to join your team's workspace.
         </p>
         <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
           Handle
@@ -40,6 +48,9 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
           value={handle}
           onChange={(e) => setHandle(e.target.value)}
           placeholder="gary"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
           className="mb-3 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
         />
         <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">

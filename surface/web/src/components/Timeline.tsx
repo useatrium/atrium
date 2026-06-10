@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '../state';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '../util';
@@ -6,6 +6,7 @@ import { MessageRow } from './MessageRow';
 
 export function Timeline({
   messages,
+  loaded,
   hasMoreBefore,
   sessions,
   spectators,
@@ -15,10 +16,12 @@ export function Timeline({
   onRetry,
 }: {
   messages: ChatMessage[];
+  /** History fetched at least once — gates the empty state vs. the skeleton. */
+  loaded: boolean;
   hasMoreBefore: boolean;
   sessions: Record<string, Session>;
   spectators: Record<string, number>;
-  onLoadEarlier: () => void;
+  onLoadEarlier: () => Promise<void>;
   onOpenThread: (rootEventId: number) => void;
   onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
@@ -27,6 +30,7 @@ export function Timeline({
   const stickRef = useRef(true);
   const prevHeightRef = useRef<number | null>(null);
   const lastKeyRef = useRef<string>('');
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
 
   const items = buildTimelineItems(messages);
   const lastKey = items.at(-1)?.key ?? '';
@@ -54,8 +58,10 @@ export function Timeline({
   });
 
   const loadEarlier = () => {
+    if (loadingEarlier) return;
     prevHeightRef.current = containerRef.current?.scrollHeight ?? null;
-    onLoadEarlier();
+    setLoadingEarlier(true);
+    onLoadEarlier().finally(() => setLoadingEarlier(false));
   };
 
   return (
@@ -64,15 +70,24 @@ export function Timeline({
         <div className="flex justify-center py-2">
           <button
             onClick={loadEarlier}
-            className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            disabled={loadingEarlier}
+            className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:text-zinc-600"
           >
-            Load earlier messages
+            {loadingEarlier ? 'Loading…' : 'Load earlier messages'}
           </button>
         </div>
       )}
-      {items.length === 0 && (
-        <div className="flex h-full items-center justify-center text-sm text-zinc-600">
-          No messages yet. Say something.
+      {!loaded && items.length === 0 && <TimelineSkeleton />}
+      {loaded && items.length === 0 && (
+        <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-sm text-zinc-500">
+          <span>No messages yet. Say something.</span>
+          <span className="text-xs text-zinc-600">
+            Or type{' '}
+            <code className="rounded bg-zinc-800/80 px-1 py-0.5 text-[11px] text-zinc-400">
+              @agent &lt;task&gt;
+            </code>{' '}
+            to put an agent on it.
+          </span>
         </div>
       )}
       {items.map((item) =>
@@ -101,6 +116,23 @@ export function Timeline({
           />
         ),
       )}
+    </div>
+  );
+}
+
+/** Structural placeholder while the first history page is in flight. */
+function TimelineSkeleton() {
+  return (
+    <div aria-hidden className="animate-pulse">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="mt-2 flex gap-3 px-4 py-0.5">
+          <div className="size-8 shrink-0 rounded-md bg-zinc-800/80" />
+          <div className="min-w-0 flex-1">
+            <div className="h-3 w-28 rounded bg-zinc-800/80" />
+            <div className="mt-1.5 h-3 rounded bg-zinc-800/50" style={{ width: `${60 - i * 15}%` }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { looksLikeAgentCommand } from '../sessions/spawn';
+import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 
 export function Composer({
   placeholder,
@@ -21,19 +21,26 @@ export function Composer({
   footer?: ReactNode;
 }) {
   const [text, setText] = useState('');
+  // "@agent" with no task: refuse to post the literal string — show what's
+  // missing instead (cleared as soon as the text changes).
+  const [agentNeedsTask, setAgentNeedsTask] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
 
   const send = () => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
+    if (agentAware && looksLikeAgentCommand(trimmed) && parseAgentTask(trimmed) == null) {
+      setAgentNeedsTask(true);
+      return;
+    }
     onSend(trimmed);
     setText('');
     if (ref.current) ref.current.style.height = 'auto';
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
     }
@@ -58,6 +65,7 @@ export function Composer({
           placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
           onChange={(e) => {
             setText(e.target.value);
+            setAgentNeedsTask(false);
             e.target.style.height = 'auto';
             e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
           }}
@@ -73,8 +81,12 @@ export function Composer({
           Send
         </button>
       </div>
-      <div className="mt-1 flex items-center gap-2 px-1 text-[10px] text-zinc-600">
-        {agentHint ? (
+      <div className="mt-1 flex items-center gap-2 px-1 text-[10px] text-zinc-500">
+        {agentNeedsTask ? (
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-300">
+            Add a task: @agent &lt;task&gt;
+          </span>
+        ) : agentHint ? (
           <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 font-medium text-indigo-300">
             @agent — spawns an agent session
           </span>
@@ -82,7 +94,11 @@ export function Composer({
           footer
         ) : (
           <span>
-            {disabled ? (disabledHint ?? '') : 'Enter to send · Shift+Enter for a new line'}
+            {disabled
+              ? (disabledHint ?? '')
+              : agentAware
+                ? 'Enter to send · Shift+Enter for a new line · @agent <task> spawns an agent'
+                : 'Enter to send · Shift+Enter for a new line'}
           </span>
         )}
       </div>

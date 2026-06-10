@@ -101,6 +101,25 @@ export function isTerminalSessionStatus(s: SessionStatus): boolean {
   return s === 'completed' || s === 'failed' || s === 'cancelled';
 }
 
+/**
+ * A session still claiming spawning/queued this long after creation has almost
+ * certainly been lost by the control plane — render it as stalled (static, no
+ * pulse) instead of letting a dead status lie forever.
+ */
+export const STALLED_AFTER_MS = 10 * 60 * 1000;
+
+export function isStalledSessionStatus(s: Session, now: number): boolean {
+  return (
+    (s.status === 'spawning' || s.status === 'queued') &&
+    now - new Date(s.createdAt).getTime() > STALLED_AFTER_MS
+  );
+}
+
+/** The further-along of two statuses — used to never regress from a stale fetch. */
+export function maxSessionStatus(a: SessionStatus, b: SessionStatus): SessionStatus {
+  return statusRank(a) >= statusRank(b) ? a : b;
+}
+
 /** Lifecycle progress rank — used to never regress status from a stale fetch. */
 function statusRank(s: SessionStatus): number {
   switch (s) {

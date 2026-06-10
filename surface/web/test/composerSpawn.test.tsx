@@ -116,7 +116,7 @@ describe('composer @agent grammar', () => {
     });
   });
 
-  it('leaves plain messages (and bare "@agent") on the message path', () => {
+  it('leaves plain messages on the message path; bare "@agent" prompts for a task', () => {
     const fetchMock = stubCreateSession();
     const onPlain = vi.fn();
     render(<Harness dispatch={vi.fn()} onPlainMessage={onPlain} />);
@@ -126,11 +126,14 @@ describe('composer @agent grammar', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(onPlain).toHaveBeenLastCalledWith('deploying in 5');
 
-    // "@agent" with no task is not a spawn (hint shows, send falls through)
+    // "@agent" with no task never posts the literal string — it keeps the
+    // text and asks for a task instead.
     box = type('@agent');
     expect(screen.getByText(/spawns an agent session/)).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(onPlain).toHaveBeenLastCalledWith('@agent');
+    expect(screen.getByText(/Add a task/)).toBeTruthy();
+    expect(onPlain).toHaveBeenCalledTimes(1);
+    expect((box as HTMLTextAreaElement).value).toBe('@agent');
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
