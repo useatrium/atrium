@@ -1,0 +1,8 @@
+.centaur-local/
+phase0/results/*.jsonl
+node_modules/
+.env
+.env.local
+dist/
+__pycache__/
+.DS_Store
