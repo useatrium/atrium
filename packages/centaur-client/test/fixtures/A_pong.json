@@ -1,0 +1,281 @@
+[
+  {
+    "event": "execution_state",
+    "event_id": 40,
+    "t": 192098.903218291,
+    "data": {
+      "type": "execution.state",
+      "status": "queued",
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f"
+    }
+  },
+  {
+    "event": "execution_state",
+    "event_id": 41,
+    "t": 192099.419144125,
+    "data": {
+      "type": "execution.state",
+      "status": "running",
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f"
+    }
+  },
+  {
+    "event": "execution_started",
+    "event_id": 42,
+    "t": 192099.41919525,
+    "data": {
+      "type": "obs.execution_started",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "user_id": "probe",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "runtime_id": "centaur-centaur-sandbox-probe-a-1781124501-61335c16-9c08b90e1c",
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f",
+      "queue_delay_s": 0.005,
+      "delivery_platform": "dev",
+      "execution_sequence": 0,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 43,
+    "t": 192099.41923625,
+    "data": {
+      "type": "system",
+      "subtype": "init",
+      "session_id": "0fc2215b-43aa-4c53-89e5-b8a1cad88f42"
+    }
+  },
+  {
+    "event": "system_event_observed",
+    "event_id": 44,
+    "t": 192099.419257083,
+    "data": {
+      "type": "obs.system",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "subtype": "init",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "session_id": "0fc2215b-43aa-4c53-89e5-b8a1cad88f42",
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f",
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 45,
+    "t": 192099.419276708,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "PONG",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 46,
+    "t": 192099.419414333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 4,
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 47,
+    "t": 192099.419549625,
+    "data": {
+      "type": "assistant",
+      "uuid": "915d70ce-f48f-4aba-b57c-5a6b4b136760",
+      "message": {
+        "id": "msg_mock000018",
+        "role": "assistant",
+        "type": "message",
+        "model": "claude-fable-5",
+        "usage": {
+          "input_tokens": 42,
+          "output_tokens": 1
+        },
+        "content": [
+          {
+            "text": "PONG",
+            "type": "text"
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "context_management": null
+      },
+      "request_id": "req_mock000019",
+      "session_id": "0fc2215b-43aa-4c53-89e5-b8a1cad88f42",
+      "parent_tool_use_id": null
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 48,
+    "t": 192099.419593583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 4,
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "usage_observed",
+    "event_id": 49,
+    "t": 192099.419620083,
+    "data": {
+      "type": "obs.usage",
+      "model": "claude-fable-5",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "cost_usd": 0.0,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f",
+      "input_tokens": 42,
+      "total_tokens": 43,
+      "authoritative": false,
+      "output_tokens": 1,
+      "assignment_generation": 1,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 50,
+    "t": 192099.419641916,
+    "data": {
+      "text": "PONG",
+      "type": "result"
+    }
+  },
+  {
+    "event": "result_observed",
+    "event_id": 51,
+    "t": 192099.419672458,
+    "data": {
+      "type": "obs.result",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 4,
+      "thread_key": "probe-a-1781124501",
+      "execution_id": "exe_666ae19da2c6459f",
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 52,
+    "t": 192099.419698416,
+    "data": {
+      "type": "turn.done",
+      "result": "PONG",
+      "turn_id": 1,
+      "agent_thread_id": "0fc2215b-43aa-4c53-89e5-b8a1cad88f42"
+    }
+  },
+  {
+    "event": "execution_summary",
+    "event_id": 53,
+    "t": 192099.419729166,
+    "data": {
+      "type": "obs.execution_summary",
+      "engine": "claude-code",
+      "models": [
+        "claude-fable-5"
+      ],
+      "status": "completed",
+      "harness": "claude-code",
+      "ttft_ms": 293.4,
+      "user_id": "probe",
+      "cost_usd": 0.0,
+      "duration_s": 0.302,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-a-1781124501",
+      "error_events": 0,
+      "execution_id": "exe_666ae19da2c6459f",
+      "input_tokens": 42,
+      "total_tokens": 43,
+      "output_tokens": 1,
+      "result_events": 1,
+      "command_events": 0,
+      "raw_event_count": 5,
+      "subagent_events": 0,
+      "terminal_reason": "completed",
+      "reasoning_events": 0,
+      "tool_retry_count": 0,
+      "subagent_failures": 0,
+      "tool_error_events": 0,
+      "execution_sequence": 0,
+      "file_change_events": 0,
+      "tool_calls_by_name": {},
+      "tool_result_events": 0,
+      "tool_errors_by_name": {},
+      "assistant_text_chars": 8,
+      "command_error_events": 0,
+      "assignment_generation": 1,
+      "assistant_text_events": 2,
+      "tool_error_categories": {},
+      "cache_read_input_tokens": 0,
+      "observation_event_count": 5,
+      "assistant_tool_use_events": 0,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "execution_state",
+    "event_id": 54,
+    "t": 192099.419767458,
+    "data": {
+      "type": "execution.state",
+      "status": "completed",
+      "thread_key": "probe-a-1781124501",
+      "result_text": "PONG",
+      "execution_id": "exe_666ae19da2c6459f",
+      "agent_thread_id": "0fc2215b-43aa-4c53-89e5-b8a1cad88f42",
+      "terminal_reason": "completed"
+    }
+  }
+]

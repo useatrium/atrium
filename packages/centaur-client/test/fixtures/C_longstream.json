@@ -1,0 +1,7047 @@
+[
+  {
+    "event": "execution_state",
+    "event_id": 77,
+    "t": 192109.666980375,
+    "data": {
+      "type": "execution.state",
+      "status": "queued",
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d"
+    }
+  },
+  {
+    "event": "execution_state",
+    "event_id": 78,
+    "t": 192110.179493166,
+    "data": {
+      "type": "execution.state",
+      "status": "running",
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d"
+    }
+  },
+  {
+    "event": "execution_started",
+    "event_id": 79,
+    "t": 192110.179647625,
+    "data": {
+      "type": "obs.execution_started",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "user_id": "probe",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "runtime_id": "centaur-centaur-sandbox-probe-c-1781124512-0c074ac5-242d5d8511",
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "queue_delay_s": 0.005,
+      "delivery_platform": "dev",
+      "execution_sequence": 0,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 80,
+    "t": 192110.18021825,
+    "data": {
+      "type": "system",
+      "subtype": "init",
+      "session_id": "205e8fa1-6faa-4aa5-a363-61a49446679a"
+    }
+  },
+  {
+    "event": "system_event_observed",
+    "event_id": 81,
+    "t": 192110.180378708,
+    "data": {
+      "type": "obs.system",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "subtype": "init",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "session_id": "205e8fa1-6faa-4aa5-a363-61a49446679a",
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 82,
+    "t": 192110.180817541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0000 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 83,
+    "t": 192110.181199875,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 84,
+    "t": 192110.181808833,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0001 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 85,
+    "t": 192110.182010166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 86,
+    "t": 192110.18237875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0002 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 87,
+    "t": 192110.182497208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 88,
+    "t": 192110.183037208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0003 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 89,
+    "t": 192110.183229916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 90,
+    "t": 192110.183968375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0004 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 91,
+    "t": 192110.183994375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 92,
+    "t": 192110.184655291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0005 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 93,
+    "t": 192110.184951041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 94,
+    "t": 192110.185294458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0006 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 95,
+    "t": 192110.185449541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 96,
+    "t": 192110.185711,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0007 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 97,
+    "t": 192110.185723541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 98,
+    "t": 192110.185884208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0008 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 99,
+    "t": 192110.185967583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 100,
+    "t": 192110.186224791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0009 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 101,
+    "t": 192110.186235625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 102,
+    "t": 192110.186299791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0010 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 103,
+    "t": 192110.186347375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 104,
+    "t": 192110.18641925,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0011 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 105,
+    "t": 192110.186432875,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 106,
+    "t": 192110.186588083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0012 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 107,
+    "t": 192110.19503725,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 108,
+    "t": 192110.195050916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0013 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 109,
+    "t": 192110.195076041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 110,
+    "t": 192110.195085458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0014 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 111,
+    "t": 192110.195307333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 112,
+    "t": 192110.195319583,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0015 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 113,
+    "t": 192110.195383583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 114,
+    "t": 192110.195396125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0016 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 115,
+    "t": 192110.195705416,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 116,
+    "t": 192110.195838791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0017 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 117,
+    "t": 192110.196055083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 118,
+    "t": 192110.196069,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0018 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 119,
+    "t": 192110.196080833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 120,
+    "t": 192110.196112916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0019 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 121,
+    "t": 192110.1962735,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 122,
+    "t": 192110.196286291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0020 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 123,
+    "t": 192110.1964405,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 124,
+    "t": 192110.196762916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0021 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 125,
+    "t": 192110.1971995,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 126,
+    "t": 192110.197209625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0022 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 127,
+    "t": 192110.197504,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 128,
+    "t": 192110.197517416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0023 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 129,
+    "t": 192110.197866375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 130,
+    "t": 192110.197877666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0024 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 131,
+    "t": 192110.198375125,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 132,
+    "t": 192110.1983975,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0025 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 133,
+    "t": 192110.198860375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 134,
+    "t": 192110.198872375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0026 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 135,
+    "t": 192110.199051708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 136,
+    "t": 192110.199063875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0027 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 137,
+    "t": 192110.199240375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 138,
+    "t": 192110.1997465,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0028 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 139,
+    "t": 192110.19975875,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 140,
+    "t": 192110.702856666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0029 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 141,
+    "t": 192110.702882333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 142,
+    "t": 192110.702894125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0030 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 143,
+    "t": 192110.702955958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 144,
+    "t": 192110.702997416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0031 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 145,
+    "t": 192110.703048791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 146,
+    "t": 192110.703217,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0032 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 147,
+    "t": 192110.703230791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 148,
+    "t": 192110.703243541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0033 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 149,
+    "t": 192110.703254,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 150,
+    "t": 192110.703376291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0034 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 151,
+    "t": 192110.70338975,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 152,
+    "t": 192110.703465958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0035 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 153,
+    "t": 192110.703481458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 154,
+    "t": 192110.703552,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0036 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 155,
+    "t": 192110.70372125,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 156,
+    "t": 192110.703748875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0037 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 157,
+    "t": 192110.703762375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 158,
+    "t": 192110.703902416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0038 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 159,
+    "t": 192110.703943208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 160,
+    "t": 192110.70412875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0039 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 161,
+    "t": 192110.704156166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 162,
+    "t": 192110.70429675,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0040 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 163,
+    "t": 192110.704322708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 164,
+    "t": 192110.70448575,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0041 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 165,
+    "t": 192110.704503541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 166,
+    "t": 192110.704524083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0042 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 167,
+    "t": 192110.704535375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 168,
+    "t": 192110.704821375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0043 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 169,
+    "t": 192110.704851583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 170,
+    "t": 192110.705453916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0044 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 171,
+    "t": 192110.7068525,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 172,
+    "t": 192110.707068208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0045 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 173,
+    "t": 192110.707089333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 174,
+    "t": 192110.707136666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0046 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 175,
+    "t": 192110.707165166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 176,
+    "t": 192110.707177625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0047 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 177,
+    "t": 192110.707193375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 178,
+    "t": 192110.707246458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0048 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 179,
+    "t": 192110.707259916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 180,
+    "t": 192110.708354875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0049 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 181,
+    "t": 192110.708368125,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 182,
+    "t": 192110.708385166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0050 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 183,
+    "t": 192110.708395958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 184,
+    "t": 192110.70842,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0051 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 185,
+    "t": 192110.708430291,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 186,
+    "t": 192110.708438916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0052 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 187,
+    "t": 192110.708449166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 188,
+    "t": 192110.708560041,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0053 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 189,
+    "t": 192110.708569833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 190,
+    "t": 192110.708818416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0054 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 191,
+    "t": 192110.708833166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 192,
+    "t": 192110.709014541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0055 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 193,
+    "t": 192110.709045416,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 194,
+    "t": 192110.70921825,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0056 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 195,
+    "t": 192110.709229625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 196,
+    "t": 192110.709394166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0057 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 197,
+    "t": 192110.709405666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 198,
+    "t": 192110.709715958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0058 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 199,
+    "t": 192110.709735583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 200,
+    "t": 192110.709908666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0059 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 201,
+    "t": 192110.709941083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 202,
+    "t": 192110.709993625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0060 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 203,
+    "t": 192110.710025708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 204,
+    "t": 192110.710113458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0061 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 205,
+    "t": 192110.710126958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 206,
+    "t": 192110.710269,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0062 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 207,
+    "t": 192110.710279833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 208,
+    "t": 192110.710886625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0063 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 209,
+    "t": 192110.711019458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 210,
+    "t": 192110.7111375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0064 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 211,
+    "t": 192110.711148541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 212,
+    "t": 192110.711329083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0065 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 213,
+    "t": 192110.711345333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 214,
+    "t": 192110.712335375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0066 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 215,
+    "t": 192110.715008208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 216,
+    "t": 192111.219946375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0067 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 217,
+    "t": 192111.2200075,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 218,
+    "t": 192111.220040583,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0068 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 219,
+    "t": 192111.220108916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 220,
+    "t": 192111.220196666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0069 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 221,
+    "t": 192111.220259916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 222,
+    "t": 192111.220419083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0070 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 223,
+    "t": 192111.220461708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 224,
+    "t": 192111.220543416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0071 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 225,
+    "t": 192111.220594125,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 226,
+    "t": 192111.220645875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0072 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 227,
+    "t": 192111.220691958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 228,
+    "t": 192111.220721166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0073 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 229,
+    "t": 192111.220762666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 230,
+    "t": 192111.220801958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0074 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 231,
+    "t": 192111.220834583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 232,
+    "t": 192111.220872458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0075 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 233,
+    "t": 192111.220905166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 234,
+    "t": 192111.220955916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0076 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 235,
+    "t": 192111.221018625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 236,
+    "t": 192111.221127708,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0077 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 237,
+    "t": 192111.221298166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 238,
+    "t": 192111.221403125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0078 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 239,
+    "t": 192111.2214735,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 240,
+    "t": 192111.221533125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0079 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 241,
+    "t": 192111.221567666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 242,
+    "t": 192111.221634125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0080 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 243,
+    "t": 192111.221670416,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 244,
+    "t": 192111.221700875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0081 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 245,
+    "t": 192111.22173525,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 246,
+    "t": 192111.221765125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0082 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 247,
+    "t": 192111.221818208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 248,
+    "t": 192111.2218495,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0083 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 249,
+    "t": 192111.22188225,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 250,
+    "t": 192111.221942875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0084 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 251,
+    "t": 192111.222007458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 252,
+    "t": 192111.222040666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0085 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 253,
+    "t": 192111.222120083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 254,
+    "t": 192111.22215,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0086 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 255,
+    "t": 192111.222181541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 256,
+    "t": 192111.222223041,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0087 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 257,
+    "t": 192111.222255166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 258,
+    "t": 192111.222283958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0088 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 259,
+    "t": 192111.222315375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 260,
+    "t": 192111.222366791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0089 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 261,
+    "t": 192111.222401041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 262,
+    "t": 192111.222429666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0090 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 263,
+    "t": 192111.222461791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 264,
+    "t": 192111.222489791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0091 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 265,
+    "t": 192111.222546916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 266,
+    "t": 192111.222575333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0092 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 267,
+    "t": 192111.222628166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 268,
+    "t": 192111.222656458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0093 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 269,
+    "t": 192111.222692125,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 270,
+    "t": 192111.222724166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0094 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 271,
+    "t": 192111.222756041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 272,
+    "t": 192111.222783583,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0095 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 273,
+    "t": 192111.222816541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 274,
+    "t": 192111.222848,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0096 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 275,
+    "t": 192111.222881166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 276,
+    "t": 192111.222909333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0097 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 277,
+    "t": 192111.222960458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 278,
+    "t": 192111.22298875,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0098 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 279,
+    "t": 192111.223020166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 280,
+    "t": 192111.223059916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0099 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 281,
+    "t": 192111.223091583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 282,
+    "t": 192111.223119208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0100 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 283,
+    "t": 192111.223154791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 284,
+    "t": 192111.223182791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0101 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 285,
+    "t": 192111.223266583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 286,
+    "t": 192111.223311916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0102 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 287,
+    "t": 192111.223347625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 288,
+    "t": 192111.223375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0103 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 289,
+    "t": 192111.223405708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 290,
+    "t": 192111.223780625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0104 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 291,
+    "t": 192111.223817166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 292,
+    "t": 192111.729041416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0105 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 293,
+    "t": 192111.729093083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 294,
+    "t": 192111.729149791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0106 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 295,
+    "t": 192111.729186375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 296,
+    "t": 192111.72935925,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0107 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 297,
+    "t": 192111.729913291,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 298,
+    "t": 192111.7313215,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0108 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 299,
+    "t": 192111.731379541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 300,
+    "t": 192111.731433166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0109 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 301,
+    "t": 192111.731466958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 302,
+    "t": 192111.7314965,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0110 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 303,
+    "t": 192111.731826833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 304,
+    "t": 192111.731877291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0111 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 305,
+    "t": 192111.731911375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 306,
+    "t": 192111.73194075,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0112 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 307,
+    "t": 192111.731976458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 308,
+    "t": 192111.732088541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0113 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 309,
+    "t": 192111.732127541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 310,
+    "t": 192111.732161333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0114 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 311,
+    "t": 192111.73219225,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 312,
+    "t": 192111.732318833,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0115 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 313,
+    "t": 192111.732377916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 314,
+    "t": 192111.732406416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0116 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 315,
+    "t": 192111.732663041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 316,
+    "t": 192111.732781833,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0117 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 317,
+    "t": 192111.732817625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 318,
+    "t": 192111.732848625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0118 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 319,
+    "t": 192111.732973958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 320,
+    "t": 192111.733005958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0119 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 321,
+    "t": 192111.733040375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 322,
+    "t": 192111.733070791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0120 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 323,
+    "t": 192111.733119958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 324,
+    "t": 192111.73327725,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0121 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 325,
+    "t": 192111.733625458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 326,
+    "t": 192111.73365925,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0122 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 327,
+    "t": 192111.733693875,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 328,
+    "t": 192111.733724125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0123 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 329,
+    "t": 192111.733803375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 330,
+    "t": 192111.733835791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0124 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 331,
+    "t": 192111.733879208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 332,
+    "t": 192111.733910166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0125 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 333,
+    "t": 192111.733967083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 334,
+    "t": 192111.733996916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0126 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 335,
+    "t": 192111.73405,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 336,
+    "t": 192111.73408075,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0127 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 337,
+    "t": 192111.734113666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 338,
+    "t": 192111.734143291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0128 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 339,
+    "t": 192111.734177666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 340,
+    "t": 192111.734217416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0129 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 341,
+    "t": 192111.734250083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 342,
+    "t": 192111.734278916,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0130 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 343,
+    "t": 192111.734311875,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 344,
+    "t": 192111.734340708,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0131 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 345,
+    "t": 192111.73437325,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 346,
+    "t": 192111.734402166,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0132 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 347,
+    "t": 192111.734438416,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 348,
+    "t": 192111.734474291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0133 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 349,
+    "t": 192111.734507041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 350,
+    "t": 192111.734535333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0134 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 351,
+    "t": 192111.73456725,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 352,
+    "t": 192111.734596208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0135 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 353,
+    "t": 192111.7346275,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 354,
+    "t": 192111.734654958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0136 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 355,
+    "t": 192111.73468625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 356,
+    "t": 192111.734713625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0137 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 357,
+    "t": 192111.734744375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 358,
+    "t": 192111.734777041,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0138 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 359,
+    "t": 192111.734808791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 360,
+    "t": 192111.734840541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0139 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 361,
+    "t": 192111.734871541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 362,
+    "t": 192111.734936541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0140 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 363,
+    "t": 192111.734973833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 364,
+    "t": 192111.735001791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0141 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 365,
+    "t": 192111.735033833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 366,
+    "t": 192111.735061375,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0142 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 367,
+    "t": 192111.735092291,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 368,
+    "t": 192111.735119333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0143 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 369,
+    "t": 192111.7351495,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 370,
+    "t": 192112.237427625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0144 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 371,
+    "t": 192112.237474666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 372,
+    "t": 192112.237506083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0145 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 373,
+    "t": 192112.237540791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 374,
+    "t": 192112.23756975,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0146 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 375,
+    "t": 192112.237603541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 376,
+    "t": 192112.237634416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0147 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 377,
+    "t": 192112.237667416,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 378,
+    "t": 192112.237782541,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0148 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 379,
+    "t": 192112.237817416,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 380,
+    "t": 192112.237853,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0149 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 381,
+    "t": 192112.237886625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 382,
+    "t": 192112.237914958,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0150 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 383,
+    "t": 192112.237946166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 384,
+    "t": 192112.2379745,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0151 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 385,
+    "t": 192112.238036791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 386,
+    "t": 192112.238065791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0152 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 387,
+    "t": 192112.238097041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 388,
+    "t": 192112.238124666,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0153 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 389,
+    "t": 192112.238155583,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 390,
+    "t": 192112.23818275,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0154 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 391,
+    "t": 192112.238213541,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 392,
+    "t": 192112.23825975,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0155 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 393,
+    "t": 192112.238291,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 394,
+    "t": 192112.238318458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0156 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 395,
+    "t": 192112.238349083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 396,
+    "t": 192112.238376583,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0157 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 397,
+    "t": 192112.238407041,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 398,
+    "t": 192112.238491625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0158 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 399,
+    "t": 192112.238609166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 400,
+    "t": 192112.238641416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0159 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 401,
+    "t": 192112.238673083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 402,
+    "t": 192112.2387345,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0160 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 403,
+    "t": 192112.238767833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 404,
+    "t": 192112.238796333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0161 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 405,
+    "t": 192112.238827666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 406,
+    "t": 192112.238855333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0162 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 407,
+    "t": 192112.238885666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 408,
+    "t": 192112.23893525,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0163 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 409,
+    "t": 192112.238968666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 410,
+    "t": 192112.23899625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0164 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 411,
+    "t": 192112.239026625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 412,
+    "t": 192112.239069291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0165 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 413,
+    "t": 192112.239100333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 414,
+    "t": 192112.239143333,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0166 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 415,
+    "t": 192112.239174791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 416,
+    "t": 192112.239215791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0167 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 417,
+    "t": 192112.239268208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 418,
+    "t": 192112.239382041,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0168 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 419,
+    "t": 192112.239419333,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 420,
+    "t": 192112.239448208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0169 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 421,
+    "t": 192112.239757,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 422,
+    "t": 192112.241794125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0170 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 423,
+    "t": 192112.241878833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 424,
+    "t": 192112.24194425,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0171 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 425,
+    "t": 192112.242031791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 426,
+    "t": 192112.242095,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0172 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 427,
+    "t": 192112.242166083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 428,
+    "t": 192112.242226625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0173 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 429,
+    "t": 192112.242296208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 430,
+    "t": 192112.242358791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0174 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 431,
+    "t": 192112.242440833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 432,
+    "t": 192112.24250025,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0175 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 433,
+    "t": 192112.242567166,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 434,
+    "t": 192112.24262625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0176 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 435,
+    "t": 192112.242692208,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 436,
+    "t": 192112.242761583,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0177 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 437,
+    "t": 192112.242829083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 438,
+    "t": 192112.242887625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0178 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 439,
+    "t": 192112.242953708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 440,
+    "t": 192112.243012708,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0179 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 441,
+    "t": 192112.243087833,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 442,
+    "t": 192112.24314725,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0180 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 443,
+    "t": 192112.2432225,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 444,
+    "t": 192112.243333125,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0181 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 445,
+    "t": 192112.243399791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 446,
+    "t": 192112.753228208,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0182 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 447,
+    "t": 192112.753294625,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 448,
+    "t": 192112.753330625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0183 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 449,
+    "t": 192112.753370708,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 450,
+    "t": 192112.753404291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0184 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 451,
+    "t": 192112.753457375,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 452,
+    "t": 192112.7534905,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0185 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 453,
+    "t": 192112.75352775,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 454,
+    "t": 192112.753595458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0186 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 455,
+    "t": 192112.753638458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 456,
+    "t": 192112.753673083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0187 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 457,
+    "t": 192112.753710458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 458,
+    "t": 192112.753742416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0188 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 459,
+    "t": 192112.753778458,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 460,
+    "t": 192112.753838291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0189 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 461,
+    "t": 192112.753873958,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 462,
+    "t": 192112.753905416,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0190 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 463,
+    "t": 192112.754004083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 464,
+    "t": 192112.754038083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0191 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 465,
+    "t": 192112.754074291,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 466,
+    "t": 192112.754117625,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0192 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 467,
+    "t": 192112.754155083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 468,
+    "t": 192112.754187458,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0193 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 469,
+    "t": 192112.754231083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 470,
+    "t": 192112.754264083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0194 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 471,
+    "t": 192112.754299875,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 472,
+    "t": 192112.754331291,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0195 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 473,
+    "t": 192112.754380083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 474,
+    "t": 192112.754533791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0196 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 475,
+    "t": 192112.754629083,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 476,
+    "t": 192112.754661791,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0197 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 477,
+    "t": 192112.754697666,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 478,
+    "t": 192112.754729041,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0198 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 479,
+    "t": 192112.754764125,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 480,
+    "t": 192112.754795083,
+    "data": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "token-0199 ",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 481,
+    "t": 192112.754830791,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 11,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 482,
+    "t": 192112.754920708,
+    "data": {
+      "type": "assistant",
+      "uuid": "228dc2bd-1b43-41ba-b1fd-7a5aa37154f5",
+      "message": {
+        "id": "msg_mock000026",
+        "role": "assistant",
+        "type": "message",
+        "model": "claude-fable-5",
+        "usage": {
+          "input_tokens": 42,
+          "output_tokens": 1
+        },
+        "content": [
+          {
+            "text": "token-0000 token-0001 token-0002 token-0003 token-0004 token-0005 token-0006 token-0007 token-0008 token-0009 token-0010 token-0011 token-0012 token-0013 token-0014 token-0015 token-0016 token-0017 token-0018 token-0019 token-0020 token-0021 token-0022 token-0023 token-0024 token-0025 token-0026 token-0027 token-0028 token-0029 token-0030 token-0031 token-0032 token-0033 token-0034 token-0035 token-0036 token-0037 token-0038 token-0039 token-0040 token-0041 token-0042 token-0043 token-0044 token-0045 token-0046 token-0047 token-0048 token-0049 token-0050 token-0051 token-0052 token-0053 token-0054 token-0055 token-0056 token-0057 token-0058 token-0059 token-0060 token-0061 token-0062 token-0063 token-0064 token-0065 token-0066 token-0067 token-0068 token-0069 token-0070 token-0071 token-0072 token-0073 token-0074 token-0075 token-0076 token-0077 token-0078 token-0079 token-0080 token-0081 token-0082 token-0083 token-0084 token-0085 token-0086 token-0087 token-0088 token-0089 token-0090 token-0091 token-0092 token-0093 token-0094 token-0095 token-0096 token-0097 token-0098 token-0099 token-0100 token-0101 token-0102 token-0103 token-0104 token-0105 token-0106 token-0107 token-0108 token-0109 token-0110 token-0111 token-0112 token-0113 token-0114 token-0115 token-0116 token-0117 token-0118 token-0119 token-0120 token-0121 token-0122 token-0123 token-0124 token-0125 token-0126 token-0127 token-0128 token-0129 token-0130 token-0131 token-0132 token-0133 token-0134 token-0135 token-0136 token-0137 token-0138 token-0139 token-0140 token-0141 token-0142 token-0143 token-0144 token-0145 token-0146 token-0147 token-0148 token-0149 token-0150 token-0151 token-0152 token-0153 token-0154 token-0155 token-0156 token-0157 token-0158 token-0159 token-0160 token-0161 token-0162 token-0163 token-0164 token-0165 token-0166 token-0167 token-0168 token-0169 token-0170 token-0171 token-0172 token-0173 token-0174 token-0175 token-0176 token-0177 token-0178 token-0179 token-0180 token-0181 token-0182 token-0183 token-0184 token-0185 token-0186 token-0187 token-0188 token-0189 token-0190 token-0191 token-0192 token-0193 token-0194 token-0195 token-0196 token-0197 token-0198 token-0199 ",
+            "type": "text"
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "context_management": null
+      },
+      "request_id": "req_mock000027",
+      "session_id": "205e8fa1-6faa-4aa5-a363-61a49446679a",
+      "parent_tool_use_id": null
+    }
+  },
+  {
+    "event": "assistant_text_observed",
+    "event_id": 483,
+    "t": 192112.755047916,
+    "data": {
+      "type": "obs.assistant_text",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 2200,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "text_block_count": 1,
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "usage_observed",
+    "event_id": 484,
+    "t": 192112.755104291,
+    "data": {
+      "type": "obs.usage",
+      "model": "claude-fable-5",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "cost_usd": 0.0,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "input_tokens": 42,
+      "total_tokens": 43,
+      "authoritative": false,
+      "output_tokens": 1,
+      "assignment_generation": 1,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 485,
+    "t": 192112.755158708,
+    "data": {
+      "text": "token-0000 token-0001 token-0002 token-0003 token-0004 token-0005 token-0006 token-0007 token-0008 token-0009 token-0010 token-0011 token-0012 token-0013 token-0014 token-0015 token-0016 token-0017 token-0018 token-0019 token-0020 token-0021 token-0022 token-0023 token-0024 token-0025 token-0026 token-0027 token-0028 token-0029 token-0030 token-0031 token-0032 token-0033 token-0034 token-0035 token-0036 token-0037 token-0038 token-0039 token-0040 token-0041 token-0042 token-0043 token-0044 token-0045 token-0046 token-0047 token-0048 token-0049 token-0050 token-0051 token-0052 token-0053 token-0054 token-0055 token-0056 token-0057 token-0058 token-0059 token-0060 token-0061 token-0062 token-0063 token-0064 token-0065 token-0066 token-0067 token-0068 token-0069 token-0070 token-0071 token-0072 token-0073 token-0074 token-0075 token-0076 token-0077 token-0078 token-0079 token-0080 token-0081 token-0082 token-0083 token-0084 token-0085 token-0086 token-0087 token-0088 token-0089 token-0090 token-0091 token-0092 token-0093 token-0094 token-0095 token-0096 token-0097 token-0098 token-0099 token-0100 token-0101 token-0102 token-0103 token-0104 token-0105 token-0106 token-0107 token-0108 token-0109 token-0110 token-0111 token-0112 token-0113 token-0114 token-0115 token-0116 token-0117 token-0118 token-0119 token-0120 token-0121 token-0122 token-0123 token-0124 token-0125 token-0126 token-0127 token-0128 token-0129 token-0130 token-0131 token-0132 token-0133 token-0134 token-0135 token-0136 token-0137 token-0138 token-0139 token-0140 token-0141 token-0142 token-0143 token-0144 token-0145 token-0146 token-0147 token-0148 token-0149 token-0150 token-0151 token-0152 token-0153 token-0154 token-0155 token-0156 token-0157 token-0158 token-0159 token-0160 token-0161 token-0162 token-0163 token-0164 token-0165 token-0166 token-0167 token-0168 token-0169 token-0170 token-0171 token-0172 token-0173 token-0174 token-0175 token-0176 token-0177 token-0178 token-0179 token-0180 token-0181 token-0182 token-0183 token-0184 token-0185 token-0186 token-0187 token-0188 token-0189 token-0190 token-0191 token-0192 token-0193 token-0194 token-0195 token-0196 token-0197 token-0198 token-0199 ",
+      "type": "result"
+    }
+  },
+  {
+    "event": "result_observed",
+    "event_id": 486,
+    "t": 192112.755203541,
+    "data": {
+      "type": "obs.result",
+      "engine": "claude-code",
+      "harness": "claude-code",
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "text_chars": 2200,
+      "thread_key": "probe-c-1781124512",
+      "execution_id": "exe_7d9ae501238e491d",
+      "assignment_generation": 1
+    }
+  },
+  {
+    "event": "amp_raw_event",
+    "event_id": 487,
+    "t": 192112.755242625,
+    "data": {
+      "type": "turn.done",
+      "result": "token-0000 token-0001 token-0002 token-0003 token-0004 token-0005 token-0006 token-0007 token-0008 token-0009 token-0010 token-0011 token-0012 token-0013 token-0014 token-0015 token-0016 token-0017 token-0018 token-0019 token-0020 token-0021 token-0022 token-0023 token-0024 token-0025 token-0026 token-0027 token-0028 token-0029 token-0030 token-0031 token-0032 token-0033 token-0034 token-0035 token-0036 token-0037 token-0038 token-0039 token-0040 token-0041 token-0042 token-0043 token-0044 token-0045 token-0046 token-0047 token-0048 token-0049 token-0050 token-0051 token-0052 token-0053 token-0054 token-0055 token-0056 token-0057 token-0058 token-0059 token-0060 token-0061 token-0062 token-0063 token-0064 token-0065 token-0066 token-0067 token-0068 token-0069 token-0070 token-0071 token-0072 token-0073 token-0074 token-0075 token-0076 token-0077 token-0078 token-0079 token-0080 token-0081 token-0082 token-0083 token-0084 token-0085 token-0086 token-0087 token-0088 token-0089 token-0090 token-0091 token-0092 token-0093 token-0094 token-0095 token-0096 token-0097 token-0098 token-0099 token-0100 token-0101 token-0102 token-0103 token-0104 token-0105 token-0106 token-0107 token-0108 token-0109 token-0110 token-0111 token-0112 token-0113 token-0114 token-0115 token-0116 token-0117 token-0118 token-0119 token-0120 token-0121 token-0122 token-0123 token-0124 token-0125 token-0126 token-0127 token-0128 token-0129 token-0130 token-0131 token-0132 token-0133 token-0134 token-0135 token-0136 token-0137 token-0138 token-0139 token-0140 token-0141 token-0142 token-0143 token-0144 token-0145 token-0146 token-0147 token-0148 token-0149 token-0150 token-0151 token-0152 token-0153 token-0154 token-0155 token-0156 token-0157 token-0158 token-0159 token-0160 token-0161 token-0162 token-0163 token-0164 token-0165 token-0166 token-0167 token-0168 token-0169 token-0170 token-0171 token-0172 token-0173 token-0174 token-0175 token-0176 token-0177 token-0178 token-0179 token-0180 token-0181 token-0182 token-0183 token-0184 token-0185 token-0186 token-0187 token-0188 token-0189 token-0190 token-0191 token-0192 token-0193 token-0194 token-0195 token-0196 token-0197 token-0198 token-0199 ",
+      "turn_id": 1,
+      "agent_thread_id": "205e8fa1-6faa-4aa5-a363-61a49446679a"
+    }
+  },
+  {
+    "event": "execution_summary",
+    "event_id": 488,
+    "t": 192112.755308875,
+    "data": {
+      "type": "obs.execution_summary",
+      "engine": "claude-code",
+      "models": [
+        "claude-fable-5"
+      ],
+      "status": "completed",
+      "harness": "claude-code",
+      "ttft_ms": 212.9,
+      "user_id": "probe",
+      "cost_usd": 0.0,
+      "duration_s": 2.86,
+      "persona_id": null,
+      "prompt_ref": "harness:claude-code",
+      "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
+      "thread_key": "probe-c-1781124512",
+      "error_events": 0,
+      "execution_id": "exe_7d9ae501238e491d",
+      "input_tokens": 42,
+      "total_tokens": 43,
+      "output_tokens": 1,
+      "result_events": 1,
+      "command_events": 0,
+      "raw_event_count": 204,
+      "subagent_events": 0,
+      "terminal_reason": "completed",
+      "reasoning_events": 0,
+      "tool_retry_count": 0,
+      "subagent_failures": 0,
+      "tool_error_events": 0,
+      "execution_sequence": 0,
+      "file_change_events": 0,
+      "tool_calls_by_name": {},
+      "tool_result_events": 0,
+      "tool_errors_by_name": {},
+      "assistant_text_chars": 4400,
+      "command_error_events": 0,
+      "assignment_generation": 1,
+      "assistant_text_events": 201,
+      "tool_error_categories": {},
+      "cache_read_input_tokens": 0,
+      "observation_event_count": 204,
+      "assistant_tool_use_events": 0,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  {
+    "event": "execution_state",
+    "event_id": 489,
+    "t": 192112.755348375,
+    "data": {
+      "type": "execution.state",
+      "status": "completed",
+      "thread_key": "probe-c-1781124512",
+      "result_text": "token-0000 token-0001 token-0002 token-0003 token-0004 token-0005 token-0006 token-0007 token-0008 token-0009 token-0010 token-0011 token-0012 token-0013 token-0014 token-0015 token-0016 token-0017 token-0018 token-0019 token-0020 token-0021 token-0022 token-0023 token-0024 token-0025 token-0026 token-0027 token-0028 token-0029 token-0030 token-0031 token-0032 token-0033 token-0034 token-0035 token-0036 token-0037 token-0038 token-0039 token-0040 token-0041 token-0042 token-0043 token-0044 token-0045 token-0046 token-0047 token-0048 token-0049 token-0050 token-0051 token-0052 token-0053 token-0054 token-0055 token-0056 token-0057 token-0058 token-0059 token-0060 token-0061 token-0062 token-0063 token-0064 token-0065 token-0066 token-0067 token-0068 token-0069 token-0070 token-0071 token-0072 token-0073 token-0074 token-0075 token-0076 token-0077 token-0078 token-0079 token-0080 token-0081 token-0082 token-0083 token-0084 token-0085 token-0086 token-0087 token-0088 token-0089 token-0090 token-0091 token-0092 token-0093 token-0094 token-0095 token-0096 token-0097 token-0098 token-0099 token-0100 token-0101 token-0102 token-0103 token-0104 token-0105 token-0106 token-0107 token-0108 token-0109 token-0110 token-0111 token-0112 token-0113 token-0114 token-0115 token-0116 token-0117 token-0118 token-0119 token-0120 token-0121 token-0122 token-0123 token-0124 token-0125 token-0126 token-0127 token-0128 token-0129 token-0130 token-0131 token-0132 token-0133 token-0134 token-0135 token-0136 token-0137 token-0138 token-0139 token-0140 token-0141 token-0142 token-0143 token-0144 token-0145 token-0146 token-0147 token-0148 token-0149 token-0150 token-0151 token-0152 token-0153 token-0154 token-0155 token-0156 token-0157 token-0158 token-0159 token-0160 token-0161 token-0162 token-0163 token-0164 token-0165 token-0166 token-0167 token-0168 token-0169 token-0170 token-0171 token-0172 token-0173 token-0174 token-0175 token-0176 token-0177 token-0178 token-0179 token-0180 token-0181 token-0182 token-0183 token-0184 token-0185 token-0186 token-0187 token-0188 token-0189 token-0190 token-0191 token-0192 token-0193 token-0194 token-0195 token-0196 token-0197 token-0198 token-0199 ",
+      "execution_id": "exe_7d9ae501238e491d",
+      "agent_thread_id": "205e8fa1-6faa-4aa5-a363-61a49446679a",
+      "terminal_reason": "completed"
+    }
+  }
+]
