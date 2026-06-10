@@ -1,0 +1,70 @@
+# Mock Anthropic API for Phase-0 seam validation.
+# Sandbox pods (centaur.ai/managed=true) reach it directly via NO_PROXY +
+# the egress policy below; iron-proxy gets ingress too as a fallback path.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: centaur-llm-mock
+  namespace: centaur
+  labels: {app: centaur-llm-mock}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: centaur-llm-mock}
+  template:
+    metadata:
+      labels: {app: centaur-llm-mock}
+    spec:
+      containers:
+        - name: mock
+          image: atrium-llm-mock:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8081}]
+          readinessProbe:
+            httpGet: {path: /health, port: 8081}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: centaur-llm-mock
+  namespace: centaur
+spec:
+  selector: {app: centaur-llm-mock}
+  ports: [{port: 8081, targetPort: 8081}]
+---
+# Allow sandbox pods to egress to the mock.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress-llm-mock
+  namespace: centaur
+spec:
+  podSelector:
+    matchLabels: {centaur.ai/managed: "true"}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app: centaur-llm-mock}
+      ports: [{protocol: TCP, port: 8081}]
+---
+# Allow ingress to the mock from sandboxes and iron-proxy pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-mock-ingress
+  namespace: centaur
+spec:
+  podSelector:
+    matchLabels: {app: centaur-llm-mock}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {centaur.ai/managed: "true"}
+        - podSelector:
+            matchLabels: {centaur.ai/iron-proxy: "true"}
+      ports: [{protocol: TCP, port: 8081}]
