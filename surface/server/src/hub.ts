@@ -72,6 +72,13 @@ export class WsHub {
     return [...byId.values()].sort((a, b) => a.handle.localeCompare(b.handle));
   }
 
+  isUserPresent(channelId: string, userId: string): boolean {
+    for (const client of this.clients) {
+      if (client.user.id === userId && client.channels.has(channelId)) return true;
+    }
+    return false;
+  }
+
   private presenceMessage(channelId: string): object {
     return { type: 'presence', channelId, users: this.presenceFor(channelId) };
   }

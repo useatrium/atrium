@@ -19,12 +19,19 @@ export interface SessionJson {
   harness: string;
   spawnedBy: string;
   driverId: string | null;
+  driver: SessionUserJson | null;
+  pendingSeatRequests: SessionUserJson[];
   costUsd: number;
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
   lastEventId: number;
   permalink: string;
+}
+
+export interface SessionUserJson {
+  userId: string;
+  displayName: string;
 }
 
 export interface SessionRunsOptions {
@@ -57,6 +64,11 @@ interface SessionRow {
 
 interface ChannelRow {
   workspace_id: string;
+}
+
+interface SessionUserRow {
+  user_id: string;
+  display_name: string;
 }
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
@@ -150,7 +162,7 @@ export class SessionRuns {
     if (!row) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
-    return toJson(row);
+    return this.toJsonWithSeatInfo(row);
   }
 
   async streamCentaurEvents(
@@ -184,7 +196,7 @@ export class SessionRuns {
   }
 
   async postUserMessage(id: string, userId: string, text: string): Promise<void> {
-    const row = await this.requireSpawner(id, userId);
+    const row = await this.requireDriver(id, userId);
     let generation = row.assignment_generation;
     if (generation == null) {
       const spawned = await this.centaur.spawn(row.centaur_thread_key, row.harness);
@@ -206,10 +218,93 @@ export class SessionRuns {
   }
 
   async cancelSession(id: string, userId: string): Promise<void> {
-    const row = await this.requireSpawner(id, userId);
+    const row = await this.requireSpawnerOrDriver(id, userId);
     await this.centaur.release(row.centaur_thread_key, `rel-${id}`, true);
     await this.updateStatus(id, 'cancelled');
     await this.stopTailer(id);
+  }
+
+  async requestSeat(id: string, userId: string): Promise<void> {
+    const event = await withTx(this.pool, async (client) => {
+      const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
+      const row = session.rows[0];
+      if (!row) {
+        throw new DomainError(404, 'session_not_found', 'session not found');
+      }
+      if (row.driver_id === userId) {
+        throw new DomainError(403, 'forbidden', 'driver already holds the seat');
+      }
+      const inserted = await client.query(
+        `INSERT INTO seat_requests (session_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [id, userId],
+      );
+      if (!inserted.rowCount) return null;
+      return appendEvent(client, {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: row.thread_root_event_id,
+        type: 'session.seat_requested',
+        actorId: userId,
+        payload: { sessionId: id, by: userId },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
+  }
+
+  async grantSeat(id: string, driverId: string, nextDriverId: string): Promise<void> {
+    const event = await this.withSeatLock(async (client) => {
+      const row = await this.lockSessionForSeatMutation(client, id);
+      if (!row) {
+        throw new DomainError(404, 'session_not_found', 'session not found');
+      }
+      if (row.driver_id !== driverId) {
+        throw new DomainError(403, 'forbidden', 'only the current driver may grant the seat');
+      }
+      await this.assertUserExists(client, nextDriverId);
+      const updated = await client.query<SessionRow>(
+        'UPDATE sessions SET driver_id = $1 WHERE id = $2 RETURNING *',
+        [nextDriverId, id],
+      );
+      await client.query('DELETE FROM seat_requests WHERE session_id = $1 AND user_id = $2', [id, nextDriverId]);
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.seat_changed',
+        actorId: driverId,
+        payload: { sessionId: id, from: row.driver_id, to: nextDriverId, reason: 'granted' },
+      });
+    });
+    this.hub.publishEvent(event);
+  }
+
+  async takeSeat(id: string, userId: string): Promise<void> {
+    const event = await this.withSeatLock(async (client) => {
+      const row = await this.lockSessionForSeatMutation(client, id);
+      if (!row) {
+        throw new DomainError(404, 'session_not_found', 'session not found');
+      }
+      if (row.driver_id === userId) {
+        throw new DomainError(409, 'seat_held', 'requester already holds the seat');
+      }
+      if (row.driver_id && this.hub.isUserPresent(`session:${id}`, row.driver_id)) {
+        throw new DomainError(409, 'seat_held', 'current driver is watching');
+      }
+      await client.query('UPDATE sessions SET driver_id = $1 WHERE id = $2', [userId, id]);
+      await client.query('DELETE FROM seat_requests WHERE session_id = $1 AND user_id = $2', [id, userId]);
+      return appendEvent(client, {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: row.thread_root_event_id,
+        type: 'session.seat_changed',
+        actorId: userId,
+        payload: { sessionId: id, from: row.driver_id, to: userId, reason: 'taken' },
+      });
+    });
+    this.hub.publishEvent(event);
   }
 
   async resumeActiveSessions(): Promise<void> {
@@ -413,15 +508,72 @@ export class SessionRuns {
     return res.rows[0] ?? null;
   }
 
-  private async requireSpawner(id: string, userId: string): Promise<SessionRow> {
+  private async requireDriver(id: string, userId: string): Promise<SessionRow> {
     const row = await this.getSessionRow(id);
     if (!row) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
-    if (row.spawned_by !== userId) {
-      throw new DomainError(403, 'forbidden', 'only the spawner may steer this session');
+    if (row.driver_id !== userId) {
+      throw new DomainError(403, 'forbidden', 'only the current driver may steer this session');
     }
     return row;
+  }
+
+  private async requireSpawnerOrDriver(id: string, userId: string): Promise<SessionRow> {
+    const row = await this.getSessionRow(id);
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    if (row.spawned_by !== userId && row.driver_id !== userId) {
+      throw new DomainError(403, 'forbidden', 'only the spawner or current driver may cancel this session');
+    }
+    return row;
+  }
+
+  private async withSeatLock<T>(fn: (client: DbClient) => Promise<T>): Promise<T> {
+    try {
+      return await withTx(this.pool, fn);
+    } catch (err) {
+      if ((err as { code?: string }).code === '55P03') {
+        throw new DomainError(409, 'seat_held', 'seat mutation already in progress');
+      }
+      throw err;
+    }
+  }
+
+  private async lockSessionForSeatMutation(client: DbClient, id: string): Promise<SessionRow | null> {
+    const res = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE NOWAIT', [id]);
+    return res.rows[0] ?? null;
+  }
+
+  private async assertUserExists(client: DbClient, userId: string): Promise<void> {
+    const res = await client.query('SELECT 1 FROM users WHERE id = $1', [userId]);
+    if (!res.rowCount) {
+      throw new DomainError(404, 'user_not_found', 'user not found');
+    }
+  }
+
+  private async toJsonWithSeatInfo(row: SessionRow): Promise<SessionJson> {
+    const [driver, requests] = await Promise.all([
+      row.driver_id
+        ? this.pool.query<SessionUserRow>(
+            'SELECT id AS user_id, display_name FROM users WHERE id = $1',
+            [row.driver_id],
+          )
+        : Promise.resolve({ rows: [] as SessionUserRow[] }),
+      this.pool.query<SessionUserRow>(
+        `SELECT u.id AS user_id, u.display_name
+         FROM seat_requests sr
+         JOIN users u ON u.id = sr.user_id
+         WHERE sr.session_id = $1
+         ORDER BY sr.created_at ASC, u.display_name ASC`,
+        [row.id],
+      ),
+    ]);
+    return toJson(row, {
+      driver: driver.rows[0] ? toSessionUserJson(driver.rows[0]) : null,
+      pendingSeatRequests: requests.rows.map(toSessionUserJson),
+    });
   }
 }
 
@@ -459,7 +611,10 @@ function normalizeStatus(status: string): SessionStatus {
   return 'running';
 }
 
-function toJson(row: SessionRow): SessionJson {
+function toJson(
+  row: SessionRow,
+  seatInfo: { driver?: SessionUserJson | null; pendingSeatRequests?: SessionUserJson[] } = {},
+): SessionJson {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -470,6 +625,8 @@ function toJson(row: SessionRow): SessionJson {
     harness: row.harness,
     spawnedBy: row.spawned_by,
     driverId: row.driver_id,
+    driver: seatInfo.driver ?? null,
+    pendingSeatRequests: seatInfo.pendingSeatRequests ?? [],
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,
     createdAt: new Date(row.created_at).toISOString(),
@@ -477,4 +634,8 @@ function toJson(row: SessionRow): SessionJson {
     lastEventId: row.last_event_id,
     permalink: `/s/${row.id}`,
   };
+}
+
+function toSessionUserJson(row: SessionUserRow): SessionUserJson {
+  return { userId: row.user_id, displayName: row.display_name };
 }

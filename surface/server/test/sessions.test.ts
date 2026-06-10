@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { WsHub, type HubSocket } from '../src/hub.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 interface RecordedRequest {
@@ -104,13 +106,41 @@ afterEach(async () => {
   await fake?.stop();
 });
 
-async function loginCookie(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {
+function fakeSocket(): HubSocket {
+  return {
+    readyState: 1,
+    send() {},
+  };
+}
+
+async function loginUser(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  handle: string,
+  displayName: string,
+): Promise<{ cookie: string; userId: string }> {
   const login = await app.inject({
     method: 'POST',
     url: '/auth/login',
-    payload: { handle: 'alice', displayName: 'Alice' },
+    payload: { handle, displayName },
   });
-  return login.headers['set-cookie'] as string;
+  return { cookie: login.headers['set-cookie'] as string, userId: login.json().user.id };
+}
+
+async function loginCookie(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {
+  return (await loginUser(app, 'alice', 'Alice')).cookie;
+}
+
+async function insertRunningSession(driverId = fx.userId): Promise<string> {
+  const inserted = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (
+       workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+       driver_id, current_execution_id, assignment_generation
+     )
+     VALUES ($1, $2, $3, 'claude-code', 'seat test', 'running', $4, $5, 'exe_fake', 1)
+     RETURNING id`,
+    [fx.workspaceId, fx.channelId, `thread-${randomUUID()}`, fx.userId, driverId],
+  );
+  return inserted.rows[0]!.id;
 }
 
 async function waitFor(assertion: () => Promise<void> | void, timeoutMs = 5000): Promise<void> {
@@ -284,6 +314,195 @@ describe('Phase 2 sessions', () => {
     expect(release?.body).toMatchObject({ release_id: `rel-${id}`, cancel_inflight: true });
     const row = await pool.query('SELECT status FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].status).toBe('cancelled');
+    await app.close();
+  });
+
+  it('request -> grant moves driver, appends events, and transfers steer permission', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertRunningSession(alice.userId);
+
+    const request = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/seat/request`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(request.statusCode).toBe(202);
+
+    const grant = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/seat/grant`,
+      headers: { cookie: alice.cookie },
+      payload: { userId: bob.userId },
+    });
+    expect(grant.statusCode).toBe(202);
+
+    const sessionRes = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}`,
+      headers: { cookie: alice.cookie },
+    });
+    expect(sessionRes.json().session).toMatchObject({
+      driverId: bob.userId,
+      driver: { userId: bob.userId, displayName: 'Bob' },
+      pendingSeatRequests: [],
+    });
+
+    const events = await pool.query('SELECT type, actor_id, payload FROM events ORDER BY id ASC');
+    expect(events.rows.map((r) => r.type).filter((type) => type.startsWith('session.seat_'))).toEqual([
+      'session.seat_requested',
+      'session.seat_changed',
+    ]);
+    expect(events.rows.at(-2)?.payload).toMatchObject({ sessionId: id, by: bob.userId });
+    expect(events.rows.at(-1)?.payload).toMatchObject({
+      sessionId: id,
+      from: alice.userId,
+      to: bob.userId,
+      reason: 'granted',
+    });
+
+    const oldDriverSteer = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie: alice.cookie },
+      payload: { text: 'old driver tries' },
+    });
+    expect(oldDriverSteer.statusCode).toBe(403);
+
+    const newDriverSteer = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie: bob.cookie },
+      payload: { text: 'new driver steers' },
+    });
+    expect(newDriverSteer.statusCode).toBe(202);
+    await app.close();
+  });
+
+  it('take refuses while driver watches, then succeeds with reason taken when absent', async () => {
+    const hub = new WsHub();
+    const app = await buildApp({
+      pool,
+      hub,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertRunningSession(alice.userId);
+
+    const watching = hub.addClient(fakeSocket(), { id: alice.userId, handle: 'alice', displayName: 'Alice' });
+    hub.subscribe(watching, [`session:${id}`]);
+
+    const refused = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/seat/take`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toBe('seat_held');
+
+    hub.removeClient(watching);
+    const taken = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/seat/take`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(taken.statusCode).toBe(202);
+
+    const row = await pool.query('SELECT driver_id FROM sessions WHERE id = $1', [id]);
+    expect(row.rows[0].driver_id).toBe(bob.userId);
+    const event = await pool.query("SELECT payload FROM events WHERE type = 'session.seat_changed'");
+    expect(event.rows).toHaveLength(1);
+    expect(event.rows[0].payload).toMatchObject({
+      sessionId: id,
+      from: alice.userId,
+      to: bob.userId,
+      reason: 'taken',
+    });
+    await app.close();
+  });
+
+  it('concurrent seat mutations produce exactly one winner and one seat_changed event', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const carol = await loginUser(app, 'carol', 'Carol');
+    const id = await insertRunningSession(alice.userId);
+
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION test_slow_driver_update() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.driver_id IS DISTINCT FROM OLD.driver_id THEN
+          PERFORM pg_sleep(0.2);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS test_slow_driver_update ON sessions;
+      CREATE TRIGGER test_slow_driver_update
+        BEFORE UPDATE OF driver_id ON sessions
+        FOR EACH ROW EXECUTE FUNCTION test_slow_driver_update();
+    `);
+    try {
+      const [a, b] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: `/api/sessions/${id}/seat/take`,
+          headers: { cookie: bob.cookie },
+        }),
+        app.inject({
+          method: 'POST',
+          url: `/api/sessions/${id}/seat/take`,
+          headers: { cookie: carol.cookie },
+        }),
+      ]);
+      const statuses = [a.statusCode, b.statusCode].sort();
+      expect(statuses).toEqual([202, 409]);
+      const events = await pool.query("SELECT payload FROM events WHERE type = 'session.seat_changed'");
+      expect(events.rows).toHaveLength(1);
+      expect([bob.userId, carol.userId]).toContain(events.rows[0].payload.to);
+    } finally {
+      await pool.query('DROP TRIGGER IF EXISTS test_slow_driver_update ON sessions');
+      await pool.query('DROP FUNCTION IF EXISTS test_slow_driver_update()');
+      await app.close();
+    }
+  });
+
+  it("allows cancel by driver who is not spawner and rejects a random third user", async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const carol = await loginUser(app, 'carol', 'Carol');
+    const id = await insertRunningSession(bob.userId);
+
+    const third = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/cancel`,
+      headers: { cookie: carol.cookie },
+    });
+    expect(third.statusCode).toBe(403);
+
+    const driverCancel = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/cancel`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(driverCancel.statusCode).toBe(202);
+    const release = fake.requests.find((r) => r.path.endsWith('/release'));
+    expect(release?.body).toMatchObject({ release_id: `rel-${id}`, cancel_inflight: true });
     await app.close();
   });
 });

@@ -328,6 +328,34 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(202).send({ ok: true });
   });
 
+  app.post('/api/sessions/:id/seat/request', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    await sessionRuns.requestSeat(id, user.id);
+    return reply.code(202).send({ ok: true });
+  });
+
+  app.post('/api/sessions/:id/seat/grant', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { userId?: string };
+    if (!body.userId || typeof body.userId !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
+    }
+    await sessionRuns.grantSeat(id, user.id, body.userId);
+    return reply.code(202).send({ ok: true });
+  });
+
+  app.post('/api/sessions/:id/seat/take', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    await sessionRuns.takeSeat(id, user.id);
+    return reply.code(202).send({ ok: true });
+  });
+
   app.post('/api/sessions/:id/cancel', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
