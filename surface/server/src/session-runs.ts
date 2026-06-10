@@ -21,6 +21,7 @@ export interface SessionJson {
   driverId: string | null;
   driver: SessionUserJson | null;
   pendingSeatRequests: SessionUserJson[];
+  viewerCount: number;
   costUsd: number;
   resultText: string | null;
   createdAt: string;
@@ -167,6 +168,7 @@ export class SessionRuns {
 
   async streamCentaurEvents(
     session: SessionJson,
+    userId: string,
     afterEventId: number,
     raw: ServerResponse,
     signal: AbortSignal,
@@ -175,6 +177,7 @@ export class SessionRuns {
     if (!row) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
+    const viewId = this.openSessionView(session.id, userId);
     const keepAlive = setInterval(() => {
       raw.write(': keep-alive\n\n');
     }, 15_000);
@@ -191,6 +194,9 @@ export class SessionRuns {
       }
     } finally {
       clearInterval(keepAlive);
+      void viewId.then((id) => {
+        if (id != null) void this.closeSessionView(id);
+      });
       raw.end();
     }
   }
@@ -554,7 +560,7 @@ export class SessionRuns {
   }
 
   private async toJsonWithSeatInfo(row: SessionRow): Promise<SessionJson> {
-    const [driver, requests] = await Promise.all([
+    const [driver, requests, viewers] = await Promise.all([
       row.driver_id
         ? this.pool.query<SessionUserRow>(
             'SELECT id AS user_id, display_name FROM users WHERE id = $1',
@@ -569,11 +575,40 @@ export class SessionRuns {
          ORDER BY sr.created_at ASC, u.display_name ASC`,
         [row.id],
       ),
+      this.pool.query<{ viewer_count: number }>(
+        `SELECT count(DISTINCT user_id) AS viewer_count
+         FROM session_views
+         WHERE session_id = $1 AND user_id <> $2`,
+        [row.id, row.spawned_by],
+      ),
     ]);
     return toJson(row, {
       driver: driver.rows[0] ? toSessionUserJson(driver.rows[0]) : null,
       pendingSeatRequests: requests.rows.map(toSessionUserJson),
+      // node-pg returns count() as a string; coerce so JSON carries a number.
+      viewerCount: Number(viewers.rows[0]?.viewer_count ?? 0),
     });
+  }
+
+  private async openSessionView(sessionId: string, userId: string): Promise<number | null> {
+    try {
+      const res = await this.pool.query<{ id: number }>(
+        'INSERT INTO session_views (session_id, user_id) VALUES ($1, $2) RETURNING id',
+        [sessionId, userId],
+      );
+      return res.rows[0]?.id ?? null;
+    } catch (err) {
+      console.warn('session view open failed', err);
+      return null;
+    }
+  }
+
+  private async closeSessionView(id: number): Promise<void> {
+    try {
+      await this.pool.query('UPDATE session_views SET closed_at = now() WHERE id = $1', [id]);
+    } catch (err) {
+      console.warn('session view close failed', err);
+    }
   }
 }
 
@@ -613,7 +648,11 @@ function normalizeStatus(status: string): SessionStatus {
 
 function toJson(
   row: SessionRow,
-  seatInfo: { driver?: SessionUserJson | null; pendingSeatRequests?: SessionUserJson[] } = {},
+  seatInfo: {
+    driver?: SessionUserJson | null;
+    pendingSeatRequests?: SessionUserJson[];
+    viewerCount?: number;
+  } = {},
 ): SessionJson {
   return {
     id: row.id,
@@ -627,6 +666,7 @@ function toJson(
     driverId: row.driver_id,
     driver: seatInfo.driver ?? null,
     pendingSeatRequests: seatInfo.pendingSeatRequests ?? [],
+    viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,
     createdAt: new Date(row.created_at).toISOString(),
