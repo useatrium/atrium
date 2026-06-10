@@ -21,8 +21,9 @@ tokenBroker:
 
 sandbox:
   extraEnv:
-    ANTHROPIC_BASE_URL: "http://centaur-llm-mock.centaur.svc.cluster.local:8081"
-    NO_PROXY: "centaur-llm-mock.centaur.svc.cluster.local,centaur-llm-mock"
+    # https through iron-proxy (CONNECT + MITM) — the designed egress path.
+    # Mock serves a cert signed by the firewall CA (see JOURNAL 2026-06-10).
+    ANTHROPIC_BASE_URL: "https://centaur-llm-mock.centaur.svc.cluster.local"
     DISABLE_TELEMETRY: "1"
     DISABLE_ERROR_REPORTING: "1"
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"

@@ -46,3 +46,37 @@ kubectl v1.34, kind + helm + just installed via brew. No pre-existing k8s cluste
 ~/.codex/auth.json refresh token for Codex access_token mode (broker would
 rotate it and likely break local `codex` login; also broker needs 1Password).
 Nothing touched your Claude/Codex accounts.
+
+## 2026-06-10 — Phase 0 first run + the 405 saga
+
+First probe run (A/B/C): control plane mechanics all PASSED (TTFE 0.03s,
+deterministic replay, usable per-frame event ids) but the LLM leg failed 405.
+
+Debug trail (for posterity / upstreaming):
+1. Sandbox env was correct (ANTHROPIC_BASE_URL + merged NO_PROXY) but the mock
+   received zero requests. Claude Code hardening env
+   `CLAUDE_CODE_PROXY_RESOLVES_HOSTS=1` (set in `sandbox/config.py`) routes ALL
+   traffic via proxy, ignoring NO_PROXY; iron-proxy's :8080 tunnel listener is
+   CONNECT-only → plain-HTTP proxy-form POST → 405.
+2. Proved the loop works: exec into sandbox, unset proxies → `claude -p` → PONG
+   from the mock. (Claude Code does a HEAD / preflight; mock now handles HEAD.)
+3. Chose the architecturally honest fix: serve the mock over TLS on :443 with a
+   cert signed by the deployment's own firewall CA (we hold the CA key in the
+   `centaur-firewall-ca-key` secret), point ANTHROPIC_BASE_URL=https://… and let
+   traffic flow CONNECT→MITM as designed. Port 443 because per-sandbox proxy
+   egress NetworkPolicy allows `to: any` ONLY on TCP/443.
+4. Remaining failure: proxy verifies upstream certs against system roots →
+   `x509: certificate signed by unknown authority`. Fix: derived image
+   (infra/iron-proxy-trust/Dockerfile) appending the firewall CA to the proxy's
+   system bundle, retagged centaur-iron-proxy:latest, kind-loaded, pods cycled.
+
+Probe C fix: resumed streams legitimately re-emit the terminal execution_state
+snapshot; id-continuity check now requires non-decreasing ids and allows dupes
+only for execution_state frames.
+
+Upstream-worthy findings (file issues later): (a) docs don't mention the
+proxy's 443-only egress for sandbox third-party hosts; (b) no supported way to
+add upstream CAs to iron-proxy trust (needed for any self-hosted/internal LLM
+endpoint — vLLM/Ollama deployments will hit this exact wall); (c) an env-mode
+token broker (read-only refresh, in-memory rotation) would unlock
+subscription auth without 1Password.

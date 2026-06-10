@@ -122,6 +122,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._json(200, {"ok": True, "mock": "atrium-llm-mock"})
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -270,7 +275,30 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
 
-if __name__ == "__main__":
+def serve_http():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(json.dumps({"msg": f"atrium-llm-mock listening on :{PORT}"}), flush=True)
+    print(json.dumps({"msg": f"atrium-llm-mock http on :{PORT}"}), flush=True)
     server.serve_forever()
+
+
+def serve_https(cert, key):
+    import ssl
+
+    server = ThreadingHTTPServer(("0.0.0.0", TLS_PORT), Handler)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    print(json.dumps({"msg": f"atrium-llm-mock https on :{TLS_PORT}"}), flush=True)
+    server.serve_forever()
+
+
+TLS_PORT = 443
+TLS_CERT = "/tls/tls.crt"
+TLS_KEY = "/tls/tls.key"
+
+if __name__ == "__main__":
+    import os
+
+    if os.path.exists(TLS_CERT):
+        threading.Thread(target=serve_https, args=(TLS_CERT, TLS_KEY), daemon=True).start()
+    serve_http()
