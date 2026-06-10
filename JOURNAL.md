@@ -80,3 +80,13 @@ add upstream CAs to iron-proxy trust (needed for any self-hosted/internal LLM
 endpoint — vLLM/Ollama deployments will hit this exact wall); (c) an env-mode
 token broker (read-only refresh, in-memory rotation) would unlock
 subscription auth without 1Password.
+
+## 2026-06-10 — Phase 0 CLOSED: GO
+
+All 18 checks green (A/B/C 14/14 + D 4/4). Test D: API pod killed mid-SLOWSTREAM,
+execution still reached completed with full durable replay (last pre-kill id
+present). Event schema documented in phase0/results/event-schema.md — key
+finding: text streaming is PER-DELTA (1.005 events/model delta), so Phase-2
+panes can render true token streaming off the durable stream. Codex agent did
+the dump analysis (its sandbox could not write into the repo; doc written by
+main session from its findings + direct dump inspection).
