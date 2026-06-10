@@ -54,6 +54,12 @@ event-sourced message log; WebSocket fanout. Auth simple (GitHub OAuth or magic 
 optimistic send, no flicker; p50 latency < 150ms.
 **Quality gate:** usable as this project's own chat for a day without resentment.
 
+**RESULT (2026-06-10): done-when ✅** — 26/26 tests (re-verified independently),
+two-browser live verification incl. reconnect catch-up and unread; p50
+send→deliver 7.5ms. Day-of-use quality gate deferred to Phase-4 dogfood.
+Known gaps in surface/PROGRESS.md (presence granularity, in-memory unread,
+single-process WS hub, no checked-in Playwright suite).
+
 ## Phase 2 — Sessions: spawn, live pane, spectate (~2 wk)
 
 Session object ↔ Centaur thread_key. `@agent` in thread → live card → pop-out pane
