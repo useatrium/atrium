@@ -8,7 +8,7 @@ import {
   mergeThread,
   type ChatMessage,
   type WireEvent,
-} from '../src/state.js';
+} from '../src/index';
 
 const alice = { id: 'u-alice', handle: 'alice', displayName: 'Alice' };
 const bob = { id: 'u-bob', handle: 'bob', displayName: 'Bob' };

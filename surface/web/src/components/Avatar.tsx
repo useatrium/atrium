@@ -1,4 +1,4 @@
-import { initials, userColor } from '../util';
+import { initials, userColor } from '@atrium/surface-client';
 
 export function Avatar({
   name,

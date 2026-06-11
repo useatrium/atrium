@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
-import type { UserRef, WireEvent } from './state';
+import type { UserRef, WireEvent } from './timeline';
 
 export type WsStatus = 'connecting' | 'open' | 'closed';
 
-interface WsCallbacks {
+export interface WsCallbacks {
   onEvent: (ev: WireEvent) => void;
   onPresence: (channelId: string, users: UserRef[]) => void;
   /** Someone else viewing `channelId` is typing (ephemeral, no expiry signal). */
@@ -18,9 +18,24 @@ export interface WsHandle {
   sendTyping: (channelId: string) => void;
 }
 
+export interface WsOptions {
+  /**
+   * Full websocket URL or per-attempt supplier (lets native clients append a
+   * fresh auth token). Default: same-origin /ws — browser only.
+   */
+  url?: string | (() => string);
+}
+
 const PING_INTERVAL_MS = 25_000;
 const IDLE_TIMEOUT_MS = 60_000;
 const MAX_BACKOFF_MS = 10_000;
+
+function defaultUrl(): string {
+  const loc = (globalThis as { location?: { protocol: string; host: string } }).location;
+  if (!loc?.host) throw new Error('useWs: pass a websocket url outside the browser');
+  const proto = loc.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${loc.host}/ws`;
+}
 
 /**
  * Reconnecting WebSocket subscribed to a set of channels. `focusChannelId`
@@ -32,12 +47,15 @@ export function useWs(
   channelIds: string[],
   callbacks: WsCallbacks,
   focusChannelId: string | null = null,
+  options: WsOptions = {},
 ): WsHandle {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
   const channelsRef = useRef(channelIds);
   const focusRef = useRef(focusChannelId);
   const socketRef = useRef<WebSocket | null>(null);
+  const urlRef = useRef(options.url);
+  urlRef.current = options.url;
 
   // Re-subscribe when the channel set changes on a live socket.
   const channelsKey = channelIds.join(',');
@@ -83,8 +101,9 @@ export function useWs(
     const connect = () => {
       if (disposed) return;
       cbRef.current.onStatus('connecting');
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${location.host}/ws`);
+      const url = urlRef.current;
+      const target = typeof url === 'function' ? url() : url ?? defaultUrl();
+      ws = new WebSocket(target);
       socketRef.current = ws;
 
       ws.onopen = () => {

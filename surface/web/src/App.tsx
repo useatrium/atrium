@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { Login } from './Login';
-import type { UserRef } from './state';
+import type { UserRef } from '@atrium/surface-client';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
 function sessionIdFromPath(pathname: string): string | null {

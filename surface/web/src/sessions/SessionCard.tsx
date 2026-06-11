@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { formatTime } from '../util';
+import { formatTime } from '@atrium/surface-client';
 import {
   formatCost,
   formatElapsed,

@@ -3,9 +3,9 @@
 
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { appReducer, initialAppState, type AppState } from '../src/appState';
+import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
 import { SessionCard } from '../src/sessions/SessionCard';
-import type { WireEvent } from '../src/state';
+import type { WireEvent } from '@atrium/surface-client';
 
 afterEach(cleanup);
 

@@ -2,8 +2,8 @@ import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type CSSP
 import { isTerminalExecutionStatus, type TextItem, type ToolCallItem } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { Composer } from '../components/Composer';
-import type { UserRef } from '../state';
-import { formatTime } from '../util';
+import type { UserRef } from '@atrium/surface-client';
+import { formatTime } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, sessionElapsedMs, useNow } from './SessionCard';
 import {

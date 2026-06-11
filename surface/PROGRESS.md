@@ -92,3 +92,44 @@ measured over a real network.
 - Not yet done from the cross-cutting list: Playwright e2e checked into the
   repo (browser verification above was run ad hoc), recorded demo, /code-review
   of the diff.
+
+## Mobile app (Expo) — added 2026-06-10
+
+- **`shared/` (`@atrium/surface-client`)**: protocol types, pure timeline
+  state, `appReducer`, session entity folds, parameterized API client
+  (`createApi({baseUrl, getToken})`) and reconnecting `useWs` hook extracted
+  from the web app; web migrated onto it (thin `web/src/api.ts` instance +
+  `sessions/types.ts` re-export shim keep web imports unchanged). Reducer
+  tests moved to `shared/test`.
+- **Server**: bearer-token auth (`Authorization: Bearer` everywhere, `?token=`
+  on `/ws` and `/api/files/:id`; `POST /auth/login` returns the token);
+  Expo push fanout on DMs/@mentions (`src/push.ts`, `push_tokens` table via
+  migration 008, register/unregister routes, live-viewer skip, dead-token
+  pruning). Tests: `tokenAuth.test.ts`, `push.test.ts` (53 server tests).
+- **`mobile/` (`@atrium/mobile`)**: Expo SDK 56 + expo-router app — login
+  (server origin + handle), channel/DM list with unread/mention badges,
+  FlashList v2 timeline (bottom-anchored, `onStartReached` history paging,
+  day separators, author grouping), composer with optimistic send/retry,
+  image+file attachments via presigned PUT, long-press reactions/edit/delete,
+  threads, search with jump-to-message, presence counts, typing indicators,
+  push registration + notification deep links. Session rows render as status
+  cards (panes stay web-only). Styling mirrors the web zinc theme.
+- **Verified**: `pnpm -r typecheck` green (server/shared/web/mobile);
+  103 unit tests pass; `expo export` bundles both platforms cleanly through
+  the pnpm monorepo; bearer login + channels + seeded messages exercised
+  against the live dev server. Verified 2026-06-11 in the iOS 26.1 simulator
+  (iPhone 17, Expo Go): auto-login via token auth, channel list with all
+  channels, #general timeline with author grouping, WS presence ("1 here
+  now"), expo-router deep link straight into a channel, live WS fanout +
+  reconnect catch-up healing + typing indicator (driven from a second client
+  while watching the simulator). Gotcha: `react` must be pinned EXACTLY to
+  react-native's bundled renderer version (19.2.3 for RN 0.85.3) — a newer
+  react patch hard-crashes at startup. Android still unverified (no SDK on
+  this machine). Push needs `eas init` + a dev build — see `mobile/README.md`.
+- **WS auth race fixed** (found via the mobile client, affected web too): the
+  /ws route awaited the auth DB lookup before attaching socket handlers, so
+  subscribe/focus/ping frames sent the instant the socket opened could be
+  silently dropped — leaving a client on a "live" socket subscribed to
+  nothing (no presence, no fanout, no reconnect banner). Handlers now attach
+  synchronously and frames buffer until auth resolves (`wsRace.test.ts`
+  regression-tests the racing burst against a real listening server).

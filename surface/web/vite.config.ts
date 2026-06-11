@@ -12,9 +12,9 @@ export default defineConfig({
   server: {
     port: 5173,
     fs: {
-      // Allow serving @atrium/centaur-client (linked from outside this root)
-      // and its test fixtures (used by the sessions dev mock).
-      allow: ['.', '../../packages/centaur-client'],
+      // Allow serving @atrium/centaur-client and @atrium/surface-client
+      // (linked from outside this root) and their test fixtures.
+      allow: ['.', '../shared', '../../packages/centaur-client'],
     },
     proxy: {
       '/api': 'http://localhost:3001',

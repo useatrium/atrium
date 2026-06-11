@@ -14,13 +14,13 @@ import {
   type ChatMessage,
   type UserRef,
   type WireEvent,
-} from './state';
+} from './timeline';
 import {
   applySessionEvent,
   maxSessionStatus,
   mergeSpawnResponse,
   type Session,
-} from './sessions/types';
+} from './sessions';
 
 /** 'mention' outranks plain unread — it renders as a red @ badge. */
 export type UnreadLevel = false | true | 'mention';
@@ -60,7 +60,7 @@ export type AppAction =
   | { type: 'init-me'; handle: string }
   | { type: 'channels-loaded'; channels: Channel[] }
   | { type: 'channel-added'; channel: Channel }
-  | { type: 'select-channel'; channelId: string }
+  | { type: 'select-channel'; channelId: string | null }
   | { type: 'history-loaded'; channelId: string; events: WireEvent[]; hasMore: boolean }
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
   | { type: 'open-thread'; rootEventId: number }
@@ -118,11 +118,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'select-channel':
+      // null = no channel focused (mobile list screen) — unreads accrue everywhere.
       return {
         ...state,
         activeChannelId: action.channelId,
         openThreadRootId: null,
-        unread: { ...state.unread, [action.channelId]: false },
+        unread: action.channelId
+          ? { ...state.unread, [action.channelId]: false }
+          : state.unread,
       };
 
     case 'history-loaded':

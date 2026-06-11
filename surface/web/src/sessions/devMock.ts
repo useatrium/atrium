@@ -32,7 +32,7 @@
 
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import { ApiError } from '../api';
-import type { UserRef, WireEvent } from '../state';
+import type { UserRef, WireEvent } from '@atrium/surface-client';
 import type { SessionStreamCallbacks, SessionStreamHandle, CreateSessionBody } from './api';
 import { normalizeExecutionStatus, type SessionStatus, type SessionWire } from './types';
 import rawB from '../../../../packages/centaur-client/test/fixtures/B_tooltest.json';

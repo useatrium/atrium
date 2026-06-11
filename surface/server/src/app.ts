@@ -22,6 +22,7 @@ import {
   type UserRef,
 } from './events.js';
 import { WsHub } from './hub.js';
+import { sendMessagePush } from './push.js';
 import { ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import type { AttachmentMeta } from './events.js';
@@ -63,8 +64,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
 
-  async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
-    const sessionId = verifySession(req.cookies[config.sessionCookie], secret);
+  async function userFromSession(raw: string | undefined | null): Promise<UserRef | null> {
+    const sessionId = verifySession(raw, secret);
     if (!sessionId) return null;
     if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
     const res = await pool.query<{ id: string; handle: string; display_name: string }>(
@@ -75,6 +76,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     );
     const row = res.rows[0];
     return row ? { id: row.id, handle: row.handle, displayName: row.display_name } : null;
+  }
+
+  /** Signed session value from the request: bearer header (native) or cookie (web). */
+  function rawSession(req: FastifyRequest): string | undefined {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith('Bearer ')) return auth.slice('Bearer '.length);
+    return req.cookies[config.sessionCookie];
+  }
+
+  async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
+    return userFromSession(rawSession(req));
   }
 
   app.decorateRequest('user', null);
@@ -120,13 +132,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       'INSERT INTO auth_sessions (user_id) VALUES ($1) RETURNING id',
       [u.id],
     );
-    reply.setCookie(config.sessionCookie, signSession(session.rows[0]!.id, secret), {
+    const token = signSession(session.rows[0]!.id, secret);
+    reply.setCookie(config.sessionCookie, token, {
       httpOnly: true,
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 24 * 30,
     });
-    return { user: { id: u.id, handle: u.handle, displayName: u.display_name } };
+    // Native clients can't rely on cookies — they store the token and send it
+    // as `Authorization: Bearer` (HTTP) or `?token=` (WS upgrade).
+    return { user: { id: u.id, handle: u.handle, displayName: u.display_name }, token };
   });
 
   app.get('/auth/me', async (req, reply) => {
@@ -136,7 +151,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.post('/auth/logout', async (req, reply) => {
-    const sessionId = verifySession(req.cookies[config.sessionCookie], secret);
+    const sessionId = verifySession(rawSession(req), secret);
     if (sessionId && /^[0-9a-f-]{36}$/i.test(sessionId)) {
       await pool.query('DELETE FROM auth_sessions WHERE id = $1', [sessionId]);
     }
@@ -365,6 +380,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       attachments,
     });
     hub.publishEvent(event);
+    void sendMessagePush(pool, hub, event).catch((err) =>
+      app.log.warn({ err }, 'push fanout failed'),
+    );
     return reply.code(201).send({ event });
   });
 
@@ -454,7 +472,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get('/api/files/:id', async (req, reply) => {
-    const user = requireUser(req, reply);
+    // Native image views can't attach cookies/headers everywhere a file URL is
+    // used, so this route (like /ws) also accepts ?token=.
+    const q = (req.query ?? {}) as { token?: unknown };
+    const user =
+      (typeof q.token === 'string' ? await userFromSession(q.token) : null) ??
+      requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
@@ -615,6 +638,42 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(202).send({ ok: true });
   });
 
+  // -------------------------------------------------------------------------
+  // Push notifications (Expo)
+  // -------------------------------------------------------------------------
+
+  app.post('/api/push/register', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { token?: unknown; platform?: unknown };
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    const platform = body.platform === 'android' ? 'android' : 'ios';
+    if (!token || token.length > 200) {
+      return reply.code(400).send({ error: 'bad_request', message: 'token required' });
+    }
+    // A device token follows whoever logged in last on that device.
+    await pool.query(
+      `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, $3)
+       ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform`,
+      [token, user.id, platform],
+    );
+    return { ok: true };
+  });
+
+  app.post('/api/push/unregister', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { token?: unknown };
+    if (typeof body.token !== 'string' || !body.token) {
+      return reply.code(400).send({ error: 'bad_request', message: 'token required' });
+    }
+    await pool.query('DELETE FROM push_tokens WHERE token = $1 AND user_id = $2', [
+      body.token,
+      user.id,
+    ]);
+    return { ok: true };
+  });
+
   app.get('/healthz', async () => ({ ok: true }));
 
   // -------------------------------------------------------------------------
@@ -622,17 +681,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // -------------------------------------------------------------------------
 
   app.register(async (instance) => {
-    instance.get('/ws', { websocket: true }, async (socket, req) => {
-      const user = await userFromRequest(req as FastifyRequest);
-      if (!user) {
-        socket.close(4401, 'unauthorized');
-        return;
-      }
-      const client = hub.addClient(socket, user);
-      socket.on('pong', () => {
-        client.isAlive = true;
-      });
-      socket.on('message', (raw: Buffer) => {
+    instance.get('/ws', { websocket: true }, (socket, req) => {
+      // Handlers must attach synchronously: clients send subscribe/focus the
+      // moment the socket opens, and frames that arrive while auth is still
+      // awaiting the DB would otherwise be dropped on the floor (the client
+      // would then sit on a "live" socket subscribed to nothing). Buffer
+      // frames until auth resolves, then replay.
+      let client: ReturnType<WsHub['addClient']> | null = null;
+      const preAuth: Buffer[] = [];
+
+      const handleMessage = (user: UserRef, raw: Buffer) => {
+        if (!client) return;
+        const c = client;
         let msg: { type?: string; channelIds?: unknown; channelId?: unknown };
         try {
           msg = JSON.parse(raw.toString());
@@ -641,7 +701,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         }
         if (msg.type === 'subscribe' && Array.isArray(msg.channelIds)) {
           const ids = msg.channelIds
-            .filter((c): c is string => typeof c === 'string')
+            .filter((v): v is string => typeof v === 'string')
             .slice(0, 500);
           // DM channels are member-only: drop ids the user can't access so
           // fanout/presence can trust subscriptions.
@@ -652,32 +712,60 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
                 allowed.push(id);
               }
             }
-            hub.subscribe(client, allowed);
+            hub.subscribe(c, allowed);
           })().catch(() => {});
         } else if (msg.type === 'focus') {
           const channelId = typeof msg.channelId === 'string' ? msg.channelId : null;
           if (!channelId) {
-            hub.setFocus(client, null);
+            hub.setFocus(c, null);
           } else {
             void canAccessChannel(pool, user.id, channelId)
               .then((ok) => {
-                if (ok) hub.setFocus(client, channelId);
+                if (ok) hub.setFocus(c, channelId);
               })
               .catch(() => {});
           }
         } else if (msg.type === 'typing') {
           // Focus is already access-checked; require it so nobody can signal
           // into a DM they aren't reading.
-          if (typeof msg.channelId === 'string' && client.focusedChannelId === msg.channelId) {
-            hub.relayTyping(client, msg.channelId);
+          if (typeof msg.channelId === 'string' && c.focusedChannelId === msg.channelId) {
+            hub.relayTyping(c, msg.channelId);
           }
         } else if (msg.type === 'ping') {
-          hub.sendTo(client, { type: 'pong', t: Date.now() });
+          hub.sendTo(c, { type: 'pong', t: Date.now() });
         }
+      };
+
+      let authedUser: UserRef | null = null;
+      socket.on('message', (raw: Buffer) => {
+        if (authedUser) handleMessage(authedUser, raw);
+        else preAuth.push(raw);
       });
-      const cleanup = () => hub.removeClient(client);
+      socket.on('pong', () => {
+        if (client) client.isAlive = true;
+      });
+      const cleanup = () => {
+        if (client) hub.removeClient(client);
+      };
       socket.on('close', cleanup);
       socket.on('error', cleanup);
+
+      void (async () => {
+        // Browsers authenticate the upgrade with the session cookie; native
+        // clients can't set headers on WebSocket, so accept ?token= too.
+        const q = (req.query ?? {}) as { token?: unknown };
+        const user =
+          (typeof q.token === 'string' ? await userFromSession(q.token) : null) ??
+          (await userFromRequest(req as FastifyRequest));
+        if (!user) {
+          socket.close(4401, 'unauthorized');
+          return;
+        }
+        if (socket.readyState !== socket.OPEN) return; // closed while authing
+        client = hub.addClient(socket, user);
+        authedUser = user;
+        for (const raw of preAuth.splice(0)) handleMessage(user, raw);
+      })().catch(() => socket.close(1011, 'auth error'));
     });
   });
 

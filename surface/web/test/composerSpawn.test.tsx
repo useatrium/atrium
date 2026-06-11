@@ -4,7 +4,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppAction } from '../src/appState';
+import type { AppAction } from '@atrium/surface-client';
 import { Composer } from '../src/components/Composer';
 import { trySpawnFromComposer } from '../src/sessions/spawn';
 import type { SessionWire } from '../src/sessions/types';

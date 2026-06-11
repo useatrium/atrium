@@ -12,7 +12,8 @@
   "dependencies": {
     "@atrium/centaur-client": "file:../../packages/centaur-client",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@atrium/surface-client": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.6",
