@@ -31,6 +31,27 @@ export interface SeatAuditEntry {
   at: string;
 }
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionPrompt {
+  id: string;
+  header: string;
+  question: string;
+  isOther?: boolean;
+  isSecret?: boolean;
+  options?: QuestionOption[];
+}
+
+export interface SessionPendingQuestion {
+  questionId: string;
+  turnId?: string;
+  questions: QuestionPrompt[];
+  eventId?: number;
+}
+
 /** Session JSON as served by POST/GET /api/sessions. */
 export interface SessionWire {
   id: string;
@@ -45,6 +66,7 @@ export interface SessionWire {
   /** Driver display info (Phase 3 server; may be absent on older payloads). */
   driver?: SessionSeatUser | null;
   pendingSeatRequests?: SessionSeatUser[];
+  pendingQuestion?: SessionPendingQuestion | null;
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -84,6 +106,7 @@ export interface Session {
   driverName?: string;
   /** Open seat requests, oldest-first (deduped by userId). */
   pendingSeatRequests: SessionSeatUser[];
+  pendingQuestion?: SessionPendingQuestion | null;
   /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
   seatEvents: SeatAuditEntry[];
   costUsd: number;
@@ -175,6 +198,7 @@ export function sessionFromWire(w: SessionWire): Session {
     driverId: w.driverId ?? w.driver?.userId ?? null,
     driverName: w.driver?.displayName,
     pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
+    pendingQuestion: w.pendingQuestion ?? null,
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
     resultText: w.resultText ?? null,
@@ -205,6 +229,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     driverName: live.driverName ?? resp.driverName,
     pendingSeatRequests:
       live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
+    pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
     seatEvents: live.seatEvents.length > 0 ? live.seatEvents : resp.seatEvents,
     lastEventId: Math.max(live.lastEventId, resp.lastEventId),
   };
@@ -235,6 +260,7 @@ export function applySessionEvent(
       spawnedBy: typeof p.by === 'string' ? p.by : (ev.actorId ?? ''),
       driverId: null,
       pendingSeatRequests: [],
+      pendingQuestion: null,
       seatEvents: [],
       costUsd: 0,
       resultText: null,
@@ -267,6 +293,32 @@ export function applySessionEvent(
         resultText: excerpt ?? prev.resultText,
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,
+        pendingQuestion: null,
+      },
+    };
+  }
+
+  if (ev.type === 'session.question_requested') {
+    const questionId = typeof p.questionId === 'string' ? p.questionId : null;
+    if (!questionId) return sessions;
+    const questions = parseQuestionSummaries(p.questions);
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        pendingQuestion: { questionId, questions },
+      },
+    };
+  }
+
+  if (ev.type === 'session.question_answered' || ev.type === 'session.question_resolved') {
+    const questionId = typeof p.questionId === 'string' ? p.questionId : null;
+    if (!prev.pendingQuestion || (questionId && prev.pendingQuestion.questionId !== questionId)) return sessions;
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        pendingQuestion: null,
       },
     };
   }
@@ -325,6 +377,25 @@ export function applySessionEvent(
   }
 
   return sessions;
+}
+
+function parseQuestionSummaries(value: unknown): QuestionPrompt[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item): QuestionPrompt | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Record<string, unknown>;
+      if (typeof raw.id !== 'string' || typeof raw.question !== 'string') return null;
+      return {
+        id: raw.id,
+        header: typeof raw.header === 'string' ? raw.header : 'Question',
+        question: raw.question,
+        isOther: raw.isOther === true,
+        isSecret: raw.isSecret === true,
+        options: [],
+      };
+    })
+    .filter((q): q is QuestionPrompt => q !== null);
 }
 
 export function formatCost(v: number): string {

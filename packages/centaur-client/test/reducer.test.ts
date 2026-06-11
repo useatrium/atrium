@@ -66,4 +66,48 @@ describe("reduceSession", () => {
     expect(texts[0]?.text.match(/token-0000/g)).toHaveLength(1);
     expect(texts[0]?.text.match(/token-0199/g)).toHaveLength(1);
   });
+
+  it("tracks pending questions and clears them on resolution or terminal state", () => {
+    const requested: CentaurEventFrame = {
+      event: "question_requested",
+      event_id: 10,
+      data: {
+        type: "question_requested",
+        question_id: "q-1",
+        turn_id: "turn-1",
+        questions: [
+          {
+            id: "choice",
+            header: "Decision",
+            question: "Which path?",
+            options: [{ label: "A", description: "Path A" }],
+          },
+        ],
+      },
+    };
+    const withQuestion = reduceSession(initialSessionState(), requested);
+    expect(withQuestion.pendingQuestion).toMatchObject({
+      questionId: "q-1",
+      questions: [{ id: "choice", header: "Decision" }],
+    });
+
+    const resolved = reduceSession(withQuestion, {
+      event: "question_resolved",
+      event_id: 11,
+      data: { type: "question_resolved", question_id: "q-1", reason: "answered" },
+    });
+    expect(resolved.pendingQuestion).toBeNull();
+
+    const terminal = reduceSession(withQuestion, {
+      event: "execution_state",
+      event_id: 12,
+      data: {
+        type: "execution.state",
+        status: "completed",
+        thread_key: "thread-1",
+        execution_id: "exe-1",
+      },
+    });
+    expect(terminal.pendingQuestion).toBeNull();
+  });
 });

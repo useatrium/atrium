@@ -158,6 +158,17 @@ export class CentaurClient {
     return this.request("GET", `/agent/executions/${encodeURIComponent(executionId)}`);
   }
 
+  answerQuestion(
+    executionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ): Promise<Record<string, JsonValue | undefined>> {
+    return this.request("POST", `/agent/executions/${encodeURIComponent(executionId)}/answer`, {
+      question_id: questionId,
+      answers: answers as JsonObject,
+    });
+  }
+
   tailEvents(
     threadKey: string,
     options: Omit<TailEventsOptions, "baseUrl" | "apiKey" | "fetchImpl">,
