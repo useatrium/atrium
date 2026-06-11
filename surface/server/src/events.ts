@@ -326,8 +326,18 @@ export async function deleteMessage(
   });
 }
 
-/** Emojis a message can be reacted with (mirrored in the web client). */
-export const REACTION_EMOJI = ['👍', '✅', '👀', '🎉', '❤️', '😂', '🚀', '🤔'] as const;
+/** Emojis a message can be reacted with — keep in sync with the web client's
+ * REACTION_EMOJI (components/MessageRow.tsx). */
+export const REACTION_EMOJI = [
+  '👍', '👎', '✅', '❌', '👀', '🎉', '❤️', '😂',
+  '😄', '😅', '😊', '😍', '🤔', '🤯', '😱', '😢',
+  '😭', '😡', '🙏', '👏', '🙌', '💪', '🤝', '👋',
+  '🫡', '🤷', '🤦', '💀', '🔥', '✨', '⭐', '💯',
+  '🚀', '🐛', '🔧', '🛠️', '⚙️', '💡', '📌', '📎',
+  '📝', '✏️', '🔍', '⏳', '⏰', '📅', '☕', '🍕',
+  '🎯', '🏁', '🚧', '⚠️', '🚨', '❓', '❗', '➕',
+  '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
+] as const;
 
 /**
  * Toggle the actor's reaction: appends reaction.added when the actor doesn't
@@ -524,6 +534,49 @@ export async function listThreadMessages(
     [args.rootEventId, 1000],
   );
   return { events: res.rows.map((r) => toWireEvent(foldEdit(r))) };
+}
+
+export interface SearchHit {
+  event: WireEvent;
+  channelName: string;
+}
+
+/**
+ * Full-text search over messages. Matches the posted text OR any edited
+ * revision (so edits that introduce a term are findable); deleted messages
+ * never surface. Newest first.
+ */
+export async function searchMessages(
+  pool: Db,
+  args: { query: string; limit?: number },
+): Promise<SearchHit[]> {
+  const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+  const res = await pool.query<EventDbRow & { channel_name: string }>(
+    `WITH hits AS (
+       SELECT DISTINCT CASE WHEN x.type = 'message.posted' THEN x.id
+                            ELSE (x.payload->>'target_event_id')::bigint END AS msg_id
+       FROM events x
+       WHERE x.type IN ('message.posted', 'message.edited')
+         AND to_tsvector('english', coalesce(x.payload->>'text', ''))
+             @@ websearch_to_tsquery('english', $1)
+     )
+     SELECT m.*, c.name AS channel_name
+     FROM (
+       ${MESSAGE_SELECT}
+       WHERE e.type = 'message.posted'
+         AND e.id IN (SELECT msg_id FROM hits WHERE msg_id IS NOT NULL)
+         AND del.id IS NULL
+       ORDER BY e.id DESC
+       LIMIT $2
+     ) m
+     JOIN channels c ON c.id = m.channel_id
+     ORDER BY m.id DESC`,
+    [args.query, limit],
+  );
+  return res.rows.map((r) => ({
+    event: toWireEvent(foldEdit(r)),
+    channelName: r.channel_name,
+  }));
 }
 
 export async function listWorkspaces(pool: Db): Promise<Workspace[]> {

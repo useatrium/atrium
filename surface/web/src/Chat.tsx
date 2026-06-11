@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type Workspace } from './api';
-import { appReducer, initialAppState } from './appState';
+import { appReducer, initialAppState, mentionsHandle } from './appState';
+import { showNotification } from './notify';
 import { emptyTimeline, type ChatMessage, type UserRef, type WireEvent } from './state';
 import { useWs } from './useWs';
 import { Avatar } from './components/Avatar';
@@ -156,6 +157,7 @@ export function Chat({
             return next;
           });
         }
+        maybeNotify(event);
         dispatch({ type: 'server-event', event });
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
@@ -173,6 +175,42 @@ export function Chat({
     lastTypingSentRef.current = now;
     ws.sendTyping(channelId);
   };
+
+  // Desktop notifications: mentions of me, and my agent sessions finishing.
+  // Live WS events only (catch-up misses land in badges instead).
+  function maybeNotify(event: WireEvent) {
+    if (event.type === 'message.posted' && event.actorId && event.actorId !== me.id) {
+      const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
+      if (!mentionsHandle(text, me.handle)) return;
+      const ch = stateRef.current.channels.find((c) => c.id === event.channelId);
+      showNotification(
+        `${event.author?.displayName ?? 'Someone'} mentioned you in #${ch?.name ?? 'a channel'}`,
+        text.slice(0, 140),
+        `evt-${event.id}`,
+        () => {
+          if (event.channelId) dispatch({ type: 'select-channel', channelId: event.channelId });
+        },
+      );
+      return;
+    }
+    if (event.type === 'session.completed') {
+      const sessionId =
+        typeof event.payload?.sessionId === 'string' ? event.payload.sessionId : null;
+      const session = sessionId ? stateRef.current.sessions[sessionId] : undefined;
+      if (!session || session.spawnedBy !== me.id) return;
+      const status = typeof event.payload?.status === 'string' ? event.payload.status : 'done';
+      const excerpt =
+        typeof event.payload?.resultExcerpt === 'string' ? event.payload.resultExcerpt : '';
+      showNotification(
+        `Agent session ${status}: ${session.title}`,
+        excerpt.slice(0, 140),
+        `evt-${event.id}`,
+        () => {
+          if (sessionId) dispatch({ type: 'open-session', sessionId });
+        },
+      );
+    }
+  }
 
   // ---- channel selection & history ----
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
@@ -272,6 +310,39 @@ export function Chat({
 
   const reactToMessage = (m: ChatMessage, emoji: string): Promise<void> =>
     api.toggleReaction(m.id!, emoji).then(({ event }) => dispatch({ type: 'server-event', event }));
+
+  // ---- jump to a message from search: page history back until it's loaded ----
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  useEffect(() => {
+    if (highlightId == null) return;
+    const t = setTimeout(() => setHighlightId(null), 2500);
+    return () => clearTimeout(t);
+  }, [highlightId]);
+
+  const jumpToMessage = async (event: WireEvent) => {
+    const channelId = event.channelId;
+    if (!channelId) return;
+    dispatch({ type: 'select-channel', channelId });
+    for (let tries = 0; tries < 30; tries++) {
+      const t = stateRef.current.timelines[channelId];
+      if (t?.main.some((m) => m.id === event.id)) break;
+      if (!t?.loaded) {
+        // Initial history fetch for this channel is still in flight.
+        await new Promise((r) => setTimeout(r, 150));
+        continue;
+      }
+      if (!t.hasMoreBefore) break;
+      const oldest = t.main.find((m) => m.status === 'confirmed');
+      if (!oldest?.id) break;
+      const { events, hasMore } = await api.messages(channelId, {
+        beforeId: oldest.id,
+        limit: PAGE_SIZE,
+      });
+      dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      await new Promise((r) => setTimeout(r, 30)); // let the reducer commit
+    }
+    setHighlightId(event.id);
+  };
 
   // Up-arrow in an empty composer edits your most recent message (Slack-style).
   const [editRequestId, setEditRequestId] = useState<number | null>(null);
@@ -402,6 +473,7 @@ export function Chat({
           meId={me.id}
           meHandle={me.handle}
           editRequestId={editRequestId}
+          highlightId={highlightId}
           onEditRequestHandled={() => setEditRequestId(null)}
           onLoadEarlier={loadEarlier}
           onOpenThread={openThread}
@@ -496,6 +568,10 @@ export function Chat({
           onSelect={(channelId) => {
             dispatch({ type: 'select-channel', channelId });
             setSwitcherOpen(false);
+          }}
+          onJumpToMessage={(event) => {
+            setSwitcherOpen(false);
+            void jumpToMessage(event);
           }}
           onClose={() => setSwitcherOpen(false)}
         />

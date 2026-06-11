@@ -1,7 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import type { Channel } from '../api';
 import type { UnreadLevel } from '../appState';
+import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UserRef } from '../state';
+
+const BELL_TITLES: Record<NotifyState, string> = {
+  on: 'Notifications on (mentions + your sessions) — click to turn off',
+  off: 'Notifications off — click to enable',
+  denied: 'Notifications blocked in browser settings',
+  unsupported: 'Notifications not supported here',
+};
 
 export function Sidebar({
   workspaceName,
@@ -27,6 +35,7 @@ export function Sidebar({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notify, setNotify] = useState<NotifyState>(() => notificationState());
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -133,11 +142,22 @@ export function Sidebar({
         </ul>
       </div>
 
-      <footer className="flex items-center gap-2 border-t border-zinc-800 px-4 py-2.5">
+      <footer className="flex items-center gap-1 border-t border-zinc-800 px-4 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium text-zinc-200">{me.displayName}</div>
           <div className="truncate text-[11px] text-zinc-500">@{me.handle}</div>
         </div>
+        <button
+          onClick={() => {
+            void toggleNotifications().then(setNotify);
+          }}
+          disabled={notify === 'denied' || notify === 'unsupported'}
+          title={BELL_TITLES[notify]}
+          aria-label={BELL_TITLES[notify]}
+          className="rounded-md px-1.5 py-1 text-sm hover:bg-zinc-800 disabled:opacity-40"
+        >
+          {notify === 'on' ? '🔔' : '🔕'}
+        </button>
         <button
           onClick={onLogout}
           className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"

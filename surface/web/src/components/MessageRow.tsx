@@ -1,8 +1,17 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import type { ChatMessage } from '../state';
 
-/** Mirrors the server's REACTION_EMOJI allowlist. */
-export const REACTION_EMOJI = ['👍', '✅', '👀', '🎉', '❤️', '😂', '🚀', '🤔'];
+/** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
+export const REACTION_EMOJI = [
+  '👍', '👎', '✅', '❌', '👀', '🎉', '❤️', '😂',
+  '😄', '😅', '😊', '😍', '🤔', '🤯', '😱', '😢',
+  '😭', '😡', '🙏', '👏', '🙌', '💪', '🤝', '👋',
+  '🫡', '🤷', '🤦', '💀', '🔥', '✨', '⭐', '💯',
+  '🚀', '🐛', '🔧', '🛠️', '⚙️', '💡', '📌', '📎',
+  '📝', '✏️', '🔍', '⏳', '⏰', '📅', '☕', '🍕',
+  '🎯', '🏁', '🚧', '⚠️', '🚨', '❓', '❗', '➕',
+  '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
+];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatGutterTime, formatTime } from '../util';
@@ -17,6 +26,7 @@ export function MessageRow({
   spectators = 0,
   meId,
   meHandle,
+  highlighted,
   editRequested,
   onEditRequestHandled,
   onOpenThread,
@@ -36,6 +46,8 @@ export function MessageRow({
   meId?: string;
   /** Current user handle — highlights @me mentions. */
   meHandle?: string;
+  /** Briefly tinted after a search jump lands on this row. */
+  highlighted?: boolean;
   /** External edit trigger (up-arrow in the composer targets this row). */
   editRequested?: boolean;
   onEditRequestHandled?: () => void;
@@ -135,10 +147,11 @@ export function MessageRow({
 
   return (
     <div
+      data-eid={m.id ?? undefined}
       onMouseLeave={() => setPickerOpen(false)}
       className={`group relative flex gap-3 px-4 hover:bg-zinc-900/60 ${
         grouped ? 'py-0.5' : 'mt-2 py-0.5'
-      } ${dim ? 'opacity-50' : ''}`}
+      } ${dim ? 'opacity-50' : ''} ${highlighted ? 'bg-indigo-500/10' : ''}`}
     >
       <div className="w-8 shrink-0">
         {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} />}
@@ -244,14 +257,14 @@ export function MessageRow({
                 setPickerOpen(false);
               }
             }}
-            className="absolute -top-12 right-0 z-10 flex gap-0.5 rounded-md border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
+            className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
           >
             {REACTION_EMOJI.map((e2) => (
               <button
                 key={e2}
                 onClick={() => react(e2)}
                 aria-label={`React with ${e2}`}
-                className="rounded px-1 py-0.5 text-base leading-none hover:bg-zinc-700"
+                className="rounded px-1 py-1 text-base leading-none hover:bg-zinc-700"
               >
                 {e2}
               </button>
