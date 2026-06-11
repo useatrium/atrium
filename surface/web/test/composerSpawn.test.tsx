@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// (c) Composer @agent grammar: spawns via POST /api/sessions (with
-// threadRootEventId when sent from a thread) instead of posting a message.
+// (c) Composer @agent grammar: queues session.spawn (with threadRootEventId
+// when sent from a thread) instead of posting a message.
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppAction } from '@atrium/surface-client';
+import { sessionFromWire, type AppAction, type SessionSpawnPayload } from '@atrium/surface-client';
 import { Composer } from '../src/components/Composer';
 import { trySpawnFromComposer } from '../src/sessions/spawn';
 import type { SessionWire } from '../src/sessions/types';
@@ -29,23 +29,16 @@ const wireSession: SessionWire = {
   permalink: '/s/sess-9',
 };
 
-function stubCreateSession() {
-  const fetchMock = vi.fn(
-    async (..._args: Parameters<typeof fetch>) =>
-      new Response(JSON.stringify({ session: wireSession }), { status: 201 }),
-  );
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
 /** Same routing Chat.send performs: @agent → session spawn, else message. */
 function Harness({
   threadRootEventId,
   dispatch,
+  enqueueSpawn,
   onPlainMessage,
 }: {
   threadRootEventId?: number;
   dispatch: (a: AppAction) => void;
+  enqueueSpawn: (payload: SessionSpawnPayload) => void;
   onPlainMessage: (text: string) => void;
 }) {
   return (
@@ -53,7 +46,7 @@ function Harness({
       placeholder="reply"
       agentAware
       onSend={(text) => {
-        if (trySpawnFromComposer(text, { channelId: 'ch-1', threadRootEventId, me, dispatch }))
+        if (trySpawnFromComposer(text, { channelId: 'ch-1', threadRootEventId, me, dispatch, enqueueSpawn }))
           return;
         onPlainMessage(text);
       }}
@@ -73,11 +66,30 @@ function type(value: string) {
 }
 
 describe('composer @agent grammar', () => {
-  it('posts to /api/sessions with threadRootEventId when in a thread', async () => {
-    const fetchMock = stubCreateSession();
+  it('queues session.spawn with threadRootEventId when in a thread', () => {
     const dispatch = vi.fn();
+    const enqueueSpawn = vi.fn((payload: SessionSpawnPayload) => {
+      dispatch({
+        type: 'session-created',
+        channelId: payload.channelId,
+        tempId: payload.clientSpawnId,
+        session: sessionFromWire({
+          ...wireSession,
+          channelId: payload.channelId,
+          threadRootEventId: payload.threadRootEventId ?? null,
+          title: payload.task,
+        }),
+      });
+    });
     const onPlain = vi.fn();
-    render(<Harness threadRootEventId={7} dispatch={dispatch} onPlainMessage={onPlain} />);
+    render(
+      <Harness
+        threadRootEventId={7}
+        dispatch={dispatch}
+        enqueueSpawn={enqueueSpawn}
+        onPlainMessage={onPlain}
+      />,
+    );
 
     const box = type('@agent fix the flaky test');
     // subtle hint chip while the grammar matches
@@ -85,11 +97,8 @@ describe('composer @agent grammar', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
 
     expect(onPlain).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('/api/sessions');
-    expect(init?.method).toBe('POST');
-    const body = JSON.parse(String(init?.body));
+    expect(enqueueSpawn).toHaveBeenCalledTimes(1);
+    const body = enqueueSpawn.mock.calls[0]![0];
     expect(body).toMatchObject({
       channelId: 'ch-1',
       threadRootEventId: 7,
@@ -103,17 +112,15 @@ describe('composer @agent grammar', () => {
     const pending = dispatch.mock.calls[0]?.[0];
     expect(pending.message.threadRootEventId).toBe(7);
     expect(pending.session.status).toBe('spawning');
-    await waitFor(() =>
-      expect(dispatch.mock.calls.some((c) => c[0]?.type === 'session-created')).toBe(true),
-    );
+    expect(dispatch.mock.calls.some((c) => c[0]?.type === 'session-created')).toBe(true);
   });
 
   it('omits threadRootEventId for channel-level spawns', () => {
-    const fetchMock = stubCreateSession();
-    render(<Harness dispatch={vi.fn()} onPlainMessage={vi.fn()} />);
+    const enqueueSpawn = vi.fn();
+    render(<Harness dispatch={vi.fn()} enqueueSpawn={enqueueSpawn} onPlainMessage={vi.fn()} />);
     const box = type('@agent summarize today');
     fireEvent.keyDown(box, { key: 'Enter' });
-    const channelBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const channelBody = enqueueSpawn.mock.calls[0]?.[0];
     expect(channelBody).toMatchObject({
       channelId: 'ch-1',
       task: 'summarize today',
@@ -123,9 +130,9 @@ describe('composer @agent grammar', () => {
   });
 
   it('leaves plain messages on the message path; bare "@agent" prompts for a task', () => {
-    const fetchMock = stubCreateSession();
+    const enqueueSpawn = vi.fn();
     const onPlain = vi.fn();
-    render(<Harness dispatch={vi.fn()} onPlainMessage={onPlain} />);
+    render(<Harness dispatch={vi.fn()} enqueueSpawn={enqueueSpawn} onPlainMessage={onPlain} />);
 
     let box = type('deploying in 5');
     expect(screen.queryByText(/spawns an agent session/)).toBeNull();
@@ -141,6 +148,6 @@ describe('composer @agent grammar', () => {
     expect(onPlain).toHaveBeenCalledTimes(1);
     expect((box as HTMLTextAreaElement).value).toBe('@agent');
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(enqueueSpawn).not.toHaveBeenCalled();
   });
 });

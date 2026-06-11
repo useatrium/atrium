@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 async function renderPaneWithB() {
-  render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} />);
+  render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
   const es = FakeEventSource.last();
   expect(es.url).toBe('/api/sessions/s-b/stream?after_event_id=0');
   await act(async () => {
@@ -103,7 +103,7 @@ describe('session pane folds the B_tooltest stream', () => {
   });
 
   it('resumes with after_event_id=<last seen> when erroring mid-stream', async () => {
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} />);
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
     const es = FakeEventSource.last();
     const firstHalf = B.slice(0, 8); // still running — no terminal state yet
     await act(async () => {
@@ -169,7 +169,7 @@ function spawnedState(): AppState {
 function paneFor(s: AppState, asUser: UserRef = me, watchers: UserRef[] = []) {
   const session = s.sessions['s-b'];
   if (!session) throw new Error('session entity missing');
-  return <SessionPane session={session} me={asUser} watchers={watchers} onClose={() => {}} />;
+  return <SessionPane session={session} me={asUser} watchers={watchers} onClose={() => {}} onAnswerQuestion={async () => {}} />;
 }
 
 function stub202() {
@@ -248,7 +248,7 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[alice, me]} onClose={() => {}} />);
+    render(<SessionPane session={session} me={me} watchers={[alice, me]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
 
     // Pure spectator: no cancel, composer disabled.
     expect(screen.queryByText('Cancel')).toBeNull();
@@ -276,7 +276,7 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[me]} onClose={() => {}} />);
+    render(<SessionPane session={session} me={me} watchers={[me]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
 
     expect(screen.queryByText('Request seat')).toBeNull();
     // Two-step: Take seat asks for confirmation before posting.
@@ -302,7 +302,7 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} />);
+    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
     fireEvent.click(screen.getByText('Take seat'));
     fireEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -317,7 +317,7 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} />);
+    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
     fireEvent.click(screen.getByText('Take seat'));
     fireEvent.click(screen.getByText('Keep watching'));
     expect(screen.getByText('Take seat')).toBeTruthy();

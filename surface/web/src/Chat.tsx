@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type Workspace } from './api';
 import {
+  DurableOpQueue,
+  MemoryOpStorage,
   appReducer,
   initialAppState,
+  looksLikeAgentCommand,
   mentionsHandle,
   nextCatchUpStep,
+  parseAgentTask,
   randomId,
+  type EnqueueOpInput,
+  type MsgSendPayload,
+  type OpType,
+  type ReactionSetPayload,
+  type SessionSpawnPayload,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
@@ -27,8 +36,13 @@ import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
-import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
-import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
+import {
+  PENDING_SESSION_PREFIX,
+  isPendingSessionId,
+  isTerminalSessionStatus,
+  sessionFromWire,
+  type Session,
+} from './sessions/types';
 import { adoptPrefs } from './theme';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { useDialog } from './useDialog';
@@ -52,6 +66,7 @@ export function Chat({
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const opStorage = useMemo(() => new MemoryOpStorage(), []);
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -63,6 +78,51 @@ export function Chat({
     setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
     dispatch({ type: 'select-channel', channelId });
   }, []);
+
+  const queuedFailureMessage = useCallback((opType: OpType): string => {
+    switch (opType) {
+      case 'msg.send':
+        return "Couldn't send the message.";
+      case 'msg.edit':
+        return "Couldn't save the edit.";
+      case 'msg.delete':
+        return "Couldn't delete the message.";
+      case 'reaction.set':
+        return "Couldn't update the reaction.";
+      case 'read.mark':
+        return "Couldn't mark the channel read.";
+      case 'mute.set':
+        return "Couldn't update the mute setting.";
+      case 'session.spawn':
+        return "Couldn't start the agent session.";
+      case 'session.answer':
+        return "Couldn't submit the answer.";
+      case 'channel.join':
+        return "Couldn't add the person.";
+      case 'channel.leave':
+        return "Couldn't leave the channel.";
+    }
+  }, []);
+
+  const opQueue = useMemo(
+    () =>
+      new DurableOpQueue({
+        storage: opStorage,
+        api,
+        dispatch,
+        onRejected: (op) => showErrorToast(queuedFailureMessage(op.opType)),
+      }),
+    [opStorage, queuedFailureMessage],
+  );
+
+  const enqueueOp = useCallback(
+    async <T extends OpType>(input: EnqueueOpInput<T>) => {
+      const op = await opQueue.enqueue(input);
+      if (op) opQueue.nudge();
+      return op;
+    },
+    [opQueue],
+  );
 
   // ---- initial data ----
   useEffect(() => {
@@ -174,6 +234,10 @@ export function Chat({
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, [catchUpChannel]);
 
+  const flushQueuedOps = useCallback(() => {
+    opQueue.nudge();
+  }, [opQueue]);
+
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, { user: UserRef; until: number }>>({});
   const onTyping = useCallback(
@@ -225,7 +289,10 @@ export function Chat({
       onMuted: (channelId, muted) => dispatch({ type: 'mute-changed', channelId, muted }),
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
-      onOpen: catchUp,
+      onOpen: () => {
+        catchUp();
+        flushQueuedOps();
+      },
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
     state.activeChannelId,
@@ -289,16 +356,12 @@ export function Chat({
       if (previous >= lastEventId) return;
       lastReadAtRef.current[channelId] = Date.now();
       lastReadSentRef.current[channelId] = lastEventId;
-      api
-        .markRead(channelId, lastEventId)
-        .then(({ lastReadEventId }) => {
-          lastReadSentRef.current[channelId] = Math.max(
-            lastReadSentRef.current[channelId] ?? 0,
-            lastReadEventId,
-          );
-          dispatch({ type: 'read-cursor', channelId, lastReadEventId });
-        })
-        .catch(() => {
+      dispatch({ type: 'read-cursor', channelId, lastReadEventId: lastEventId });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'read.mark',
+        payload: { channelId, lastReadEventId: lastEventId },
+      }).catch(() => {
           if (lastReadSentRef.current[channelId] === lastEventId) {
             lastReadSentRef.current[channelId] = previous;
           }
@@ -311,7 +374,7 @@ export function Chat({
     }
     if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
     readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
-  }, []);
+  }, [enqueueOp]);
 
   useEffect(() => {
     if (active) markRead(active.id, timeline.lastEventId);
@@ -394,6 +457,77 @@ export function Chat({
   }, [state.presence]);
 
   // ---- sending ----
+  const pendingSpawnFromPayload = (payload: SessionSpawnPayload): { message: ChatMessage; session: Session } => {
+    const createdAt = payload.createdAt ?? new Date().toISOString();
+    return {
+      session: {
+        id: payload.clientSpawnId,
+        workspaceId: '',
+        channelId: payload.channelId,
+        threadRootEventId: payload.threadRootEventId ?? null,
+        title: payload.task.slice(0, 80),
+        status: 'spawning',
+        harness: payload.harness ?? 'claude-code',
+        spawnedBy: me.id,
+        spawnerName: me.displayName,
+        driverId: null,
+        pendingSeatRequests: [],
+        seatEvents: [],
+        costUsd: 0,
+        resultText: null,
+        createdAt,
+        completedAt: null,
+        lastEventId: 0,
+        permalink: '',
+      },
+      message: {
+        id: null,
+        clientMsgId: payload.clientSpawnId,
+        channelId: payload.channelId,
+        threadRootEventId: payload.threadRootEventId ?? null,
+        text: payload.task,
+        edited: false,
+        author: me,
+        createdAt,
+        replyCount: 0,
+        lastReplyId: 0,
+        status: 'pending',
+        sessionId: payload.clientSpawnId,
+      },
+    };
+  };
+
+  const spawnQueuedSession = (
+    channelId: string,
+    task: string,
+    threadRootEventId?: number,
+  ) => {
+    const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
+    const payload: SessionSpawnPayload = {
+      channelId,
+      task,
+      clientSpawnId,
+      threadRootEventId,
+      harness: 'claude-code',
+      createdAt: new Date().toISOString(),
+    };
+    const pending = pendingSpawnFromPayload(payload);
+    dispatch({
+      type: 'session-spawn-pending',
+      channelId,
+      message: pending.message,
+      session: pending.session,
+    });
+    void enqueueOp({
+      opId: randomId(),
+      opType: 'session.spawn',
+      payload,
+    }).catch(() => {
+      dispatch({ type: 'session-spawn-failed', channelId, tempId: clientSpawnId });
+      showErrorToast("Couldn't queue the agent session.");
+    });
+  };
+
   const send = (
     channelId: string,
     text: string,
@@ -403,9 +537,19 @@ export function Chat({
     // Attachments can't ride along on a spawn — "@agent …" with files attached
     // sends as a plain message instead of silently dropping them.
     const noAttachments = !attachments || attachments.length === 0;
-    if (text && noAttachments && trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch }))
-      return;
+    if (text && noAttachments) {
+      const task = parseAgentTask(text);
+      if (task != null) {
+        spawnQueuedSession(channelId, task, threadRootEventId);
+        return;
+      }
+      if (looksLikeAgentCommand(text.trim())) {
+        showErrorToast('Type @agent followed by the task to run.');
+        return;
+      }
+    }
     const clientMsgId = randomId();
+    const createdAt = new Date().toISOString();
     const message: ChatMessage = {
       id: null,
       clientMsgId,
@@ -414,36 +558,101 @@ export function Chat({
       text,
       edited: false,
       author: me,
-      createdAt: new Date().toISOString(),
+      createdAt,
       replyCount: 0,
       lastReplyId: 0,
       status: 'pending',
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
     dispatch({ type: 'send-pending', channelId, message });
-    api
-      .postMessage({
-        channelId,
-        text,
-        clientMsgId,
-        threadRootEventId,
-        attachments: attachments?.map((a) => a.id),
-      })
-      .then(({ event }) => dispatch({ type: 'server-event', event }))
-      .catch(() => dispatch({ type: 'send-failed', channelId, clientMsgId }));
+    const payload: MsgSendPayload = {
+      channelId,
+      text,
+      clientMsgId,
+      threadRootEventId,
+      attachments,
+      createdAt,
+    };
+    void enqueueOp({
+      opId: randomId(),
+      opType: 'msg.send',
+      payload,
+    }).catch(() => {
+      dispatch({ type: 'send-failed', channelId, clientMsgId });
+      showErrorToast("Couldn't queue the message.");
+    });
   };
 
-  const editMessage = (m: ChatMessage, text: string): Promise<void> =>
-    api.editMessage(m.id!, text).then(({ event }) => dispatch({ type: 'server-event', event }));
-
-  const removeMessage = (m: ChatMessage): Promise<void> =>
-    api.deleteMessage(m.id!).then(({ event }) => dispatch({ type: 'server-event', event }));
-
-  const reactToMessage = (m: ChatMessage, emoji: string): Promise<void> => {
-    const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
-    return api.setReaction(m.id!, emoji, mine ? 'remove' : 'add').then(({ event }) => {
-      if (event) dispatch({ type: 'server-event', event });
+  const editMessage = async (m: ChatMessage, text: string): Promise<void> => {
+    if (m.id == null) return;
+    const opId = randomId();
+    dispatch({
+      type: 'edit-overlay-pending',
+      channelId: m.channelId,
+      opId,
+      targetEventId: m.id,
+      text,
     });
+    try {
+      await enqueueOp({
+        opId,
+        opType: 'msg.edit',
+        payload: { channelId: m.channelId, eventId: m.id, text },
+      });
+    } catch {
+      dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
+      showErrorToast("Couldn't queue the edit.");
+    }
+  };
+
+  const removeMessage = async (m: ChatMessage): Promise<void> => {
+    if (m.id == null) return;
+    const opId = randomId();
+    dispatch({
+      type: 'delete-overlay-pending',
+      channelId: m.channelId,
+      opId,
+      targetEventId: m.id,
+    });
+    try {
+      await enqueueOp({
+        opId,
+        opType: 'msg.delete',
+        payload: { channelId: m.channelId, eventId: m.id },
+      });
+    } catch {
+      dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
+      showErrorToast("Couldn't queue the delete.");
+    }
+  };
+
+  const reactToMessage = async (m: ChatMessage, emoji: string): Promise<void> => {
+    if (m.id == null) return;
+    const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
+    const action = mine ? 'remove' : 'add';
+    const opId = randomId();
+    const payload: ReactionSetPayload = {
+      channelId: m.channelId,
+      eventId: m.id,
+      emoji,
+      action,
+      userId: me.id,
+    };
+    dispatch({
+      type: 'reaction-overlay-pending',
+      channelId: m.channelId,
+      opId,
+      targetEventId: m.id,
+      emoji,
+      userId: me.id,
+      action,
+    });
+    try {
+      await enqueueOp({ opId, opType: 'reaction.set', payload });
+    } catch {
+      dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
+      showErrorToast("Couldn't queue the reaction.");
+    }
   };
 
   // ---- jump to a message from search: page history back until it's loaded ----
@@ -502,12 +711,7 @@ export function Chat({
     dispatch({ type: 'retry-remove', channelId: m.channelId, clientMsgId: m.clientMsgId });
     if (m.sessionId != null) {
       // Failed spawn: re-run the @agent flow with the original task text.
-      spawnSession(m.text, {
-        channelId: m.channelId,
-        threadRootEventId: m.threadRootEventId ?? undefined,
-        me,
-        dispatch,
-      });
+      spawnQueuedSession(m.channelId, m.text, m.threadRootEventId ?? undefined);
       return;
     }
     send(m.channelId, m.text, m.threadRootEventId ?? undefined, m.attachments);
@@ -530,11 +734,28 @@ export function Chat({
   };
 
   const setMute = (channelId: string, muted: boolean) => {
+    const previousMuted = stateRef.current.channels.find((c) => c.id === channelId)?.muted === true;
     dispatch({ type: 'mute-changed', channelId, muted });
-    api
-      .setMute(channelId, muted)
-      .then((res) => dispatch({ type: 'mute-changed', channelId, muted: res.muted }))
-      .catch(() => dispatch({ type: 'mute-changed', channelId, muted: !muted }));
+    void enqueueOp({
+      opId: randomId(),
+      opType: 'mute.set',
+      payload: { channelId, muted, previousMuted },
+    }).catch(() => {
+      dispatch({ type: 'mute-changed', channelId, muted: previousMuted });
+      showErrorToast("Couldn't queue the mute change.");
+    });
+  };
+
+  const answerSessionQuestion = async (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ): Promise<void> => {
+    await enqueueOp({
+      opId: randomId(),
+      opType: 'session.answer',
+      payload: { sessionId, questionId, answers },
+    });
   };
 
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
@@ -585,13 +806,17 @@ export function Chat({
 
   const inviteMember = (userId: string) => {
     if (!active) return;
-    api
-      .addChannelMember(active.id, userId)
-      .then(() => {
+    void enqueueOp({
+      opId: randomId(),
+      opType: 'channel.join',
+      payload: { channelId: active.id, userId },
+    })
+      .then((op) => {
+        if (!op) return;
         loadMembers();
         setMemberPickerOpen(false);
       })
-      .catch(() => {});
+      .catch(() => showErrorToast("Couldn't queue the invite."));
   };
 
   const leaveActive = () => {
@@ -601,10 +826,11 @@ export function Chat({
       return;
     }
     setLeaveAsk(false);
-    api
-      .leaveChannelMembership(active.id)
-      .then(() => dispatch({ type: 'channel-removed', channelId: active.id }))
-      .catch(() => {});
+    void enqueueOp({
+      opId: randomId(),
+      opType: 'channel.leave',
+      payload: { channelId: active.id, userId: me.id },
+    }).catch(() => showErrorToast("Couldn't queue the channel leave."));
   };
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
@@ -837,6 +1063,7 @@ export function Chat({
           me={me}
           watchers={paneWatchers}
           onClose={() => dispatch({ type: 'close-session' })}
+          onAnswerQuestion={answerSessionQuestion}
         />
       ) : state.openSessionId ? (
         <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
