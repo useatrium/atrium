@@ -13,6 +13,8 @@ export interface CreateSessionBody {
   threadRootEventId?: number;
   task: string;
   harness?: string;
+  /** Optimistic id echoed on session.spawned for lost-response reconcile. */
+  clientSpawnId?: string;
 }
 
 export interface SessionStreamHandle {

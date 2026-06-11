@@ -89,11 +89,14 @@ describe('composer @agent grammar', () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('/api/sessions');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toEqual({
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({
       channelId: 'ch-1',
       threadRootEventId: 7,
       task: 'fix the flaky test',
     });
+    // the optimistic id rides along so a lost response still reconciles
+    expect(body.clientSpawnId).toMatch(/^pending:/);
 
     // optimistic card first, reconciled with the 201 response after
     expect(dispatch.mock.calls[0]?.[0]?.type).toBe('session-spawn-pending');
@@ -110,10 +113,13 @@ describe('composer @agent grammar', () => {
     render(<Harness dispatch={vi.fn()} onPlainMessage={vi.fn()} />);
     const box = type('@agent summarize today');
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+    const channelBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(channelBody).toMatchObject({
       channelId: 'ch-1',
       task: 'summarize today',
     });
+    expect(channelBody.threadRootEventId).toBeUndefined();
+    expect(channelBody.clientSpawnId).toMatch(/^pending:/);
   });
 
   it('leaves plain messages on the message path; bare "@agent" prompts for a task', () => {

@@ -68,7 +68,7 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
   dispatch({ type: 'session-spawn-pending', channelId, message: row, session: optimistic });
 
   sessionsApi
-    .create({ channelId, threadRootEventId, task })
+    .create({ channelId, threadRootEventId, task, clientSpawnId: tempId })
     .then(({ session }) =>
       dispatch({ type: 'session-created', channelId, tempId, session: sessionFromWire(session) }),
     )
