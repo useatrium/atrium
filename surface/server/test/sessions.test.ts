@@ -372,6 +372,53 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('dedupes duplicate POST /api/sessions by clientSpawnId', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const payload = {
+      channelId: fx.channelId,
+      task: 'dedupe this spawn',
+      clientSpawnId: 'pending:test-spawn-1',
+    };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload,
+    });
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload,
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(200);
+    expect(second.json().session.id).toBe(first.json().session.id);
+    const rows = await pool.query('SELECT id FROM sessions WHERE client_spawn_id = $1', [
+      payload.clientSpawnId,
+    ]);
+    expect(rows.rowCount).toBe(1);
+    const events = await pool.query(
+      `SELECT id, payload FROM events
+       WHERE type = 'session.spawned' AND payload->>'client_spawn_id' = $1`,
+      [payload.clientSpawnId],
+    );
+    expect(events.rowCount).toBe(1);
+    await waitFor(() => {
+      expect(fake.requests.filter((r) => r.path === '/agent/spawn')).toHaveLength(1);
+      expect(fake.requests.filter((r) => r.path === '/agent/message')).toHaveLength(1);
+      expect(fake.requests.filter((r) => r.path === '/agent/execute')).toHaveLength(1);
+    });
+    await app.close();
+  });
+
   it('tailer folds A_pong into completed session state and lifecycle event', async () => {
     const app = await buildApp({
       pool,

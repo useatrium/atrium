@@ -5,19 +5,20 @@ import fastifyWebsocket from '@fastify/websocket';
 import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
 import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
-import type { Db } from './db.js';
+import type { Db, DbClient } from './db.js';
+import { withTx } from './db.js';
 import { signSession, verifySession } from './cookie.js';
 import {
-  addChannelMember,
+  addChannelMemberTx,
   DomainError,
   canAccessChannel,
   canAccessFile,
   createChannel,
-  deleteMessage,
-  editMessage,
+  deleteMessageTx,
+  editMessageTx,
   getOrCreateGdm,
   getOrCreateDm,
-  leaveChannel,
+  leaveChannelTx,
   listChannelMembers,
   listChannelMessages,
   listChannelsFor,
@@ -26,7 +27,9 @@ import {
   listWorkspaces,
   postMessage,
   searchMessages,
-  toggleReaction,
+  setReactionTx,
+  type ReactionAction,
+  type WireEvent,
   type UserRef,
 } from './events.js';
 import { WsHub } from './hub.js';
@@ -35,6 +38,7 @@ import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import type { AttachmentMeta } from './events.js';
+import { isUuid, withIdempotency } from './idempotency.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -179,6 +183,41 @@ function rawSession(req: FastifyRequest): string | undefined {
       return null;
     }
     return req.user;
+  }
+
+  function optionalOpId(body: unknown): string | undefined {
+    if (!isPlainObject(body) || body.opId == null) return undefined;
+    if (!isUuid(body.opId)) {
+      throw new DomainError(400, 'bad_request', 'opId must be a uuid');
+    }
+    return body.opId;
+  }
+
+  function withoutOpId(body: Record<string, unknown>): Record<string, unknown> {
+    const rest = { ...body };
+    delete rest.opId;
+    return rest;
+  }
+
+  async function runMutation<T>(args: {
+    userId: string;
+    opId?: string;
+    opType: string;
+    body: unknown;
+    fn: (client: DbClient) => Promise<T>;
+    onApplied?: (response: T) => void | Promise<void>;
+  }): Promise<T> {
+    if (args.opId) {
+      return withIdempotency(
+        pool,
+        { userId: args.userId, opId: args.opId, opType: args.opType, body: args.body },
+        args.fn,
+        { onApplied: args.onApplied },
+      );
+    }
+    const response = await withTx(pool, args.fn);
+    if (args.onApplied) await args.onApplied(response);
+    return response;
   }
 
   function codeHash(email: string, code: string): string {
@@ -571,7 +610,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { lastReadEventId?: number };
+    const body = (req.body ?? {}) as { lastReadEventId?: number; opId?: unknown };
+    const opId = optionalOpId(body);
     const lastReadEventId = Number(body.lastReadEventId);
     if (!Number.isSafeInteger(lastReadEventId) || lastReadEventId < 0) {
       return reply
@@ -582,65 +622,92 @@ function rawSession(req: FastifyRequest): string | undefined {
       // 404, not 403 — don't leak the existence of someone else's DM.
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    const res = await pool.query<{ last_read_event_id: string; advanced: boolean }>(
-      `WITH previous AS (
-         SELECT last_read_event_id
-         FROM channel_read_cursors
-         WHERE user_id = $1 AND channel_id = $2
-       ), upsert AS (
-         INSERT INTO channel_read_cursors (user_id, channel_id, last_read_event_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (user_id, channel_id) DO UPDATE
-         SET last_read_event_id = GREATEST(
-               channel_read_cursors.last_read_event_id,
-               EXCLUDED.last_read_event_id
-             ),
-             updated_at = CASE
-               WHEN EXCLUDED.last_read_event_id > channel_read_cursors.last_read_event_id
-               THEN now()
-               ELSE channel_read_cursors.updated_at
-             END
-         RETURNING last_read_event_id
-       )
-       SELECT upsert.last_read_event_id,
-              COALESCE((SELECT last_read_event_id FROM previous), 0) < upsert.last_read_event_id
-                AS advanced
-       FROM upsert`,
-      [user.id, id, lastReadEventId],
-    );
-    const stored = Number(res.rows[0]!.last_read_event_id);
-    if (res.rows[0]!.advanced) {
-      hub.sendToUsers([user.id], { type: 'read', channelId: id, lastReadEventId: stored });
-    }
-    return { lastReadEventId: stored };
+    let advanced = false;
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'read.mark',
+      body: { channelId: id, lastReadEventId },
+      fn: async (client) => {
+        const res = await client.query<{ last_read_event_id: string; advanced: boolean }>(
+          `WITH previous AS (
+             SELECT last_read_event_id
+             FROM channel_read_cursors
+             WHERE user_id = $1 AND channel_id = $2
+           ), upsert AS (
+             INSERT INTO channel_read_cursors (user_id, channel_id, last_read_event_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, channel_id) DO UPDATE
+             SET last_read_event_id = GREATEST(
+                   channel_read_cursors.last_read_event_id,
+                   EXCLUDED.last_read_event_id
+                 ),
+                 updated_at = CASE
+                   WHEN EXCLUDED.last_read_event_id > channel_read_cursors.last_read_event_id
+                   THEN now()
+                   ELSE channel_read_cursors.updated_at
+                 END
+             RETURNING last_read_event_id
+           )
+           SELECT upsert.last_read_event_id,
+                  COALESCE((SELECT last_read_event_id FROM previous), 0) < upsert.last_read_event_id
+                    AS advanced
+           FROM upsert`,
+          [user.id, id, lastReadEventId],
+        );
+        const stored = Number(res.rows[0]!.last_read_event_id);
+        advanced = res.rows[0]!.advanced;
+        return { lastReadEventId: stored };
+      },
+      onApplied: (response) => {
+        if (advanced) {
+          hub.sendToUsers([user.id], {
+            type: 'read',
+            channelId: id,
+            lastReadEventId: response.lastReadEventId,
+          });
+        }
+      },
+    });
   });
 
   app.post('/api/channels/:id/mute', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { muted?: unknown };
+    const body = (req.body ?? {}) as { muted?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
     if (typeof body.muted !== 'boolean') {
       return reply.code(400).send({ error: 'bad_request', message: 'muted must be boolean' });
     }
     if (!(await canAccessChannel(pool, user.id, id))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    if (body.muted) {
-      await pool.query(
-        `INSERT INTO channel_mutes (user_id, channel_id)
-         VALUES ($1, $2)
-         ON CONFLICT (user_id, channel_id) DO NOTHING`,
-        [user.id, id],
-      );
-    } else {
-      await pool.query('DELETE FROM channel_mutes WHERE user_id = $1 AND channel_id = $2', [
-        user.id,
-        id,
-      ]);
-    }
-    hub.sendToUsers([user.id], { type: 'muted', channelId: id, muted: body.muted });
-    return { muted: body.muted };
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'mute.set',
+      body: { channelId: id, muted: body.muted },
+      fn: async (client) => {
+        if (body.muted) {
+          await client.query(
+            `INSERT INTO channel_mutes (user_id, channel_id)
+             VALUES ($1, $2)
+             ON CONFLICT (user_id, channel_id) DO NOTHING`,
+            [user.id, id],
+          );
+        } else {
+          await client.query('DELETE FROM channel_mutes WHERE user_id = $1 AND channel_id = $2', [
+            user.id,
+            id,
+          ]);
+        }
+        return { muted: body.muted as boolean };
+      },
+      onApplied: (response) => {
+        hub.sendToUsers([user.id], { type: 'muted', channelId: id, muted: response.muted });
+      },
+    });
   });
 
   app.patch('/api/me/prefs', async (req, reply) => {
@@ -649,16 +716,31 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!isPlainObject(req.body)) {
       return reply.code(400).send({ error: 'bad_request', message: 'body must be object' });
     }
-    const current = await pool.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
-      user.id,
-    ]);
-    const merged = normalizePrefs({
-      ...normalizePrefs(current.rows[0]?.prefs),
-      ...prefsPatch(req.body),
+    const prefsBody = req.body;
+    const opId = optionalOpId(prefsBody);
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'prefs.patch',
+      body: withoutOpId(prefsBody),
+      fn: async (client) => {
+        const current = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
+          user.id,
+        ]);
+        const merged = normalizePrefs({
+          ...normalizePrefs(current.rows[0]?.prefs),
+          ...prefsPatch(prefsBody),
+        });
+        await client.query('UPDATE users SET prefs = $1 WHERE id = $2', [
+          JSON.stringify(merged),
+          user.id,
+        ]);
+        return { prefs: merged };
+      },
+      onApplied: (response) => {
+        hub.sendToUsers([user.id], { type: 'prefs', prefs: response.prefs });
+      },
     });
-    await pool.query('UPDATE users SET prefs = $1 WHERE id = $2', [JSON.stringify(merged), user.id]);
-    hub.sendToUsers([user.id], { type: 'prefs', prefs: merged });
-    return { prefs: merged };
   });
 
   app.get('/api/users', async (req, reply) => {
@@ -765,43 +847,72 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { userId?: unknown };
+    const body = (req.body ?? {}) as { userId?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
     if (typeof body.userId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
     }
-    const result = await addChannelMember(pool, {
-      channelId: id,
-      actorId: user.id,
-      userId: body.userId,
+    const response = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'channel.member.add',
+      body: { channelId: id, userId: body.userId },
+      fn: async (client) => {
+        const result = await addChannelMemberTx(client, {
+          channelId: id,
+          actorId: user.id,
+          userId: body.userId as string,
+        });
+        if (!result) return null;
+        return { member: result.member, channel: result.channel, event: result.event };
+      },
+      onApplied: (result) => {
+        if (!result) return;
+        hub.publishToUsers([body.userId as string], {
+          id: 0,
+          workspaceId: result.channel.workspaceId,
+          channelId: result.channel.id,
+          threadRootEventId: null,
+          type: 'channel.created',
+          actorId: user.id,
+          payload: { name: result.channel.name, channel: result.channel },
+          createdAt: new Date().toISOString(),
+          author: user,
+        });
+        hub.publishEvent(result.event);
+      },
     });
-    if (!result) {
+    if (!response) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    hub.publishToUsers([body.userId], {
-      id: 0,
-      workspaceId: result.channel.workspaceId,
-      channelId: result.channel.id,
-      threadRootEventId: null,
-      type: 'channel.created',
-      actorId: user.id,
-      payload: { name: result.channel.name, channel: result.channel },
-      createdAt: new Date().toISOString(),
-      author: user,
-    });
-    hub.publishEvent(result.event);
-    return reply.code(201).send({ member: result.member });
+    return reply.code(201).send({ member: response.member });
   });
 
   app.delete('/api/channels/:id/members/me', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const result = await leaveChannel(pool, { channelId: id, userId: user.id });
-    if (!result) {
+    const body = (req.body ?? {}) as { opId?: unknown };
+    const opId = optionalOpId(body);
+    const response = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'channel.leave',
+      body: { channelId: id },
+      fn: async (client) => {
+        const result = await leaveChannelTx(client, { channelId: id, userId: user.id });
+        if (!result) return null;
+        return { ok: true as const, event: result.event };
+      },
+      onApplied: (result) => {
+        if (!result) return;
+        hub.publishEvent(result.event);
+        hub.sendToUsers([user.id], { type: 'channel-left', channelId: id });
+      },
+    });
+    if (!response) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    hub.publishEvent(result.event);
-    hub.sendToUsers([user.id], { type: 'channel-left', channelId: id });
     return { ok: true };
   });
 
@@ -956,7 +1067,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!Number.isFinite(targetEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
     }
-    const body = (req.body ?? {}) as { text?: string };
+    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+    const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
     if (text.trim().length === 0) {
       return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
@@ -964,9 +1076,19 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
-    const event = await editMessage(pool, { targetEventId, actorId: user.id, text });
-    hub.publishEvent(event);
-    return { event };
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'message.edit',
+      body: { targetEventId, text },
+      fn: async (client) => {
+        const event = await editMessageTx(client, { targetEventId, actorId: user.id, text });
+        return { event };
+      },
+      onApplied: (response) => {
+        hub.publishEvent(response.event);
+      },
+    });
   });
 
   app.delete('/api/messages/:id', async (req, reply) => {
@@ -976,9 +1098,21 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!Number.isFinite(targetEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
     }
-    const event = await deleteMessage(pool, { targetEventId, actorId: user.id });
-    hub.publishEvent(event);
-    return { event };
+    const body = (req.body ?? {}) as { opId?: unknown };
+    const opId = optionalOpId(body);
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'message.delete',
+      body: { targetEventId },
+      fn: async (client) => {
+        const event = await deleteMessageTx(client, { targetEventId, actorId: user.id });
+        return { event };
+      },
+      onApplied: (response) => {
+        hub.publishEvent(response.event);
+      },
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1098,17 +1232,34 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!Number.isFinite(targetEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
     }
-    const body = (req.body ?? {}) as { emoji?: string };
+    const body = (req.body ?? {}) as { emoji?: string; action?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
     if (typeof body.emoji !== 'string' || !body.emoji) {
       return reply.code(400).send({ error: 'bad_request', message: 'emoji required' });
     }
-    const event = await toggleReaction(pool, {
-      targetEventId,
-      actorId: user.id,
-      emoji: body.emoji,
+    if (body.action !== 'add' && body.action !== 'remove') {
+      return reply
+        .code(400)
+        .send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
+    }
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'reaction.set',
+      body: { targetEventId, emoji: body.emoji, action: body.action },
+      fn: async (client) => {
+        const result = await setReactionTx(client, {
+          targetEventId,
+          actorId: user.id,
+          emoji: body.emoji as string,
+          action: body.action as ReactionAction,
+        });
+        return result.applied ? { event: result.event } : { event: null, applied: false as const };
+      },
+      onApplied: (response) => {
+        if (response.event) hub.publishEvent(response.event);
+      },
     });
-    hub.publishEvent(event);
-    return { event };
   });
 
   // -------------------------------------------------------------------------
@@ -1123,7 +1274,9 @@ function rawSession(req: FastifyRequest): string | undefined {
       threadRootEventId?: number;
       task?: string;
       harness?: string;
+      opId?: unknown;
     };
+    const opId = optionalOpId(body);
     const task = typeof body.task === 'string' ? body.task : '';
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
@@ -1143,16 +1296,37 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
     const bodySpawnId = (body as { clientSpawnId?: unknown }).clientSpawnId;
-    const session = await sessionRuns.createSession({
-      channelId: body.channelId,
-      threadRootEventId,
-      task,
-      harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
-      clientSpawnId:
-        typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined,
-      user,
+    const clientSpawnId =
+      typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined;
+    let createdSession: Awaited<ReturnType<typeof sessionRuns.createSessionInTx>> | null = null;
+    const result = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.spawn',
+      body: {
+        channelId: body.channelId,
+        threadRootEventId,
+        task,
+        harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+        clientSpawnId,
+      },
+      fn: async (client) => {
+        createdSession = await sessionRuns.createSessionInTx(client, {
+          channelId: body.channelId as string,
+          threadRootEventId,
+          task,
+          harness:
+            typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+          clientSpawnId,
+          user,
+        });
+        return { session: createdSession.session, created: createdSession.created };
+      },
+      onApplied: () => {
+        if (createdSession) sessionRuns.afterCreateSession(createdSession, task);
+      },
     });
-    return reply.code(201).send({ session });
+    return reply.code(result.created ? 201 : 200).send({ session: result.session });
   });
 
   app.get('/api/sessions', async (req, reply) => {
@@ -1240,13 +1414,37 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown };
+    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
     if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
       return reply
         .code(400)
         .send({ error: 'bad_request', message: 'questionId and answers are required' });
     }
-    await sessionRuns.answerQuestion(id, user, body.questionId, body.answers);
+    if (opId) {
+      let event: WireEvent | null = null;
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.answer',
+        body: { sessionId: id, questionId: body.questionId, answers: body.answers },
+        fn: async (client) => {
+          event = await sessionRuns.answerQuestionInTx(
+            client,
+            id,
+            user,
+            body.questionId as string,
+            body.answers as Record<string, { answers: string[] }>,
+          );
+          return { ok: true as const };
+        },
+        onApplied: () => {
+          if (event) hub.publishEvent(event);
+        },
+      });
+    } else {
+      await sessionRuns.answerQuestion(id, user, body.questionId, body.answers);
+    }
     return reply.code(202).send({ ok: true });
   });
 
@@ -1282,7 +1480,26 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    await sessionRuns.cancelSession(id, user.id);
+    const body = (req.body ?? {}) as { opId?: unknown };
+    const opId = optionalOpId(body);
+    if (opId) {
+      let events: WireEvent[] = [];
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.cancel',
+        body: { sessionId: id },
+        fn: async (client) => {
+          events = await sessionRuns.cancelSessionInTx(client, id, user.id);
+          return { ok: true as const };
+        },
+        onApplied: () => {
+          sessionRuns.afterCancelSession(id, events);
+        },
+      });
+    } else {
+      await sessionRuns.cancelSession(id, user.id);
+    }
     return reply.code(202).send({ ok: true });
   });
 

@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@types/react": "^19.0.8",
+    "fast-check": "^4.8.0",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   }
