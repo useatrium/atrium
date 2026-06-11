@@ -50,6 +50,10 @@ class FakeCentaur {
     });
   }
 
+  clearFrames(): void {
+    this.frames = [];
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
@@ -149,6 +153,8 @@ async function insertSessionRow(args: {
   title: string;
   status: 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   spawnedBy?: string;
+  currentExecutionId?: string | null;
+  assignmentGeneration?: number | null;
   createdAt?: string;
   completedAt?: string | null;
   costUsd?: number;
@@ -158,7 +164,7 @@ async function insertSessionRow(args: {
        workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
        driver_id, current_execution_id, assignment_generation, created_at, completed_at, cost_usd
      )
-     VALUES ($1, $2, $3, 'claude-code', $4, $5, $6, $6, 'exe_fake', 1, $7, $8, $9)
+     VALUES ($1, $2, $3, 'claude-code', $4, $5, $6, $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [
       fx.workspaceId,
@@ -167,6 +173,8 @@ async function insertSessionRow(args: {
       args.title,
       args.status,
       args.spawnedBy ?? fx.userId,
+      args.currentExecutionId ?? 'exe_fake',
+      args.assignmentGeneration === undefined ? 1 : args.assignmentGeneration,
       args.createdAt ?? new Date().toISOString(),
       args.completedAt ?? null,
       args.costUsd ?? 0,
@@ -281,6 +289,81 @@ describe('Phase 2 sessions', () => {
       expect(row.rows[0].result_text).toContain('PONG');
     });
     await app.close();
+  });
+
+  describe('boot release sweep', () => {
+    let previousReleaseIdleMs: string | undefined;
+
+    beforeEach(() => {
+      previousReleaseIdleMs = process.env.SESSION_RELEASE_IDLE_MS;
+      process.env.SESSION_RELEASE_IDLE_MS = '10';
+    });
+
+    afterEach(() => {
+      if (previousReleaseIdleMs === undefined) delete process.env.SESSION_RELEASE_IDLE_MS;
+      else process.env.SESSION_RELEASE_IDLE_MS = previousReleaseIdleMs;
+    });
+
+    it('schedules release for terminal sessions with pinned assignments on boot', async () => {
+      const id = await insertSessionRow({
+        title: 'release on boot',
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        assignmentGeneration: 7,
+      });
+      const app = await buildApp({
+        pool,
+        sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+      });
+      await app.ready();
+
+      await waitFor(async () => {
+        const release = fake.requests.find((r) => r.path.endsWith('/release'));
+        expect(release?.body).toMatchObject({ cancel_inflight: false });
+        expect(release?.body.release_id).toContain(`rel-${id}-`);
+        const row = await pool.query('SELECT assignment_generation FROM sessions WHERE id = $1', [id]);
+        expect(row.rows[0].assignment_generation).toBeNull();
+      });
+      await app.close();
+    });
+
+    it('does not release terminal sessions whose assignment is already null on boot', async () => {
+      await insertSessionRow({
+        title: 'already released',
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        assignmentGeneration: null,
+      });
+      const app = await buildApp({
+        pool,
+        sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+      });
+      await app.ready();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
+      await app.close();
+    });
+
+    it('does not release non-terminal sessions during the boot sweep', async () => {
+      fake.clearFrames();
+      const id = await insertSessionRow({
+        title: 'still running',
+        status: 'running',
+        assignmentGeneration: 4,
+      });
+      const app = await buildApp({
+        pool,
+        sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+      });
+      await app.ready();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
+      const row = await pool.query('SELECT status, assignment_generation FROM sessions WHERE id = $1', [id]);
+      expect(row.rows[0]).toMatchObject({ status: 'running', assignment_generation: 4 });
+      await app.close();
+    });
   });
 
   it('stream proxy rejects unauthenticated clients and streams Centaur frames with cookie', async () => {
