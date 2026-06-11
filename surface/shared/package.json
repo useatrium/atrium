@@ -5,7 +5,8 @@
   "description": "Shared protocol types, timeline state, API and WS client for Atrium surface clients",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./prefs": "./src/prefs.ts"
   },
   "scripts": {
     "test": "vitest run",
