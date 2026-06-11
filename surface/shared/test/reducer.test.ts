@@ -9,6 +9,7 @@ import {
   mergeHistory,
   mergeThread,
   nextCatchUpStep,
+  resetToLatest,
   type ChatMessage,
   type WireEvent,
 } from '../src/index';
@@ -172,21 +173,46 @@ describe('history pagination merge', () => {
     expect(t.main[0]!.edited).toBe(true);
   });
 
-  it('preserves pending and failed rows when catch-up falls back to latest history', () => {
+  it('snapshot reset drops stale confirmed rows but keeps local and newer rows', () => {
     let t = mergeHistory(emptyTimeline, [wire(1, 'old')], { hasMoreBefore: true });
     t = addPending(t, pending('cm-pending', 'still sending'));
     t = addPending(t, pending('cm-failed', 'retry me'));
     t = markFailed(t, 'cm-failed');
+    // A WS event can land between the snapshot fetch and its dispatch — it is
+    // newer than the page and must survive the reset.
+    t = applyEvent(t, wire(60, 'raced in live', { author: bob }));
 
-    t = mergeHistory(t, [wire(50, 'latest')], { hasMoreBefore: true });
+    t = resetToLatest(t, [wire(50, 'latest')], { hasMoreBefore: true });
 
+    // 'old' (id 1) is gone: the gap between it and the snapshot was never
+    // fetched, and keeping it would render a silent hole.
     expect(t.main.map((m) => [m.text, m.status])).toEqual([
-      ['old', 'confirmed'],
       ['latest', 'confirmed'],
+      ['raced in live', 'confirmed'],
       ['still sending', 'pending'],
       ['retry me', 'failed'],
     ]);
     expect(t.hasMoreBefore).toBe(true);
+    expect(t.lastEventId).toBe(60);
+    // seenIds rebuilt from kept rows: paging back must re-apply id 1.
+    expect(t.seenIds.has(1)).toBe(false);
+    t = mergeHistory(t, [wire(1, 'old')], { hasMoreBefore: false });
+    expect(t.main[0]!.text).toBe('old');
+    expect(t.hasMoreBefore).toBe(false);
+  });
+
+  it('snapshot reset reconciles a pending row confirmed inside the page', () => {
+    let t = mergeHistory(emptyTimeline, [wire(1, 'old')], { hasMoreBefore: true });
+    t = addPending(t, pending('cm-1', 'mine'));
+
+    t = resetToLatest(t, [wire(49, 'mine', { clientMsgId: 'cm-1' }), wire(50, 'latest', { author: bob })], {
+      hasMoreBefore: true,
+    });
+
+    expect(t.main.map((m) => [m.text, m.status])).toEqual([
+      ['mine', 'confirmed'],
+      ['latest', 'confirmed'],
+    ]);
   });
 });
 

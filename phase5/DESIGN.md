@@ -116,6 +116,22 @@ flushing the same op queue is harmless because the server dedupes by `op_id`.
 No tab election required (Web Locks becomes an optional politeness
 optimization, not a correctness mechanism).
 
+**D3 — every piece of client-visible state declares its bucket.**
+Two buckets, no third option:
+- *History matters* → append-only event log, synced by cursor (messages,
+  session lifecycle, membership changes).
+- *Only the current value matters* → mutable state table with an explicit
+  per-type merge rule (LWW, monotonic max, set membership), shipped as part of
+  the `/sync` snapshot. Deliberately **not** event-sourced: read cursors would
+  be the highest-frequency, lowest-value entries in the log, and replaying
+  history for state whose history is worthless is pure cost.
+Nothing ships as "a bare WS frame + a table" again (today's G3 pattern). A new
+feature adding state must pick a bucket at design time; if it picks bucket 2,
+it must also name its merge rule and join the snapshot. Applies prospectively
+to e.g. profile/display-name editing (no route today; author info heals at
+read time via the `attachAuthor` join, but a rename feature would join the
+snapshot or emit an event — not invent a third path).
+
 Kept from the blueprint: WS demoted to an accelerator that is never trusted for
 correctness; durable typed client op queue; per-type conflict semantics;
 snapshot repair when too far behind; chaos testing as the enforcement
