@@ -18,6 +18,7 @@ interface SessionContextValue {
   /** False until SecureStore has been read on boot. */
   ready: boolean;
   login: (serverUrl: string, handle: string, displayName: string) => Promise<void>;
+  loginWithEmailCode: (serverUrl: string, email: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Called by the chat layer when the server says the token is dead. */
   invalidate: () => Promise<void>;
@@ -58,6 +59,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setSession(next);
   }, []);
 
+  const loginWithEmailCode = useCallback(async (serverUrl: string, email: string, code: string) => {
+    const base = normalizeServerUrl(serverUrl);
+    const api = createApi({ baseUrl: base });
+    const { user, token } = await api.verifyEmailCode(email, code);
+    if (!token) {
+      throw new Error('Server did not return a token — update the Atrium server.');
+    }
+    const next: Session = { serverUrl: base, token, user };
+    await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(next));
+    setSession(next);
+  }, []);
+
   const invalidate = useCallback(async () => {
     // Every path out of a session (logout AND 401 invalidation) must clear the
     // local cache/outbox/drafts — a later login may be a different account,
@@ -78,7 +91,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [session, invalidate]);
 
   return (
-    <SessionContext.Provider value={{ session, ready, login, logout, invalidate }}>
+    <SessionContext.Provider value={{ session, ready, login, loginWithEmailCode, logout, invalidate }}>
       {children}
     </SessionContext.Provider>
   );
