@@ -1,15 +1,16 @@
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
-import * as Haptics from 'expo-haptics';
 import {
   formatTime,
   formatBytes,
+  type AttachmentMeta,
   type ChatMessage,
   type MessageReaction,
   type Session,
 } from '@atrium/surface-client';
 import { colors, font, radius, space } from '../lib/theme';
+import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
 
@@ -33,6 +34,7 @@ export interface MessageRowProps {
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
   onOpenAttachment: (fileId: string) => void;
+  onOpenImageAttachment: (attachment: AttachmentMeta) => void;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -87,11 +89,13 @@ function Attachments({
   fileUrl,
   fileHeaders,
   onOpen,
+  onOpenImage,
 }: {
   message: ChatMessage;
   fileUrl: (id: string) => string;
   fileHeaders?: Record<string, string>;
   onOpen: (fileId: string) => void;
+  onOpenImage: (attachment: AttachmentMeta) => void;
 }) {
   if (!message.attachments?.length) return null;
   return (
@@ -101,7 +105,7 @@ function Attachments({
           const ratio = a.width && a.height ? a.width / a.height : 4 / 3;
           const w = Math.min(IMAGE_MAX_W, a.width ?? IMAGE_MAX_W);
           return (
-            <Pressable key={a.id} onPress={() => onOpen(a.id)}>
+            <Pressable key={a.id} onPress={() => onOpenImage(a)}>
               <Image
                 source={{ uri: fileUrl(a.id), headers: fileHeaders }}
                 style={{
@@ -220,6 +224,7 @@ export const MessageRow = memo(function MessageRow({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
+  onOpenImageAttachment,
   onOpenSession,
 }: MessageRowProps) {
   const pending = m.status === 'pending';
@@ -240,6 +245,7 @@ export const MessageRow = memo(function MessageRow({
         fileUrl={fileUrl}
         fileHeaders={fileHeaders}
         onOpen={onOpenAttachment}
+        onOpenImage={onOpenImageAttachment}
       />
     </>
   );
@@ -248,7 +254,7 @@ export const MessageRow = memo(function MessageRow({
     <Pressable
       onLongPress={() => {
         if (tombstone || m.sessionId != null) return;
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        lightImpactHaptic();
         onLongPress(m);
       }}
       delayLongPress={250}
@@ -295,7 +301,10 @@ export const MessageRow = memo(function MessageRow({
           <ReactionChips
             reactions={m.reactions}
             meId={meId}
-            onToggle={(emoji) => onToggleReaction(m, emoji)}
+            onToggle={(emoji) => {
+              selectionHaptic();
+              onToggleReaction(m, emoji);
+            }}
           />
         )}
         {!inThread && m.replyCount > 0 && onOpenThread && (
