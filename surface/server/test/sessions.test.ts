@@ -20,7 +20,11 @@ interface RecordedRequest {
 class FakeCentaur {
   private server: Server;
   private frames: any[] = [];
+  private readonly idempotency = new Map<string, { payload: string; response: object }>();
+  private readonly threadGenerations = new Map<string, number>();
   readonly requests: RecordedRequest[] = [];
+  readonly acceptedExecutions: string[] = [];
+  staleMessages = new Set<string>();
   url = '';
 
   constructor() {
@@ -56,13 +60,35 @@ class FakeCentaur {
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body, query: url.searchParams });
 
     if (req.method === 'POST' && url.pathname === '/agent/spawn') {
-      return sendJson(res, { thread_key: body.thread_key, assignment_generation: 1 });
+      const replay = this.replayIdempotent(res, 'spawn', body.thread_key, body.spawn_id, body);
+      if (replay) return;
+      const generation = (this.threadGenerations.get(body.thread_key) ?? 0) + 1;
+      this.threadGenerations.set(body.thread_key, generation);
+      const response = { thread_key: body.thread_key, assignment_generation: generation };
+      this.rememberIdempotent('spawn', body.thread_key, body.spawn_id, body, response);
+      return sendJson(res, response);
     }
     if (req.method === 'POST' && url.pathname === '/agent/message') {
+      if (this.staleMessages.delete(body.thread_key)) {
+        return sendJson(res, { code: 'ASSIGNMENT_GENERATION_STALE' }, 409);
+      }
+      const current = this.threadGenerations.get(body.thread_key);
+      if (current != null && body.assignment_generation < current) {
+        return sendJson(res, { code: 'ASSIGNMENT_GENERATION_STALE' }, 409);
+      }
+      const replay = this.replayIdempotent(res, 'message', body.thread_key, body.message_id, body);
+      if (replay) return;
+      this.rememberIdempotent('message', body.thread_key, body.message_id, body, {});
       return sendJson(res, {});
     }
     if (req.method === 'POST' && url.pathname === '/agent/execute') {
-      return sendJson(res, { execution_id: 'exe_fake' });
+      const replay = this.replayIdempotent(res, 'execute', body.thread_key, body.execute_id, body);
+      if (replay) return;
+      const executionId = `exe_fake_${this.acceptedExecutions.length + 1}`;
+      const response = { execution_id: executionId };
+      this.acceptedExecutions.push(executionId);
+      this.rememberIdempotent('execute', body.thread_key, body.execute_id, body, response);
+      return sendJson(res, response);
     }
     if (req.method === 'POST' && url.pathname.endsWith('/release')) {
       return sendJson(res, {});
@@ -81,6 +107,47 @@ class FakeCentaur {
 
     res.writeHead(404);
     res.end('not found');
+  }
+
+  setThreadGeneration(threadKey: string, generation: number): void {
+    this.threadGenerations.set(threadKey, generation);
+  }
+
+  seedAcceptedExecute(threadKey: string, executeId: string, body: object, response: object): void {
+    this.acceptedExecutions.push((response as { execution_id: string }).execution_id);
+    this.rememberIdempotent('execute', threadKey, executeId, body, response);
+  }
+
+  private replayIdempotent(
+    res: ServerResponse,
+    kind: string,
+    threadKey: string,
+    key: string | undefined,
+    body: object,
+  ): boolean {
+    if (!key) return false;
+    const existing = this.idempotency.get(`${kind}:${threadKey}:${key}`);
+    if (!existing) return false;
+    if (existing.payload !== JSON.stringify(body)) {
+      sendJson(res, { code: 'IDEMPOTENCY_PAYLOAD_MISMATCH' }, 409);
+      return true;
+    }
+    sendJson(res, existing.response);
+    return true;
+  }
+
+  private rememberIdempotent(
+    kind: string,
+    threadKey: string,
+    key: string | undefined,
+    body: object,
+    response: object,
+  ): void {
+    if (!key) return;
+    this.idempotency.set(`${kind}:${threadKey}:${key}`, {
+      payload: JSON.stringify(body),
+      response,
+    });
   }
 }
 
@@ -280,6 +347,128 @@ describe('Phase 2 sessions', () => {
       expect(row.rows[0].status).toBe('completed');
       expect(row.rows[0].result_text).toContain('PONG');
     });
+    await app.close();
+  });
+
+  it('boot resume reuses pending execute id after execute accept was not persisted', async () => {
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, centaur_execute_id, centaur_execute_attempt
+       )
+       VALUES ($1, $2, 'thread-crash-exec', 'claude-code', 'resume execute', 'queued', $3, $3, NULL, 1, '', 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    const executeId = `exec-${id}-a1`;
+    await pool.query('UPDATE sessions SET centaur_execute_id = $1 WHERE id = $2', [executeId, id]);
+    fake.seedAcceptedExecute(
+      'thread-crash-exec',
+      executeId,
+      {
+        thread_key: 'thread-crash-exec',
+        assignment_generation: 1,
+        harness: 'claude-code',
+        delivery: { platform: 'dev' },
+        execute_id: executeId,
+      },
+      { execution_id: 'exe_crashed' },
+    );
+
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        'SELECT current_execution_id, centaur_execute_id FROM sessions WHERE id = $1',
+        [id],
+      );
+      expect(row.rows[0].current_execution_id).toBe('exe_crashed');
+      expect(row.rows[0].centaur_execute_id).toBeNull();
+    });
+    expect(fake.acceptedExecutions).toEqual(['exe_crashed']);
+    const executes = fake.requests.filter((r) => r.path === '/agent/execute');
+    expect(executes).toHaveLength(1);
+    expect(executes[0]!.body.execute_id).toBe(executeId);
+    await app.close();
+  });
+
+  it('steer after release uses a fresh spawn id', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, centaur_spawn_attempt
+       )
+       VALUES ($1, $2, 'thread-released', 'claude-code', 'released', 'completed', $3, $3, 'exe_done', NULL, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'resume released assignment' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    expect(spawn?.body.spawn_id).toBe(`spawn-${id}-a2`);
+    expect(spawn?.body.spawn_id).not.toBe(`spawn-${id}-a1`);
+    await app.close();
+  });
+
+  it('re-spawns and retries once when postMessage sees stale assignment generation', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-stale', 'claude-code', 'stale', 'running', $3, $3, 'exe_old', 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-stale', 1);
+    fake.staleMessages.add('thread-stale');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'retry after stale' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const messages = fake.requests.filter((r) => r.path === '/agent/message');
+    expect(messages).toHaveLength(2);
+    expect(messages[0]!.body.assignment_generation).toBe(1);
+    expect(messages[1]!.body.assignment_generation).toBe(2);
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    expect(spawn?.body.spawn_id).toBe(`spawn-${id}-a1`);
+    const row = await pool.query(
+      'SELECT assignment_generation, current_execution_id FROM sessions WHERE id = $1',
+      [id],
+    );
+    expect(row.rows[0].assignment_generation).toBe(2);
+    expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
     await app.close();
   });
 
@@ -629,8 +818,8 @@ async function readJson(req: IncomingMessage): Promise<any> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function sendJson(res: ServerResponse, body: object): void {
-  res.writeHead(200, { 'content-type': 'application/json' });
+function sendJson(res: ServerResponse, body: object, status = 200): void {
+  res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
 }
 
