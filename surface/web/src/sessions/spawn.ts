@@ -4,7 +4,7 @@
 import type { AppAction } from '@atrium/surface-client';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 export { AGENT_PREFIX, looksLikeAgentCommand, parseAgentTask } from '@atrium/surface-client';
-import { parseAgentTask } from '@atrium/surface-client';
+import { randomId, parseAgentTask } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { PENDING_SESSION_PREFIX, sessionFromWire, type Session } from './types';
 
@@ -28,7 +28,7 @@ export function trySpawnFromComposer(text: string, ctx: SpawnContext): boolean {
 
 export function spawnSession(task: string, ctx: SpawnContext): void {
   const { channelId, threadRootEventId, me, dispatch } = ctx;
-  const tempId = `${PENDING_SESSION_PREFIX}${crypto.randomUUID()}`;
+  const tempId = `${PENDING_SESSION_PREFIX}${randomId()}`;
   const now = new Date().toISOString();
 
   const optimistic: Session = {

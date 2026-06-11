@@ -2,6 +2,7 @@ import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } 
 import { api } from '../api';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta } from '@atrium/surface-client';
+import { randomId } from '@atrium/surface-client';
 
 interface PendingFile {
   key: string;
@@ -55,7 +56,7 @@ export function Composer({
   );
 
   const startUpload = async (file: File) => {
-    const key = crypto.randomUUID();
+    const key = randomId();
     let width: number | undefined;
     let height: number | undefined;
     if (file.type.startsWith('image/')) {
