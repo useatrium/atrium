@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:24-alpine AS base
+WORKDIR /app
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV CI=true
+RUN corepack enable
+
+FROM base AS deps
+COPY surface/package.json surface/pnpm-lock.yaml surface/pnpm-workspace.yaml ./surface/
+COPY surface/server/package.json ./surface/server/package.json
+COPY surface/shared/package.json ./surface/shared/package.json
+COPY packages/centaur-client/package.json ./packages/centaur-client/package.json
+RUN cd surface && pnpm install --frozen-lockfile --ignore-scripts --filter @atrium/server...
+
+FROM deps AS build
+COPY surface/server ./surface/server
+COPY surface/shared ./surface/shared
+COPY packages/centaur-client ./packages/centaur-client
+RUN cd packages/centaur-client && pnpm install --frozen-lockfile --ignore-scripts && pnpm build
+RUN mkdir -p surface/server/node_modules/@atrium/centaur-client \
+  && cp packages/centaur-client/package.json surface/server/node_modules/@atrium/centaur-client/package.json \
+  && cp -R packages/centaur-client/dist surface/server/node_modules/@atrium/centaur-client/dist
+RUN cd surface/server && pnpm exec tsc \
+  --target ES2023 \
+  --module NodeNext \
+  --moduleResolution NodeNext \
+  --lib ES2023 \
+  --types node \
+  --strict \
+  --noUncheckedIndexedAccess \
+  --esModuleInterop \
+  --skipLibCheck \
+  --forceConsistentCasingInFileNames \
+  --outDir dist \
+  --rootDir src \
+  src/index.ts
+
+FROM base AS prod-deps
+COPY surface/package.json surface/pnpm-lock.yaml surface/pnpm-workspace.yaml ./surface/
+COPY surface/server/package.json ./surface/server/package.json
+COPY surface/shared/package.json ./surface/shared/package.json
+COPY packages/centaur-client/package.json ./packages/centaur-client/package.json
+RUN cd surface && pnpm install --prod --frozen-lockfile --ignore-scripts --filter @atrium/server...
+
+FROM node:24-alpine AS runtime
+WORKDIR /app/surface/server
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3001
+
+COPY --from=prod-deps /app/surface/node_modules /app/surface/node_modules
+COPY --from=prod-deps /app/surface/server/node_modules /app/surface/server/node_modules
+COPY --from=prod-deps /app/packages /app/packages
+COPY --from=build /app/packages/centaur-client/dist /app/packages/centaur-client/dist
+COPY --from=build /app/packages/centaur-client/package.json /app/surface/server/node_modules/@atrium/centaur-client/package.json
+COPY --from=build /app/packages/centaur-client/dist /app/surface/server/node_modules/@atrium/centaur-client/dist
+COPY --from=build /app/surface/server/dist ./dist
+COPY --from=build /app/surface/server/migrations ./migrations
+COPY --from=build /app/surface/server/package.json ./package.json
+
+RUN addgroup -S atrium && adduser -S -G atrium atrium
+USER atrium
+
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
+
+CMD ["node", "dist/index.js"]
