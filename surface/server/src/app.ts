@@ -252,19 +252,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return Number.isFinite(createdAt) && Date.now() - createdAt <= 10 * 60 * 1000;
   }
 
-  function decodeJwtPayload(token: string): Record<string, unknown> | null {
-    const parts = token.split('.');
-    if (parts.length < 2) return null;
-    try {
-      return JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Record<
-        string,
-        unknown
-      >;
-    } catch {
-      return null;
-    }
-  }
-
   async function userForGoogleIdentity(claims: {
     sub: string;
     email?: string;
@@ -322,6 +309,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           .code(400)
           .send({ error: 'invalid_email', message: 'enter a valid email address' });
       }
+      // Per-email cooldown: ignore rapid repeats (don't churn the pending code
+      // or spam delivery) while keeping the response uniform so it can't be
+      // used to probe which emails are active.
+      const recent = await pool.query(
+        `SELECT 1 FROM login_codes WHERE email = $1 AND created_at > now() - interval '30 seconds' LIMIT 1`,
+        [email],
+      );
+      if (recent.rowCount) return { ok: true };
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
       await pool.query('UPDATE login_codes SET consumed_at = now() WHERE email = $1 AND consumed_at IS NULL', [
         email,
@@ -331,9 +326,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
          VALUES ($1, $2, now() + interval '10 minutes')`,
         [email, codeHash(email, code)],
       );
-      if (config.emailMode === 'log') {
-        req.log.warn({ email, code }, 'auth email code');
-      } else {
+      // Only ever log the actual code when dev codes are explicitly enabled —
+      // otherwise a prod deploy left in EMAIL_MODE=log would leak login factors.
+      if (config.authDevCodes) {
+        req.log.warn({ email, code }, 'auth email code (dev)');
+      } else if (config.emailMode !== 'log') {
         req.log.warn({ email, mode: config.emailMode }, 'email transport mode is not implemented');
       }
       return config.authDevCodes ? { ok: true, devCode: code } : { ok: true };
@@ -347,53 +344,75 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!EMAIL_RE.test(email) || email.length > 320 || !CODE_RE.test(code)) {
       return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
     }
-    const codes = await pool.query<{
-      id: string;
-      code_hash: string;
-      expires_at: Date;
-      attempts: number;
-    }>(
-      `SELECT id, code_hash, expires_at, attempts
-       FROM login_codes
-       WHERE email = $1 AND consumed_at IS NULL
-       ORDER BY created_at DESC
-       LIMIT 1`,
+    // Atomic single-use redemption: consume the latest valid code ONLY if the
+    // hash matches, in one UPDATE. Concurrent verifies can't double-redeem or
+    // race past the lockout (the row lock serializes them, and a second
+    // correct guess sees consumed_at already set → rowCount 0).
+    const consumed = await pool.query<{ id: string }>(
+      `UPDATE login_codes SET consumed_at = now()
+       WHERE id = (
+         SELECT id FROM login_codes
+         WHERE email = $1 AND consumed_at IS NULL AND expires_at > now() AND attempts < 5
+         ORDER BY created_at DESC LIMIT 1
+       )
+       AND code_hash = $2
+       RETURNING id`,
+      [email, codeHash(email, code)],
+    );
+    if (consumed.rowCount === 1) {
+      const user = await userForEmail(email);
+      return createAuthSession(reply, user);
+    }
+    // Wrong (or no valid) code: atomically burn an attempt on the latest valid
+    // code, locking it after the 5th failure.
+    await pool.query(
+      `UPDATE login_codes
+       SET attempts = attempts + 1,
+           consumed_at = CASE WHEN attempts + 1 >= 5 THEN now() ELSE consumed_at END
+       WHERE id = (
+         SELECT id FROM login_codes
+         WHERE email = $1 AND consumed_at IS NULL AND expires_at > now() AND attempts < 5
+         ORDER BY created_at DESC LIMIT 1
+       )`,
       [email],
     );
-    const row = codes.rows[0];
-    if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
-      return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
-    }
-    if (!safeEqual(row.code_hash, codeHash(email, code))) {
-      const attempts = row.attempts + 1;
-      await pool.query(
-        `UPDATE login_codes
-         SET attempts = $2, consumed_at = CASE WHEN $2 >= 5 THEN now() ELSE consumed_at END
-         WHERE id = $1`,
-        [row.id, attempts],
-      );
-      return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
-    }
-    await pool.query('UPDATE login_codes SET consumed_at = now() WHERE id = $1', [row.id]);
-    const user = await userForEmail(email);
-    return createAuthSession(reply, user);
+    return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
   });
+
+  const OAUTH_STATE_COOKIE = 'atrium_oauth_state';
 
   app.get('/auth/oauth/google', async (_req, reply) => {
     if (!googleEnabled()) return reply.code(404).send({ error: 'not_found' });
+    const state = signOAuthState();
+    // Bind the state to THIS browser: the callback requires the same value
+    // back in an httpOnly cookie, so a valid signed state can't be replayed
+    // into a victim's session (login CSRF).
+    reply.setCookie(OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/auth/oauth',
+      maxAge: 600,
+    });
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     url.searchParams.set('client_id', config.googleClientId);
     url.searchParams.set('redirect_uri', config.googleRedirectUrl);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'openid email profile');
-    url.searchParams.set('state', signOAuthState());
+    url.searchParams.set('state', state);
     return reply.redirect(url.toString(), 302);
   });
 
   app.get('/auth/oauth/google/callback', async (req, reply) => {
     if (!googleEnabled()) return reply.code(404).send({ error: 'not_found' });
     const query = req.query as { code?: string; state?: string };
-    if (!query.code || !verifyOAuthState(query.state)) {
+    const cookieState = req.cookies[OAUTH_STATE_COOKIE];
+    reply.clearCookie(OAUTH_STATE_COOKIE, { path: '/auth/oauth' });
+    if (
+      !query.code ||
+      !verifyOAuthState(query.state) ||
+      !cookieState ||
+      query.state !== cookieState
+    ) {
       return reply.code(400).send({ error: 'invalid_oauth_state' });
     }
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -409,17 +428,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     });
     if (!tokenRes.ok) return reply.code(400).send({ error: 'oauth_exchange_failed' });
     const tokenBody = (await tokenRes.json()) as { id_token?: string };
-    const claims = tokenBody.id_token ? decodeJwtPayload(tokenBody.id_token) : null;
-    // TODO before any non-tailnet exposure: verify id_token against Google's JWKS.
-    // This scaffold validates aud/iss/exp/email claims only, not the JWT signature.
+    if (!tokenBody.id_token) return reply.code(400).send({ error: 'invalid_id_token' });
+    // Verify the id_token's SIGNATURE via Google's tokeninfo endpoint (server-
+    // side validation, no JWKS to hand-roll). The returned claims are trusted.
+    const infoRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(tokenBody.id_token)}`,
+    );
+    if (!infoRes.ok) return reply.code(400).send({ error: 'invalid_id_token' });
+    const claims = (await infoRes.json()) as Record<string, unknown>;
+    const exp = Number(claims.exp);
     if (
-      !claims ||
       typeof claims.sub !== 'string' ||
       claims.aud !== config.googleClientId ||
       typeof claims.iss !== 'string' ||
       !GOOGLE_ISSUERS.has(claims.iss) ||
-      typeof claims.exp !== 'number' ||
-      claims.exp * 1000 <= Date.now()
+      !Number.isFinite(exp) ||
+      exp * 1000 <= Date.now()
     ) {
       return reply.code(400).send({ error: 'invalid_id_token' });
     }
@@ -427,7 +451,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const user = await userForGoogleIdentity({
       sub: claims.sub,
       email,
-      emailVerified: claims.email_verified === true,
+      // tokeninfo returns claim values as strings ("true"); the token-exchange
+      // path returned a boolean — accept both.
+      emailVerified: claims.email_verified === true || claims.email_verified === 'true',
       name: typeof claims.name === 'string' ? claims.name : undefined,
     });
     await createAuthSession(reply, user);
