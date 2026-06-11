@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
-import { CentaurClient, isTerminalExecutionStatus, type CentaurEventFrame } from '@atrium/centaur-client';
+import {
+  CentaurApiError,
+  CentaurClient,
+  isTerminalExecutionStatus,
+  type CentaurEventFrame,
+  type QuestionPrompt,
+} from '@atrium/centaur-client';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -27,6 +33,7 @@ export interface SessionJson {
   driverId: string | null;
   driver: SessionUserJson | null;
   pendingSeatRequests: SessionUserJson[];
+  pendingQuestion: SessionPendingQuestionJson | null;
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
@@ -39,6 +46,19 @@ export interface SessionJson {
 export interface SessionUserJson {
   userId: string;
   displayName: string;
+}
+
+export interface SessionPendingQuestionJson {
+  questionId: string;
+  turnId: string;
+  questions: QuestionPrompt[];
+  eventId: number;
+}
+
+export interface QuestionAnswerBody {
+  [questionId: string]: {
+    answers: string[];
+  };
 }
 
 export interface SessionListItem {
@@ -76,6 +96,11 @@ interface SessionRow {
   driver_id: string | null;
   current_execution_id: string | null;
   assignment_generation: number | null;
+  centaur_spawn_attempt: number;
+  centaur_spawn_id: string | null;
+  centaur_execute_attempt: number;
+  centaur_execute_id: string | null;
+  pending_question: unknown | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -102,7 +127,7 @@ interface SessionListRow extends SessionRow {
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
 
 // Idle window before a terminal session's sandbox assignment is released.
-const RELEASE_IDLE_MS = Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
+const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
 
 export class SessionRuns {
   private readonly centaur: CentaurClient;
@@ -281,24 +306,92 @@ export class SessionRuns {
   async postUserMessage(id: string, userId: string, text: string): Promise<void> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriver(id, userId);
+    await this.postUserMessageOnce(row, userId, text, true);
+    this.startTailer(id);
+  }
+
+  async answerQuestion(
+    id: string,
+    user: UserRef,
+    questionId: string,
+    answers: QuestionAnswerBody,
+  ): Promise<void> {
+    const row = await this.requireDriver(id, user.id);
+    const pending = parsePendingQuestion(row.pending_question);
+    if (!pending || pending.questionId !== questionId) {
+      throw new DomainError(409, 'question_not_pending', 'question is not pending');
+    }
+    if (!row.current_execution_id) {
+      throw new DomainError(409, 'execution_not_running', 'session has no running execution');
+    }
+
+    await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const locked = before.rows[0];
+      const stillPending = locked ? parsePendingQuestion(locked.pending_question) : null;
+      if (!locked || !stillPending || stillPending.questionId !== questionId) return null;
+      const updated = await client.query<SessionRow>(
+        'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
+        [id],
+      );
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_answered',
+        actorId: user.id,
+        payload: {
+          sessionId: id,
+          questionId,
+          by: user.id,
+          answers: summarizeAnswers(stillPending, answers),
+        },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
+  }
+
+  private async postUserMessageOnce(row: SessionRow, userId: string, text: string, allowStaleRetry: boolean): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
-      const spawned = await this.centaur.spawn(row.centaur_thread_key, row.harness);
+      const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
       generation = spawned.assignment_generation;
-      await this.pool.query('UPDATE sessions SET assignment_generation = $1 WHERE id = $2', [generation, id]);
+      row = spawned.row;
     }
-    await this.centaur.postMessage(row.centaur_thread_key, generation, [{ type: 'text', text }], {
-      user_id: userId,
-    });
-    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness);
+    try {
+      await this.centaur.postMessage(
+        row.centaur_thread_key,
+        generation,
+        [{ type: 'text', text }],
+        { user_id: userId },
+        { messageId: `msg-${randomUUID()}` },
+      );
+    } catch (err) {
+      if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
+        const refreshed = await this.clearAssignment(row.id);
+        await this.postUserMessageOnce(refreshed, userId, text, false);
+        return;
+      }
+      throw err;
+    }
+    // A newly posted message needs a fresh execution: a pending execute id
+    // left by a crashed earlier steer would make Centaur replay that old
+    // execution and strand this message in the queue. Pending-id reuse is
+    // only for boot resume (startSession), which posts no message.
+    await this.pool.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
+    const executeId = await this.reserveExecuteId(row.id);
+    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
     await this.pool.query(
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
-           completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END
+           completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END,
+           centaur_execute_id = NULL
        WHERE id = $2`,
-      [exec.execution_id, id],
+      [exec.execution_id, row.id],
     );
-    this.startTailer(id);
   }
 
   async cancelSession(id: string, userId: string): Promise<void> {
@@ -393,6 +486,14 @@ export class SessionRuns {
 
   async resumeActiveSessions(): Promise<void> {
     if (!this.autoResume) return;
+    const terminal = await this.pool.query<Pick<SessionRow, 'id'>>(
+      `SELECT id FROM sessions
+       WHERE status IN ('completed', 'failed', 'cancelled')
+         AND assignment_generation IS NOT NULL
+       ORDER BY completed_at ASC NULLS LAST, created_at ASC`,
+    );
+    for (const row of terminal.rows) this.scheduleRelease(row.id);
+
     const res = await this.pool.query<SessionRow>(
       `SELECT * FROM sessions
        WHERE status NOT IN ('completed', 'failed', 'cancelled')
@@ -425,17 +526,21 @@ export class SessionRuns {
       if (!row) return;
       let generation = row.assignment_generation;
       if (generation == null) {
-        const spawned = await this.centaur.spawn(row.centaur_thread_key, row.harness);
+        const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
         generation = spawned.assignment_generation;
-        if (generation == null) throw new Error('centaur spawn missing assignment_generation');
-        row = await this.updateExecution(id, null, generation);
+        row = spawned.row;
       }
       if (task != null) {
-        await this.centaur.postMessage(row.centaur_thread_key, generation, [{ type: 'text', text: task }], {
-          user_id: row.spawned_by,
-        });
+        await this.centaur.postMessage(
+          row.centaur_thread_key,
+          generation,
+          [{ type: 'text', text: task }],
+          { user_id: row.spawned_by },
+          { messageId: `msg-${id}-initial` },
+        );
       }
-      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness);
+      const executeId = await this.reserveExecuteId(id);
+      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
       await this.updateExecution(id, exec.execution_id, generation);
       this.startTailer(id);
     } catch (err) {
@@ -502,6 +607,14 @@ export class SessionRuns {
       }
       return;
     }
+    if (frame.event === 'question_requested') {
+      await this.persistQuestionRequested(id, frame);
+      return;
+    }
+    if (frame.event === 'question_resolved') {
+      await this.persistQuestionResolved(id, frame.data.question_id, frame.data.reason);
+      return;
+    }
     if (frame.event !== 'execution_state') return;
     const status = normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
@@ -510,6 +623,74 @@ export class SessionRuns {
     } else {
       await this.updateStatus(id, status);
     }
+  }
+
+  private async persistQuestionRequested(
+    id: string,
+    frame: Extract<CentaurEventFrame, { event: 'question_requested' }>,
+  ): Promise<void> {
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      if (!row || TERMINAL_STATUSES.has(row.status)) return null;
+      const pending: SessionPendingQuestionJson = {
+        questionId: frame.data.question_id,
+        turnId: frame.data.turn_id,
+        questions: frame.data.questions,
+        eventId: frame.event_id,
+      };
+      const updated = await client.query<SessionRow>(
+        `UPDATE sessions
+         SET pending_question = $1,
+             last_event_id = GREATEST(last_event_id, $2)
+         WHERE id = $3
+         RETURNING *`,
+        [JSON.stringify(pending), frame.event_id, id],
+      );
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_requested',
+        actorId: next.spawned_by,
+        payload: {
+          sessionId: id,
+          questionId: pending.questionId,
+          questions: summarizeQuestions(pending.questions),
+          permalink: `/s/${id}`,
+        },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
+  }
+
+  private async persistQuestionResolved(
+    id: string,
+    questionId: string,
+    reason: 'answered' | 'cancelled' | 'empty',
+  ): Promise<void> {
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      const pending = row ? parsePendingQuestion(row.pending_question) : null;
+      if (!row || !pending || pending.questionId !== questionId) return null;
+      const updated = await client.query<SessionRow>(
+        'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
+        [id],
+      );
+      if (reason === 'answered') return null;
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_resolved',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, questionId, reason },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
   }
 
   private async updateStatus(id: string, status: SessionStatus): Promise<void> {
@@ -545,7 +726,8 @@ export class SessionRuns {
       if (!row || TERMINAL_STATUSES.has(row.status)) return null;
       const completed = await client.query<SessionRow>(
         `UPDATE sessions
-         SET status = $1, result_text = $2, completed_at = now(), last_event_id = GREATEST(last_event_id, $3)
+         SET status = $1, result_text = $2, completed_at = now(), pending_question = NULL,
+             last_event_id = GREATEST(last_event_id, $3)
          WHERE id = $4
          RETURNING *`,
         [status, resultText, lastEventId, id],
@@ -578,7 +760,7 @@ export class SessionRuns {
     const timer = setTimeout(() => {
       this.releaseTimers.delete(id);
       void this.releaseAssignment(id);
-    }, RELEASE_IDLE_MS);
+    }, releaseIdleMs());
     timer.unref?.();
     this.releaseTimers.set(id, timer);
   }
@@ -595,6 +777,7 @@ export class SessionRuns {
     try {
       const row = await this.getSessionRow(id);
       if (!row || !TERMINAL_STATUSES.has(row.status)) return;
+      if (row.assignment_generation == null) return;
       await this.centaur.release(row.centaur_thread_key, `rel-${id}-${Date.now()}`, false);
       await this.pool.query('UPDATE sessions SET assignment_generation = NULL WHERE id = $1', [id]);
     } catch (err) {
@@ -617,10 +800,84 @@ export class SessionRuns {
     const res = await this.pool.query<SessionRow>(
       `UPDATE sessions
        SET current_execution_id = COALESCE($1, current_execution_id),
-           assignment_generation = $2
+           assignment_generation = $2,
+           centaur_execute_id = CASE WHEN $1::text IS NULL THEN centaur_execute_id ELSE NULL END
        WHERE id = $3
        RETURNING *`,
       [executionId, generation, id],
+    );
+    return res.rows[0]!;
+  }
+
+  private async spawnAssignment(
+    id: string,
+    threadKey: string,
+    harness: string,
+  ): Promise<{ row: SessionRow; assignment_generation: number }> {
+    const spawnId = await this.reserveSpawnId(id);
+    const spawned = await this.centaur.spawn(threadKey, harness, { spawnId });
+    const generation = spawned.assignment_generation;
+    if (generation == null) throw new Error('centaur spawn missing assignment_generation');
+    const row = await this.persistSpawnedAssignment(id, generation);
+    return { row, assignment_generation: generation };
+  }
+
+  private async reserveSpawnId(id: string): Promise<string> {
+    const res = await this.pool.query<{ centaur_spawn_id: string }>(
+      `UPDATE sessions
+       SET centaur_spawn_attempt = CASE
+             WHEN centaur_spawn_id IS NULL THEN centaur_spawn_attempt + 1
+             ELSE centaur_spawn_attempt
+           END,
+           centaur_spawn_id = COALESCE(
+             centaur_spawn_id,
+             'spawn-' || id::text || '-a' || (centaur_spawn_attempt + 1)::text
+           )
+       WHERE id = $1
+       RETURNING centaur_spawn_id`,
+      [id],
+    );
+    return res.rows[0]!.centaur_spawn_id;
+  }
+
+  private async persistSpawnedAssignment(id: string, generation: number): Promise<SessionRow> {
+    const res = await this.pool.query<SessionRow>(
+      `UPDATE sessions
+       SET assignment_generation = $1,
+           centaur_spawn_id = NULL
+       WHERE id = $2
+       RETURNING *`,
+      [generation, id],
+    );
+    return res.rows[0]!;
+  }
+
+  private async reserveExecuteId(id: string): Promise<string> {
+    const res = await this.pool.query<{ centaur_execute_id: string }>(
+      `UPDATE sessions
+       SET centaur_execute_attempt = CASE
+             WHEN centaur_execute_id IS NULL THEN centaur_execute_attempt + 1
+             ELSE centaur_execute_attempt
+           END,
+           centaur_execute_id = COALESCE(
+             centaur_execute_id,
+             'exec-' || id::text || '-a' || (centaur_execute_attempt + 1)::text
+           )
+       WHERE id = $1
+       RETURNING centaur_execute_id`,
+      [id],
+    );
+    return res.rows[0]!.centaur_execute_id;
+  }
+
+  private async clearAssignment(id: string): Promise<SessionRow> {
+    const res = await this.pool.query<SessionRow>(
+      `UPDATE sessions
+       SET assignment_generation = NULL,
+           centaur_spawn_id = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [id],
     );
     return res.rows[0]!;
   }
@@ -773,6 +1030,10 @@ function normalizeStatus(status: string): SessionStatus {
   return 'running';
 }
 
+function isCentaurCode(err: unknown, code: string): boolean {
+  return err instanceof CentaurApiError && err.code === code;
+}
+
 function toJson(
   row: SessionRow,
   seatInfo: {
@@ -793,6 +1054,7 @@ function toJson(
     driverId: row.driver_id,
     driver: seatInfo.driver ?? null,
     pendingSeatRequests: seatInfo.pendingSeatRequests ?? [],
+    pendingQuestion: parsePendingQuestion(row.pending_question),
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,
@@ -821,4 +1083,65 @@ function toListItem(row: SessionListRow): SessionListItem {
 
 function toSessionUserJson(row: SessionUserRow): SessionUserJson {
   return { userId: row.user_id, displayName: row.display_name };
+}
+
+function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.questionId !== 'string' || typeof raw.turnId !== 'string') return null;
+  if (!Array.isArray(raw.questions)) return null;
+  const questions = raw.questions.filter(isQuestionPrompt);
+  if (questions.length !== raw.questions.length) return null;
+  const eventId = Number(raw.eventId);
+  if (!Number.isFinite(eventId)) return null;
+  return {
+    questionId: raw.questionId,
+    turnId: raw.turnId,
+    questions,
+    eventId,
+  };
+}
+
+function isQuestionPrompt(value: unknown): value is QuestionPrompt {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || typeof raw.header !== 'string' || typeof raw.question !== 'string') {
+    return false;
+  }
+  if (raw.options !== undefined) {
+    if (!Array.isArray(raw.options)) return false;
+    for (const option of raw.options) {
+      if (!option || typeof option !== 'object' || Array.isArray(option)) return false;
+      const o = option as Record<string, unknown>;
+      if (typeof o.label !== 'string' || typeof o.description !== 'string') return false;
+    }
+  }
+  return true;
+}
+
+function summarizeQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] {
+  return questions.map((q) => ({
+    id: q.id,
+    header: q.header,
+    question: q.question,
+    optionCount: q.options?.length ?? 0,
+    isOther: q.isOther === true,
+    isSecret: q.isSecret === true,
+  }));
+}
+
+function summarizeAnswers(
+  pending: SessionPendingQuestionJson,
+  answers: QuestionAnswerBody,
+): Record<string, unknown>[] {
+  return Object.entries(answers).map(([id, value]) => {
+    const prompt = pending.questions.find((q) => q.id === id);
+    const answerValues = Array.isArray(value.answers) ? value.answers : [];
+    return {
+      id,
+      header: prompt?.header ?? id,
+      answers: prompt?.isSecret ? answerValues.map(() => 'redacted') : answerValues,
+      count: answerValues.length,
+    };
+  });
 }

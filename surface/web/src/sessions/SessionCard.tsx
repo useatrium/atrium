@@ -115,6 +115,8 @@ export function SessionCard({
       <div className="flex items-center gap-2">
         {spawnFailed ? (
           <StatusChip status="failed" label="spawn failed" />
+        ) : session.pendingQuestion ? (
+          <StatusChip status="running" label="needs input" stalled />
         ) : (
           <StatusChip status={session.status} stalled={stalled} />
         )}

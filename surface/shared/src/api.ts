@@ -242,6 +242,15 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),
+    answerSessionQuestion: (
+      id: string,
+      questionId: string,
+      answers: Record<string, { answers: string[] }>,
+    ) =>
+      req<{ ok: true }>(`/api/sessions/${id}/answer`, {
+        method: 'POST',
+        body: JSON.stringify({ questionId, answers }),
+      }),
     cancelSession: (id: string) =>
       req<{ ok: true }>(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' }),
   };
