@@ -3,6 +3,7 @@ import {
   apiAs,
   channelButton,
   channelId,
+  confirmedRowsWithText,
   createChannel,
   login,
   mainComposer,
@@ -11,7 +12,9 @@ import {
   openChannel,
   postMessage,
   sendMessage,
+  timelineText,
   unique,
+  warmOfflineShell,
 } from './helpers.js';
 
 test('login lands in #general; sent message appears', async ({ page }) => {
@@ -63,7 +66,7 @@ test('reactions: toggle a reaction, chip count updates', async ({ page }) => {
 
   const id = await messageId(page, text);
   const add = await page.context().request.post(`/api/messages/${id}/reactions`, {
-    data: { emoji: '👍' },
+    data: { emoji: '👍', action: 'add' },
   });
   expect(add.ok()).toBeTruthy();
   await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
@@ -84,7 +87,7 @@ test('edit and delete own message', async ({ page }) => {
   await row.getByLabel('Edit message').click({ force: true });
   await page.getByLabel('Edit message text').fill(edited);
   await page.getByLabel('Edit message text').press('Enter');
-  await expect(page.getByText(edited, { exact: true })).toBeVisible();
+  await expect(messageRow(page, edited)).toBeVisible();
   await expect(page.getByText('(edited)')).toBeVisible();
 
   const editedRow = messageRow(page, edited);
@@ -170,8 +173,107 @@ test('search (⌘K): find an old message and jump to it', async ({ page }) => {
   await expect(page.getByText(old, { exact: true })).toHaveCount(0);
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   await page.getByLabel('Channel and message search').fill(old);
-  await expect(page.getByRole('listbox', { name: 'Message results' }).getByText(old)).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Search results' }).getByText(old)).toBeVisible();
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(page.getByText(old, { exact: true })).toBeVisible();
+});
+
+test('offline send survives reload and confirms once', async ({ page, context }) => {
+  await login(page, unique('offline-sender'), 'Offline Sender');
+  await warmOfflineShell(page);
+
+  const text = unique('offline-survives');
+  await context.setOffline(true);
+  await mainComposer(page).fill(text);
+  await mainComposer(page).press('Enter');
+  await expect(timelineText(page, text)).toBeVisible();
+  await expect(confirmedRowsWithText(page, text)).toHaveCount(0);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(timelineText(page, text)).toBeVisible();
+  await expect(confirmedRowsWithText(page, text)).toHaveCount(0);
+
+  await context.setOffline(false);
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({ timeout: 15_000 });
+  await expect(confirmedRowsWithText(page, text)).toHaveCount(1, { timeout: 15_000 });
+  await expect(timelineText(page, text)).toHaveCount(1);
+});
+
+test('offline edit and reaction land and survive reload', async ({ page, context }) => {
+  await login(page, unique('offline-editor'), 'Offline Editor');
+  const original = unique('offline-edit-original');
+  const edited = unique('offline-edit-final');
+  await sendMessage(page, original);
+
+  await context.setOffline(true);
+  const originalRow = messageRow(page, original);
+  await originalRow.scrollIntoViewIfNeeded();
+  await originalRow.hover();
+  await originalRow.getByLabel('Edit message').click({ force: true });
+  await page.getByLabel('Edit message text').fill(edited);
+  await page.getByLabel('Edit message text').press('Enter');
+  await expect(messageRow(page, edited)).toBeVisible();
+  await expect(page.getByText('(saving edit)')).toBeVisible();
+
+  const editedRow = messageRow(page, edited);
+  await editedRow.hover();
+  await editedRow.getByLabel('Add reaction').click({ force: true });
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+
+  await context.setOffline(false);
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('(saving edit)')).toHaveCount(0, { timeout: 15_000 });
+  await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+
+  await page.reload();
+  await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  await expect(timelineText(page, original)).toHaveCount(0);
+});
+
+test('disconnect burst heals through sync without reload', async ({ browser }) => {
+  const alice = await browser.newContext();
+  const bob = await browser.newContext();
+  const alicePage = await alice.newPage();
+  const bobPage = await bob.newPage();
+  await login(alicePage, unique('oba'), 'Offline Burst Alice');
+  await login(bobPage, unique('obb'), 'Offline Burst Bob');
+
+  await alice.setOffline(true);
+  const first = unique('burst-first');
+  const editedFirst = unique('burst-first-edited');
+  const second = unique('burst-second');
+  await sendMessage(bobPage, first);
+  const firstId = await messageId(bobPage, first);
+  const edit = await bobPage.context().request.patch(`/api/messages/${firstId}`, {
+    data: { text: editedFirst },
+  });
+  expect(edit.ok()).toBeTruthy();
+  await sendMessage(bobPage, second);
+  await expect(messageRow(bobPage, editedFirst)).toBeVisible();
+
+  await alice.setOffline(false);
+  await expect(alicePage.getByRole('status', { name: 'connection: open' })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(confirmedRowsWithText(alicePage, editedFirst)).toHaveCount(1, { timeout: 15_000 });
+  await expect(confirmedRowsWithText(alicePage, second)).toHaveCount(1);
+  await expect(timelineText(alicePage, first)).toHaveCount(0);
+
+  const firstRow = await messageRow(alicePage, editedFirst).elementHandle();
+  const secondRow = await messageRow(alicePage, second).elementHandle();
+  expect(firstRow).not.toBeNull();
+  expect(secondRow).not.toBeNull();
+  const firstBeforeSecond = await firstRow!.evaluate(
+    (node, other) =>
+      Boolean(node.compareDocumentPosition(other as Node) & Node.DOCUMENT_POSITION_FOLLOWING),
+    secondRow,
+  );
+  expect(firstBeforeSecond).toBe(true);
+
+  await alice.close();
+  await bob.close();
 });

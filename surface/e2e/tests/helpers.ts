@@ -19,6 +19,20 @@ export async function login(page: Page, handle: string, displayName = handle): P
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
 }
 
+export async function warmOfflineShell(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    if (!('serviceWorker' in navigator)) return;
+    await navigator.serviceWorker.ready;
+    if (navigator.serviceWorker.controller) return;
+    await new Promise<void>((resolve) => {
+      navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true });
+    });
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('heading', { name: '# general' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
+}
+
 export function mainComposer(page: Page, channelName = 'general') {
   return page.getByPlaceholder(`Message #${channelName}`);
 }
@@ -31,6 +45,14 @@ export async function sendMessage(page: Page, text: string, channelName = 'gener
 
 export function messageRow(page: Page, text: string) {
   return page.locator('[data-eid]').filter({ hasText: text }).first();
+}
+
+export function confirmedRowsWithText(page: Page, text: string) {
+  return page.getByRole('log', { name: 'Messages' }).locator('[data-eid]').filter({ hasText: text });
+}
+
+export function timelineText(page: Page, text: string) {
+  return page.getByRole('log', { name: 'Messages' }).getByText(text, { exact: true });
 }
 
 export async function messageId(page: Page, text: string): Promise<number> {

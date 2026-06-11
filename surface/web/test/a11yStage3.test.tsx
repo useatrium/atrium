@@ -168,23 +168,37 @@ describe('Toast live region', () => {
 describe('private channel leave confirmation', () => {
   it('requires a second click before leaving', async () => {
     vi.stubGlobal('WebSocket', NoopWebSocket);
+    const privateChannel = {
+      id: 'ch-private',
+      workspaceId: 'ws-1',
+      name: 'secret',
+      createdAt: '',
+      kind: 'private' as const,
+      members: [me],
+      latestEventId: 1,
+      lastReadEventId: 1,
+    };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.startsWith('/api/sync?')) {
+        return new Response(
+          JSON.stringify({
+            events: [],
+            nextCursor: 1,
+            limited: false,
+            state: {
+              readCursors: { 'ch-private': 1 },
+              mutes: [],
+              prefs: {},
+              channels: [privateChannel],
+            },
+          }),
+        );
+      }
       if (url === '/api/channels') {
         return new Response(
           JSON.stringify({
-            channels: [
-              {
-                id: 'ch-private',
-                workspaceId: 'ws-1',
-                name: 'secret',
-                createdAt: '',
-                kind: 'private',
-                members: [me],
-                latestEventId: 1,
-                lastReadEventId: 1,
-              },
-            ],
+            channels: [privateChannel],
           }),
         );
       }
