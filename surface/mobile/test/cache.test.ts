@@ -149,4 +149,21 @@ describe('event cache', () => {
     const reloaded = createEventCache(storage);
     await expect(reloaded.loadSnapshot()).resolves.toMatchObject({ syncCursor: 10 });
   });
+
+  it('does not persist a cursor ahead of pending timeline flushes', async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const cache = createEventCache(storage, 500);
+
+    cache.enqueueEvents('channel-1', [event(11)]);
+    await cache.saveSyncCursor(11);
+
+    expect(storage.snapshot.syncCursor).toBe(0);
+    expect(storage.timelineWrites).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(storage.timelineWrites).toBe(1);
+    expect(storage.snapshot.syncCursor).toBe(11);
+  });
 });
