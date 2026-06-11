@@ -29,6 +29,7 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { useSession, type Session } from './session';
+import { eventCache } from './cacheSqlite';
 
 const PAGE_SIZE = 50;
 
@@ -99,6 +100,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [hydrated, setHydrated] = useState(false);
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -112,11 +114,44 @@ export function ChatProvider({ session, children }: { session: Session; children
     dispatch({ type: 'init-me', handle: me.handle });
   }, [me.handle]);
 
+  useEffect(() => {
+    let disposed = false;
+    eventCache
+      .loadSnapshot()
+      .then(({ channels, timelines }) => {
+        if (disposed) return;
+        if (channels) {
+          dispatch({ type: 'channels-loaded', channels });
+          if (!focusedRef.current) dispatch({ type: 'select-channel', channelId: null });
+        }
+        for (const [channelId, timeline] of Object.entries(timelines)) {
+          dispatch({
+            type: 'history-loaded',
+            channelId,
+            events: timeline.events,
+            hasMore: timeline.hasMore,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to hydrate event cache', err);
+      })
+      .finally(() => {
+        if (!disposed) setHydrated(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
   const loadChannels = useCallback(() => {
     api
       .channels()
       .then(({ channels }) => {
         dispatch({ type: 'channels-loaded', channels });
+        void eventCache.saveChannels(channels).catch((err: unknown) => {
+          console.warn('failed to cache channels', err);
+        });
         // channels-loaded auto-selects a default channel (web behavior); on
         // mobile nothing is focused unless a channel screen is open.
         if (!focusedRef.current) dispatch({ type: 'select-channel', channelId: null });
@@ -124,7 +159,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       .catch(onApiError);
   }, [api, onApiError]);
 
-  useEffect(loadChannels, [loadChannels]);
+  useEffect(() => {
+    if (hydrated) loadChannels();
+  }, [hydrated, loadChannels]);
 
   // ---- reconnect catch-up: refetch what we might have missed ----
   const catchUp = useCallback(() => {
@@ -136,9 +173,13 @@ export function ChatProvider({ session, children }: { session: Session; children
         .then(({ events, hasMore }) => {
           if (t.lastEventId > 0) {
             for (const ev of events) dispatch({ type: 'server-event', event: ev });
+            if (events.length > 0) eventCache.enqueueEvents(channelId, events);
             if (hasMore) catchUp();
           } else {
             dispatch({ type: 'history-loaded', channelId, events, hasMore });
+            void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+              console.warn('failed to cache catch-up history', err);
+            });
           }
         })
         .catch(onApiError);
@@ -183,7 +224,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
 
   const ws = useWs(
-    true,
+    hydrated,
     wsKeys,
     {
       onEvent: (event: WireEvent) => {
@@ -196,6 +237,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           });
         }
         dispatch({ type: 'server-event', event });
+        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
@@ -278,9 +320,12 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (stateRef.current.timelines[channelId]?.loaded) return;
       api
         .messages(channelId, { limit: PAGE_SIZE })
-        .then(({ events, hasMore }) =>
-          dispatch({ type: 'history-loaded', channelId, events, hasMore }),
-        )
+        .then(({ events, hasMore }) => {
+          dispatch({ type: 'history-loaded', channelId, events, hasMore });
+          void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+            console.warn('failed to cache history', err);
+          });
+        })
         .catch(onApiError);
     },
     [api, onApiError],
@@ -308,9 +353,12 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (!t || !oldest?.id || !t.hasMoreBefore) return Promise.resolve();
       return api
         .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
-        .then(({ events, hasMore }) =>
-          dispatch({ type: 'history-loaded', channelId, events, hasMore }),
-        )
+        .then(({ events, hasMore }) => {
+          dispatch({ type: 'history-loaded', channelId, events, hasMore });
+          void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+            console.warn('failed to cache earlier history', err);
+          });
+        })
         .catch(onApiError);
     },
     [api, onApiError],
@@ -359,7 +407,10 @@ export function ChatProvider({ session, children }: { session: Session; children
           threadRootEventId,
           attachments: attachments?.map((a) => a.id),
         })
-        .then(({ event }) => dispatch({ type: 'server-event', event }))
+        .then(({ event }) => {
+          dispatch({ type: 'server-event', event });
+          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+        })
         .catch((err) => {
           onApiError(err);
           dispatch({ type: 'send-failed', channelId, clientMsgId });
@@ -379,13 +430,19 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const editMessage = useCallback(
     (m: ChatMessage, text: string): Promise<void> =>
-      api.editMessage(m.id!, text).then(({ event }) => dispatch({ type: 'server-event', event })),
+      api.editMessage(m.id!, text).then(({ event }) => {
+        dispatch({ type: 'server-event', event });
+        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+      }),
     [api],
   );
 
   const deleteMessage = useCallback(
     (m: ChatMessage): Promise<void> =>
-      api.deleteMessage(m.id!).then(({ event }) => dispatch({ type: 'server-event', event })),
+      api.deleteMessage(m.id!).then(({ event }) => {
+        dispatch({ type: 'server-event', event });
+        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+      }),
     [api],
   );
 
@@ -393,7 +450,10 @@ export function ChatProvider({ session, children }: { session: Session; children
     (m: ChatMessage, emoji: string): Promise<void> =>
       api
         .toggleReaction(m.id!, emoji)
-        .then(({ event }) => dispatch({ type: 'server-event', event })),
+        .then(({ event }) => {
+          dispatch({ type: 'server-event', event });
+          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+        }),
     [api],
   );
 
@@ -498,6 +558,9 @@ export function ChatProvider({ session, children }: { session: Session; children
           limit: PAGE_SIZE,
         });
         dispatch({ type: 'history-loaded', channelId, events, hasMore });
+        void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+          console.warn('failed to cache jump history', err);
+        });
         await new Promise((r) => setTimeout(r, 30)); // let the reducer commit
       }
       setHighlightId(event.id);

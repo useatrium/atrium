@@ -7,5 +7,5 @@
     "noUnusedParameters": true,
     "skipLibCheck": true
   },
-  "include": ["app", "src", "expo-env.d.ts", ".expo/types/**/*.ts"]
+  "include": ["app", "src", "test", "expo-env.d.ts", ".expo/types/**/*.ts"]
 }

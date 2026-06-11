@@ -17,6 +17,7 @@
     "expo-notifications": "~56.0.15",
     "expo-router": "~56.2.8",
     "expo-secure-store": "~56.0.4",
+    "expo-sqlite": "~56.0.0",
     "expo-status-bar": "~56.0.0",
     "react": "19.2.3",
     "react-native": "~0.85.0",
@@ -26,13 +27,15 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.0",
-    "typescript": "~6.0.0"
+    "typescript": "~6.0.0",
+    "vitest": "^3.0.5"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "private": true
