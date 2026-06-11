@@ -1,7 +1,15 @@
-import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload } from '@atrium/surface-client';
-import { randomId } from '@atrium/surface-client';
+import { createDraftChangeDebouncer, randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
 
 interface PendingFile {
@@ -27,6 +35,9 @@ export function Composer({
   disabled,
   disabledHint,
   footer,
+  draftKey,
+  initialDraft,
+  onDraftChange,
 }: {
   placeholder: string;
   onSend: (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
@@ -44,6 +55,9 @@ export function Composer({
   disabledHint?: string;
   /** Replaces the default hint line (e.g. seat request controls in the pane). */
   footer?: ReactNode;
+  draftKey?: string;
+  initialDraft?: string;
+  onDraftChange?: (key: string, text: string) => void;
 }) {
   const [text, setText] = useState('');
   // "@agent" with no task: refuse to post the literal string — show what's
@@ -53,11 +67,28 @@ export function Composer({
   const [dragOver, setDragOver] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const draftWriter = useMemo(
+    () => createDraftChangeDebouncer((key, value) => onDraftChange?.(key, value)),
+    [onDraftChange],
+  );
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
   const uploading = files.some((f) => f.status === 'uploading');
   const readyFiles = files.filter(
     (f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId,
   );
+
+  useEffect(() => () => draftWriter.cancel(), [draftWriter]);
+
+  useEffect(() => {
+    setText('');
+    setFiles([]);
+    if (ref.current) ref.current.style.height = 'auto';
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!initialDraft) return;
+    setText((prev) => (prev === '' ? initialDraft : prev));
+  }, [initialDraft]);
 
   const contentHashFor = async (file: File): Promise<string | undefined> => {
     try {
@@ -153,6 +184,7 @@ export function Composer({
         : undefined,
       readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined,
     );
+    if (draftKey) draftWriter.saveNow(draftKey, '');
     setText('');
     setFiles([]);
     if (ref.current) ref.current.style.height = 'auto';
@@ -256,6 +288,7 @@ export function Composer({
           aria-label="Message input"
           onChange={(e) => {
             setText(e.target.value);
+            if (draftKey) draftWriter.schedule(draftKey, e.target.value);
             setAgentNeedsTask(false);
             if (e.target.value.trim()) onTyping?.();
             e.target.style.height = 'auto';
