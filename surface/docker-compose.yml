@@ -16,5 +16,26 @@ services:
       timeout: 2s
       retries: 30
 
+  minio:
+    image: minio/minio:latest
+    container_name: atrium-surface-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: atrium
+      MINIO_ROOT_PASSWORD: atrium-dev-secret
+      # Browser uploads PUT directly to presigned URLs from the Vite origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - atrium_minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
 volumes:
   atrium_pgdata:
+  atrium_minio:

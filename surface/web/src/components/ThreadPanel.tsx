@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import type { ChatMessage } from '../state';
+import type { AttachmentMeta, ChatMessage } from '../state';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '../util';
 import { Composer } from './Composer';
@@ -30,7 +30,7 @@ export function ThreadPanel({
   meId?: string;
   meHandle?: string;
   onClose: () => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: AttachmentMeta[]) => void;
   onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
@@ -113,7 +113,7 @@ export function ThreadPanel({
           </div>
         )}
       </div>
-      <Composer placeholder="Reply…" onSend={onSend} autoFocus agentAware />
+      <Composer placeholder="Reply…" onSend={onSend} autoFocus agentAware allowAttachments />
     </aside>
   );
 }

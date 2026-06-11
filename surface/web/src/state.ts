@@ -31,6 +31,17 @@ export interface MessageReaction {
   userIds: string[];
 }
 
+/** File attached to a message; the body is fetched via /api/files/:id. */
+export interface AttachmentMeta {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  /** Present for images — lets rows reserve space before the image loads. */
+  width?: number;
+  height?: number;
+}
+
 export interface ChatMessage {
   /** Server event id; null while pending/failed. */
   id: number | null;
@@ -42,6 +53,7 @@ export interface ChatMessage {
   /** Tombstoned: hidden in the timeline unless it anchors a thread. */
   deleted?: boolean;
   reactions?: MessageReaction[];
+  attachments?: AttachmentMeta[];
   author: UserRef;
   createdAt: string;
   replyCount: number;
@@ -101,6 +113,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     edited: payload.edited === true,
     deleted: payload.deleted === true,
     reactions: parseReactions(payload.reactions),
+    attachments: parseAttachments(payload.attachments),
     author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
@@ -108,6 +121,25 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
   };
+}
+
+function parseAttachments(v: unknown): AttachmentMeta[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: AttachmentMeta[] = [];
+  for (const a of v) {
+    const r = a as Partial<AttachmentMeta>;
+    if (typeof r.id === 'string' && typeof r.filename === 'string') {
+      out.push({
+        id: r.id,
+        filename: r.filename,
+        contentType: typeof r.contentType === 'string' ? r.contentType : 'application/octet-stream',
+        size: Number(r.size) || 0,
+        ...(Number(r.width) > 0 ? { width: Number(r.width) } : {}),
+        ...(Number(r.height) > 0 ? { height: Number(r.height) } : {}),
+      });
+    }
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function parseReactions(v: unknown): MessageReaction[] | undefined {

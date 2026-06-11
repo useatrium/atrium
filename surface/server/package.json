@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@atrium/centaur-client": "file:../../packages/centaur-client",
+    "@aws-sdk/client-s3": "^3.1061.0",
+    "@aws-sdk/s3-request-presigner": "^3.1061.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/websocket": "^11.0.2",
     "fastify": "^5.2.1",

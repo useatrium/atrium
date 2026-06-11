@@ -10,4 +10,10 @@ export const config = {
   centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
   centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
   centaurHarness: process.env.CENTAUR_HARNESS ?? 'claude-code',
+  // File uploads (MinIO in dev; any S3-compatible store in deployment).
+  s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
+  s3Bucket: process.env.S3_BUCKET ?? 'atrium-files',
+  s3AccessKey: process.env.S3_ACCESS_KEY ?? 'atrium',
+  s3SecretKey: process.env.S3_SECRET_KEY ?? 'atrium-dev-secret',
+  maxUploadBytes: 25 * 1024 * 1024,
 };

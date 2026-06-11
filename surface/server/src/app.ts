@@ -19,7 +19,9 @@ import {
   type UserRef,
 } from './events.js';
 import { WsHub } from './hub.js';
+import { ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import type { AttachmentMeta } from './events.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -228,16 +230,51 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       text?: string;
       clientMsgId?: string;
       threadRootEventId?: number;
+      attachments?: unknown;
     };
     const text = typeof body.text === 'string' ? body.text : '';
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
     }
-    if (text.trim().length === 0) {
+    const attachmentIds = Array.isArray(body.attachments)
+      ? body.attachments.filter((a): a is string => typeof a === 'string').slice(0, 10)
+      : [];
+    if (text.trim().length === 0 && attachmentIds.length === 0) {
       return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
     }
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
+    }
+    let attachments: AttachmentMeta[] | undefined;
+    if (attachmentIds.length > 0) {
+      const rows = await pool.query<{
+        id: string;
+        filename: string;
+        content_type: string;
+        size_bytes: string;
+        width: number | null;
+        height: number | null;
+      }>(
+        `SELECT id, filename, content_type, size_bytes, width, height
+         FROM files WHERE id = ANY($1::uuid[]) AND uploader_id = $2`,
+        [attachmentIds, user.id],
+      );
+      if (rows.rows.length !== attachmentIds.length) {
+        return reply
+          .code(400)
+          .send({ error: 'bad_attachment', message: 'unknown or foreign attachment id' });
+      }
+      attachments = attachmentIds.map((id) => {
+        const f = rows.rows.find((r) => r.id === id)!;
+        return {
+          id: f.id,
+          filename: f.filename,
+          contentType: f.content_type,
+          size: Number(f.size_bytes),
+          ...(f.width != null ? { width: f.width } : {}),
+          ...(f.height != null ? { height: f.height } : {}),
+        };
+      });
     }
     const clientMsgId =
       typeof body.clientMsgId === 'string' && body.clientMsgId.length <= 64
@@ -262,6 +299,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       text,
       clientMsgId,
       threadRootEventId,
+      attachments,
     });
     hub.publishEvent(event);
     return reply.code(201).send({ event });
@@ -297,6 +335,81 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const event = await deleteMessage(pool, { targetEventId, actorId: user.id });
     hub.publishEvent(event);
     return { event };
+  });
+
+  // -------------------------------------------------------------------------
+  // File uploads (presigned to S3/MinIO)
+  // -------------------------------------------------------------------------
+
+  app.post('/api/uploads', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as {
+      filename?: string;
+      contentType?: string;
+      size?: number;
+      width?: number;
+      height?: number;
+    };
+    const filename = String(body.filename ?? '').trim().slice(0, 200) || 'file';
+    const contentType =
+      typeof body.contentType === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(body.contentType)
+        ? body.contentType
+        : 'application/octet-stream';
+    const size = Number(body.size);
+    if (!Number.isFinite(size) || size <= 0) {
+      return reply.code(400).send({ error: 'bad_request', message: 'size required' });
+    }
+    if (size > config.maxUploadBytes) {
+      return reply.code(413).send({
+        error: 'file_too_large',
+        message: `file exceeds ${Math.round(config.maxUploadBytes / 1024 / 1024)}MB`,
+      });
+    }
+    const dim = (v: unknown) =>
+      Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : null;
+    const workspaces = await listWorkspaces(pool);
+    const ws = workspaces[0];
+    if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace' });
+    try {
+      await ensureBucket();
+    } catch {
+      return reply
+        .code(503)
+        .send({ error: 'storage_unavailable', message: 'file storage is not running' });
+    }
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO files (workspace_id, uploader_id, filename, content_type, size_bytes, width, height, s3_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, '') RETURNING id`,
+      [ws.id, user.id, filename, contentType, size, dim(body.width), dim(body.height)],
+    );
+    const fileId = inserted.rows[0]!.id;
+    const s3Key = `${fileId}/${filename}`;
+    await pool.query('UPDATE files SET s3_key = $1 WHERE id = $2', [s3Key, fileId]);
+    const uploadUrl = await presignPut(s3Key, contentType);
+    return reply.code(201).send({ fileId, uploadUrl });
+  });
+
+  app.get('/api/files/:id', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+    const res = await pool.query<{
+      filename: string;
+      content_type: string;
+      s3_key: string;
+    }>('SELECT filename, content_type, s3_key FROM files WHERE id = $1', [id]);
+    const file = res.rows[0];
+    if (!file || !file.s3_key) {
+      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+    const inline =
+      file.content_type.startsWith('image/') || file.content_type === 'application/pdf';
+    const url = await presignGet(file.s3_key, file.filename, inline);
+    return reply.redirect(url, 302);
   });
 
   app.post('/api/messages/:id/reactions', async (req, reply) => {
