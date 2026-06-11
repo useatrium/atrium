@@ -287,6 +287,95 @@ export async function editMessage(
   });
 }
 
+/**
+ * Append a message.deleted tombstone for an existing message.posted. Reads
+ * fold it by stripping the text and flagging deleted=true; clients hide the
+ * row (or render a tombstone when the message anchors a thread).
+ */
+export async function deleteMessage(
+  pool: Db,
+  args: { targetEventId: number; actorId: string },
+): Promise<WireEvent> {
+  return withTx(pool, async (client) => {
+    const target = await client.query<{
+      workspace_id: string;
+      channel_id: string | null;
+      thread_root_event_id: number | null;
+      type: string;
+      actor_id: string | null;
+    }>(
+      'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+      [args.targetEventId],
+    );
+    const t = target.rows[0];
+    if (!t || t.type !== 'message.posted') {
+      throw new DomainError(404, 'message_not_found', 'message not found');
+    }
+    if (t.actor_id !== args.actorId) {
+      throw new DomainError(403, 'forbidden', 'only the author may delete a message');
+    }
+    const ev = await insertEvent(client, {
+      workspaceId: t.workspace_id,
+      channelId: t.channel_id,
+      threadRootEventId: t.thread_root_event_id,
+      type: 'message.deleted',
+      actorId: args.actorId,
+      payload: { target_event_id: args.targetEventId },
+    });
+    return toWireEvent(await attachAuthor(client, ev));
+  });
+}
+
+/** Emojis a message can be reacted with (mirrored in the web client). */
+export const REACTION_EMOJI = ['👍', '✅', '👀', '🎉', '❤️', '😂', '🚀', '🤔'] as const;
+
+/**
+ * Toggle the actor's reaction: appends reaction.added when the actor doesn't
+ * currently have that emoji on the message, reaction.removed when they do.
+ */
+export async function toggleReaction(
+  pool: Db,
+  args: { targetEventId: number; actorId: string; emoji: string },
+): Promise<WireEvent> {
+  if (!(REACTION_EMOJI as readonly string[]).includes(args.emoji)) {
+    throw new DomainError(400, 'invalid_emoji', 'unsupported reaction emoji');
+  }
+  return withTx(pool, async (client) => {
+    const target = await client.query<{
+      workspace_id: string;
+      channel_id: string | null;
+      thread_root_event_id: number | null;
+      type: string;
+    }>(
+      'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1',
+      [args.targetEventId],
+    );
+    const t = target.rows[0];
+    if (!t || t.type !== 'message.posted') {
+      throw new DomainError(404, 'message_not_found', 'message not found');
+    }
+    const net = await client.query<{ net: string }>(
+      `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0) AS net
+       FROM events
+       WHERE type IN ('reaction.added', 'reaction.removed')
+         AND (payload->>'target_event_id')::bigint = $1
+         AND actor_id = $2
+         AND payload->>'emoji' = $3`,
+      [args.targetEventId, args.actorId, args.emoji],
+    );
+    const on = Number(net.rows[0]?.net ?? 0) > 0;
+    const ev = await insertEvent(client, {
+      workspaceId: t.workspace_id,
+      channelId: t.channel_id,
+      threadRootEventId: t.thread_root_event_id,
+      type: on ? 'reaction.removed' : 'reaction.added',
+      actorId: args.actorId,
+      payload: { target_event_id: args.targetEventId, emoji: args.emoji },
+    });
+    return toWireEvent(await attachAuthor(client, ev));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reads (straight off the events table)
 // ---------------------------------------------------------------------------
@@ -297,13 +386,20 @@ const MESSAGE_SELECT = `
          u.display_name AS author_display_name,
          coalesce(r.reply_count, 0)::int AS reply_count,
          coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
-         edit.text AS edited_text
+         edit.text AS edited_text,
+         (del.id IS NOT NULL) AS is_deleted,
+         rx.reactions AS reactions
   FROM events e
   LEFT JOIN users u ON u.id = e.actor_id
   LEFT JOIN LATERAL (
     SELECT count(*) AS reply_count, max(x.id) AS last_reply_id
     FROM events x
     WHERE x.thread_root_event_id = e.id AND x.type = 'message.posted'
+      AND NOT EXISTS (
+        SELECT 1 FROM events d
+        WHERE d.type = 'message.deleted'
+          AND (d.payload->>'target_event_id')::bigint = x.id
+      )
   ) r ON e.thread_root_event_id IS NULL
   LEFT JOIN LATERAL (
     SELECT x.payload->>'text' AS text
@@ -313,16 +409,54 @@ const MESSAGE_SELECT = `
     ORDER BY x.id DESC
     LIMIT 1
   ) edit ON true
+  LEFT JOIN LATERAL (
+    SELECT x.id
+    FROM events x
+    WHERE x.type = 'message.deleted'
+      AND (x.payload->>'target_event_id')::bigint = e.id
+    LIMIT 1
+  ) del ON true
+  LEFT JOIN LATERAL (
+    SELECT json_agg(json_build_object('emoji', emoji, 'userIds', user_ids)) AS reactions
+    FROM (
+      SELECT emoji, json_agg(actor_id ORDER BY first_id) AS user_ids
+      FROM (
+        SELECT x.actor_id, x.payload->>'emoji' AS emoji,
+               SUM(CASE WHEN x.type = 'reaction.added' THEN 1 ELSE -1 END) AS net,
+               MIN(x.id) AS first_id
+        FROM events x
+        WHERE x.type IN ('reaction.added', 'reaction.removed')
+          AND (x.payload->>'target_event_id')::bigint = e.id
+        GROUP BY x.actor_id, x.payload->>'emoji'
+      ) n
+      WHERE n.net > 0
+      GROUP BY emoji
+      ORDER BY MIN(first_id)
+    ) agg
+  ) rx ON true
 `;
 
-// message.edited is included so after_id catch-up heals edits made while a
-// client was disconnected (live clients fold the same event from WS fanout).
+// message.edited / message.deleted / reaction.* are included so after_id
+// catch-up heals changes made while a client was disconnected (live clients
+// fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed')";
 
-function foldEdit(row: EventDbRow & { edited_text?: string | null }): EventDbRow {
-  if (row.edited_text != null && row.type === 'message.posted') {
+function foldEdit(
+  row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
+): EventDbRow {
+  if (row.type !== 'message.posted') return row;
+  if (row.is_deleted) {
+    // Tombstone: never ship deleted text back to clients.
+    row.payload = { ...row.payload, text: '', deleted: true };
+    delete (row.payload as { client_msg_id?: unknown }).client_msg_id;
+    return row;
+  }
+  if (row.edited_text != null) {
     row.payload = { ...row.payload, text: row.edited_text, edited: true };
+  }
+  if (row.reactions != null) {
+    row.payload = { ...row.payload, reactions: row.reactions };
   }
   return row;
 }

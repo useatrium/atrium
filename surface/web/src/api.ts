@@ -89,4 +89,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ text }),
     }),
+  deleteMessage: (eventId: number) =>
+    req<{ event: WireEvent }>(`/api/messages/${eventId}`, { method: 'DELETE' }),
+  toggleReaction: (eventId: number, emoji: string) =>
+    req<{ event: WireEvent }>(`/api/messages/${eventId}/reactions`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji }),
+    }),
 };

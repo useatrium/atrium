@@ -165,4 +165,25 @@ describe('fanout ordering', () => {
     const afterLeave = s1.received.filter((m) => m.type === 'presence').at(-1);
     expect(afterLeave).toBeTruthy();
   });
+
+  it('relays typing only to other clients viewing the same channel', () => {
+    const hub = new WsHub();
+    const s1 = fakeSocket();
+    const s2 = fakeSocket();
+    const s3 = fakeSocket();
+    const alice = hub.addClient(s1, { id: 'u1', handle: 'alice', displayName: 'Alice' });
+    const bob = hub.addClient(s2, { id: 'u2', handle: 'bob', displayName: 'Bob' });
+    const carol = hub.addClient(s3, { id: 'u3', handle: 'carol', displayName: 'Carol' });
+    hub.setFocus(alice, fx.channelId);
+    hub.setFocus(bob, fx.channelId);
+    hub.setFocus(carol, fx.otherChannelId);
+
+    hub.relayTyping(bob, fx.channelId);
+    const typed = s1.received.filter((m) => m.type === 'typing');
+    expect(typed).toHaveLength(1);
+    expect(typed[0].user.handle).toBe('bob');
+    // Neither the sender nor someone viewing another channel hears it.
+    expect(s2.received.filter((m) => m.type === 'typing')).toHaveLength(0);
+    expect(s3.received.filter((m) => m.type === 'typing')).toHaveLength(0);
+  });
 });

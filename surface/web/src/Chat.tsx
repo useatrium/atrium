@@ -36,6 +36,9 @@ export function Chat({
 
   // ---- initial data ----
   useEffect(() => {
+    dispatch({ type: 'init-me', handle: me.handle });
+  }, [me.handle]);
+  useEffect(() => {
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, []);
 
@@ -118,17 +121,58 @@ export function Chat({
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, []);
 
-  useWs(
+  // ---- typing indicators (ephemeral, per viewed channel) ----
+  const [typing, setTyping] = useState<Record<string, { user: UserRef; until: number }>>({});
+  const onTyping = useCallback(
+    (channelId: string, user: UserRef) => {
+      if (user.id === me.id || channelId !== stateRef.current.activeChannelId) return;
+      setTyping((prev) => ({ ...prev, [user.id]: { user, until: Date.now() + 4000 } }));
+    },
+    [me.id],
+  );
+  useEffect(() => {
+    const t = setInterval(() => {
+      setTyping((prev) => {
+        const now = Date.now();
+        const live = Object.entries(prev).filter(([, v]) => v.until > now);
+        return live.length === Object.keys(prev).length ? prev : Object.fromEntries(live);
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => setTyping({}), [state.activeChannelId]);
+
+  const ws = useWs(
     true,
     wsKeys,
     {
-      onEvent: (event: WireEvent) => dispatch({ type: 'server-event', event }),
+      onEvent: (event: WireEvent) => {
+        // A message landing ends that author's "is typing…" immediately.
+        if (event.type === 'message.posted' && event.actorId) {
+          setTyping((prev) => {
+            if (!prev[event.actorId!]) return prev;
+            const next = { ...prev };
+            delete next[event.actorId!];
+            return next;
+          });
+        }
+        dispatch({ type: 'server-event', event });
+      },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
+      onTyping,
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
     state.activeChannelId,
   );
+
+  const lastTypingSentRef = useRef(0);
+  const notifyTyping = (channelId: string) => {
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < 2500) return;
+    lastTypingSentRef.current = now;
+    ws.sendTyping(channelId);
+  };
 
   // ---- channel selection & history ----
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
@@ -222,6 +266,30 @@ export function Chat({
 
   const editMessage = (m: ChatMessage, text: string): Promise<void> =>
     api.editMessage(m.id!, text).then(({ event }) => dispatch({ type: 'server-event', event }));
+
+  const removeMessage = (m: ChatMessage): Promise<void> =>
+    api.deleteMessage(m.id!).then(({ event }) => dispatch({ type: 'server-event', event }));
+
+  const reactToMessage = (m: ChatMessage, emoji: string): Promise<void> =>
+    api.toggleReaction(m.id!, emoji).then(({ event }) => dispatch({ type: 'server-event', event }));
+
+  // Up-arrow in an empty composer edits your most recent message (Slack-style).
+  const [editRequestId, setEditRequestId] = useState<number | null>(null);
+  const editLastOwn = () => {
+    for (let i = timeline.main.length - 1; i >= 0; i--) {
+      const m = timeline.main[i]!;
+      if (
+        m.status === 'confirmed' &&
+        m.id != null &&
+        m.author.id === me.id &&
+        m.sessionId == null &&
+        !m.deleted
+      ) {
+        setEditRequestId(m.id);
+        return;
+      }
+    }
+  };
 
   const retry = (m: ChatMessage) => {
     if (!m.clientMsgId) return;
@@ -332,20 +400,30 @@ export function Chat({
           sessions={state.sessions}
           spectators={spectators}
           meId={me.id}
+          meHandle={me.handle}
+          editRequestId={editRequestId}
+          onEditRequestHandled={() => setEditRequestId(null)}
           onLoadEarlier={loadEarlier}
           onOpenThread={openThread}
           onOpenSession={openSession}
           onRetry={retry}
           onEdit={editMessage}
+          onDelete={removeMessage}
+          onReact={reactToMessage}
         />
 
         {active && (
-          <Composer
-            placeholder={`Message #${active.name}`}
-            onSend={(text) => send(active.id, text)}
-            autoFocus
-            agentAware
-          />
+          <>
+            <TypingLine typing={typing} />
+            <Composer
+              placeholder={`Message #${active.name}`}
+              onSend={(text) => send(active.id, text)}
+              onTyping={() => notifyTyping(active.id)}
+              onArrowUpOnEmpty={editLastOwn}
+              autoFocus
+              agentAware
+            />
+          </>
         )}
       </main>
 
@@ -399,11 +477,14 @@ export function Chat({
             sessions={state.sessions}
             spectators={spectators}
             meId={me.id}
+            meHandle={me.handle}
             onClose={() => dispatch({ type: 'close-thread' })}
             onSend={(text) => send(active.id, text, openThreadRoot.id!)}
             onOpenSession={openSession}
             onRetry={retry}
             onEdit={editMessage}
+            onDelete={removeMessage}
+            onReact={reactToMessage}
           />
         )
       )}
@@ -419,6 +500,24 @@ export function Chat({
           onClose={() => setSwitcherOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** Fixed-height "X is typing…" line — always present so the layout never shifts. */
+function TypingLine({ typing }: { typing: Record<string, { user: UserRef; until: number }> }) {
+  const names = Object.values(typing).map((t) => t.user.displayName);
+  const label =
+    names.length === 0
+      ? ''
+      : names.length === 1
+        ? `${names[0]} is typing…`
+        : names.length === 2
+          ? `${names[0]} and ${names[1]} are typing…`
+          : 'Several people are typing…';
+  return (
+    <div aria-live="polite" className="h-5 shrink-0 px-4 text-[11px] leading-5 text-zinc-500">
+      {label}
     </div>
   );
 }

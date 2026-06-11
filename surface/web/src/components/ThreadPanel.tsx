@@ -12,11 +12,14 @@ export function ThreadPanel({
   sessions,
   spectators,
   meId,
+  meHandle,
   onClose,
   onSend,
   onOpenSession,
   onRetry,
   onEdit,
+  onDelete,
+  onReact,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -25,11 +28,14 @@ export function ThreadPanel({
   sessions: Record<string, Session>;
   spectators: Record<string, number>;
   meId?: string;
+  meHandle?: string;
   onClose: () => void;
   onSend: (text: string) => void;
   onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
+  onDelete?: (message: ChatMessage) => Promise<void>;
+  onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
 }) {
   const sessionFor = (m: ChatMessage) =>
     m.sessionId != null ? sessions[m.sessionId] : undefined;
@@ -70,9 +76,12 @@ export function ThreadPanel({
           session={sessionFor(root)}
           spectators={spectatorsFor(root)}
           meId={meId}
+          meHandle={meHandle}
           onOpenSession={onOpenSession}
           onRetry={onRetry}
           onEdit={onEdit}
+          onDelete={onDelete}
+          onReact={onReact}
         />
         <div className="my-2 flex items-center gap-2 px-4">
           <div className="h-px flex-1 bg-zinc-800" />
@@ -89,9 +98,12 @@ export function ThreadPanel({
               session={sessionFor(item.message!)}
               spectators={spectatorsFor(item.message!)}
               meId={meId}
+              meHandle={meHandle}
               onOpenSession={onOpenSession}
               onRetry={onRetry}
               onEdit={onEdit}
+              onDelete={onDelete}
+              onReact={onReact}
             />
           ),
         )}

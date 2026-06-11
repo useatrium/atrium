@@ -20,6 +20,15 @@ export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+/** Compact 24h time for the 32px message gutter — "7:54 PM" wraps there. */
+export function formatGutterTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 export function formatDay(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
@@ -49,11 +58,13 @@ export interface TimelineItem {
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
-/** Build render items: day separators + consecutive-message grouping. */
+/** Build render items: day separators + consecutive-message grouping.
+ * Deleted messages disappear unless they anchor a thread (tombstone). */
 export function buildTimelineItems(messages: ChatMessage[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   let prev: ChatMessage | null = null;
   for (const m of messages) {
+    if (m.deleted && m.replyCount === 0) continue;
     const d = new Date(m.createdAt);
     if (!prev || !sameDay(new Date(prev.createdAt), d)) {
       items.push({ kind: 'day', key: `day-${d.toDateString()}`, label: formatDay(m.createdAt) });

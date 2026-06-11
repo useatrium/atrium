@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { Channel } from '../api';
+import type { UnreadLevel } from '../appState';
 import type { UserRef } from '../state';
 
 export function Sidebar({
@@ -16,7 +17,7 @@ export function Sidebar({
   workspaceName: string;
   channels: Channel[];
   activeChannelId: string | null;
-  unread: Record<string, boolean>;
+  unread: Record<string, UnreadLevel>;
   me: UserRef;
   wsStatus: 'connecting' | 'open' | 'closed';
   onSelect: (channelId: string) => void;
@@ -101,7 +102,7 @@ export function Sidebar({
         <ul>
           {channels.map((c) => {
             const active = c.id === activeChannelId;
-            const isUnread = unread[c.id] && !active;
+            const level = active ? false : unread[c.id] ?? false;
             return (
               <li key={c.id}>
                 <button
@@ -109,18 +110,22 @@ export function Sidebar({
                   className={`flex w-full items-center gap-1.5 px-4 py-1 text-left text-sm ${
                     active
                       ? 'bg-indigo-600/20 font-medium text-zinc-100'
-                      : isUnread
+                      : level
                         ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
                         : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
                   }`}
                 >
                   <span className="text-zinc-500">#</span>
                   <span className="truncate">{c.name}</span>
-                  {isUnread && (
+                  {level === 'mention' ? (
+                    <span className="ml-auto shrink-0 rounded bg-red-500/90 px-1 text-[10px] font-bold leading-4 text-white">
+                      @<span className="sr-only"> mention</span>
+                    </span>
+                  ) : level ? (
                     <span className="ml-auto size-2 shrink-0 rounded-full bg-indigo-400">
                       <span className="sr-only">unread</span>
                     </span>
-                  )}
+                  ) : null}
                 </button>
               </li>
             );

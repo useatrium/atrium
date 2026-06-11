@@ -25,6 +25,12 @@ export interface WireEvent {
 
 export type MessageStatus = 'pending' | 'failed' | 'confirmed';
 
+/** One emoji's reactors on a message, insertion-ordered. */
+export interface MessageReaction {
+  emoji: string;
+  userIds: string[];
+}
+
 export interface ChatMessage {
   /** Server event id; null while pending/failed. */
   id: number | null;
@@ -33,6 +39,9 @@ export interface ChatMessage {
   threadRootEventId: number | null;
   text: string;
   edited: boolean;
+  /** Tombstoned: hidden in the timeline unless it anchors a thread. */
+  deleted?: boolean;
+  reactions?: MessageReaction[];
   author: UserRef;
   createdAt: string;
   replyCount: number;
@@ -90,6 +99,8 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     threadRootEventId: ev.threadRootEventId,
     text,
     edited: payload.edited === true,
+    deleted: payload.deleted === true,
+    reactions: parseReactions(payload.reactions),
     author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
@@ -97,6 +108,42 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
   };
+}
+
+function parseReactions(v: unknown): MessageReaction[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: MessageReaction[] = [];
+  for (const r of v) {
+    const emoji = (r as { emoji?: unknown }).emoji;
+    const userIds = (r as { userIds?: unknown }).userIds;
+    if (typeof emoji === 'string' && Array.isArray(userIds)) {
+      out.push({ emoji, userIds: userIds.filter((u): u is string => typeof u === 'string') });
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Toggle one user's emoji on a message (pure; used by the reaction fold). */
+export function foldReaction(
+  m: ChatMessage,
+  emoji: string,
+  userId: string,
+  add: boolean,
+): ChatMessage {
+  const list = m.reactions ?? [];
+  const i = list.findIndex((r) => r.emoji === emoji);
+  if (add) {
+    if (i < 0) return { ...m, reactions: [...list, { emoji, userIds: [userId] }] };
+    if (list[i]!.userIds.includes(userId)) return m;
+    const next = [...list];
+    next[i] = { emoji, userIds: [...next[i]!.userIds, userId] };
+    return { ...m, reactions: next };
+  }
+  if (i < 0 || !list[i]!.userIds.includes(userId)) return m;
+  const userIds = list[i]!.userIds.filter((u) => u !== userId);
+  const next = userIds.length > 0 ? [...list] : list.filter((_, j) => j !== i);
+  if (userIds.length > 0) next[i] = { emoji, userIds };
+  return { ...m, reactions: next };
 }
 
 /** Confirmed messages sorted by id asc; pending/failed keep send order at the end. */
@@ -195,18 +242,46 @@ function bumpLastEvent(t: ChannelTimeline, id: number): ChannelTimeline {
 export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
   if (t.seenIds.has(ev.id)) return bumpLastEvent(t, ev.id);
 
-  if (ev.type === 'message.edited') {
+  if (ev.type === 'message.edited' || ev.type === 'message.deleted') {
     const targetId = Number((ev.payload ?? {}).target_event_id);
-    const edit = (list: ChatMessage[]) =>
-      list.map((m) =>
-        m.id === targetId ? { ...m, text: String((ev.payload ?? {}).text ?? m.text), edited: true } : m,
-      );
+    const fold = (list: ChatMessage[]) =>
+      list.map((m) => {
+        if (m.id !== targetId) return m;
+        if (ev.type === 'message.deleted') return { ...m, text: '', deleted: true };
+        return { ...m, text: String((ev.payload ?? {}).text ?? m.text), edited: true };
+      });
     const threads: Record<number, ChatMessage[]> = {};
-    for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = edit(v);
+    for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
+    let main = fold(t.main);
+    // Deleting a thread reply: the root's visible reply count shrinks by one.
+    if (ev.type === 'message.deleted' && ev.threadRootEventId != null) {
+      main = main.map((m) =>
+        m.id === ev.threadRootEventId
+          ? { ...m, replyCount: Math.max(0, m.replyCount - 1) }
+          : m,
+      );
+    }
     return bumpLastEvent(
-      { ...t, main: edit(t.main), threads, seenIds: new Set(t.seenIds).add(ev.id) },
+      { ...t, main, threads, seenIds: new Set(t.seenIds).add(ev.id) },
       ev.id,
     );
+  }
+
+  if (ev.type === 'reaction.added' || ev.type === 'reaction.removed') {
+    const p = ev.payload ?? {};
+    const targetId = Number(p.target_event_id);
+    const emoji = typeof p.emoji === 'string' ? p.emoji : '';
+    const uid = ev.actorId;
+    const seenIds = new Set(t.seenIds).add(ev.id);
+    if (!emoji || !uid || !Number.isFinite(targetId)) {
+      return bumpLastEvent({ ...t, seenIds }, ev.id);
+    }
+    const add = ev.type === 'reaction.added';
+    const fold = (list: ChatMessage[]) =>
+      list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
+    const threads: Record<number, ChatMessage[]> = {};
+    for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
+    return bumpLastEvent({ ...t, main: fold(t.main), threads, seenIds }, ev.id);
   }
 
   if (!isRowEvent(ev.type)) {
@@ -274,8 +349,8 @@ export function mergeThread(
     seenIds.add(ev.id);
     thread = upsertConfirmed(thread, messageFromEvent(ev));
   }
-  // Thread fetch is authoritative for the root's count.
-  const confirmedCount = thread.filter((m) => m.status === 'confirmed').length;
+  // Thread fetch is authoritative for the root's count (tombstones excluded).
+  const confirmedCount = thread.filter((m) => m.status === 'confirmed' && !m.deleted).length;
   const maxReplyId = thread.reduce((acc, m) => Math.max(acc, m.id ?? 0), 0);
   const main = t.main.map((m) =>
     m.id === rootEventId

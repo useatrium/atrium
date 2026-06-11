@@ -4,6 +4,8 @@ import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 export function Composer({
   placeholder,
   onSend,
+  onTyping,
+  onArrowUpOnEmpty,
   autoFocus,
   agentAware,
   disabled,
@@ -12,6 +14,10 @@ export function Composer({
 }: {
   placeholder: string;
   onSend: (text: string) => void;
+  /** Fired while the user types non-empty text (throttle at the call site). */
+  onTyping?: () => void;
+  /** ArrowUp in an empty composer — Slack-style "edit my last message". */
+  onArrowUpOnEmpty?: () => void;
   autoFocus?: boolean;
   /** Show the "@agent spawns a session" hint chip while the grammar matches. */
   agentAware?: boolean;
@@ -43,6 +49,9 @@ export function Composer({
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
+    } else if (e.key === 'ArrowUp' && text === '' && onArrowUpOnEmpty) {
+      e.preventDefault();
+      onArrowUpOnEmpty();
     }
   };
 
@@ -66,6 +75,7 @@ export function Composer({
           onChange={(e) => {
             setText(e.target.value);
             setAgentNeedsTask(false);
+            if (e.target.value.trim()) onTyping?.();
             e.target.style.height = 'auto';
             e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
           }}
