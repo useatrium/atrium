@@ -1,0 +1,129 @@
+import type { Channel, WireEvent } from '@atrium/surface-client';
+
+export const MAX_EVENTS_PER_CHANNEL = 300;
+export const DEFAULT_CACHE_FLUSH_MS = 500;
+
+export interface CachedTimeline {
+  events: WireEvent[];
+  hasMore: boolean;
+}
+
+export interface CacheSnapshot {
+  channels: Channel[] | null;
+  timelines: Record<string, CachedTimeline>;
+}
+
+export interface CacheStorage {
+  loadSnapshot: () => Promise<CacheSnapshot>;
+  saveChannels: (channels: Channel[]) => Promise<void>;
+  saveTimeline: (channelId: string, timeline: CachedTimeline) => Promise<void>;
+  clearCache: () => Promise<void>;
+}
+
+export interface EventCache {
+  loadSnapshot: () => Promise<CacheSnapshot>;
+  saveChannels: (channels: Channel[]) => Promise<void>;
+  saveTimeline: (channelId: string, events: WireEvent[], hasMore: boolean) => Promise<void>;
+  enqueueEvents: (channelId: string, events: WireEvent[]) => void;
+  flushChannel: (channelId: string) => Promise<void>;
+  flushAll: () => Promise<void>;
+  clearCache: () => Promise<void>;
+}
+
+function newestEvents(events: WireEvent[]): WireEvent[] {
+  return [...events].sort((a, b) => a.id - b.id).slice(-MAX_EVENTS_PER_CHANNEL);
+}
+
+function normalizeTimeline(timeline: CachedTimeline): CachedTimeline {
+  return {
+    events: newestEvents(timeline.events),
+    hasMore: timeline.hasMore,
+  };
+}
+
+function mergeEvents(current: CachedTimeline | undefined, events: WireEvent[], hasMore?: boolean) {
+  const byId = new Map<number, WireEvent>();
+  for (const ev of current?.events ?? []) byId.set(ev.id, ev);
+  for (const ev of events) byId.set(ev.id, ev);
+  return normalizeTimeline({
+    events: [...byId.values()],
+    hasMore: hasMore ?? current?.hasMore ?? false,
+  });
+}
+
+export function createEventCache(
+  storage: CacheStorage,
+  flushMs = DEFAULT_CACHE_FLUSH_MS,
+): EventCache {
+  let channels: Channel[] | null = null;
+  let timelines: Record<string, CachedTimeline> = {};
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const clearTimer = (channelId: string) => {
+    const timer = timers.get(channelId);
+    if (timer) clearTimeout(timer);
+    timers.delete(channelId);
+  };
+
+  const flushChannel = async (channelId: string) => {
+    clearTimer(channelId);
+    const timeline = timelines[channelId];
+    if (!timeline) return;
+    await storage.saveTimeline(channelId, normalizeTimeline(timeline));
+  };
+
+  const cache: EventCache = {
+    loadSnapshot: async () => {
+      const snapshot = await storage.loadSnapshot();
+      channels = snapshot.channels;
+      timelines = Object.fromEntries(
+        Object.entries(snapshot.timelines).map(([channelId, timeline]) => [
+          channelId,
+          normalizeTimeline(timeline),
+        ]),
+      );
+      return { channels, timelines };
+    },
+
+    saveChannels: async (nextChannels) => {
+      channels = nextChannels;
+      await storage.saveChannels(nextChannels);
+    },
+
+    saveTimeline: async (channelId, events, hasMore) => {
+      const timeline = mergeEvents(timelines[channelId], events, hasMore);
+      timelines = { ...timelines, [channelId]: timeline };
+      clearTimer(channelId);
+      await storage.saveTimeline(channelId, timeline);
+    },
+
+    enqueueEvents: (channelId, events) => {
+      if (events.length === 0) return;
+      timelines = { ...timelines, [channelId]: mergeEvents(timelines[channelId], events) };
+      clearTimer(channelId);
+      timers.set(
+        channelId,
+        setTimeout(() => {
+          void flushChannel(channelId).catch((err: unknown) => {
+            console.warn('failed to flush event cache', err);
+          });
+        }, flushMs),
+      );
+    },
+
+    flushChannel,
+
+    flushAll: async () => {
+      await Promise.all(Object.keys(timelines).map((channelId) => flushChannel(channelId)));
+    },
+
+    clearCache: async () => {
+      for (const channelId of timers.keys()) clearTimer(channelId);
+      channels = null;
+      timelines = {};
+      await storage.clearCache();
+    },
+  };
+
+  return cache;
+}
