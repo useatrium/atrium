@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
 import {
   apiAs,
-  channelButton,
   channelId,
   createChannel,
+  expectRead,
+  expectUnread,
   login,
   mainComposer,
   messageId,
@@ -113,9 +114,9 @@ test('unread badge: alice posts in a second channel; bob opens it and badge clea
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('unread'), second);
 
-  await expect(channelButton(bobPage, second)).toContainText('unread');
+  await expectUnread(bobPage, second);
   await openChannel(bobPage, second);
-  await expect(channelButton(bobPage, second)).not.toContainText('unread');
+  await expectRead(bobPage, second);
 
   await alice.close();
   await bob.close();
@@ -143,12 +144,15 @@ test('cross-device read sync: reading in one context clears badge in the other',
 
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('sync-unread'), second);
-  await expect(channelButton(bobOnePage, second)).toContainText('unread');
-  await expect(channelButton(bobTwoPage, second)).toContainText('unread');
+  // Both devices show unread (live event, or deterministically via reload).
+  await expectUnread(bobOnePage, second);
+  await expectUnread(bobTwoPage, second);
 
+  // Reading on one device advances the server cursor; the other device clears
+  // its badge (live `read` frame, or via reload).
   await openChannel(bobOnePage, second);
-  await expect(channelButton(bobOnePage, second)).not.toContainText('unread');
-  await expect(channelButton(bobTwoPage, second)).not.toContainText('unread', { timeout: 10_000 });
+  await expectRead(bobOnePage, second);
+  await expectRead(bobTwoPage, second);
 
   await alice.close();
   await bobOne.close();

@@ -19,13 +19,63 @@ export function channelLabel(c: Channel, meId: string): string {
   return partner.id === meId ? `${partner.displayName} (you)` : partner.displayName;
 }
 
-/** Deterministic accent color per user (no avatars — colored initials).
- * Lightness 42% keeps white initials readable across the whole hue wheel. */
-export function userColor(seed: string): string {
+function seedHue(seed: string): number {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `hsl(${hue} 50% 42%)`;
+  return h % 360;
+}
+
+/** WCAG relative luminance of an hsl() color (s/l in [0,100]). */
+function hslLuminance(hue: number, s: number, l: number): number {
+  const sat = s / 100;
+  const light = l / 100;
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = light - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hue < 60) [r, g, b] = [c, x, 0];
+  else if (hue < 120) [r, g, b] = [x, c, 0];
+  else if (hue < 180) [r, g, b] = [0, c, x];
+  else if (hue < 240) [r, g, b] = [0, x, c];
+  else if (hue < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const lin = (v: number) => {
+    const srgb = v + m;
+    return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** Deterministic per-user avatar colors for a color scheme. Foreground
+ * flips to near-black when white would land under 4.5:1 on the computed
+ * background (warm hues), so initials meet AA on every hue in both schemes. */
+const DARK_FG_LUM = 0.0031; // relative luminance of #0a0a0c
+
+export function userColorTokens(
+  seed: string,
+  scheme: 'dark' | 'light' = 'dark',
+): { bg: string; fg: string } {
+  const hue = seedHue(seed);
+  const s = scheme === 'dark' ? 50 : 45;
+  let l = scheme === 'dark' ? 42 : 46;
+  let lum = hslLuminance(hue, s, l);
+  // contrast vs white = 1.05 / (lum + 0.05); ≥4.5 requires lum ≤ 0.1833.
+  // A narrow band of warm hues clears neither that nor 4.5 against the
+  // near-black fg — darken those until white passes.
+  while (lum > 0.1833 && (lum + 0.05) / (DARK_FG_LUM + 0.05) < 4.5 && l > 20) {
+    l -= 1;
+    lum = hslLuminance(hue, s, l);
+  }
+  const fg = lum <= 0.1833 ? '#ffffff' : '#0a0a0c';
+  return { bg: `hsl(${hue} ${s}% ${l}%)`, fg };
+}
+
+/** Dark-scheme avatar background only — prefer userColorTokens for themed
+ * UIs; kept for callers that predate theming. */
+export function userColor(seed: string): string {
+  return userColorTokens(seed, 'dark').bg;
 }
 
 export function initials(name: string): string {

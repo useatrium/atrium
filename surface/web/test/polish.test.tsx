@@ -190,6 +190,72 @@ describe('message editing', () => {
   });
 });
 
+describe('session question events', () => {
+  const sessionEvent = (over: Partial<ChatMessage>): ChatMessage => ({
+    id: 50,
+    clientMsgId: null,
+    channelId: 'ch-1',
+    threadRootEventId: 1,
+    text: '',
+    edited: false,
+    author: { id: 'agent', handle: 'agent', displayName: 'Agent' },
+    createdAt: new Date().toISOString(),
+    replyCount: 0,
+    lastReplyId: 0,
+    status: 'confirmed',
+    sessionId: 'sess-1',
+    ...over,
+  });
+
+  it('renders requested questions as a compact open-pane line', async () => {
+    const onOpenSession = vi.fn();
+    render(
+      <MessageRow
+        message={sessionEvent({
+          sessionEventType: 'question_requested',
+          sessionEventPayload: {
+            questions: [{ id: 'q1', header: 'Decision', question: 'Deploy now?' }],
+          },
+        })}
+        grouped={false}
+        onOpenSession={onOpenSession}
+      />,
+    );
+
+    expect(screen.getByText('❓ Deploy now?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'open pane' }));
+    await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('sess-1'));
+  });
+
+  it('renders requested questions with a generic fallback', () => {
+    render(
+      <MessageRow
+        message={sessionEvent({
+          sessionEventType: 'question_requested',
+          sessionEventPayload: { questions: [] },
+        })}
+        grouped={false}
+      />,
+    );
+
+    expect(screen.getByText('❓ Agent asked a question')).toBeTruthy();
+  });
+
+  it('renders resolved questions as a quiet dismissed line', () => {
+    render(
+      <MessageRow
+        message={sessionEvent({
+          sessionEventType: 'question_resolved',
+          sessionEventPayload: { reason: 'cancelled' },
+        })}
+        grouped={false}
+      />,
+    );
+
+    expect(screen.getByText('Question dismissed')).toBeTruthy();
+  });
+});
+
 describe('mentions', () => {
   it('mentionsHandle matches whole handles only', () => {
     expect(mentionsHandle('hey @gary look', 'gary')).toBe(true);

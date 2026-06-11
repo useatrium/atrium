@@ -8,5 +8,6 @@ export * from './spawnTrigger';
 export * from './mentions';
 export * from './formatting';
 export * from './api';
+export * from './prefs';
 export * from './useWs';
 export * from './util';
