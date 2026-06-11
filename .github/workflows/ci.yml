@@ -88,9 +88,11 @@ jobs:
         working-directory: surface
         timeout-minutes: 6
         env:
-          # e2e/db-reset.mjs creates and truncates this dedicated database while
-          # using the atrium database from the same Postgres service as admin DB.
-          DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium_e2e
+          # playwright.config.ts reads E2E_DATABASE_URL for the webServer (it
+          # falls back to a localhost:5433 default otherwise). db-reset.mjs
+          # creates/truncates this dedicated DB using the atrium DB on the same
+          # Postgres service as admin.
+          E2E_DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium_e2e
         run: pnpm e2e
 
       - name: Upload Playwright report
