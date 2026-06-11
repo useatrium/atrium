@@ -707,6 +707,27 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(201).send({ session });
   });
 
+  app.get('/api/sessions', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const q = req.query as { status?: string; limit?: string };
+    const status =
+      q.status === 'running' || q.status === 'recent' || q.status === 'all'
+        ? q.status
+        : q.status == null
+          ? 'all'
+          : null;
+    if (!status) {
+      return reply.code(400).send({ error: 'bad_query', message: 'invalid status filter' });
+    }
+    const rawLimit = q.limit == null ? 50 : Number(q.limit);
+    if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'limit must be positive' });
+    }
+    const limit = Math.min(200, Math.floor(rawLimit));
+    return { sessions: await sessionRuns.listSessionsForUser({ userId: user.id, status, limit }) };
+  });
+
   app.get('/api/sessions/:id', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;

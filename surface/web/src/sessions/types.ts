@@ -10,6 +10,7 @@ export type {
   SeatChangeReason,
   SeatAuditEntry,
   SessionWire,
+  SessionListItem,
   Session,
 } from '@atrium/surface-client';
 export {

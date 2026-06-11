@@ -140,6 +140,7 @@ export default function ChannelList() {
           ),
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 6 }}>
+              <HeaderButton label="⚙" onPress={() => router.push('/sessions')} />
               <HeaderButton label="🔍" onPress={() => router.push('/search')} />
               <HeaderButton label="✉️" onPress={() => router.push('/new-dm')} />
               <HeaderButton label="＋" onPress={() => router.push('/new-channel')} />

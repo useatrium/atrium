@@ -144,6 +144,37 @@ async function insertRunningSession(driverId = fx.userId): Promise<string> {
   return inserted.rows[0]!.id;
 }
 
+async function insertSessionRow(args: {
+  channelId?: string;
+  title: string;
+  status: 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  spawnedBy?: string;
+  createdAt?: string;
+  completedAt?: string | null;
+  costUsd?: number;
+}): Promise<string> {
+  const inserted = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (
+       workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+       driver_id, current_execution_id, assignment_generation, created_at, completed_at, cost_usd
+     )
+     VALUES ($1, $2, $3, 'claude-code', $4, $5, $6, $6, 'exe_fake', 1, $7, $8, $9)
+     RETURNING id`,
+    [
+      fx.workspaceId,
+      args.channelId ?? fx.channelId,
+      `thread-${randomUUID()}`,
+      args.title,
+      args.status,
+      args.spawnedBy ?? fx.userId,
+      args.createdAt ?? new Date().toISOString(),
+      args.completedAt ?? null,
+      args.costUsd ?? 0,
+    ],
+  );
+  return inserted.rows[0]!.id;
+}
+
 async function waitFor(assertion: () => Promise<void> | void, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
   let lastError: unknown;
@@ -604,6 +635,146 @@ function sendJson(res: ServerResponse, body: object): void {
 }
 
 describe('session access control', () => {
+  it('GET /api/sessions filters DM sessions by channel access', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const cara = await loginUser(app, 'cara', 'Cara');
+    const { channel } = await getOrCreateDm(pool, {
+      workspaceId: fx.workspaceId,
+      userIdA: alice.userId,
+      userIdB: bob.userId,
+    });
+    const publicId = await insertSessionRow({
+      title: 'public session',
+      status: 'running',
+      spawnedBy: alice.userId,
+    });
+    const dmId = await insertSessionRow({
+      channelId: channel.id,
+      title: 'dm session',
+      status: 'running',
+      spawnedBy: alice.userId,
+    });
+
+    const asBob = await app.inject({
+      method: 'GET',
+      url: '/api/sessions',
+      headers: { cookie: bob.cookie },
+    });
+    const asCara = await app.inject({
+      method: 'GET',
+      url: '/api/sessions',
+      headers: { cookie: cara.cookie },
+    });
+    expect(asBob.statusCode).toBe(200);
+    expect(asCara.statusCode).toBe(200);
+    expect(asBob.json().sessions.map((s: { id: string }) => s.id)).toEqual(
+      expect.arrayContaining([publicId, dmId]),
+    );
+    expect(asCara.json().sessions.map((s: { id: string }) => s.id)).toContain(publicId);
+    expect(asCara.json().sessions.map((s: { id: string }) => s.id)).not.toContain(dmId);
+    await app.close();
+  });
+
+  it('GET /api/sessions supports status filters, ordering, limit cap, and light shape', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const completedOld = await insertSessionRow({
+      title: 'completed old',
+      status: 'completed',
+      spawnedBy: alice.userId,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:10:00.000Z',
+      costUsd: 1.25,
+    });
+    const runningOlder = await insertSessionRow({
+      title: 'running older',
+      status: 'running',
+      spawnedBy: alice.userId,
+      createdAt: '2025-01-02T00:00:00.000Z',
+    });
+    const queuedNewer = await insertSessionRow({
+      title: 'queued newer',
+      status: 'queued',
+      spawnedBy: alice.userId,
+      createdAt: '2025-01-03T00:00:00.000Z',
+    });
+    const failedNewest = await insertSessionRow({
+      title: 'failed newest',
+      status: 'failed',
+      spawnedBy: alice.userId,
+      createdAt: '2025-01-04T00:00:00.000Z',
+      completedAt: '2025-01-04T00:01:00.000Z',
+    });
+
+    const all = await app.inject({
+      method: 'GET',
+      url: '/api/sessions?limit=500',
+      headers: { cookie: alice.cookie },
+    });
+    expect(all.statusCode).toBe(200);
+    const allSessions = all.json().sessions;
+    expect(allSessions.map((s: { id: string }) => s.id)).toEqual([
+      queuedNewer,
+      runningOlder,
+      failedNewest,
+      completedOld,
+    ]);
+    expect(Object.keys(allSessions[0]).sort()).toEqual([
+      'channelId',
+      'channelName',
+      'completedAt',
+      'costUsd',
+      'createdAt',
+      'harness',
+      'id',
+      'spawnedBy',
+      'spawnerName',
+      'status',
+      'title',
+    ]);
+    expect(allSessions[3]).toMatchObject({
+      id: completedOld,
+      channelId: fx.channelId,
+      channelName: 'general',
+      title: 'completed old',
+      status: 'completed',
+      harness: 'claude-code',
+      spawnedBy: alice.userId,
+      spawnerName: 'Alice',
+      costUsd: 1.25,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:10:00.000Z',
+    });
+
+    const running = await app.inject({
+      method: 'GET',
+      url: '/api/sessions?status=running',
+      headers: { cookie: alice.cookie },
+    });
+    expect(running.json().sessions.map((s: { id: string }) => s.id)).toEqual([
+      queuedNewer,
+      runningOlder,
+    ]);
+
+    const recent = await app.inject({
+      method: 'GET',
+      url: '/api/sessions?status=recent&limit=1',
+      headers: { cookie: alice.cookie },
+    });
+    expect(recent.json().sessions.map((s: { id: string }) => s.id)).toEqual([failedNewest]);
+    await app.close();
+  });
+
   it('sessions in a DM are 404 for non-members, visible to members', async () => {
     const app = await buildApp({
       pool,
