@@ -1,0 +1,23 @@
+# Scenario A, always-on Mac behind Tailscale:
+#   SITE_ADDRESS=:80
+#   HTTP_HOST_PORT=8080 or 80
+#   Mobile app server URL: http://<tailscale-ip-or-magicdns-name>:<HTTP_HOST_PORT>
+#
+# Scenario B, Linux VPS with automatic TLS:
+#   SITE_ADDRESS=atrium.example.com
+#   HTTP_HOST_PORT=80
+#   HTTPS_HOST_PORT=443
+#   Mobile app server URL: https://atrium.example.com
+#
+# Caddy reverse_proxy supports WebSocket upgrades automatically.
+
+{$SITE_ADDRESS:localhost} {
+	root * /srv
+	encode zstd gzip
+
+	@server path /api/* /auth/* /ws /healthz
+	reverse_proxy @server server:3001
+
+	try_files {path} /index.html
+	file_server
+}
