@@ -125,6 +125,16 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    createAgentSession: (body: {
+      channelId: string;
+      task: string;
+      harness?: string;
+      threadRootEventId?: number;
+    }) =>
+      req<{ session: SessionWire }>('/api/sessions', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     createUpload: (body: {
       filename: string;
       contentType: string;

@@ -15,9 +15,10 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
-import type { AttachmentMeta } from '@atrium/surface-client';
+import { matchMentionPrefix, type AttachmentMeta, type UserRef } from '@atrium/surface-client';
 import { colors, font, radius, space } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
+import { Avatar } from './Avatar';
 
 interface PendingAttachment {
   key: string;
@@ -37,6 +38,8 @@ export interface ComposerProps {
   draftKey?: string;
   initialDraft?: string;
   onDraftChange?: (key: string, text: string) => void;
+  mentionUsers?: UserRef[] | null;
+  onMentionTrigger?: () => void;
   allowAttachments?: boolean;
   uploadFile?: (file: {
     uri: string;
@@ -58,6 +61,8 @@ export function Composer({
   draftKey,
   initialDraft,
   onDraftChange,
+  mentionUsers,
+  onMentionTrigger,
   allowAttachments,
   uploadFile,
 }: ComposerProps) {
@@ -167,6 +172,32 @@ export function Composer({
   const uploading = attachments.some((a) => !a.meta && !a.failed);
   const ready = attachments.filter((a) => a.meta != null).map((a) => a.meta!);
   const canSend = !uploading && (text.trim().length > 0 || ready.length > 0);
+  const mentionMatch = !editing ? matchMentionPrefix(text) : null;
+  const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
+  const agentMatches = mentionMatch != null && 'agent'.startsWith(mentionPrefix);
+  const matchedUsers = useMemo(() => {
+    if (!mentionMatch || !mentionUsers) return [];
+    return mentionUsers
+      .filter((u) => {
+        const handle = u.handle.toLowerCase();
+        const displayName = u.displayName.toLowerCase();
+        return handle.startsWith(mentionPrefix) || displayName.includes(mentionPrefix);
+      })
+      .slice(0, agentMatches ? 4 : 5);
+  }, [agentMatches, mentionMatch, mentionPrefix, mentionUsers]);
+  const showMentionSuggestions = mentionMatch != null && (agentMatches || matchedUsers.length > 0);
+
+  useEffect(() => {
+    if (mentionMatch) onMentionTrigger?.();
+  }, [mentionMatch, onMentionTrigger]);
+
+  const insertMention = (value: string) => {
+    if (!mentionMatch) return;
+    const next = `${text.slice(0, mentionMatch.start)}@${value} `;
+    setText(next);
+    if (draftKey) draftWriter.saveNow(draftKey, next);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
 
   const submit = () => {
     const trimmed = text.trim();
@@ -208,6 +239,73 @@ export function Composer({
           >
             <Text style={{ color: colors.textMuted, fontSize: font.xs }}>Cancel</Text>
           </Pressable>
+        </View>
+      )}
+
+      {showMentionSuggestions && (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: radius.md,
+            backgroundColor: colors.bgElevated,
+            overflow: 'hidden',
+          }}
+        >
+          {agentMatches && (
+            <Pressable
+              onPress={() => insertMention('agent')}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: space.sm,
+                paddingHorizontal: space.md,
+                paddingVertical: space.sm,
+                backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+              })}
+            >
+              <View
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: radius.sm,
+                  backgroundColor: colors.accentBg,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}>@</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
+                  @agent
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>run an agent task</Text>
+              </View>
+            </Pressable>
+          )}
+          {matchedUsers.map((u) => (
+            <Pressable
+              key={u.id}
+              onPress={() => insertMention(u.handle)}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: space.sm,
+                paddingHorizontal: space.md,
+                paddingVertical: space.sm,
+                backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+              })}
+            >
+              <Avatar name={u.displayName} seed={u.id} size={28} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
+                  {u.displayName}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>@{u.handle}</Text>
+              </View>
+            </Pressable>
+          ))}
         </View>
       )}
 
