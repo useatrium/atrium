@@ -1,4 +1,4 @@
-import type { Channel, WireEvent } from '@atrium/surface-client';
+import type { AttachmentMeta, Channel, WireEvent } from '@atrium/surface-client';
 
 export const MAX_EVENTS_PER_CHANNEL = 300;
 export const DEFAULT_CACHE_FLUSH_MS = 500;
@@ -13,10 +13,24 @@ export interface CacheSnapshot {
   timelines: Record<string, CachedTimeline>;
 }
 
+export interface OutboxMessage {
+  clientMsgId: string;
+  channelId: string;
+  text: string;
+  threadRootEventId?: number;
+  attachments?: AttachmentMeta[];
+  createdAt: string;
+}
+
 export interface CacheStorage {
   loadSnapshot: () => Promise<CacheSnapshot>;
   saveChannels: (channels: Channel[]) => Promise<void>;
   saveTimeline: (channelId: string, timeline: CachedTimeline) => Promise<void>;
+  enqueueOutbox: (msg: OutboxMessage) => Promise<void>;
+  listOutbox: () => Promise<OutboxMessage[]>;
+  removeOutbox: (clientMsgId: string) => Promise<void>;
+  getDraft: (key: string) => Promise<string | null>;
+  setDraft: (key: string, text: string) => Promise<void>;
   clearCache: () => Promise<void>;
 }
 
@@ -25,6 +39,11 @@ export interface EventCache {
   saveChannels: (channels: Channel[]) => Promise<void>;
   saveTimeline: (channelId: string, events: WireEvent[], hasMore: boolean) => Promise<void>;
   enqueueEvents: (channelId: string, events: WireEvent[]) => void;
+  enqueueOutbox: (msg: OutboxMessage) => Promise<void>;
+  listOutbox: () => Promise<OutboxMessage[]>;
+  removeOutbox: (clientMsgId: string) => Promise<void>;
+  getDraft: (key: string) => Promise<string | null>;
+  setDraft: (key: string, text: string) => Promise<void>;
   flushChannel: (channelId: string) => Promise<void>;
   flushAll: () => Promise<void>;
   clearCache: () => Promise<void>;
@@ -110,6 +129,16 @@ export function createEventCache(
         }, flushMs),
       );
     },
+
+    enqueueOutbox: (msg) => storage.enqueueOutbox(msg),
+
+    listOutbox: () => storage.listOutbox(),
+
+    removeOutbox: (clientMsgId) => storage.removeOutbox(clientMsgId),
+
+    getDraft: (key) => storage.getDraft(key),
+
+    setDraft: (key, text) => storage.setDraft(key, text),
 
     flushChannel,
 

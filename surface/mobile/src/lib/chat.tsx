@@ -29,7 +29,13 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { useSession, type Session } from './session';
+import type { OutboxMessage } from './cache';
 import { eventCache } from './cacheSqlite';
+import {
+  flushOutbox,
+  isNetworkFailure,
+  outboxMessageFromSend,
+} from './outbox';
 
 const PAGE_SIZE = 50;
 
@@ -76,6 +82,8 @@ interface ChatContextValue {
     width?: number;
     height?: number;
   }) => Promise<AttachmentMeta>;
+  getDraft: (key: string) => Promise<string | null>;
+  setDraft: (key: string, text: string) => Promise<void>;
   /** From search: load the message's channel (paging back as needed) + highlight. */
   jumpToMessage: (event: WireEvent) => Promise<void>;
   highlightId: number | null;
@@ -101,6 +109,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [hydrated, setHydrated] = useState(false);
+  const flushingOutboxRef = useRef(false);
+  const flushOnWakeRef = useRef<() => void>(() => {});
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -114,11 +124,29 @@ export function ChatProvider({ session, children }: { session: Session; children
     dispatch({ type: 'init-me', handle: me.handle });
   }, [me.handle]);
 
+  const pendingMessageFromOutbox = useCallback(
+    (msg: OutboxMessage): ChatMessage => ({
+      id: null,
+      clientMsgId: msg.clientMsgId,
+      channelId: msg.channelId,
+      threadRootEventId: msg.threadRootEventId ?? null,
+      text: msg.text,
+      edited: false,
+      author: me,
+      createdAt: msg.createdAt,
+      replyCount: 0,
+      lastReplyId: 0,
+      status: 'pending',
+      ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
+    }),
+    [me],
+  );
+
   useEffect(() => {
     let disposed = false;
     eventCache
       .loadSnapshot()
-      .then(({ channels, timelines }) => {
+      .then(async ({ channels, timelines }) => {
         if (disposed) return;
         if (channels) {
           dispatch({ type: 'channels-loaded', channels });
@@ -132,6 +160,15 @@ export function ChatProvider({ session, children }: { session: Session; children
             hasMore: timeline.hasMore,
           });
         }
+        const queued = await eventCache.listOutbox();
+        if (disposed) return;
+        for (const msg of queued) {
+          dispatch({
+            type: 'send-pending',
+            channelId: msg.channelId,
+            message: pendingMessageFromOutbox(msg),
+          });
+        }
       })
       .catch((err: unknown) => {
         console.warn('failed to hydrate event cache', err);
@@ -142,7 +179,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [pendingMessageFromOutbox]);
 
   const loadChannels = useCallback(() => {
     api
@@ -187,6 +224,30 @@ export function ChatProvider({ session, children }: { session: Session; children
     loadChannels();
   }, [api, loadChannels, onApiError]);
 
+  const flushQueuedOutbox = useCallback(() => {
+    if (flushingOutboxRef.current) return;
+    flushingOutboxRef.current = true;
+    void flushOutbox({
+      storage: eventCache,
+      postMessage: api.postMessage,
+      onConfirmed: (event) => {
+        dispatch({ type: 'server-event', event });
+        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+      },
+      onRejected: (msg) => {
+        dispatch({ type: 'send-failed', channelId: msg.channelId, clientMsgId: msg.clientMsgId });
+      },
+    })
+      .catch(onApiError)
+      .finally(() => {
+        flushingOutboxRef.current = false;
+      });
+  }, [api, onApiError]);
+
+  useEffect(() => {
+    flushOnWakeRef.current = flushQueuedOutbox;
+  }, [flushQueuedOutbox]);
+
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, TypingEntry>>({});
   const onTyping = useCallback(
@@ -218,7 +279,10 @@ export function ChatProvider({ session, children }: { session: Session; children
   // tell the WS layer the instant the app is foregrounded again.
   const bindWake = useCallback((cb: () => void) => {
     const sub = RNAppState.addEventListener('change', (s) => {
-      if (s === 'active') cb();
+      if (s === 'active') {
+        cb();
+        flushOnWakeRef.current();
+      }
     });
     return () => sub.remove();
   }, []);
@@ -248,7 +312,10 @@ export function ChatProvider({ session, children }: { session: Session; children
         );
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
       },
-      onOpen: catchUp,
+      onOpen: () => {
+        catchUp();
+        flushQueuedOutbox();
+      },
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
     state.activeChannelId,
@@ -384,6 +451,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       attachments?: AttachmentMeta[],
     ) => {
       const clientMsgId = randomUUID();
+      const createdAt = new Date().toISOString();
       const message: ChatMessage = {
         id: null,
         clientMsgId,
@@ -392,7 +460,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         text,
         edited: false,
         author: me,
-        createdAt: new Date().toISOString(),
+        createdAt,
         replyCount: 0,
         lastReplyId: 0,
         status: 'pending',
@@ -412,6 +480,23 @@ export function ChatProvider({ session, children }: { session: Session; children
           if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
         })
         .catch((err) => {
+          if (isNetworkFailure(err)) {
+            void eventCache
+              .enqueueOutbox(
+                outboxMessageFromSend({
+                  clientMsgId,
+                  channelId,
+                  text,
+                  threadRootEventId,
+                  attachments,
+                  createdAt,
+                }),
+              )
+              .catch((cacheErr: unknown) => {
+                console.warn('failed to queue offline message', cacheErr);
+              });
+            return;
+          }
           onApiError(err);
           dispatch({ type: 'send-failed', channelId, clientMsgId });
         });
@@ -511,6 +596,10 @@ export function ChatProvider({ session, children }: { session: Session; children
     [api],
   );
 
+  const getDraft = useCallback((key: string) => eventCache.getDraft(key), []);
+
+  const setDraft = useCallback((key: string, text: string) => eventCache.setDraft(key, text), []);
+
   const fileUrl = useCallback(
     (fileId: string) => `${serverUrl}/api/files/${fileId}`,
     [serverUrl],
@@ -590,6 +679,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       fileHeaders,
       openAttachment,
       uploadFile,
+      getDraft,
+      setDraft,
       jumpToMessage,
       highlightId,
     }),
@@ -614,6 +705,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       fileHeaders,
       openAttachment,
       uploadFile,
+      getDraft,
+      setDraft,
       jumpToMessage,
       highlightId,
     ],

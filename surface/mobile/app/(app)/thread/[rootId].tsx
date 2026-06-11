@@ -17,6 +17,7 @@ export default function ThreadScreen() {
   const rootId = Number(rootIdParam);
   const chat = useChat();
   const { state, me } = chat;
+  const { getDraft, setDraft } = chat;
   const headerHeight = useHeaderHeight();
 
   useEffect(() => {
@@ -31,6 +32,34 @@ export default function ThreadScreen() {
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [initialDraft, setInitialDraft] = useState('');
+  const draftKey =
+    channelId && Number.isFinite(rootId) ? `channel:${channelId}:thread:${rootId}` : '';
+
+  useEffect(() => {
+    if (!draftKey) return;
+    let disposed = false;
+    setInitialDraft('');
+    void getDraft(draftKey)
+      .then((draft) => {
+        if (!disposed) setInitialDraft(draft ?? '');
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to load thread draft', err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [draftKey, getDraft]);
+
+  const saveDraft = useCallback(
+    (key: string, text: string) => {
+      void setDraft(key, text).catch((err: unknown) => {
+        console.warn('failed to save thread draft', err);
+      });
+    },
+    [setDraft],
+  );
 
   const openAttachment = useCallback(
     (fileId: string) => {
@@ -70,6 +99,9 @@ export default function ThreadScreen() {
           placeholder="Reply in thread"
           onSend={(text, attachments) => chat.send(channelId, text, rootId, attachments)}
           onTyping={() => chat.notifyTyping(channelId)}
+          draftKey={draftKey}
+          initialDraft={initialDraft}
+          onDraftChange={saveDraft}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text) => {
             if (editing) void chat.editMessage(editing, text);
