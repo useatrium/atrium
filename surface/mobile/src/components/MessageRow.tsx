@@ -212,6 +212,43 @@ function SessionCard({
   );
 }
 
+function SessionEventLine({
+  message,
+  onOpen,
+}: {
+  message: ChatMessage;
+  onOpen?: (sessionId: string) => void;
+}) {
+  const payload = message.sessionEventPayload ?? {};
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  const firstQuestion = questions[0] as Record<string, unknown> | undefined;
+  const questionText =
+    typeof firstQuestion?.question === 'string' && firstQuestion.question.trim()
+      ? firstQuestion.question
+      : 'Agent asked a question';
+  const label =
+    message.sessionEventType === 'question_answered'
+      ? 'Question answered'
+      : message.sessionEventType === 'question_requested'
+        ? `❓ ${questionText}`
+        : message.sessionEventType === 'question_resolved'
+          ? 'Question dismissed'
+          : 'Session event';
+
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', marginTop: 2 }}>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{label}</Text>
+      {message.sessionId && onOpen ? (
+        <Pressable onPress={() => onOpen(message.sessionId!)}>
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
+            {'  '}open pane
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 export const MessageRow = memo(function MessageRow({
   message: m,
   grouped,
@@ -238,6 +275,8 @@ export const MessageRow = memo(function MessageRow({
     <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>
       Message deleted
     </Text>
+  ) : m.sessionEventType != null ? (
+    <SessionEventLine message={m} onOpen={onOpenSession} />
   ) : m.sessionId != null ? (
     <SessionCard message={m} session={session} onOpen={onOpenSession} />
   ) : (
