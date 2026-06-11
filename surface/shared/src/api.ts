@@ -42,6 +42,12 @@ export interface ApiOptions {
   getToken?: () => string | null | Promise<string | null>;
 }
 
+export interface AuthMethods {
+  open: boolean;
+  email: true;
+  google: boolean;
+}
+
 export type Api = ReturnType<typeof createApi>;
 
 export function createApi(opts: ApiOptions = {}) {
@@ -74,6 +80,17 @@ export function createApi(opts: ApiOptions = {}) {
   }
 
   return {
+    authMethods: () => req<AuthMethods>('/auth/methods'),
+    requestEmailCode: (email: string) =>
+      req<{ ok: true; devCode?: string }>('/auth/email/request', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
+    verifyEmailCode: (email: string, code: string) =>
+      req<{ user: UserRef; token?: string }>('/auth/email/verify', {
+        method: 'POST',
+        body: JSON.stringify({ email, code }),
+      }),
     login: (handle: string, displayName: string) =>
       req<{ user: UserRef; token?: string }>('/auth/login', {
         method: 'POST',
