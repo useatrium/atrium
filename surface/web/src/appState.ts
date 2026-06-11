@@ -22,6 +22,9 @@ import {
   type Session,
 } from './sessions/types';
 
+/** 'mention' outranks plain unread — it renders as a red @ badge. */
+export type UnreadLevel = false | true | 'mention';
+
 export interface AppState {
   channels: Channel[];
   timelines: Record<string, ChannelTimeline>;
@@ -33,7 +36,9 @@ export interface AppState {
   openSessionId: string | null;
   /** The open pane's session couldn't be fetched (bad permalink, deleted). */
   openSessionError: boolean;
-  unread: Record<string, boolean>;
+  unread: Record<string, UnreadLevel>;
+  /** Current user's handle — drives @mention unread detection. */
+  meHandle: string | null;
   wsStatus: 'connecting' | 'open' | 'closed';
 }
 
@@ -47,10 +52,12 @@ export const initialAppState: AppState = {
   openSessionId: null,
   openSessionError: false,
   unread: {},
+  meHandle: null,
   wsStatus: 'connecting',
 };
 
 export type AppAction =
+  | { type: 'init-me'; handle: string }
   | { type: 'channels-loaded'; channels: Channel[] }
   | { type: 'channel-added'; channel: Channel }
   | { type: 'select-channel'; channelId: string }
@@ -81,8 +88,17 @@ function withTimeline(state: AppState, channelId: string, t: ChannelTimeline): A
   return { ...state, timelines: { ...state.timelines, [channelId]: t } };
 }
 
+/** Does `text` @-mention the user? Handles are [a-z0-9_-], so no escaping. */
+export function mentionsHandle(text: string, handle: string | null): boolean {
+  if (!handle) return false;
+  return new RegExp(`@${handle}(?![a-z0-9_-])`, 'i').test(text);
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case 'init-me':
+      return { ...state, meHandle: action.handle };
+
     case 'channels-loaded': {
       const channels = [...action.channels].sort((a, b) => a.name.localeCompare(b.name));
       const activeChannelId =
@@ -158,7 +174,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const isNewMessage =
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
       if (isNewMessage && ev.channelId !== state.activeChannelId) {
-        next = { ...next, unread: { ...next.unread, [ev.channelId]: true } };
+        const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
+        const mentioned =
+          ev.actorId !== null && mentionsHandle(text, state.meHandle) ? 'mention' : true;
+        // A mention badge sticks until the channel is read.
+        const level = next.unread[ev.channelId] === 'mention' ? 'mention' : mentioned;
+        next = { ...next, unread: { ...next.unread, [ev.channelId]: level } };
       }
       return next;
     }

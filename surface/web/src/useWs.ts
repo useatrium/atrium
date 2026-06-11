@@ -6,9 +6,16 @@ export type WsStatus = 'connecting' | 'open' | 'closed';
 interface WsCallbacks {
   onEvent: (ev: WireEvent) => void;
   onPresence: (channelId: string, users: UserRef[]) => void;
+  /** Someone else viewing `channelId` is typing (ephemeral, no expiry signal). */
+  onTyping?: (channelId: string, user: UserRef) => void;
   /** Fires on every (re)connect after the subscribe is sent — refetch catch-up here. */
   onOpen: () => void;
   onStatus: (status: WsStatus) => void;
+}
+
+export interface WsHandle {
+  /** Best-effort typing signal; throttle at the call site. */
+  sendTyping: (channelId: string) => void;
 }
 
 const PING_INTERVAL_MS = 25_000;
@@ -25,7 +32,7 @@ export function useWs(
   channelIds: string[],
   callbacks: WsCallbacks,
   focusChannelId: string | null = null,
-): void {
+): WsHandle {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
   const channelsRef = useRef(channelIds);
@@ -94,7 +101,13 @@ export function useWs(
 
       ws.onmessage = (e) => {
         resetIdle();
-        let msg: { type?: string; event?: WireEvent; channelId?: string; users?: UserRef[] };
+        let msg: {
+          type?: string;
+          event?: WireEvent;
+          channelId?: string;
+          users?: UserRef[];
+          user?: UserRef;
+        };
         try {
           msg = JSON.parse(e.data as string);
         } catch {
@@ -103,6 +116,8 @@ export function useWs(
         if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
         else if (msg.type === 'presence' && msg.channelId)
           cbRef.current.onPresence(msg.channelId, msg.users ?? []);
+        else if (msg.type === 'typing' && msg.channelId && msg.user)
+          cbRef.current.onTyping?.(msg.channelId, msg.user);
       };
 
       ws.onclose = () => {
@@ -128,4 +143,13 @@ export function useWs(
       ws?.close();
     };
   }, [enabled]);
+
+  return {
+    sendTyping: (channelId: string) => {
+      const ws = socketRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'typing', channelId }));
+      }
+    },
+  };
 }

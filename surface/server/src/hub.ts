@@ -68,6 +68,14 @@ export class WsHub {
     return isSessionKey(key) ? client.channels.has(key) : client.focusedChannelId === key;
   }
 
+  /** Ephemeral typing relay to everyone else viewing the channel. */
+  relayTyping(from: HubClient, channelId: string): void {
+    const msg = JSON.stringify({ type: 'typing', channelId, user: from.user });
+    for (const client of this.clients) {
+      if (client !== from && client.focusedChannelId === channelId) this.sendRaw(client, msg);
+    }
+  }
+
   /** Replace a client's subscription set; emit presence for changed channels. */
   subscribe(client: HubClient, channelIds: string[]): void {
     const next = new Set(channelIds);

@@ -7,12 +7,14 @@ import { signSession, verifySession } from './cookie.js';
 import {
   DomainError,
   createChannel,
+  deleteMessage,
   editMessage,
   listChannelMessages,
   listChannels,
   listThreadMessages,
   listWorkspaces,
   postMessage,
+  toggleReaction,
   type UserRef,
 } from './events.js';
 import { WsHub } from './hub.js';
@@ -270,6 +272,38 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return { event };
   });
 
+  app.delete('/api/messages/:id', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const targetEventId = Number((req.params as { id: string }).id);
+    if (!Number.isFinite(targetEventId)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
+    }
+    const event = await deleteMessage(pool, { targetEventId, actorId: user.id });
+    hub.publishEvent(event);
+    return { event };
+  });
+
+  app.post('/api/messages/:id/reactions', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const targetEventId = Number((req.params as { id: string }).id);
+    if (!Number.isFinite(targetEventId)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
+    }
+    const body = (req.body ?? {}) as { emoji?: string };
+    if (typeof body.emoji !== 'string' || !body.emoji) {
+      return reply.code(400).send({ error: 'bad_request', message: 'emoji required' });
+    }
+    const event = await toggleReaction(pool, {
+      targetEventId,
+      actorId: user.id,
+      emoji: body.emoji,
+    });
+    hub.publishEvent(event);
+    return { event };
+  });
+
   // -------------------------------------------------------------------------
   // Agent sessions
   // -------------------------------------------------------------------------
@@ -418,6 +452,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           hub.subscribe(client, ids);
         } else if (msg.type === 'focus') {
           hub.setFocus(client, typeof msg.channelId === 'string' ? msg.channelId : null);
+        } else if (msg.type === 'typing') {
+          if (typeof msg.channelId === 'string') hub.relayTyping(client, msg.channelId);
         } else if (msg.type === 'ping') {
           hub.sendTo(client, { type: 'pong', t: Date.now() });
         }

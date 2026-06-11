@@ -1,8 +1,11 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import type { ChatMessage } from '../state';
+
+/** Mirrors the server's REACTION_EMOJI allowlist. */
+export const REACTION_EMOJI = ['👍', '✅', '👀', '🎉', '❤️', '😂', '🚀', '🤔'];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
-import { formatTime } from '../util';
+import { formatGutterTime, formatTime } from '../util';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
 
@@ -13,10 +16,15 @@ export function MessageRow({
   session,
   spectators = 0,
   meId,
+  meHandle,
+  editRequested,
+  onEditRequestHandled,
   onOpenThread,
   onOpenSession,
   onRetry,
   onEdit,
+  onDelete,
+  onReact,
 }: {
   message: ChatMessage;
   grouped: boolean;
@@ -24,21 +32,48 @@ export function MessageRow({
   /** Session entity when this row is a session card (message.sessionId set). */
   session?: Session;
   spectators?: number;
-  /** Current user id — enables Edit on own messages. */
+  /** Current user id — enables Edit/Delete on own messages. */
   meId?: string;
+  /** Current user handle — highlights @me mentions. */
+  meHandle?: string;
+  /** External edit trigger (up-arrow in the composer targets this row). */
+  editRequested?: boolean;
+  onEditRequestHandled?: () => void;
   onOpenThread?: (rootEventId: number) => void;
   onOpenSession?: (sessionId: string) => void;
   onRetry?: (message: ChatMessage) => void;
   /** Resolves when the edit is accepted; the folded event updates the row. */
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
+  onDelete?: (message: ChatMessage) => Promise<void>;
+  /** Toggle an emoji reaction (server decides add vs remove). */
+  onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
 }) {
   const m = message;
   const dim = m.status === 'pending';
   const failed = m.status === 'failed';
-  const canThread = !inThread && m.id != null && onOpenThread;
+  const deleted = m.deleted === true;
+  const canThread = !inThread && m.id != null && onOpenThread && !deleted;
   const isSessionRow = m.sessionId != null && session != null;
   const canEdit =
-    !isSessionRow && m.status === 'confirmed' && m.id != null && meId === m.author.id && !!onEdit;
+    !isSessionRow &&
+    !deleted &&
+    m.status === 'confirmed' &&
+    m.id != null &&
+    meId === m.author.id &&
+    !!onEdit;
+  const canDelete =
+    !isSessionRow &&
+    !deleted &&
+    m.status === 'confirmed' &&
+    m.id != null &&
+    meId === m.author.id &&
+    !!onDelete;
+  const canReact = !isSessionRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const react = (emoji: string) => {
+    setPickerOpen(false);
+    onReact?.(m, emoji).catch(() => {});
+  };
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -74,8 +109,33 @@ export function MessageRow({
     }
   };
 
+  // Up-arrow in the composer targets this row for editing.
+  useEffect(() => {
+    if (!editRequested) return;
+    if (canEdit && !editing) startEdit();
+    onEditRequestHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequested]);
+
+  // Delete is destructive — two-step inline confirm, auto-reverting.
+  const [deleteAsk, setDeleteAsk] = useState(false);
+  useEffect(() => {
+    if (!deleteAsk) return;
+    const t = setTimeout(() => setDeleteAsk(false), 5000);
+    return () => clearTimeout(t);
+  }, [deleteAsk]);
+  const onDeleteClick = () => {
+    if (!deleteAsk) {
+      setDeleteAsk(true);
+      return;
+    }
+    setDeleteAsk(false);
+    onDelete!(m).catch(() => {});
+  };
+
   return (
     <div
+      onMouseLeave={() => setPickerOpen(false)}
       className={`group relative flex gap-3 px-4 hover:bg-zinc-900/60 ${
         grouped ? 'py-0.5' : 'mt-2 py-0.5'
       } ${dim ? 'opacity-50' : ''}`}
@@ -83,8 +143,11 @@ export function MessageRow({
       <div className="w-8 shrink-0">
         {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} />}
         {grouped && (
-          <span className="invisible pt-0.5 text-[10px] tabular-nums text-zinc-500 group-hover:visible">
-            {formatTime(m.createdAt)}
+          <span
+            className="invisible whitespace-nowrap pt-0.5 text-[10px] tabular-nums text-zinc-500 group-hover:visible"
+            title={new Date(m.createdAt).toLocaleString()}
+          >
+            {formatGutterTime(m.createdAt)}
           </span>
         )}
       </div>
@@ -92,7 +155,10 @@ export function MessageRow({
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-zinc-100">{m.author.displayName}</span>
-            <span className="text-[11px] tabular-nums text-zinc-500">
+            <span
+              className="text-[11px] tabular-nums text-zinc-500"
+              title={new Date(m.createdAt).toLocaleString()}
+            >
               {formatTime(m.createdAt)}
             </span>
           </div>
@@ -121,10 +187,35 @@ export function MessageRow({
               Enter to save · Esc to cancel
             </div>
           </div>
+        ) : deleted ? (
+          <div className="text-sm italic leading-relaxed text-zinc-600">Message deleted</div>
         ) : (
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200">
-            <MessageText text={m.text} />
+            <MessageText text={m.text} meHandle={meHandle} />
             {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
+          </div>
+        )}
+        {!deleted && !isSessionRow && (m.reactions?.length ?? 0) > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {m.reactions!.map((r) => {
+              const mine = meId != null && r.userIds.includes(meId);
+              return (
+                <button
+                  key={r.emoji}
+                  onClick={() => canReact && react(r.emoji)}
+                  title={`${r.userIds.length} reacted with ${r.emoji}`}
+                  aria-label={`${r.emoji} ${r.userIds.length}${mine ? ', including you' : ''}`}
+                  className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums ${
+                    mine
+                      ? 'border-indigo-700/70 bg-indigo-500/15 text-indigo-200'
+                      : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600'
+                  }`}
+                >
+                  <span>{r.emoji}</span>
+                  <span>{r.userIds.length}</span>
+                </button>
+              );
+            })}
           </div>
         )}
         {failed && (
@@ -143,8 +234,42 @@ export function MessageRow({
             {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
           </button>
         )}
-        {(canThread || canEdit) && !editing && (
+        {pickerOpen && (
+          <div
+            role="menu"
+            aria-label="Pick a reaction"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                setPickerOpen(false);
+              }
+            }}
+            className="absolute -top-12 right-0 z-10 flex gap-0.5 rounded-md border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
+          >
+            {REACTION_EMOJI.map((e2) => (
+              <button
+                key={e2}
+                onClick={() => react(e2)}
+                aria-label={`React with ${e2}`}
+                className="rounded px-1 py-0.5 text-base leading-none hover:bg-zinc-700"
+              >
+                {e2}
+              </button>
+            ))}
+          </div>
+        )}
+        {(canThread || canEdit || canDelete || canReact) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+            {canReact && (
+              <button
+                onClick={() => setPickerOpen((v) => !v)}
+                title="Add reaction"
+                aria-label="Add reaction"
+                className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 shadow-sm hover:bg-zinc-700 hover:text-zinc-100"
+              >
+                🙂+
+              </button>
+            )}
             {canEdit && (
               <button
                 onClick={startEdit}
@@ -153,6 +278,20 @@ export function MessageRow({
                 className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 shadow-sm hover:bg-zinc-700 hover:text-zinc-100"
               >
                 Edit
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={onDeleteClick}
+                title="Delete message"
+                aria-label={deleteAsk ? 'Confirm delete message' : 'Delete message'}
+                className={`rounded-md border px-2 py-1 text-xs shadow-sm ${
+                  deleteAsk
+                    ? 'border-red-700 bg-red-950/70 font-medium text-red-200 hover:bg-red-900/70'
+                    : 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-red-300'
+                }`}
+              >
+                {deleteAsk ? 'Confirm delete' : 'Delete'}
               </button>
             )}
             {canThread && (

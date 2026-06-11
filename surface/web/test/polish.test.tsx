@@ -4,11 +4,12 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appReducer, initialAppState, type AppState } from '../src/appState';
+import { appReducer, initialAppState, mentionsHandle, type AppState } from '../src/appState';
 import { MessageRow } from '../src/components/MessageRow';
 import { MessageText } from '../src/components/MessageText';
 import { Timeline } from '../src/components/Timeline';
-import type { ChatMessage } from '../src/state';
+import type { ChatMessage, WireEvent } from '../src/state';
+import { buildTimelineItems } from '../src/util';
 import { SessionPane } from '../src/sessions/SessionPane';
 import {
   isStalledSessionStatus,
@@ -186,6 +187,200 @@ describe('message editing', () => {
       <MessageRow message={msg('u-other')} grouped={false} meId={me.id} onEdit={async () => {}} />,
     );
     expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
+  });
+});
+
+describe('mentions', () => {
+  it('mentionsHandle matches whole handles only', () => {
+    expect(mentionsHandle('hey @gary look', 'gary')).toBe(true);
+    expect(mentionsHandle('hey @garys look', 'gary')).toBe(false);
+    expect(mentionsHandle('hey @GARY', 'gary')).toBe(true);
+    expect(mentionsHandle('no mention', 'gary')).toBe(false);
+    expect(mentionsHandle('@gary', null)).toBe(false);
+  });
+
+  it('a mention in an inactive channel sets a mention-level unread', () => {
+    const wire = (id: number, channelId: string, text: string): WireEvent => ({
+      id,
+      workspaceId: 'ws-1',
+      channelId,
+      threadRootEventId: null,
+      type: 'message.posted',
+      actorId: 'u-other',
+      payload: { text },
+      createdAt: new Date().toISOString(),
+      author: { id: 'u-other', handle: 'other', displayName: 'Other' },
+    });
+    let s: AppState = appReducer(initialAppState, { type: 'init-me', handle: 'gary' });
+    s = appReducer(s, {
+      type: 'channels-loaded',
+      channels: [
+        { id: 'ch-a', workspaceId: 'ws-1', name: 'a', createdAt: '' },
+        { id: 'ch-b', workspaceId: 'ws-1', name: 'b', createdAt: '' },
+      ],
+    });
+    s = appReducer(s, { type: 'select-channel', channelId: 'ch-a' });
+    s = appReducer(s, { type: 'server-event', event: wire(1, 'ch-b', 'plain note') });
+    expect(s.unread['ch-b']).toBe(true);
+    s = appReducer(s, { type: 'server-event', event: wire(2, 'ch-b', 'ping @gary now') });
+    expect(s.unread['ch-b']).toBe('mention');
+    // A later plain message must not downgrade the mention badge.
+    s = appReducer(s, { type: 'server-event', event: wire(3, 'ch-b', 'more chatter') });
+    expect(s.unread['ch-b']).toBe('mention');
+    s = appReducer(s, { type: 'select-channel', channelId: 'ch-b' });
+    expect(s.unread['ch-b']).toBe(false);
+  });
+
+  it('highlights @me differently from other mentions', () => {
+    render(
+      <div data-testid="m">
+        <MessageText text="cc @gary and @ben" meHandle="gary" />
+      </div>,
+    );
+    const root = screen.getByTestId('m');
+    const spans = root.querySelectorAll('span');
+    const meSpan = [...spans].find((s) => s.textContent === '@gary')!;
+    const otherSpan = [...spans].find((s) => s.textContent === '@ben')!;
+    expect(meSpan.className).toContain('amber');
+    expect(otherSpan.className).toContain('indigo');
+  });
+});
+
+describe('message delete', () => {
+  const own = (over: Partial<ChatMessage> = {}): ChatMessage => ({
+    id: 7,
+    clientMsgId: null,
+    channelId: 'ch-1',
+    threadRootEventId: null,
+    text: 'remove me',
+    edited: false,
+    author: me,
+    createdAt: new Date().toISOString(),
+    replyCount: 0,
+    lastReplyId: 0,
+    status: 'confirmed',
+    ...over,
+  });
+
+  it('two-step confirm then onDelete', async () => {
+    const onDelete = vi.fn(async () => {});
+    render(<MessageRow message={own()} grouped={false} meId={me.id} onDelete={onDelete} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete message' }));
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm delete message' }));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
+  });
+
+  it('deleted messages are hidden unless they anchor a thread', () => {
+    const items = buildTimelineItems([
+      own({ id: 1, deleted: true, replyCount: 0 }),
+      own({ id: 2, deleted: true, replyCount: 2, text: '' }),
+      own({ id: 3, text: 'visible' }),
+    ]);
+    const ids = items.filter((i) => i.kind === 'message').map((i) => i.message!.id);
+    expect(ids).toEqual([2, 3]);
+  });
+
+  it('renders a tombstone with no hover actions', () => {
+    render(
+      <MessageRow
+        message={own({ deleted: true, replyCount: 1, text: '' })}
+        grouped={false}
+        meId={me.id}
+        onDelete={async () => {}}
+        onEdit={async () => {}}
+        onOpenThread={() => {}}
+      />,
+    );
+    expect(screen.getByText('Message deleted')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Delete message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
+    // The replies link survives so the thread stays reachable.
+    expect(screen.getByText(/1 reply/)).toBeTruthy();
+  });
+});
+
+describe('reactions', () => {
+  const reactedMsg = (): ChatMessage => ({
+    id: 9,
+    clientMsgId: null,
+    channelId: 'ch-1',
+    threadRootEventId: null,
+    text: 'nice work',
+    edited: false,
+    reactions: [
+      { emoji: '👍', userIds: [me.id, 'u-other'] },
+      { emoji: '🎉', userIds: ['u-other'] },
+    ],
+    author: { id: 'u-other', handle: 'other', displayName: 'Other' },
+    createdAt: new Date().toISOString(),
+    replyCount: 0,
+    lastReplyId: 0,
+    status: 'confirmed',
+  });
+
+  it('renders chips with counts and marks mine; clicking toggles', async () => {
+    const onReact = vi.fn(async () => {});
+    render(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
+    const mine = screen.getByRole('button', { name: '👍 2, including you' });
+    expect(mine.className).toContain('indigo');
+    expect(screen.getByRole('button', { name: '🎉 1' })).toBeTruthy();
+    fireEvent.click(mine);
+    await waitFor(() =>
+      expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), '👍'),
+    );
+  });
+
+  it('the picker offers the allowlist and reacts on pick', async () => {
+    const onReact = vi.fn(async () => {});
+    render(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }));
+    fireEvent.click(screen.getByRole('button', { name: 'React with 🚀' }));
+    await waitFor(() =>
+      expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), '🚀'),
+    );
+  });
+
+  it('reducer folds live reaction.added/removed events', () => {
+    const post = (id: number, text: string): WireEvent => ({
+      id,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type: 'message.posted',
+      actorId: 'u-other',
+      payload: { text },
+      createdAt: new Date().toISOString(),
+      author: { id: 'u-other', handle: 'other', displayName: 'Other' },
+    });
+    const reaction = (id: number, type: string, emoji: string, by: string): WireEvent => ({
+      id,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type,
+      actorId: by,
+      payload: { target_event_id: 1, emoji },
+      createdAt: new Date().toISOString(),
+      author: null,
+    });
+    let s: AppState = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: 'ch-1',
+      events: [post(1, 'hello')],
+      hasMore: false,
+    });
+    s = appReducer(s, { type: 'server-event', event: reaction(2, 'reaction.added', '👍', 'u-a') });
+    s = appReducer(s, { type: 'server-event', event: reaction(3, 'reaction.added', '👍', 'u-b') });
+    expect(s.timelines['ch-1']!.main[0]!.reactions).toEqual([
+      { emoji: '👍', userIds: ['u-a', 'u-b'] },
+    ]);
+    // Duplicate event id is ignored (WS + catch-up overlap).
+    s = appReducer(s, { type: 'server-event', event: reaction(3, 'reaction.added', '👍', 'u-b') });
+    expect(s.timelines['ch-1']!.main[0]!.reactions![0]!.userIds).toHaveLength(2);
+    s = appReducer(s, { type: 'server-event', event: reaction(4, 'reaction.removed', '👍', 'u-a') });
+    s = appReducer(s, { type: 'server-event', event: reaction(5, 'reaction.removed', '👍', 'u-b') });
+    expect(s.timelines['ch-1']!.main[0]!.reactions).toEqual([]);
   });
 });
 

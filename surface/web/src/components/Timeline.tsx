@@ -11,11 +11,16 @@ export function Timeline({
   sessions,
   spectators,
   meId,
+  meHandle,
+  editRequestId,
+  onEditRequestHandled,
   onLoadEarlier,
   onOpenThread,
   onOpenSession,
   onRetry,
   onEdit,
+  onDelete,
+  onReact,
 }: {
   messages: ChatMessage[];
   /** History fetched at least once — gates the empty state vs. the skeleton. */
@@ -24,11 +29,17 @@ export function Timeline({
   sessions: Record<string, Session>;
   spectators: Record<string, number>;
   meId?: string;
+  meHandle?: string;
+  /** Message id the composer's up-arrow asked to edit. */
+  editRequestId?: number | null;
+  onEditRequestHandled?: () => void;
   onLoadEarlier: () => Promise<void>;
   onOpenThread: (rootEventId: number) => void;
   onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
+  onDelete?: (message: ChatMessage) => Promise<void>;
+  onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -115,10 +126,15 @@ export function Timeline({
               item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0
             }
             meId={meId}
+            meHandle={meHandle}
+            editRequested={editRequestId != null && item.message!.id === editRequestId}
+            onEditRequestHandled={onEditRequestHandled}
             onOpenThread={onOpenThread}
             onOpenSession={onOpenSession}
             onRetry={onRetry}
             onEdit={onEdit}
+            onDelete={onDelete}
+            onReact={onReact}
           />
         ),
       )}
