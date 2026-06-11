@@ -19,6 +19,7 @@ import { matchMentionPrefix, type AttachmentMeta, type UserRef } from '@atrium/s
 import { colors, font, radius, space } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
+import { lightImpactHaptic } from '../lib/haptics';
 
 interface PendingAttachment {
   key: string;
@@ -208,6 +209,7 @@ export function Composer({
       return;
     }
     if (!canSend) return;
+    lightImpactHaptic();
     onSend(trimmed, ready);
     if (draftKey) draftWriter.saveNow(draftKey, '');
     setText('');
