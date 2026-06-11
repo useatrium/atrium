@@ -13,6 +13,7 @@ export function Timeline({
   meId,
   meHandle,
   editRequestId,
+  highlightId,
   onEditRequestHandled,
   onLoadEarlier,
   onOpenThread,
@@ -32,6 +33,8 @@ export function Timeline({
   meHandle?: string;
   /** Message id the composer's up-arrow asked to edit. */
   editRequestId?: number | null;
+  /** Message to scroll to and briefly highlight (search jump). */
+  highlightId?: number | null;
   onEditRequestHandled?: () => void;
   onLoadEarlier: () => Promise<void>;
   onOpenThread: (rootEventId: number) => void;
@@ -78,6 +81,16 @@ export function Timeline({
     setLoadingEarlier(true);
     onLoadEarlier().finally(() => setLoadingEarlier(false));
   };
+
+  // Search jump: center the target row and unpin from the bottom.
+  useLayoutEffect(() => {
+    if (highlightId == null) return;
+    const el = containerRef.current?.querySelector(`[data-eid="${highlightId}"]`);
+    if (el) {
+      stickRef.current = false;
+      el.scrollIntoView({ block: 'center' });
+    }
+  }, [highlightId]);
 
   return (
     <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto pb-4 pt-2">
@@ -127,6 +140,7 @@ export function Timeline({
             }
             meId={meId}
             meHandle={meHandle}
+            highlighted={highlightId != null && item.message!.id === highlightId}
             editRequested={editRequestId != null && item.message!.id === editRequestId}
             onEditRequestHandled={onEditRequestHandled}
             onOpenThread={onOpenThread}

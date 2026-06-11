@@ -14,6 +14,7 @@ import {
   listThreadMessages,
   listWorkspaces,
   postMessage,
+  searchMessages,
   toggleReaction,
   type UserRef,
 } from './events.js';
@@ -194,6 +195,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: 'bad_query', message: 'use before_id or after_id, not both' });
     }
     return listChannelMessages(pool, { channelId: id, beforeId, afterId, limit });
+  });
+
+  app.get('/api/search', async (req, reply) => {
+    if (!requireUser(req, reply)) return;
+    const q = (req.query as { q?: string; limit?: string });
+    const query = String(q.q ?? '').trim();
+    if (query.length < 2) {
+      return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
+    }
+    const limit = q.limit ? Number(q.limit) : undefined;
+    if (limit !== undefined && !Number.isFinite(limit)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
+    }
+    return { results: await searchMessages(pool, { query, limit }) };
   });
 
   app.get('/api/threads/:rootEventId/messages', async (req, reply) => {

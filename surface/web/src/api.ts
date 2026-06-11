@@ -96,4 +96,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ emoji }),
     }),
+  search: (q: string, limit = 8) =>
+    req<{ results: { event: WireEvent; channelName: string }[] }>(
+      `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
 };

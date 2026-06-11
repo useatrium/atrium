@@ -267,6 +267,50 @@ describe('re-login display name', () => {
   });
 });
 
+describe('GET /api/search (full-text)', () => {
+  it('finds messages by current text, including edit-introduced terms, never deleted ones', async () => {
+    const { cookie } = await login('alice', 'Alice');
+    const hit = await post(cookie, 'the deploy pipeline is broken again');
+    await post(cookie, 'unrelated chatter about lunch');
+    const editTarget = await post(cookie, 'this says nothing interesting');
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/messages/${editTarget.id}`,
+      headers: { cookie },
+      payload: { text: 'edited to mention the pipeline too' },
+    });
+    const goner = await post(cookie, 'pipeline secrets to delete');
+    await app.inject({
+      method: 'DELETE',
+      url: `/api/messages/${goner.id}`,
+      headers: { cookie },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/search?q=pipeline',
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    const results = res.json().results as { event: any; channelName: string }[];
+    const ids = results.map((r) => r.event.id);
+    expect(ids).toContain(hit.id);
+    expect(ids).toContain(editTarget.id); // edit introduced the term
+    expect(ids).not.toContain(goner.id); // deleted never surfaces
+    // Folded current text + channel name ride along.
+    const edited = results.find((r) => r.event.id === editTarget.id)!;
+    expect(edited.event.payload.text).toContain('edited to mention');
+    expect(edited.channelName).toBeTruthy();
+
+    const tooShort = await app.inject({
+      method: 'GET',
+      url: '/api/search?q=x',
+      headers: { cookie },
+    });
+    expect(tooShort.statusCode).toBe(400);
+  });
+});
+
 describe('GET /api/sessions/:id with a mangled id', () => {
   it('returns 404, not a Postgres cast 500', async () => {
     const { cookie } = await login('alice', 'Alice');
