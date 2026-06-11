@@ -386,6 +386,9 @@ function rawSession(req: FastifyRequest): string | undefined {
          ORDER BY created_at DESC LIMIT 1
        )
        AND code_hash = $2
+       AND consumed_at IS NULL
+       AND expires_at > now()
+       AND attempts < 5
        RETURNING id`,
       [email, codeHash(email, code)],
     );
@@ -403,7 +406,10 @@ function rawSession(req: FastifyRequest): string | undefined {
          SELECT id FROM login_codes
          WHERE email = $1 AND consumed_at IS NULL AND expires_at > now() AND attempts < 5
          ORDER BY created_at DESC LIMIT 1
-       )`,
+       )
+       AND consumed_at IS NULL
+       AND expires_at > now()
+       AND attempts < 5`,
       [email],
     );
     return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
@@ -1231,7 +1237,7 @@ function rawSession(req: FastifyRequest): string | undefined {
   });
 
   app.post('/api/sessions/:id/answer', async (req, reply) => {
-    const user = requireUser(req, reply);
+    const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown };
