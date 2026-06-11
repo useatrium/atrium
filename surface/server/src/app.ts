@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import type { Db } from './db.js';
 import { signSession, verifySession } from './cookie.js';
@@ -50,6 +51,9 @@ export interface AppDeps {
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
 const CHANNEL_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CODE_RE = /^\d{6}$/;
+const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
@@ -147,9 +151,288 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return req.user;
   }
 
+  function codeHash(email: string, code: string): string {
+    return createHmac('sha256', secret).update(`${email}:${code}`).digest('base64url');
+  }
+
+  function safeEqual(a: string, b: string): boolean {
+    const left = Buffer.from(a);
+    const right = Buffer.from(b);
+    return left.length === right.length && timingSafeEqual(left, right);
+  }
+
+  async function createAuthSession(
+    reply: FastifyReply,
+    user: { id: string; handle: string; display_name: string },
+  ) {
+    // Opportunistic reaping — keeps the table from accumulating dead rows.
+    void pool.query('DELETE FROM auth_sessions WHERE expires_at < now()').catch(() => {});
+    const session = await pool.query<{ id: string }>(
+      `INSERT INTO auth_sessions (user_id, expires_at)
+       VALUES ($1, now() + interval '30 days') RETURNING id`,
+      [user.id],
+    );
+    const token = signSession(session.rows[0]!.id, secret);
+    reply.setCookie(config.sessionCookie, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30,
+    });
+    return {
+      user: { id: user.id, handle: user.handle, displayName: user.display_name },
+      token,
+    };
+  }
+
+  function normalizeEmail(input: unknown): string {
+    return String(input ?? '').trim().toLowerCase();
+  }
+
+  function displayNameFromEmail(email: string): string {
+    return email.split('@')[0] || email;
+  }
+
+  function handleBaseFromEmail(email: string): string {
+    const local = displayNameFromEmail(email).toLowerCase();
+    let handle = local
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^[^a-z0-9]+/, '')
+      .replace(/-+/g, '-')
+      .slice(0, 32);
+    if (!/^[a-z0-9]/.test(handle)) handle = 'user';
+    if (handle.length < 2) handle = `${handle}x`;
+    return handle;
+  }
+
+  async function createUserForEmail(email: string) {
+    const displayName = displayNameFromEmail(email);
+    const base = handleBaseFromEmail(email).slice(0, 29);
+    for (let i = 1; i <= 100; i += 1) {
+      const suffix = i === 1 ? '' : `-${i}`;
+      const handle = `${base.slice(0, 32 - suffix.length)}${suffix}`;
+      const inserted = await pool.query<{ id: string; handle: string; display_name: string }>(
+        `INSERT INTO users (handle, display_name, email)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING
+         RETURNING id, handle, display_name`,
+        [handle, displayName, email],
+      );
+      if (inserted.rows[0]) return inserted.rows[0]!;
+      const existingEmail = await pool.query<{ id: string; handle: string; display_name: string }>(
+        `SELECT id, handle, display_name FROM users WHERE email = $1`,
+        [email],
+      );
+      if (existingEmail.rows[0]) return existingEmail.rows[0]!;
+    }
+    throw new Error('could not allocate handle');
+  }
+
+  async function userForEmail(email: string) {
+    const existing = await pool.query<{ id: string; handle: string; display_name: string }>(
+      `SELECT id, handle, display_name FROM users WHERE email = $1`,
+      [email],
+    );
+    return existing.rows[0] ?? (await createUserForEmail(email));
+  }
+
+  function googleEnabled(): boolean {
+    return Boolean(config.googleClientId && config.googleClientSecret && config.googleRedirectUrl);
+  }
+
+  function signOAuthState(): string {
+    return signSession(`${Date.now()}:${randomUUID()}`, secret);
+  }
+
+  function verifyOAuthState(state: unknown): boolean {
+    const payload = verifySession(typeof state === 'string' ? state : null, secret);
+    if (!payload) return false;
+    const [ts] = payload.split(':');
+    const createdAt = Number(ts);
+    return Number.isFinite(createdAt) && Date.now() - createdAt <= 10 * 60 * 1000;
+  }
+
+  function decodeJwtPayload(token: string): Record<string, unknown> | null {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    try {
+      return JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      return null;
+    }
+  }
+
+  async function userForGoogleIdentity(claims: {
+    sub: string;
+    email?: string;
+    emailVerified: boolean;
+    name?: string;
+  }) {
+    const linked = await pool.query<{ id: string; handle: string; display_name: string }>(
+      `SELECT u.id, u.handle, u.display_name
+       FROM oauth_identities oi JOIN users u ON u.id = oi.user_id
+       WHERE oi.provider = 'google' AND oi.subject = $1`,
+      [claims.sub],
+    );
+    if (linked.rows[0]) return linked.rows[0]!;
+
+    let user: { id: string; handle: string; display_name: string };
+    if (claims.email && claims.emailVerified) {
+      const existing = await pool.query<{ id: string; handle: string; display_name: string }>(
+        `SELECT id, handle, display_name FROM users WHERE email = $1`,
+        [claims.email],
+      );
+      user = existing.rows[0] ?? (await createUserForEmail(claims.email));
+    } else {
+      user = await createUserForEmail(`${claims.sub}@google.oauth.local`);
+    }
+
+    await pool.query(
+      `INSERT INTO oauth_identities (provider, subject, user_id)
+       VALUES ('google', $1, $2)
+       ON CONFLICT (provider, subject) DO NOTHING`,
+      [claims.sub, user.id],
+    );
+    return user;
+  }
+
   // -------------------------------------------------------------------------
   // Auth
   // -------------------------------------------------------------------------
+
+  app.get('/auth/methods', async () => ({
+    open: config.authOpen,
+    email: true,
+    google: googleEnabled(),
+  }));
+
+  app.post(
+    '/auth/email/request',
+    {
+      config: { rateLimit: rateLimit === false ? false : { max: 6 } },
+    },
+    async (req, reply) => {
+      const body = (req.body ?? {}) as { email?: string };
+      const email = normalizeEmail(body.email);
+      if (!EMAIL_RE.test(email) || email.length > 320) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_email', message: 'enter a valid email address' });
+      }
+      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      await pool.query('UPDATE login_codes SET consumed_at = now() WHERE email = $1 AND consumed_at IS NULL', [
+        email,
+      ]);
+      await pool.query(
+        `INSERT INTO login_codes (email, code_hash, expires_at)
+         VALUES ($1, $2, now() + interval '10 minutes')`,
+        [email, codeHash(email, code)],
+      );
+      if (config.emailMode === 'log') {
+        req.log.warn({ email, code }, 'auth email code');
+      } else {
+        req.log.warn({ email, mode: config.emailMode }, 'email transport mode is not implemented');
+      }
+      return config.authDevCodes ? { ok: true, devCode: code } : { ok: true };
+    },
+  );
+
+  app.post('/auth/email/verify', async (req, reply) => {
+    const body = (req.body ?? {}) as { email?: string; code?: string };
+    const email = normalizeEmail(body.email);
+    const code = String(body.code ?? '').trim();
+    if (!EMAIL_RE.test(email) || email.length > 320 || !CODE_RE.test(code)) {
+      return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
+    }
+    const codes = await pool.query<{
+      id: string;
+      code_hash: string;
+      expires_at: Date;
+      attempts: number;
+    }>(
+      `SELECT id, code_hash, expires_at, attempts
+       FROM login_codes
+       WHERE email = $1 AND consumed_at IS NULL
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [email],
+    );
+    const row = codes.rows[0];
+    if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+      return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
+    }
+    if (!safeEqual(row.code_hash, codeHash(email, code))) {
+      const attempts = row.attempts + 1;
+      await pool.query(
+        `UPDATE login_codes
+         SET attempts = $2, consumed_at = CASE WHEN $2 >= 5 THEN now() ELSE consumed_at END
+         WHERE id = $1`,
+        [row.id, attempts],
+      );
+      return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
+    }
+    await pool.query('UPDATE login_codes SET consumed_at = now() WHERE id = $1', [row.id]);
+    const user = await userForEmail(email);
+    return createAuthSession(reply, user);
+  });
+
+  app.get('/auth/oauth/google', async (_req, reply) => {
+    if (!googleEnabled()) return reply.code(404).send({ error: 'not_found' });
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.searchParams.set('client_id', config.googleClientId);
+    url.searchParams.set('redirect_uri', config.googleRedirectUrl);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'openid email profile');
+    url.searchParams.set('state', signOAuthState());
+    return reply.redirect(url.toString(), 302);
+  });
+
+  app.get('/auth/oauth/google/callback', async (req, reply) => {
+    if (!googleEnabled()) return reply.code(404).send({ error: 'not_found' });
+    const query = req.query as { code?: string; state?: string };
+    if (!query.code || !verifyOAuthState(query.state)) {
+      return reply.code(400).send({ error: 'invalid_oauth_state' });
+    }
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: query.code,
+        client_id: config.googleClientId,
+        client_secret: config.googleClientSecret,
+        redirect_uri: config.googleRedirectUrl,
+        grant_type: 'authorization_code',
+      }),
+    });
+    if (!tokenRes.ok) return reply.code(400).send({ error: 'oauth_exchange_failed' });
+    const tokenBody = (await tokenRes.json()) as { id_token?: string };
+    const claims = tokenBody.id_token ? decodeJwtPayload(tokenBody.id_token) : null;
+    // TODO before any non-tailnet exposure: verify id_token against Google's JWKS.
+    // This scaffold validates aud/iss/exp/email claims only, not the JWT signature.
+    if (
+      !claims ||
+      typeof claims.sub !== 'string' ||
+      claims.aud !== config.googleClientId ||
+      typeof claims.iss !== 'string' ||
+      !GOOGLE_ISSUERS.has(claims.iss) ||
+      typeof claims.exp !== 'number' ||
+      claims.exp * 1000 <= Date.now()
+    ) {
+      return reply.code(400).send({ error: 'invalid_id_token' });
+    }
+    const email = typeof claims.email === 'string' ? normalizeEmail(claims.email) : undefined;
+    const user = await userForGoogleIdentity({
+      sub: claims.sub,
+      email,
+      emailVerified: claims.email_verified === true,
+      name: typeof claims.name === 'string' ? claims.name : undefined,
+    });
+    await createAuthSession(reply, user);
+    return reply.redirect('/', 302);
+  });
 
   app.post(
     '/auth/login',
@@ -157,6 +440,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       config: { rateLimit: rateLimit === false ? false : { max: rateLimit?.loginMax ?? 30 } },
     },
     async (req, reply) => {
+      if (!config.authOpen) {
+        return reply.code(403).send({ error: 'auth_closed' });
+      }
       const body = (req.body ?? {}) as { handle?: string; displayName?: string };
       const handle = String(body.handle ?? '').trim().toLowerCase();
       const displayName = String(body.displayName ?? '').trim();
@@ -180,23 +466,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         [handle, displayName],
       );
       const u = user.rows[0]!;
-      // Opportunistic reaping — keeps the table from accumulating dead rows.
-      void pool.query('DELETE FROM auth_sessions WHERE expires_at < now()').catch(() => {});
-      const session = await pool.query<{ id: string }>(
-        `INSERT INTO auth_sessions (user_id, expires_at)
-         VALUES ($1, now() + interval '30 days') RETURNING id`,
-        [u.id],
-      );
-      const token = signSession(session.rows[0]!.id, secret);
-      reply.setCookie(config.sessionCookie, token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 30,
-      });
       // Native clients can't rely on cookies — they store the token and send it
       // as `Authorization: Bearer` (HTTP) or `?token=` (WS upgrade).
-      return { user: { id: u.id, handle: u.handle, displayName: u.display_name }, token };
+      return createAuthSession(reply, u);
     },
   );
 
