@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
-import { getOrCreateDm } from '../src/events.js';
+import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -814,6 +814,41 @@ describe('session access control', () => {
       headers: { cookie: cara.cookie },
     });
     expect(stream.statusCode).toBe(404);
+    await app.close();
+  });
+});
+
+describe('session list access control', () => {
+  it('hides private-channel sessions from non-members in GET /api/sessions', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const cara = await loginUser(app, 'cara', 'Cara');
+
+    const priv = await createChannel(pool, {
+      workspaceId: fx.workspaceId,
+      name: 'secret-room',
+      actorId: alice.userId,
+      private: true,
+    });
+    await pool.query(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, $3, 'claude-code', 'private work', 'running', $4, $4, 'exe_fake', 1)`,
+      [fx.workspaceId, priv.channel.id, `thread-${randomUUID()}`, alice.userId],
+    );
+
+    const asUser = (cookie: string) =>
+      app.inject({ method: 'GET', url: '/api/sessions?status=all', headers: { cookie } });
+    const aliceList = (await asUser(alice.cookie)).json().sessions as { title: string }[];
+    expect(aliceList.some((s) => s.title === 'private work')).toBe(true);
+    const caraList = (await asUser(cara.cookie)).json().sessions as { title: string }[];
+    expect(caraList.some((s) => s.title === 'private work')).toBe(false);
     await app.close();
   });
 });

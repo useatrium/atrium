@@ -226,7 +226,9 @@ export class SessionRuns {
        JOIN users u ON u.id = s.spawned_by
        LEFT JOIN channel_members m
          ON m.channel_id = c.id AND m.user_id = $1
-       WHERE (c.kind <> 'dm' OR m.user_id IS NOT NULL)
+       -- Must mirror canAccessChannel: only 'public' is world-visible; every
+       -- other kind (dm, gdm, private — and future ones) requires membership.
+       WHERE (c.kind = 'public' OR m.user_id IS NOT NULL)
          ${statusWhere}
        ORDER BY CASE s.status
                   WHEN 'spawning' THEN 0
