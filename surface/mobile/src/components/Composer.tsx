@@ -1,7 +1,7 @@
 // Message composer: multiline input, image/file attachments (uploaded on
 // pick, presigned PUT), optimistic send, and an inline edit mode.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -17,6 +17,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
 import type { AttachmentMeta } from '@atrium/surface-client';
 import { colors, font, radius, space } from '../lib/theme';
+import { createDraftChangeDebouncer } from '../lib/outbox';
 
 interface PendingAttachment {
   key: string;
@@ -33,6 +34,9 @@ export interface ComposerProps {
   editingText?: string | null;
   onSubmitEdit?: (text: string) => void;
   onCancelEdit?: () => void;
+  draftKey?: string;
+  initialDraft?: string;
+  onDraftChange?: (key: string, text: string) => void;
   allowAttachments?: boolean;
   uploadFile?: (file: {
     uri: string;
@@ -51,6 +55,9 @@ export function Composer({
   editingText,
   onSubmitEdit,
   onCancelEdit,
+  draftKey,
+  initialDraft,
+  onDraftChange,
   allowAttachments,
   uploadFile,
 }: ComposerProps) {
@@ -58,6 +65,16 @@ export function Composer({
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const inputRef = useRef<TextInput>(null);
   const editing = editingText != null;
+  const draftWriter = useMemo(
+    () => createDraftChangeDebouncer((key, value) => onDraftChange?.(key, value)),
+    [onDraftChange],
+  );
+
+  useEffect(() => () => draftWriter.cancel(), [draftWriter]);
+
+  useEffect(() => {
+    if (!editing) setText(initialDraft ?? '');
+  }, [draftKey, editing, initialDraft]);
 
   useEffect(() => {
     if (editingText != null) {
@@ -154,6 +171,7 @@ export function Composer({
     }
     if (!canSend) return;
     onSend(trimmed, ready);
+    if (draftKey) draftWriter.saveNow(draftKey, '');
     setText('');
     setAttachments([]);
   };
@@ -267,6 +285,7 @@ export function Composer({
           value={text}
           onChangeText={(v) => {
             setText(v);
+            if (!editing && draftKey) draftWriter.schedule(draftKey, v);
             if (v.trim()) onTyping();
           }}
           placeholder={placeholder}
