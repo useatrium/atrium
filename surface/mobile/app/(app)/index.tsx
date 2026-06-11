@@ -55,7 +55,7 @@ export default function ChannelList() {
   const { channels, dms } = useMemo(() => {
     const channels: Channel[] = [];
     const dms: Channel[] = [];
-    for (const c of state.channels) (c.kind === 'dm' ? dms : channels).push(c);
+    for (const c of state.channels) (c.kind === 'dm' || c.kind === 'gdm' ? dms : channels).push(c);
     return { channels, dms };
   }, [state.channels]);
 
@@ -101,10 +101,16 @@ export default function ChannelList() {
       >
         {c.kind === 'dm' && partner ? (
           <Avatar name={channelLabel(c, me.id)} seed={partner.id} size={28} />
+        ) : c.kind === 'gdm' ? (
+          <View style={{ width: 28, alignItems: 'center' }}>
+            <Text style={{ color: colors.textMuted, fontSize: font.md, fontWeight: '700' }}>
+              @
+            </Text>
+          </View>
         ) : (
           <View style={{ width: 28, alignItems: 'center' }}>
             <Text style={{ color: colors.textMuted, fontSize: font.lg, fontWeight: '600' }}>
-              #
+              {c.kind === 'private' ? '🔒' : '#'}
             </Text>
           </View>
         )}

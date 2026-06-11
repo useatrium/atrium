@@ -39,6 +39,7 @@ export interface AppState {
   unread: Record<string, UnreadLevel>;
   /** Current user's handle — drives @mention unread detection. */
   meHandle: string | null;
+  meId: string | null;
   wsStatus: 'connecting' | 'open' | 'closed';
 }
 
@@ -53,15 +54,17 @@ export const initialAppState: AppState = {
   openSessionError: false,
   unread: {},
   meHandle: null,
+  meId: null,
   wsStatus: 'connecting',
 };
 
 export type AppAction =
-  | { type: 'init-me'; handle: string }
+  | { type: 'init-me'; handle: string; id?: string }
   | { type: 'channels-loaded'; channels: Channel[] }
   | { type: 'read-cursor'; channelId: string; lastReadEventId: number }
   | { type: 'mute-changed'; channelId: string; muted: boolean }
   | { type: 'channel-added'; channel: Channel }
+  | { type: 'channel-removed'; channelId: string }
   | { type: 'select-channel'; channelId: string | null }
   | { type: 'history-loaded'; channelId: string; events: WireEvent[]; hasMore: boolean }
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
@@ -99,7 +102,7 @@ export function mentionsHandle(text: string, handle: string | null): boolean {
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'init-me':
-      return { ...state, meHandle: action.handle };
+      return { ...state, meHandle: action.handle, meId: action.id ?? state.meId };
 
     case 'channels-loaded': {
       const channels = [...action.channels].sort((a, b) => a.name.localeCompare(b.name));
@@ -150,6 +153,26 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, channels };
     }
 
+    case 'channel-removed': {
+      const timelines = { ...state.timelines };
+      const presence = { ...state.presence };
+      const unread = { ...state.unread };
+      delete timelines[action.channelId];
+      delete presence[action.channelId];
+      delete unread[action.channelId];
+      return {
+        ...state,
+        channels: state.channels.filter((c) => c.id !== action.channelId),
+        timelines,
+        presence,
+        unread,
+        activeChannelId:
+          state.activeChannelId === action.channelId ? null : state.activeChannelId,
+        openThreadRootId:
+          state.activeChannelId === action.channelId ? null : state.openThreadRootId,
+      };
+    }
+
     case 'select-channel':
       // null = no channel focused (mobile list screen) — unreads accrue everywhere.
       return {
@@ -189,6 +212,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const ch = ev.payload?.channel as Channel | undefined;
         return ch ? appReducer(state, { type: 'channel-added', channel: ch }) : state;
       }
+      if (ev.type === 'channel.member_left' && ev.payload?.userId === state.meId) {
+        return ev.channelId ? appReducer(state, { type: 'channel-removed', channelId: ev.channelId }) : state;
+      }
       let next = state;
       if (ev.type.startsWith('session.')) {
         const sessions = applySessionEvent(state.sessions, ev);
@@ -213,7 +239,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
         const channel = state.channels.find((c) => c.id === ev.channelId);
         if (channel?.muted) return next;
-        const isDm = channel?.kind === 'dm';
+        const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
         const mentioned =
           isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle))
             ? 'mention'

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
@@ -41,6 +41,7 @@ export default function ChannelScreen() {
 
   const title = channel ? channelLabel(channel, me.id) : '';
   const isDm = channel?.kind === 'dm';
+  const isGroupLike = channel?.kind === 'private' || channel?.kind === 'gdm';
   const draftKey = id ? `channel:${id}` : '';
 
   useEffect(() => {
@@ -83,6 +84,65 @@ export default function ChannelScreen() {
     [chat],
   );
 
+  const showMembers = useCallback(async () => {
+    if (!id) return;
+    try {
+      const members = await chat.channelMembers(id);
+      Alert.alert('Members', members.map((u) => u.displayName).join('\n') || 'No members');
+    } catch {
+      Alert.alert('Members', 'Could not load members.');
+    }
+  }, [chat, id]);
+
+  const addPerson = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [members, { users }] = await Promise.all([chat.channelMembers(id), chat.api.users()]);
+      const memberIds = new Set(members.map((u) => u.id));
+      const candidates = users.filter((u) => !memberIds.has(u.id));
+      if (candidates.length === 0) {
+        Alert.alert('Add person', 'Everyone is already a member.');
+        return;
+      }
+      Alert.alert(
+        'Add person',
+        undefined,
+        [
+          ...candidates.slice(0, 8).map((u) => ({
+            text: u.displayName,
+            onPress: () => void chat.addChannelMember(id, u.id),
+          })),
+          { text: 'Cancel', style: 'cancel' as const },
+        ],
+      );
+    } catch {
+      Alert.alert('Add person', 'Could not load people.');
+    }
+  }, [chat, id]);
+
+  const leave = useCallback(() => {
+    if (!id) return;
+    Alert.alert('Leave channel', 'You can be invited again later.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Leave',
+        style: 'destructive',
+        onPress: () => {
+          void chat.leaveMembership(id).then(() => router.back());
+        },
+      },
+    ]);
+  }, [chat, id]);
+
+  const openHeaderMenu = useCallback(() => {
+    Alert.alert(title, undefined, [
+      { text: 'Members', onPress: () => void showMembers() },
+      { text: 'Add person', onPress: () => void addPerson() },
+      { text: 'Leave', style: 'destructive', onPress: leave },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [addPerson, leave, showMembers, title]);
+
   if (!id) return null;
 
   return (
@@ -92,7 +152,7 @@ export default function ChannelScreen() {
           headerTitle: () => (
             <View>
               <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '700' }}>
-                {isDm ? title : `#${title}`}
+                {isDm || channel?.kind === 'gdm' ? title : `${channel?.kind === 'private' ? '🔒' : '#'}${title}`}
               </Text>
               {presentCount > 0 && (
                 <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
@@ -101,6 +161,12 @@ export default function ChannelScreen() {
               )}
             </View>
           ),
+          headerRight: () =>
+            isGroupLike ? (
+              <Pressable onPress={openHeaderMenu} hitSlop={8} style={{ paddingHorizontal: 8 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: font.lg }}>…</Text>
+              </Pressable>
+            ) : null,
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
@@ -131,7 +197,7 @@ export default function ChannelScreen() {
         />
         <TypingLine typing={chat.typing} />
         <Composer
-          placeholder={isDm ? `Message ${title}` : `Message #${title}`}
+          placeholder={isDm || channel?.kind === 'gdm' ? `Message ${title}` : `Message ${channel?.kind === 'private' ? '🔒' : '#'}${title}`}
           onSend={(text, attachments) => chat.send(id, text, undefined, attachments)}
           onTyping={() => chat.notifyTyping(id)}
           draftKey={draftKey}

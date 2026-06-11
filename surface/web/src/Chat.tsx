@@ -49,8 +49,8 @@ export function Chat({
 
   // ---- initial data ----
   useEffect(() => {
-    dispatch({ type: 'init-me', handle: me.handle });
-  }, [me.handle]);
+    dispatch({ type: 'init-me', handle: me.handle, id: me.id });
+  }, [me.handle, me.id]);
   useEffect(() => {
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
   }, []);
@@ -183,6 +183,7 @@ export function Chat({
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
       },
       onMuted: (channelId, muted) => dispatch({ type: 'mute-changed', channelId, muted }),
+      onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
@@ -204,7 +205,7 @@ export function Chat({
       const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
       const ch = stateRef.current.channels.find((c) => c.id === event.channelId);
       if (ch?.muted) return;
-      const isDm = ch?.kind === 'dm';
+      const isDm = ch?.kind === 'dm' || ch?.kind === 'gdm';
       if (!isDm && !mentionsHandle(text, me.handle)) return;
       const author = event.author?.displayName ?? 'Someone';
       showNotification(
@@ -460,15 +461,15 @@ export function Chat({
     send(m.channelId, m.text, m.threadRootEventId ?? undefined, m.attachments);
   };
 
-  const createChannel = async (name: string) => {
-    const { channel } = await api.createChannel(name);
+  const createChannel = async (name: string, isPrivate = false) => {
+    const { channel } = await api.createChannel(name, { private: isPrivate });
     dispatch({ type: 'channel-added', channel });
     dispatch({ type: 'select-channel', channelId: channel.id });
   };
 
-  const startDm = (userId: string) => {
+  const startDm = (userIds: string[]) => {
     api
-      .createDm(userId)
+      .createDmWithUsers(userIds)
       .then(({ channel }) => {
         dispatch({ type: 'channel-added', channel });
         dispatch({ type: 'select-channel', channelId: channel.id });
@@ -485,6 +486,43 @@ export function Chat({
   };
 
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [members, setMembers] = useState<UserRef[] | null>(null);
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [memberPeople, setMemberPeople] = useState<UserRef[] | null>(null);
+
+  const loadMembers = useCallback(() => {
+    if (!active || (active.kind !== 'private' && active.kind !== 'gdm')) return;
+    api
+      .channelMembers(active.id)
+      .then(({ members }) => setMembers(members))
+      .catch(() => setMembers([]));
+  }, [active?.id, active?.kind]);
+
+  useEffect(() => {
+    setMembers(null);
+    setMembersOpen(false);
+    setMemberPickerOpen(false);
+  }, [active?.id]);
+
+  const inviteMember = (userId: string) => {
+    if (!active) return;
+    api
+      .addChannelMember(active.id, userId)
+      .then(() => {
+        loadMembers();
+        setMemberPickerOpen(false);
+      })
+      .catch(() => {});
+  };
+
+  const leaveActive = () => {
+    if (!active) return;
+    api
+      .leaveChannelMembership(active.id)
+      .then(() => dispatch({ type: 'channel-removed', channelId: active.id }))
+      .catch(() => {});
+  };
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -537,7 +575,7 @@ export function Chat({
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
           <h1 className="flex items-center gap-1.5 text-sm font-bold text-zinc-100">
-            {active?.kind === 'dm' ? (
+            {active?.kind === 'dm' || active?.kind === 'gdm' ? (
               <>
                 <Avatar
                   name={channelLabel(active, me.id)}
@@ -548,11 +586,70 @@ export function Chat({
               </>
             ) : (
               <>
-                <span className="mr-0.5 text-zinc-500">#</span>
+                <span className="mr-0.5 text-zinc-500">{active?.kind === 'private' ? '🔒' : '#'}</span>
                 {active?.name ?? '…'}
               </>
             )}
           </h1>
+          {active && (active.kind === 'private' || active.kind === 'gdm') && (
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setMembersOpen((v) => !v);
+                  if (!members) loadMembers();
+                }}
+                className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                Members
+              </button>
+              {membersOpen && (
+                <div className="absolute left-0 top-8 z-20 w-64 rounded-md border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-300">Members</span>
+                    <button
+                      onClick={() => {
+                        setMemberPickerOpen((v) => !v);
+                        if (!memberPeople) {
+                          api.users().then(({ users }) => setMemberPeople(users)).catch(() => setMemberPeople([]));
+                        }
+                      }}
+                      className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-800"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {memberPickerOpen && (
+                    <div className="mb-2 max-h-32 overflow-y-auto border-b border-zinc-800 pb-2">
+                      {(memberPeople ?? []).filter((u) => !members?.some((m) => m.id === u.id)).map((u) => (
+                        <button
+                          key={u.id}
+                          onClick={() => inviteMember(u.id)}
+                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                        >
+                          <Avatar name={u.displayName} seed={u.id} size={16} />
+                          <span className="truncate">{u.displayName}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <ul className="max-h-48 overflow-y-auto">
+                    {(members ?? active.members ?? []).map((u) => (
+                      <li key={u.id} className="flex items-center gap-2 px-2 py-1 text-xs text-zinc-300">
+                        <Avatar name={u.displayName} seed={u.id} size={16} />
+                        <span className="truncate">{u.displayName}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    onClick={leaveActive}
+                    className="mt-2 w-full rounded border border-red-900/60 px-2 py-1 text-xs text-red-300 hover:bg-red-950/40"
+                  >
+                    Leave
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {presentUsers.length > 0 && (
             <div
               className="ml-auto flex items-center gap-2"
@@ -606,9 +703,9 @@ export function Chat({
             <TypingLine typing={typing} />
             <Composer
               placeholder={
-                active.kind === 'dm'
+                active.kind === 'dm' || active.kind === 'gdm'
                   ? `Message ${channelLabel(active, me.id)}`
-                  : `Message #${active.name}`
+                  : `Message ${active.kind === 'private' ? '🔒' : '#'}${active.name}`
               }
               onSend={(text, attachments) => send(active.id, text, undefined, attachments)}
               onTyping={() => notifyTyping(active.id)}

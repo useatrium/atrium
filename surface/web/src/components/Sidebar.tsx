@@ -38,26 +38,29 @@ export function Sidebar({
   wsStatus: 'connecting' | 'open' | 'closed';
   onSelect: (channelId: string) => void;
   onSetMute: (channelId: string, muted: boolean) => void;
-  onCreateChannel: (name: string) => Promise<void>;
-  onStartDm: (userId: string) => void;
+  onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
+  onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
   sessionEventSeq: number;
   onLogout: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [privateChannel, setPrivateChannel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notify, setNotify] = useState<NotifyState>(() => notificationState());
   const [dmPicking, setDmPicking] = useState(false);
   const [dmQuery, setDmQuery] = useState('');
   const [people, setPeople] = useState<UserRef[] | null>(null);
+  const [selectedDmIds, setSelectedDmIds] = useState<Set<string>>(new Set());
 
-  const publicChannels = channels.filter((c) => c.kind !== 'dm');
-  const dms = channels.filter((c) => c.kind === 'dm');
+  const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
+  const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
 
   const openDmPicker = () => {
     setDmPicking((v) => !v);
     setDmQuery('');
+    setSelectedDmIds(new Set());
     if (people === null) {
       api
         .users()
@@ -96,8 +99,9 @@ export function Sidebar({
     const n = name.trim();
     if (!n) return;
     try {
-      await onCreateChannel(n);
+      await onCreateChannel(n, privateChannel);
       setName('');
+      setPrivateChannel(false);
       setCreating(false);
       setError(null);
     } catch (err) {
@@ -158,6 +162,15 @@ export function Sidebar({
               placeholder="new-channel-name"
               className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
             />
+            <label className="mt-1 flex items-center gap-2 text-[11px] text-zinc-400">
+              <input
+                type="checkbox"
+                checked={privateChannel}
+                onChange={(e) => setPrivateChannel(e.target.checked)}
+                className="accent-indigo-500"
+              />
+              Private
+            </label>
             {error && <div className="pt-1 text-[11px] text-red-400">{error}</div>}
           </form>
         )}
@@ -180,7 +193,7 @@ export function Sidebar({
                           : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
                   }`}
                 >
-                  <span className="text-zinc-500">#</span>
+                  <span className="text-zinc-500">{c.kind === 'private' ? '🔒' : '#'}</span>
                   <span className="truncate">{c.name}</span>
                   {unreadBadge(c.id, active)}
                 </button>
@@ -234,8 +247,12 @@ export function Sidebar({
                 <li key={u.id}>
                   <button
                     onClick={() => {
-                      setDmPicking(false);
-                      onStartDm(u.id);
+                      setSelectedDmIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(u.id)) next.delete(u.id);
+                        else next.add(u.id);
+                        return next;
+                      });
                     }}
                     className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800"
                   >
@@ -243,10 +260,22 @@ export function Sidebar({
                     <span className="truncate">{u.displayName}</span>
                     <span className="truncate text-zinc-600">@{u.handle}</span>
                     {u.id === me.id && <span className="text-zinc-600">(you)</span>}
+                    {selectedDmIds.has(u.id) && <span className="ml-auto text-indigo-300">✓</span>}
                   </button>
                 </li>
               ))}
             </ul>
+            {selectedDmIds.size > 0 && (
+              <button
+                onClick={() => {
+                  setDmPicking(false);
+                  onStartDm([...selectedDmIds]);
+                }}
+                className="mt-2 w-full rounded-md bg-indigo-500 px-2 py-1 text-xs font-semibold text-white"
+              >
+                Start {selectedDmIds.size > 1 ? 'group DM' : 'DM'}
+              </button>
+            )}
           </div>
         )}
 

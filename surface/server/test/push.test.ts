@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { config } from '../src/config.js';
-import { getOrCreateDm, postMessage, type WireEvent } from '../src/events.js';
+import { getOrCreateDm, getOrCreateGdm, postMessage, type WireEvent } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import {
   checkExpoPushReceipts,
@@ -102,6 +102,19 @@ describe('pushRecipientsFor', () => {
     const { userIds, isDm } = await pushRecipientsFor(pool, ev);
     expect(isDm).toBe(true);
     expect(userIds).toEqual([benId]);
+  });
+
+  it('GDM messages target all other members as DM pushes', async () => {
+    const { channel } = await getOrCreateGdm(pool, {
+      workspaceId: fx.workspaceId,
+      creatorId: fx.userId,
+      userIds: [benId, caraId],
+    });
+    const ev = await postInChannel(channel.id, 'hi group');
+    const recipients = await pushRecipientsFor(pool, ev);
+    expect(recipients.isDm).toBe(true);
+    expect(new Set(recipients.userIds)).toEqual(new Set([benId, caraId]));
+    expect(recipients.recipients.every((r) => r.reason === 'dm')).toBe(true);
   });
 
   it('channel messages target @mentioned users, never the author', async () => {

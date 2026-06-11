@@ -125,7 +125,9 @@ export function QuickSwitcher({
                       i === selected ? 'bg-indigo-600/20 text-zinc-100' : 'text-zinc-300'
                     }`}
                   >
-                    <span className="text-zinc-500">{c.kind === 'dm' ? '@' : '#'}</span>
+                    <span className="text-zinc-500">
+                      {c.kind === 'dm' || c.kind === 'gdm' ? '@' : c.kind === 'private' ? '🔒' : '#'}
+                    </span>
                     <span className="truncate">{channelLabel(c, meId)}</span>
                     {c.id === activeChannelId && (
                       <span className="ml-auto text-[10px] text-zinc-500">current</span>

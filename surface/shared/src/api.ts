@@ -20,9 +20,11 @@ export interface Channel {
   latestEventId?: number;
   muted?: boolean;
   /** Absent on older payloads — treat as 'public'. */
-  kind?: 'public' | 'dm';
-  /** DM channels only: both members. */
+  kind?: 'public' | 'private' | 'dm' | 'gdm';
+  /** DM/GDM channels only: members. */
   members?: UserRef[];
+  /** Private channels only: member count without full member list. */
+  memberCount?: number;
 }
 
 export class ApiError extends Error {
@@ -88,10 +90,21 @@ export function createApi(opts: ApiOptions = {}) {
     logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST', body: '{}' }),
     workspaces: () => req<{ workspaces: Workspace[] }>('/api/workspaces'),
     channels: () => req<{ channels: Channel[] }>('/api/channels'),
-    createChannel: (name: string) =>
+    createChannel: (name: string, opts: { private?: boolean } = {}) =>
       req<{ channel: Channel }>('/api/channels', {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, private: opts.private === true }),
+      }),
+    channelMembers: (channelId: string) =>
+      req<{ members: UserRef[] }>(`/api/channels/${channelId}/members`),
+    addChannelMember: (channelId: string, userId: string) =>
+      req<{ member: UserRef }>(`/api/channels/${channelId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ userId }),
+      }),
+    leaveChannelMembership: (channelId: string) =>
+      req<{ ok: true }>(`/api/channels/${channelId}/members/me`, {
+        method: 'DELETE',
       }),
     messages: (
       channelId: string,
@@ -183,6 +196,11 @@ export function createApi(opts: ApiOptions = {}) {
       req<{ channel: Channel }>('/api/dms', {
         method: 'POST',
         body: JSON.stringify({ userId }),
+      }),
+    createDmWithUsers: (userIds: string[]) =>
+      req<{ channel: Channel }>('/api/dms', {
+        method: 'POST',
+        body: JSON.stringify({ userIds }),
       }),
     registerPush: (body: { token: string; platform: 'ios' | 'android' }) =>
       req<{ ok: true }>('/api/push/register', {

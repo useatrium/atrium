@@ -6,12 +6,16 @@ import { config } from './config.js';
 import type { Db } from './db.js';
 import { signSession, verifySession } from './cookie.js';
 import {
+  addChannelMember,
   DomainError,
   canAccessChannel,
   createChannel,
   deleteMessage,
   editMessage,
+  getOrCreateGdm,
   getOrCreateDm,
+  leaveChannel,
+  listChannelMembers,
   listChannelMessages,
   listChannelsFor,
   listThreadMessages,
@@ -309,26 +313,41 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.post('/api/dms', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { userId?: string };
-    if (!body.userId || typeof body.userId !== 'string') {
-      return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
+    const body = (req.body ?? {}) as { userId?: string; userIds?: unknown };
+    const userIds = Array.isArray(body.userIds)
+      ? body.userIds.filter((id): id is string => typeof id === 'string')
+      : body.userId && typeof body.userId === 'string'
+        ? [body.userId]
+        : [];
+    const distinctUserIds = [...new Set(userIds)];
+    if (distinctUserIds.length < 1 || distinctUserIds.length > 8) {
+      return reply.code(400).send({ error: 'bad_request', message: 'userIds must contain 1-8 users' });
     }
-    const other = await pool.query('SELECT id FROM users WHERE id = $1', [body.userId]);
-    if (!other.rows[0]) {
+    const existingUsers = await pool.query('SELECT id FROM users WHERE id = ANY($1::uuid[])', [
+      distinctUserIds,
+    ]);
+    if (existingUsers.rows.length !== distinctUserIds.length) {
       return reply.code(404).send({ error: 'user_not_found', message: 'user not found' });
     }
     const workspaces = await listWorkspaces(pool);
     const ws = workspaces[0];
     if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace' });
-    const { channel, created } = await getOrCreateDm(pool, {
-      workspaceId: ws.id,
-      userIdA: user.id,
-      userIdB: body.userId,
-    });
+    const isOneToOne = new Set([user.id, ...distinctUserIds]).size <= 2;
+    const { channel, created } = isOneToOne
+      ? await getOrCreateDm(pool, {
+          workspaceId: ws.id,
+          userIdA: user.id,
+          userIdB: distinctUserIds[0]!,
+        })
+      : await getOrCreateGdm(pool, {
+          workspaceId: ws.id,
+          creatorId: user.id,
+          userIds: distinctUserIds,
+        });
     if (created) {
-      // Only the two members learn the DM exists.
+      // Only members learn the DM/GDM exists.
       hub.publishToUsers(
-        [user.id, body.userId],
+        channel.members?.map((m) => m.id) ?? [user.id, ...distinctUserIds],
         {
           id: 0,
           workspaceId: ws.id,
@@ -348,7 +367,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.post('/api/channels', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { name?: string };
+    const body = (req.body ?? {}) as { name?: string; private?: unknown };
     const name = String(body.name ?? '').trim().toLowerCase().replace(/\s+/g, '-');
     if (!CHANNEL_RE.test(name)) {
       return reply.code(400).send({
@@ -363,10 +382,71 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       workspaceId: ws.id,
       name,
       actorId: user.id,
+      private: body.private === true,
     });
-    // channel.created is broadcast to everyone so sidebars stay live.
-    hub.publishGlobal({ ...event, payload: { ...event.payload, channel } });
+    const createdEvent = { ...event, payload: { ...event.payload, channel } };
+    if (channel.kind === 'public') {
+      // channel.created is broadcast to everyone so sidebars stay live.
+      hub.publishGlobal(createdEvent);
+    } else {
+      hub.publishToUsers([user.id], createdEvent);
+    }
     return reply.code(201).send({ channel });
+  });
+
+  app.get('/api/channels/:id/members', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const result = await listChannelMembers(pool, { channelId: id, userId: user.id });
+    if (!result) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    return { members: result.members };
+  });
+
+  app.post('/api/channels/:id/members', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { userId?: unknown };
+    if (typeof body.userId !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
+    }
+    const result = await addChannelMember(pool, {
+      channelId: id,
+      actorId: user.id,
+      userId: body.userId,
+    });
+    if (!result) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    hub.publishToUsers([body.userId], {
+      id: 0,
+      workspaceId: result.channel.workspaceId,
+      channelId: result.channel.id,
+      threadRootEventId: null,
+      type: 'channel.created',
+      actorId: user.id,
+      payload: { name: result.channel.name, channel: result.channel },
+      createdAt: new Date().toISOString(),
+      author: user,
+    });
+    hub.publishEvent(result.event);
+    return reply.code(201).send({ member: result.member });
+  });
+
+  app.delete('/api/channels/:id/members/me', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const result = await leaveChannel(pool, { channelId: id, userId: user.id });
+    if (!result) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    hub.publishEvent(result.event);
+    hub.sendToUsers([user.id], { type: 'channel-left', channelId: id });
+    return { ok: true };
   });
 
   // -------------------------------------------------------------------------
