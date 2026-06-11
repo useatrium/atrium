@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, Switch, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { ApiError } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
@@ -10,6 +10,7 @@ export default function NewChannel() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPrivate, setIsPrivate] = useState(false);
 
   const canCreate = name.trim().length > 0 && !busy;
 
@@ -18,7 +19,7 @@ export default function NewChannel() {
     setBusy(true);
     setError(null);
     try {
-      const channel = await createChannel(name.trim());
+      const channel = await createChannel(name.trim(), isPrivate);
       router.dismiss();
       router.push(`/channel/${channel.id}`);
     } catch (err) {
@@ -56,6 +57,10 @@ export default function NewChannel() {
       <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
         Lowercase letters, digits, dashes and underscores.
       </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ color: colors.textSecondary, fontSize: font.md }}>Private</Text>
+        <Switch value={isPrivate} onValueChange={setIsPrivate} />
+      </View>
       {error && <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>}
       <Pressable
         onPress={() => void create()}

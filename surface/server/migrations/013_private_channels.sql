@@ -1,0 +1,2 @@
+-- Channel kinds are now: public, private, dm, gdm.
+-- channel_members stores membership for private channels, 1:1 DMs, and group DMs.

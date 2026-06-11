@@ -159,17 +159,19 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
-  kind: 'public' | 'dm';
+  kind: 'public' | 'private' | 'dm' | 'gdm';
   lastReadEventId?: number;
   latestEventId?: number;
   muted?: boolean;
-  /** DM channels only: the (enforced) member list. */
+  /** DM/GDM channels only: the member list. */
   members?: UserRef[];
+  /** Private channels only: count of members, without shipping the full list. */
+  memberCount?: number;
 }
 
 export async function createChannel(
   pool: Db,
-  args: { workspaceId: string; name: string; actorId?: string | null },
+  args: { workspaceId: string; name: string; actorId?: string | null; private?: boolean },
 ): Promise<{ channel: Channel; event: WireEvent }> {
   try {
     return await withTx(pool, async (client) => {
@@ -178,11 +180,18 @@ export async function createChannel(
         workspace_id: string;
         name: string;
         created_at: Date;
+        kind: 'public' | 'private';
       }>(
-        'INSERT INTO channels (workspace_id, name, created_by) VALUES ($1, $2, $3) RETURNING *',
-        [args.workspaceId, args.name, args.actorId ?? null],
+        'INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, $3, $4) RETURNING *',
+        [args.workspaceId, args.name, args.private ? 'private' : 'public', args.actorId ?? null],
       );
       const row = ch.rows[0]!;
+      if (row.kind === 'private' && args.actorId) {
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
+          row.id,
+          args.actorId,
+        ]);
+      }
       const ev = await insertEvent(client, {
         workspaceId: args.workspaceId,
         channelId: row.id,
@@ -196,7 +205,8 @@ export async function createChannel(
           workspaceId: row.workspace_id,
           name: row.name,
           createdAt: new Date(row.created_at).toISOString(),
-          kind: 'public' as const,
+          kind: row.kind,
+          ...(row.kind === 'private' ? { memberCount: args.actorId ? 1 : 0 } : {}),
         },
         event: toWireEvent(await attachAuthor(client, ev)),
       };
@@ -616,7 +626,7 @@ export async function searchMessages(
        LIMIT $2
      ) m
      JOIN channels c ON c.id = m.channel_id
-     WHERE c.kind <> 'dm'
+    WHERE c.kind = 'public'
         OR EXISTS (SELECT 1 FROM channel_members cm
                    WHERE cm.channel_id = c.id AND cm.user_id = $3)
      ORDER BY m.id DESC`,
@@ -655,27 +665,34 @@ export async function listChannels(pool: Db, workspaceId?: string): Promise<Chan
   }));
 }
 
-/** Public channels plus the user's DMs (with member lists for display). */
+/** Public channels plus the user's private channels/DMs/GDMs. */
 export async function listChannelsFor(pool: Db, userId: string): Promise<Channel[]> {
   const res = await pool.query<{
     id: string;
     workspace_id: string;
     name: string;
     created_at: Date;
-    kind: 'public' | 'dm';
+    kind: 'public' | 'private' | 'dm' | 'gdm';
     last_read_event_id: string;
     latest_event_id: string;
     muted: boolean;
+    member_count: string;
   }>(
     `SELECT c.*,
             COALESCE(rc.last_read_event_id, 0) AS last_read_event_id,
             COALESCE(latest.latest_event_id, 0) AS latest_event_id,
-            (cm.user_id IS NOT NULL) AS muted
+            (cm.user_id IS NOT NULL) AS muted,
+            COALESCE(member_counts.member_count, 0) AS member_count
      FROM channels c
      LEFT JOIN channel_read_cursors rc
        ON rc.channel_id = c.id AND rc.user_id = $1
      LEFT JOIN channel_mutes cm
        ON cm.channel_id = c.id AND cm.user_id = $1
+     LEFT JOIN LATERAL (
+       SELECT COUNT(*) AS member_count
+       FROM channel_members m
+       WHERE m.channel_id = c.id
+     ) member_counts ON c.kind IN ('private', 'gdm')
      LEFT JOIN LATERAL (
        SELECT MAX(e.id) AS latest_event_id
        FROM events e
@@ -687,9 +704,9 @@ export async function listChannelsFor(pool: Db, userId: string): Promise<Channel
      ORDER BY c.name ASC`,
     [userId],
   );
-  const dmIds = res.rows.filter((r) => r.kind === 'dm').map((r) => r.id);
+  const memberListIds = res.rows.filter((r) => r.kind === 'dm' || r.kind === 'gdm').map((r) => r.id);
   const membersByChannel = new Map<string, UserRef[]>();
-  if (dmIds.length > 0) {
+  if (memberListIds.length > 0) {
     const members = await pool.query<{
       channel_id: string;
       id: string;
@@ -700,7 +717,7 @@ export async function listChannelsFor(pool: Db, userId: string): Promise<Channel
        FROM channel_members m JOIN users u ON u.id = m.user_id
        WHERE m.channel_id = ANY($1::uuid[])
        ORDER BY u.handle ASC`,
-      [dmIds],
+      [memberListIds],
     );
     for (const row of members.rows) {
       const list = membersByChannel.get(row.channel_id) ?? [];
@@ -717,11 +734,12 @@ export async function listChannelsFor(pool: Db, userId: string): Promise<Channel
     lastReadEventId: Number(r.last_read_event_id),
     latestEventId: Number(r.latest_event_id),
     muted: r.muted,
-    ...(r.kind === 'dm' ? { members: membersByChannel.get(r.id) ?? [] } : {}),
+    ...(r.kind === 'dm' || r.kind === 'gdm' ? { members: membersByChannel.get(r.id) ?? [] } : {}),
+    ...(r.kind === 'private' ? { memberCount: Number(r.member_count) } : {}),
   }));
 }
 
-/** True when the user may read/post in the channel (public, or DM member). */
+/** True when the user may read/post in the channel (public, or member-only kinds). */
 export async function canAccessChannel(
   pool: Db,
   userId: string,
@@ -736,7 +754,7 @@ export async function canAccessChannel(
   );
   const row = res.rows[0];
   if (!row) return false;
-  return row.kind !== 'dm' || row.member;
+  return row.kind === 'public' || row.member;
 }
 
 export async function listUsers(pool: Db): Promise<UserRef[]> {
@@ -744,6 +762,136 @@ export async function listUsers(pool: Db): Promise<UserRef[]> {
     'SELECT id, handle, display_name FROM users ORDER BY handle ASC',
   );
   return res.rows.map((r) => ({ id: r.id, handle: r.handle, displayName: r.display_name }));
+}
+
+async function membersForChannel(client: Db | DbClient, channelId: string): Promise<UserRef[]> {
+  const members = await client.query<{ id: string; handle: string; display_name: string }>(
+    `SELECT u.id, u.handle, u.display_name
+     FROM channel_members m JOIN users u ON u.id = m.user_id
+     WHERE m.channel_id = $1
+     ORDER BY u.handle ASC`,
+    [channelId],
+  );
+  return members.rows.map((r) => ({ id: r.id, handle: r.handle, displayName: r.display_name }));
+}
+
+export async function listChannelMembers(
+  pool: Db,
+  args: { channelId: string; userId: string },
+): Promise<{ channel: Pick<Channel, 'id' | 'kind'>; members: UserRef[] } | null> {
+  const access = await pool.query<{ kind: Channel['kind']; member: boolean }>(
+    `SELECT c.kind,
+            EXISTS (SELECT 1 FROM channel_members m
+                    WHERE m.channel_id = c.id AND m.user_id = $2) AS member
+     FROM channels c
+     WHERE c.id = $1`,
+    [args.channelId, args.userId],
+  );
+  const row = access.rows[0];
+  if (!row || row.kind === 'public' || !row.member) return null;
+  return {
+    channel: { id: args.channelId, kind: row.kind },
+    members: await membersForChannel(pool, args.channelId),
+  };
+}
+
+export async function addChannelMember(
+  pool: Db,
+  args: { channelId: string; actorId: string; userId: string },
+): Promise<{ channel: Channel; member: UserRef; event: WireEvent } | null> {
+  return withTx(pool, async (client) => {
+    const ch = await client.query<{
+      id: string;
+      workspace_id: string;
+      name: string;
+      created_at: Date;
+      kind: Channel['kind'];
+      member: boolean;
+    }>(
+      `SELECT c.*,
+              EXISTS (SELECT 1 FROM channel_members m
+                      WHERE m.channel_id = c.id AND m.user_id = $2) AS member
+       FROM channels c
+       WHERE c.id = $1`,
+      [args.channelId, args.actorId],
+    );
+    const row = ch.rows[0];
+    if (!row || row.kind === 'public' || row.kind === 'dm' || !row.member) return null;
+    const user = await client.query<{ id: string; handle: string; display_name: string }>(
+      'SELECT id, handle, display_name FROM users WHERE id = $1',
+      [args.userId],
+    );
+    const u = user.rows[0];
+    if (!u) throw new DomainError(404, 'user_not_found', 'user not found');
+    await client.query(
+      `INSERT INTO channel_members (channel_id, user_id)
+       VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [args.channelId, args.userId],
+    );
+    const member = { id: u.id, handle: u.handle, displayName: u.display_name };
+    const members = row.kind === 'gdm' ? await membersForChannel(client, args.channelId) : undefined;
+    const count = await client.query<{ count: string }>(
+      'SELECT COUNT(*) FROM channel_members WHERE channel_id = $1',
+      [args.channelId],
+    );
+    const ev = await insertEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.id,
+      type: 'channel.member_joined',
+      actorId: args.actorId,
+      payload: { userId: member.id, displayName: member.displayName },
+    });
+    return {
+      channel: {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        name: row.name,
+        createdAt: new Date(row.created_at).toISOString(),
+        kind: row.kind,
+        ...(row.kind === 'gdm' ? { members } : { memberCount: Number(count.rows[0]!.count) }),
+      },
+      member,
+      event: toWireEvent(await attachAuthor(client, ev)),
+    };
+  });
+}
+
+export async function leaveChannel(
+  pool: Db,
+  args: { channelId: string; userId: string },
+): Promise<{ event: WireEvent } | null> {
+  return withTx(pool, async (client) => {
+    const ch = await client.query<{
+      workspace_id: string;
+      kind: Channel['kind'];
+      member: boolean;
+      display_name: string;
+    }>(
+      `SELECT c.workspace_id, c.kind,
+              EXISTS (SELECT 1 FROM channel_members m
+                      WHERE m.channel_id = c.id AND m.user_id = $2) AS member,
+              u.display_name
+       FROM channels c CROSS JOIN users u
+       WHERE c.id = $1 AND u.id = $2`,
+      [args.channelId, args.userId],
+    );
+    const row = ch.rows[0];
+    if (!row || row.kind === 'public' || !row.member) return null;
+    if (row.kind === 'dm') throw new DomainError(400, 'cannot_leave_dm', 'cannot leave a DM');
+    await client.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [
+      args.channelId,
+      args.userId,
+    ]);
+    const ev = await insertEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: args.channelId,
+      type: 'channel.member_left',
+      actorId: args.userId,
+      payload: { userId: args.userId, displayName: row.display_name },
+    });
+    return { event: toWireEvent(await attachAuthor(client, ev)) };
+  });
 }
 
 /**
@@ -782,6 +930,58 @@ export async function getOrCreateDm(
   }
   const channel = await load();
   if (!channel) throw new DomainError(500, 'dm_create_failed', 'could not create DM');
+  return { channel, created: true };
+}
+
+export async function getOrCreateGdm(
+  pool: Db,
+  args: { workspaceId: string; creatorId: string; userIds: string[] },
+): Promise<{ channel: Channel; created: boolean }> {
+  const memberIds = [...new Set([args.creatorId, ...args.userIds])].sort();
+  if (memberIds.length < 3 || memberIds.length > 9) {
+    throw new DomainError(400, 'bad_request', 'group DMs require 3-9 total members');
+  }
+  const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE id = ANY($1::uuid[])', [
+    memberIds,
+  ]);
+  if (users.rows.length !== memberIds.length) {
+    throw new DomainError(404, 'user_not_found', 'user not found');
+  }
+  const loadExact = async (): Promise<Channel | null> => {
+    const existing = await pool.query<{ channel_id: string }>(
+      `SELECT m.channel_id
+       FROM channel_members m JOIN channels c ON c.id = m.channel_id
+       WHERE c.kind = 'gdm'
+       GROUP BY m.channel_id
+       HAVING array_agg(m.user_id ORDER BY m.user_id) = $1::uuid[]`,
+      [memberIds],
+    );
+    const channelId = existing.rows[0]?.channel_id;
+    if (!channelId) return null;
+    return (await listChannelsFor(pool, args.creatorId)).find((c) => c.id === channelId) ?? null;
+  };
+  const existing = await loadExact();
+  if (existing) return { channel: existing, created: false };
+  const name = `gdm:${memberIds.join(':')}`;
+  try {
+    await withTx(pool, async (client) => {
+      const ch = await client.query<{ id: string }>(
+        "INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, 'gdm', $3) RETURNING id",
+        [args.workspaceId, name, args.creatorId],
+      );
+      const channelId = ch.rows[0]!.id;
+      for (const userId of memberIds) {
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
+          channelId,
+          userId,
+        ]);
+      }
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code !== '23505') throw err;
+  }
+  const channel = await loadExact();
+  if (!channel) throw new DomainError(500, 'gdm_create_failed', 'could not create group DM');
   return { channel, created: true };
 }
 
