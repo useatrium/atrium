@@ -83,6 +83,13 @@ export interface SessionRunsOptions {
   autoResume?: boolean;
 }
 
+export interface SessionCreateResult {
+  session: SessionJson;
+  created: boolean;
+  event: WireEvent | null;
+  row: SessionRow | null;
+}
+
 interface SessionRow {
   id: string;
   workspace_id: string;
@@ -98,6 +105,7 @@ interface SessionRow {
   assignment_generation: number | null;
   centaur_spawn_attempt: number;
   centaur_spawn_id: string | null;
+  client_spawn_id: string | null;
   centaur_execute_attempt: number;
   centaur_execute_id: string | null;
   centaur_message_attempt: number;
@@ -163,63 +171,94 @@ export class SessionRuns {
     clientSpawnId?: string;
     user: UserRef;
   }): Promise<SessionJson> {
+    const result = await withTx(this.pool, (client) => this.createSessionInTx(client, args));
+    this.afterCreateSession(result, args.task);
+    return result.session;
+  }
+
+  async createSessionInTx(
+    client: DbClient,
+    args: {
+      channelId: string;
+      threadRootEventId: number | null;
+      task: string;
+      harness?: string;
+      clientSpawnId?: string;
+      user: UserRef;
+    },
+  ): Promise<SessionCreateResult> {
+    const existing = await this.findByClientSpawnId(client, args.user.id, args.clientSpawnId);
+    if (existing) {
+      return { session: toJson(existing), created: false, event: null, row: existing };
+    }
+
     const title = args.task.trim().slice(0, 80);
     const harness = args.harness ?? this.harness;
-    const centaurThreadKey = `surface-${randomUUID()}`;
-    const result = await withTx(this.pool, async (client) => {
-      const channel = await getChannel(client, args.channelId);
-      if (!channel) {
-        throw new DomainError(404, 'channel_not_found', 'channel not found');
-      }
-      if (args.threadRootEventId != null) {
-        await assertThreadRoot(client, args.channelId, args.threadRootEventId);
-      }
-      const inserted = await client.query<SessionRow>(
-        `INSERT INTO sessions (
-           workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, title,
-           status, spawned_by, driver_id
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, 'spawning', $7, $7)
-         RETURNING *`,
-        [
-          channel.workspace_id,
-          args.channelId,
-          args.threadRootEventId,
-          centaurThreadKey,
-          harness,
-          title,
-          args.user.id,
-        ],
-      );
-      let row = inserted.rows[0]!;
-      const event = await appendEvent(client, {
-        workspaceId: row.workspace_id,
-        channelId: row.channel_id,
-        threadRootEventId: args.threadRootEventId,
-        type: 'session.spawned',
-        actorId: args.user.id,
-        payload: {
-          sessionId: row.id,
-          title: row.title,
-          harness: row.harness,
-          by: args.user.id,
-          ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
-        },
-      });
-      if (args.threadRootEventId == null) {
-        const updated = await client.query<SessionRow>(
-          'UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2 RETURNING *',
-          [event.id, row.id],
-        );
-        row = updated.rows[0]!;
-      }
-      return { row, event };
+    const channel = await getChannel(client, args.channelId);
+    if (!channel) {
+      throw new DomainError(404, 'channel_not_found', 'channel not found');
+    }
+    if (args.threadRootEventId != null) {
+      await assertThreadRoot(client, args.channelId, args.threadRootEventId);
+    }
+    const conflictClause = args.clientSpawnId
+      ? `ON CONFLICT (spawned_by, client_spawn_id) WHERE client_spawn_id IS NOT NULL DO NOTHING`
+      : '';
+    const inserted = await client.query<SessionRow>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, title,
+         status, spawned_by, driver_id, client_spawn_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, 'spawning', $7, $7, $8)
+       ${conflictClause}
+       RETURNING *`,
+      [
+        channel.workspace_id,
+        args.channelId,
+        args.threadRootEventId,
+        `surface-${randomUUID()}`,
+        harness,
+        title,
+        args.user.id,
+        args.clientSpawnId ?? null,
+      ],
+    );
+    let row = inserted.rows[0];
+    if (!row) {
+      const existing = await this.findByClientSpawnId(client, args.user.id, args.clientSpawnId);
+      if (!existing) throw new DomainError(500, 'session_create_failed', 'could not create session');
+      return { session: toJson(existing), created: false, event: null, row: existing };
+    }
+    const event = await appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: args.threadRootEventId,
+      type: 'session.spawned',
+      actorId: args.user.id,
+      payload: {
+        sessionId: row.id,
+        title: row.title,
+        harness: row.harness,
+        by: args.user.id,
+        ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
+      },
     });
+    if (args.threadRootEventId == null) {
+      const updated = await client.query<SessionRow>(
+        'UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2 RETURNING *',
+        [event.id, row.id],
+      );
+      row = updated.rows[0]!;
+    }
+    return { session: toJson(row), created: true, event, row };
+  }
+
+  afterCreateSession(result: SessionCreateResult, task: string): void {
+    if (!result.created || !result.event || !result.row) return;
     this.hub.publishEvent(result.event);
     queueMicrotask(() => {
-      void this.startSession(result.row.id, args.task).catch(() => {});
+      void this.startSession(result.row!.id, task).catch(() => {});
     });
-    return toJson(result.row);
   }
 
   // TODO(memberships): when multi-workspace membership lands, gate by
@@ -364,6 +403,51 @@ export class SessionRuns {
     if (event) this.hub.publishEvent(event);
   }
 
+  async answerQuestionInTx(
+    client: DbClient,
+    id: string,
+    user: UserRef,
+    questionId: string,
+    answers: QuestionAnswerBody,
+  ): Promise<WireEvent | null> {
+    const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+    const row = before.rows[0];
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    if (row.driver_id !== user.id) {
+      throw new DomainError(403, 'forbidden', 'only the current driver may steer this session');
+    }
+    const pending = parsePendingQuestion(row.pending_question);
+    if (!pending || pending.questionId !== questionId) {
+      throw new DomainError(409, 'question_not_pending', 'question is not pending');
+    }
+    if (!row.current_execution_id) {
+      throw new DomainError(409, 'execution_not_running', 'session has no running execution');
+    }
+
+    await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+
+    const updated = await client.query<SessionRow>(
+      'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
+      [id],
+    );
+    const next = updated.rows[0]!;
+    return appendEvent(client, {
+      workspaceId: next.workspace_id,
+      channelId: next.channel_id,
+      threadRootEventId: next.thread_root_event_id,
+      type: 'session.question_answered',
+      actorId: user.id,
+      payload: {
+        sessionId: id,
+        questionId,
+        by: user.id,
+        answers: summarizeAnswers(pending, answers),
+      },
+    });
+  }
+
   private async postUserMessageOnce(row: SessionRow, userId: string, text: string, allowStaleRetry: boolean): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
@@ -428,6 +512,52 @@ export class SessionRuns {
     await this.centaur.release(row.centaur_thread_key, `rel-${id}`, true);
     await this.updateStatus(id, 'cancelled');
     await this.stopTailer(id);
+  }
+
+  async cancelSessionInTx(client: DbClient, id: string, userId: string): Promise<WireEvent[]> {
+    const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+    const row = before.rows[0];
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    if (row.spawned_by !== userId && row.driver_id !== userId) {
+      throw new DomainError(403, 'forbidden', 'only the spawner or current driver may cancel this session');
+    }
+    await this.centaur.release(row.centaur_thread_key, `rel-${id}`, true);
+    if (row.status === 'cancelled' || TERMINAL_STATUSES.has(row.status)) return [];
+    const pending = parsePendingQuestion(row.pending_question);
+    const updated = await client.query<SessionRow>(
+      `UPDATE sessions
+       SET status = 'cancelled',
+           pending_question = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [id],
+    );
+    const next = updated.rows[0]!;
+    const statusEvent = await appendEvent(client, {
+      workspaceId: next.workspace_id,
+      channelId: next.channel_id,
+      threadRootEventId: next.thread_root_event_id,
+      type: 'session.status_changed',
+      actorId: next.spawned_by,
+      payload: { sessionId: id, status: 'cancelled' },
+    });
+    if (!pending) return [statusEvent];
+    const resolvedEvent = await appendEvent(client, {
+      workspaceId: next.workspace_id,
+      channelId: next.channel_id,
+      threadRootEventId: next.thread_root_event_id,
+      type: 'session.question_resolved',
+      actorId: next.spawned_by,
+      payload: { sessionId: id, questionId: pending.questionId, reason: 'cancelled' },
+    });
+    return [statusEvent, resolvedEvent];
+  }
+
+  afterCancelSession(id: string, events: WireEvent[]): void {
+    for (const event of events) this.hub.publishEvent(event);
+    void this.stopTailer(id);
   }
 
   async requestSeat(id: string, userId: string): Promise<void> {
@@ -990,6 +1120,19 @@ export class SessionRuns {
     // cast error surfacing as a 500.
     if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
     const res = await this.pool.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
+    return res.rows[0] ?? null;
+  }
+
+  private async findByClientSpawnId(
+    client: DbClient,
+    userId: string,
+    clientSpawnId: string | undefined,
+  ): Promise<SessionRow | null> {
+    if (!clientSpawnId) return null;
+    const res = await client.query<SessionRow>(
+      'SELECT * FROM sessions WHERE spawned_by = $1 AND client_spawn_id = $2',
+      [userId, clientSpawnId],
+    );
     return res.rows[0] ?? null;
   }
 

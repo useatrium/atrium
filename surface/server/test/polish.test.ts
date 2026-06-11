@@ -168,8 +168,8 @@ describe('DELETE /api/messages/:id', () => {
   });
 });
 
-describe('POST /api/messages/:id/reactions (toggle)', () => {
-  it('adds, aggregates per emoji in reads, and a second toggle removes', async () => {
+describe('POST /api/messages/:id/reactions', () => {
+  it('adds, aggregates per emoji in reads, and explicit remove clears membership', async () => {
     const { cookie: alice, user: aliceUser } = await login('alice', 'Alice');
     const { cookie: ben, user: benUser } = await login('ben', 'Ben');
     const msg = await post(alice, 'react to me');
@@ -178,7 +178,7 @@ describe('POST /api/messages/:id/reactions (toggle)', () => {
       method: 'POST',
       url: `/api/messages/${msg.id}/reactions`,
       headers: { cookie: alice },
-      payload: { emoji: '👍' },
+      payload: { emoji: '👍', action: 'add' },
     });
     expect(r1.statusCode).toBe(200);
     expect(r1.json().event.type).toBe('reaction.added');
@@ -186,13 +186,13 @@ describe('POST /api/messages/:id/reactions (toggle)', () => {
       method: 'POST',
       url: `/api/messages/${msg.id}/reactions`,
       headers: { cookie: ben },
-      payload: { emoji: '👍' },
+      payload: { emoji: '👍', action: 'add' },
     });
     await app.inject({
       method: 'POST',
       url: `/api/messages/${msg.id}/reactions`,
       headers: { cookie: ben },
-      payload: { emoji: '🎉' },
+      payload: { emoji: '🎉', action: 'add' },
     });
 
     let read = await app.inject({
@@ -206,12 +206,12 @@ describe('POST /api/messages/:id/reactions (toggle)', () => {
       { emoji: '🎉', userIds: [benUser.id] },
     ]);
 
-    // Toggling again removes ben's 👍.
+    // Explicit remove clears ben's 👍.
     const r2 = await app.inject({
       method: 'POST',
       url: `/api/messages/${msg.id}/reactions`,
       headers: { cookie: ben },
-      payload: { emoji: '👍' },
+      payload: { emoji: '👍', action: 'remove' },
     });
     expect(r2.json().event.type).toBe('reaction.removed');
     read = await app.inject({
@@ -226,6 +226,47 @@ describe('POST /api/messages/:id/reactions (toggle)', () => {
     ]);
   });
 
+  it('treats add-when-present and remove-when-absent as successful no-ops', async () => {
+    const { cookie } = await login('alice', 'Alice');
+    const msg = await post(cookie, 'react once');
+
+    const added = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍', action: 'add' },
+    });
+    expect(added.statusCode).toBe(200);
+    expect(added.json().event.type).toBe('reaction.added');
+
+    const addAgain = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍', action: 'add' },
+    });
+    expect(addAgain.statusCode).toBe(200);
+    expect(addAgain.json()).toEqual({ event: null, applied: false });
+
+    const removed = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍', action: 'remove' },
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json().event.type).toBe('reaction.removed');
+
+    const removeAgain = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍', action: 'remove' },
+    });
+    expect(removeAgain.statusCode).toBe(200);
+    expect(removeAgain.json()).toEqual({ event: null, applied: false });
+  });
+
   it('rejects emojis outside the allowlist and missing targets', async () => {
     const { cookie } = await login('alice', 'Alice');
     const msg = await post(cookie, 'x');
@@ -233,14 +274,21 @@ describe('POST /api/messages/:id/reactions (toggle)', () => {
       method: 'POST',
       url: `/api/messages/${msg.id}/reactions`,
       headers: { cookie },
-      payload: { emoji: '<script>' },
+      payload: { emoji: '<script>', action: 'add' },
     });
     expect(bad.statusCode).toBe(400);
+    const missingAction = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍' },
+    });
+    expect(missingAction.statusCode).toBe(400);
     const missing = await app.inject({
       method: 'POST',
       url: '/api/messages/999999/reactions',
       headers: { cookie },
-      payload: { emoji: '👍' },
+      payload: { emoji: '👍', action: 'add' },
     });
     expect(missing.statusCode).toBe(404);
   });
