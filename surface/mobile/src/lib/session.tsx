@@ -68,6 +68,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const api = createApi({ baseUrl: session.serverUrl, getToken: () => session.token });
       await api.logout().catch(() => {}); // revoke best-effort; clear locally regardless
     }
+    await import('./cacheSqlite')
+      .then(({ clearCache }) => clearCache())
+      .catch(() => {});
     await invalidate();
   }, [session, invalidate]);
 
