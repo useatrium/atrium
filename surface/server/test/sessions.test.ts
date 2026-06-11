@@ -23,6 +23,7 @@ class FakeCentaur {
   private readonly idempotency = new Map<string, { payload: string; response: object }>();
   private readonly threadGenerations = new Map<string, number>();
   readonly requests: RecordedRequest[] = [];
+  readonly answers: RecordedRequest[] = [];
   readonly acceptedExecutions: string[] = [];
   staleMessages = new Set<string>();
   url = '';
@@ -56,6 +57,10 @@ class FakeCentaur {
 
   clearFrames(): void {
     this.frames = [];
+  }
+
+  setFrames(frames: any[]): void {
+    this.frames = frames;
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -93,6 +98,10 @@ class FakeCentaur {
       this.acceptedExecutions.push(executionId);
       this.rememberIdempotent('execute', body.thread_key, body.execute_id, body, response);
       return sendJson(res, response);
+    }
+    if (req.method === 'POST' && /^\/agent\/executions\/[^/]+\/answer$/.test(url.pathname)) {
+      this.answers.push({ method: req.method ?? 'POST', path: url.pathname, body, query: url.searchParams });
+      return sendJson(res, {});
     }
     if (req.method === 'POST' && url.pathname.endsWith('/release')) {
       return sendJson(res, {});
@@ -250,6 +259,52 @@ async function insertSessionRow(args: {
   return inserted.rows[0]!.id;
 }
 
+function questionRequestedFrame(eventId = 1) {
+  return {
+    event: 'question_requested',
+    event_id: eventId,
+    data: {
+      type: 'question_requested',
+      question_id: 'q-main',
+      turn_id: 'turn-1',
+      questions: [
+        {
+          id: 'choice',
+          header: 'Decision',
+          question: 'Which deployment path should I take?',
+          options: [
+            { label: 'Fast', description: 'Ship the smallest change' },
+            { label: 'Careful', description: 'Run the full suite first' },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function questionResolvedFrame(reason: 'answered' | 'cancelled' | 'empty', eventId = 2) {
+  return {
+    event: 'question_resolved',
+    event_id: eventId,
+    data: { type: 'question_resolved', question_id: 'q-main', reason },
+  };
+}
+
+async function setPendingQuestion(id: string): Promise<void> {
+  await pool.query(
+    `UPDATE sessions SET pending_question = $1 WHERE id = $2`,
+    [
+      JSON.stringify({
+        questionId: 'q-main',
+        turnId: 'turn-1',
+        eventId: 1,
+        questions: questionRequestedFrame().data.questions,
+      }),
+      id,
+    ],
+  );
+}
+
 async function waitFor(assertion: () => Promise<void> | void, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
   let lastError: unknown;
@@ -354,6 +409,167 @@ describe('Phase 2 sessions', () => {
       ]);
       expect(row.rows[0].status).toBe('completed');
       expect(row.rows[0].result_text).toContain('PONG');
+    });
+    await app.close();
+  });
+
+  it('folds question_requested into pending state and a thread event', async () => {
+    fake.setFrames([questionRequestedFrame()]);
+    const id = await insertSessionRow({ title: 'needs input', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const row = await pool.query('SELECT pending_question, last_event_id FROM sessions WHERE id = $1', [id]);
+      expect(row.rows[0].pending_question).toMatchObject({
+        questionId: 'q-main',
+        turnId: 'turn-1',
+        questions: [{ id: 'choice', header: 'Decision' }],
+      });
+      expect(Number(row.rows[0].last_event_id)).toBe(1);
+      const event = await pool.query('SELECT thread_root_event_id, payload FROM events WHERE type = $1', [
+        'session.question_requested',
+      ]);
+      expect(event.rowCount).toBe(1);
+      expect(event.rows[0].payload).toMatchObject({
+        sessionId: id,
+        questionId: 'q-main',
+        permalink: `/s/${id}`,
+      });
+    });
+    await app.close();
+  });
+
+  it('GET /api/sessions/:id includes pendingQuestion', async () => {
+    const id = await insertSessionRow({ title: 'pending get', status: 'running' });
+    await setPendingQuestion(id);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${id}`, headers: { cookie } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().session.pendingQuestion).toMatchObject({
+      questionId: 'q-main',
+      questions: [{ id: 'choice', header: 'Decision' }],
+    });
+    await app.close();
+  });
+
+  it('answer route is driver-only, requires matching pending question, posts to Centaur, clears, and emits', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const other = await loginUser(app, 'bob', 'Bob');
+    const id = await insertSessionRow({ title: 'answer me', status: 'running' });
+    await setPendingQuestion(id);
+
+    const denied = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie: other.cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const noPendingId = await insertSessionRow({ title: 'no pending', status: 'running' });
+    const conflict = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${noPendingId}/answer`,
+      headers: { cookie: driverCookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    expect(conflict.statusCode).toBe(409);
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie: driverCookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    expect(ok.statusCode).toBe(202);
+    expect(fake.answers).toHaveLength(1);
+    expect(fake.answers[0]!.path).toBe('/agent/executions/exe_fake/answer');
+    expect(fake.answers[0]!.body).toEqual({
+      question_id: 'q-main',
+      answers: { choice: { answers: ['Fast'] } },
+    });
+    const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    expect(row.rows[0].pending_question).toBeNull();
+    const event = await pool.query('SELECT actor_id, payload FROM events WHERE type = $1', [
+      'session.question_answered',
+    ]);
+    expect(event.rowCount).toBe(1);
+    expect(event.rows[0].actor_id).toBe(fx.userId);
+    expect(event.rows[0].payload).toMatchObject({
+      sessionId: id,
+      questionId: 'q-main',
+      by: fx.userId,
+    });
+    await app.close();
+  });
+
+  it('question_resolved(cancelled) clears pending state and emits a follow-up event', async () => {
+    fake.setFrames([questionRequestedFrame(1), questionResolvedFrame('cancelled', 2)]);
+    const id = await insertSessionRow({ title: 'cancelled question', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+      expect(row.rows[0].pending_question).toBeNull();
+      const event = await pool.query('SELECT payload FROM events WHERE type = $1', [
+        'session.question_resolved',
+      ]);
+      expect(event.rowCount).toBe(1);
+      expect(event.rows[0].payload).toMatchObject({
+        sessionId: id,
+        questionId: 'q-main',
+        reason: 'cancelled',
+      });
+    });
+    await app.close();
+  });
+
+  it('terminal execution_state clears pending question', async () => {
+    fake.setFrames([
+      questionRequestedFrame(1),
+      {
+        event: 'execution_state',
+        event_id: 2,
+        data: {
+          type: 'execution.state',
+          status: 'completed',
+          thread_key: 'thread',
+          execution_id: 'exe_fake',
+          result_text: 'done',
+        },
+      },
+    ]);
+    const id = await insertSessionRow({ title: 'terminal clears', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const row = await pool.query('SELECT status, pending_question FROM sessions WHERE id = $1', [id]);
+      expect(row.rows[0].status).toBe('completed');
+      expect(row.rows[0].pending_question).toBeNull();
     });
     await app.close();
   });

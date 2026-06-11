@@ -5,6 +5,7 @@ import {
   CentaurClient,
   isTerminalExecutionStatus,
   type CentaurEventFrame,
+  type QuestionPrompt,
 } from '@atrium/centaur-client';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
@@ -32,6 +33,7 @@ export interface SessionJson {
   driverId: string | null;
   driver: SessionUserJson | null;
   pendingSeatRequests: SessionUserJson[];
+  pendingQuestion: SessionPendingQuestionJson | null;
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
@@ -44,6 +46,19 @@ export interface SessionJson {
 export interface SessionUserJson {
   userId: string;
   displayName: string;
+}
+
+export interface SessionPendingQuestionJson {
+  questionId: string;
+  turnId: string;
+  questions: QuestionPrompt[];
+  eventId: number;
+}
+
+export interface QuestionAnswerBody {
+  [questionId: string]: {
+    answers: string[];
+  };
 }
 
 export interface SessionListItem {
@@ -85,6 +100,7 @@ interface SessionRow {
   centaur_spawn_id: string | null;
   centaur_execute_attempt: number;
   centaur_execute_id: string | null;
+  pending_question: unknown | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -292,6 +308,50 @@ export class SessionRuns {
     const row = await this.requireDriver(id, userId);
     await this.postUserMessageOnce(row, userId, text, true);
     this.startTailer(id);
+  }
+
+  async answerQuestion(
+    id: string,
+    user: UserRef,
+    questionId: string,
+    answers: QuestionAnswerBody,
+  ): Promise<void> {
+    const row = await this.requireDriver(id, user.id);
+    const pending = parsePendingQuestion(row.pending_question);
+    if (!pending || pending.questionId !== questionId) {
+      throw new DomainError(409, 'question_not_pending', 'question is not pending');
+    }
+    if (!row.current_execution_id) {
+      throw new DomainError(409, 'execution_not_running', 'session has no running execution');
+    }
+
+    await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const locked = before.rows[0];
+      const stillPending = locked ? parsePendingQuestion(locked.pending_question) : null;
+      if (!locked || !stillPending || stillPending.questionId !== questionId) return null;
+      const updated = await client.query<SessionRow>(
+        'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
+        [id],
+      );
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_answered',
+        actorId: user.id,
+        payload: {
+          sessionId: id,
+          questionId,
+          by: user.id,
+          answers: summarizeAnswers(stillPending, answers),
+        },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
   }
 
   private async postUserMessageOnce(row: SessionRow, userId: string, text: string, allowStaleRetry: boolean): Promise<void> {
@@ -547,6 +607,14 @@ export class SessionRuns {
       }
       return;
     }
+    if (frame.event === 'question_requested') {
+      await this.persistQuestionRequested(id, frame);
+      return;
+    }
+    if (frame.event === 'question_resolved') {
+      await this.persistQuestionResolved(id, frame.data.question_id, frame.data.reason);
+      return;
+    }
     if (frame.event !== 'execution_state') return;
     const status = normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
@@ -555,6 +623,74 @@ export class SessionRuns {
     } else {
       await this.updateStatus(id, status);
     }
+  }
+
+  private async persistQuestionRequested(
+    id: string,
+    frame: Extract<CentaurEventFrame, { event: 'question_requested' }>,
+  ): Promise<void> {
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      if (!row || TERMINAL_STATUSES.has(row.status)) return null;
+      const pending: SessionPendingQuestionJson = {
+        questionId: frame.data.question_id,
+        turnId: frame.data.turn_id,
+        questions: frame.data.questions,
+        eventId: frame.event_id,
+      };
+      const updated = await client.query<SessionRow>(
+        `UPDATE sessions
+         SET pending_question = $1,
+             last_event_id = GREATEST(last_event_id, $2)
+         WHERE id = $3
+         RETURNING *`,
+        [JSON.stringify(pending), frame.event_id, id],
+      );
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_requested',
+        actorId: next.spawned_by,
+        payload: {
+          sessionId: id,
+          questionId: pending.questionId,
+          questions: summarizeQuestions(pending.questions),
+          permalink: `/s/${id}`,
+        },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
+  }
+
+  private async persistQuestionResolved(
+    id: string,
+    questionId: string,
+    reason: 'answered' | 'cancelled' | 'empty',
+  ): Promise<void> {
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      const pending = row ? parsePendingQuestion(row.pending_question) : null;
+      if (!row || !pending || pending.questionId !== questionId) return null;
+      const updated = await client.query<SessionRow>(
+        'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
+        [id],
+      );
+      if (reason === 'answered') return null;
+      const next = updated.rows[0]!;
+      return appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_resolved',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, questionId, reason },
+      });
+    });
+    if (event) this.hub.publishEvent(event);
   }
 
   private async updateStatus(id: string, status: SessionStatus): Promise<void> {
@@ -590,7 +726,8 @@ export class SessionRuns {
       if (!row || TERMINAL_STATUSES.has(row.status)) return null;
       const completed = await client.query<SessionRow>(
         `UPDATE sessions
-         SET status = $1, result_text = $2, completed_at = now(), last_event_id = GREATEST(last_event_id, $3)
+         SET status = $1, result_text = $2, completed_at = now(), pending_question = NULL,
+             last_event_id = GREATEST(last_event_id, $3)
          WHERE id = $4
          RETURNING *`,
         [status, resultText, lastEventId, id],
@@ -909,6 +1046,7 @@ function toJson(
     driverId: row.driver_id,
     driver: seatInfo.driver ?? null,
     pendingSeatRequests: seatInfo.pendingSeatRequests ?? [],
+    pendingQuestion: parsePendingQuestion(row.pending_question),
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,
@@ -937,4 +1075,65 @@ function toListItem(row: SessionListRow): SessionListItem {
 
 function toSessionUserJson(row: SessionUserRow): SessionUserJson {
   return { userId: row.user_id, displayName: row.display_name };
+}
+
+function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.questionId !== 'string' || typeof raw.turnId !== 'string') return null;
+  if (!Array.isArray(raw.questions)) return null;
+  const questions = raw.questions.filter(isQuestionPrompt);
+  if (questions.length !== raw.questions.length) return null;
+  const eventId = Number(raw.eventId);
+  if (!Number.isFinite(eventId)) return null;
+  return {
+    questionId: raw.questionId,
+    turnId: raw.turnId,
+    questions,
+    eventId,
+  };
+}
+
+function isQuestionPrompt(value: unknown): value is QuestionPrompt {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || typeof raw.header !== 'string' || typeof raw.question !== 'string') {
+    return false;
+  }
+  if (raw.options !== undefined) {
+    if (!Array.isArray(raw.options)) return false;
+    for (const option of raw.options) {
+      if (!option || typeof option !== 'object' || Array.isArray(option)) return false;
+      const o = option as Record<string, unknown>;
+      if (typeof o.label !== 'string' || typeof o.description !== 'string') return false;
+    }
+  }
+  return true;
+}
+
+function summarizeQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] {
+  return questions.map((q) => ({
+    id: q.id,
+    header: q.header,
+    question: q.question,
+    optionCount: q.options?.length ?? 0,
+    isOther: q.isOther === true,
+    isSecret: q.isSecret === true,
+  }));
+}
+
+function summarizeAnswers(
+  pending: SessionPendingQuestionJson,
+  answers: QuestionAnswerBody,
+): Record<string, unknown>[] {
+  return Object.entries(answers).map(([id, value]) => {
+    const prompt = pending.questions.find((q) => q.id === id);
+    const answerValues = Array.isArray(value.answers) ? value.answers : [];
+    return {
+      id,
+      header: prompt?.header ?? id,
+      answers: prompt?.isSecret ? answerValues.map(() => 'redacted') : answerValues,
+      count: answerValues.length,
+    };
+  });
 }

@@ -84,6 +84,23 @@ describe("CentaurClient endpoint paths", () => {
     );
     expect(captured.body).toEqual({ release_id: "rel-1", cancel_inflight: true });
   });
+
+  it("answerQuestion posts to /agent/executions/{execution_id}/answer", async () => {
+    const captured: { url?: string; body?: unknown } = {};
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: captureFetch(captured),
+    });
+    await client.answerQuestion("exe/1", "q-1", { choice: { answers: ["A"] } });
+    expect(captured.url).toBe(
+      "http://centaur.test:8000/agent/executions/exe%2F1/answer",
+    );
+    expect(captured.body).toEqual({
+      question_id: "q-1",
+      answers: { choice: { answers: ["A"] } },
+    });
+  });
 });
 
 describe("SSE id-less frame handling", () => {
