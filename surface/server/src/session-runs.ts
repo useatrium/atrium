@@ -386,7 +386,24 @@ export class SessionRuns {
         await this.postUserMessageOnce(refreshed, userId, text, false);
         return;
       }
-      throw err;
+      if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
+        // A prior steer's message was delivered but its execute never
+        // persisted, so the reserved id can't be reused for different text.
+        // That delivered message still sits in Centaur's queue (the next
+        // execute consumes it), so this steer is a NEW logical message:
+        // mint a fresh id and post exactly once.
+        await this.pool.query('UPDATE sessions SET centaur_message_id = NULL WHERE id = $1', [row.id]);
+        const freshId = await this.reserveMessageId(row.id);
+        await this.centaur.postMessage(
+          row.centaur_thread_key,
+          generation,
+          [{ type: 'text', text }],
+          { user_id: userId },
+          { messageId: freshId },
+        );
+      } else {
+        throw err;
+      }
     }
     // A newly posted message needs a fresh execution: a pending execute id
     // left by a crashed earlier steer would make Centaur replay that old
