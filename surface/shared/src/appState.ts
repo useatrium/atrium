@@ -59,6 +59,7 @@ export const initialAppState: AppState = {
 export type AppAction =
   | { type: 'init-me'; handle: string }
   | { type: 'channels-loaded'; channels: Channel[] }
+  | { type: 'read-cursor'; channelId: string; lastReadEventId: number }
   | { type: 'channel-added'; channel: Channel }
   | { type: 'select-channel'; channelId: string | null }
   | { type: 'history-loaded'; channelId: string; events: WireEvent[]; hasMore: boolean }
@@ -106,8 +107,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         channels.find((c) => c.name === 'general')?.id ??
         channels[0]?.id ??
         null;
-      return { ...state, channels, activeChannelId };
+      let unread = state.unread;
+      for (const ch of channels) {
+        if (unread[ch.id] === 'mention') continue;
+        const latest = ch.latestEventId ?? 0;
+        const lastRead = ch.lastReadEventId ?? 0;
+        const level = latest > lastRead ? true : false;
+        if (unread[ch.id] !== level) unread = { ...unread, [ch.id]: level };
+        // Cold channel counters cannot identify @mentions because they carry
+        // no message text; only live message events can promote to 'mention'.
+      }
+      return { ...state, channels, activeChannelId, unread };
     }
+
+    case 'read-cursor':
+      return { ...state, unread: { ...state.unread, [action.channelId]: false } };
 
     case 'channel-added': {
       if (state.channels.some((c) => c.id === action.channel.id)) return state;
