@@ -2,10 +2,11 @@
 
 import { Text, View } from 'react-native';
 import type { UnreadLevel } from '@atrium/surface-client';
-import { colors, font, space } from '../lib/theme';
+import { font, space, useTheme } from '../lib/theme';
 import type { TypingEntry } from '../lib/chat';
 
 export function DayDivider({ label }: { label?: string }) {
+  const { colors } = useTheme();
   return (
     <View
       style={{
@@ -24,12 +25,13 @@ export function DayDivider({ label }: { label?: string }) {
 }
 
 export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | 'closed' }) {
+  const { colors } = useTheme();
   if (status !== 'closed') return null;
   return (
     <View
       style={{
-        backgroundColor: colors.warningBg,
-        borderBottomColor: 'rgba(146, 64, 14, 0.4)',
+        backgroundColor: colors.warningSurface,
+        borderBottomColor: colors.warningBorder,
         borderBottomWidth: 1,
         paddingVertical: 4,
         alignItems: 'center',
@@ -44,6 +46,7 @@ export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | '
 
 /** Fixed-height "X is typing…" line — always present so the layout never shifts. */
 export function TypingLine({ typing }: { typing: Record<string, TypingEntry> }) {
+  const { colors } = useTheme();
   const names = Object.values(typing).map((t) => t.user.displayName);
   const label =
     names.length === 0
@@ -70,6 +73,7 @@ export function TypingLine({ typing }: { typing: Record<string, TypingEntry> }) 
 }
 
 export function UnreadBadge({ level }: { level: UnreadLevel }) {
+  const { colors } = useTheme();
   if (!level) return null;
   if (level === 'mention') {
     return (
@@ -84,7 +88,7 @@ export function UnreadBadge({ level }: { level: UnreadLevel }) {
           paddingHorizontal: 5,
         }}
       >
-        <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }}>@</Text>
+        <Text style={{ color: colors.onMention, fontSize: 11, fontWeight: '800' }}>@</Text>
       </View>
     );
   }

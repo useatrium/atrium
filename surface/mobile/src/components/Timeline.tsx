@@ -11,7 +11,7 @@ import {
   type Session,
   type TimelineItem,
 } from '@atrium/surface-client';
-import { colors, font, space } from '../lib/theme';
+import { font, space, useTheme } from '../lib/theme';
 import { DayDivider } from './bits';
 import { MessageRow } from './MessageRow';
 
@@ -58,6 +58,7 @@ export function Timeline({
   onOpenImageAttachment,
   onOpenSession,
 }: TimelineProps) {
+  const { colors } = useTheme();
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
 
   // Chronological (oldest-first); FlashList v2 anchors rendering at the bottom.

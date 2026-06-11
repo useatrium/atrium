@@ -13,7 +13,7 @@ import {
 import { router } from 'expo-router';
 import { formatTime, type WireEvent } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { colors, font, radius, space } from '../../src/lib/theme';
+import { font, radius, space, useTheme } from '../../src/lib/theme';
 
 interface Result {
   event: WireEvent;
@@ -22,6 +22,7 @@ interface Result {
 
 export default function Search() {
   const { api, jumpToMessage } = useChat();
+  const { colors } = useTheme();
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);

@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { tokenizeMessage, type Segment } from '@atrium/surface-client';
 import type { ReactNode } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { colors, font, radius, space } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 import { selectionHaptic } from '../lib/haptics';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
@@ -16,6 +16,7 @@ function InlineSegment({
   meHandle: string | null;
   muted?: boolean;
 }) {
+  const { colors } = useTheme();
   switch (segment.kind) {
     case 'text':
       return <Text>{segment.text}</Text>;
@@ -25,7 +26,7 @@ function InlineSegment({
           style={{
             backgroundColor: colors.bgElevated,
             borderRadius: radius.sm,
-            color: muted ? colors.textMuted : '#fda4af',
+            color: muted ? colors.textMuted : colors.codeAccent,
             fontFamily: monoFont,
             fontSize: font.sm,
             paddingHorizontal: 4,
@@ -71,6 +72,7 @@ function InlineRun({
   meHandle: string | null;
   muted?: boolean;
 }) {
+  const { colors } = useTheme();
   if (segments.length === 0) return null;
   return (
     <Text
@@ -94,6 +96,7 @@ function CodeBlock({
   segment: Extract<Segment, { kind: 'codeblock' }>;
   muted?: boolean;
 }) {
+  const { colors } = useTheme();
   return (
     <Pressable
       onLongPress={() => {

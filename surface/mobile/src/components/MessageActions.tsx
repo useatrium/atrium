@@ -3,7 +3,7 @@
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import type { ChatMessage } from '@atrium/surface-client';
-import { colors, font, radius, space } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 import { selectionHaptic } from '../lib/haptics';
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🔥', '😢', '🚀', '🙏', '💯', '🤔'];
@@ -28,6 +28,7 @@ function Action({
   destructive?: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -60,13 +61,14 @@ export function MessageActions({
   onEdit,
   onDelete,
 }: MessageActionsProps) {
+  const { colors } = useTheme();
   const m = message;
   const confirmed = m?.status === 'confirmed' && m.id != null;
   const canCopy = !!m?.text.trim();
   return (
     <Modal visible={m != null} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+        style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
         onPress={onClose}
       >
         <Pressable

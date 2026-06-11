@@ -3,11 +3,12 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'rea
 import { router } from 'expo-router';
 import type { UserRef } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { colors, font, space } from '../../src/lib/theme';
+import { font, space, useTheme } from '../../src/lib/theme';
 import { Avatar } from '../../src/components/Avatar';
 
 export default function NewDm() {
   const { api, me, startDm } = useChat();
+  const { colors } = useTheme();
   const [users, setUsers] = useState<UserRef[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -90,9 +91,9 @@ export default function NewDm() {
         }}
       >
         {busy ? (
-          <ActivityIndicator color={colors.bg} />
+          <ActivityIndicator color={colors.onAccent} />
         ) : (
-          <Text style={{ color: colors.bg, fontSize: font.md, fontWeight: '700' }}>
+          <Text style={{ color: colors.onAccent, fontSize: font.md, fontWeight: '700' }}>
             Start {selected.size > 1 ? 'group DM' : 'DM'}
           </Text>
         )}

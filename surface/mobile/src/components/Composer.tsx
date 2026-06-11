@@ -15,8 +15,9 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { matchMentionPrefix, type AttachmentMeta, type UserRef } from '@atrium/surface-client';
-import { colors, font, radius, space } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { lightImpactHaptic } from '../lib/haptics';
@@ -67,6 +68,7 @@ export function Composer({
   allowAttachments,
   uploadFile,
 }: ComposerProps) {
+  const { colors } = useTheme();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const inputRef = useRef<TextInput>(null);
@@ -338,9 +340,13 @@ export function Composer({
                     backgroundColor: colors.bgElevated,
                     alignItems: 'center',
                     justifyContent: 'center',
-                  }}
-                >
-                  <Text style={{ fontSize: 18 }}>{a.failed ? '⚠️' : '📎'}</Text>
+                }}
+              >
+                  <Ionicons
+                    name={a.failed ? 'alert-circle-outline' : 'attach-outline'}
+                    size={21}
+                    color={a.failed ? colors.danger : colors.textSecondary}
+                  />
                 </View>
               )}
               {!a.meta && !a.failed && (
@@ -365,7 +371,7 @@ export function Composer({
                   justifyContent: 'center',
                 }}
               >
-                <Text style={{ color: colors.text, fontSize: 10, fontWeight: '800' }}>✕</Text>
+                <Ionicons name="close-outline" size={14} color={colors.text} />
               </Pressable>
             </View>
           ))}
@@ -387,7 +393,7 @@ export function Composer({
               marginBottom: 2,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 20, lineHeight: 22 }}>+</Text>
+            <Ionicons name="attach-outline" size={21} color={colors.textSecondary} />
           </Pressable>
         )}
         <TextInput
@@ -432,9 +438,11 @@ export function Composer({
             marginBottom: 2,
           }}
         >
-          <Text style={{ color: colors.bg, fontSize: 16, fontWeight: '800' }}>
-            {editing ? '✓' : '↑'}
-          </Text>
+          <Ionicons
+            name={editing ? 'checkmark-outline' : 'arrow-up-circle'}
+            size={editing ? 21 : 25}
+            color={(editing ? text.trim().length > 0 : canSend) ? colors.onAccent : colors.textFaint}
+          />
         </Pressable>
       </View>
     </View>
