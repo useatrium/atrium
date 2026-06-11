@@ -12,6 +12,7 @@ import {
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { Composer } from './components/Composer';
+import { LockIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
@@ -580,8 +581,8 @@ export function Chat({
         />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
-          <h1 className="flex items-center gap-1.5 text-sm font-bold text-zinc-100">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge px-4">
+          <h1 className="flex items-center gap-1.5 text-sm font-bold text-fg">
             {active?.kind === 'dm' || active?.kind === 'gdm' ? (
               <>
                 <Avatar
@@ -593,7 +594,9 @@ export function Chat({
               </>
             ) : (
               <>
-                <span className="mr-0.5 text-zinc-500">{active?.kind === 'private' ? '🔒' : '#'}</span>
+                <span className="mr-0.5 text-fg-muted">
+                  {active?.kind === 'private' ? <LockIcon size={14} /> : '#'}
+                </span>
                 {active?.name ?? '…'}
               </>
             )}
@@ -605,14 +608,14 @@ export function Chat({
                   setMembersOpen((v) => !v);
                   if (!members) loadMembers();
                 }}
-                className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                className="rounded-md px-2 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
               >
                 Members
               </button>
               {membersOpen && (
-                <div className="absolute left-0 top-8 z-20 w-64 rounded-md border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
+                <div className="absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-300">Members</span>
+                    <span className="text-xs font-semibold text-fg-secondary">Members</span>
                     <button
                       onClick={() => {
                         setMemberPickerOpen((v) => !v);
@@ -620,18 +623,18 @@ export function Chat({
                           api.users().then(({ users }) => setMemberPeople(users)).catch(() => setMemberPeople([]));
                         }
                       }}
-                      className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-800"
+                      className="rounded px-2 py-0.5 text-xs text-fg-tertiary hover:bg-surface-overlay"
                     >
                       Add
                     </button>
                   </div>
                   {memberPickerOpen && (
-                    <div className="mb-2 max-h-32 overflow-y-auto border-b border-zinc-800 pb-2">
+                    <div className="mb-2 max-h-32 overflow-y-auto border-b border-edge pb-2">
                       {(memberPeople ?? []).filter((u) => !members?.some((m) => m.id === u.id)).map((u) => (
                         <button
                           key={u.id}
                           onClick={() => inviteMember(u.id)}
-                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
                         >
                           <Avatar name={u.displayName} seed={u.id} size={16} />
                           <span className="truncate">{u.displayName}</span>
@@ -641,7 +644,7 @@ export function Chat({
                   )}
                   <ul className="max-h-48 overflow-y-auto">
                     {(members ?? active.members ?? []).map((u) => (
-                      <li key={u.id} className="flex items-center gap-2 px-2 py-1 text-xs text-zinc-300">
+                      <li key={u.id} className="flex items-center gap-2 px-2 py-1 text-xs text-fg-secondary">
                         <Avatar name={u.displayName} seed={u.id} size={16} />
                         <span className="truncate">{u.displayName}</span>
                       </li>
@@ -649,7 +652,7 @@ export function Chat({
                   </ul>
                   <button
                     onClick={leaveActive}
-                    className="mt-2 w-full rounded border border-red-900/60 px-2 py-1 text-xs text-red-300 hover:bg-red-950/40"
+                    className="mt-2 w-full rounded border border-danger-border/60 px-2 py-1 text-xs text-danger-text hover:bg-danger-tint/40"
                   >
                     Leave
                   </button>
@@ -664,12 +667,12 @@ export function Chat({
             >
               <div className="flex -space-x-1.5">
                 {presentUsers.slice(0, 8).map((u) => (
-                  <div key={u.id} className="rounded-md ring-2 ring-zinc-950">
+                  <div key={u.id} className="rounded-md ring-2 ring-surface">
                     <Avatar name={u.displayName} seed={u.id} size={20} />
                   </div>
                 ))}
               </div>
-              <span className="text-[11px] tabular-nums text-zinc-500">
+              <span className="text-2xs tabular-nums text-fg-muted">
                 {presentUsers.length} here
               </span>
             </div>
@@ -679,7 +682,7 @@ export function Chat({
         {state.wsStatus === 'closed' && (
           <div
             role="status"
-            className="flex shrink-0 items-center justify-center border-b border-amber-900/40 bg-amber-950/30 px-4 py-1 text-[11px] text-amber-300"
+            className="flex shrink-0 items-center justify-center border-b border-warning-border/40 bg-warning-tint/30 px-4 py-1 text-2xs text-warning-text"
           >
             Connection lost — reconnecting…
           </div>
@@ -712,7 +715,7 @@ export function Chat({
               placeholder={
                 active.kind === 'dm' || active.kind === 'gdm'
                   ? `Message ${channelLabel(active, me.id)}`
-                  : `Message ${active.kind === 'private' ? '🔒' : '#'}${active.name}`
+                  : `Message ${active.kind === 'private' ? '' : '#'}${active.name}`
               }
               onSend={(text, attachments) => send(active.id, text, undefined, attachments)}
               onTyping={() => notifyTyping(active.id)}
@@ -734,33 +737,33 @@ export function Chat({
           onClose={() => dispatch({ type: 'close-session' })}
         />
       ) : state.openSessionId ? (
-        <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
-          <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
-            <span className="text-sm font-semibold text-zinc-100">Session</span>
+        <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+          <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
+            <span className="text-sm font-semibold text-fg">Session</span>
             <button
               onClick={() => dispatch({ type: 'close-session' })}
               title="Close session pane"
               aria-label="Close session pane"
-              className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
             >
-              ✕
+              <XIcon />
             </button>
           </header>
           {state.openSessionError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-              <div className="text-sm font-medium text-zinc-300">Session not found</div>
-              <div className="text-xs text-zinc-500">
+              <div className="text-sm font-medium text-fg-secondary">Session not found</div>
+              <div className="text-xs text-fg-muted">
                 It may have been removed, or the link is wrong.
               </div>
               <button
                 onClick={() => dispatch({ type: 'close-session' })}
-                className="mt-2 rounded-md border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                className="mt-2 rounded-md border border-edge-strong px-3 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
               >
                 Close
               </button>
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
               Loading session…
             </div>
           )}
@@ -819,7 +822,7 @@ function TypingLine({ typing }: { typing: Record<string, { user: UserRef; until:
           ? `${names[0]} and ${names[1]} are typing…`
           : 'Several people are typing…';
   return (
-    <div aria-live="polite" className="h-5 shrink-0 px-4 text-[11px] leading-5 text-zinc-500">
+    <div aria-live="polite" className="h-5 shrink-0 px-4 text-2xs leading-5 text-fg-muted">
       {label}
     </div>
   );

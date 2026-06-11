@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type CSSP
 import { isTerminalExecutionStatus, type TextItem, type ToolCallItem } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { Composer } from '../components/Composer';
+import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
 import type { UserRef } from '@atrium/surface-client';
 import { formatTime } from '@atrium/surface-client';
 import { sessionsApi } from './api';
@@ -187,45 +188,45 @@ export function SessionPane({
   };
 
   return (
-    <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-800 px-3">
+    <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3">
         <StatusChip status={displayStatus} stalled={stalled} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-zinc-100" title={session.title}>
+          <div className="truncate text-sm font-semibold text-fg" title={session.title}>
             {session.title}
           </div>
-          <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+          <div className="flex items-center gap-1.5 text-3xs text-fg-muted">
             {driverId !== session.spawnedBy && (
               <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
             )}
             <span
               data-testid="driver-chip"
               className={`shrink-0 truncate rounded-full px-1.5 py-px font-medium ${
-                isDriver ? 'bg-indigo-500/15 text-indigo-300' : 'bg-zinc-800/80 text-zinc-300'
+                isDriver ? 'bg-accent-hover/15 text-accent-text-strong' : 'bg-surface-overlay/80 text-fg-secondary'
               }`}
             >
               driver: {driverName}
             </span>
             {spectators > 0 && (
               <>
-                <span className="text-zinc-700">·</span>
+                <span className="text-fg-faint">·</span>
                 <span className="tabular-nums">{spectators} watching</span>
               </>
             )}
             {costUsd > 0 && (
               <>
-                <span className="text-zinc-700">·</span>
+                <span className="text-fg-faint">·</span>
                 <span className="tabular-nums">{formatCost(costUsd)}</span>
               </>
             )}
-            <span className="text-zinc-700">·</span>
+            <span className="text-fg-faint">·</span>
             {stalled ? (
               <span className="tabular-nums">started {formatTime(session.createdAt)}</span>
             ) : (
               <span className="tabular-nums">{formatElapsed(sessionElapsedMs(session, now))}</span>
             )}
             {!connected && !displayTerminal && (
-              <span role="status" className="text-amber-400/80">
+              <span role="status" className="text-warning/80">
                 · reconnecting…
               </span>
             )}
@@ -235,10 +236,10 @@ export function SessionPane({
           <button
             onClick={onCancel}
             title="Cancel this session"
-            className={`rounded-md border px-2 py-1 text-[11px] font-medium ${
+            className={`rounded-md border px-2 py-1 text-2xs font-medium ${
               cancelAsk === 'confirm'
-                ? 'border-red-700 bg-red-950/60 text-red-200 hover:bg-red-900/60'
-                : 'border-red-900/60 text-red-400 hover:bg-red-950/40 hover:text-red-300'
+                ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
             }`}
           >
             {cancelAsk === 'confirm'
@@ -252,23 +253,23 @@ export function SessionPane({
           onClick={onClose}
           title="Close session pane"
           aria-label="Close session pane"
-          className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
         >
-          ✕
+          <XIcon />
         </button>
       </header>
 
       {seatRequest && !displayTerminal && (
         <div
           data-testid="seat-request-banner"
-          className="flex shrink-0 items-center gap-2 border-b border-indigo-900/40 bg-indigo-950/30 px-3 py-1.5 text-xs"
+          className="flex shrink-0 items-center gap-2 border-b border-accent-tint/40 bg-accent-tint/30 px-3 py-1.5 text-xs"
         >
-          <span className="min-w-0 flex-1 truncate text-zinc-200">
+          <span className="min-w-0 flex-1 truncate text-fg-body">
             <span className="font-semibold">{seatRequest.displayName}</span> requests the seat
           </span>
           <button
             onClick={() => sessionsApi.grantSeat(session.id, seatRequest.userId).catch(() => {})}
-            className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-indigo-500"
+            className="rounded-md bg-accent px-2 py-0.5 text-2xs font-medium text-on-accent hover:bg-accent-hover"
           >
             Grant
           </button>
@@ -276,7 +277,7 @@ export function SessionPane({
             onClick={() =>
               setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))
             }
-            className="rounded-md px-2 py-0.5 text-[11px] font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
           >
             Ignore
           </button>
@@ -297,12 +298,12 @@ export function SessionPane({
       {displayTerminal && resultText && (
         <div
           data-testid="session-result"
-          className="shrink-0 border-b border-zinc-800 bg-zinc-900/60 px-4 py-2"
+          className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2"
         >
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
             Result
           </div>
-          <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
+          <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
             {resultText}
           </div>
         </div>
@@ -310,7 +311,7 @@ export function SessionPane({
 
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-2">
         {stream.items.length === 0 && (
-          <div className="flex h-full items-center justify-center text-xs text-zinc-500">
+          <div className="flex h-full items-center justify-center text-xs text-fg-muted">
             {!displayTerminal ? (
               <span className="animate-pulse">Waiting for agent output…</span>
             ) : isTerminalExecutionStatus(stream.status) ? (
@@ -347,7 +348,7 @@ export function SessionPane({
       </div>
 
       {displayTerminal ? (
-        <div className="shrink-0 border-t border-zinc-800 px-4 py-2.5 text-[11px] text-zinc-500">
+        <div className="shrink-0 border-t border-edge px-4 py-2.5 text-2xs text-fg-muted">
           Session ended — transcript is read-only.
         </div>
       ) : (
@@ -356,20 +357,20 @@ export function SessionPane({
             <div
               role="alert"
               data-testid="steer-error"
-              className="flex shrink-0 items-center gap-2 border-t border-red-900/40 bg-red-950/20 px-3 py-1.5 text-xs"
+              className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
             >
-              <span className="min-w-0 flex-1 truncate text-red-300">
+              <span className="min-w-0 flex-1 truncate text-danger-text">
                 Message didn't send: "{steerError}"
               </span>
               <button
                 onClick={() => sendSteer(steerError)}
-                className="rounded-md bg-red-900/50 px-2 py-0.5 text-[11px] font-medium text-red-200 hover:bg-red-900/80"
+                className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
               >
                 Retry
               </button>
               <button
                 onClick={() => setSteerError(null)}
-                className="rounded-md px-2 py-0.5 text-[11px] font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
               >
                 Dismiss
               </button>
@@ -388,22 +389,22 @@ export function SessionPane({
                   {seatRequested ? (
                     <span>
                       {seatAsk === 'seat-held' && (
-                        <span className="text-amber-400/80">seat held · </span>
+                        <span className="text-warning/80">seat held · </span>
                       )}
                       requested — waiting for {driverName}
                     </span>
                   ) : seatAsk === 'confirm-take' ? (
                     <>
-                      <span className="text-zinc-400">take the seat from {driverName}?</span>
+                      <span className="text-fg-tertiary">take the seat from {driverName}?</span>
                       <button
                         onClick={takeSeat}
-                        className="rounded border border-indigo-800/60 px-2 py-0.5 font-medium text-indigo-300 hover:bg-indigo-950/40 hover:text-indigo-200"
+                        className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                       >
                         Confirm
                       </button>
                       <button
                         onClick={() => setSeatAsk('idle')}
-                        className="rounded px-2 py-0.5 font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                        className="rounded px-2 py-0.5 font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
                       >
                         Keep watching
                       </button>
@@ -411,7 +412,7 @@ export function SessionPane({
                   ) : (
                     <button
                       onClick={driverPresent ? requestSeat : () => setSeatAsk('confirm-take')}
-                      className="rounded border border-indigo-800/60 px-2 py-0.5 font-medium text-indigo-300 hover:bg-indigo-950/40 hover:text-indigo-200"
+                      className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                     >
                       {driverPresent ? 'Request seat' : 'Take seat'}
                     </button>
@@ -469,14 +470,14 @@ function QuestionBanner({
   return (
     <div
       data-testid="question-banner"
-      className="shrink-0 border-b border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs"
+      className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
     >
       <div className="mb-2 flex items-center gap-2">
-        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+        <span className="rounded-full bg-warning/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-warning-text">
           needs input
         </span>
         {!isDriver && (
-          <span className="text-zinc-400">
+          <span className="text-fg-tertiary">
             waiting for {driverName} to answer
           </span>
         )}
@@ -485,12 +486,12 @@ function QuestionBanner({
         {pending.questions.map((q) => (
           <div key={q.id} className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-zinc-800 px-1.5 py-px text-[10px] font-semibold text-zinc-300">
+              <span className="rounded bg-surface-overlay px-1.5 py-px text-3xs font-semibold text-fg-secondary">
                 {q.header}
               </span>
-              {q.isSecret && <span className="text-[10px] text-zinc-500">secret</span>}
+              {q.isSecret && <span className="text-3xs text-fg-muted">secret</span>}
             </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-100">
+            <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg">
               {q.question}
             </div>
             {q.options?.length ? (
@@ -503,14 +504,14 @@ function QuestionBanner({
                       disabled={!isDriver || submitting}
                       onClick={() => setAnswer(q.id, option.label)}
                       title={option.description}
-                      className={`rounded-md border px-2 py-1 text-left text-[11px] ${
+                      className={`rounded-md border px-2 py-1 text-left text-2xs ${
                         selected
-                          ? 'border-amber-500 bg-amber-500/15 text-amber-100'
-                          : 'border-zinc-700 bg-zinc-900/70 text-zinc-200 hover:border-zinc-600'
+                          ? 'border-warning bg-warning/15 text-warning-text-strong'
+                          : 'border-edge-strong bg-surface-raised/70 text-fg-body hover:border-edge-hover'
                       } disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                       <span className="block font-semibold">{option.label}</span>
-                      <span className="block text-zinc-500">{option.description}</span>
+                      <span className="block text-fg-muted">{option.description}</span>
                     </button>
                   );
                 })}
@@ -521,7 +522,7 @@ function QuestionBanner({
                 disabled={!isDriver || submitting}
                 value={values[q.id] ?? ''}
                 onChange={(e) => setAnswer(q.id, e.target.value)}
-                className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500 disabled:opacity-60"
+                className="w-full rounded-md border border-edge-strong bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-warning disabled:opacity-60"
               />
             )}
           </div>
@@ -532,16 +533,16 @@ function QuestionBanner({
           <button
             onClick={submit}
             disabled={!complete || submitting}
-            className="rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-warning px-2.5 py-1 text-2xs font-semibold text-surface hover:bg-warning-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? 'Answering…' : 'Submit answer'}
           </button>
         ) : seatRequested ? (
-          <span className="text-[11px] text-zinc-500">seat requested</span>
+          <span className="text-2xs text-fg-muted">seat requested</span>
         ) : (
           <button
             onClick={requestSeat}
-            className="rounded border border-indigo-800/60 px-2 py-0.5 text-[11px] font-medium text-indigo-300 hover:bg-indigo-950/40 hover:text-indigo-200"
+            className="rounded border border-accent-border-muted/60 px-2 py-0.5 text-2xs font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
           >
             Request seat
           </button>
@@ -576,13 +577,13 @@ function SeatAuditLine({
   return (
     <div
       data-testid="seat-audit-line"
-      className="my-1 flex items-center gap-1.5 text-[11px] text-zinc-500"
+      className="my-1 flex items-center gap-1.5 text-2xs text-fg-muted"
     >
-      <span aria-hidden className="text-zinc-600">
-        ⇄
+      <span aria-hidden className="text-fg-faint">
+        <ArrowUpIcon size={12} />
       </span>
       <span className="truncate">{seatLineLabel(entry, nameFor)}</span>
-      <span className="text-zinc-700">·</span>
+      <span className="text-fg-faint">·</span>
       <span className="tabular-nums">{hhmm(entry.at)}</span>
     </div>
   );
@@ -595,7 +596,7 @@ const TextBlock = memo(
     return (
       <div
         style={ITEM_VIS}
-        className="whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-zinc-200"
+        className="whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-fg-body"
       >
         {item.text}
       </div>
@@ -632,48 +633,50 @@ const ToolCard = memo(
         style={ITEM_VIS}
         data-testid="tool-card"
         className={`my-1 rounded-md border text-xs ${
-          isError ? 'border-red-900/60 bg-red-950/20' : 'border-zinc-800 bg-zinc-900/50'
+          isError ? 'border-danger-border/60 bg-danger-tint/20' : 'border-edge bg-surface-raised/50'
         }`}
       >
         <button
           onClick={onToggle}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-zinc-800/40"
+          className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay/40"
         >
-          <span className="text-[10px] text-zinc-500">{expanded ? '▾' : '▸'}</span>
-          <span className="shrink-0 font-mono font-semibold text-zinc-200">{item.name}</span>
+          <span className="text-fg-muted">
+            {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+          </span>
+          <span className="shrink-0 font-mono font-semibold text-fg-body">{item.name}</span>
           {!expanded && (
-            <span className="min-w-0 flex-1 truncate font-mono text-zinc-500">
+            <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">
               {firstInputLine(item)}
             </span>
           )}
           <span className="ml-auto shrink-0">
             {running ? (
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-400" />
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent-text" />
             ) : isError ? (
-              <span className="font-semibold text-red-400">error</span>
+              <span className="font-semibold text-danger">error</span>
             ) : (
-              <span className="text-zinc-500">done</span>
+              <span className="text-fg-muted">done</span>
             )}
           </span>
         </button>
         {expanded && (
-          <div className="border-t border-zinc-800/80 px-2 py-1.5">
+          <div className="border-t border-edge/80 px-2 py-1.5">
             {command !== null && (
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-300">
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-fg-secondary">
                 {command}
               </pre>
             )}
             {restJson && (
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-500">
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-fg-muted">
                 {restJson}
               </pre>
             )}
             {item.result && (
               <pre
-                className={`mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-[11px] leading-relaxed ${
+                className={`mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-2xs leading-relaxed ${
                   isError
-                    ? 'border-red-900/60 bg-red-950/30 text-red-200'
-                    : 'border-zinc-800 bg-zinc-950/70 text-zinc-300'
+                    ? 'border-danger-border/60 bg-danger-tint/30 text-danger-text-strong'
+                    : 'border-edge bg-surface/70 text-fg-secondary'
                 }`}
               >
                 {item.result.content}

@@ -3,6 +3,7 @@ import type { AttachmentMeta, ChatMessage } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
 import { Composer } from './Composer';
+import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
 
 export function ThreadPanel({
@@ -51,11 +52,11 @@ export function ThreadPanel({
   const items = buildTimelineItems(replies);
 
   return (
-    <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-zinc-800 bg-zinc-950/60">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
-        <div className="text-sm font-semibold text-zinc-100">
+    <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
+        <div className="text-sm font-semibold text-fg">
           Thread
-          <span className="ml-2 text-xs font-normal text-zinc-500">
+          <span className="ml-2 text-xs font-normal text-fg-muted">
             {root.replyCount} {root.replyCount === 1 ? 'reply' : 'replies'}
           </span>
         </div>
@@ -63,9 +64,9 @@ export function ThreadPanel({
           onClick={onClose}
           title="Close thread"
           aria-label="Close thread"
-          className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
         >
-          ✕
+          <XIcon />
         </button>
       </header>
       <div ref={scrollRef} className="flex-1 overflow-y-auto py-2">
@@ -84,9 +85,9 @@ export function ThreadPanel({
           onReact={onReact}
         />
         <div className="my-2 flex items-center gap-2 px-4">
-          <div className="h-px flex-1 bg-zinc-800" />
-          <span className="text-[10px] uppercase tracking-wide text-zinc-600">replies</span>
-          <div className="h-px flex-1 bg-zinc-800" />
+          <div className="h-px flex-1 bg-surface-overlay" />
+          <span className="text-3xs uppercase tracking-wide text-fg-faint">replies</span>
+          <div className="h-px flex-1 bg-surface-overlay" />
         </div>
         {items.map((item) =>
           item.kind === 'day' ? null : (
@@ -108,7 +109,7 @@ export function ThreadPanel({
           ),
         )}
         {replies.length === 0 && (
-          <div className="px-4 py-6 text-center text-xs text-zinc-500">
+          <div className="px-4 py-6 text-center text-xs text-fg-muted">
             {loaded ? 'No replies yet. Start the thread.' : 'Loading replies…'}
           </div>
         )}

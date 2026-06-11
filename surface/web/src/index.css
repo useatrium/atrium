@@ -1,12 +1,66 @@
 @import 'tailwindcss';
 
+@theme {
+  --color-surface: #09090b;
+  --color-surface-raised: #18181b;
+  --color-surface-overlay: #27272a;
+
+  --color-edge: #27272a;
+  --color-edge-strong: #3f3f46;
+  --color-edge-hover: #52525b;
+  --color-edge-focus: #71717a;
+
+  --color-fg: #f4f4f5;
+  --color-fg-body: #e4e4e7;
+  --color-fg-secondary: #d4d4d8;
+  --color-fg-tertiary: #a1a1aa;
+  --color-fg-muted: #8f8f98;
+  --color-fg-faint: #52525b;
+  --color-on-accent: #ffffff;
+
+  --color-accent: #4f46e5;
+  --color-accent-hover: #6366f1;
+  --color-accent-text: #818cf8;
+  --color-accent-text-strong: #a5b4fc;
+  --color-accent-border: #4338ca;
+  --color-accent-border-muted: #3730a3;
+  --color-accent-tint: #312e81;
+
+  --color-danger: #f87171;
+  --color-danger-strong: #dc2626;
+  --color-danger-text: #fca5a5;
+  --color-danger-text-strong: #fecaca;
+  --color-danger-border: #7f1d1d;
+  --color-danger-border-strong: #b91c1c;
+  --color-danger-tint: #450a0a;
+  --color-danger-surface: #7f1d1d;
+
+  --color-warning: #f59e0b;
+  --color-warning-hover: #fbbf24;
+  --color-warning-text: #fcd34d;
+  --color-warning-text-strong: #fef3c7;
+  --color-warning-border: #78350f;
+  --color-warning-tint: #451a03;
+
+  --color-success: #10b981;
+  --color-success-text: #6ee7b7;
+  --color-info: #0ea5e9;
+  --color-info-text: #7dd3fc;
+  --color-code: #fda4af;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.875rem;
+}
+
 :root {
   color-scheme: dark;
 }
 
 body {
-  background-color: var(--color-zinc-950);
-  color: var(--color-zinc-200);
+  background-color: var(--color-surface);
+  color: var(--color-fg-body);
   -webkit-font-smoothing: antialiased;
   font-family:
     ui-sans-serif,
@@ -18,24 +72,23 @@ body {
     sans-serif;
 }
 
-/* Visible keyboard focus on click targets (mouse clicks stay quiet).
- * Inputs/textareas keep their border-color focus treatment instead. */
-:where(button, [role='button'], a, select):focus-visible {
-  outline: 2px solid var(--color-indigo-400);
+/* Visible keyboard focus on interactive controls (mouse clicks stay quiet). */
+:where(button, [role='button'], a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--color-accent-text);
   outline-offset: 1px;
 }
 
 /* Thin dark scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-zinc-700) transparent;
+  scrollbar-color: var(--color-edge-strong) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--color-zinc-700);
+  background: var(--color-edge-strong);
   border-radius: 4px;
 }
 *::-webkit-scrollbar-track {

@@ -1,4 +1,4 @@
-import { initials, userColor } from '@atrium/surface-client';
+import { initials, userColorTokens } from '@atrium/surface-client';
 
 export function Avatar({
   name,
@@ -9,13 +9,15 @@ export function Avatar({
   seed: string;
   size?: number;
 }) {
+  const colors = userColorTokens(seed, 'dark');
   return (
     <div
-      className="flex shrink-0 select-none items-center justify-center rounded-md font-semibold text-white/90"
+      className="flex shrink-0 select-none items-center justify-center rounded-md font-semibold"
       style={{
         width: size,
         height: size,
-        backgroundColor: userColor(seed),
+        backgroundColor: colors.bg,
+        color: colors.fg,
         fontSize: Math.max(10, Math.floor(size * 0.4)),
       }}
       title={name}
