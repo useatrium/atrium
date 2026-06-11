@@ -4,6 +4,8 @@
 import { useCallback, useMemo } from 'react';
 import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 import { channelLabel, dmPartner, type Channel } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
 import { useSession } from '../../src/lib/session';
@@ -11,19 +13,27 @@ import {
   getRegisteredPushToken,
   unregisterPush,
 } from '../../src/lib/notifications';
-import { colors, font, space } from '../../src/lib/theme';
+import { font, space, useTheme } from '../../src/lib/theme';
 import { Avatar } from '../../src/components/Avatar';
 import { ConnectionBanner, UnreadBadge } from '../../src/components/bits';
 
-function HeaderButton({ label, onPress }: { label: string; onPress: () => void }) {
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+function HeaderButton({ icon, onPress }: { icon: IoniconName; onPress: () => void }) {
+  const { colors } = useTheme();
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={{ paddingHorizontal: 6 }}>
-      <Text style={{ fontSize: 17, color: colors.textSecondary }}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      hitSlop={8}
+      style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
+    >
+      <Ionicons name={icon} size={21} color={colors.textSecondary} />
     </Pressable>
   );
 }
 
 function SectionHeader({ title }: { title: string }) {
+  const { colors } = useTheme();
   return (
     <Text
       style={{
@@ -45,6 +55,7 @@ function SectionHeader({ title }: { title: string }) {
 export default function ChannelList() {
   const { state, me, api, leaveChannel, setMute } = useChat();
   const { logout } = useSession();
+  const { colors } = useTheme();
 
   useFocusEffect(
     useCallback(() => {
@@ -146,10 +157,10 @@ export default function ChannelList() {
           ),
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 6 }}>
-              <HeaderButton label="⚙" onPress={() => router.push('/sessions')} />
-              <HeaderButton label="🔍" onPress={() => router.push('/search')} />
-              <HeaderButton label="✉️" onPress={() => router.push('/new-dm')} />
-              <HeaderButton label="＋" onPress={() => router.push('/new-channel')} />
+              <HeaderButton icon="hardware-chip-outline" onPress={() => router.push('/sessions')} />
+              <HeaderButton icon="search-outline" onPress={() => router.push('/search')} />
+              <HeaderButton icon="mail-outline" onPress={() => router.push('/new-dm')} />
+              <HeaderButton icon="add-outline" onPress={() => router.push('/new-channel')} />
             </View>
           ),
         }}
@@ -160,7 +171,7 @@ export default function ChannelList() {
         {channels.map(row)}
         {channels.length === 0 && (
           <Text style={{ color: colors.textFaint, fontSize: font.sm, paddingHorizontal: space.lg }}>
-            No channels yet — create one with ＋
+            No channels yet.
           </Text>
         )}
         {dms.length > 0 && <SectionHeader title="Direct messages" />}

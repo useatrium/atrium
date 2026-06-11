@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import {
   formatTime,
   formatBytes,
@@ -9,7 +10,7 @@ import {
   type MessageReaction,
   type Session,
 } from '@atrium/surface-client';
-import { colors, font, radius, space } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
@@ -47,6 +48,7 @@ function ReactionChips({
   meId: string;
   onToggle: (emoji: string) => void;
 }) {
+  const { colors } = useTheme();
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
       {reactions.map((r) => {
@@ -97,6 +99,7 @@ function Attachments({
   onOpen: (fileId: string) => void;
   onOpenImage: (attachment: AttachmentMeta) => void;
 }) {
+  const { colors } = useTheme();
   if (!message.attachments?.length) return null;
   return (
     <View style={{ gap: 6, marginTop: 4 }}>
@@ -137,7 +140,7 @@ function Attachments({
               maxWidth: 280,
             }}
           >
-            <Text style={{ fontSize: 16 }}>📎</Text>
+            <Ionicons name="attach-outline" size={18} color={colors.textSecondary} />
             <View style={{ flexShrink: 1 }}>
               <Text style={{ color: colors.text, fontSize: font.sm }} numberOfLines={1}>
                 {a.filename}
@@ -163,6 +166,7 @@ function SessionCard({
   session?: Session;
   onOpen?: (sessionId: string) => void;
 }) {
+  const { colors } = useTheme();
   const status = session?.status ?? 'spawning';
   const needsInput = session?.pendingQuestion != null;
   const statusColor =
@@ -190,8 +194,9 @@ function SessionCard({
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
         <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>
-          ⚙ AGENT SESSION
+          AGENT SESSION
         </Text>
         <Text style={{ fontSize: font.xs, color: statusColor, fontWeight: '700' }}>
           {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
@@ -230,6 +235,7 @@ export const MessageRow = memo(function MessageRow({
   onOpenImageAttachment,
   onOpenSession,
 }: MessageRowProps) {
+  const { colors } = useTheme();
   const pending = m.status === 'pending';
   const failed = m.status === 'failed';
   const tombstone = m.deleted === true;

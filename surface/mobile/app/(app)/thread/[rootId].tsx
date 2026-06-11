@@ -4,7 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { emptyTimeline, type AttachmentMeta, type ChatMessage } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
-import { colors } from '../../../src/lib/theme';
+import { useTheme } from '../../../src/lib/theme';
 import { Composer } from '../../../src/components/Composer';
 import { ImageViewer } from '../../../src/components/ImageViewer';
 import { MessageActions } from '../../../src/components/MessageActions';
@@ -17,6 +17,7 @@ export default function ThreadScreen() {
   }>();
   const rootId = Number(rootIdParam);
   const chat = useChat();
+  const { colors } = useTheme();
   const { state, me } = chat;
   const { getDraft, setDraft } = chat;
   const headerHeight = useHeaderHeight();

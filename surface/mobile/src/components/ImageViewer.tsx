@@ -10,8 +10,9 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import type { AttachmentMeta } from '@atrium/surface-client';
-import { colors, font, space } from '../lib/theme';
+import { font, space, useTheme } from '../lib/theme';
 
 export interface ImageViewerProps {
   attachment: AttachmentMeta | null;
@@ -30,6 +31,7 @@ export function ImageViewer({
   onClose,
   onOpenExternal,
 }: ImageViewerProps) {
+  const { colors } = useTheme();
   const { width, height } = useWindowDimensions();
   const [zoomed, setZoomed] = useState(false);
   const lastTapRef = useRef(0);
@@ -72,10 +74,7 @@ export function ImageViewer({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <View
-        style={{ flex: 1, backgroundColor: 'black' }}
-        {...panResponder.panHandlers}
-      >
+      <View style={{ flex: 1, backgroundColor: colors.letterbox }} {...panResponder.panHandlers}>
         <View
           style={{
             position: 'absolute',
@@ -90,7 +89,7 @@ export function ImageViewer({
           }}
         >
           <Pressable onPress={onClose} hitSlop={12} style={{ padding: space.sm }}>
-            <Text style={{ color: colors.text, fontSize: 24, lineHeight: 26 }}>x</Text>
+            <Ionicons name="close-outline" size={28} color={colors.text} />
           </Pressable>
           <Pressable
             onPress={() => onOpenExternal(attachment.id)}

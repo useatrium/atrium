@@ -6,7 +6,7 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#09090b",
     "ios": {
       "supportsTablet": true,
@@ -33,6 +33,17 @@
         "expo-notifications",
         {
           "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "backgroundColor": "#09090b",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#09090b"
+          }
         }
       ]
     ],

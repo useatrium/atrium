@@ -3,10 +3,11 @@ import { ActivityIndicator, Pressable, Switch, Text, TextInput, View } from 'rea
 import { router } from 'expo-router';
 import { ApiError } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { colors, font, radius, space } from '../../src/lib/theme';
+import { font, radius, space, useTheme } from '../../src/lib/theme';
 
 export default function NewChannel() {
   const { createChannel } = useChat();
+  const { colors } = useTheme();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +60,12 @@ export default function NewChannel() {
       </Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ color: colors.textSecondary, fontSize: font.md }}>Private</Text>
-        <Switch value={isPrivate} onValueChange={setIsPrivate} />
+        <Switch
+          value={isPrivate}
+          onValueChange={setIsPrivate}
+          trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
+          thumbColor={isPrivate ? colors.onAccent : colors.switchThumbOff}
+        />
       </View>
       {error && <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>}
       <Pressable
@@ -73,11 +79,11 @@ export default function NewChannel() {
         }}
       >
         {busy ? (
-          <ActivityIndicator color={colors.bg} />
+          <ActivityIndicator color={colors.onAccent} />
         ) : (
           <Text
             style={{
-              color: canCreate ? colors.bg : colors.textFaint,
+              color: canCreate ? colors.onAccent : colors.textFaint,
               fontSize: font.md,
               fontWeight: '700',
             }}
