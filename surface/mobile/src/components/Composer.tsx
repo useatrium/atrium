@@ -72,9 +72,16 @@ export function Composer({
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
 
+  // Reset on conversation switch; apply the async-loaded draft only into an
+  // untouched input — never clobber text the user already started typing.
   useEffect(() => {
-    if (!editing) setText(initialDraft ?? '');
-  }, [draftKey, editing, initialDraft]);
+    if (!editing) setText('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  useEffect(() => {
+    if (editing || !initialDraft) return;
+    setText((prev) => (prev === '' ? initialDraft : prev));
+  }, [editing, initialDraft]);
 
   useEffect(() => {
     if (editingText != null) {

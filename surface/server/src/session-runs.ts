@@ -4,7 +4,13 @@ import { CentaurClient, isTerminalExecutionStatus, type CentaurEventFrame } from
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { appendEvent, DomainError, type UserRef, type WireEvent } from './events.js';
+import {
+  appendEvent,
+  canAccessChannel,
+  DomainError,
+  type UserRef,
+  type WireEvent,
+} from './events.js';
 import type { WsHub } from './hub.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -160,11 +166,11 @@ export class SessionRuns {
   }
 
   // TODO(memberships): when multi-workspace membership lands, gate by
-  // workspace membership here. Today there is exactly one workspace and every
-  // authenticated user belongs to it, so cookie auth at the route suffices.
-  async getSessionForUser(id: string, _userId: string): Promise<SessionJson> {
+  // workspace membership too. Channel access already gates DM-spawned
+  // sessions: 404 (not 403) so foreign session ids don't leak existence.
+  async getSessionForUser(id: string, userId: string): Promise<SessionJson> {
     const row = await this.getSessionRow(id);
-    if (!row) {
+    if (!row || !(await canAccessChannel(this.pool, userId, row.channel_id))) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
     return this.toJsonWithSeatInfo(row);

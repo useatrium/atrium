@@ -231,40 +231,67 @@ export async function postMessage(
     attachments?: AttachmentMeta[];
   },
 ): Promise<WireEvent> {
-  return withTx(pool, async (client) => {
-    if (args.threadRootEventId != null) {
-      const root = await client.query<{
-        channel_id: string | null;
-        thread_root_event_id: number | null;
-        type: string;
-      }>(
-        'SELECT channel_id, thread_root_event_id, type FROM events WHERE id = $1',
-        [args.threadRootEventId],
-      );
-      const r = root.rows[0];
-      if (!r || (r.type !== 'message.posted' && r.type !== 'session.spawned')) {
-        throw new DomainError(404, 'thread_root_not_found', 'thread root message not found');
+  // Idempotency: the mobile offline outbox retries sends whose response was
+  // lost, reusing the clientMsgId — return the already-committed event
+  // instead of duplicating (the events_client_msg_dedupe unique index covers
+  // the concurrent-retry race).
+  const findExisting = async (db: Db | DbClient): Promise<WireEvent | null> => {
+    if (!args.clientMsgId) return null;
+    const res = await db.query<EventDbRow>(
+      `SELECT * FROM events
+       WHERE type = 'message.posted' AND actor_id = $1 AND channel_id = $2
+         AND payload->>'client_msg_id' = $3`,
+      [args.actorId, args.channelId, args.clientMsgId],
+    );
+    const row = res.rows[0];
+    return row ? toWireEvent(await attachAuthor(db as DbClient, row)) : null;
+  };
+
+  try {
+    return await withTx(pool, async (client) => {
+      const existing = await findExisting(client);
+      if (existing) return existing;
+      if (args.threadRootEventId != null) {
+        const root = await client.query<{
+          channel_id: string | null;
+          thread_root_event_id: number | null;
+          type: string;
+        }>(
+          'SELECT channel_id, thread_root_event_id, type FROM events WHERE id = $1',
+          [args.threadRootEventId],
+        );
+        const r = root.rows[0];
+        if (!r || (r.type !== 'message.posted' && r.type !== 'session.spawned')) {
+          throw new DomainError(404, 'thread_root_not_found', 'thread root message not found');
+        }
+        if (r.channel_id !== args.channelId) {
+          throw new DomainError(400, 'thread_channel_mismatch', 'thread root belongs to another channel');
+        }
+        if (r.thread_root_event_id != null) {
+          throw new DomainError(400, 'nested_thread', 'cannot reply to a reply; threads are one level deep');
+        }
       }
-      if (r.channel_id !== args.channelId) {
-        throw new DomainError(400, 'thread_channel_mismatch', 'thread root belongs to another channel');
-      }
-      if (r.thread_root_event_id != null) {
-        throw new DomainError(400, 'nested_thread', 'cannot reply to a reply; threads are one level deep');
-      }
-    }
-    const payload: Record<string, unknown> = { text: args.text };
-    if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
-    if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
-    const ev = await insertEvent(client, {
-      workspaceId: args.workspaceId,
-      channelId: args.channelId,
-      threadRootEventId: args.threadRootEventId ?? null,
-      type: 'message.posted',
-      actorId: args.actorId,
-      payload,
+      const payload: Record<string, unknown> = { text: args.text };
+      if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
+      if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
+      const ev = await insertEvent(client, {
+        workspaceId: args.workspaceId,
+        channelId: args.channelId,
+        threadRootEventId: args.threadRootEventId ?? null,
+        type: 'message.posted',
+        actorId: args.actorId,
+        payload,
+      });
+      return toWireEvent(await attachAuthor(client, ev));
     });
-    return toWireEvent(await attachAuthor(client, ev));
-  });
+  } catch (err) {
+    // Lost the insert race to a concurrent retry — the winner's row is the answer.
+    if ((err as { code?: string }).code === '23505') {
+      const winner = await findExisting(pool);
+      if (winner) return winner;
+    }
+    throw err;
+  }
 }
 
 /**

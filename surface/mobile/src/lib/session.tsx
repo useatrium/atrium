@@ -59,6 +59,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const invalidate = useCallback(async () => {
+    // Every path out of a session (logout AND 401 invalidation) must clear the
+    // local cache/outbox/drafts — a later login may be a different account,
+    // and a stale outbox would flush as them.
+    await import('./cacheSqlite')
+      .then(({ clearCache }) => clearCache())
+      .catch(() => {});
     await SecureStore.deleteItemAsync(STORE_KEY).catch(() => {});
     setSession(null);
   }, []);
@@ -68,10 +74,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const api = createApi({ baseUrl: session.serverUrl, getToken: () => session.token });
       await api.logout().catch(() => {}); // revoke best-effort; clear locally regardless
     }
-    await import('./cacheSqlite')
-      .then(({ clearCache }) => clearCache())
-      .catch(() => {});
-    await invalidate();
+    await invalidate(); // clears cache/outbox/drafts too
   }, [session, invalidate]);
 
   return (

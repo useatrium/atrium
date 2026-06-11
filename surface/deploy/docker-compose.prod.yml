@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${DB_USER:-atrium}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     ports:
-      - "${DB_HOST_PORT:-5433}:5432"
+      - "${DB_BIND_HOST:-127.0.0.1}:${DB_HOST_PORT:-5433}:5432"
     volumes:
       - atrium_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?set MINIO_PASSWORD in .env}
       MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
     ports:
-      - "${MINIO_HOST_PORT:-9000}:9000"
+      - "${BIND_HOST:-0.0.0.0}:${MINIO_HOST_PORT:-9000}:9000"
     volumes:
       - atrium_minio:/data
     healthcheck:
@@ -56,7 +56,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PUSH_REDACT: ${PUSH_REDACT:-1}
     ports:
-      - "${SERVER_HOST_PORT:-3001}:3001"
+      - "${BIND_HOST:-0.0.0.0}:${SERVER_HOST_PORT:-3001}:3001"
     healthcheck:
       test:
         [

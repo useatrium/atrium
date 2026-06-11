@@ -263,3 +263,38 @@ describe('app unread read cursors', () => {
     expect(state.unread[CH]).toBe(false);
   });
 });
+
+  it('unmuting re-derives unread from the cold counters', () => {
+    const loaded = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'was-muted',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+          latestEventId: 10,
+          lastReadEventId: 3,
+          muted: true,
+        },
+      ],
+    });
+    expect(loaded.unread[CH]).toBe(false);
+
+    // Messages arrived while muted (suppressed); unmute must surface them.
+    const unmuted = appReducer(loaded, { type: 'mute-changed', channelId: CH, muted: false });
+    expect(unmuted.unread[CH]).toBe(true);
+
+    // ...and unmuting a fully-read channel stays quiet.
+    const read = appReducer(unmuted, { type: 'read-cursor', channelId: CH, lastReadEventId: 10 });
+    const muted = appReducer(
+      {
+        ...read,
+        channels: read.channels.map((c) => (c.id === CH ? { ...c, lastReadEventId: 10 } : c)),
+      },
+      { type: 'mute-changed', channelId: CH, muted: true },
+    );
+    const unmutedAgain = appReducer(muted, { type: 'mute-changed', channelId: CH, muted: false });
+    expect(unmutedAgain.unread[CH]).toBe(false);
+  });

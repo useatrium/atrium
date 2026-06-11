@@ -136,3 +136,10 @@ Server is unhealthy: read `docker compose logs server`. Startup includes migrati
 Migrations appear stuck: the server uses a Postgres advisory lock. Confirm only one deployment is booting, then inspect `docker compose logs server db`.
 
 Frontend shows 404 on refresh: Caddy's `try_files {path} /index.html` is the SPA fallback. Confirm `surface/web/dist/index.html` exists and the `caddy` service has the bind mount.
+
+## Port exposure
+
+Postgres always binds to `127.0.0.1` on the host (`DB_BIND_HOST`). The API
+server and MinIO bind to `BIND_HOST` (default `0.0.0.0` for the Tailscale
+scenario). On an internet-facing VPS set `BIND_HOST=127.0.0.1` so only Caddy
+(80/443) is reachable — it proxies to the services over the compose network.
