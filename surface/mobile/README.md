@@ -33,8 +33,9 @@ EXPO_PUBLIC_AUTO_LOGIN="http://localhost:3001|alice|Alice" npx expo start
 ## Architecture
 
 - `app/` — expo-router screens. `(app)/` is the authed group: channel list,
-  `channel/[id]` timeline, `thread/[rootId]`, search / new-dm / new-channel
-  modals. `login.tsx` sits outside the group behind a `Stack.Protected` guard.
+  `channel/[id]` timeline, `thread/[rootId]`, `session/[id]` live transcript,
+  `sessions` list, `settings`, and search / new-dm / new-channel modals.
+  `login.tsx` sits outside the group behind a `Stack.Protected` guard.
 - `src/lib/session.tsx` — login session (server origin + bearer token) in
   SecureStore. The server returns the token from `POST /auth/login`; HTTP
   sends it as `Authorization: Bearer`, the WS upgrade and file URLs as
@@ -44,8 +45,15 @@ EXPO_PUBLIC_AUTO_LOGIN="http://localhost:3001|alice|Alice" npx expo start
   jump-to-message. Mirrors `web/src/Chat.tsx`.
 - `src/components/Timeline.tsx` — FlashList v2 anchored at the bottom
   (`startRenderingFromBottom`), `onStartReached` pages older history in.
-- Styling: plain StyleSheet objects against `src/lib/theme.ts`, which mirrors
-  the web client's zinc dark palette.
+- Styling/theming: inline style objects against `src/lib/theme.ts` —
+  `buildColors(scheme, accent, highContrast)` palettes behind
+  `ThemeProvider`/`useTheme()`. Light/dark follows the OS by default
+  (`userInterfaceStyle: "automatic"`); user overrides (theme, accent, text
+  size, high contrast, reduced motion) live in the Settings screen, persist in
+  AsyncStorage (`atrium.prefs.v1`, survives logout), and sync across devices
+  via `PATCH /api/me/prefs` + the `{type:'prefs'}` WS fan-out
+  (`PrefsSessionBridge` in `app/_layout.tsx` owns the reconcile rule: a
+  non-default remote wins; local is re-pushed only over server defaults).
 
 ## Push notifications
 
@@ -69,6 +77,13 @@ What it needs from you (one-time, interactive):
 
 ## Known gaps vs web
 
-- Agent session panes are web-only; session rows render as status cards.
-- No `@agent` composer spawn flow.
 - Quick switcher (⌘K) is replaced by the search modal.
+- No message-search jump from a cold start into very old history (search jumps
+  work for loaded ranges).
+- Web's settings popover and the mobile Settings screen expose the same prefs;
+  notifications config is still per-platform (web: desktop notifications
+  toggle; mobile: push via EAS, see above).
+
+(Previously listed gaps that have since shipped: `@agent` composer spawn,
+live session viewing/steering at `session/[id]`, sessions list, emoji
+reactions, message edit/delete, uploads, jump-to-message.)
