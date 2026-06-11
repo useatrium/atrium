@@ -273,6 +273,34 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return { lastReadEventId: stored };
   });
 
+  app.post('/api/channels/:id/mute', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { muted?: unknown };
+    if (typeof body.muted !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'muted must be boolean' });
+    }
+    if (!(await canAccessChannel(pool, user.id, id))) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    if (body.muted) {
+      await pool.query(
+        `INSERT INTO channel_mutes (user_id, channel_id)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id, channel_id) DO NOTHING`,
+        [user.id, id],
+      );
+    } else {
+      await pool.query('DELETE FROM channel_mutes WHERE user_id = $1 AND channel_id = $2', [
+        user.id,
+        id,
+      ]);
+    }
+    hub.sendToUsers([user.id], { type: 'muted', channelId: id, muted: body.muted });
+    return { muted: body.muted };
+  });
+
   app.get('/api/users', async (req, reply) => {
     if (!requireUser(req, reply)) return;
     return { users: await listUsers(pool) };
