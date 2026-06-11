@@ -14,6 +14,7 @@ import {
   normalizeExecutionStatus,
   sessionDriverId,
   type SeatAuditEntry,
+  type QuestionPrompt,
   type Session,
   type SessionStatus,
 } from './types';
@@ -49,6 +50,8 @@ export function SessionPane({
   const resultText = stream.resultText || session.resultText || '';
   const isSpawner = session.spawnedBy === me.id;
   const spectators = watchers.length;
+  const pendingQuestion =
+    session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
 
   // ---- driver seat (Phase 3) ----
   const driverId = sessionDriverId(session);
@@ -280,6 +283,17 @@ export function SessionPane({
         </div>
       )}
 
+      {pendingQuestion && !displayTerminal && (
+        <QuestionBanner
+          sessionId={session.id}
+          pending={pendingQuestion}
+          isDriver={isDriver}
+          driverName={driverName}
+          seatRequested={seatRequested}
+          requestSeat={requestSeat}
+        />
+      )}
+
       {displayTerminal && resultText && (
         <div
           data-testid="session-result"
@@ -409,6 +423,131 @@ export function SessionPane({
         </>
       )}
     </aside>
+  );
+}
+
+function QuestionBanner({
+  sessionId,
+  pending,
+  isDriver,
+  driverName,
+  seatRequested,
+  requestSeat,
+}: {
+  sessionId: string;
+  pending: { questionId: string; questions: QuestionPrompt[] };
+  isDriver: boolean;
+  driverName: string;
+  seatRequested: boolean;
+  requestSeat: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [cleared, setCleared] = useState<string | null>(null);
+  useEffect(() => {
+    setValues({});
+    setSubmitting(false);
+    setCleared(null);
+  }, [pending.questionId]);
+  if (cleared === pending.questionId) return null;
+
+  const setAnswer = (id: string, value: string) => {
+    setValues((prev) => ({ ...prev, [id]: value }));
+  };
+  const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
+  const submit = () => {
+    if (!complete || submitting) return;
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const q of pending.questions) answers[q.id] = { answers: [values[q.id]!.trim()] };
+    setSubmitting(true);
+    sessionsApi
+      .answerQuestion(sessionId, pending.questionId, answers)
+      .then(() => setCleared(pending.questionId))
+      .finally(() => setSubmitting(false));
+  };
+
+  return (
+    <div
+      data-testid="question-banner"
+      className="shrink-0 border-b border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+          needs input
+        </span>
+        {!isDriver && (
+          <span className="text-zinc-400">
+            waiting for {driverName} to answer
+          </span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {pending.questions.map((q) => (
+          <div key={q.id} className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-zinc-800 px-1.5 py-px text-[10px] font-semibold text-zinc-300">
+                {q.header}
+              </span>
+              {q.isSecret && <span className="text-[10px] text-zinc-500">secret</span>}
+            </div>
+            <div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-100">
+              {q.question}
+            </div>
+            {q.options?.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {q.options.map((option) => {
+                  const selected = values[q.id] === option.label;
+                  return (
+                    <button
+                      key={option.label}
+                      disabled={!isDriver || submitting}
+                      onClick={() => setAnswer(q.id, option.label)}
+                      title={option.description}
+                      className={`rounded-md border px-2 py-1 text-left text-[11px] ${
+                        selected
+                          ? 'border-amber-500 bg-amber-500/15 text-amber-100'
+                          : 'border-zinc-700 bg-zinc-900/70 text-zinc-200 hover:border-zinc-600'
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <span className="block font-semibold">{option.label}</span>
+                      <span className="block text-zinc-500">{option.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <input
+                type={q.isSecret ? 'password' : 'text'}
+                disabled={!isDriver || submitting}
+                value={values[q.id] ?? ''}
+                onChange={(e) => setAnswer(q.id, e.target.value)}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500 disabled:opacity-60"
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {isDriver ? (
+          <button
+            onClick={submit}
+            disabled={!complete || submitting}
+            className="rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? 'Answering…' : 'Submit answer'}
+          </button>
+        ) : seatRequested ? (
+          <span className="text-[11px] text-zinc-500">seat requested</span>
+        ) : (
+          <button
+            onClick={requestSeat}
+            className="rounded border border-indigo-800/60 px-2 py-0.5 text-[11px] font-medium text-indigo-300 hover:bg-indigo-950/40 hover:text-indigo-200"
+          >
+            Request seat
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

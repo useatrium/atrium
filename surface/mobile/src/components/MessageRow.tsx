@@ -164,8 +164,11 @@ function SessionCard({
   onOpen?: (sessionId: string) => void;
 }) {
   const status = session?.status ?? 'spawning';
+  const needsInput = session?.pendingQuestion != null;
   const statusColor =
-    status === 'completed'
+    needsInput
+      ? colors.warning
+      : status === 'completed'
       ? colors.online
       : status === 'failed' || status === 'cancelled'
         ? colors.danger
@@ -191,7 +194,7 @@ function SessionCard({
           ⚙ AGENT SESSION
         </Text>
         <Text style={{ fontSize: font.xs, color: statusColor, fontWeight: '700' }}>
-          {status.toUpperCase()}
+          {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
         </Text>
       </View>
       <Text style={{ color: colors.text, fontSize: font.sm }} numberOfLines={3}>
