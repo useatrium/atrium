@@ -4,10 +4,11 @@ import {
   DurableOpQueue,
   MemoryOpStorage,
   appReducer,
+  dispatchSyncSnapshot,
+  dispatchSyncResponse,
   initialAppState,
   looksLikeAgentCommand,
   mentionsHandle,
-  nextCatchUpStep,
   parseAgentTask,
   randomId,
   type EnqueueOpInput,
@@ -48,6 +49,7 @@ import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { useDialog } from './useDialog';
 
 const PAGE_SIZE = 50;
+const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
 
 export function Chat({
@@ -191,27 +193,14 @@ export function Chat({
     return keys;
   }, [state.channels, state.openSessionId]);
 
-  const catchUpChannel = useCallback(async (channelId: string, initialLastEventId: number) => {
-    if (initialLastEventId <= 0) {
-      const { events, hasMore } = await api.messages(channelId, { limit: PAGE_SIZE });
-      dispatch({ type: 'history-loaded', channelId, events, hasMore });
-      return;
-    }
+  const flushQueuedOps = useCallback(() => {
+    opQueue.nudge();
+  }, [opQueue]);
 
-    let afterId = initialLastEventId;
-    let pagesFetched = 0;
-    for (;;) {
-      const { events, hasMore } = await api.messages(channelId, {
-        afterId,
-        limit: PAGE_SIZE,
-      });
-      pagesFetched += 1;
-      for (const ev of events) dispatch({ type: 'server-event', event: ev });
-      afterId = events.reduce((max, ev) => Math.max(max, ev.id), afterId);
-
-      const step = nextCatchUpStep({ hasMore, pagesFetched });
-      if (step === 'done') return;
-      if (step === 'refetch-latest') {
+  const resetLoadedTimelinesToLatest = useCallback(async () => {
+    const loaded = Object.entries(stateRef.current.timelines).filter(([, t]) => t.loaded);
+    await Promise.all(
+      loaded.map(async ([channelId]) => {
         const latest = await api.messages(channelId, { limit: PAGE_SIZE });
         dispatch({
           type: 'history-reset',
@@ -219,24 +208,47 @@ export function Chat({
           events: latest.events,
           hasMore: latest.hasMore,
         });
-        return;
-      }
-    }
+      }),
+    );
   }, []);
 
-  const catchUp = useCallback(() => {
-    // On (re)connect: refetch anything we might have missed per loaded channel.
-    const s = stateRef.current;
-    for (const [channelId, t] of Object.entries(s.timelines)) {
-      if (!t.loaded) continue;
-      void catchUpChannel(channelId, t.lastEventId).catch(() => {});
+  const syncFromCursor = useCallback(async () => {
+    let cursor = stateRef.current.syncCursor;
+    for (;;) {
+      const response = await api.sync(cursor, { limit: SYNC_LIMIT });
+      if (response.limited) {
+        dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
+        await resetLoadedTimelinesToLatest();
+        dispatch({ type: 'sync-cursor', cursor: response.nextCursor });
+        return;
+      }
+      dispatchSyncResponse(dispatch, response, {
+        onPrefs: adoptPrefs,
+        onEvent: (event) => {
+          if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
+        },
+      });
+      cursor = Math.max(cursor, response.nextCursor);
+      if (response.events.length < SYNC_LIMIT) return;
     }
-    api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
-  }, [catchUpChannel]);
+  }, [resetLoadedTimelinesToLatest]);
 
-  const flushQueuedOps = useCallback(() => {
-    opQueue.nudge();
-  }, [opQueue]);
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
+  const runReconnectSync = useCallback(() => {
+    if (!syncInFlightRef.current) {
+      const work = syncFromCursor().finally(() => {
+        syncInFlightRef.current = null;
+      });
+      syncInFlightRef.current = work;
+    }
+    return syncInFlightRef.current;
+  }, [syncFromCursor]);
+
+  const syncThenFlushQueuedOps = useCallback(() => {
+    void runReconnectSync()
+      .then(flushQueuedOps)
+      .catch(() => {});
+  }, [flushQueuedOps, runReconnectSync]);
 
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, { user: UserRef; until: number }>>({});
@@ -290,8 +302,7 @@ export function Chat({
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
       onOpen: () => {
-        catchUp();
-        flushQueuedOps();
+        syncThenFlushQueuedOps();
       },
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
