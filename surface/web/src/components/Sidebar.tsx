@@ -1,13 +1,33 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { api, type Channel } from '../api';
-import { formatCost, formatTime, isTerminalSessionStatus, type SessionListItem } from '@atrium/surface-client';
+import {
+  ACCENTS,
+  FONT_SCALES,
+  formatCost,
+  formatTime,
+  isTerminalSessionStatus,
+  type Accent,
+  type FontScale,
+  type MotionPref,
+  type SessionListItem,
+  type ThemeMode,
+} from '@atrium/surface-client';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
+import { useTheme } from '../theme';
 import { Avatar } from './Avatar';
-import { BellIcon, BellOffIcon, LockIcon } from './icons';
+import { BellIcon, BellOffIcon, GearIcon, LockIcon } from './icons';
 
 const BELL_TITLES: Record<NotifyState, string> = {
   on: 'Notifications on (mentions + your sessions) — click to turn off',
@@ -54,6 +74,10 @@ export function Sidebar({
   const [dmQuery, setDmQuery] = useState('');
   const [people, setPeople] = useState<UserRef[] | null>(null);
   const [selectedDmIds, setSelectedDmIds] = useState<Set<string>>(new Set());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const settingsPopoverRef = useRef<HTMLDivElement | null>(null);
+  const firstSettingsControlRef = useRef<HTMLButtonElement | null>(null);
 
   const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
   const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
@@ -109,6 +133,35 @@ export function Sidebar({
       setError((err as Error).message);
     }
   };
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    settingsButtonRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    firstSettingsControlRef.current?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        settingsPopoverRef.current?.contains(target) ||
+        settingsButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      closeSettings();
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') closeSettings();
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [settingsOpen]);
 
   return (
     <nav className="flex w-56 shrink-0 flex-col border-r border-edge bg-surface-raised/50">
@@ -327,22 +380,30 @@ export function Sidebar({
         />
       </div>
 
-      <footer className="flex items-center gap-1 border-t border-edge px-4 py-2.5">
+      <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium text-fg-body">{me.displayName}</div>
           <div className="truncate text-2xs text-fg-muted">@{me.handle}</div>
         </div>
         <button
-          onClick={() => {
-            void toggleNotifications().then(setNotify);
-          }}
-          disabled={notify === 'denied' || notify === 'unsupported'}
-          title={BELL_TITLES[notify]}
-          aria-label={BELL_TITLES[notify]}
-          className="rounded-md px-1.5 py-1 text-sm hover:bg-surface-overlay disabled:opacity-40"
+          ref={settingsButtonRef}
+          onClick={() => setSettingsOpen((v) => !v)}
+          title="Settings"
+          aria-label="Settings"
+          aria-expanded={settingsOpen}
+          aria-haspopup="dialog"
+          className="rounded-md px-1.5 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
         >
-          {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
+          <GearIcon />
         </button>
+        {settingsOpen && (
+          <SettingsPopover
+            refEl={settingsPopoverRef}
+            firstControlRef={firstSettingsControlRef}
+            notify={notify}
+            setNotify={setNotify}
+          />
+        )}
         <button
           onClick={onLogout}
           className="rounded-md px-2 py-1 text-2xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
@@ -351,6 +412,181 @@ export function Sidebar({
         </button>
       </footer>
     </nav>
+  );
+}
+
+const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+const MOTION_OPTIONS: { value: MotionPref; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'reduced', label: 'Reduced' },
+  { value: 'full', label: 'Full' },
+];
+
+const ACCENT_LABELS: Record<Accent, string> = {
+  indigo: 'Indigo',
+  teal: 'Teal',
+  amber: 'Amber',
+  rose: 'Rose',
+};
+
+const FONT_LABELS: Record<FontScale, string> = {
+  0.875: 'S',
+  1: 'M',
+  1.125: 'L',
+  1.25: 'XL',
+};
+
+const SWATCH_CLASSES: Record<Accent, string> = {
+  indigo: 'accent-swatch-indigo',
+  teal: 'accent-swatch-teal',
+  amber: 'accent-swatch-amber',
+  rose: 'accent-swatch-rose',
+};
+
+function SettingsPopover({
+  refEl,
+  firstControlRef,
+  notify,
+  setNotify,
+}: {
+  refEl: RefObject<HTMLDivElement | null>;
+  firstControlRef: RefObject<HTMLButtonElement | null>;
+  notify: NotifyState;
+  setNotify: (state: NotifyState) => void;
+}) {
+  const { prefs, setPrefs } = useTheme();
+  const segmentButton = (active: boolean) =>
+    `h-8 flex-1 rounded px-2 text-xs font-medium ${
+      active
+        ? 'bg-accent text-on-accent'
+        : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
+    }`;
+
+  return (
+    <div
+      ref={refEl}
+      role="dialog"
+      aria-label="Settings"
+      className="absolute bottom-full right-2 z-40 mb-2 w-72 rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl"
+    >
+      <div className="space-y-3">
+        <SettingRow label="Theme">
+          <div className="flex rounded-md border border-edge bg-surface p-0.5">
+            {THEME_OPTIONS.map((option, index) => (
+              <button
+                key={option.value}
+                ref={index === 0 ? firstControlRef : undefined}
+                type="button"
+                aria-pressed={prefs.theme === option.value}
+                onClick={() => setPrefs({ theme: option.value })}
+                className={segmentButton(prefs.theme === option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Accent">
+          <div className="flex items-center gap-2">
+            {ACCENTS.map((accent) => (
+              <button
+                key={accent}
+                type="button"
+                aria-label={`${ACCENT_LABELS[accent]} accent`}
+                title={ACCENT_LABELS[accent]}
+                aria-pressed={prefs.accent === accent}
+                onClick={() => setPrefs({ accent })}
+                className={`flex size-8 items-center justify-center rounded-md border border-edge ${
+                  prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
+                }`}
+              >
+                <span className={`size-4 rounded-full ${SWATCH_CLASSES[accent]}`} />
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Text size">
+          <div className="grid grid-cols-4 rounded-md border border-edge bg-surface p-0.5">
+            {FONT_SCALES.map((fontScale) => (
+              <button
+                key={fontScale}
+                type="button"
+                aria-label={`${FONT_LABELS[fontScale]} text size`}
+                aria-pressed={prefs.fontScale === fontScale}
+                onClick={() => setPrefs({ fontScale })}
+                className={segmentButton(prefs.fontScale === fontScale)}
+              >
+                {FONT_LABELS[fontScale]}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="High contrast">
+          <button
+            type="button"
+            aria-pressed={prefs.highContrast}
+            onClick={() => setPrefs({ highContrast: !prefs.highContrast })}
+            className={`flex h-8 w-16 items-center rounded-full border px-1 ${
+              prefs.highContrast
+                ? 'justify-end border-accent bg-accent text-on-accent'
+                : 'justify-start border-edge-strong bg-surface text-fg-muted'
+            }`}
+          >
+            <span className="size-5 rounded-full bg-current" />
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Motion">
+          <div className="flex rounded-md border border-edge bg-surface p-0.5">
+            {MOTION_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={prefs.motion === option.value}
+                onClick={() => setPrefs({ motion: option.value })}
+                className={segmentButton(prefs.motion === option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Notifications">
+          <button
+            type="button"
+            onClick={() => {
+              void toggleNotifications().then(setNotify);
+            }}
+            disabled={notify === 'denied' || notify === 'unsupported'}
+            title={BELL_TITLES[notify]}
+            aria-label={BELL_TITLES[notify]}
+            aria-pressed={notify === 'on'}
+            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:opacity-40"
+          >
+            {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
+            <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
+          </button>
+        </SettingRow>
+      </div>
+    </div>
+  );
+}
+
+function SettingRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">{label}</div>
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }
 
