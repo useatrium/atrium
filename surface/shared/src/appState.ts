@@ -128,8 +128,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, channels, activeChannelId, unread };
     }
 
-    case 'read-cursor':
-      return { ...state, unread: { ...state.unread, [action.channelId]: false } };
+    case 'read-cursor': {
+      // Keep the cold counter current too — the unread divider and unmute
+      // re-derivation compare against it long after channels-loaded.
+      const channels = state.channels.map((c) =>
+        c.id === action.channelId && (c.lastReadEventId ?? 0) < action.lastReadEventId
+          ? { ...c, lastReadEventId: action.lastReadEventId }
+          : c,
+      );
+      return { ...state, channels, unread: { ...state.unread, [action.channelId]: false } };
+    }
 
     case 'mute-changed': {
       const channels = state.channels.map((c) =>
@@ -235,6 +243,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       const isNewMessage =
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
+      if (isNewMessage && !ev.mock && typeof ev.id === 'number') {
+        // Live events must advance the cold counter — the unread divider and
+        // unmute re-derivation compare latestEventId against lastReadEventId.
+        next = {
+          ...next,
+          channels: next.channels.map((c) =>
+            c.id === ev.channelId && (c.latestEventId ?? 0) < ev.id
+              ? { ...c, latestEventId: ev.id }
+              : c,
+          ),
+        };
+      }
       if (isNewMessage && ev.channelId !== state.activeChannelId) {
         const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
         const channel = state.channels.find((c) => c.id === ev.channelId);

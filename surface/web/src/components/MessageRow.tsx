@@ -423,7 +423,7 @@ export const MessageRow = memo(function MessageRow({
                 onClick={() => onOpenThread!(m.id!)}
                 title="Reply in thread"
                 aria-label="Reply in thread"
-                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 <CornerUpLeftIcon /> Reply
               </button>
