@@ -58,6 +58,12 @@ export interface ListSessionsOptions {
   limit?: number;
 }
 
+export type ReactionAction = 'add' | 'remove';
+export type ReactionResponse = { event: WireEvent } | { event: null; applied: false };
+export interface OpOptions {
+  opId?: string;
+}
+
 export function createApi(opts: ApiOptions = {}) {
   const base = (opts.baseUrl ?? '').replace(/\/+$/, '');
 
@@ -108,10 +114,10 @@ export function createApi(opts: ApiOptions = {}) {
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
     /** Partial update; server merges over stored prefs and fans the full
      * normalized result out to all of the user's sockets via {type:'prefs'}. */
-    patchPrefs: (patch: Partial<UserPrefs>) =>
+    patchPrefs: (patch: Partial<UserPrefs>, op: OpOptions = {}) =>
       req<{ prefs: UserPrefs }>('/api/me/prefs', {
         method: 'PATCH',
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST', body: '{}' }),
     workspaces: () => req<{ workspaces: Workspace[] }>('/api/workspaces'),
@@ -123,14 +129,15 @@ export function createApi(opts: ApiOptions = {}) {
       }),
     channelMembers: (channelId: string) =>
       req<{ members: UserRef[] }>(`/api/channels/${channelId}/members`),
-    addChannelMember: (channelId: string, userId: string) =>
+    addChannelMember: (channelId: string, userId: string, op: OpOptions = {}) =>
       req<{ member: UserRef }>(`/api/channels/${channelId}/members`, {
         method: 'POST',
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
-    leaveChannelMembership: (channelId: string) =>
+    leaveChannelMembership: (channelId: string, op: OpOptions = {}) =>
       req<{ ok: true }>(`/api/channels/${channelId}/members/me`, {
         method: 'DELETE',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
       }),
     messages: (
       channelId: string,
@@ -145,15 +152,15 @@ export function createApi(opts: ApiOptions = {}) {
         `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`,
       );
     },
-    markRead: (channelId: string, lastReadEventId: number) =>
+    markRead: (channelId: string, lastReadEventId: number, op: OpOptions = {}) =>
       req<{ lastReadEventId: number }>(`/api/channels/${channelId}/read`, {
         method: 'POST',
-        body: JSON.stringify({ lastReadEventId }),
+        body: JSON.stringify({ lastReadEventId, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
-    setMute: (channelId: string, muted: boolean) =>
+    setMute: (channelId: string, muted: boolean, op: OpOptions = {}) =>
       req<{ muted: boolean }>(`/api/channels/${channelId}/mute`, {
         method: 'POST',
-        body: JSON.stringify({ muted }),
+        body: JSON.stringify({ muted, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
@@ -176,6 +183,7 @@ export function createApi(opts: ApiOptions = {}) {
       threadRootEventId?: number;
       /** Optimistic id echoed on session.spawned for lost-response reconcile. */
       clientSpawnId?: string;
+      opId?: string;
     }) =>
       req<{ session: SessionWire }>('/api/sessions', {
         method: 'POST',
@@ -201,17 +209,20 @@ export function createApi(opts: ApiOptions = {}) {
      */
     fileSignedUrl: (fileId: string) =>
       req<{ url: string; expiresAt: string }>(`/api/files/${fileId}/url`),
-    editMessage: (eventId: number, text: string) =>
+    editMessage: (eventId: number, text: string, op: OpOptions = {}) =>
       req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
-    deleteMessage: (eventId: number) =>
-      req<{ event: WireEvent }>(`/api/messages/${eventId}`, { method: 'DELETE' }),
-    toggleReaction: (eventId: number, emoji: string) =>
-      req<{ event: WireEvent }>(`/api/messages/${eventId}/reactions`, {
+    deleteMessage: (eventId: number, op: OpOptions = {}) =>
+      req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
+        method: 'DELETE',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
+      }),
+    setReaction: (eventId: number, emoji: string, action: ReactionAction, op: OpOptions = {}) =>
+      req<ReactionResponse>(`/api/messages/${eventId}/reactions`, {
         method: 'POST',
-        body: JSON.stringify({ emoji }),
+        body: JSON.stringify({ emoji, action, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     search: (q: string, limit = 8) =>
       req<{ results: { event: WireEvent; channelName: string }[] }>(
@@ -255,12 +266,16 @@ export function createApi(opts: ApiOptions = {}) {
       id: string,
       questionId: string,
       answers: Record<string, { answers: string[] }>,
+      op: OpOptions = {},
     ) =>
       req<{ ok: true }>(`/api/sessions/${id}/answer`, {
         method: 'POST',
-        body: JSON.stringify({ questionId, answers }),
+        body: JSON.stringify({ questionId, answers, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
-    cancelSession: (id: string) =>
-      req<{ ok: true }>(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' }),
+    cancelSession: (id: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
+      }),
   };
 }

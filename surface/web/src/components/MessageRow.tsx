@@ -59,7 +59,7 @@ export const MessageRow = memo(function MessageRow({
   /** Resolves when the edit is accepted; the folded event updates the row. */
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
-  /** Toggle an emoji reaction (server decides add vs remove). */
+  /** Toggle an emoji reaction in the UI; caller sends explicit add/remove. */
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
 }) {
   const m = message;

@@ -439,8 +439,12 @@ export function Chat({
   const removeMessage = (m: ChatMessage): Promise<void> =>
     api.deleteMessage(m.id!).then(({ event }) => dispatch({ type: 'server-event', event }));
 
-  const reactToMessage = (m: ChatMessage, emoji: string): Promise<void> =>
-    api.toggleReaction(m.id!, emoji).then(({ event }) => dispatch({ type: 'server-event', event }));
+  const reactToMessage = (m: ChatMessage, emoji: string): Promise<void> => {
+    const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
+    return api.setReaction(m.id!, emoji, mine ? 'remove' : 'add').then(({ event }) => {
+      if (event) dispatch({ type: 'server-event', event });
+    });
+  };
 
   // ---- jump to a message from search: page history back until it's loaded ----
   const [highlightId, setHighlightId] = useState<number | null>(null);

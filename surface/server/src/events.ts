@@ -313,34 +313,39 @@ export async function editMessage(
   pool: Db,
   args: { targetEventId: number; actorId: string; text: string },
 ): Promise<WireEvent> {
-  return withTx(pool, async (client) => {
-    const target = await client.query<{
-      workspace_id: string;
-      channel_id: string | null;
-      thread_root_event_id: number | null;
-      type: string;
-      actor_id: string | null;
-    }>(
-      'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-      [args.targetEventId],
-    );
-    const t = target.rows[0];
-    if (!t || t.type !== 'message.posted') {
-      throw new DomainError(404, 'message_not_found', 'message not found');
-    }
-    if (t.actor_id !== args.actorId) {
-      throw new DomainError(403, 'forbidden', 'only the author may edit a message');
-    }
-    const ev = await insertEvent(client, {
-      workspaceId: t.workspace_id,
-      channelId: t.channel_id,
-      threadRootEventId: t.thread_root_event_id,
-      type: 'message.edited',
-      actorId: args.actorId,
-      payload: { target_event_id: args.targetEventId, text: args.text },
-    });
-    return toWireEvent(await attachAuthor(client, ev));
+  return withTx(pool, (client) => editMessageTx(client, args));
+}
+
+export async function editMessageTx(
+  client: DbClient,
+  args: { targetEventId: number; actorId: string; text: string },
+): Promise<WireEvent> {
+  const target = await client.query<{
+    workspace_id: string;
+    channel_id: string | null;
+    thread_root_event_id: number | null;
+    type: string;
+    actor_id: string | null;
+  }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+    [args.targetEventId],
+  );
+  const t = target.rows[0];
+  if (!t || t.type !== 'message.posted') {
+    throw new DomainError(404, 'message_not_found', 'message not found');
+  }
+  if (t.actor_id !== args.actorId) {
+    throw new DomainError(403, 'forbidden', 'only the author may edit a message');
+  }
+  const ev = await insertEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: 'message.edited',
+    actorId: args.actorId,
+    payload: { target_event_id: args.targetEventId, text: args.text },
   });
+  return toWireEvent(await attachAuthor(client, ev));
 }
 
 /**
@@ -352,34 +357,39 @@ export async function deleteMessage(
   pool: Db,
   args: { targetEventId: number; actorId: string },
 ): Promise<WireEvent> {
-  return withTx(pool, async (client) => {
-    const target = await client.query<{
-      workspace_id: string;
-      channel_id: string | null;
-      thread_root_event_id: number | null;
-      type: string;
-      actor_id: string | null;
-    }>(
-      'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-      [args.targetEventId],
-    );
-    const t = target.rows[0];
-    if (!t || t.type !== 'message.posted') {
-      throw new DomainError(404, 'message_not_found', 'message not found');
-    }
-    if (t.actor_id !== args.actorId) {
-      throw new DomainError(403, 'forbidden', 'only the author may delete a message');
-    }
-    const ev = await insertEvent(client, {
-      workspaceId: t.workspace_id,
-      channelId: t.channel_id,
-      threadRootEventId: t.thread_root_event_id,
-      type: 'message.deleted',
-      actorId: args.actorId,
-      payload: { target_event_id: args.targetEventId },
-    });
-    return toWireEvent(await attachAuthor(client, ev));
+  return withTx(pool, (client) => deleteMessageTx(client, args));
+}
+
+export async function deleteMessageTx(
+  client: DbClient,
+  args: { targetEventId: number; actorId: string },
+): Promise<WireEvent> {
+  const target = await client.query<{
+    workspace_id: string;
+    channel_id: string | null;
+    thread_root_event_id: number | null;
+    type: string;
+    actor_id: string | null;
+  }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+    [args.targetEventId],
+  );
+  const t = target.rows[0];
+  if (!t || t.type !== 'message.posted') {
+    throw new DomainError(404, 'message_not_found', 'message not found');
+  }
+  if (t.actor_id !== args.actorId) {
+    throw new DomainError(403, 'forbidden', 'only the author may delete a message');
+  }
+  const ev = await insertEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: 'message.deleted',
+    actorId: args.actorId,
+    payload: { target_event_id: args.targetEventId },
   });
+  return toWireEvent(await attachAuthor(client, ev));
 }
 
 /** Emojis a message can be reacted with — keep in sync with the web client's
@@ -395,51 +405,69 @@ export const REACTION_EMOJI = [
   '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
 ] as const;
 
+export type ReactionAction = 'add' | 'remove';
+
+export interface ReactionResult {
+  event: WireEvent | null;
+  applied: boolean;
+}
+
 /**
- * Toggle the actor's reaction: appends reaction.added when the actor doesn't
- * currently have that emoji on the message, reaction.removed when they do.
+ * Apply an explicit reaction set operation. Re-applying the same set state is
+ * a successful no-op, which makes retry schedules safe without a toggle shim.
  */
-export async function toggleReaction(
+export async function setReaction(
   pool: Db,
-  args: { targetEventId: number; actorId: string; emoji: string },
-): Promise<WireEvent> {
+  args: { targetEventId: number; actorId: string; emoji: string; action: ReactionAction },
+): Promise<ReactionResult> {
   if (!(REACTION_EMOJI as readonly string[]).includes(args.emoji)) {
     throw new DomainError(400, 'invalid_emoji', 'unsupported reaction emoji');
   }
-  return withTx(pool, async (client) => {
-    const target = await client.query<{
-      workspace_id: string;
-      channel_id: string | null;
-      thread_root_event_id: number | null;
-      type: string;
-    }>(
-      'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1',
-      [args.targetEventId],
-    );
-    const t = target.rows[0];
-    if (!t || t.type !== 'message.posted') {
-      throw new DomainError(404, 'message_not_found', 'message not found');
-    }
-    const net = await client.query<{ net: string }>(
-      `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0) AS net
-       FROM events
-       WHERE type IN ('reaction.added', 'reaction.removed')
-         AND (payload->>'target_event_id')::bigint = $1
-         AND actor_id = $2
-         AND payload->>'emoji' = $3`,
-      [args.targetEventId, args.actorId, args.emoji],
-    );
-    const on = Number(net.rows[0]?.net ?? 0) > 0;
-    const ev = await insertEvent(client, {
-      workspaceId: t.workspace_id,
-      channelId: t.channel_id,
-      threadRootEventId: t.thread_root_event_id,
-      type: on ? 'reaction.removed' : 'reaction.added',
-      actorId: args.actorId,
-      payload: { target_event_id: args.targetEventId, emoji: args.emoji },
-    });
-    return toWireEvent(await attachAuthor(client, ev));
+  return withTx(pool, (client) => setReactionTx(client, args));
+}
+
+export async function setReactionTx(
+  client: DbClient,
+  args: { targetEventId: number; actorId: string; emoji: string; action: ReactionAction },
+): Promise<ReactionResult> {
+  if (!(REACTION_EMOJI as readonly string[]).includes(args.emoji)) {
+    throw new DomainError(400, 'invalid_emoji', 'unsupported reaction emoji');
+  }
+  const target = await client.query<{
+    workspace_id: string;
+    channel_id: string | null;
+    thread_root_event_id: number | null;
+    type: string;
+  }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1 FOR UPDATE',
+    [args.targetEventId],
+  );
+  const t = target.rows[0];
+  if (!t || t.type !== 'message.posted') {
+    throw new DomainError(404, 'message_not_found', 'message not found');
+  }
+  const net = await client.query<{ net: string }>(
+    `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0) AS net
+     FROM events
+     WHERE type IN ('reaction.added', 'reaction.removed')
+       AND (payload->>'target_event_id')::bigint = $1
+       AND actor_id = $2
+       AND payload->>'emoji' = $3`,
+    [args.targetEventId, args.actorId, args.emoji],
+  );
+  const present = Number(net.rows[0]?.net ?? 0) > 0;
+  if ((args.action === 'add' && present) || (args.action === 'remove' && !present)) {
+    return { event: null, applied: false };
+  }
+  const ev = await insertEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: args.action === 'add' ? 'reaction.added' : 'reaction.removed',
+    actorId: args.actorId,
+    payload: { target_event_id: args.targetEventId, emoji: args.emoji },
   });
+  return { event: toWireEvent(await attachAuthor(client, ev)), applied: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -832,99 +860,109 @@ export async function addChannelMember(
   pool: Db,
   args: { channelId: string; actorId: string; userId: string },
 ): Promise<{ channel: Channel; member: UserRef; event: WireEvent } | null> {
-  return withTx(pool, async (client) => {
-    const ch = await client.query<{
-      id: string;
-      workspace_id: string;
-      name: string;
-      created_at: Date;
-      kind: Channel['kind'];
-      member: boolean;
-    }>(
-      `SELECT c.*,
-              EXISTS (SELECT 1 FROM channel_members m
-                      WHERE m.channel_id = c.id AND m.user_id = $2) AS member
-       FROM channels c
-       WHERE c.id = $1`,
-      [args.channelId, args.actorId],
-    );
-    const row = ch.rows[0];
-    if (!row || row.kind === 'public' || row.kind === 'dm' || !row.member) return null;
-    const user = await client.query<{ id: string; handle: string; display_name: string }>(
-      'SELECT id, handle, display_name FROM users WHERE id = $1',
-      [args.userId],
-    );
-    const u = user.rows[0];
-    if (!u) throw new DomainError(404, 'user_not_found', 'user not found');
-    await client.query(
-      `INSERT INTO channel_members (channel_id, user_id)
-       VALUES ($1, $2)
-       ON CONFLICT DO NOTHING`,
-      [args.channelId, args.userId],
-    );
-    const member = { id: u.id, handle: u.handle, displayName: u.display_name };
-    const members = row.kind === 'gdm' ? await membersForChannel(client, args.channelId) : undefined;
-    const count = await client.query<{ count: string }>(
-      'SELECT COUNT(*) FROM channel_members WHERE channel_id = $1',
-      [args.channelId],
-    );
-    const ev = await insertEvent(client, {
-      workspaceId: row.workspace_id,
-      channelId: row.id,
-      type: 'channel.member_joined',
-      actorId: args.actorId,
-      payload: { userId: member.id, displayName: member.displayName },
-    });
-    return {
-      channel: {
-        id: row.id,
-        workspaceId: row.workspace_id,
-        name: row.name,
-        createdAt: new Date(row.created_at).toISOString(),
-        kind: row.kind,
-        ...(row.kind === 'gdm' ? { members } : { memberCount: Number(count.rows[0]!.count) }),
-      },
-      member,
-      event: toWireEvent(await attachAuthor(client, ev)),
-    };
+  return withTx(pool, (client) => addChannelMemberTx(client, args));
+}
+
+export async function addChannelMemberTx(
+  client: DbClient,
+  args: { channelId: string; actorId: string; userId: string },
+): Promise<{ channel: Channel; member: UserRef; event: WireEvent } | null> {
+  const ch = await client.query<{
+    id: string;
+    workspace_id: string;
+    name: string;
+    created_at: Date;
+    kind: Channel['kind'];
+    member: boolean;
+  }>(
+    `SELECT c.*,
+            EXISTS (SELECT 1 FROM channel_members m
+                    WHERE m.channel_id = c.id AND m.user_id = $2) AS member
+     FROM channels c
+     WHERE c.id = $1`,
+    [args.channelId, args.actorId],
+  );
+  const row = ch.rows[0];
+  if (!row || row.kind === 'public' || row.kind === 'dm' || !row.member) return null;
+  const user = await client.query<{ id: string; handle: string; display_name: string }>(
+    'SELECT id, handle, display_name FROM users WHERE id = $1',
+    [args.userId],
+  );
+  const u = user.rows[0];
+  if (!u) throw new DomainError(404, 'user_not_found', 'user not found');
+  await client.query(
+    `INSERT INTO channel_members (channel_id, user_id)
+     VALUES ($1, $2)
+     ON CONFLICT DO NOTHING`,
+    [args.channelId, args.userId],
+  );
+  const member = { id: u.id, handle: u.handle, displayName: u.display_name };
+  const members = row.kind === 'gdm' ? await membersForChannel(client, args.channelId) : undefined;
+  const count = await client.query<{ count: string }>(
+    'SELECT COUNT(*) FROM channel_members WHERE channel_id = $1',
+    [args.channelId],
+  );
+  const ev = await insertEvent(client, {
+    workspaceId: row.workspace_id,
+    channelId: row.id,
+    type: 'channel.member_joined',
+    actorId: args.actorId,
+    payload: { userId: member.id, displayName: member.displayName },
   });
+  return {
+    channel: {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      name: row.name,
+      createdAt: new Date(row.created_at).toISOString(),
+      kind: row.kind,
+      ...(row.kind === 'gdm' ? { members } : { memberCount: Number(count.rows[0]!.count) }),
+    },
+    member,
+    event: toWireEvent(await attachAuthor(client, ev)),
+  };
 }
 
 export async function leaveChannel(
   pool: Db,
   args: { channelId: string; userId: string },
 ): Promise<{ event: WireEvent } | null> {
-  return withTx(pool, async (client) => {
-    const ch = await client.query<{
-      workspace_id: string;
-      kind: Channel['kind'];
-      member: boolean;
-      display_name: string;
-    }>(
-      `SELECT c.workspace_id, c.kind,
-              EXISTS (SELECT 1 FROM channel_members m
-                      WHERE m.channel_id = c.id AND m.user_id = $2) AS member,
-              u.display_name
-       FROM channels c CROSS JOIN users u
-       WHERE c.id = $1 AND u.id = $2`,
-      [args.channelId, args.userId],
-    );
-    const row = ch.rows[0];
-    if (!row || row.kind === 'public' || !row.member) return null;
-    if (row.kind === 'dm') throw new DomainError(400, 'cannot_leave_dm', 'cannot leave a DM');
-    await client.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [
-      args.channelId,
-      args.userId,
-    ]);
-    const ev = await insertEvent(client, {
-      workspaceId: row.workspace_id,
-      channelId: args.channelId,
-      type: 'channel.member_left',
-      actorId: args.userId,
-      payload: { userId: args.userId, displayName: row.display_name },
-    });
-    return { event: toWireEvent(await attachAuthor(client, ev)) };
+  return withTx(pool, (client) => leaveChannelTx(client, args));
+}
+
+export async function leaveChannelTx(
+  client: DbClient,
+  args: { channelId: string; userId: string },
+): Promise<{ event: WireEvent } | null> {
+  const ch = await client.query<{
+    workspace_id: string;
+    kind: Channel['kind'];
+    member: boolean;
+    display_name: string;
+  }>(
+    `SELECT c.workspace_id, c.kind,
+            EXISTS (SELECT 1 FROM channel_members m
+                    WHERE m.channel_id = c.id AND m.user_id = $2) AS member,
+            u.display_name
+     FROM channels c CROSS JOIN users u
+     WHERE c.id = $1 AND u.id = $2`,
+    [args.channelId, args.userId],
+  );
+  const row = ch.rows[0];
+  if (!row || row.kind === 'public' || !row.member) return null;
+  if (row.kind === 'dm') throw new DomainError(400, 'cannot_leave_dm', 'cannot leave a DM');
+  await client.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [
+    args.channelId,
+    args.userId,
+  ]);
+  const ev = await insertEvent(client, {
+    workspaceId: row.workspace_id,
+    channelId: args.channelId,
+    type: 'channel.member_left',
+    actorId: args.userId,
+    payload: { userId: args.userId, displayName: row.display_name },
   });
+  return { event: toWireEvent(await attachAuthor(client, ev)) };
 }
 
 /**
