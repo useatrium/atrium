@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
-import type { AttachmentMeta, ChatMessage } from '@atrium/surface-client';
+import type { AttachmentMeta, AttachmentRef, ChatMessage, UploadPayload } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
 import { Composer } from './Composer';
@@ -16,6 +16,7 @@ export function ThreadPanel({
   meHandle,
   onClose,
   onSend,
+  queueUpload,
   onOpenSession,
   onRetry,
   onEdit,
@@ -31,7 +32,8 @@ export function ThreadPanel({
   meId?: string;
   meHandle?: string;
   onClose: () => void;
-  onSend: (text: string, attachments?: AttachmentMeta[]) => void;
+  onSend: (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
+  queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   onOpenSession: (sessionId: string) => void;
   onRetry: (message: ChatMessage) => void;
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
@@ -114,7 +116,14 @@ export function ThreadPanel({
           </div>
         )}
       </div>
-      <Composer placeholder="Reply…" onSend={onSend} autoFocus agentAware allowAttachments />
+      <Composer
+        placeholder="Reply…"
+        onSend={onSend}
+        queueUpload={queueUpload}
+        autoFocus
+        agentAware
+        allowAttachments
+      />
     </aside>
   );
 }

@@ -5,6 +5,7 @@ import type { AttachmentMeta, WireEvent } from './timeline';
 
 export type OpType =
   | 'msg.send'
+  | 'upload'
   | 'msg.edit'
   | 'msg.delete'
   | 'reaction.set'
@@ -20,7 +21,7 @@ export interface QueuedOp {
   opType: OpType;
   queueKey: string;
   payload: unknown;
-  status: 'pending' | 'inflight';
+  status: 'pending' | 'inflight' | 'completed';
   retryCount: number;
   createdAt: string;
 }
@@ -39,7 +40,25 @@ export interface MsgSendPayload {
   clientMsgId: string;
   threadRootEventId?: number;
   attachments?: AttachmentMeta[];
+  attachmentRefs?: AttachmentRef[];
   createdAt?: string;
+}
+
+export interface AttachmentRef {
+  uploadKey: string;
+}
+
+export interface UploadPayload {
+  uploadKey: string;
+  localUri: string;
+  contentHash?: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  width?: number;
+  height?: number;
+  fileId?: string;
+  uploaded?: boolean;
 }
 
 export interface MsgEditPayload {
@@ -99,6 +118,7 @@ export interface ChannelLeavePayload {
 
 export type OpPayloadByType = {
   'msg.send': MsgSendPayload;
+  upload: UploadPayload;
   'msg.edit': MsgEditPayload;
   'msg.delete': MsgDeletePayload;
   'reaction.set': ReactionSetPayload;
@@ -112,6 +132,7 @@ export type OpPayloadByType = {
 
 type OpResultByType = {
   'msg.send': { event: WireEvent };
+  upload: { fileId: string };
   'msg.edit': { event: WireEvent };
   'msg.delete': { event: WireEvent };
   'reaction.set': { event: WireEvent } | { event: null; applied: false };
@@ -123,20 +144,35 @@ type OpResultByType = {
   'channel.leave': { ok: true };
 };
 
+export interface OpExecuteContext {
+  listOps(): Promise<QueuedOp[]>;
+  putOp(op: QueuedOp): Promise<void>;
+  uploadFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  readUploadBody(payload: UploadPayload): Promise<BodyInit>;
+}
+
 export interface OpHandler<T extends OpType> {
-  execute(api: Api, payload: OpPayloadByType[T], op: QueuedOp): Promise<OpResultByType[T]>;
+  execute(
+    api: Api,
+    payload: OpPayloadByType[T],
+    op: QueuedOp,
+    context: OpExecuteContext,
+  ): Promise<OpResultByType[T]>;
+  dependsOn?(payload: OpPayloadByType[T], op: QueuedOp): string[];
+  completedOp?(op: QueuedOp, result: OpResultByType[T]): QueuedOp | null;
+  removeDependenciesOnSettled?: boolean;
   onConfirmed(
     dispatch: (action: AppAction) => void,
     result: OpResultByType[T],
     payload: OpPayloadByType[T],
     op: QueuedOp,
-  ): void;
+  ): void | Promise<void>;
   onRejected(
     dispatch: (action: AppAction) => void,
     payload: OpPayloadByType[T],
     error: unknown,
     op: QueuedOp,
-  ): void;
+  ): void | Promise<void>;
 }
 
 export type OpRegistry = {
@@ -154,6 +190,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
   switch (opType) {
     case 'msg.send':
       return `msg:${(payload as MsgSendPayload).channelId}`;
+    case 'upload':
+      return `upload:${(payload as UploadPayload).uploadKey}`;
     case 'msg.edit': {
       const p = payload as MsgEditPayload;
       return `edit:${p.eventId}`;
@@ -310,6 +348,8 @@ export interface OpQueueOptions {
   maxParallelKeys?: number;
   maxServerRetries?: number;
   onRejected?: (op: QueuedOp, error: unknown) => void;
+  uploadFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  readUploadBody?: (payload: UploadPayload) => Promise<BodyInit>;
   setTimer?: (cb: () => void, ms: number) => unknown;
 }
 
@@ -321,6 +361,8 @@ export class DurableOpQueue {
   private readonly maxParallelKeys: number;
   private readonly maxServerRetries: number;
   private readonly onRejected?: (op: QueuedOp, error: unknown) => void;
+  private readonly uploadFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  private readonly readUploadBody: (payload: UploadPayload) => Promise<BodyInit>;
   private readonly setTimer: (cb: () => void, ms: number) => unknown;
   private readonly activeKeys = new Set<string>();
   private readonly retryAfter = new Map<string, number>();
@@ -335,6 +377,14 @@ export class DurableOpQueue {
     this.maxParallelKeys = options.maxParallelKeys ?? 4;
     this.maxServerRetries = options.maxServerRetries ?? 5;
     this.onRejected = options.onRejected;
+    this.uploadFetch = options.uploadFetch ?? ((input, init) => fetch(input, init));
+    this.readUploadBody =
+      options.readUploadBody ??
+      (async (payload) => {
+        const res = await fetch(payload.localUri);
+        if (!res.ok) throw new Error(`read upload body failed (${res.status})`);
+        return res.blob();
+      });
     this.setTimer = options.setTimer ?? ((cb, ms) => setTimeout(cb, ms));
   }
 
@@ -390,6 +440,7 @@ export class DurableOpQueue {
       if (op.status !== 'pending') continue;
       if (seenKeys.has(op.queueKey) || this.activeKeys.has(op.queueKey)) continue;
       seenKeys.add(op.queueKey);
+      if (!this.dependenciesSatisfied(op, ops)) continue;
       const retryAt = this.retryAfter.get(op.opId) ?? 0;
       if (retryAt > now) {
         this.setTimer(() => this.nudge(), retryAt - now);
@@ -403,16 +454,36 @@ export class DurableOpQueue {
 
   private async runOp(op: QueuedOp): Promise<void> {
     this.activeKeys.add(op.queueKey);
+    let currentOp: QueuedOp = op;
     try {
       const inflight = { ...op, status: 'inflight' as const };
-      await this.storage.putOp(inflight);
+      currentOp = inflight;
+      await this.storage.putOp(currentOp);
       const handler = this.registry[op.opType] as OpHandler<OpType>;
-      const result = await handler.execute(this.api, asPayload(inflight), inflight);
-      await this.storage.removeOp(op.opId);
+      const context: OpExecuteContext = {
+        listOps: () => this.storage.listOps(),
+        putOp: async (next) => {
+          currentOp = next;
+          await this.storage.putOp(next);
+        },
+        uploadFetch: this.uploadFetch,
+        readUploadBody: this.readUploadBody,
+      };
+      const result = await handler.execute(this.api, asPayload(currentOp), currentOp, context);
+      const completed = handler.completedOp?.(currentOp, result) ?? null;
+      if (completed) {
+        currentOp = completed;
+        await this.storage.putOp(completed);
+      } else {
+        await this.storage.removeOp(op.opId);
+      }
       this.retryAfter.delete(op.opId);
-      handler.onConfirmed(this.dispatch, result, asPayload(inflight), inflight);
+      await handler.onConfirmed(this.dispatch, result, asPayload(currentOp), currentOp);
+      if (handler.removeDependenciesOnSettled) {
+        await this.removeDependencies(currentOp);
+      }
     } catch (error) {
-      await this.handleFailure(op, error);
+      await this.handleFailure(currentOp, error);
     } finally {
       this.activeKeys.delete(op.queueKey);
       this.flushAgain = true;
@@ -436,27 +507,95 @@ export class DurableOpQueue {
     if (shouldRejectHttp(error) || isRetryableServerError(error)) {
       await this.storage.removeOp(op.opId);
       const handler = this.registry[op.opType] as OpHandler<OpType>;
-      handler.onRejected(this.dispatch, asPayload(op), error, op);
+      await handler.onRejected(this.dispatch, asPayload(op), error, op);
+      if (handler.removeDependenciesOnSettled) {
+        await this.removeDependencies(op);
+      }
       this.onRejected?.(op, error);
+      await this.rejectDependents(op.queueKey, error);
       return;
     }
 
     const pending = { ...op, status: 'pending' as const, retryCount };
     await this.storage.putOp(pending);
   }
+
+  private dependenciesFor(op: QueuedOp): string[] {
+    const handler = this.registry[op.opType] as OpHandler<OpType>;
+    return handler.dependsOn?.(asPayload(op), op) ?? [];
+  }
+
+  private dependenciesSatisfied(op: QueuedOp, ops: QueuedOp[]): boolean {
+    const dependencies = this.dependenciesFor(op);
+    if (dependencies.length === 0) return true;
+    for (const queueKey of dependencies) {
+      const dependency = ops.find((candidate) => candidate.queueKey === queueKey);
+      if (!dependency || dependency.status !== 'completed') return false;
+    }
+    return true;
+  }
+
+  private async removeDependencies(op: QueuedOp): Promise<void> {
+    for (const queueKey of this.dependenciesFor(op)) {
+      const ops = await this.storage.listOps();
+      const dependency = ops.find(
+        (candidate) => candidate.queueKey === queueKey && candidate.status === 'completed',
+      );
+      if (dependency) await this.storage.removeOp(dependency.opId);
+    }
+  }
+
+  private async rejectDependents(
+    failedQueueKey: string,
+    error: unknown,
+    visited = new Set<string>(),
+  ): Promise<void> {
+    if (visited.has(failedQueueKey)) return;
+    visited.add(failedQueueKey);
+    const ops = await this.storage.listOps();
+    const dependents = ops.filter((candidate) =>
+      this.dependenciesFor(candidate).includes(failedQueueKey),
+    );
+    for (const dependent of dependents) {
+      await this.storage.removeOp(dependent.opId);
+      const handler = this.registry[dependent.opType] as OpHandler<OpType>;
+      await handler.onRejected(this.dispatch, asPayload(dependent), error, dependent);
+      if (handler.removeDependenciesOnSettled) {
+        await this.removeDependencies(dependent);
+      }
+      this.onRejected?.(dependent, error);
+      await this.rejectDependents(dependent.queueKey, error, visited);
+    }
+  }
 }
 
 export function createDefaultOpRegistry(): OpRegistry {
   return {
     'msg.send': {
-      execute: (api, payload) =>
-        api.postMessage({
+      execute: async (api, payload, _op, context) => {
+        let attachments = payload.attachments?.map((a) => a.id);
+        if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
+          const ops = await context.listOps();
+          attachments = payload.attachmentRefs.map((ref) => {
+            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
+            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
+            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
+              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
+            }
+            return uploadPayload.fileId;
+          });
+        }
+        return api.postMessage({
           channelId: payload.channelId,
           text: payload.text,
           clientMsgId: payload.clientMsgId,
           threadRootEventId: payload.threadRootEventId,
-          attachments: payload.attachments?.map((a) => a.id),
-        }),
+          attachments,
+        });
+      },
+      dependsOn: (payload) =>
+        payload.attachmentRefs?.map((ref) => `upload:${ref.uploadKey}`) ?? [],
+      removeDependenciesOnSettled: true,
       onConfirmed: (dispatch, result) => dispatch({ type: 'server-event', event: result.event }),
       onRejected: (dispatch, payload) =>
         dispatch({
@@ -464,6 +603,58 @@ export function createDefaultOpRegistry(): OpRegistry {
           channelId: payload.channelId,
           clientMsgId: payload.clientMsgId,
         }),
+    },
+    upload: {
+      execute: async (api, payload, op, context) => {
+        let currentPayload = payload;
+        let fileId = payload.fileId;
+        let uploadUrl: string;
+        if (!fileId) {
+          const created = await api.createUpload({
+            filename: payload.filename,
+            contentType: payload.contentType,
+            size: payload.size,
+            width: payload.width,
+            height: payload.height,
+            contentHash: payload.contentHash,
+          });
+          fileId = created.fileId;
+          currentPayload = { ...payload, fileId };
+          await context.putOp({ ...op, payload: currentPayload });
+          uploadUrl = created.uploadUrl;
+        } else {
+          const refreshed = await api.refreshUpload(fileId);
+          uploadUrl = refreshed.uploadUrl;
+        }
+
+        const put = async (url: string) =>
+          context.uploadFetch(url, {
+            method: 'PUT',
+            headers: { 'content-type': currentPayload.contentType },
+            body: await context.readUploadBody(currentPayload),
+          });
+
+        let res = await put(uploadUrl);
+        if (res.status === 403) {
+          const refreshed = await api.refreshUpload(fileId);
+          res = await put(refreshed.uploadUrl);
+        }
+        if (!res.ok) {
+          throw new ApiError(res.status, 'upload_failed', `upload failed (${res.status})`);
+        }
+        return { fileId };
+      },
+      completedOp: (op, result) => {
+        const payload = op.payload as UploadPayload;
+        return {
+          ...op,
+          status: 'completed',
+          retryCount: 0,
+          payload: { ...payload, fileId: result.fileId, uploaded: true },
+        };
+      },
+      onConfirmed: () => {},
+      onRejected: () => {},
     },
     'msg.edit': {
       execute: (api, payload, op) => api.editMessage(payload.eventId, payload.text, { opId: op.opId }),

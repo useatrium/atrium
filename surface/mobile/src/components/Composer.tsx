@@ -18,7 +18,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { matchMentionPrefix, type AttachmentMeta, type UserRef } from '@atrium/surface-client';
+import {
+  matchMentionPrefix,
+  type AttachmentMeta,
+  type AttachmentRef,
+  type UserRef,
+} from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
@@ -27,13 +32,13 @@ import { lightImpactHaptic } from '../lib/haptics';
 interface PendingAttachment {
   key: string;
   previewUri: string | null;
-  meta: AttachmentMeta | null; // null while uploading
+  meta: (AttachmentMeta & { uploadKey: string; localUri: string }) | null; // null while uploading
   failed: boolean;
 }
 
 export interface ComposerProps {
   placeholder: string;
-  onSend: (text: string, attachments: AttachmentMeta[]) => void;
+  onSend: (text: string, attachments: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
   onTyping: () => void;
   /** Non-null puts the composer into edit mode for that message text. */
   editingText?: string | null;
@@ -52,7 +57,7 @@ export interface ComposerProps {
     size: number;
     width?: number;
     height?: number;
-  }) => Promise<AttachmentMeta>;
+  }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
 }
 
 export function Composer({
@@ -186,8 +191,20 @@ export function Composer({
   };
 
   const uploading = attachments.some((a) => !a.meta && !a.failed);
-  const ready = attachments.filter((a) => a.meta != null).map((a) => a.meta!);
-  const canSend = !uploading && (text.trim().length > 0 || ready.length > 0);
+  const ready = attachments.filter(
+    (a): a is PendingAttachment & { meta: AttachmentMeta & { uploadKey: string; localUri: string } } =>
+      a.meta != null,
+  );
+  const readyMeta = ready.map(({ meta }) => ({
+    id: meta.id,
+    filename: meta.filename,
+    contentType: meta.contentType,
+    size: meta.size,
+    ...(meta.width ? { width: meta.width } : {}),
+    ...(meta.height ? { height: meta.height } : {}),
+  }));
+  const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
+  const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
   const mentionMatch = !editing ? matchMentionPrefix(text) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
   // @agent only spawns when the whole message starts with it — don't offer
@@ -228,7 +245,7 @@ export function Composer({
     }
     if (!canSend) return;
     lightImpactHaptic();
-    onSend(trimmed, ready);
+    onSend(trimmed, readyMeta, readyRefs.length > 0 ? readyRefs : undefined);
     if (draftKey) draftWriter.saveNow(draftKey, '');
     setText('');
     setAttachments([]);

@@ -36,7 +36,7 @@ import {
 import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
-import { ensureBucket, presignGet, presignPut } from './s3.js';
+import * as s3 from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
@@ -53,6 +53,7 @@ export interface AppDeps {
   sessionSecret?: string;
   sessionRuns?: SessionRunsOptions;
   rateLimit?: false | { max?: number; loginMax?: number };
+  fileStorage?: Pick<typeof s3, 'ensureBucket' | 'presignGet' | 'presignPut'>;
 }
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
@@ -65,6 +66,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
+  const fileStorage = deps.fileStorage ?? s3;
   const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
@@ -1192,12 +1194,22 @@ function rawSession(req: FastifyRequest): string | undefined {
       size?: number;
       width?: number;
       height?: number;
+      contentHash?: string;
     };
     const filename = String(body.filename ?? '').trim().slice(0, 200) || 'file';
     const contentType =
       typeof body.contentType === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(body.contentType)
         ? body.contentType
         : 'application/octet-stream';
+    const contentHash =
+      typeof body.contentHash === 'string' && body.contentHash.length > 0
+        ? body.contentHash.toLowerCase()
+        : null;
+    if (contentHash != null && !/^[0-9a-f]{64}$/.test(contentHash)) {
+      return reply
+        .code(400)
+        .send({ error: 'bad_request', message: 'contentHash must be sha-256 hex' });
+    }
     const size = Number(body.size);
     if (!Number.isFinite(size) || size <= 0) {
       return reply.code(400).send({ error: 'bad_request', message: 'size required' });
@@ -1214,22 +1226,75 @@ function rawSession(req: FastifyRequest): string | undefined {
     const ws = workspaces[0];
     if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace' });
     try {
-      await ensureBucket();
+      await fileStorage.ensureBucket();
     } catch {
       return reply
         .code(503)
         .send({ error: 'storage_unavailable', message: 'file storage is not running' });
     }
-    const inserted = await pool.query<{ id: string }>(
-      `INSERT INTO files (workspace_id, uploader_id, filename, content_type, size_bytes, width, height, s3_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, '') RETURNING id`,
-      [ws.id, user.id, filename, contentType, size, dim(body.width), dim(body.height)],
-    );
-    const fileId = inserted.rows[0]!.id;
+
+    if (contentHash != null) {
+      const existing = await pool.query<{ id: string; s3_key: string }>(
+        `SELECT id, s3_key
+           FROM files
+          WHERE uploader_id = $1 AND content_hash = $2 AND size_bytes = $3
+          ORDER BY created_at ASC
+          LIMIT 1`,
+        [user.id, contentHash, size],
+      );
+      if (existing.rows[0]) {
+        const row = existing.rows[0];
+        const uploadUrl = await fileStorage.presignPut(row.s3_key, contentType);
+        return reply.send({ fileId: row.id, uploadUrl, existing: true });
+      }
+    }
+
+    const fileId = randomUUID();
     const s3Key = `${fileId}/${filename}`;
-    await pool.query('UPDATE files SET s3_key = $1 WHERE id = $2', [s3Key, fileId]);
-    const uploadUrl = await presignPut(s3Key, contentType);
-    return reply.code(201).send({ fileId, uploadUrl });
+    await pool.query(
+      `INSERT INTO files (id, workspace_id, uploader_id, filename, content_type, size_bytes, width, height, s3_key, content_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        fileId,
+        ws.id,
+        user.id,
+        filename,
+        contentType,
+        size,
+        dim(body.width),
+        dim(body.height),
+        s3Key,
+        contentHash,
+      ],
+    );
+    const uploadUrl = await fileStorage.presignPut(s3Key, contentType);
+    return reply.code(201).send({ fileId, uploadUrl, existing: false });
+  });
+
+  app.post('/api/uploads/:fileId/refresh', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { fileId } = req.params as { fileId: string };
+    if (!/^[0-9a-f-]{36}$/i.test(fileId)) {
+      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+    const row = await pool.query<{ content_type: string; s3_key: string }>(
+      `SELECT content_type, s3_key FROM files WHERE id = $1 AND uploader_id = $2`,
+      [fileId, user.id],
+    );
+    const file = row.rows[0];
+    if (!file) {
+      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+    try {
+      await fileStorage.ensureBucket();
+    } catch {
+      return reply
+        .code(503)
+        .send({ error: 'storage_unavailable', message: 'file storage is not running' });
+    }
+    const uploadUrl = await fileStorage.presignPut(file.s3_key, file.content_type);
+    return reply.send({ uploadUrl });
   });
 
   // Mint a short-lived signed URL for opening a file outside an authenticated
@@ -1285,7 +1350,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     const inline =
       file.content_type.startsWith('image/') || file.content_type === 'application/pdf';
-    const url = await presignGet(file.s3_key, file.filename, inline);
+    const url = await fileStorage.presignGet(file.s3_key, file.filename, inline);
     return reply.redirect(url, 302);
   });
 

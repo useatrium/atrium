@@ -1,15 +1,16 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { api } from '../api';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
-import type { AttachmentMeta } from '@atrium/surface-client';
+import type { AttachmentMeta, AttachmentRef, UploadPayload } from '@atrium/surface-client';
 import { randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
 
 interface PendingFile {
   key: string;
+  uploadKey: string;
   file: File;
   status: 'uploading' | 'ready' | 'failed';
   fileId?: string;
+  localUri: string;
   width?: number;
   height?: number;
 }
@@ -17,6 +18,7 @@ interface PendingFile {
 export function Composer({
   placeholder,
   onSend,
+  queueUpload,
   onTyping,
   onArrowUpOnEmpty,
   autoFocus,
@@ -27,7 +29,8 @@ export function Composer({
   footer,
 }: {
   placeholder: string;
-  onSend: (text: string, attachments?: AttachmentMeta[]) => void;
+  onSend: (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
+  queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   /** Fired while the user types non-empty text (throttle at the call site). */
   onTyping?: () => void;
   /** ArrowUp in an empty composer — Slack-style "edit my last message". */
@@ -56,8 +59,20 @@ export function Composer({
     (f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId,
   );
 
+  const contentHashFor = async (file: File): Promise<string | undefined> => {
+    try {
+      if (!globalThis.crypto?.subtle) return undefined;
+      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+      return undefined;
+    }
+  };
+
   const startUpload = async (file: File) => {
     const key = randomId();
+    const uploadKey = randomId();
+    const localUri = URL.createObjectURL(file);
     let width: number | undefined;
     let height: number | undefined;
     if (file.type.startsWith('image/')) {
@@ -70,21 +85,24 @@ export function Composer({
         // not decodable as an image — upload without dimensions
       }
     }
-    setFiles((prev) => [...prev, { key, file, status: 'uploading', width, height }]);
+    setFiles((prev) => [
+      ...prev,
+      { key, uploadKey, file, status: 'uploading', localUri, width, height },
+    ]);
     try {
-      const { fileId, uploadUrl } = await api.createUpload({
+      if (!queueUpload) throw new Error('upload queue unavailable');
+      const contentHash = await contentHashFor(file);
+      const { fileId } = await queueUpload({
+        uploadKey,
+        localUri,
         filename: file.name || 'pasted-image.png',
         contentType: file.type || 'application/octet-stream',
         size: file.size,
         width,
         height,
+        contentHash,
       });
-      const res = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'content-type': file.type || 'application/octet-stream' },
-      });
-      if (!res.ok) throw new Error(`upload ${res.status}`);
+      URL.revokeObjectURL(localUri);
       setFiles((prev) =>
         prev.map((p) => (p.key === key ? { ...p, fileId, status: 'ready' } : p)),
       );
@@ -100,7 +118,12 @@ export function Composer({
     }
   };
 
-  const removeFile = (key: string) => setFiles((prev) => prev.filter((p) => p.key !== key));
+  const removeFile = (key: string) =>
+    setFiles((prev) => {
+      const file = prev.find((p) => p.key === key);
+      if (file && file.status !== 'uploading') URL.revokeObjectURL(file.localUri);
+      return prev.filter((p) => p.key !== key);
+    });
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
@@ -128,6 +151,7 @@ export function Composer({
             ...(f.height ? { height: f.height } : {}),
           }))
         : undefined,
+      readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined,
     );
     setText('');
     setFiles([]);

@@ -68,6 +68,9 @@ importers:
       expo-document-picker:
         specifier: ~56.0.4
         version: 56.0.4(expo@56.0.8)
+      expo-file-system:
+        specifier: ~56.0.7
+        version: 56.0.7(expo@56.0.8)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(react@19.2.3))
       expo-haptics:
         specifier: ~56.0.3
         version: 56.0.3(expo@56.0.8)
@@ -6231,9 +6234,7 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
 
   '@react-native/normalize-colors@0.85.3': {}
 
