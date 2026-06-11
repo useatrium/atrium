@@ -3,6 +3,7 @@
 // a bearer token (React Native cookie handling is unreliable).
 
 import type { UserPrefs } from './prefs';
+import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
 
@@ -122,6 +123,11 @@ export function createApi(opts: ApiOptions = {}) {
     logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST', body: '{}' }),
     workspaces: () => req<{ workspaces: Workspace[] }>('/api/workspaces'),
     channels: () => req<{ channels: Channel[] }>('/api/channels'),
+    sync: (after: number, opts: { limit?: number } = {}) => {
+      const q = new URLSearchParams({ after: String(after) });
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      return req<SyncResponse>(`/api/sync?${q.toString()}`);
+    },
     createChannel: (name: string, opts: { private?: boolean } = {}) =>
       req<{ channel: Channel }>('/api/channels', {
         method: 'POST',
