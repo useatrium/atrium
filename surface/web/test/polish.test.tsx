@@ -241,8 +241,9 @@ describe('mentions', () => {
     const spans = root.querySelectorAll('span');
     const meSpan = [...spans].find((s) => s.textContent === '@gary')!;
     const otherSpan = [...spans].find((s) => s.textContent === '@ben')!;
-    expect(meSpan.className).toContain('amber');
-    expect(otherSpan.className).toContain('indigo');
+    expect(meSpan.className).toContain('warning');
+    expect(otherSpan.className).toContain('accent');
+    expect(meSpan.className).not.toBe(otherSpan.className);
   });
 });
 
@@ -323,7 +324,7 @@ describe('reactions', () => {
     const onReact = vi.fn(async () => {});
     render(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
     const mine = screen.getByRole('button', { name: '👍 2, including you' });
-    expect(mine.className).toContain('indigo');
+    expect(mine.className).toContain('accent');
     expect(screen.getByRole('button', { name: '🎉 1' })).toBeTruthy();
     fireEvent.click(mine);
     await waitFor(() =>
