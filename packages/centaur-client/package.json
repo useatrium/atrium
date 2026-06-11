@@ -3,16 +3,11 @@
   "version": "0.1.0",
   "description": "Typed Centaur control-plane client and durable event-stream reducer.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   },
   "files": [
-    "dist",
+    "src",
     "README.md"
   ],
   "scripts": {

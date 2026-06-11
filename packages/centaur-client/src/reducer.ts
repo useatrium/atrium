@@ -411,6 +411,7 @@ function completeCodexCommandExecution(state: SessionState, eventId: number, ite
     content,
     is_error: exitCodeIsError(exitCode) || status === "failed" || status === "error",
   };
+  tool.sourceEventIds.push(eventId);
 }
 
 function findCodexToolCall(state: SessionState, itemId: string | undefined): ToolCallItem | undefined {
