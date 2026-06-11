@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+const apiTarget = process.env.ATRIUM_API_TARGET ?? 'http://localhost:3001';
+const wsTarget = apiTarget.replace(/^http/, 'ws');
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
@@ -17,9 +20,9 @@ export default defineConfig({
       allow: ['.', '../shared', '../../packages/centaur-client'],
     },
     proxy: {
-      '/api': 'http://localhost:3001',
-      '/auth': 'http://localhost:3001',
-      '/ws': { target: 'ws://localhost:3001', ws: true },
+      '/api': apiTarget,
+      '/auth': apiTarget,
+      '/ws': { target: wsTarget, ws: true },
     },
   },
 });
