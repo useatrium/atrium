@@ -141,6 +141,17 @@ test('cross-device read sync: reading in one context clears badge in the other',
   await login(bobOnePage, bobHandle, 'Bob');
   await login(bobTwoPage, bobHandle, 'Bob');
 
+  // Guarantee both bob devices have completed their channel subscription
+  // before alice posts. On a slow CI runner the post can otherwise race the
+  // WS subscribe round-trip (3 concurrent sockets), so a device never enters
+  // the fanout set and misses the live unread event. Visiting `second` then
+  // returning to #general subscribes the socket without leaving it focused
+  // there (focus would auto-read the incoming message).
+  for (const page of [bobOnePage, bobTwoPage]) {
+    await openChannel(page, second);
+    await openChannel(page, 'general');
+  }
+
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('sync-unread'), second);
   await expect(channelButton(bobOnePage, second)).toContainText('unread');
