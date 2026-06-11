@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { api, type Channel } from '../api';
 import type { WireEvent } from '../state';
-import { formatTime } from '../util';
+import { channelLabel, formatTime } from '../util';
 
 interface MessageHit {
   event: WireEvent;
@@ -15,12 +15,14 @@ interface MessageHit {
 export function QuickSwitcher({
   channels,
   activeChannelId,
+  meId,
   onSelect,
   onJumpToMessage,
   onClose,
 }: {
   channels: Channel[];
   activeChannelId: string | null;
+  meId: string;
   onSelect: (channelId: string) => void;
   onJumpToMessage: (event: WireEvent) => void;
   onClose: () => void;
@@ -32,12 +34,12 @@ export function QuickSwitcher({
 
   const channelMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q ? channels.filter((c) => c.name.toLowerCase().includes(q)) : channels;
+    const label = (c: Channel) => channelLabel(c, meId).toLowerCase();
+    const list = q ? channels.filter((c) => label(c).includes(q)) : channels;
     return [...list].sort(
-      (a, b) =>
-        Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)),
+      (a, b) => Number(label(b).startsWith(q)) - Number(label(a).startsWith(q)),
     );
-  }, [channels, query]);
+  }, [channels, query, meId]);
 
   // Debounced message search once the query is meaningful.
   useEffect(() => {
@@ -123,8 +125,8 @@ export function QuickSwitcher({
                       i === selected ? 'bg-indigo-600/20 text-zinc-100' : 'text-zinc-300'
                     }`}
                   >
-                    <span className="text-zinc-500">#</span>
-                    <span className="truncate">{c.name}</span>
+                    <span className="text-zinc-500">{c.kind === 'dm' ? '@' : '#'}</span>
+                    <span className="truncate">{channelLabel(c, meId)}</span>
                     {c.id === activeChannelId && (
                       <span className="ml-auto text-[10px] text-zinc-500">current</span>
                     )}

@@ -175,8 +175,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
       if (isNewMessage && ev.channelId !== state.activeChannelId) {
         const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
+        const isDm = state.channels.find((c) => c.id === ev.channelId)?.kind === 'dm';
         const mentioned =
-          ev.actorId !== null && mentionsHandle(text, state.meHandle) ? 'mention' : true;
+          isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle))
+            ? 'mention'
+            : true;
         // A mention badge sticks until the channel is read.
         const level = next.unread[ev.channelId] === 'mention' ? 'mention' : mentioned;
         next = { ...next, unread: { ...next.unread, [ev.channelId]: level } };

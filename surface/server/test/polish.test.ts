@@ -406,6 +406,119 @@ describe('GET /api/search (full-text)', () => {
   });
 });
 
+describe('private DMs', () => {
+  it('find-or-create is idempotent; only members see the channel or its messages', async () => {
+    const { cookie: alice, user: aliceUser } = await login('alice', 'Alice');
+    const { cookie: ben, user: benUser } = await login('ben', 'Ben');
+    const { cookie: carol } = await login('carol', 'Carol');
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: alice },
+      payload: { userId: benUser.id },
+    });
+    expect(created.statusCode).toBe(201);
+    const dm = created.json().channel;
+    expect(dm.kind).toBe('dm');
+    expect(dm.members.map((m: any) => m.id).sort()).toEqual([aliceUser.id, benUser.id].sort());
+
+    // Same pair again (from either side) returns the same channel.
+    const again = await app.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: ben },
+      payload: { userId: aliceUser.id },
+    });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().channel.id).toBe(dm.id);
+
+    // Members can post and read.
+    const posted = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { cookie: alice },
+      payload: { channelId: dm.id, text: 'secret plans', clientMsgId: 'dm-1' },
+    });
+    expect(posted.statusCode).toBe(201);
+    const benRead = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${dm.id}/messages`,
+      headers: { cookie: ben },
+    });
+    expect(benRead.statusCode).toBe(200);
+    expect(benRead.json().events.some((e: any) => e.payload.text === 'secret plans')).toBe(true);
+
+    // Non-members: channel invisible in lists, unreadable, unpostable,
+    // and the DM's messages never appear in their search.
+    const carolChannels = await app.inject({
+      method: 'GET',
+      url: '/api/channels',
+      headers: { cookie: carol },
+    });
+    expect(carolChannels.json().channels.some((c: any) => c.id === dm.id)).toBe(false);
+    const carolRead = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${dm.id}/messages`,
+      headers: { cookie: carol },
+    });
+    expect(carolRead.statusCode).toBe(404);
+    const carolPost = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { cookie: carol },
+      payload: { channelId: dm.id, text: 'intruder', clientMsgId: 'dm-x' },
+    });
+    expect(carolPost.statusCode).toBe(404);
+    const carolSearch = await app.inject({
+      method: 'GET',
+      url: '/api/search?q=secret',
+      headers: { cookie: carol },
+    });
+    expect(carolSearch.json().results).toHaveLength(0);
+    const aliceSearch = await app.inject({
+      method: 'GET',
+      url: '/api/search?q=secret',
+      headers: { cookie: alice },
+    });
+    expect(aliceSearch.json().results.length).toBeGreaterThan(0);
+  });
+
+  it('threads inside DMs are member-only too', async () => {
+    const { cookie: alice } = await login('alice', 'Alice');
+    const { user: benUser } = await login('ben', 'Ben');
+    const { cookie: carol } = await login('carol', 'Carol');
+    const dm = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/dms',
+        headers: { cookie: alice },
+        payload: { userId: benUser.id },
+      })
+    ).json().channel;
+    const root = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/messages',
+        headers: { cookie: alice },
+        payload: { channelId: dm.id, text: 'thread root', clientMsgId: 'dm-r' },
+      })
+    ).json().event;
+    const carolThread = await app.inject({
+      method: 'GET',
+      url: `/api/threads/${root.id}/messages`,
+      headers: { cookie: carol },
+    });
+    expect(carolThread.statusCode).toBe(404);
+    const aliceThread = await app.inject({
+      method: 'GET',
+      url: `/api/threads/${root.id}/messages`,
+      headers: { cookie: alice },
+    });
+    expect(aliceThread.statusCode).toBe(200);
+  });
+});
+
 describe('GET /api/sessions/:id with a mangled id', () => {
   it('returns 404, not a Postgres cast 500', async () => {
     const { cookie } = await login('alice', 'Alice');
