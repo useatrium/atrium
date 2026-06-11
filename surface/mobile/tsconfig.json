@@ -5,12 +5,7 @@
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "paths": {
-      "@atrium/centaur-client": ["../../packages/centaur-client/src/index.ts"]
-    }
+    "skipLibCheck": true
   },
   "include": ["app", "src", "test", "expo-env.d.ts", ".expo/types/**/*.ts"]
 }
