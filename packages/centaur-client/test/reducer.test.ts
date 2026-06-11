@@ -67,6 +67,146 @@ describe("reduceSession", () => {
     expect(texts[0]?.text.match(/token-0199/g)).toHaveLength(1);
   });
 
+  it("accumulates Codex agentMessage deltas and replaces them with completed text", () => {
+    const state = reduceAll([
+      {
+        event: "amp_raw_event",
+        event_id: 1,
+        data: { type: "system", subtype: "init", session_id: "codex-session" },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 2,
+        data: {
+          type: "item.started",
+          item: {
+            id: "prompt-1",
+            type: "userMessage",
+            content: [{ type: "text", text: "say howdy", text_elements: [] }],
+          },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 3,
+        data: {
+          type: "item.completed",
+          item: {
+            id: "prompt-1",
+            type: "userMessage",
+            content: [{ type: "text", text: "say howdy", text_elements: [] }],
+          },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 4,
+        data: { type: "item.agentMessage.delta", id: "agent-1", delta: "how" },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 5,
+        data: { type: "item.agentMessage.delta", id: "agent-1", delta: "dy!" },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 6,
+        data: { type: "item.completed", item: { id: "agent-1", type: "agentMessage", text: "howdy" } },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 7,
+        data: { type: "turn.done", result: "", turn_id: 1, agent_thread_id: "thread-1" },
+      },
+    ]);
+
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({
+      type: "text",
+      id: "text:codex:agent-1",
+      text: "howdy",
+      messageId: "agent-1",
+      sourceEventIds: [4, 5, 6],
+    });
+    expect(state.resultText).toBe("");
+  });
+
+  it("renders Codex commandExecution items as tool calls with output", () => {
+    const state = reduceAll([
+      {
+        event: "amp_raw_event",
+        event_id: 1,
+        data: { type: "item.started", item: { id: "cmd-1", type: "commandExecution", command: "pwd" } },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 2,
+        data: { type: "item.commandExecution.outputDelta", item_id: "cmd-1", delta: "/Users/" },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 3,
+        data: { type: "item.commandExecution.outputDelta", item_id: "cmd-1", delta: "gary\n" },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 4,
+        data: {
+          type: "item.completed",
+          item: { id: "cmd-1", type: "commandExecution", command: "pwd", output: "/Users/gary\n", exit_code: 0 },
+        },
+      },
+    ]);
+
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({
+      type: "tool_call",
+      id: "tool:codex:cmd-1",
+      name: "command",
+      input: { command: "pwd" },
+      result: {
+        content: "/Users/gary\n",
+        is_error: false,
+      },
+    });
+  });
+
+  it("keeps Claude reconciliation intact when Codex frames arrive later", () => {
+    const state = reduceAll([
+      {
+        event: "amp_raw_event",
+        event_id: 1,
+        data: {
+          type: "assistant",
+          message: { id: "msg-1", content: [{ type: "text", text: "Claude " }] },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 2,
+        data: {
+          type: "assistant",
+          uuid: "uuid-1",
+          message: { id: "msg-1", content: [{ type: "text", text: "Claude done." }] },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 3,
+        data: { type: "item.agentMessage.delta", delta: "Codex " },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 4,
+        data: { type: "item.completed", item: { id: "codex-1", type: "agentMessage", text: "Codex done." } },
+      },
+    ]);
+
+    expect(state.items).toHaveLength(2);
+    expect(state.items[0]).toMatchObject({ type: "text", text: "Claude done.", uuid: "uuid-1" });
+    expect(state.items[1]).toMatchObject({ type: "text", text: "Codex done.", messageId: "codex-1" });
+  });
+
   it("tracks pending questions and clears them on resolution or terminal state", () => {
     const requested: CentaurEventFrame = {
       event: "question_requested",

@@ -100,12 +100,72 @@ export interface AmpTurnDoneEvent {
   [key: string]: unknown;
 }
 
+export interface CodexTextContent {
+  type: "text";
+  text: string;
+  text_elements?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface CodexItem {
+  id?: string;
+  type: "userMessage" | "agentMessage" | "commandExecution" | "fileChange" | "reasoning" | "plan" | (string & {});
+  content?: CodexTextContent[];
+  text?: string;
+  command?: string;
+  input?: JsonObject;
+  output?: string;
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+  exitCode?: number;
+  status?: string;
+  [key: string]: unknown;
+}
+
+export interface CodexItemStartedEvent {
+  type: "item.started";
+  item: CodexItem;
+  [key: string]: unknown;
+}
+
+export interface CodexItemCompletedEvent {
+  type: "item.completed";
+  item: CodexItem;
+  [key: string]: unknown;
+}
+
+export interface CodexAgentMessageDeltaEvent {
+  type: "item.agentMessage.delta";
+  delta: string;
+  item_id?: string;
+  itemId?: string;
+  id?: string;
+  item?: CodexItem;
+  [key: string]: unknown;
+}
+
+export interface CodexCommandExecutionOutputDeltaEvent {
+  type: "item.commandExecution.outputDelta";
+  delta?: string;
+  output?: string;
+  item_id?: string;
+  itemId?: string;
+  id?: string;
+  item?: CodexItem;
+  [key: string]: unknown;
+}
+
 export type AmpRawEvent =
   | AmpSystemEvent
   | AmpAssistantEvent
   | AmpToolEvent
   | AmpResultEvent
-  | AmpTurnDoneEvent;
+  | AmpTurnDoneEvent
+  | CodexItemStartedEvent
+  | CodexItemCompletedEvent
+  | CodexAgentMessageDeltaEvent
+  | CodexCommandExecutionOutputDeltaEvent;
 
 interface ObservationBase {
   engine: string;
