@@ -103,6 +103,8 @@ export default function ThreadScreen() {
           draftKey={draftKey}
           initialDraft={initialDraft}
           onDraftChange={saveDraft}
+          mentionUsers={chat.mentionUsers}
+          onMentionTrigger={chat.loadMentionUsers}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text) => {
             if (editing) void chat.editMessage(editing, text);

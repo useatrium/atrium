@@ -19,6 +19,9 @@ import {
   appReducer,
   createApi,
   initialAppState,
+  parseAgentTask,
+  PENDING_SESSION_PREFIX,
+  sessionFromWire,
   useWs,
   type Api,
   type AppState,
@@ -67,6 +70,8 @@ interface ChatContextValue {
   react: (m: ChatMessage, emoji: string) => Promise<void>;
   createChannel: (name: string) => Promise<Channel>;
   startDm: (userId: string) => Promise<Channel>;
+  mentionUsers: UserRef[] | null;
+  loadMentionUsers: () => void;
   setMute: (channelId: string, muted: boolean) => void;
   upsertSession: (session: AgentSession) => void;
   notifyTyping: (channelId: string) => void;
@@ -114,6 +119,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [hydrated, setHydrated] = useState(false);
   const flushingOutboxRef = useRef(false);
   const flushOnWakeRef = useRef<() => void>(() => {});
+  const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
+  const loadingMentionUsersRef = useRef(false);
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -459,6 +466,63 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   // ---- sending ----
+  const spawnSession = useCallback(
+    (channelId: string, task: string, threadRootEventId?: number) => {
+      const tempId = `${PENDING_SESSION_PREFIX}${randomUUID()}`;
+      const now = new Date().toISOString();
+      const optimistic: AgentSession = {
+        id: tempId,
+        workspaceId: '',
+        channelId,
+        threadRootEventId: threadRootEventId ?? null,
+        title: task.slice(0, 80),
+        status: 'spawning',
+        harness: 'claude-code',
+        spawnedBy: me.id,
+        spawnerName: me.displayName,
+        driverId: null,
+        pendingSeatRequests: [],
+        seatEvents: [],
+        costUsd: 0,
+        resultText: null,
+        createdAt: now,
+        completedAt: null,
+        lastEventId: 0,
+        permalink: '',
+      };
+      const row: ChatMessage = {
+        id: null,
+        clientMsgId: tempId,
+        channelId,
+        threadRootEventId: threadRootEventId ?? null,
+        text: task,
+        edited: false,
+        author: me,
+        createdAt: now,
+        replyCount: 0,
+        lastReplyId: 0,
+        status: 'pending',
+        sessionId: tempId,
+      };
+      dispatch({ type: 'session-spawn-pending', channelId, message: row, session: optimistic });
+      api
+        .createAgentSession({ channelId, threadRootEventId, task })
+        .then(({ session }) =>
+          dispatch({
+            type: 'session-created',
+            channelId,
+            tempId,
+            session: sessionFromWire(session),
+          }),
+        )
+        .catch((err) => {
+          onApiError(err);
+          dispatch({ type: 'session-spawn-failed', channelId, tempId });
+        });
+    },
+    [api, me, onApiError],
+  );
+
   const send = useCallback(
     (
       channelId: string,
@@ -466,6 +530,11 @@ export function ChatProvider({ session, children }: { session: Session; children
       threadRootEventId?: number,
       attachments?: AttachmentMeta[],
     ) => {
+      const task = parseAgentTask(text);
+      if (task != null) {
+        spawnSession(channelId, task, threadRootEventId);
+        return;
+      }
       const clientMsgId = randomUUID();
       const createdAt = new Date().toISOString();
       const message: ChatMessage = {
@@ -517,16 +586,20 @@ export function ChatProvider({ session, children }: { session: Session; children
           dispatch({ type: 'send-failed', channelId, clientMsgId });
         });
     },
-    [api, me, onApiError],
+    [api, me, onApiError, spawnSession],
   );
 
   const retry = useCallback(
     (m: ChatMessage) => {
       if (!m.clientMsgId) return;
       dispatch({ type: 'retry-remove', channelId: m.channelId, clientMsgId: m.clientMsgId });
+      if (m.sessionId != null) {
+        spawnSession(m.channelId, m.text, m.threadRootEventId ?? undefined);
+        return;
+      }
       send(m.channelId, m.text, m.threadRootEventId ?? undefined, m.attachments);
     },
-    [send],
+    [send, spawnSession],
   );
 
   const editMessage = useCallback(
@@ -575,6 +648,18 @@ export function ChatProvider({ session, children }: { session: Session; children
     },
     [api],
   );
+
+  const loadMentionUsers = useCallback(() => {
+    if (mentionUsers || loadingMentionUsersRef.current) return;
+    loadingMentionUsersRef.current = true;
+    api
+      .users()
+      .then(({ users }) => setMentionUsers(users))
+      .catch(onApiError)
+      .finally(() => {
+        loadingMentionUsersRef.current = false;
+      });
+  }, [api, mentionUsers, onApiError]);
 
   const setMute = useCallback(
     (channelId: string, muted: boolean) => {
@@ -712,6 +797,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      mentionUsers,
+      loadMentionUsers,
       setMute,
       upsertSession,
       notifyTyping,
@@ -740,6 +827,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      mentionUsers,
+      loadMentionUsers,
       setMute,
       upsertSession,
       notifyTyping,
