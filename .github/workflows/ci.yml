@@ -15,6 +15,12 @@ jobs:
     name: Surface
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Run inside the official Playwright image: browsers + system deps are
+    # pre-installed, so there is no flaky azureedge browser download (which
+    # deterministically hung after the main artifact on GitHub runners). Tag
+    # MUST track the pinned @playwright/test version in surface/e2e.
+    container:
+      image: mcr.microsoft.com/playwright:v1.49.1-noble
 
     services:
       postgres:
@@ -23,8 +29,6 @@ jobs:
           POSTGRES_USER: atrium
           POSTGRES_PASSWORD: atrium
           POSTGRES_DB: atrium
-        ports:
-          - 5433:5432
         options: >-
           --health-cmd "pg_isready -U atrium -d atrium"
           --health-interval 10s
@@ -32,7 +36,9 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgres://atrium:atrium@localhost:5433/atrium
+      # Inside a job container, service containers are reached by their label
+      # hostname on the container port (not localhost:5433).
+      DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium
 
     steps:
       - name: Checkout
@@ -75,31 +81,8 @@ jobs:
         timeout-minutes: 6
         run: pnpm -r test
 
-      # Cache the downloaded browsers so steady-state runs skip the download
-      # entirely (keyed on the pinned Playwright version).
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-1.49.1
-
-      # The browser download occasionally stalls after the main artifact hits
-      # 100% (secondary headless-shell/ffmpeg fetch); retry so a transient CDN
-      # hiccup doesn't fail the run. System deps install once via --with-deps.
-      - name: Install Playwright Chromium
-        working-directory: surface
-        timeout-minutes: 12
-        run: |
-          for attempt in 1 2 3; do
-            echo "playwright install attempt $attempt"
-            if timeout 200 pnpm --filter @atrium/e2e exec playwright install --with-deps chromium; then
-              exit 0
-            fi
-            echo "attempt $attempt failed/stalled; retrying"
-          done
-          exit 1
-
-      # Per-step timeout so a webServer/teardown hang is killed in 6m and
+      # No browser-install step: the Playwright container already has Chromium.
+      # Per-step timeout so a webServer/teardown hang is killed fast and
       # attributed, instead of silently eating the whole job budget.
       - name: Run Playwright e2e
         working-directory: surface
@@ -107,7 +90,7 @@ jobs:
         env:
           # e2e/db-reset.mjs creates and truncates this dedicated database while
           # using the atrium database from the same Postgres service as admin DB.
-          DATABASE_URL: postgres://atrium:atrium@localhost:5433/atrium_e2e
+          DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium_e2e
         run: pnpm e2e
 
       - name: Upload Playwright report
