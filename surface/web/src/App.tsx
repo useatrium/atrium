@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { Login } from './Login';
+import { Toasts } from './components/Toasts';
 import type { UserRef } from '@atrium/surface-client';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
@@ -32,23 +33,32 @@ export function App() {
     }
   }, [me]);
 
-  if (!checked) return <div className="h-dvh bg-zinc-950" />;
-  if (!me) return <Login onLogin={setMe} />;
-  if (!workspace)
-    return (
+  // Toasts mount at the root so even login-screen failures surface.
+  let body;
+  if (!checked) body = <div className="h-dvh bg-zinc-950" />;
+  else if (!me) body = <Login onLogin={setMe} />;
+  else if (!workspace)
+    body = (
       <div className="flex h-dvh items-center justify-center bg-zinc-950 text-sm text-zinc-500">
         Loading workspace…
       </div>
     );
+  else
+    body = (
+      <Chat
+        me={me}
+        workspace={workspace}
+        initialSessionId={initialSessionId}
+        onLogout={() => {
+          api.logout().finally(() => location.reload());
+        }}
+      />
+    );
 
   return (
-    <Chat
-      me={me}
-      workspace={workspace}
-      initialSessionId={initialSessionId}
-      onLogout={() => {
-        api.logout().finally(() => location.reload());
-      }}
-    />
+    <>
+      {body}
+      <Toasts />
+    </>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type Workspace } from './api';
-import { appReducer, initialAppState, mentionsHandle } from '@atrium/surface-client';
+import { appReducer, initialAppState, mentionsHandle, randomId } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
   emptyTimeline,
@@ -12,6 +12,7 @@ import {
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { Composer } from './components/Composer';
+import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
@@ -353,7 +354,7 @@ export function Chat({
     const noAttachments = !attachments || attachments.length === 0;
     if (text && noAttachments && trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch }))
       return;
-    const clientMsgId = crypto.randomUUID();
+    const clientMsgId = randomId();
     const message: ChatMessage = {
       id: null,
       clientMsgId,
@@ -470,7 +471,7 @@ export function Chat({
         dispatch({ type: 'channel-added', channel });
         dispatch({ type: 'select-channel', channelId: channel.id });
       })
-      .catch(() => {});
+      .catch(() => showErrorToast("Couldn't start the conversation — try again."));
   };
 
   const setMute = (channelId: string, muted: boolean) => {
