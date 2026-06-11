@@ -72,44 +72,50 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
   };
 
   return (
-    <div className="flex h-dvh items-center justify-center bg-zinc-950">
-      <div className="w-80 rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-2xl">
-        <h1 className="text-lg font-bold tracking-tight text-zinc-100">Atrium</h1>
-        <p className="mb-5 mt-1 text-xs text-pretty text-zinc-500">
+    <div className="flex h-dvh items-center justify-center bg-surface">
+      <div className="w-80 rounded-xl border border-edge bg-surface-raised/60 p-6 shadow-2xl">
+        <h1 className="text-lg font-bold tracking-tight text-fg">Atrium</h1>
+        <p className="mb-5 mt-1 text-xs text-pretty text-fg-muted">
           Sign in to your team's workspace.
         </p>
 
         <form onSubmit={step === 'email' ? requestCode : verifyCode}>
-          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+          <label htmlFor="login-email" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
             Email
           </label>
           <input
+            id="login-email"
+            type="email"
             autoFocus
             value={email}
+            aria-describedby={error && step === 'email' ? 'login-error' : undefined}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="gary@example.com"
+            autoComplete="email"
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
             disabled={step === 'code'}
-            className="mb-3 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500 disabled:text-zinc-500"
+            className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover disabled:text-fg-muted"
           />
           {step === 'code' && (
             <>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+              <label htmlFor="login-code" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
                 Code
               </label>
               <input
+                id="login-code"
                 value={code}
+                aria-describedby={error && step === 'code' ? 'login-error' : undefined}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="123456"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                className="mb-3 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+                className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
               />
             </>
           )}
-          {error && <div className="mb-3 text-xs text-red-400">{error}</div>}
+          {error && <div id="login-error" role="alert" className="mb-3 text-xs text-danger">{error}</div>}
           <button
             type="submit"
             disabled={
@@ -117,7 +123,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               !email.trim() ||
               (step === 'code' && code.trim().length !== 6)
             }
-            className="w-full rounded-md bg-indigo-600 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500"
+            className="w-full rounded-md bg-accent py-2 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover disabled:bg-surface-overlay disabled:text-fg-muted"
           >
             {busy ? 'Working...' : step === 'email' ? 'Email me a code' : 'Sign in'}
           </button>
@@ -131,7 +137,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               setCode('');
               setError(null);
             }}
-            className="mt-3 w-full text-xs text-zinc-500 hover:text-zinc-300"
+            className="mt-3 w-full text-xs text-fg-muted hover:text-fg-secondary"
           >
             Use a different email
           </button>
@@ -140,44 +146,47 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
         {methods.google && (
           <a
             href="/auth/oauth/google"
-            className="mt-3 block w-full rounded-md border border-zinc-700 py-2 text-center text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800"
+            className="mt-3 block w-full rounded-md border border-edge-strong py-2 text-center text-sm font-semibold text-fg transition-colors hover:bg-surface-overlay"
           >
             Continue with Google
           </a>
         )}
 
         {methods.open && (
-          <details className="mt-5 border-t border-zinc-800 pt-4">
-            <summary className="cursor-pointer text-center text-xs text-zinc-500">
+          <details className="mt-5 border-t border-edge pt-4">
+            <summary className="cursor-pointer text-center text-xs text-fg-muted">
               dev login
             </summary>
             <form onSubmit={submitHandle} className="mt-4">
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+              <label htmlFor="dev-login-handle" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
                 Handle
               </label>
               <input
+                id="dev-login-handle"
                 value={handle}
+                aria-describedby={error ? 'login-error' : undefined}
                 onChange={(e) => setHandle(e.target.value)}
                 placeholder="gary"
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                className="mb-3 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+                className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
               />
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+              <label htmlFor="dev-login-display-name" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
                 Display name{' '}
-                <span className="font-normal normal-case text-zinc-600">· optional</span>
+                <span className="font-normal normal-case text-fg-faint">· optional</span>
               </label>
               <input
+                id="dev-login-display-name"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="Gary Basin"
-                className="mb-4 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+                className="mb-4 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
               />
               <button
                 type="submit"
                 disabled={busy || !handle.trim()}
-                className="w-full rounded-md bg-zinc-800 py-2 text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-700 disabled:text-zinc-500"
+                className="w-full rounded-md bg-surface-overlay py-2 text-sm font-semibold text-fg transition-colors hover:bg-edge-strong disabled:text-fg-muted"
               >
                 {busy ? 'Joining...' : 'Join with handle'}
               </button>

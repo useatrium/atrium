@@ -3,6 +3,7 @@ import { api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { Login } from './Login';
 import { Toasts } from './components/Toasts';
+import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
@@ -20,7 +21,10 @@ export function App() {
   useEffect(() => {
     api
       .me()
-      .then(({ user }) => setMe(user))
+      .then(({ user, prefs }) => {
+        setMe(user);
+        if (prefs) adoptPrefs(prefs);
+      })
       .catch(() => {})
       .finally(() => setChecked(true));
   }, []);
@@ -35,11 +39,11 @@ export function App() {
 
   // Toasts mount at the root so even login-screen failures surface.
   let body;
-  if (!checked) body = <div className="h-dvh bg-zinc-950" />;
+  if (!checked) body = <div className="h-dvh bg-surface" />;
   else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)
     body = (
-      <div className="flex h-dvh items-center justify-center bg-zinc-950 text-sm text-zinc-500">
+      <div className="flex h-dvh items-center justify-center bg-surface text-sm text-fg-muted">
         Loading workspace…
       </div>
     );

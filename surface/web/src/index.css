@@ -1,12 +1,258 @@
 @import 'tailwindcss';
 
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+  --color-edge-hover: var(--edge-hover);
+  --color-edge-focus: var(--edge-focus);
+
+  --color-fg: var(--fg);
+  --color-fg-body: var(--fg-body);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-tertiary: var(--fg-tertiary);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-on-accent: var(--on-accent);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-text: var(--accent-text);
+  --color-accent-text-strong: var(--accent-text-strong);
+  --color-accent-border: var(--accent-border);
+  --color-accent-border-muted: var(--accent-border-muted);
+  --color-accent-tint: var(--accent-tint);
+
+  --color-danger: var(--danger);
+  --color-danger-strong: var(--danger-strong);
+  --color-danger-text: var(--danger-text);
+  --color-danger-text-strong: var(--danger-text-strong);
+  --color-danger-border: var(--danger-border);
+  --color-danger-border-strong: var(--danger-border-strong);
+  --color-danger-tint: var(--danger-tint);
+  --color-danger-surface: var(--danger-surface);
+
+  --color-warning: var(--warning);
+  --color-warning-hover: var(--warning-hover);
+  --color-warning-text: var(--warning-text);
+  --color-warning-text-strong: var(--warning-text-strong);
+  --color-warning-border: var(--warning-border);
+  --color-warning-tint: var(--warning-tint);
+
+  --color-success: var(--success);
+  --color-success-text: var(--success-text);
+  --color-info: var(--info);
+  --color-info-text: var(--info-text);
+  --color-code: var(--code);
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.875rem;
+}
+
 :root {
+  color-scheme: dark;
+  --surface: #09090b;
+  --surface-raised: #18181b;
+  --surface-overlay: #27272a;
+
+  --edge: #27272a;
+  --edge-strong: #3f3f46;
+  --edge-hover: #52525b;
+  --edge-focus: #71717a;
+
+  --fg: #f4f4f5;
+  --fg-body: #e4e4e7;
+  --fg-secondary: #d4d4d8;
+  --fg-tertiary: #a1a1aa;
+  --fg-muted: #8f8f98;
+  --fg-faint: #52525b;
+
+  --accent: #4f46e5;
+  --accent-hover: #6366f1;
+  --accent-text: #818cf8;
+  --accent-text-strong: #a5b4fc;
+  --accent-border: #4338ca;
+  --accent-border-muted: #3730a3;
+  --accent-tint: #312e81;
+  --on-accent: #ffffff;
+
+  --danger: #f87171;
+  --danger-strong: #dc2626;
+  --danger-text: #fca5a5;
+  --danger-text-strong: #fecaca;
+  --danger-border: #7f1d1d;
+  --danger-border-strong: #b91c1c;
+  --danger-tint: #450a0a;
+  --danger-surface: #7f1d1d;
+
+  --warning: #f59e0b;
+  --warning-hover: #fbbf24;
+  --warning-text: #fcd34d;
+  --warning-text-strong: #fef3c7;
+  --warning-border: #78350f;
+  --warning-tint: #451a03;
+
+  --success: #10b981;
+  --success-text: #6ee7b7;
+  --info: #0ea5e9;
+  --info-text: #7dd3fc;
+  --code: #fda4af;
+}
+
+:root[data-theme='dark'] {
   color-scheme: dark;
 }
 
+:root[data-theme='light'] {
+  color-scheme: light;
+  --surface: #fafafa;
+  --surface-raised: #fdfdff;
+  --surface-overlay: #f4f4f5;
+
+  --edge: #d4d4d8;
+  --edge-strong: #a1a1aa;
+  --edge-hover: #71717a;
+  --edge-focus: #52525b;
+
+  --fg: #18181b;
+  --fg-body: #27272a;
+  --fg-secondary: #3f3f46;
+  --fg-tertiary: #52525b;
+  --fg-muted: #52525b;
+  --fg-faint: #a1a1aa;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-text: #4338ca;
+  --accent-text-strong: #3730a3;
+  --accent-border: #6366f1;
+  --accent-border-muted: #c7d2fe;
+  --accent-tint: #e0e7ff;
+  --on-accent: #ffffff;
+
+  --danger: #dc2626;
+  --danger-strong: #b91c1c;
+  --danger-text: #b91c1c;
+  --danger-text-strong: #991b1b;
+  --danger-border: #fca5a5;
+  --danger-border-strong: #dc2626;
+  --danger-tint: #fecaca;
+  --danger-surface: #fee2e2;
+
+  --warning: #d97706;
+  --warning-hover: #b45309;
+  --warning-text: #92400e;
+  --warning-text-strong: #78350f;
+  --warning-border: #fcd34d;
+  --warning-tint: #fde68a;
+
+  --success: #059669;
+  --success-text: #047857;
+  --info: #0284c7;
+  --info-text: #0369a1;
+  --code: #be123c;
+}
+
+:root[data-theme='dark'][data-accent='teal'] {
+  --accent: #0d9488;
+  --accent-hover: #14b8a6;
+  --accent-text: #5eead4;
+  --accent-text-strong: #99f6e4;
+  --accent-border: #0f766e;
+  --accent-border-muted: #115e59;
+  --accent-tint: #134e4a;
+  --on-accent: #18181b;
+}
+
+:root[data-theme='dark'][data-accent='amber'] {
+  --accent: #f59e0b;
+  --accent-hover: #fbbf24;
+  --accent-text: #fcd34d;
+  --accent-text-strong: #fef3c7;
+  --accent-border: #b45309;
+  --accent-border-muted: #92400e;
+  --accent-tint: #451a03;
+  --on-accent: #18181b;
+}
+
+:root[data-theme='dark'][data-accent='rose'] {
+  --accent: #e11d48;
+  --accent-hover: #f43f5e;
+  --accent-text: #fb7185;
+  --accent-text-strong: #fda4af;
+  --accent-border: #be123c;
+  --accent-border-muted: #9f1239;
+  --accent-tint: #4c0519;
+  --on-accent: #ffffff;
+}
+
+:root[data-theme='light'][data-accent='teal'] {
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --accent-text: #0f766e;
+  --accent-text-strong: #115e59;
+  --accent-border: #14b8a6;
+  --accent-border-muted: #99f6e4;
+  --accent-tint: #ccfbf1;
+  --on-accent: #18181b;
+}
+
+:root[data-theme='light'][data-accent='amber'] {
+  --accent: #d97706;
+  --accent-hover: #b45309;
+  --accent-text: #92400e;
+  --accent-text-strong: #78350f;
+  --accent-border: #f59e0b;
+  --accent-border-muted: #fde68a;
+  --accent-tint: #fef3c7;
+  --on-accent: #18181b;
+}
+
+:root[data-theme='light'][data-accent='rose'] {
+  --accent: #e11d48;
+  --accent-hover: #be123c;
+  --accent-text: #be123c;
+  --accent-text-strong: #9f1239;
+  --accent-border: #f43f5e;
+  --accent-border-muted: #fecdd3;
+  --accent-tint: #ffe4e6;
+  --on-accent: #ffffff;
+}
+
+:root[data-theme='dark'][data-contrast='high'] {
+  --fg-muted: #a1a1aa;
+  --fg-faint: #8f8f98;
+  --edge: #3f3f46;
+  --edge-strong: #52525b;
+}
+
+:root[data-theme='light'][data-contrast='high'] {
+  --fg-muted: #52525b;
+  --fg-faint: #52525b;
+  --edge: #a1a1aa;
+  --edge-strong: #71717a;
+}
+
+:root[data-fontscale='0.875'] {
+  font-size: 87.5%;
+}
+
+:root[data-fontscale='1.125'] {
+  font-size: 112.5%;
+}
+
+:root[data-fontscale='1.25'] {
+  font-size: 125%;
+}
+
 body {
-  background-color: var(--color-zinc-950);
-  color: var(--color-zinc-200);
+  background-color: var(--color-surface);
+  color: var(--color-fg-body);
   -webkit-font-smoothing: antialiased;
   font-family:
     ui-sans-serif,
@@ -18,26 +264,59 @@ body {
     sans-serif;
 }
 
-/* Visible keyboard focus on click targets (mouse clicks stay quiet).
- * Inputs/textareas keep their border-color focus treatment instead. */
-:where(button, [role='button'], a, select):focus-visible {
-  outline: 2px solid var(--color-indigo-400);
+/* Visible keyboard focus on interactive controls (mouse clicks stay quiet). */
+:where(button, [role='button'], a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--color-accent-text);
   outline-offset: 1px;
 }
 
 /* Thin dark scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-zinc-700) transparent;
+  scrollbar-color: var(--color-edge-strong) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--color-zinc-700);
+  background: var(--color-edge-strong);
   border-radius: 4px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+.accent-swatch-indigo {
+  background-color: #4f46e5;
+}
+
+.accent-swatch-teal {
+  background-color: #0d9488;
+}
+
+.accent-swatch-amber {
+  background-color: #d97706;
+}
+
+.accent-swatch-rose {
+  background-color: #e11d48;
+}
+
+:root[data-motion='reduced'] .animate-pulse {
+  animation: none;
+}
+
+:root[data-motion='reduced'] :where(.transition, .transition-all, .transition-colors, .transition-opacity, .transition-shadow, .transition-transform) {
+  transition-duration: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .animate-pulse {
+    animation: none;
+  }
+
+  :root:not([data-motion='full']) :where(.transition, .transition-all, .transition-colors, .transition-opacity, .transition-shadow, .transition-transform) {
+    transition-duration: 0s;
+  }
 }

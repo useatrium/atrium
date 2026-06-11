@@ -13,7 +13,7 @@ function renderSegment(segment: Segment, key: string, meHandle?: string): ReactN
       return (
         <code
           key={key}
-          className="rounded bg-zinc-800/80 px-1 py-px font-mono text-[0.85em] text-rose-300/90"
+          className="rounded bg-surface-overlay/80 px-1 py-px font-mono text-[0.85em] text-code/90"
         >
           {segment.code}
         </code>
@@ -25,7 +25,7 @@ function renderSegment(segment: Segment, key: string, meHandle?: string): ReactN
           href={segment.href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-indigo-400 hover:underline"
+          className="text-accent-text hover:underline"
         >
           {segment.href}
         </a>
@@ -37,8 +37,8 @@ function renderSegment(segment: Segment, key: string, meHandle?: string): ReactN
           key={key}
           className={
             isMe
-              ? 'rounded bg-amber-400/20 px-0.5 font-medium text-amber-200'
-              : 'rounded bg-indigo-500/10 px-0.5 text-indigo-300'
+              ? 'rounded bg-warning-hover/20 px-0.5 font-medium text-warning-text'
+              : 'rounded bg-accent-hover/10 px-0.5 text-accent-text-strong'
           }
         >
           @{segment.handle}
@@ -49,7 +49,7 @@ function renderSegment(segment: Segment, key: string, meHandle?: string): ReactN
       return (
         <pre
           key={key}
-          className="my-1 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900/70 px-3 py-2 font-mono text-[12px] leading-relaxed text-zinc-300"
+          className="my-1 overflow-x-auto rounded-md border border-edge bg-surface-raised/70 px-3 py-2 font-mono text-xs leading-relaxed text-fg-secondary"
         >
           {segment.code}
         </pre>
