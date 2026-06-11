@@ -7,6 +7,12 @@ const wsTarget = apiTarget.replace(/^http/, 'ws');
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  optimizeDeps: {
+    // Linked workspace packages are consumed as TypeScript source; letting the
+    // dep optimizer pre-bundle them serves a stale cached copy after their
+    // source changes (bit us: codex transcript frames silently ignored).
+    exclude: ['@atrium/centaur-client', '@atrium/surface-client'],
+  },
   test: {
     // React must run its development build for act()/Testing Library, even if
     // the invoking shell exports NODE_ENV=production.
