@@ -32,6 +32,7 @@ export interface TimelineProps {
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
   onOpenAttachment: (fileId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
 }
 
 export function Timeline({
@@ -52,6 +53,7 @@ export function Timeline({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
+  onOpenSession,
 }: TimelineProps) {
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
 
@@ -99,6 +101,7 @@ export function Timeline({
           onToggleReaction={onToggleReaction}
           onRetry={onRetry}
           onOpenAttachment={onOpenAttachment}
+          onOpenSession={onOpenSession}
         />
       );
     },
@@ -115,6 +118,7 @@ export function Timeline({
       onToggleReaction,
       onRetry,
       onOpenAttachment,
+      onOpenSession,
     ],
   );
 

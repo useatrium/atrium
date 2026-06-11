@@ -25,6 +25,7 @@ import {
   type AttachmentMeta,
   type Channel,
   type ChatMessage,
+  type Session as AgentSession,
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
@@ -60,6 +61,7 @@ interface ChatContextValue {
   react: (m: ChatMessage, emoji: string) => Promise<void>;
   createChannel: (name: string) => Promise<Channel>;
   startDm: (userId: string) => Promise<Channel>;
+  upsertSession: (session: AgentSession) => void;
   notifyTyping: (channelId: string) => void;
   typing: Record<string, TypingEntry>;
   /** URL for an attachment body — pair with fileHeaders for in-app loads. */
@@ -475,6 +477,10 @@ export function ChatProvider({ session, children }: { session: Session; children
     [api],
   );
 
+  const upsertSession = useCallback((agentSession: AgentSession) => {
+    dispatch({ type: 'session-upsert', session: agentSession });
+  }, []);
+
   // ---- uploads ----
   const uploadFile = useCallback(
     async (file: {
@@ -584,6 +590,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      upsertSession,
       notifyTyping,
       typing,
       fileUrl,
@@ -608,6 +615,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      upsertSession,
       notifyTyping,
       typing,
       fileUrl,
