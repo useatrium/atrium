@@ -3,13 +3,18 @@
 import type { Channel } from './api';
 import {
   addPending,
+  applyLocalDeleteOverlay,
+  applyLocalEditOverlay,
+  applyLocalReactionOverlay,
   applyEvent,
+  confirmLocalOverlay,
   emptyTimeline,
   markFailed,
   mergeHistory,
   resetToLatest,
   mergeThread,
   removeByClientMsgId,
+  rejectLocalOverlay,
   resolveSpawn,
   type ChannelTimeline,
   type ChatMessage,
@@ -76,6 +81,25 @@ export type AppAction =
   | { type: 'send-pending'; channelId: string; message: ChatMessage }
   | { type: 'send-failed'; channelId: string; clientMsgId: string }
   | { type: 'retry-remove'; channelId: string; clientMsgId: string }
+  | {
+      type: 'edit-overlay-pending';
+      channelId: string;
+      opId: string;
+      targetEventId: number;
+      text: string;
+    }
+  | { type: 'delete-overlay-pending'; channelId: string; opId: string; targetEventId: number }
+  | {
+      type: 'reaction-overlay-pending';
+      channelId: string;
+      opId: string;
+      targetEventId: number;
+      emoji: string;
+      userId: string;
+      action: 'add' | 'remove';
+    }
+  | { type: 'overlay-confirmed'; channelId: string; opId: string }
+  | { type: 'overlay-rejected'; channelId: string; opId: string }
   | { type: 'presence'; channelId: string; users: UserRef[] }
   | { type: 'ws-status'; status: AppState['wsStatus'] }
   // ---- sessions ----
@@ -310,6 +334,57 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       return next;
     }
+
+    case 'edit-overlay-pending':
+      return withTimeline(
+        state,
+        action.channelId,
+        applyLocalEditOverlay(
+          timeline(state, action.channelId),
+          action.opId,
+          action.targetEventId,
+          action.text,
+        ),
+      );
+
+    case 'delete-overlay-pending':
+      return withTimeline(
+        state,
+        action.channelId,
+        applyLocalDeleteOverlay(
+          timeline(state, action.channelId),
+          action.opId,
+          action.targetEventId,
+        ),
+      );
+
+    case 'reaction-overlay-pending':
+      return withTimeline(
+        state,
+        action.channelId,
+        applyLocalReactionOverlay(
+          timeline(state, action.channelId),
+          action.opId,
+          action.targetEventId,
+          action.emoji,
+          action.userId,
+          action.action,
+        ),
+      );
+
+    case 'overlay-confirmed':
+      return withTimeline(
+        state,
+        action.channelId,
+        confirmLocalOverlay(timeline(state, action.channelId), action.opId),
+      );
+
+    case 'overlay-rejected':
+      return withTimeline(
+        state,
+        action.channelId,
+        rejectLocalOverlay(timeline(state, action.channelId), action.opId),
+      );
 
     case 'presence':
       return { ...state, presence: { ...state.presence, [action.channelId]: action.users } };

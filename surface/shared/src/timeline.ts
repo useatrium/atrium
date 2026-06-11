@@ -50,8 +50,12 @@ export interface ChatMessage {
   threadRootEventId: number | null;
   text: string;
   edited: boolean;
+  /** Local edit queued but not yet confirmed by message.edited. */
+  pendingEdit?: boolean;
   /** Tombstoned: hidden in the timeline unless it anchors a thread. */
   deleted?: boolean;
+  /** Local delete queued but not yet confirmed by message.deleted. */
+  pendingDelete?: boolean;
   reactions?: MessageReaction[];
   attachments?: AttachmentMeta[];
   author: UserRef;
@@ -77,6 +81,8 @@ export interface ChannelTimeline {
   threads: Record<number, ChatMessage[]>;
   /** Every server event id already applied (dedupe across WS + POST + refetch). */
   seenIds: ReadonlySet<number>;
+  /** Local overlays for queued edit/delete/reaction ops, keyed by opId. */
+  localOverlays: TimelineOverlay[];
   /** Max applied event id; used as after_id on reconnect catch-up. */
   lastEventId: number;
   hasMoreBefore: boolean;
@@ -87,10 +93,41 @@ export const emptyTimeline: ChannelTimeline = {
   main: [],
   threads: {},
   seenIds: new Set(),
+  localOverlays: [],
   lastEventId: 0,
   hasMoreBefore: false,
   loaded: false,
 };
+
+interface TextOverlaySnapshot {
+  text: string;
+  edited: boolean;
+  deleted?: boolean;
+}
+
+export type TimelineOverlay =
+  | {
+      kind: 'edit';
+      opId: string;
+      targetEventId: number;
+      text: string;
+      previous: TextOverlaySnapshot;
+    }
+  | {
+      kind: 'delete';
+      opId: string;
+      targetEventId: number;
+      previous: TextOverlaySnapshot;
+    }
+  | {
+      kind: 'reaction';
+      opId: string;
+      targetEventId: number;
+      emoji: string;
+      userId: string;
+      action: 'add' | 'remove';
+      previousHad: boolean;
+    };
 
 /** Event types that produce a timeline row. */
 function isRowEvent(type: string): boolean {
@@ -301,6 +338,250 @@ function bumpLastEvent(t: ChannelTimeline, id: number): ChannelTimeline {
   return id > t.lastEventId ? { ...t, lastEventId: id } : t;
 }
 
+function textSnapshot(m: ChatMessage): TextOverlaySnapshot {
+  return {
+    text: m.text,
+    edited: m.edited,
+    ...(m.deleted !== undefined ? { deleted: m.deleted } : {}),
+  };
+}
+
+function hasReaction(m: ChatMessage, emoji: string, userId: string): boolean {
+  return m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(userId) === true;
+}
+
+function mapTargetMessage(
+  t: ChannelTimeline,
+  targetEventId: number,
+  map: (m: ChatMessage) => ChatMessage,
+): ChannelTimeline {
+  const fold = (list: ChatMessage[]) => list.map((m) => (m.id === targetEventId ? map(m) : m));
+  const threads: Record<number, ChatMessage[]> = {};
+  for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
+  return { ...t, main: fold(t.main), threads };
+}
+
+function findTargetMessage(t: ChannelTimeline, targetEventId: number): ChatMessage | null {
+  for (const m of t.main) if (m.id === targetEventId) return m;
+  for (const thread of Object.values(t.threads)) {
+    for (const m of thread) if (m.id === targetEventId) return m;
+  }
+  return null;
+}
+
+function overlaysForTarget(t: ChannelTimeline, targetEventId: number): TimelineOverlay[] {
+  return t.localOverlays.filter((overlay) => overlay.targetEventId === targetEventId);
+}
+
+function rematerializeTarget(t: ChannelTimeline, targetEventId: number): ChannelTimeline {
+  const overlays = overlaysForTarget(t, targetEventId);
+  return mapTargetMessage(t, targetEventId, (m) => {
+    let next: ChatMessage = { ...m, pendingEdit: false, pendingDelete: false };
+    for (const overlay of overlays) {
+      if (overlay.kind === 'edit') {
+        next = { ...next, text: overlay.text, pendingEdit: true };
+      } else if (overlay.kind === 'delete') {
+        next = {
+          ...next,
+          text: '',
+          deleted: true,
+          pendingDelete: true,
+          pendingEdit: false,
+        };
+      } else {
+        next = foldReaction(next, overlay.emoji, overlay.userId, overlay.action === 'add');
+      }
+    }
+    return next;
+  });
+}
+
+function rematerializeAll(t: ChannelTimeline): ChannelTimeline {
+  let next = t;
+  for (const targetEventId of new Set(t.localOverlays.map((overlay) => overlay.targetEventId))) {
+    next = rematerializeTarget(next, targetEventId);
+  }
+  return next;
+}
+
+function rebaseTextSnapshot(
+  previous: TextOverlaySnapshot,
+  ev: WireEvent,
+): TextOverlaySnapshot {
+  if (ev.type === 'message.deleted') return { ...previous, text: '', deleted: true };
+  if (ev.type === 'message.edited') {
+    return { ...previous, text: String((ev.payload ?? {}).text ?? previous.text), edited: true };
+  }
+  return previous;
+}
+
+function reconcileLocalOverlays(t: ChannelTimeline, ev: WireEvent, targetEventId: number): ChannelTimeline {
+  let changed = false;
+  const text = typeof (ev.payload ?? {}).text === 'string' ? String((ev.payload ?? {}).text) : null;
+  const emoji = typeof (ev.payload ?? {}).emoji === 'string' ? String((ev.payload ?? {}).emoji) : '';
+  const userId = ev.actorId;
+  const action =
+    ev.type === 'reaction.added' ? 'add' : ev.type === 'reaction.removed' ? 'remove' : null;
+
+  const localOverlays = t.localOverlays.flatMap((overlay): TimelineOverlay[] => {
+    if (overlay.targetEventId !== targetEventId) return [overlay];
+    if (overlay.kind === 'edit' && ev.type === 'message.edited' && text === overlay.text) {
+      changed = true;
+      return [];
+    }
+    if (overlay.kind === 'delete' && ev.type === 'message.deleted') {
+      changed = true;
+      return [];
+    }
+    if (
+      overlay.kind === 'reaction' &&
+      action === overlay.action &&
+      emoji === overlay.emoji &&
+      userId === overlay.userId
+    ) {
+      changed = true;
+      return [];
+    }
+    if (overlay.kind === 'edit' || overlay.kind === 'delete') {
+      const previous = rebaseTextSnapshot(overlay.previous, ev);
+      if (previous !== overlay.previous) changed = true;
+      return [{ ...overlay, previous }];
+    }
+    return [overlay];
+  });
+
+  const next = changed ? { ...t, localOverlays } : t;
+  return rematerializeTarget(next, targetEventId);
+}
+
+export function applyLocalEditOverlay(
+  t: ChannelTimeline,
+  opId: string,
+  targetEventId: number,
+  text: string,
+): ChannelTimeline {
+  const target = findTargetMessage(t, targetEventId);
+  if (!target) return t;
+  const existing = t.localOverlays.find(
+    (overlay) => overlay.kind === 'edit' && overlay.targetEventId === targetEventId,
+  ) as Extract<TimelineOverlay, { kind: 'edit' }> | undefined;
+  const overlay: TimelineOverlay = {
+    kind: 'edit',
+    opId,
+    targetEventId,
+    text,
+    previous: existing?.previous ?? textSnapshot(target),
+  };
+  const localOverlays = [
+    ...t.localOverlays.filter(
+      (current) => !(current.kind === 'edit' && current.targetEventId === targetEventId),
+    ),
+    overlay,
+  ];
+  return rematerializeTarget({ ...t, localOverlays }, targetEventId);
+}
+
+export function applyLocalDeleteOverlay(
+  t: ChannelTimeline,
+  opId: string,
+  targetEventId: number,
+): ChannelTimeline {
+  const target = findTargetMessage(t, targetEventId);
+  if (!target) return t;
+  const previousEdit = t.localOverlays.find(
+    (overlay) => overlay.kind === 'edit' && overlay.targetEventId === targetEventId,
+  ) as Extract<TimelineOverlay, { kind: 'edit' }> | undefined;
+  const previousDelete = t.localOverlays.find(
+    (overlay) => overlay.kind === 'delete' && overlay.targetEventId === targetEventId,
+  ) as Extract<TimelineOverlay, { kind: 'delete' }> | undefined;
+  const overlay: TimelineOverlay = {
+    kind: 'delete',
+    opId,
+    targetEventId,
+    previous: previousDelete?.previous ?? previousEdit?.previous ?? textSnapshot(target),
+  };
+  const localOverlays = [
+    ...t.localOverlays.filter(
+      (current) =>
+        current.targetEventId !== targetEventId ||
+        (current.kind !== 'edit' && current.kind !== 'delete'),
+    ),
+    overlay,
+  ];
+  return rematerializeTarget({ ...t, localOverlays }, targetEventId);
+}
+
+export function applyLocalReactionOverlay(
+  t: ChannelTimeline,
+  opId: string,
+  targetEventId: number,
+  emoji: string,
+  userId: string,
+  action: 'add' | 'remove',
+): ChannelTimeline {
+  const target = findTargetMessage(t, targetEventId);
+  if (!target) return t;
+  const existing = t.localOverlays.find(
+    (overlay) =>
+      overlay.kind === 'reaction' &&
+      overlay.targetEventId === targetEventId &&
+      overlay.emoji === emoji &&
+      overlay.userId === userId,
+  ) as Extract<TimelineOverlay, { kind: 'reaction' }> | undefined;
+  const overlay: TimelineOverlay = {
+    kind: 'reaction',
+    opId,
+    targetEventId,
+    emoji,
+    userId,
+    action,
+    previousHad: existing?.previousHad ?? hasReaction(target, emoji, userId),
+  };
+  const localOverlays = [
+    ...t.localOverlays.filter(
+      (current) =>
+        !(
+          current.kind === 'reaction' &&
+          current.targetEventId === targetEventId &&
+          current.emoji === emoji &&
+          current.userId === userId
+        ),
+    ),
+    overlay,
+  ];
+  return rematerializeTarget({ ...t, localOverlays }, targetEventId);
+}
+
+export function confirmLocalOverlay(t: ChannelTimeline, opId: string): ChannelTimeline {
+  const overlay = t.localOverlays.find((current) => current.opId === opId);
+  if (!overlay) return t;
+  const localOverlays = t.localOverlays.filter((current) => current.opId !== opId);
+  return rematerializeTarget({ ...t, localOverlays }, overlay.targetEventId);
+}
+
+export function rejectLocalOverlay(t: ChannelTimeline, opId: string): ChannelTimeline {
+  const overlay = t.localOverlays.find((current) => current.opId === opId);
+  if (!overlay) return t;
+  let next: ChannelTimeline = {
+    ...t,
+    localOverlays: t.localOverlays.filter((current) => current.opId !== opId),
+  };
+  next = mapTargetMessage(next, overlay.targetEventId, (m) => {
+    if (overlay.kind === 'reaction') {
+      return foldReaction(m, overlay.emoji, overlay.userId, overlay.previousHad);
+    }
+    return {
+      ...m,
+      text: overlay.previous.text,
+      edited: overlay.previous.edited,
+      deleted: overlay.previous.deleted === true,
+      pendingEdit: false,
+      pendingDelete: false,
+    };
+  });
+  return rematerializeTarget(next, overlay.targetEventId);
+}
+
 /**
  * Apply one server event (from WS, POST response, or catch-up fetch).
  * Idempotent by event id.
@@ -328,7 +609,11 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       );
     }
     return bumpLastEvent(
-      { ...t, main, threads, seenIds: new Set(t.seenIds).add(ev.id) },
+      reconcileLocalOverlays(
+        { ...t, main, threads, seenIds: new Set(t.seenIds).add(ev.id) },
+        ev,
+        targetId,
+      ),
       ev.id,
     );
   }
@@ -347,7 +632,10 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
-    return bumpLastEvent({ ...t, main: fold(t.main), threads, seenIds }, ev.id);
+    return bumpLastEvent(
+      reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId),
+      ev.id,
+    );
   }
 
   if (!isRowEvent(ev.type)) {
@@ -391,14 +679,14 @@ export function mergeHistory(
     main = upsertConfirmed(main, messageFromEvent(ev));
   }
   const maxId = events.reduce((acc, e) => Math.max(acc, e.id), t.lastEventId);
-  return {
+  return rematerializeAll({
     ...t,
     main,
     seenIds,
     lastEventId: maxId,
     hasMoreBefore: opts.hasMoreBefore,
     loaded: true,
-  };
+  });
 }
 
 /**
@@ -428,14 +716,14 @@ export function resetToLatest(
     seenIds.add(ev.id);
     main = upsertConfirmed(main, messageFromEvent(ev));
   }
-  return {
+  return rematerializeAll({
     ...t,
     main,
     seenIds,
     lastEventId: Math.max(t.lastEventId, maxPageId),
     hasMoreBefore: opts.hasMoreBefore,
     loaded: true,
-  };
+  });
 }
 
 /** Merge a fetched thread (replies oldest-first). */
@@ -465,11 +753,11 @@ export function mergeThread(
       : m,
   );
   const maxId = events.reduce((acc, e) => Math.max(acc, e.id), t.lastEventId);
-  return {
+  return rematerializeAll({
     ...t,
     main,
     threads: { ...t.threads, [rootEventId]: thread },
     seenIds,
     lastEventId: maxId,
-  };
+  });
 }
