@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { api, type Workspace } from './api';
+import { ApiError, api, type Workspace } from './api';
 import {
   DurableOpQueue,
-  MemoryOpStorage,
   appReducer,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
@@ -49,10 +48,20 @@ import {
 import { adoptPrefs } from './theme';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { useDialog } from './useDialog';
+import { clearCache, eventCache } from './cacheIdb';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
+const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
+
+function broadcastQueueNudge(): void {
+  try {
+    localStorage.setItem(QUEUE_NUDGE_KEY, `${Date.now()}:${Math.random()}`);
+  } catch {
+    // Best-effort multi-tab wake-up only.
+  }
+}
 
 export function Chat({
   me,
@@ -70,10 +79,11 @@ export function Chat({
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const opStorage = useMemo(() => new MemoryOpStorage(), []);
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const authInvalidatedRef = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
   const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
   const selectChannel = useCallback((channelId: string) => {
     const channel = stateRef.current.channels.find((c) => c.id === channelId);
@@ -82,6 +92,48 @@ export function Chat({
     setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
     dispatch({ type: 'select-channel', channelId });
   }, []);
+
+  const cacheMute = useCallback((channelId: string, muted: boolean) => {
+    const channels = stateRef.current.channels.map((c) =>
+      c.id === channelId ? { ...c, muted } : c,
+    );
+    void eventCache.saveChannels(channels).catch((err: unknown) => {
+      console.warn('failed to cache mute change', err);
+    });
+  }, []);
+
+  const cacheSyncCursor = useCallback((cursor: number) => {
+    void eventCache.saveSyncCursor(cursor).catch((err: unknown) => {
+      console.warn('failed to cache sync cursor', err);
+    });
+  }, []);
+
+  const invalidateAuth = useCallback(() => {
+    if (authInvalidatedRef.current) return;
+    authInvalidatedRef.current = true;
+    void clearCache().finally(onLogout);
+  }, [onLogout]);
+
+  const onApiError = useCallback(
+    (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) invalidateAuth();
+    },
+    [invalidateAuth],
+  );
+
+  const queueDispatch = useCallback(
+    (action: Parameters<typeof dispatch>[0]) => {
+      dispatch(action);
+      if (action.type === 'server-event') {
+        if (action.event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
+        if (action.event.channelId) eventCache.enqueueEvents(action.event.channelId, [action.event]);
+        cacheSyncCursor(action.event.id);
+      }
+      if (action.type === 'sync-cursor') cacheSyncCursor(action.cursor);
+      if (action.type === 'mute-changed') cacheMute(action.channelId, action.muted);
+    },
+    [cacheMute, cacheSyncCursor],
+  );
 
   const queuedFailureMessage = useCallback((opType: OpType): string => {
     switch (opType) {
@@ -113,22 +165,44 @@ export function Chat({
   const opQueue = useMemo(
     () =>
       new DurableOpQueue({
-        storage: opStorage,
+        storage: eventCache,
         api,
-        dispatch,
-        onRejected: (op) => showErrorToast(queuedFailureMessage(op.opType)),
+        dispatch: queueDispatch,
+        onRejected: (op, err) => {
+          onApiError(err);
+          if (op.opType === 'mute.set') {
+            const payload = op.payload as { channelId?: unknown; previousMuted?: unknown };
+            if (typeof payload.channelId === 'string' && typeof payload.previousMuted === 'boolean') {
+              cacheMute(payload.channelId, payload.previousMuted);
+            }
+          }
+          if (!(err instanceof ApiError && err.status === 401)) {
+            showErrorToast(queuedFailureMessage(op.opType));
+          }
+        },
       }),
-    [opStorage, queuedFailureMessage],
+    [cacheMute, onApiError, queueDispatch, queuedFailureMessage],
   );
 
   const enqueueOp = useCallback(
     async <T extends OpType>(input: EnqueueOpInput<T>) => {
       const op = await opQueue.enqueue(input);
-      if (op) opQueue.nudge();
+      if (op) {
+        opQueue.nudge();
+        broadcastQueueNudge();
+      }
       return op;
     },
     [opQueue],
   );
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === QUEUE_NUDGE_KEY) opQueue.nudge();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [opQueue]);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -141,7 +215,7 @@ export function Chat({
           fn();
         };
         const check = () => {
-          void opStorage
+          void eventCache
             .listOps()
             .then((ops) => {
               const op = ops.find((candidate) => candidate.queueKey === `upload:${uploadKey}`);
@@ -159,7 +233,7 @@ export function Chat({
         const timer = setInterval(check, 250);
         check();
       }),
-    [opStorage],
+    [],
   );
 
   const queueUpload = useCallback(
@@ -174,13 +248,180 @@ export function Chat({
     [enqueueOp, waitForUpload],
   );
 
+  const pendingMessageFromSendPayload = useCallback(
+    (msg: MsgSendPayload): ChatMessage => ({
+      id: null,
+      clientMsgId: msg.clientMsgId,
+      channelId: msg.channelId,
+      threadRootEventId: msg.threadRootEventId ?? null,
+      text: msg.text,
+      edited: false,
+      author: me,
+      createdAt: msg.createdAt ?? new Date().toISOString(),
+      replyCount: 0,
+      lastReplyId: 0,
+      status: 'pending',
+      ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
+    }),
+    [me],
+  );
+
+  const pendingSpawnFromPayload = useCallback(
+    (payload: SessionSpawnPayload): { message: ChatMessage; session: Session } => {
+      const createdAt = payload.createdAt ?? new Date().toISOString();
+      return {
+        session: {
+          id: payload.clientSpawnId,
+          workspaceId: '',
+          channelId: payload.channelId,
+          threadRootEventId: payload.threadRootEventId ?? null,
+          title: payload.task.slice(0, 80),
+          status: 'spawning',
+          harness: payload.harness ?? 'claude-code',
+          spawnedBy: me.id,
+          spawnerName: me.displayName,
+          driverId: null,
+          pendingSeatRequests: [],
+          seatEvents: [],
+          costUsd: 0,
+          resultText: null,
+          createdAt,
+          completedAt: null,
+          lastEventId: 0,
+          permalink: '',
+        },
+        message: {
+          id: null,
+          clientMsgId: payload.clientSpawnId,
+          channelId: payload.channelId,
+          threadRootEventId: payload.threadRootEventId ?? null,
+          text: payload.task,
+          edited: false,
+          author: me,
+          createdAt,
+          replyCount: 0,
+          lastReplyId: 0,
+          status: 'pending',
+          sessionId: payload.clientSpawnId,
+        },
+      };
+    },
+    [me],
+  );
+
+  const applyQueuedOp = useCallback(
+    (op: { opType: OpType; payload: unknown; opId: string }) => {
+      if (op.opType === 'msg.send') {
+        const payload = op.payload as MsgSendPayload;
+        dispatch({
+          type: 'send-pending',
+          channelId: payload.channelId,
+          message: pendingMessageFromSendPayload(payload),
+        });
+        return;
+      }
+      if (op.opType === 'session.spawn') {
+        const payload = op.payload as SessionSpawnPayload;
+        const pending = pendingSpawnFromPayload(payload);
+        dispatch({
+          type: 'session-spawn-pending',
+          channelId: payload.channelId,
+          message: pending.message,
+          session: pending.session,
+        });
+        return;
+      }
+      if (op.opType === 'msg.edit') {
+        const payload = op.payload as { channelId: string; eventId: number; text: string };
+        dispatch({
+          type: 'edit-overlay-pending',
+          channelId: payload.channelId,
+          opId: op.opId,
+          targetEventId: payload.eventId,
+          text: payload.text,
+        });
+        return;
+      }
+      if (op.opType === 'msg.delete') {
+        const payload = op.payload as { channelId: string; eventId: number };
+        dispatch({
+          type: 'delete-overlay-pending',
+          channelId: payload.channelId,
+          opId: op.opId,
+          targetEventId: payload.eventId,
+        });
+        return;
+      }
+      if (op.opType === 'reaction.set') {
+        const payload = op.payload as ReactionSetPayload;
+        dispatch({
+          type: 'reaction-overlay-pending',
+          channelId: payload.channelId,
+          opId: op.opId,
+          targetEventId: payload.eventId,
+          emoji: payload.emoji,
+          userId: payload.userId,
+          action: payload.action,
+        });
+        return;
+      }
+      if (op.opType === 'mute.set') {
+        const payload = op.payload as { channelId: string; muted: boolean };
+        dispatch({ type: 'mute-changed', channelId: payload.channelId, muted: payload.muted });
+        return;
+      }
+      if (op.opType === 'read.mark') {
+        const payload = op.payload as { channelId: string; lastReadEventId: number };
+        lastReadSentRef.current[payload.channelId] = Math.max(
+          lastReadSentRef.current[payload.channelId] ?? 0,
+          payload.lastReadEventId,
+        );
+        dispatch({
+          type: 'read-cursor',
+          channelId: payload.channelId,
+          lastReadEventId: payload.lastReadEventId,
+        });
+      }
+    },
+    [pendingMessageFromSendPayload, pendingSpawnFromPayload],
+  );
+
   // ---- initial data ----
   useEffect(() => {
     dispatch({ type: 'init-me', handle: me.handle, id: me.id });
   }, [me.handle, me.id]);
+
   useEffect(() => {
-    api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
-  }, []);
+    let disposed = false;
+    eventCache
+      .loadSnapshot()
+      .then(async ({ channels, timelines, syncCursor }) => {
+        if (disposed) return;
+        if (channels) dispatch({ type: 'channels-loaded', channels });
+        for (const [channelId, timeline] of Object.entries(timelines)) {
+          dispatch({
+            type: 'history-loaded',
+            channelId,
+            events: timeline.events,
+            hasMore: timeline.hasMore,
+          });
+        }
+        if (syncCursor > 0) dispatch({ type: 'sync-cursor', cursor: syncCursor });
+        await opQueue.recoverInflight();
+        const queued = await eventCache.listOps();
+        if (disposed) return;
+        for (const op of queued) applyQueuedOp(op);
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to hydrate IndexedDB cache', err);
+      })
+      .finally(() => {
+        if (!disposed) setHydrated(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [applyQueuedOp, opQueue]);
 
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
@@ -256,6 +497,11 @@ export function Chat({
           events: latest.events,
           hasMore: latest.hasMore,
         });
+        void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
+          (err: unknown) => {
+            console.warn('failed to cache sync repair history', err);
+          },
+        );
       }),
     );
   }, []);
@@ -266,20 +512,30 @@ export function Chat({
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
+        void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
+          console.warn('failed to cache sync channels', err);
+        });
         await resetLoadedTimelinesToLatest();
         dispatch({ type: 'sync-cursor', cursor: response.nextCursor });
+        cacheSyncCursor(response.nextCursor);
         return;
       }
       dispatchSyncResponse(dispatch, response, {
         onPrefs: adoptPrefs,
         onEvent: (event) => {
           if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
+          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+          cacheSyncCursor(event.id);
         },
       });
+      void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
+        console.warn('failed to cache sync channels', err);
+      });
+      cacheSyncCursor(response.nextCursor);
       cursor = Math.max(cursor, response.nextCursor);
       if (response.events.length < SYNC_LIMIT) return;
     }
-  }, [resetLoadedTimelinesToLatest]);
+  }, [cacheSyncCursor, resetLoadedTimelinesToLatest]);
 
   const syncInFlightRef = useRef<Promise<void> | null>(null);
   const runReconnectSync = useCallback(() => {
@@ -295,8 +551,12 @@ export function Chat({
   const syncThenFlushQueuedOps = useCallback(() => {
     void runReconnectSync()
       .then(flushQueuedOps)
-      .catch(() => {});
-  }, [flushQueuedOps, runReconnectSync]);
+      .catch(onApiError);
+  }, [flushQueuedOps, onApiError, runReconnectSync]);
+
+  useEffect(() => {
+    if (hydrated) syncThenFlushQueuedOps();
+  }, [hydrated, syncThenFlushQueuedOps]);
 
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, { user: UserRef; until: number }>>({});
@@ -320,7 +580,7 @@ export function Chat({
   useEffect(() => setTyping({}), [state.activeChannelId]);
 
   const ws = useWs(
-    true,
+    hydrated,
     wsKeys,
     {
       onEvent: (event: WireEvent) => {
@@ -336,6 +596,8 @@ export function Chat({
         }
         maybeNotify(event);
         dispatch({ type: 'server-event', event });
+        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+        cacheSyncCursor(event.id);
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
@@ -346,7 +608,10 @@ export function Chat({
         );
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
       },
-      onMuted: (channelId, muted) => dispatch({ type: 'mute-changed', channelId, muted }),
+      onMuted: (channelId, muted) => {
+        dispatch({ type: 'mute-changed', channelId, muted });
+        cacheMute(channelId, muted);
+      },
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
       onOpen: () => {
@@ -420,10 +685,11 @@ export function Chat({
         opId: randomId(),
         opType: 'read.mark',
         payload: { channelId, lastReadEventId: lastEventId },
-      }).catch(() => {
+      }).catch((err: unknown) => {
           if (lastReadSentRef.current[channelId] === lastEventId) {
             lastReadSentRef.current[channelId] = previous;
           }
+          onApiError(err);
         });
     };
     const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
@@ -433,7 +699,7 @@ export function Chat({
     }
     if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
     readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
-  }, [enqueueOp]);
+  }, [enqueueOp, onApiError]);
 
   useEffect(() => {
     if (active) markRead(active.id, timeline.lastEventId);
@@ -456,8 +722,12 @@ export function Chat({
         // fetch was in flight — avoids a ghost timeline.
         if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
         dispatch({ type: 'history-loaded', channelId, events, hasMore });
-      });
-  }, [active?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+        void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+          console.warn('failed to cache history', err);
+        });
+      })
+      .catch(onApiError);
+  }, [active?.id, onApiError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadEarlier = (): Promise<void> => {
     if (!active) return Promise.resolve();
@@ -466,9 +736,13 @@ export function Chat({
     const channelId = active.id;
     return api
       .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
-      .then(({ events, hasMore }) =>
-        dispatch({ type: 'history-loaded', channelId, events, hasMore }),
-      );
+      .then(({ events, hasMore }) => {
+        dispatch({ type: 'history-loaded', channelId, events, hasMore });
+        void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+          console.warn('failed to cache earlier history', err);
+        });
+      })
+      .catch(onApiError);
   };
 
   // ---- thread panel ----
@@ -516,46 +790,6 @@ export function Chat({
   }, [state.presence]);
 
   // ---- sending ----
-  const pendingSpawnFromPayload = (payload: SessionSpawnPayload): { message: ChatMessage; session: Session } => {
-    const createdAt = payload.createdAt ?? new Date().toISOString();
-    return {
-      session: {
-        id: payload.clientSpawnId,
-        workspaceId: '',
-        channelId: payload.channelId,
-        threadRootEventId: payload.threadRootEventId ?? null,
-        title: payload.task.slice(0, 80),
-        status: 'spawning',
-        harness: payload.harness ?? 'claude-code',
-        spawnedBy: me.id,
-        spawnerName: me.displayName,
-        driverId: null,
-        pendingSeatRequests: [],
-        seatEvents: [],
-        costUsd: 0,
-        resultText: null,
-        createdAt,
-        completedAt: null,
-        lastEventId: 0,
-        permalink: '',
-      },
-      message: {
-        id: null,
-        clientMsgId: payload.clientSpawnId,
-        channelId: payload.channelId,
-        threadRootEventId: payload.threadRootEventId ?? null,
-        text: payload.task,
-        edited: false,
-        author: me,
-        createdAt,
-        replyCount: 0,
-        lastReplyId: 0,
-        status: 'pending',
-        sessionId: payload.clientSpawnId,
-      },
-    };
-  };
-
   const spawnQueuedSession = (
     channelId: string,
     task: string,
@@ -744,6 +978,9 @@ export function Chat({
         limit: PAGE_SIZE,
       });
       dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+        console.warn('failed to cache jump history', err);
+      });
       await new Promise((r) => setTimeout(r, 30)); // let the reducer commit
     }
     setHighlightId(event.id);
@@ -923,6 +1160,42 @@ export function Chat({
 
   const threadLoaded =
     state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
+  const activeDraftKey = active ? `channel:${active.id}` : '';
+  const threadDraftKey =
+    active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const loadDraft = useCallback((key: string, label: string) => {
+    let disposed = false;
+    setDrafts((prev) => ({ ...prev, [key]: '' }));
+    void eventCache
+      .getDraft(key)
+      .then((draft) => {
+        if (!disposed) setDrafts((prev) => ({ ...prev, [key]: draft ?? '' }));
+      })
+      .catch((err: unknown) => {
+        console.warn(`failed to load ${label} draft`, err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeDraftKey) return;
+    return loadDraft(activeDraftKey, 'channel');
+  }, [activeDraftKey, loadDraft]);
+
+  useEffect(() => {
+    if (!threadDraftKey) return;
+    return loadDraft(threadDraftKey, 'thread');
+  }, [loadDraft, threadDraftKey]);
+
+  const saveDraft = useCallback((key: string, text: string) => {
+    void eventCache.setDraft(key, text).catch((err: unknown) => {
+      console.warn('failed to save draft', err);
+    });
+  }, []);
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -1112,6 +1385,9 @@ export function Chat({
               queueUpload={queueUpload}
               onTyping={() => notifyTyping(active.id)}
               onArrowUpOnEmpty={editLastOwn}
+              draftKey={activeDraftKey}
+              initialDraft={drafts[activeDraftKey] ?? ''}
+              onDraftChange={saveDraft}
               autoFocus
               agentAware
               allowAttachments
@@ -1182,6 +1458,9 @@ export function Chat({
             onEdit={editMessage}
             onDelete={removeMessage}
             onReact={reactToMessage}
+            draftKey={threadDraftKey}
+            initialDraft={drafts[threadDraftKey] ?? ''}
+            onDraftChange={saveDraft}
           />
         )
       )}
