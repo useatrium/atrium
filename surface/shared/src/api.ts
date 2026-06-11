@@ -15,6 +15,8 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
+  lastReadEventId?: number;
+  latestEventId?: number;
   /** Absent on older payloads — treat as 'public'. */
   kind?: 'public' | 'dm';
   /** DM channels only: both members. */
@@ -97,6 +99,11 @@ export function createApi(opts: ApiOptions = {}) {
         `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`,
       );
     },
+    markRead: (channelId: string, lastReadEventId: number) =>
+      req<{ lastReadEventId: number }>(`/api/channels/${channelId}/read`, {
+        method: 'POST',
+        body: JSON.stringify({ lastReadEventId }),
+      }),
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
     postMessage: (body: {

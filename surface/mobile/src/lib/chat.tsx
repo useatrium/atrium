@@ -96,6 +96,9 @@ export function ChatProvider({ session, children }: { session: Session; children
   stateRef.current = state;
   // Which channel screen is actually visible (null on the list screen).
   const focusedRef = useRef<string | null>(null);
+  const lastReadSentRef = useRef<Record<string, number>>({});
+  const lastReadAtRef = useRef<Record<string, number>>({});
+  const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -196,6 +199,13 @@ export function ChatProvider({ session, children }: { session: Session; children
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
+      onRead: (channelId, lastReadEventId) => {
+        lastReadSentRef.current[channelId] = Math.max(
+          lastReadSentRef.current[channelId] ?? 0,
+          lastReadEventId,
+        );
+        dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+      },
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
@@ -212,6 +222,54 @@ export function ChatProvider({ session, children }: { session: Session; children
       ws.sendTyping(channelId);
     },
     [ws],
+  );
+
+  const markRead = useCallback(
+    (channelId: string, lastEventId: number) => {
+      if (lastEventId <= 0 || (lastReadSentRef.current[channelId] ?? 0) >= lastEventId) return;
+      const fire = () => {
+        const previous = lastReadSentRef.current[channelId] ?? 0;
+        if (previous >= lastEventId) return;
+        lastReadAtRef.current[channelId] = Date.now();
+        lastReadSentRef.current[channelId] = lastEventId;
+        api
+          .markRead(channelId, lastEventId)
+          .then(({ lastReadEventId }) => {
+            lastReadSentRef.current[channelId] = Math.max(
+              lastReadSentRef.current[channelId] ?? 0,
+              lastReadEventId,
+            );
+            dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+          })
+          .catch((err) => {
+            if (lastReadSentRef.current[channelId] === lastEventId) {
+              lastReadSentRef.current[channelId] = previous;
+            }
+            onApiError(err);
+          });
+      };
+      const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
+      if (elapsed >= 2000) {
+        fire();
+        return;
+      }
+      if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
+      readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
+    },
+    [api, onApiError],
+  );
+
+  useEffect(() => {
+    const channelId = focusedRef.current;
+    if (!channelId) return;
+    markRead(channelId, state.timelines[channelId]?.lastEventId ?? 0);
+  }, [markRead, state.timelines]);
+
+  useEffect(
+    () => () => {
+      for (const timer of Object.values(readTimersRef.current)) clearTimeout(timer);
+    },
+    [],
   );
 
   // ---- channel focus + history ----
@@ -232,9 +290,10 @@ export function ChatProvider({ session, children }: { session: Session; children
     (channelId: string) => {
       focusedRef.current = channelId;
       dispatch({ type: 'select-channel', channelId });
+      markRead(channelId, stateRef.current.timelines[channelId]?.lastEventId ?? 0);
       loadHistory(channelId);
     },
-    [loadHistory],
+    [loadHistory, markRead],
   );
 
   const leaveChannel = useCallback(() => {

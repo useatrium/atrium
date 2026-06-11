@@ -8,6 +8,7 @@ export interface WsCallbacks {
   onPresence: (channelId: string, users: UserRef[]) => void;
   /** Someone else viewing `channelId` is typing (ephemeral, no expiry signal). */
   onTyping?: (channelId: string, user: UserRef) => void;
+  onRead?: (channelId: string, lastReadEventId: number) => void;
   /** Fires on every (re)connect after the subscribe is sent — refetch catch-up here. */
   onOpen: () => void;
   onStatus: (status: WsStatus) => void;
@@ -134,6 +135,7 @@ export function useWs(
           type?: string;
           event?: WireEvent;
           channelId?: string;
+          lastReadEventId?: number;
           users?: UserRef[];
           user?: UserRef;
         };
@@ -147,6 +149,12 @@ export function useWs(
           cbRef.current.onPresence(msg.channelId, msg.users ?? []);
         else if (msg.type === 'typing' && msg.channelId && msg.user)
           cbRef.current.onTyping?.(msg.channelId, msg.user);
+        else if (
+          msg.type === 'read' &&
+          msg.channelId &&
+          typeof msg.lastReadEventId === 'number'
+        )
+          cbRef.current.onRead?.(msg.channelId, msg.lastReadEventId);
       };
 
       ws.onclose = () => {
