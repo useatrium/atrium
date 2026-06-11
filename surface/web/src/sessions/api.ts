@@ -6,7 +6,7 @@
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { sessionsMock } from './devMock';
-import type { SessionWire } from './types';
+import type { SessionListItem, SessionWire } from './types';
 
 export interface CreateSessionBody {
   channelId: string;
@@ -109,6 +109,16 @@ export const sessionsApi = {
   get(id: string): Promise<{ session: SessionWire }> {
     if (sessionsMock) return sessionsMock.getSession(id);
     return reqJson<{ session: SessionWire }>(`/api/sessions/${id}`);
+  },
+
+  list(opts: { status?: 'running' | 'recent' | 'all'; limit?: number } = {}): Promise<{
+    sessions: SessionListItem[];
+  }> {
+    const q = new URLSearchParams();
+    if (opts.status) q.set('status', opts.status);
+    if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+    const qs = q.toString();
+    return reqJson<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
   },
 
   sendMessage(id: string, text: string): Promise<void> {

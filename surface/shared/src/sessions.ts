@@ -53,6 +53,20 @@ export interface SessionWire {
   permalink: string;
 }
 
+export interface SessionListItem {
+  id: string;
+  channelId: string;
+  channelName: string;
+  title: string;
+  status: SessionStatus;
+  harness: string;
+  spawnedBy: string;
+  spawnerName: string;
+  costUsd: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 /** Client-side session entity (wire shape + display-only extras). */
 export interface Session {
   id: string;

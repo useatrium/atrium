@@ -41,6 +41,20 @@ export interface SessionUserJson {
   displayName: string;
 }
 
+export interface SessionListItem {
+  id: string;
+  channelId: string;
+  channelName: string;
+  title: string;
+  status: SessionStatus;
+  harness: string;
+  spawnedBy: string;
+  spawnerName: string;
+  costUsd: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export interface SessionRunsOptions {
   centaur?: CentaurClient;
   baseUrl?: string;
@@ -76,6 +90,13 @@ interface ChannelRow {
 interface SessionUserRow {
   user_id: string;
   display_name: string;
+}
+
+type SessionListStatus = 'running' | 'recent' | 'all';
+
+interface SessionListRow extends SessionRow {
+  channel_name: string;
+  spawner_name: string;
 }
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
@@ -183,6 +204,41 @@ export class SessionRuns {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
     return this.toJsonWithSeatInfo(row);
+  }
+
+  async listSessionsForUser(args: {
+    userId: string;
+    status: SessionListStatus;
+    limit: number;
+  }): Promise<SessionListItem[]> {
+    const statusWhere =
+      args.status === 'running'
+        ? "AND s.status IN ('spawning', 'queued', 'running')"
+        : args.status === 'recent'
+          ? "AND s.status NOT IN ('spawning', 'queued', 'running')"
+          : '';
+    const res = await this.pool.query<SessionListRow>(
+      `SELECT s.*,
+              c.name AS channel_name,
+              u.display_name AS spawner_name
+       FROM sessions s
+       JOIN channels c ON c.id = s.channel_id
+       JOIN users u ON u.id = s.spawned_by
+       LEFT JOIN channel_members m
+         ON m.channel_id = c.id AND m.user_id = $1
+       WHERE (c.kind <> 'dm' OR m.user_id IS NOT NULL)
+         ${statusWhere}
+       ORDER BY CASE s.status
+                  WHEN 'spawning' THEN 0
+                  WHEN 'queued' THEN 1
+                  WHEN 'running' THEN 2
+                  ELSE 3
+                END,
+                s.created_at DESC
+       LIMIT $2`,
+      [args.userId, args.limit],
+    );
+    return res.rows.map(toListItem);
   }
 
   async streamCentaurEvents(
@@ -734,6 +790,22 @@ function toJson(
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     lastEventId: row.last_event_id,
     permalink: `/s/${row.id}`,
+  };
+}
+
+function toListItem(row: SessionListRow): SessionListItem {
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    channelName: row.channel_name,
+    title: row.title,
+    status: row.status,
+    harness: row.harness,
+    spawnedBy: row.spawned_by,
+    spawnerName: row.spawner_name,
+    costUsd: Number(row.cost_usd),
+    createdAt: new Date(row.created_at).toISOString(),
+    completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
   };
 }
 

@@ -1,9 +1,11 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { api, type Channel } from '../api';
-import type { UnreadLevel } from '@atrium/surface-client';
+import { formatCost, formatTime, isTerminalSessionStatus, type SessionListItem } from '@atrium/surface-client';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
-import type { UserRef } from '@atrium/surface-client';
+import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
+import { sessionsApi } from '../sessions/api';
+import { StatusChip } from '../sessions/SessionCard';
 import { Avatar } from './Avatar';
 
 const BELL_TITLES: Record<NotifyState, string> = {
@@ -24,6 +26,8 @@ export function Sidebar({
   onSetMute,
   onCreateChannel,
   onStartDm,
+  onOpenSession,
+  sessionEventSeq,
   onLogout,
 }: {
   workspaceName: string;
@@ -36,6 +40,8 @@ export function Sidebar({
   onSetMute: (channelId: string, muted: boolean) => void;
   onCreateChannel: (name: string) => Promise<void>;
   onStartDm: (userId: string) => void;
+  onOpenSession: (sessionId: string) => void;
+  sessionEventSeq: number;
   onLogout: () => void;
 }) {
   const [creating, setCreating] = useState(false);
@@ -245,7 +251,7 @@ export function Sidebar({
         )}
 
         <ul>
-          {dms.map((c) => {
+        {dms.map((c) => {
             const active = c.id === activeChannelId;
             const level = c.muted || active ? false : unread[c.id] ?? false;
             const label = channelLabel(c, me.id);
@@ -282,6 +288,11 @@ export function Sidebar({
             );
           })}
         </ul>
+
+        <SessionSidebarSection
+          refreshKey={sessionEventSeq}
+          onOpenSession={onOpenSession}
+        />
       </div>
 
       <footer className="flex items-center gap-1 border-t border-zinc-800 px-4 py-2.5">
@@ -308,5 +319,166 @@ export function Sidebar({
         </button>
       </footer>
     </nav>
+  );
+}
+
+function SessionSidebarSection({
+  refreshKey,
+  onOpenSession,
+}: {
+  refreshKey: number;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  const [sessions, setSessions] = useState<SessionListItem[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const load = () => {
+      sessionsApi
+        .list({ status: 'all', limit: 50 })
+        .then(({ sessions }) => {
+          if (!disposed) setSessions(sessions);
+        })
+        .catch(() => {
+          if (!disposed) setSessions([]);
+        });
+    };
+    load();
+    const poll = setInterval(load, 30_000);
+    return () => {
+      disposed = true;
+      clearInterval(poll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      sessionsApi
+        .list({ status: 'all', limit: 50 })
+        .then(({ sessions }) => setSessions(sessions))
+        .catch(() => {});
+    }, 180);
+    return () => clearTimeout(t);
+  }, [refreshKey]);
+
+  const running = useMemo(
+    () => sessions.filter((s) => !isTerminalSessionStatus(s.status)),
+    [sessions],
+  );
+  const preview = running.slice(0, 5);
+  const open = (id: string) => {
+    onOpenSession(id);
+    setModalOpen(false);
+  };
+
+  return (
+    <>
+      <div className="mt-4 flex items-center justify-between px-4 pb-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          Sessions
+        </span>
+        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400">
+          {running.length}
+        </span>
+      </div>
+      <ul>
+        {preview.map((session) => (
+          <li key={session.id}>
+            <button
+              onClick={() => open(session.id)}
+              className="flex w-full min-w-0 flex-col gap-1 px-4 py-1.5 text-left hover:bg-zinc-800/70"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <StatusChip status={session.status} />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">
+                  {session.title}
+                </span>
+              </span>
+              <span className="truncate pl-1 text-[11px] text-zinc-600">
+                #{session.channelName}
+              </span>
+            </button>
+          </li>
+        ))}
+        <li>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="w-full px-4 py-1 text-left text-xs font-medium text-indigo-400 hover:bg-zinc-800/70"
+          >
+            View all
+          </button>
+        </li>
+      </ul>
+      {modalOpen && (
+        <SessionBrowserModal
+          sessions={sessions}
+          onOpenSession={open}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function SessionBrowserModal({
+  sessions,
+  onOpenSession,
+  onClose,
+}: {
+  sessions: SessionListItem[];
+  onOpenSession: (sessionId: string) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-zinc-950/60"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Browse sessions"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl"
+      >
+        <div className="border-b border-zinc-800 px-3 py-2.5 text-sm font-semibold text-zinc-100">
+          Sessions
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto py-1">
+          {sessions.map((session) => (
+            <button
+              key={session.id}
+              onClick={() => onOpenSession(session.id)}
+              className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-indigo-600/20"
+            >
+              <StatusChip status={session.status} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-zinc-100">
+                  {session.title}
+                </span>
+                <span className="block truncate text-[11px] text-zinc-500">
+                  #{session.channelName} · {session.spawnerName} · {formatTime(session.createdAt)}
+                </span>
+              </span>
+              <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+                {session.costUsd > 0 ? formatCost(session.costUsd) : ''}
+              </span>
+            </button>
+          ))}
+          {sessions.length === 0 && (
+            <div className="px-3 py-8 text-center text-sm text-zinc-500">No sessions yet</div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

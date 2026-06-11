@@ -39,6 +39,7 @@ export function Chat({
   onLogout: () => void;
 }) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
   const lastReadSentRef = useRef<Record<string, number>>({});
@@ -158,6 +159,7 @@ export function Chat({
     wsKeys,
     {
       onEvent: (event: WireEvent) => {
+        if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
         // A message landing ends that author's "is typing…" immediately.
         if (event.type === 'message.posted' && event.actorId) {
           setTyping((prev) => {
@@ -524,10 +526,12 @@ export function Chat({
         wsStatus={state.wsStatus}
         onSelect={(channelId) => dispatch({ type: 'select-channel', channelId })}
         onSetMute={setMute}
-        onCreateChannel={createChannel}
-        onStartDm={startDm}
-        onLogout={onLogout}
-      />
+          onCreateChannel={createChannel}
+          onStartDm={startDm}
+          onOpenSession={openSession}
+          sessionEventSeq={sessionEventSeq}
+          onLogout={onLogout}
+        />
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
