@@ -198,9 +198,28 @@ describe('fanout ordering', () => {
 
     hub.sendToUsers(['u1'], { type: 'read', channelId: fx.channelId, lastReadEventId: 42 });
 
-    expect(s1.received).toEqual([{ type: 'read', channelId: fx.channelId, lastReadEventId: 42 }]);
-    expect(s2.received).toEqual([{ type: 'read', channelId: fx.channelId, lastReadEventId: 42 }]);
+    expect(s1.received).toEqual([
+      expect.objectContaining({ type: 'read', channelId: fx.channelId, lastReadEventId: 42 }),
+    ]);
+    expect(s2.received).toEqual([
+      expect.objectContaining({ type: 'read', channelId: fx.channelId, lastReadEventId: 42 }),
+    ]);
     expect(s3.received).toEqual([]);
+  });
+
+  it('stamps outbound frames with per-connection contiguous sequence numbers', () => {
+    const hub = new WsHub();
+    const s1 = fakeSocket();
+    const s2 = fakeSocket();
+    const c1 = hub.addClient(s1, { id: 'u1', handle: 'alice', displayName: 'Alice' });
+    const c2 = hub.addClient(s2, { id: 'u2', handle: 'bob', displayName: 'Bob' });
+
+    hub.sendTo(c1, { type: 'pong' });
+    hub.sendTo(c1, { type: 'prefs', prefs: {} });
+    hub.sendTo(c2, { type: 'pong' });
+
+    expect(s1.received.map((m) => m.seq)).toEqual([1, 2]);
+    expect(s2.received.map((m) => m.seq)).toEqual([1]);
   });
 });
 
