@@ -876,6 +876,60 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('steer with NEW text mints a fresh message id when a pending id holds different content', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, centaur_message_attempt
+       )
+       VALUES ($1, $2, 'thread-wedged-msg', 'claude-code', 'wedged msg', 'running', $3, $3, 'exe_old', 1, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-wedged-msg', 1);
+    // Simulate an earlier steer whose message Centaur accepted (idempotency
+    // row recorded) but whose execute never persisted: the pending id holds
+    // the OLD text.
+    await pool.query('UPDATE sessions SET centaur_message_id = $1 WHERE id = $2', [`msg-${id}-a1`, id]);
+    const seeded = await fetch(`${fake.url}/agent/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        thread_key: 'thread-wedged-msg',
+        assignment_generation: 1,
+        role: 'user',
+        parts: [{ type: 'text', text: 'the earlier, different steer text' }],
+        metadata: { user_id: fx.userId },
+        user_id: fx.userId,
+        message_id: `msg-${id}-a1`,
+      }),
+    });
+    expect(seeded.status).toBe(200);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'a brand new steer' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const messages = fake.requests.filter((r) => r.path === '/agent/message');
+    // seed + wedged attempt (mismatch) + fresh retry
+    expect(messages.at(-1)!.body.message_id).toBe(`msg-${id}-a2`);
+    const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [id]);
+    expect(row.rows[0].centaur_message_id).toBeNull();
+    expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
+    await app.close();
+  });
+
   it('steer reuses a pending message id after Centaur accepted the message before a crash', async () => {
     const app = await buildApp({
       pool,
