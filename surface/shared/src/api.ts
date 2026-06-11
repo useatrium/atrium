@@ -2,6 +2,7 @@
 // the session cookie, while native clients pass an absolute server origin and
 // a bearer token (React Native cookie handling is unreliable).
 
+import type { SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
 
 export interface Workspace {
@@ -176,5 +177,13 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ token }),
       }),
+    getSession: (id: string) => req<{ session: SessionWire }>(`/api/sessions/${id}`),
+    steerSession: (id: string, text: string) =>
+      req<{ ok: true }>(`/api/sessions/${id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      }),
+    cancelSession: (id: string) =>
+      req<{ ok: true }>(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' }),
   };
 }

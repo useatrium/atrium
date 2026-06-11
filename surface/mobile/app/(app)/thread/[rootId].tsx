@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { emptyTimeline, type ChatMessage } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
@@ -94,6 +94,7 @@ export default function ThreadScreen() {
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
           onOpenAttachment={openAttachment}
+          onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
         />
         <Composer
           placeholder="Reply in thread"
