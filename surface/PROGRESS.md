@@ -186,3 +186,37 @@ Orchestration note: the codex plugin's rescue agents background their jobs
 and exit, which let the harness reap their worktrees mid-run (two jobs died,
 one had to be harvested from a /tmp git dir). Reliable pattern: `codex exec`
 driven directly in self-managed `git worktree add` checkouts.
+
+## Parallel round 2 + codex review — 2026-06-11
+
+Five workstreams by codex exec workers in self-managed worktrees, merged
+sequentially, then a codex read-only review of the integrated diff:
+
+- **Channel mutes** (migration 011): mute toggle on web sidebar rows +
+  mobile long-press; muted channels never badge and never push; `{type:
+  'muted'}` WS frame syncs the user's other devices.
+- **Mobile offline send queue + drafts**: network-failed sends persist in a
+  sqlite outbox (FIFO flush on reconnect/wake, original clientMsgId), drafts
+  per channel/thread survive restarts.
+- **Mobile agent-session viewer**: `/session/[id]` screen streams the
+  Centaur SSE feed via expo/fetch + centaur-client's platform-agnostic
+  parser — live status/cost/elapsed, tool-call cards, result, steer
+  (driver-only) and two-step cancel; timeline session cards now tap through.
+- **Deployment packaging** (`surface/deploy/`): multi-stage server image,
+  prod compose (secrets required via :?), Caddy config, Tailscale + VPS
+  guides; worker boot-tested an isolated stack (healthz + login) before
+  committing.
+- **Playwright e2e** (`surface/e2e`): 8 specs — login, realtime two-context,
+  threads, reactions, edit/delete, unread badges, cross-device read sync,
+  search jump — against a dedicated atrium_e2e DB on override ports; root
+  script `pnpm e2e`. Caught a real integration regression on landing (mute
+  button broke unread-badge selectors).
+- **Codex review findings fixed**: DM-session ACL (any authed user could
+  fetch/stream any session — now 404 via canAccessChannel), idempotent
+  sends by client_msg_id (migration 012 — outbox retries can't duplicate),
+  401 invalidation clears the mobile cache/outbox (cross-account leak),
+  unmute re-derives badges, draft-load no longer clobbers typed text,
+  postgres host port binds loopback.
+
+141 unit tests + 8 e2e green. Still needs on-device passes: session viewer
+streaming, outbox wake-flush, sqlite cache.
