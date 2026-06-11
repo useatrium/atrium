@@ -2,6 +2,7 @@ packages:
   - server
   - shared
   - web
+  - e2e
   - mobile
 
 # pnpm's trust heuristic flags old-but-canonical packages (published before npm
