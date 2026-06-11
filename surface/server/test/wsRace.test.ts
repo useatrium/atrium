@@ -49,7 +49,7 @@ describe('ws auth race', () => {
     const ws = new WebSocket(
       `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`,
     );
-    const received: { type?: string; channelId?: string }[] = [];
+    const received: { type?: string; channelId?: string; seq?: number }[] = [];
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error(`only got: ${JSON.stringify(received)}`)),
@@ -78,6 +78,8 @@ describe('ws auth race', () => {
       });
     });
     await done;
+    expect(received.every((m) => typeof m.seq === 'number')).toBe(true);
+    expect(received.map((m) => m.seq)).toEqual(received.map((_, i) => i + 1));
     ws.close();
   });
 

@@ -401,6 +401,43 @@ export function mergeHistory(
   };
 }
 
+/**
+ * Snapshot repair: replace the timeline with the latest history page when
+ * catch-up fell too far behind to page through the gap. Confirmed rows older
+ * than the snapshot are dropped — keeping them would render a silent hole
+ * between them and the snapshot that pagination (which fetches before the
+ * oldest row) could never fill. Pending/failed local rows survive, as do
+ * confirmed rows newer than the snapshot (a WS event can land between the
+ * fetch and this dispatch). seenIds is rebuilt from the kept rows so paging
+ * back re-applies the dropped events.
+ */
+export function resetToLatest(
+  t: ChannelTimeline,
+  events: WireEvent[],
+  opts: { hasMoreBefore: boolean },
+): ChannelTimeline {
+  const maxPageId = events.reduce((acc, e) => Math.max(acc, e.id), 0);
+  let main = t.main.filter(
+    (m) => m.status !== 'confirmed' || (m.id != null && m.id > maxPageId),
+  );
+  const seenIds = new Set<number>();
+  for (const m of main) if (m.id != null) seenIds.add(m.id);
+  for (const ev of events) {
+    if (!isRowEvent(ev.type) || ev.threadRootEventId != null) continue;
+    if (seenIds.has(ev.id)) continue;
+    seenIds.add(ev.id);
+    main = upsertConfirmed(main, messageFromEvent(ev));
+  }
+  return {
+    ...t,
+    main,
+    seenIds,
+    lastEventId: Math.max(t.lastEventId, maxPageId),
+    hasMoreBefore: opts.hasMoreBefore,
+    loaded: true,
+  };
+}
+
 /** Merge a fetched thread (replies oldest-first). */
 export function mergeThread(
   t: ChannelTimeline,

@@ -138,8 +138,8 @@ describe('user prefs', () => {
       payload: { theme: 'dark' },
     });
 
-    const expected = { type: 'prefs', prefs: patched.json().prefs };
     expect(patched.statusCode).toBe(200);
+    const expected = expect.objectContaining({ type: 'prefs', prefs: patched.json().prefs });
     expect(aliceCaller.received).toContainEqual(expected);
     expect(aliceOther.received).toContainEqual(expected);
     expect(benSocket.received).toEqual([]);

@@ -32,10 +32,9 @@ export async function flushOutbox({
   const queued = await storage.listOutbox();
   for (const msg of queued) {
     try {
-      // Known caveat: the server does not dedupe by client_msg_id yet. If the
-      // original request landed but its response was lost, this retry can
-      // produce a duplicate server row. Keeping the original clientMsgId still
-      // reconciles the local pending message for the normal retry case.
+      // Safe retry contract: the server dedupes by clientMsgId and returns
+      // the already-committed event if the original request landed but its
+      // response was lost.
       const { event } = await postMessage({
         channelId: msg.channelId,
         text: msg.text,

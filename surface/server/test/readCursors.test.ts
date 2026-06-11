@@ -82,16 +82,20 @@ describe('read cursors', () => {
     });
     expect(first.statusCode).toBe(200);
     expect(first.json()).toEqual({ lastReadEventId: 10 });
-    expect(s1.received).toContainEqual({
-      type: 'read',
-      channelId: fx.channelId,
-      lastReadEventId: 10,
-    });
-    expect(s2.received).toContainEqual({
-      type: 'read',
-      channelId: fx.channelId,
-      lastReadEventId: 10,
-    });
+    expect(s1.received).toContainEqual(
+      expect.objectContaining({
+        type: 'read',
+        channelId: fx.channelId,
+        lastReadEventId: 10,
+      }),
+    );
+    expect(s2.received).toContainEqual(
+      expect.objectContaining({
+        type: 'read',
+        channelId: fx.channelId,
+        lastReadEventId: 10,
+      }),
+    );
     expect(s3.received).toEqual([]);
 
     s1.received.length = 0;
