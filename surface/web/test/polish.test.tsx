@@ -215,7 +215,7 @@ describe('session question events', () => {
 
   it('renders requested questions as a compact open-pane line', async () => {
     const onOpenSession = vi.fn();
-    render(
+    renderThemed(
       <MessageRow
         message={sessionEvent({
           sessionEventType: 'question_requested',
@@ -234,7 +234,7 @@ describe('session question events', () => {
   });
 
   it('renders requested questions with a generic fallback', () => {
-    render(
+    renderThemed(
       <MessageRow
         message={sessionEvent({
           sessionEventType: 'question_requested',
@@ -248,7 +248,7 @@ describe('session question events', () => {
   });
 
   it('renders resolved questions as a quiet dismissed line', () => {
-    render(
+    renderThemed(
       <MessageRow
         message={sessionEvent({
           sessionEventType: 'question_resolved',
