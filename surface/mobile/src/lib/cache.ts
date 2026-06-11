@@ -1,4 +1,4 @@
-import type { AttachmentMeta, Channel, WireEvent } from '@atrium/surface-client';
+import type { Channel, QueuedOp, WireEvent } from '@atrium/surface-client';
 
 export const MAX_EVENTS_PER_CHANNEL = 300;
 export const DEFAULT_CACHE_FLUSH_MS = 500;
@@ -13,22 +13,13 @@ export interface CacheSnapshot {
   timelines: Record<string, CachedTimeline>;
 }
 
-export interface OutboxMessage {
-  clientMsgId: string;
-  channelId: string;
-  text: string;
-  threadRootEventId?: number;
-  attachments?: AttachmentMeta[];
-  createdAt: string;
-}
-
 export interface CacheStorage {
   loadSnapshot: () => Promise<CacheSnapshot>;
   saveChannels: (channels: Channel[]) => Promise<void>;
   saveTimeline: (channelId: string, timeline: CachedTimeline) => Promise<void>;
-  enqueueOutbox: (msg: OutboxMessage) => Promise<void>;
-  listOutbox: () => Promise<OutboxMessage[]>;
-  removeOutbox: (clientMsgId: string) => Promise<void>;
+  listOps: () => Promise<QueuedOp[]>;
+  putOp: (op: QueuedOp) => Promise<void>;
+  removeOp: (opId: string) => Promise<void>;
   getDraft: (key: string) => Promise<string | null>;
   setDraft: (key: string, text: string) => Promise<void>;
   clearCache: () => Promise<void>;
@@ -39,9 +30,9 @@ export interface EventCache {
   saveChannels: (channels: Channel[]) => Promise<void>;
   saveTimeline: (channelId: string, events: WireEvent[], hasMore: boolean) => Promise<void>;
   enqueueEvents: (channelId: string, events: WireEvent[]) => void;
-  enqueueOutbox: (msg: OutboxMessage) => Promise<void>;
-  listOutbox: () => Promise<OutboxMessage[]>;
-  removeOutbox: (clientMsgId: string) => Promise<void>;
+  listOps: () => Promise<QueuedOp[]>;
+  putOp: (op: QueuedOp) => Promise<void>;
+  removeOp: (opId: string) => Promise<void>;
   getDraft: (key: string) => Promise<string | null>;
   setDraft: (key: string, text: string) => Promise<void>;
   flushChannel: (channelId: string) => Promise<void>;
@@ -137,11 +128,14 @@ export function createEventCache(
       );
     },
 
-    enqueueOutbox: (msg) => storage.enqueueOutbox(msg),
+    listOps: () => (invalidated ? Promise.resolve([]) : storage.listOps()),
 
-    listOutbox: () => storage.listOutbox(),
+    putOp: (op) => {
+      if (invalidated) return Promise.resolve();
+      return storage.putOp(op);
+    },
 
-    removeOutbox: (clientMsgId) => storage.removeOutbox(clientMsgId),
+    removeOp: (opId) => storage.removeOp(opId),
 
     getDraft: (key) => storage.getDraft(key),
 

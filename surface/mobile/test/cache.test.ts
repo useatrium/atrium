@@ -5,13 +5,12 @@ import {
   type CachedTimeline,
   type CacheSnapshot,
   type CacheStorage,
-  type OutboxMessage,
 } from '../src/lib/cache';
-import type { Channel, WireEvent } from '@atrium/surface-client';
+import type { Channel, QueuedOp, WireEvent } from '@atrium/surface-client';
 
 class MemoryStorage implements CacheStorage {
   snapshot: CacheSnapshot = { channels: null, timelines: {} };
-  outbox: OutboxMessage[] = [];
+  ops: QueuedOp[] = [];
   drafts = new Map<string, string>();
   timelineWrites = 0;
 
@@ -28,17 +27,17 @@ class MemoryStorage implements CacheStorage {
     this.snapshot.timelines[channelId] = structuredClone(timeline);
   }
 
-  async enqueueOutbox(msg: OutboxMessage): Promise<void> {
-    this.outbox = this.outbox.filter((m) => m.clientMsgId !== msg.clientMsgId);
-    this.outbox.push(structuredClone(msg));
+  async listOps(): Promise<QueuedOp[]> {
+    return structuredClone(this.ops);
   }
 
-  async listOutbox(): Promise<OutboxMessage[]> {
-    return structuredClone(this.outbox);
+  async putOp(op: QueuedOp): Promise<void> {
+    this.ops = this.ops.filter((current) => current.opId !== op.opId);
+    this.ops.push(structuredClone(op));
   }
 
-  async removeOutbox(clientMsgId: string): Promise<void> {
-    this.outbox = this.outbox.filter((m) => m.clientMsgId !== clientMsgId);
+  async removeOp(opId: string): Promise<void> {
+    this.ops = this.ops.filter((op) => op.opId !== opId);
   }
 
   async getDraft(key: string): Promise<string | null> {
@@ -52,7 +51,7 @@ class MemoryStorage implements CacheStorage {
 
   async clearCache(): Promise<void> {
     this.snapshot = { channels: null, timelines: {} };
-    this.outbox = [];
+    this.ops = [];
     this.drafts.clear();
   }
 }
