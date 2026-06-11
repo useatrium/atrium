@@ -4,12 +4,12 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appReducer, initialAppState, mentionsHandle, type AppState } from '../src/appState';
+import { appReducer, initialAppState, mentionsHandle, type AppState } from '@atrium/surface-client';
 import { MessageRow } from '../src/components/MessageRow';
 import { MessageText } from '../src/components/MessageText';
 import { Timeline } from '../src/components/Timeline';
-import type { ChatMessage, WireEvent } from '../src/state';
-import { buildTimelineItems } from '../src/util';
+import type { ChatMessage, WireEvent } from '@atrium/surface-client';
+import { buildTimelineItems } from '@atrium/surface-client';
 import { SessionPane } from '../src/sessions/SessionPane';
 import {
   isStalledSessionStatus,

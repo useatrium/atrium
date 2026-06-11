@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import type { ChatMessage } from '../state';
+import type { ChatMessage } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { buildTimelineItems } from '../util';
+import { buildTimelineItems } from '@atrium/surface-client';
 import { MessageRow } from './MessageRow';
 
 export function Timeline({

@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
-import type { AttachmentMeta } from '../state';
+import type { AttachmentMeta } from '@atrium/surface-client';
 
 interface PendingFile {
   key: string;

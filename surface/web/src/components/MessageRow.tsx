@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
-import type { ChatMessage } from '../state';
+import type { ChatMessage } from '@atrium/surface-client';
 
 /** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
 export const REACTION_EMOJI = [
@@ -14,7 +14,7 @@ export const REACTION_EMOJI = [
 ];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
-import { formatBytes, formatGutterTime, formatTime } from '../util';
+import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
 

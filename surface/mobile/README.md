@@ -1,0 +1,74 @@
+# Atrium mobile (Expo / React Native)
+
+iOS + Android client for the Atrium surface. Shares its protocol types,
+timeline state, reducer, API client and WebSocket layer with the web app via
+`@atrium/surface-client` (../shared).
+
+## Run it (development)
+
+Prereqs: the surface stack running (see ../README.md), plus Xcode (iOS
+simulator) and/or Android Studio (emulator).
+
+```bash
+cd surface
+pnpm install
+
+# start postgres/minio + the API server in one terminal
+docker compose up -d --wait && pnpm --filter @atrium/server dev
+
+# start the app in another
+cd mobile
+npx expo start            # press i for iOS simulator, a for Android
+```
+
+Sign in with the server origin (simulator: `http://localhost:3001`; physical
+device: `http://<your-mac-LAN-IP>:3001`), a handle, and a display name.
+
+Dev shortcut — auto-login on boot (dev builds only):
+
+```bash
+EXPO_PUBLIC_AUTO_LOGIN="http://localhost:3001|alice|Alice" npx expo start
+```
+
+## Architecture
+
+- `app/` — expo-router screens. `(app)/` is the authed group: channel list,
+  `channel/[id]` timeline, `thread/[rootId]`, search / new-dm / new-channel
+  modals. `login.tsx` sits outside the group behind a `Stack.Protected` guard.
+- `src/lib/session.tsx` — login session (server origin + bearer token) in
+  SecureStore. The server returns the token from `POST /auth/login`; HTTP
+  sends it as `Authorization: Bearer`, the WS upgrade and file URLs as
+  `?token=`.
+- `src/lib/chat.tsx` — the app store: shared `appReducer` + reconnecting
+  WebSocket with after_id catch-up, optimistic sends, uploads (presigned PUT),
+  jump-to-message. Mirrors `web/src/Chat.tsx`.
+- `src/components/Timeline.tsx` — FlashList v2 anchored at the bottom
+  (`startRenderingFromBottom`), `onStartReached` pages older history in.
+- Styling: plain StyleSheet objects against `src/lib/theme.ts`, which mirrors
+  the web client's zinc dark palette.
+
+## Push notifications
+
+The client code is fully wired (`src/lib/notifications.ts`): permission
+prompt, Expo push token registration with the server, banner suppression for
+the channel you're reading, tap-to-open deep link. The server sends pushes for
+DMs and @mentions (skipping users actively viewing the channel) and prunes
+dead tokens.
+
+What it needs from you (one-time, interactive):
+
+1. `npm i -g eas-cli && eas login`
+2. `cd surface/mobile && eas init` — links the app to an EAS project and
+   stamps `extra.eas.projectId` into app.json (the code reads it from there).
+3. `eas build --profile development --platform ios` (and/or `android`) — push
+   does not work in Expo Go; install the resulting dev build on your device.
+   iOS needs your Apple Developer account when prompted; EAS manages the APNs
+   key. Android FCM is configured automatically by EAS.
+4. Run `npx expo start` and open the dev build — notifications now arrive for
+   DMs/mentions while the app is backgrounded or closed.
+
+## Known gaps vs web
+
+- Agent session panes are web-only; session rows render as status cards.
+- No `@agent` composer spawn flow.
+- Quick switcher (⌘K) is replaced by the search modal.

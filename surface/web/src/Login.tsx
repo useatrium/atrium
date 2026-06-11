@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { api, ApiError } from './api';
-import type { UserRef } from './state';
+import type { UserRef } from '@atrium/surface-client';
 
 function friendlyLoginError(err: unknown): string {
   if (err instanceof ApiError) {

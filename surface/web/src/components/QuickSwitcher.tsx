@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { api, type Channel } from '../api';
-import type { WireEvent } from '../state';
-import { channelLabel, formatTime } from '../util';
+import type { WireEvent } from '@atrium/surface-client';
+import { channelLabel, formatTime } from '@atrium/surface-client';
 
 interface MessageHit {
   event: WireEvent;

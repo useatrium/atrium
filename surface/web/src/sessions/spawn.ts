@@ -1,8 +1,8 @@
 // Composer grammar: "@agent <task>" spawns a session instead of posting a
 // message. Optimistic card + POST /api/sessions reconciliation.
 
-import type { AppAction } from '../appState';
-import type { ChatMessage, UserRef } from '../state';
+import type { AppAction } from '@atrium/surface-client';
+import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { PENDING_SESSION_PREFIX, sessionFromWire, type Session } from './types';
 

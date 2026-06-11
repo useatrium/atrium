@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type Workspace } from './api';
-import { appReducer, initialAppState, mentionsHandle } from './appState';
+import { appReducer, initialAppState, mentionsHandle } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
   emptyTimeline,
@@ -8,8 +8,8 @@ import {
   type ChatMessage,
   type UserRef,
   type WireEvent,
-} from './state';
-import { useWs } from './useWs';
+} from '@atrium/surface-client';
+import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { Composer } from './components/Composer';
 import { QuickSwitcher } from './components/QuickSwitcher';
@@ -21,7 +21,7 @@ import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
-import { channelLabel, dmPartner } from './util';
+import { channelLabel, dmPartner } from '@atrium/surface-client';
 
 const PAGE_SIZE = 50;
 const NO_WATCHERS: UserRef[] = [];

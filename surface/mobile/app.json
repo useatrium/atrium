@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Atrium",
+    "slug": "atrium",
+    "scheme": "atrium",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#09090b",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "chat.atrium.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Attach photos to messages.",
+        "NSCameraUsageDescription": "Take a photo to attach to a message."
+      }
+    },
+    "android": {
+      "package": "chat.atrium.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#09090b",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "default"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

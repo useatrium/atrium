@@ -1,5 +1,5 @@
 import type { Channel } from './api';
-import type { ChatMessage, UserRef } from './state';
+import type { ChatMessage, UserRef } from './timeline';
 
 /** The person on the other side of a DM (yourself, for a self-DM). */
 export function dmPartner(c: Channel, meId: string): UserRef | null {

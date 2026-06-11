@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { api, type Channel } from '../api';
-import type { UnreadLevel } from '../appState';
+import type { UnreadLevel } from '@atrium/surface-client';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
-import type { UserRef } from '../state';
-import { channelLabel, dmPartner } from '../util';
+import type { UserRef } from '@atrium/surface-client';
+import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
 
 const BELL_TITLES: Record<NotifyState, string> = {

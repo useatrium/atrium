@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
-import type { AttachmentMeta, ChatMessage } from '../state';
+import type { AttachmentMeta, ChatMessage } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { buildTimelineItems } from '../util';
+import { buildTimelineItems } from '@atrium/surface-client';
 import { Composer } from './Composer';
 import { MessageRow } from './MessageRow';
 
