@@ -123,6 +123,7 @@ export default function ChannelScreen() {
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
           onOpenAttachment={openAttachment}
+          onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
         />
         <TypingLine typing={chat.typing} />
         <Composer

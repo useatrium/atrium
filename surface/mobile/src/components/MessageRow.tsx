@@ -33,6 +33,7 @@ export interface MessageRowProps {
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
   onOpenAttachment: (fileId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
 }
 
 function ReactionChips({
@@ -148,8 +149,16 @@ function Attachments({
   );
 }
 
-/** Agent-session rows render as a compact status card (panes are web-only). */
-function SessionCard({ message, session }: { message: ChatMessage; session?: Session }) {
+/** Agent-session rows render as a compact status card; tap through to the mobile viewer. */
+function SessionCard({
+  message,
+  session,
+  onOpen,
+}: {
+  message: ChatMessage;
+  session?: Session;
+  onOpen?: (sessionId: string) => void;
+}) {
   const status = session?.status ?? 'spawning';
   const statusColor =
     status === 'completed'
@@ -158,7 +167,11 @@ function SessionCard({ message, session }: { message: ChatMessage; session?: Ses
         ? colors.danger
         : colors.warning;
   return (
-    <View
+    <Pressable
+      disabled={!message.sessionId || !onOpen}
+      onPress={() => {
+        if (message.sessionId) onOpen?.(message.sessionId);
+      }}
       style={{
         borderWidth: 1,
         borderColor: colors.border,
@@ -185,10 +198,10 @@ function SessionCard({ message, session }: { message: ChatMessage; session?: Ses
           {session.resultText}
         </Text>
       ) : null}
-      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
-        Open Atrium on desktop to view this session
+      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
+        View live session
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -207,6 +220,7 @@ export const MessageRow = memo(function MessageRow({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
+  onOpenSession,
 }: MessageRowProps) {
   const pending = m.status === 'pending';
   const failed = m.status === 'failed';
@@ -217,7 +231,7 @@ export const MessageRow = memo(function MessageRow({
       Message deleted
     </Text>
   ) : m.sessionId != null ? (
-    <SessionCard message={m} session={session} />
+    <SessionCard message={m} session={session} onOpen={onOpenSession} />
   ) : (
     <>
       {m.text ? <MessageText text={m.text} meHandle={meHandle} muted={pending} /> : null}

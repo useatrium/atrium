@@ -69,6 +69,7 @@ export default function AppLayout() {
       >
         <Stack.Screen name="index" options={{ title: 'Atrium' }} />
         <Stack.Screen name="channel/[id]" options={{ title: '' }} />
+        <Stack.Screen name="session/[id]" options={{ title: '' }} />
         <Stack.Screen name="thread/[rootId]" options={{ title: 'Thread' }} />
         <Stack.Screen
           name="search"
