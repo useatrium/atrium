@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
@@ -18,6 +18,7 @@ export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
   const { state, me } = chat;
+  const { getDraft, setDraft } = chat;
 
   useFocusEffect(
     useCallback(() => {
@@ -33,9 +34,36 @@ export default function ChannelScreen() {
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [initialDraft, setInitialDraft] = useState('');
 
   const title = channel ? channelLabel(channel, me.id) : '';
   const isDm = channel?.kind === 'dm';
+  const draftKey = id ? `channel:${id}` : '';
+
+  useEffect(() => {
+    if (!draftKey) return;
+    let disposed = false;
+    setInitialDraft('');
+    void getDraft(draftKey)
+      .then((draft) => {
+        if (!disposed) setInitialDraft(draft ?? '');
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to load draft', err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [draftKey, getDraft]);
+
+  const saveDraft = useCallback(
+    (key: string, text: string) => {
+      void setDraft(key, text).catch((err: unknown) => {
+        console.warn('failed to save draft', err);
+      });
+    },
+    [setDraft],
+  );
 
   const openThread = useCallback(
     (m: ChatMessage) => {
@@ -101,6 +129,9 @@ export default function ChannelScreen() {
           placeholder={isDm ? `Message ${title}` : `Message #${title}`}
           onSend={(text, attachments) => chat.send(id, text, undefined, attachments)}
           onTyping={() => chat.notifyTyping(id)}
+          draftKey={draftKey}
+          initialDraft={initialDraft}
+          onDraftChange={saveDraft}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text) => {
             if (editing) void chat.editMessage(editing, text);
