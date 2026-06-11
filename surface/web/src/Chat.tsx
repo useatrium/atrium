@@ -41,6 +41,9 @@ export function Chat({
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const lastReadSentRef = useRef<Record<string, number>>({});
+  const lastReadAtRef = useRef<Record<string, number>>({});
+  const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // ---- initial data ----
   useEffect(() => {
@@ -169,6 +172,13 @@ export function Chat({
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
+      onRead: (channelId, lastReadEventId) => {
+        lastReadSentRef.current[channelId] = Math.max(
+          lastReadSentRef.current[channelId] ?? 0,
+          lastReadEventId,
+        );
+        dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+      },
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
@@ -224,6 +234,48 @@ export function Chat({
   // ---- channel selection & history ----
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
+
+  const markRead = useCallback((channelId: string, lastEventId: number) => {
+    if (lastEventId <= 0 || (lastReadSentRef.current[channelId] ?? 0) >= lastEventId) return;
+    const fire = () => {
+      const previous = lastReadSentRef.current[channelId] ?? 0;
+      if (previous >= lastEventId) return;
+      lastReadAtRef.current[channelId] = Date.now();
+      lastReadSentRef.current[channelId] = lastEventId;
+      api
+        .markRead(channelId, lastEventId)
+        .then(({ lastReadEventId }) => {
+          lastReadSentRef.current[channelId] = Math.max(
+            lastReadSentRef.current[channelId] ?? 0,
+            lastReadEventId,
+          );
+          dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+        })
+        .catch(() => {
+          if (lastReadSentRef.current[channelId] === lastEventId) {
+            lastReadSentRef.current[channelId] = previous;
+          }
+        });
+    };
+    const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
+    if (elapsed >= 2000) {
+      fire();
+      return;
+    }
+    if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
+    readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
+  }, []);
+
+  useEffect(() => {
+    if (active) markRead(active.id, timeline.lastEventId);
+  }, [active?.id, markRead, timeline.lastEventId]);
+
+  useEffect(
+    () => () => {
+      for (const timer of Object.values(readTimersRef.current)) clearTimeout(timer);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!active || state.timelines[active.id]?.loaded) return;

@@ -354,6 +354,7 @@ export class SessionRuns {
       if (generation == null) {
         const spawned = await this.centaur.spawn(row.centaur_thread_key, row.harness);
         generation = spawned.assignment_generation;
+        if (generation == null) throw new Error('centaur spawn missing assignment_generation');
         row = await this.updateExecution(id, null, generation);
       }
       if (task != null) {
