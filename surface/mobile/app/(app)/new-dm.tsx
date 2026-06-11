@@ -9,7 +9,8 @@ import { Avatar } from '../../src/components/Avatar';
 export default function NewDm() {
   const { api, me, startDm } = useChat();
   const [users, setUsers] = useState<UserRef[] | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api
@@ -18,15 +19,15 @@ export default function NewDm() {
       .catch(() => setUsers([]));
   }, [api]);
 
-  const open = async (u: UserRef) => {
-    if (busyId) return;
-    setBusyId(u.id);
+  const start = async () => {
+    if (busy || selected.size === 0) return;
+    setBusy(true);
     try {
-      const channel = await startDm(u.id);
+      const channel = await startDm([...selected]);
       router.dismiss();
       router.push(`/channel/${channel.id}`);
     } finally {
-      setBusyId(null);
+      setBusy(false);
     }
   };
 
@@ -39,11 +40,19 @@ export default function NewDm() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <ScrollView style={{ flex: 1 }}>
       {users.map((u) => (
         <Pressable
           key={u.id}
-          onPress={() => void open(u)}
+          onPress={() =>
+            setSelected((prev) => {
+              const next = new Set(prev);
+              if (next.has(u.id)) next.delete(u.id);
+              else next.add(u.id);
+              return next;
+            })
+          }
           style={({ pressed }) => ({
             flexDirection: 'row',
             alignItems: 'center',
@@ -51,7 +60,7 @@ export default function NewDm() {
             paddingHorizontal: space.lg,
             paddingVertical: 10,
             backgroundColor: pressed ? colors.borderSoft : 'transparent',
-            opacity: busyId && busyId !== u.id ? 0.5 : 1,
+            opacity: busy ? 0.5 : 1,
           })}
         >
           <Avatar name={u.displayName} seed={u.id} size={32} />
@@ -62,9 +71,31 @@ export default function NewDm() {
             </Text>
             <Text style={{ color: colors.textMuted, fontSize: font.xs }}>@{u.handle}</Text>
           </View>
-          {busyId === u.id && <ActivityIndicator size="small" color={colors.textMuted} />}
+          {selected.has(u.id) && <Text style={{ color: colors.accent, fontSize: font.lg }}>✓</Text>}
         </Pressable>
       ))}
     </ScrollView>
+    {selected.size > 0 && (
+      <Pressable
+        onPress={() => void start()}
+        disabled={busy}
+        style={{
+          margin: space.lg,
+          alignItems: 'center',
+          paddingVertical: 13,
+          borderRadius: 10,
+          backgroundColor: colors.accent,
+        }}
+      >
+        {busy ? (
+          <ActivityIndicator color={colors.bg} />
+        ) : (
+          <Text style={{ color: colors.bg, fontSize: font.md, fontWeight: '700' }}>
+            Start {selected.size > 1 ? 'group DM' : 'DM'}
+          </Text>
+        )}
+      </Pressable>
+    )}
+    </View>
   );
 }

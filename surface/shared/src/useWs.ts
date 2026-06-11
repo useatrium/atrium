@@ -10,6 +10,7 @@ export interface WsCallbacks {
   onTyping?: (channelId: string, user: UserRef) => void;
   onRead?: (channelId: string, lastReadEventId: number) => void;
   onMuted?: (channelId: string, muted: boolean) => void;
+  onChannelLeft?: (channelId: string) => void;
   /** Fires on every (re)connect after the subscribe is sent — refetch catch-up here. */
   onOpen: () => void;
   onStatus: (status: WsStatus) => void;
@@ -159,6 +160,8 @@ export function useWs(
           cbRef.current.onRead?.(msg.channelId, msg.lastReadEventId);
         else if (msg.type === 'muted' && msg.channelId && typeof msg.muted === 'boolean')
           cbRef.current.onMuted?.(msg.channelId, msg.muted);
+        else if (msg.type === 'channel-left' && msg.channelId)
+          cbRef.current.onChannelLeft?.(msg.channelId);
       };
 
       ws.onclose = () => {
