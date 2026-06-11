@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
+import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
 import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import type { Db } from './db.js';
@@ -144,6 +145,23 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
     }
     return true;
+  }
+
+  function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+  }
+
+  function prefsPatch(input: Record<string, unknown>): Partial<UserPrefs> {
+    const patch: Partial<UserPrefs> = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (!(key in DEFAULT_PREFS)) continue;
+      const prefKey = key as keyof UserPrefs;
+      if (Object.is(normalizePrefs({ [key]: value })[prefKey], value)) {
+        (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[prefKey] =
+          value as UserPrefs[keyof UserPrefs];
+      }
+    }
+    return patch;
   }
 
   async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
@@ -513,7 +531,10 @@ function rawSession(req: FastifyRequest): string | undefined {
   app.get('/auth/me', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    return { user };
+    const res = await pool.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
+      user.id,
+    ]);
+    return { user, prefs: normalizePrefs(res.rows[0]?.prefs) };
   });
 
   app.post('/auth/logout', async (req, reply) => {
@@ -614,6 +635,24 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     hub.sendToUsers([user.id], { type: 'muted', channelId: id, muted: body.muted });
     return { muted: body.muted };
+  });
+
+  app.patch('/api/me/prefs', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    if (!isPlainObject(req.body)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'body must be object' });
+    }
+    const current = await pool.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
+      user.id,
+    ]);
+    const merged = normalizePrefs({
+      ...normalizePrefs(current.rows[0]?.prefs),
+      ...prefsPatch(req.body),
+    });
+    await pool.query('UPDATE users SET prefs = $1 WHERE id = $2', [JSON.stringify(merged), user.id]);
+    hub.sendToUsers([user.id], { type: 'prefs', prefs: merged });
+    return { prefs: merged };
   });
 
   app.get('/api/users', async (req, reply) => {

@@ -2,6 +2,7 @@
 // the session cookie, while native clients pass an absolute server origin and
 // a bearer token (React Native cookie handling is unreliable).
 
+import type { UserPrefs } from './prefs';
 import type { SessionListItem, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
 
@@ -103,7 +104,15 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ handle, displayName }),
       }),
-    me: () => req<{ user: UserRef }>('/auth/me'),
+    /** `prefs` is absent on servers that predate the user-prefs migration. */
+    me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
+    /** Partial update; server merges over stored prefs and fans the full
+     * normalized result out to all of the user's sockets via {type:'prefs'}. */
+    patchPrefs: (patch: Partial<UserPrefs>) =>
+      req<{ prefs: UserPrefs }>('/api/me/prefs', {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
     logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST', body: '{}' }),
     workspaces: () => req<{ workspaces: Workspace[] }>('/api/workspaces'),
     channels: () => req<{ channels: Channel[] }>('/api/channels'),
