@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  surface:
+    name: Surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: atrium
+          POSTGRES_PASSWORD: atrium
+          POSTGRES_DB: atrium
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U atrium -d atrium"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://atrium:atrium@localhost:5433/atrium
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: surface/pnpm-lock.yaml
+
+      # surface depends on packages/centaur-client as a local file package. Its
+      # dist/ directory is intentionally gitignored, so build it before installing
+      # surface or TypeScript cannot resolve the package exports in CI.
+      - name: Install centaur client dependencies
+        working-directory: packages/centaur-client
+        run: pnpm install --frozen-lockfile
+
+      - name: Build centaur client
+        working-directory: packages/centaur-client
+        run: pnpm build
+
+      - name: Install surface workspace
+        working-directory: surface
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck surface workspace
+        working-directory: surface
+        run: pnpm -r typecheck
+
+      - name: Test surface workspace
+        working-directory: surface
+        run: pnpm -r test
+
+      - name: Install Playwright Chromium
+        working-directory: surface
+        run: pnpm --filter @atrium/e2e exec playwright install --with-deps chromium
+
+      - name: Run Playwright e2e
+        working-directory: surface
+        env:
+          # e2e/db-reset.mjs creates and truncates this dedicated database while
+          # using the atrium database from the same Postgres service as admin DB.
+          DATABASE_URL: postgres://atrium:atrium@localhost:5433/atrium_e2e
+        run: pnpm e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: surface/e2e/playwright-report/
+          if-no-files-found: ignore
