@@ -24,10 +24,20 @@ export interface WsOptions {
    * fresh auth token). Default: same-origin /ws — browser only.
    */
   url?: string | (() => string);
+  /**
+   * Subscribe to "the app came back to the foreground" (e.g. React Native
+   * AppState). On wake the hook reconnects immediately if it was waiting on
+   * backoff, or ping-probes a socket the OS may have silently killed while
+   * the app was suspended (dead sockets close within ~5s instead of waiting
+   * out the 60s idle timer). Must be referentially stable; returns an
+   * unsubscribe.
+   */
+  onWake?: (cb: () => void) => () => void;
 }
 
 const PING_INTERVAL_MS = 25_000;
 const IDLE_TIMEOUT_MS = 60_000;
+const PROBE_TIMEOUT_MS = 5_000;
 const MAX_BACKOFF_MS = 10_000;
 
 function defaultUrl(): string {
@@ -153,14 +163,41 @@ export function useWs(
       ws.onerror = () => ws?.close();
     };
 
+    // Foreground wake: skip any pending backoff, or probe a possibly-dead
+    // socket with a tight deadline (any inbound frame re-arms the normal
+    // idle timer via resetIdle).
+    const onWakeSignal = () => {
+      if (disposed) return;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        attempt = 0;
+        connect();
+        return;
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        } catch {
+          ws.close();
+          return;
+        }
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => ws?.close(), PROBE_TIMEOUT_MS);
+      }
+    };
+    const unWake = options.onWake?.(onWakeSignal);
+
     connect();
     return () => {
       disposed = true;
       clearTimers();
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      unWake?.();
       socketRef.current = null;
       ws?.close();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
   return {

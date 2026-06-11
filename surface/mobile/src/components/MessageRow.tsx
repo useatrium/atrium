@@ -26,6 +26,8 @@ export interface MessageRowProps {
   /** Hide the reply-count pill (inside a thread screen). */
   inThread?: boolean;
   fileUrl: (id: string) => string;
+  /** Auth headers for in-app image loads. */
+  fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
@@ -82,10 +84,12 @@ function ReactionChips({
 function Attachments({
   message,
   fileUrl,
+  fileHeaders,
   onOpen,
 }: {
   message: ChatMessage;
   fileUrl: (id: string) => string;
+  fileHeaders?: Record<string, string>;
   onOpen: (fileId: string) => void;
 }) {
   if (!message.attachments?.length) return null;
@@ -98,7 +102,7 @@ function Attachments({
           return (
             <Pressable key={a.id} onPress={() => onOpen(a.id)}>
               <Image
-                source={{ uri: fileUrl(a.id) }}
+                source={{ uri: fileUrl(a.id), headers: fileHeaders }}
                 style={{
                   width: w,
                   height: Math.round(w / ratio),
@@ -197,6 +201,7 @@ export const MessageRow = memo(function MessageRow({
   session,
   inThread,
   fileUrl,
+  fileHeaders,
   onLongPress,
   onOpenThread,
   onToggleReaction,
@@ -216,7 +221,12 @@ export const MessageRow = memo(function MessageRow({
   ) : (
     <>
       {m.text ? <MessageText text={m.text} meHandle={meHandle} muted={pending} /> : null}
-      <Attachments message={m} fileUrl={fileUrl} onOpen={onOpenAttachment} />
+      <Attachments
+        message={m}
+        fileUrl={fileUrl}
+        fileHeaders={fileHeaders}
+        onOpen={onOpenAttachment}
+      />
     </>
   );
 

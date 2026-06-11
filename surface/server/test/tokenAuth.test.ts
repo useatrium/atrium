@@ -87,6 +87,58 @@ describe('bearer-token auth', () => {
     expect(me.statusCode).toBe(401);
   });
 
+  it('rejects an expired session', async () => {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { handle: 'alice', displayName: 'Alice' },
+    });
+    const token = login.json().token as string;
+    const sessionId = token.slice(0, token.lastIndexOf('.'));
+    await pool.query(
+      `UPDATE auth_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1`,
+      [sessionId],
+    );
+    const me = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(401);
+  });
+
+  it('slides expiry forward when a session nears its deadline', async () => {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { handle: 'alice', displayName: 'Alice' },
+    });
+    const token = login.json().token as string;
+    const sessionId = token.slice(0, token.lastIndexOf('.'));
+    await pool.query(
+      `UPDATE auth_sessions SET expires_at = now() + interval '5 days' WHERE id = $1`,
+      [sessionId],
+    );
+    const me = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+    // Renewal is fire-and-forget — poll briefly for it to land.
+    let renewed = false;
+    for (let i = 0; i < 20 && !renewed; i++) {
+      const row = await pool.query<{ days: number }>(
+        `SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 86400 AS days
+         FROM auth_sessions WHERE id = $1`,
+        [sessionId],
+      );
+      renewed = Number(row.rows[0]?.days) > 20;
+      if (!renewed) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(renewed).toBe(true);
+  });
+
   it('logout via bearer revokes the session', async () => {
     const login = await app.inject({
       method: 'POST',
