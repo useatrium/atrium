@@ -84,6 +84,7 @@ export default function AppLayout() {
           name="new-channel"
           options={{ title: 'New channel', presentation: 'modal' }}
         />
+        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack>
     </ChatProvider>
   );
