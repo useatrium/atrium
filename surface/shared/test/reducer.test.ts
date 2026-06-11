@@ -8,6 +8,7 @@ import {
   markFailed,
   mergeHistory,
   mergeThread,
+  nextCatchUpStep,
   type ChatMessage,
   type WireEvent,
 } from '../src/index';
@@ -169,6 +170,31 @@ describe('history pagination merge', () => {
     t = applyEvent(t, edit);
     expect(t.main[0]!.text).toBe('edited!');
     expect(t.main[0]!.edited).toBe(true);
+  });
+
+  it('preserves pending and failed rows when catch-up falls back to latest history', () => {
+    let t = mergeHistory(emptyTimeline, [wire(1, 'old')], { hasMoreBefore: true });
+    t = addPending(t, pending('cm-pending', 'still sending'));
+    t = addPending(t, pending('cm-failed', 'retry me'));
+    t = markFailed(t, 'cm-failed');
+
+    t = mergeHistory(t, [wire(50, 'latest')], { hasMoreBefore: true });
+
+    expect(t.main.map((m) => [m.text, m.status])).toEqual([
+      ['old', 'confirmed'],
+      ['latest', 'confirmed'],
+      ['still sending', 'pending'],
+      ['retry me', 'failed'],
+    ]);
+    expect(t.hasMoreBefore).toBe(true);
+  });
+});
+
+describe('catch-up fallback decision', () => {
+  it('caps after_id paging and falls back to the latest page when still behind', () => {
+    expect(nextCatchUpStep({ hasMore: false, pagesFetched: 5 })).toBe('done');
+    expect(nextCatchUpStep({ hasMore: true, pagesFetched: 4 })).toBe('continue');
+    expect(nextCatchUpStep({ hasMore: true, pagesFetched: 5 })).toBe('refetch-latest');
   });
 });
 
