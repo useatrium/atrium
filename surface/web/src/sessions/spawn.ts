@@ -3,22 +3,10 @@
 
 import type { AppAction } from '@atrium/surface-client';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
+export { AGENT_PREFIX, looksLikeAgentCommand, parseAgentTask } from '@atrium/surface-client';
+import { parseAgentTask } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { PENDING_SESSION_PREFIX, sessionFromWire, type Session } from './types';
-
-export const AGENT_PREFIX = '@agent';
-
-/** True while the composer text begins with "@agent" (drives the hint chip). */
-export function looksLikeAgentCommand(text: string): boolean {
-  return text.startsWith(AGENT_PREFIX);
-}
-
-/** Extract the task from "@agent <task>", or null if this is a plain message. */
-export function parseAgentTask(text: string): string | null {
-  if (!text.startsWith(`${AGENT_PREFIX} `)) return null;
-  const task = text.slice(AGENT_PREFIX.length + 1).trim();
-  return task.length > 0 ? task : null;
-}
 
 export interface SpawnContext {
   channelId: string;
