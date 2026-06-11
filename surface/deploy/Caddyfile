@@ -11,13 +11,20 @@
 #
 # Caddy reverse_proxy supports WebSocket upgrades automatically.
 
+# handle blocks are mutually exclusive — without them try_files (a rewrite,
+# which runs before reverse_proxy in Caddy's directive order) rewrites API
+# paths to /index.html before the proxy matcher can see them.
 {$SITE_ADDRESS:localhost} {
-	root * /srv
 	encode zstd gzip
 
 	@server path /api/* /auth/* /ws /healthz
-	reverse_proxy @server server:3001
+	handle @server {
+		reverse_proxy server:3001
+	}
 
-	try_files {path} /index.html
-	file_server
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
 }
