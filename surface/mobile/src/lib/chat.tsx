@@ -43,6 +43,7 @@ import {
   isNetworkFailure,
   outboxMessageFromSend,
 } from './outbox';
+import { useTheme } from './theme';
 
 const PAGE_SIZE = 50;
 
@@ -55,12 +56,17 @@ interface ChatContextValue {
   state: AppState;
   me: UserRef;
   api: Api;
+  channelsLoaded: boolean;
+  channelsError: string | null;
+  refreshChannels: () => void;
   /** Channel screen came into focus: select it, mark read, load history. */
   openChannel: (channelId: string) => void;
   /** Channel screen lost focus: unreads accrue everywhere again. */
   leaveChannel: () => void;
   loadEarlier: (channelId: string) => Promise<void>;
   openThread: (channelId: string, rootEventId: number) => void;
+  retryThread: (channelId: string, rootEventId: number) => void;
+  threadErrors: Record<number, string>;
   send: (
     channelId: string,
     text: string,
@@ -107,6 +113,7 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 export function ChatProvider({ session, children }: { session: Session; children: React.ReactNode }) {
   const { invalidate } = useSession();
+  const { adoptPrefs } = useTheme();
   const { serverUrl, token, user: me } = session;
 
   const api = useMemo(
@@ -123,6 +130,9 @@ export function ChatProvider({ session, children }: { session: Session; children
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [hydrated, setHydrated] = useState(false);
+  const [channelsLoaded, setChannelsLoaded] = useState(false);
+  const [channelsError, setChannelsError] = useState<string | null>(null);
+  const [threadErrors, setThreadErrors] = useState<Record<number, string>>({});
   const flushingOutboxRef = useRef(false);
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
@@ -198,9 +208,11 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, [pendingMessageFromOutbox]);
 
   const loadChannels = useCallback(() => {
+    setChannelsError(null);
     api
       .channels()
       .then(({ channels }) => {
+        setChannelsLoaded(true);
         dispatch({ type: 'channels-loaded', channels });
         void eventCache.saveChannels(channels).catch((err: unknown) => {
           console.warn('failed to cache channels', err);
@@ -209,7 +221,10 @@ export function ChatProvider({ session, children }: { session: Session; children
         // mobile nothing is focused unless a channel screen is open.
         if (!focusedRef.current) dispatch({ type: 'select-channel', channelId: null });
       })
-      .catch(onApiError);
+      .catch((err: unknown) => {
+        setChannelsError(err instanceof Error ? err.message : 'Could not load channels');
+        onApiError(err);
+      });
   }, [api, onApiError]);
 
   useEffect(() => {
@@ -341,6 +356,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         dispatch({ type: 'mute-changed', channelId, muted });
         cacheMute(channelId, muted);
       },
+      onPrefs: adoptPrefs,
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: () => {
         catchUp();
@@ -467,12 +483,31 @@ export function ChatProvider({ session, children }: { session: Session; children
   const openThread = useCallback(
     (channelId: string, rootEventId: number) => {
       dispatch({ type: 'open-thread', rootEventId });
+      setThreadErrors((prev) => {
+        if (!prev[rootEventId]) return prev;
+        const next = { ...prev };
+        delete next[rootEventId];
+        return next;
+      });
       api
         .thread(rootEventId)
         .then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }))
-        .catch(onApiError);
+        .catch((err: unknown) => {
+          setThreadErrors((prev) => ({
+            ...prev,
+            [rootEventId]: err instanceof Error ? err.message : 'Could not load replies',
+          }));
+          onApiError(err);
+        });
     },
     [api, onApiError],
+  );
+
+  const retryThread = useCallback(
+    (channelId: string, rootEventId: number) => {
+      openThread(channelId, rootEventId);
+    },
+    [openThread],
   );
 
   // ---- sending ----
@@ -872,10 +907,15 @@ export function ChatProvider({ session, children }: { session: Session; children
       state,
       me,
       api,
+      channelsLoaded,
+      channelsError,
+      refreshChannels: loadChannels,
       openChannel,
       leaveChannel,
       loadEarlier,
       openThread,
+      retryThread,
+      threadErrors,
       send,
       retry,
       editMessage,
@@ -905,10 +945,15 @@ export function ChatProvider({ session, children }: { session: Session; children
       state,
       me,
       api,
+      channelsLoaded,
+      channelsError,
+      loadChannels,
       openChannel,
       leaveChannel,
       loadEarlier,
       openThread,
+      retryThread,
+      threadErrors,
       send,
       retry,
       editMessage,

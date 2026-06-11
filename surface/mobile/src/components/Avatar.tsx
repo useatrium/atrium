@@ -8,6 +8,8 @@ export function Avatar({ name, seed, size = 36 }: { name: string; seed: string; 
   const userColors = userColorTokens(seed, scheme);
   return (
     <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
       style={{
         width: size,
         height: size,

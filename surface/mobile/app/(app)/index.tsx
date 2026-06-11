@@ -2,30 +2,35 @@
 // screen is visible, so every channel accrues unreads.
 
 import { useCallback, useMemo } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { channelLabel, dmPartner, type Channel } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { useSession } from '../../src/lib/session';
-import {
-  getRegisteredPushToken,
-  unregisterPush,
-} from '../../src/lib/notifications';
 import { font, space, useTheme } from '../../src/lib/theme';
 import { Avatar } from '../../src/components/Avatar';
 import { ConnectionBanner, UnreadBadge } from '../../src/components/bits';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-function HeaderButton({ icon, onPress }: { icon: IoniconName; onPress: () => void }) {
+function HeaderButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: IoniconName;
+  label: string;
+  onPress: () => void;
+}) {
   const { colors } = useTheme();
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
       onPress={onPress}
-      hitSlop={8}
-      style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
+      hitSlop={6}
+      style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
     >
       <Ionicons name={icon} size={21} color={colors.textSecondary} />
     </Pressable>
@@ -53,8 +58,7 @@ function SectionHeader({ title }: { title: string }) {
 }
 
 export default function ChannelList() {
-  const { state, me, api, leaveChannel, setMute } = useChat();
-  const { logout } = useSession();
+  const { state, me, leaveChannel, setMute, channelsLoaded, channelsError, refreshChannels } = useChat();
   const { colors } = useTheme();
 
   useFocusEffect(
@@ -69,19 +73,6 @@ export default function ChannelList() {
     for (const c of state.channels) (c.kind === 'dm' || c.kind === 'gdm' ? dms : channels).push(c);
     return { channels, dms };
   }, [state.channels]);
-
-  const confirmLogout = () => {
-    Alert.alert(me.displayName, `@${me.handle}`, [
-      {
-        text: 'Log out',
-        style: 'destructive',
-        onPress: () => {
-          void unregisterPush(api, getRegisteredPushToken()).finally(() => void logout());
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
 
   const row = (c: Channel) => {
     const unread = c.muted ? false : state.unread[c.id] ?? false;
@@ -99,6 +90,8 @@ export default function ChannelList() {
     return (
       <Pressable
         key={c.id}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}${c.muted ? ', muted' : unread === 'mention' ? ', mention' : unread ? ', unread' : ''}`}
         onPress={() => router.push(`/channel/${c.id}`)}
         onLongPress={toggleMute}
         style={({ pressed }) => ({
@@ -145,39 +138,100 @@ export default function ChannelList() {
     );
   };
 
+  const sections = [
+    { key: 'channels-header', kind: 'header' as const, title: 'Channels' },
+    ...channels.map((channel) => ({ key: channel.id, kind: 'channel' as const, channel })),
+    ...(channelsError && state.channels.length === 0
+      ? [{ key: 'channels-error', kind: 'error' as const }]
+      : []),
+    ...(state.channels.length === 0 && !channelsLoaded && !channelsError
+      ? [{ key: 'channels-loading', kind: 'loading' as const }]
+      : []),
+    ...(channels.length === 0 && channelsLoaded
+      ? [{ key: 'channels-empty', kind: 'empty' as const }]
+      : []),
+    ...(dms.length > 0
+      ? [
+          { key: 'dms-header', kind: 'header' as const, title: 'Direct messages' },
+          ...dms.map((channel) => ({ key: channel.id, kind: 'channel' as const, channel })),
+        ]
+      : []),
+  ];
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Stack.Screen
         options={{
           title: 'Atrium',
           headerLeft: () => (
-            <Pressable onPress={confirmLogout} hitSlop={8}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open settings"
+              onPress={() => router.push('/settings')}
+              hitSlop={8}
+            >
               <Avatar name={me.displayName} seed={me.id} size={28} />
             </Pressable>
           ),
           headerRight: () => (
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              <HeaderButton icon="hardware-chip-outline" onPress={() => router.push('/sessions')} />
-              <HeaderButton icon="search-outline" onPress={() => router.push('/search')} />
-              <HeaderButton icon="mail-outline" onPress={() => router.push('/new-dm')} />
-              <HeaderButton icon="add-outline" onPress={() => router.push('/new-channel')} />
+            <View style={{ flexDirection: 'row', gap: 2 }}>
+              <HeaderButton
+                icon="hardware-chip-outline"
+                label="Open sessions"
+                onPress={() => router.push('/sessions')}
+              />
+              <HeaderButton icon="search-outline" label="Search messages" onPress={() => router.push('/search')} />
+              <HeaderButton icon="mail-outline" label="New direct message" onPress={() => router.push('/new-dm')} />
+              <HeaderButton icon="add-outline" label="New channel" onPress={() => router.push('/new-channel')} />
+              <HeaderButton icon="settings-outline" label="Open settings" onPress={() => router.push('/settings')} />
             </View>
           ),
         }}
       />
       <ConnectionBanner status={state.wsStatus} />
-      <ScrollView style={{ flex: 1 }}>
-        <SectionHeader title="Channels" />
-        {channels.map(row)}
-        {channels.length === 0 && (
-          <Text style={{ color: colors.textFaint, fontSize: font.sm, paddingHorizontal: space.lg }}>
-            No channels yet.
-          </Text>
-        )}
-        {dms.length > 0 && <SectionHeader title="Direct messages" />}
-        {dms.map(row)}
-        <View style={{ height: space.xl }} />
-      </ScrollView>
+      <FlatList
+        style={{ flex: 1 }}
+        data={sections}
+        keyExtractor={(item) => item.key}
+        refreshControl={
+          <RefreshControl
+            refreshing={!channelsLoaded && state.channels.length === 0}
+            onRefresh={refreshChannels}
+            tintColor={colors.textMuted}
+          />
+        }
+        renderItem={({ item }) => {
+          if (item.kind === 'header') return <SectionHeader title={item.title} />;
+          if (item.kind === 'channel') return row(item.channel);
+          if (item.kind === 'loading') {
+            return (
+              <Text style={{ color: colors.textMuted, fontSize: font.sm, paddingHorizontal: space.lg }}>
+                Loading channels...
+              </Text>
+            );
+          }
+          if (item.kind === 'error') {
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Channel list failed. Tap to retry."
+                onPress={refreshChannels}
+                style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.lg }}
+              >
+                <Text style={{ color: colors.danger, fontSize: font.sm }}>
+                  Channels failed — tap to retry
+                </Text>
+              </Pressable>
+            );
+          }
+          return (
+            <Text style={{ color: colors.textFaint, fontSize: font.sm, paddingHorizontal: space.lg }}>
+              No channels yet.
+            </Text>
+          );
+        }}
+        ListFooterComponent={<View style={{ height: space.xl }} />}
+      />
     </View>
   );
 }

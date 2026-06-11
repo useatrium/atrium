@@ -173,7 +173,13 @@ export default function ChannelScreen() {
           ),
           headerRight: () =>
             isGroupLike ? (
-              <Pressable onPress={openHeaderMenu} hitSlop={8} style={{ paddingHorizontal: 8 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open channel menu"
+                onPress={openHeaderMenu}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+              >
                 <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
               </Pressable>
             ) : null,

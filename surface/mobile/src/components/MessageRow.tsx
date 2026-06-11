@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type AccessibilityActionEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -56,12 +56,16 @@ function ReactionChips({
         return (
           <Pressable
             key={r.emoji}
+            accessibilityRole="button"
+            accessibilityLabel={`${r.emoji} ${r.userIds.length}${mine ? ', you reacted' : ''}`}
+            accessibilityState={{ selected: mine }}
             onPress={() => onToggle(r.emoji)}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               gap: 4,
-              paddingHorizontal: 8,
+              minHeight: 44,
+              paddingHorizontal: 12,
               paddingVertical: 3,
               borderRadius: 999,
               backgroundColor: mine ? colors.accentBg : colors.bgElevated,
@@ -108,7 +112,12 @@ function Attachments({
           const ratio = a.width && a.height ? a.width / a.height : 4 / 3;
           const w = Math.min(IMAGE_MAX_W, a.width ?? IMAGE_MAX_W);
           return (
-            <Pressable key={a.id} onPress={() => onOpenImage(a)}>
+            <Pressable
+              key={a.id}
+              accessibilityRole="imagebutton"
+              accessibilityLabel={a.filename}
+              onPress={() => onOpenImage(a)}
+            >
               <Image
                 source={{ uri: fileUrl(a.id), headers: fileHeaders }}
                 style={{
@@ -126,6 +135,8 @@ function Attachments({
         return (
           <Pressable
             key={a.id}
+            accessibilityRole="button"
+            accessibilityLabel={`${a.filename}, ${formatBytes(a.size)}`}
             onPress={() => onOpen(a.id)}
             style={{
               flexDirection: 'row',
@@ -239,6 +250,41 @@ export const MessageRow = memo(function MessageRow({
   const pending = m.status === 'pending';
   const failed = m.status === 'failed';
   const tombstone = m.deleted === true;
+  const attachmentDescription = m.attachments?.length
+    ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
+    : '';
+  const rowText = tombstone
+    ? 'Message deleted'
+    : m.text.trim() || attachmentDescription || (m.sessionId ? 'Agent session' : 'Message');
+  const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
+  const own = m.author.id === meId;
+  const accessibilityActions = [
+    ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
+    ...(!tombstone && m.sessionId == null && onOpenThread && !inThread
+      ? [{ name: 'reply', label: 'Reply in thread' }]
+      : []),
+    ...(!tombstone && m.sessionId == null ? [{ name: 'react', label: 'React' }] : []),
+    ...(m.text.trim() ? [{ name: 'copy', label: 'Copy text' }] : []),
+    ...(own && !tombstone && m.sessionId == null
+      ? [
+          { name: 'edit', label: 'Edit message' },
+          { name: 'delete', label: 'Delete message' },
+        ]
+      : []),
+  ];
+
+  const onAccessibilityAction = (event: AccessibilityActionEvent) => {
+    const name = event.nativeEvent.actionName;
+    if (name === 'retry') {
+      onRetry(m);
+      return;
+    }
+    if (name === 'reply' && onOpenThread) {
+      onOpenThread(m);
+      return;
+    }
+    if (['react', 'copy', 'edit', 'delete'].includes(name)) onLongPress(m);
+  };
 
   const body = tombstone ? (
     <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>
@@ -261,6 +307,11 @@ export const MessageRow = memo(function MessageRow({
 
   return (
     <Pressable
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={rowLabel}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={onAccessibilityAction}
       onLongPress={() => {
         if (tombstone || m.sessionId != null) return;
         lightImpactHaptic();
@@ -300,7 +351,13 @@ export const MessageRow = memo(function MessageRow({
           <Text style={{ color: colors.textFaint, fontSize: font.xs }}>(edited)</Text>
         ) : null}
         {failed && (
-          <Pressable onPress={() => onRetry(m)}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Failed to send. Tap to retry."
+            onPress={() => onRetry(m)}
+            hitSlop={10}
+            style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+          >
             <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: 2 }}>
               Failed to send — tap to retry
             </Text>
@@ -318,8 +375,11 @@ export const MessageRow = memo(function MessageRow({
         )}
         {!inThread && m.replyCount > 0 && onOpenThread && (
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${m.replyCount} ${m.replyCount === 1 ? 'reply' : 'replies'}`}
             onPress={() => onOpenThread(m)}
-            style={{ marginTop: 4, alignSelf: 'flex-start' }}
+            hitSlop={10}
+            style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
           >
             <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
               {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →

@@ -58,7 +58,7 @@ export function Timeline({
   onOpenImageAttachment,
   onOpenSession,
 }: TimelineProps) {
-  const { colors } = useTheme();
+  const { colors, reduceMotion } = useTheme();
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
 
   // Chronological (oldest-first); FlashList v2 anchors rendering at the bottom.
@@ -74,7 +74,7 @@ export function Timeline({
     const scroll = (attempt: number) => {
       if (cancelled) return;
       try {
-        listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+        listRef.current?.scrollToIndex({ index, animated: !reduceMotion, viewPosition: 0.5 });
       } catch {
         /* row may not be measured yet; bounded retry below */
       }
@@ -85,7 +85,7 @@ export function Timeline({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [highlightId, items]);
+  }, [highlightId, items, reduceMotion]);
 
   const loadingOlder = useRef(false);
   const handleStartReached = useCallback(() => {

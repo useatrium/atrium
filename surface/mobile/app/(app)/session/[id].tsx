@@ -139,7 +139,7 @@ function ToolCard({ item }: { item: ToolCallItem }) {
 function TextBlock({ item }: { item: TextItem }) {
   const { colors } = useTheme();
   return (
-    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: 21 }}>
+    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: font.md * 1.4 }}>
       {item.text}
     </Text>
   );
@@ -190,6 +190,9 @@ function MobileQuestionBanner({
                 const selected = values[q.id] === option.label;
                 return (
                   <Pressable
+                    accessibilityRole="radio"
+                    accessibilityLabel={option.label}
+                    accessibilityState={{ selected, disabled: !isDriver || submitting }}
                     key={option.label}
                     disabled={!isDriver || submitting}
                     onPress={() => setValue(q.id, option.label)}
@@ -261,7 +264,7 @@ function MobileQuestionBanner({
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
-  const { colors } = useTheme();
+  const { colors, reduceMotion } = useTheme();
   const { api, me, state, upsertSession } = chat;
   const { stream, connected } = useSessionStream(id ?? null);
   const headerHeight = useHeaderHeight();
@@ -333,8 +336,8 @@ export default function SessionScreen() {
   }, [cancelAsk]);
 
   useEffect(() => {
-    if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: true });
-  }, [stream.lastEventId, resultText]);
+    if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: !reduceMotion });
+  }, [reduceMotion, stream.lastEventId, resultText]);
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -442,7 +445,14 @@ export default function SessionScreen() {
           ),
           headerRight: canCancel
             ? () => (
-                <Pressable onPress={cancel} hitSlop={8}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={cancelAsk === 'confirm' ? 'Confirm cancel session' : 'Cancel session'}
+                  accessibilityState={{ disabled: false }}
+                  onPress={cancel}
+                  hitSlop={8}
+                  style={{ minHeight: 44, justifyContent: 'center' }}
+                >
                   <Text
                     style={{
                       color: cancelAsk === 'confirm' ? colors.danger : colors.textSecondary,
@@ -543,10 +553,22 @@ export default function SessionScreen() {
               Message did not send: "{steerError}"
             </Text>
             <View style={{ flexDirection: 'row', gap: space.sm }}>
-              <Pressable onPress={retrySteer}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry sending session message"
+                onPress={retrySteer}
+                hitSlop={10}
+                style={{ minHeight: 44, justifyContent: 'center' }}
+              >
                 <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '800' }}>Retry</Text>
               </Pressable>
-              <Pressable onPress={() => setSteerError(null)}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss failed session message"
+                onPress={() => setSteerError(null)}
+                hitSlop={10}
+                style={{ minHeight: 44, justifyContent: 'center' }}
+              >
                 <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Dismiss</Text>
               </Pressable>
             </View>
@@ -590,13 +612,17 @@ export default function SessionScreen() {
               }}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send session message"
+              accessibilityState={{ disabled: !steerText.trim() }}
               onPress={sendSteer}
               disabled={!steerText.trim()}
               style={{
                 borderRadius: radius.md,
                 backgroundColor: steerText.trim() ? colors.accent : colors.bgElevated,
                 paddingHorizontal: space.md,
-                height: 38,
+                minHeight: 44,
+                minWidth: 44,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
