@@ -60,6 +60,7 @@ interface ChatContextValue {
   react: (m: ChatMessage, emoji: string) => Promise<void>;
   createChannel: (name: string) => Promise<Channel>;
   startDm: (userId: string) => Promise<Channel>;
+  setMute: (channelId: string, muted: boolean) => void;
   notifyTyping: (channelId: string) => void;
   typing: Record<string, TypingEntry>;
   /** URL for an attachment body — pair with fileHeaders for in-app loads. */
@@ -214,6 +215,15 @@ export function ChatProvider({ session, children }: { session: Session; children
     return `${ws}/ws?token=${encodeURIComponent(token)}`;
   }, [serverUrl, token]);
 
+  const cacheMute = useCallback((channelId: string, muted: boolean) => {
+    const channels = stateRef.current.channels.map((c) =>
+      c.id === channelId ? { ...c, muted } : c,
+    );
+    void eventCache.saveChannels(channels).catch((err: unknown) => {
+      console.warn('failed to cache mute change', err);
+    });
+  }, []);
+
   // iOS suspends timers in the background and kills idle sockets silently —
   // tell the WS layer the instant the app is foregrounded again.
   const bindWake = useCallback((cb: () => void) => {
@@ -247,6 +257,10 @@ export function ChatProvider({ session, children }: { session: Session; children
           lastReadEventId,
         );
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+      },
+      onMuted: (channelId, muted) => {
+        dispatch({ type: 'mute-changed', channelId, muted });
+        cacheMute(channelId, muted);
       },
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
@@ -475,6 +489,25 @@ export function ChatProvider({ session, children }: { session: Session; children
     [api],
   );
 
+  const setMute = useCallback(
+    (channelId: string, muted: boolean) => {
+      dispatch({ type: 'mute-changed', channelId, muted });
+      cacheMute(channelId, muted);
+      api
+        .setMute(channelId, muted)
+        .then((res) => {
+          dispatch({ type: 'mute-changed', channelId, muted: res.muted });
+          cacheMute(channelId, res.muted);
+        })
+        .catch((err) => {
+          onApiError(err);
+          dispatch({ type: 'mute-changed', channelId, muted: !muted });
+          cacheMute(channelId, !muted);
+        });
+    },
+    [api, cacheMute, onApiError],
+  );
+
   // ---- uploads ----
   const uploadFile = useCallback(
     async (file: {
@@ -584,6 +617,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      setMute,
       notifyTyping,
       typing,
       fileUrl,
@@ -608,6 +642,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      setMute,
       notifyTyping,
       typing,
       fileUrl,

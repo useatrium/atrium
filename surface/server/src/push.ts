@@ -55,6 +55,21 @@ function addRecipient(
   recipients.set(userId, reason);
 }
 
+async function dropMutedRecipients(
+  pool: Db,
+  channelId: string,
+  recipients: Map<string, PushReason>,
+): Promise<void> {
+  if (recipients.size === 0) return;
+  const muted = await pool.query<{ user_id: string }>(
+    `SELECT user_id
+     FROM channel_mutes
+     WHERE channel_id = $1 AND user_id = ANY($2::uuid[])`,
+    [channelId, [...recipients.keys()]],
+  );
+  for (const row of muted.rows) recipients.delete(row.user_id);
+}
+
 /** User ids to push for a message: DM partner(s), @mentioned users, or thread participants. */
 export async function pushRecipientsFor(
   pool: Db,
@@ -79,6 +94,7 @@ export async function pushRecipientsFor(
     for (const member of members.rows) {
       addRecipient(recipients, member.user_id, ev.actorId, 'dm');
     }
+    await dropMutedRecipients(pool, ev.channelId, recipients);
     return {
       userIds: [...recipients.keys()],
       channelName: row.name,
@@ -112,6 +128,7 @@ export async function pushRecipientsFor(
     }
   }
 
+  await dropMutedRecipients(pool, ev.channelId, recipients);
   return {
     userIds: [...recipients.keys()],
     channelName: row.name,

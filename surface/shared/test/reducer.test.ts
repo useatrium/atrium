@@ -223,4 +223,43 @@ describe('app unread read cursors', () => {
 
     expect(state.unread[CH]).toBe(false);
   });
+
+  it('channels-loaded keeps muted channels unbadged', () => {
+    const state = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'muted',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+          latestEventId: 10,
+          lastReadEventId: 0,
+          muted: true,
+        },
+      ],
+    });
+
+    expect(state.unread[CH]).toBe(false);
+  });
+
+  it('muted channels never gain unread from live events', () => {
+    const loaded = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'muted',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+          muted: true,
+        },
+      ],
+    });
+    const state = appReducer(loaded, { type: 'server-event', event: wire(12, 'ping @alice') });
+
+    expect(state.unread[CH]).toBe(false);
+  });
 });

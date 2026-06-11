@@ -43,7 +43,7 @@ function SectionHeader({ title }: { title: string }) {
 }
 
 export default function ChannelList() {
-  const { state, me, api, leaveChannel } = useChat();
+  const { state, me, api, leaveChannel, setMute } = useChat();
   const { logout } = useSession();
 
   useFocusEffect(
@@ -73,12 +73,23 @@ export default function ChannelList() {
   };
 
   const row = (c: Channel) => {
-    const unread = state.unread[c.id] ?? false;
+    const unread = c.muted ? false : state.unread[c.id] ?? false;
     const partner = dmPartner(c, me.id);
+    const label = channelLabel(c, me.id);
+    const toggleMute = () => {
+      Alert.alert(label, undefined, [
+        {
+          text: c.muted ? 'Unmute' : 'Mute',
+          onPress: () => setMute(c.id, !c.muted),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    };
     return (
       <Pressable
         key={c.id}
         onPress={() => router.push(`/channel/${c.id}`)}
+        onLongPress={toggleMute}
         style={({ pressed }) => ({
           flexDirection: 'row',
           alignItems: 'center',
@@ -100,15 +111,19 @@ export default function ChannelList() {
         <Text
           style={{
             flex: 1,
-            color: unread ? colors.text : colors.textSecondary,
+            color: c.muted ? colors.textMuted : unread ? colors.text : colors.textSecondary,
             fontSize: font.md,
             fontWeight: unread ? '700' : '400',
           }}
           numberOfLines={1}
         >
-          {channelLabel(c, me.id)}
+          {label}
         </Text>
-        <UnreadBadge level={unread} />
+        {c.muted ? (
+          <Text style={{ color: colors.textMuted, fontSize: font.sm }}>🔕</Text>
+        ) : (
+          <UnreadBadge level={unread} />
+        )}
       </Pressable>
     );
   };
