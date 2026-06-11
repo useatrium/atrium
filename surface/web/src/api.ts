@@ -79,8 +79,21 @@ export const api = {
     text: string;
     clientMsgId: string;
     threadRootEventId?: number;
+    /** Uploaded file ids to attach. */
+    attachments?: string[];
   }) =>
     req<{ event: WireEvent }>('/api/messages', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  createUpload: (body: {
+    filename: string;
+    contentType: string;
+    size: number;
+    width?: number;
+    height?: number;
+  }) =>
+    req<{ fileId: string; uploadUrl: string }>('/api/uploads', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

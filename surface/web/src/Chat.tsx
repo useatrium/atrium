@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { api, type Workspace } from './api';
 import { appReducer, initialAppState, mentionsHandle } from './appState';
 import { showNotification } from './notify';
-import { emptyTimeline, type ChatMessage, type UserRef, type WireEvent } from './state';
+import {
+  emptyTimeline,
+  type AttachmentMeta,
+  type ChatMessage,
+  type UserRef,
+  type WireEvent,
+} from './state';
 import { useWs } from './useWs';
 import { Avatar } from './components/Avatar';
 import { Composer } from './components/Composer';
@@ -279,8 +285,13 @@ export function Chat({
   }, [state.presence]);
 
   // ---- sending ----
-  const send = (channelId: string, text: string, threadRootEventId?: number) => {
-    if (trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch })) return;
+  const send = (
+    channelId: string,
+    text: string,
+    threadRootEventId?: number,
+    attachments?: AttachmentMeta[],
+  ) => {
+    if (text && trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch })) return;
     const clientMsgId = crypto.randomUUID();
     const message: ChatMessage = {
       id: null,
@@ -294,10 +305,17 @@ export function Chat({
       replyCount: 0,
       lastReplyId: 0,
       status: 'pending',
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
     dispatch({ type: 'send-pending', channelId, message });
     api
-      .postMessage({ channelId, text, clientMsgId, threadRootEventId })
+      .postMessage({
+        channelId,
+        text,
+        clientMsgId,
+        threadRootEventId,
+        attachments: attachments?.map((a) => a.id),
+      })
       .then(({ event }) => dispatch({ type: 'server-event', event }))
       .catch(() => dispatch({ type: 'send-failed', channelId, clientMsgId }));
   };
@@ -375,7 +393,7 @@ export function Chat({
       });
       return;
     }
-    send(m.channelId, m.text, m.threadRootEventId ?? undefined);
+    send(m.channelId, m.text, m.threadRootEventId ?? undefined, m.attachments);
   };
 
   const createChannel = async (name: string) => {
@@ -489,11 +507,12 @@ export function Chat({
             <TypingLine typing={typing} />
             <Composer
               placeholder={`Message #${active.name}`}
-              onSend={(text) => send(active.id, text)}
+              onSend={(text, attachments) => send(active.id, text, undefined, attachments)}
               onTyping={() => notifyTyping(active.id)}
               onArrowUpOnEmpty={editLastOwn}
               autoFocus
               agentAware
+              allowAttachments
             />
           </>
         )}
@@ -551,7 +570,7 @@ export function Chat({
             meId={me.id}
             meHandle={me.handle}
             onClose={() => dispatch({ type: 'close-thread' })}
-            onSend={(text) => send(active.id, text, openThreadRoot.id!)}
+            onSend={(text, attachments) => send(active.id, text, openThreadRoot.id!, attachments)}
             onOpenSession={openSession}
             onRetry={retry}
             onEdit={editMessage}

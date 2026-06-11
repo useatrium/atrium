@@ -202,6 +202,16 @@ export async function createChannel(
   }
 }
 
+/** Attachment metadata embedded in message payloads (body lives in S3). */
+export interface AttachmentMeta {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  width?: number;
+  height?: number;
+}
+
 export async function postMessage(
   pool: Db,
   args: {
@@ -211,6 +221,7 @@ export async function postMessage(
     text: string;
     clientMsgId?: string | null;
     threadRootEventId?: number | null;
+    attachments?: AttachmentMeta[];
   },
 ): Promise<WireEvent> {
   return withTx(pool, async (client) => {
@@ -236,6 +247,7 @@ export async function postMessage(
     }
     const payload: Record<string, unknown> = { text: args.text };
     if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
+    if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
     const ev = await insertEvent(client, {
       workspaceId: args.workspaceId,
       channelId: args.channelId,

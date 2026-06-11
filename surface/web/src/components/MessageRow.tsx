@@ -14,7 +14,7 @@ export const REACTION_EMOJI = [
 ];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
-import { formatGutterTime, formatTime } from '../util';
+import { formatBytes, formatGutterTime, formatTime } from '../util';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
 
@@ -206,6 +206,48 @@ export function MessageRow({
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200">
             <MessageText text={m.text} meHandle={meHandle} />
             {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
+          </div>
+        )}
+        {!deleted && !isSessionRow && (m.attachments?.length ?? 0) > 0 && (
+          <div className="mt-1 flex flex-wrap gap-2">
+            {m.attachments!.map((a) =>
+              a.contentType.startsWith('image/') ? (
+                <a
+                  key={a.id}
+                  href={`/api/files/${a.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={a.filename}
+                  className="block"
+                >
+                  <img
+                    src={`/api/files/${a.id}`}
+                    alt={a.filename}
+                    width={a.width}
+                    height={a.height}
+                    loading="lazy"
+                    className="max-h-72 w-auto max-w-sm rounded-md border border-zinc-800 object-contain"
+                    style={
+                      a.width && a.height
+                        ? { aspectRatio: `${a.width} / ${a.height}` }
+                        : undefined
+                    }
+                  />
+                </a>
+              ) : (
+                <a
+                  key={a.id}
+                  href={`/api/files/${a.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-200 hover:border-zinc-700"
+                >
+                  <span aria-hidden>📄</span>
+                  <span className="max-w-56 truncate">{a.filename}</span>
+                  <span className="text-xs text-zinc-500">{formatBytes(a.size)}</span>
+                </a>
+              ),
+            )}
           </div>
         )}
         {!deleted && !isSessionRow && (m.reactions?.length ?? 0) > 0 && (

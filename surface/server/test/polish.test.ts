@@ -267,6 +267,101 @@ describe('re-login display name', () => {
   });
 });
 
+describe('attachments', () => {
+  async function insertFile(uploaderId: string, over: Record<string, unknown> = {}) {
+    const res = await pool.query<{ id: string }>(
+      `INSERT INTO files (workspace_id, uploader_id, filename, content_type, size_bytes, width, height, s3_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [
+        fx.workspaceId,
+        uploaderId,
+        over.filename ?? 'shot.png',
+        over.contentType ?? 'image/png',
+        over.size ?? 12345,
+        over.width ?? 800,
+        over.height ?? 600,
+        'k/shot.png',
+      ],
+    );
+    return res.rows[0]!.id;
+  }
+
+  it('embeds attachment metadata into the message payload', async () => {
+    const { cookie, user } = await login('alice', 'Alice');
+    const fileId = await insertFile(user.id);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, text: '', clientMsgId: 'cm-att', attachments: [fileId] },
+    });
+    expect(res.statusCode).toBe(201);
+    const ev = res.json().event;
+    expect(ev.payload.attachments).toEqual([
+      {
+        id: fileId,
+        filename: 'shot.png',
+        contentType: 'image/png',
+        size: 12345,
+        width: 800,
+        height: 600,
+      },
+    ]);
+    // Attachment-only messages are allowed; text-and-attachment-free are not.
+    const empty = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, text: '', clientMsgId: 'cm-none' },
+    });
+    expect(empty.statusCode).toBe(400);
+  });
+
+  it("rejects attaching someone else's upload", async () => {
+    const { user: aliceUser } = await login('alice', 'Alice');
+    const { cookie: benCookie } = await login('ben', 'Ben');
+    const fileId = await insertFile(aliceUser.id);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { cookie: benCookie },
+      payload: { channelId: fx.channelId, text: 'steal', attachments: [fileId] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('bad_attachment');
+  });
+
+  it('GET /api/files/:id redirects to a presigned URL; unknown ids 404', async () => {
+    const { cookie, user } = await login('alice', 'Alice');
+    const fileId = await insertFile(user.id);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/files/${fileId}`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain('k/shot.png');
+    expect(res.headers.location).toContain('X-Amz-Signature');
+    const missing = await app.inject({
+      method: 'GET',
+      url: '/api/files/not-a-uuid',
+      headers: { cookie },
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it('rejects oversize upload declarations before touching storage', async () => {
+    const { cookie } = await login('alice', 'Alice');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/uploads',
+      headers: { cookie },
+      payload: { filename: 'big.bin', contentType: 'application/zip', size: 26 * 1024 * 1024 },
+    });
+    expect(res.statusCode).toBe(413);
+  });
+});
+
 describe('GET /api/search (full-text)', () => {
   it('finds messages by current text, including edit-introduced terms, never deleted ones', async () => {
     const { cookie } = await login('alice', 'Alice');
