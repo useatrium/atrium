@@ -11,6 +11,7 @@ import {
   type MsgSendPayload,
   type OpRegistry,
   type QueuedOp,
+  type UploadPayload,
   type WireEvent,
 } from '../src/index';
 
@@ -57,6 +58,49 @@ function msg(opId: string, channelId: string, clientMsgId = opId): QueuedOp {
         channelId,
         text: clientMsgId,
         clientMsgId,
+        createdAt: '2026-06-11T12:00:00.000Z',
+      },
+    },
+    '2026-06-11T12:00:00.000Z',
+  );
+}
+
+function upload(opId: string, payload: Partial<UploadPayload> = {}): QueuedOp {
+  return makeQueuedOp(
+    {
+      opId,
+      opType: 'upload',
+      payload: {
+        uploadKey: 'up-1',
+        localUri: 'memory://file',
+        filename: 'shot.png',
+        contentType: 'image/png',
+        size: 123,
+        ...payload,
+      },
+    },
+    '2026-06-11T12:00:00.000Z',
+  );
+}
+
+function msgWithUpload(opId: string, uploadKey = 'up-1'): QueuedOp {
+  return makeQueuedOp(
+    {
+      opId,
+      opType: 'msg.send',
+      payload: {
+        channelId: 'ch-1',
+        text: 'with file',
+        clientMsgId: opId,
+        attachmentRefs: [{ uploadKey }],
+        attachments: [
+          {
+            id: uploadKey,
+            filename: 'shot.png',
+            contentType: 'image/png',
+            size: 123,
+          },
+        ],
         createdAt: '2026-06-11T12:00:00.000Z',
       },
     },
@@ -240,5 +284,156 @@ describe('durable op queue flushing', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('upload op dependencies', () => {
+  it('does not flush a dependent message until its upload marker is completed', async () => {
+    const storage = new MemoryOpStorage([msgWithUpload('msg-1')]);
+    const posted: string[][] = [];
+    const queue = new DurableOpQueue({
+      storage,
+      api: {
+        postMessage: async (body: MsgSendPayload & { attachments?: string[] }) => {
+          posted.push(body.attachments ?? []);
+          return { event: eventFor(body) };
+        },
+      } as unknown as Api,
+      dispatch: () => {},
+    });
+
+    await queue.flush();
+    expect(posted).toEqual([]);
+
+    await storage.putOp({
+      ...upload('upload-1', { fileId: 'file-1', uploaded: true }),
+      status: 'completed',
+    });
+    await queue.flush();
+    expect(posted).toEqual([['file-1']]);
+    expect(await storage.listOps()).toEqual([]);
+  });
+
+  it('rejects a dependent message when its upload is rejected', async () => {
+    const storage = new MemoryOpStorage([upload('upload-1'), msgWithUpload('msg-1')]);
+    const actions: AppAction[] = [];
+    const rejected: string[] = [];
+    const registry = createDefaultOpRegistry();
+    registry.upload = {
+      ...registry.upload,
+      execute: async () => {
+        throw new ApiError(400, 'bad_upload', 'bad upload');
+      },
+    };
+    const queue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: (action) => actions.push(action),
+      registry,
+      onRejected: (op) => rejected.push(op.opId),
+    });
+
+    await queue.flush();
+
+    expect(actions).toEqual([{ type: 'send-failed', channelId: 'ch-1', clientMsgId: 'msg-1' }]);
+    expect(rejected).toEqual(['upload-1', 'msg-1']);
+    expect(await storage.listOps()).toEqual([]);
+  });
+
+  it('persists fileId after upload intent creation and resumes with refresh before PUT', async () => {
+    const storage = new MemoryOpStorage([upload('upload-1')]);
+    let createCalls = 0;
+    let refreshCalls = 0;
+    let putCalls = 0;
+    const firstApi = {
+      createUpload: async () => {
+        createCalls += 1;
+        return { fileId: 'file-1', uploadUrl: 'https://storage.local/put/old' };
+      },
+      refreshUpload: async () => {
+        refreshCalls += 1;
+        return { uploadUrl: 'https://storage.local/put/refreshed' };
+      },
+    } as unknown as Api;
+    const firstQueue = new DurableOpQueue({
+      storage,
+      api: firstApi,
+      dispatch: () => {},
+      readUploadBody: async () => 'body',
+      uploadFetch: async () => {
+        putCalls += 1;
+        throw new TypeError('offline during put');
+      },
+      setTimer: () => undefined,
+    });
+
+    await firstQueue.flush();
+    let remaining = await storage.listOps();
+    expect(createCalls).toBe(1);
+    expect(putCalls).toBe(1);
+    expect((remaining[0]!.payload as UploadPayload).fileId).toBe('file-1');
+    expect(remaining[0]!.status).toBe('pending');
+
+    const secondApi = {
+      createUpload: async () => {
+        throw new Error('createUpload should not be called after fileId is persisted');
+      },
+      refreshUpload: async (fileId: string) => {
+        refreshCalls += 1;
+        expect(fileId).toBe('file-1');
+        return { uploadUrl: 'https://storage.local/put/refreshed' };
+      },
+    } as unknown as Api;
+    const secondQueue = new DurableOpQueue({
+      storage,
+      api: secondApi,
+      dispatch: () => {},
+      readUploadBody: async () => 'body',
+      uploadFetch: async (url) => {
+        expect(String(url)).toBe('https://storage.local/put/refreshed');
+        return new Response(null, { status: 200 });
+      },
+    });
+    await secondQueue.flush();
+
+    remaining = await storage.listOps();
+    expect(refreshCalls).toBe(1);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.status).toBe('completed');
+    expect(remaining[0]!.payload).toMatchObject({ fileId: 'file-1', uploaded: true });
+  });
+
+  it('refreshes an expired presigned PUT URL once after a 403', async () => {
+    const storage = new MemoryOpStorage([upload('upload-1')]);
+    const putUrls: string[] = [];
+    let refreshCalls = 0;
+    const queue = new DurableOpQueue({
+      storage,
+      api: {
+        createUpload: async () => ({ fileId: 'file-1', uploadUrl: 'https://storage.local/old' }),
+        refreshUpload: async (fileId: string) => {
+          refreshCalls += 1;
+          expect(fileId).toBe('file-1');
+          return { uploadUrl: 'https://storage.local/new' };
+        },
+      } as unknown as Api,
+      dispatch: () => {},
+      readUploadBody: async () => 'body',
+      uploadFetch: async (url) => {
+        putUrls.push(String(url));
+        return new Response(null, { status: putUrls.length === 1 ? 403 : 200 });
+      },
+    });
+
+    await queue.flush();
+
+    expect(refreshCalls).toBe(1);
+    expect(putUrls).toEqual(['https://storage.local/old', 'https://storage.local/new']);
+    const [completed] = await storage.listOps();
+    expect(completed).toMatchObject({
+      opId: 'upload-1',
+      status: 'completed',
+      payload: { fileId: 'file-1', uploaded: true },
+    });
   });
 });
