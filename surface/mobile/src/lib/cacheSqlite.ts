@@ -139,6 +139,10 @@ const storage: CacheStorage = {
       'SELECT value FROM cache_meta WHERE key = ?',
       'channels',
     );
+    const syncCursorRow = await database.getFirstAsync<JsonRow>(
+      'SELECT value FROM cache_meta WHERE key = ?',
+      'syncCursor',
+    );
     const rows = await database.getAllAsync<TimelineRow>(
       'SELECT channel_id, events_json, has_more FROM channel_timelines',
     );
@@ -152,6 +156,7 @@ const storage: CacheStorage = {
     return {
       channels: channelsRow ? (JSON.parse(channelsRow.value) as Channel[]) : null,
       timelines,
+      syncCursor: Math.max(0, Number(syncCursorRow?.value ?? 0) || 0),
     };
   },
 
@@ -174,6 +179,15 @@ const storage: CacheStorage = {
       JSON.stringify(timeline.events),
       timeline.hasMore ? 1 : 0,
       Date.now(),
+    );
+  },
+
+  saveSyncCursor: async (cursor) => {
+    const database = await db();
+    await database.runAsync(
+      'INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)',
+      'syncCursor',
+      String(Math.max(0, Math.floor(cursor))),
     );
   },
 
@@ -264,4 +278,5 @@ export const eventCache = createEventCache(storage);
 export const loadSnapshot = eventCache.loadSnapshot;
 export const saveChannels = eventCache.saveChannels;
 export const saveTimeline = eventCache.saveTimeline;
+export const saveSyncCursor = eventCache.saveSyncCursor;
 export const clearCache = eventCache.clearCache;

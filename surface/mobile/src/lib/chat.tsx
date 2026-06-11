@@ -18,11 +18,12 @@ import {
   DurableOpQueue,
   appReducer,
   createApi,
+  dispatchSyncSnapshot,
+  dispatchSyncResponse,
   initialAppState,
   isPendingSessionId,
   isTerminalSessionStatus,
   looksLikeAgentCommand,
-  nextCatchUpStep,
   parseAgentTask,
   PENDING_SESSION_PREFIX,
   randomId,
@@ -48,6 +49,7 @@ import { eventCache } from './cacheSqlite';
 import { useTheme } from './theme';
 
 const PAGE_SIZE = 50;
+const SYNC_LIMIT = 500;
 
 export interface TypingEntry {
   user: UserRef;
@@ -153,6 +155,12 @@ export function ChatProvider({ session, children }: { session: Session; children
     });
   }, []);
 
+  const cacheSyncCursor = useCallback((cursor: number) => {
+    void eventCache.saveSyncCursor(cursor).catch((err: unknown) => {
+      console.warn('failed to cache sync cursor', err);
+    });
+  }, []);
+
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
     (err: unknown) => {
@@ -192,9 +200,11 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (action.type === 'server-event' && action.event.channelId) {
         eventCache.enqueueEvents(action.event.channelId, [action.event]);
       }
+      if (action.type === 'server-event') cacheSyncCursor(action.event.id);
+      if (action.type === 'sync-cursor') cacheSyncCursor(action.cursor);
       if (action.type === 'mute-changed') cacheMute(action.channelId, action.muted);
     },
-    [cacheMute],
+    [cacheMute, cacheSyncCursor],
   );
 
   const opQueue = useMemo(
@@ -374,7 +384,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     let disposed = false;
     eventCache
       .loadSnapshot()
-      .then(async ({ channels, timelines }) => {
+      .then(async ({ channels, timelines, syncCursor }) => {
         if (disposed) return;
         if (channels) {
           dispatch({ type: 'channels-loaded', channels });
@@ -388,6 +398,7 @@ export function ChatProvider({ session, children }: { session: Session; children
             hasMore: timeline.hasMore,
           });
         }
+        if (syncCursor > 0) dispatch({ type: 'sync-cursor', cursor: syncCursor });
         await opQueue.recoverInflight();
         const queued = await eventCache.listOps();
         if (disposed) return;
@@ -428,34 +439,14 @@ export function ChatProvider({ session, children }: { session: Session; children
     if (hydrated) loadChannels();
   }, [hydrated, loadChannels]);
 
-  // ---- reconnect catch-up: refetch what we might have missed ----
-  const catchUpChannel = useCallback(async (channelId: string, initialLastEventId: number) => {
-    if (initialLastEventId <= 0) {
-      const { events, hasMore } = await api.messages(channelId, { limit: PAGE_SIZE });
-      dispatch({ type: 'history-loaded', channelId, events, hasMore });
-      void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
-        console.warn('failed to cache catch-up history', err);
-      });
-      return;
-    }
+  const flushQueuedOps = useCallback(() => {
+    opQueue.nudge();
+  }, [opQueue]);
 
-    let afterId = initialLastEventId;
-    let pagesFetched = 0;
-    for (;;) {
-      const { events, hasMore } = await api.messages(channelId, {
-        afterId,
-        limit: PAGE_SIZE,
-      });
-      pagesFetched += 1;
-      for (const ev of events) dispatch({ type: 'server-event', event: ev });
-      if (events.length > 0) {
-        void eventCache.enqueueEvents(channelId, events);
-      }
-      afterId = events.reduce((max, ev) => Math.max(max, ev.id), afterId);
-
-      const step = nextCatchUpStep({ hasMore, pagesFetched });
-      if (step === 'done') return;
-      if (step === 'refetch-latest') {
+  const resetLoadedTimelinesToLatest = useCallback(async () => {
+    const loaded = Object.entries(stateRef.current.timelines).filter(([, t]) => t.loaded);
+    await Promise.all(
+      loaded.map(async ([channelId]) => {
         const latest = await api.messages(channelId, { limit: PAGE_SIZE });
         dispatch({
           type: 'history-reset',
@@ -465,30 +456,63 @@ export function ChatProvider({ session, children }: { session: Session; children
         });
         void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
           (err: unknown) => {
-            console.warn('failed to cache catch-up fallback history', err);
+            console.warn('failed to cache sync repair history', err);
           },
         );
-        return;
-      }
-    }
+      }),
+    );
   }, [api]);
 
-  const catchUp = useCallback(() => {
-    const s = stateRef.current;
-    for (const [channelId, t] of Object.entries(s.timelines)) {
-      if (!t.loaded) continue;
-      void catchUpChannel(channelId, t.lastEventId).catch(onApiError);
+  const syncFromCursor = useCallback(async () => {
+    let cursor = stateRef.current.syncCursor;
+    for (;;) {
+      const response = await api.sync(cursor, { limit: SYNC_LIMIT });
+      if (response.limited) {
+        dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
+        void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
+          console.warn('failed to cache sync channels', err);
+        });
+        await resetLoadedTimelinesToLatest();
+        dispatch({ type: 'sync-cursor', cursor: response.nextCursor });
+        cacheSyncCursor(response.nextCursor);
+        return;
+      }
+      dispatchSyncResponse(dispatch, response, {
+        onPrefs: adoptPrefs,
+        onEvent: (event) => {
+          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+          cacheSyncCursor(event.id);
+        },
+      });
+      void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
+        console.warn('failed to cache sync channels', err);
+      });
+      cacheSyncCursor(response.nextCursor);
+      cursor = Math.max(cursor, response.nextCursor);
+      if (response.events.length < SYNC_LIMIT) return;
     }
-    loadChannels();
-  }, [catchUpChannel, loadChannels, onApiError]);
+  }, [adoptPrefs, api, cacheSyncCursor, resetLoadedTimelinesToLatest]);
 
-  const flushQueuedOps = useCallback(() => {
-    opQueue.nudge();
-  }, [opQueue]);
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
+  const runReconnectSync = useCallback(() => {
+    if (!syncInFlightRef.current) {
+      const work = syncFromCursor().finally(() => {
+        syncInFlightRef.current = null;
+      });
+      syncInFlightRef.current = work;
+    }
+    return syncInFlightRef.current;
+  }, [syncFromCursor]);
+
+  const syncThenFlushQueuedOps = useCallback(() => {
+    void runReconnectSync()
+      .then(flushQueuedOps)
+      .catch(onApiError);
+  }, [flushQueuedOps, onApiError, runReconnectSync]);
 
   useEffect(() => {
-    flushOnWakeRef.current = flushQueuedOps;
-  }, [flushQueuedOps]);
+    flushOnWakeRef.current = syncThenFlushQueuedOps;
+  }, [syncThenFlushQueuedOps]);
 
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, TypingEntry>>({});
@@ -544,6 +568,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         }
         dispatch({ type: 'server-event', event });
         if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+        cacheSyncCursor(event.id);
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
@@ -561,8 +586,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       onPrefs: adoptPrefs,
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: () => {
-        catchUp();
-        flushQueuedOps();
+        syncThenFlushQueuedOps();
       },
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },

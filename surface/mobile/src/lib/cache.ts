@@ -11,12 +11,14 @@ export interface CachedTimeline {
 export interface CacheSnapshot {
   channels: Channel[] | null;
   timelines: Record<string, CachedTimeline>;
+  syncCursor: number;
 }
 
 export interface CacheStorage {
   loadSnapshot: () => Promise<CacheSnapshot>;
   saveChannels: (channels: Channel[]) => Promise<void>;
   saveTimeline: (channelId: string, timeline: CachedTimeline) => Promise<void>;
+  saveSyncCursor: (cursor: number) => Promise<void>;
   listOps: () => Promise<QueuedOp[]>;
   putOp: (op: QueuedOp) => Promise<void>;
   removeOp: (opId: string) => Promise<void>;
@@ -30,6 +32,7 @@ export interface EventCache {
   saveChannels: (channels: Channel[]) => Promise<void>;
   saveTimeline: (channelId: string, events: WireEvent[], hasMore: boolean) => Promise<void>;
   enqueueEvents: (channelId: string, events: WireEvent[]) => void;
+  saveSyncCursor: (cursor: number) => Promise<void>;
   listOps: () => Promise<QueuedOp[]>;
   putOp: (op: QueuedOp) => Promise<void>;
   removeOp: (opId: string) => Promise<void>;
@@ -67,6 +70,7 @@ export function createEventCache(
 ): EventCache {
   let channels: Channel[] | null = null;
   let timelines: Record<string, CachedTimeline> = {};
+  let syncCursor = 0;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   // After clearCache (logout / 401) the singleton must reject late writes —
   // an in-flight outbox flush or WS event resolving after the wipe would
@@ -91,13 +95,14 @@ export function createEventCache(
       invalidated = false; // a fresh session re-arms writes
       const snapshot = await storage.loadSnapshot();
       channels = snapshot.channels;
+      syncCursor = snapshot.syncCursor;
       timelines = Object.fromEntries(
         Object.entries(snapshot.timelines).map(([channelId, timeline]) => [
           channelId,
           normalizeTimeline(timeline),
         ]),
       );
-      return { channels, timelines };
+      return { channels, timelines, syncCursor };
     },
 
     saveChannels: async (nextChannels) => {
@@ -128,6 +133,12 @@ export function createEventCache(
       );
     },
 
+    saveSyncCursor: async (cursor) => {
+      if (invalidated || cursor <= syncCursor) return;
+      syncCursor = cursor;
+      await storage.saveSyncCursor(cursor);
+    },
+
     listOps: () => (invalidated ? Promise.resolve([]) : storage.listOps()),
 
     putOp: (op) => {
@@ -152,6 +163,7 @@ export function createEventCache(
       for (const channelId of timers.keys()) clearTimer(channelId);
       channels = null;
       timelines = {};
+      syncCursor = 0;
       await storage.clearCache();
     },
   };

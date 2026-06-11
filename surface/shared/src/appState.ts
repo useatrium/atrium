@@ -46,6 +46,8 @@ export interface AppState {
   /** Current user's handle — drives @mention unread detection. */
   meHandle: string | null;
   meId: string | null;
+  /** Max workspace event id applied through history, sync, WS, or POST echoes. */
+  syncCursor: number;
   wsStatus: 'connecting' | 'open' | 'closed';
 }
 
@@ -61,6 +63,7 @@ export const initialAppState: AppState = {
   unread: {},
   meHandle: null,
   meId: null,
+  syncCursor: 0,
   wsStatus: 'connecting',
 };
 
@@ -78,6 +81,7 @@ export type AppAction =
   | { type: 'open-thread'; rootEventId: number }
   | { type: 'close-thread' }
   | { type: 'server-event'; event: WireEvent }
+  | { type: 'sync-cursor'; cursor: number }
   | { type: 'send-pending'; channelId: string; message: ChatMessage }
   | { type: 'send-failed'; channelId: string; clientMsgId: string }
   | { type: 'retry-remove'; channelId: string; clientMsgId: string }
@@ -117,6 +121,14 @@ function timeline(state: AppState, channelId: string): ChannelTimeline {
 
 function withTimeline(state: AppState, channelId: string, t: ChannelTimeline): AppState {
   return { ...state, timelines: { ...state.timelines, [channelId]: t } };
+}
+
+function maxEventId(events: WireEvent[]): number {
+  return events.reduce((max, event) => Math.max(max, event.id), 0);
+}
+
+function withSyncCursor(state: AppState, cursor: number): AppState {
+  return cursor > state.syncCursor ? { ...state, syncCursor: cursor } : state;
 }
 
 /** Does `text` @-mention the user? Handles are [a-z0-9_-], so no escaping. */
@@ -219,28 +231,37 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'history-loaded':
-      return withTimeline(
-        foldSessionEvents(state, action.events),
-        action.channelId,
-        mergeHistory(timeline(state, action.channelId), action.events, {
-          hasMoreBefore: action.hasMore,
-        }),
+      return withSyncCursor(
+        withTimeline(
+          foldSessionEvents(state, action.events),
+          action.channelId,
+          mergeHistory(timeline(state, action.channelId), action.events, {
+            hasMoreBefore: action.hasMore,
+          }),
+        ),
+        maxEventId(action.events),
       );
 
     case 'history-reset':
-      return withTimeline(
-        foldSessionEvents(state, action.events),
-        action.channelId,
-        resetToLatest(timeline(state, action.channelId), action.events, {
-          hasMoreBefore: action.hasMore,
-        }),
+      return withSyncCursor(
+        withTimeline(
+          foldSessionEvents(state, action.events),
+          action.channelId,
+          resetToLatest(timeline(state, action.channelId), action.events, {
+            hasMoreBefore: action.hasMore,
+          }),
+        ),
+        maxEventId(action.events),
       );
 
     case 'thread-loaded':
-      return withTimeline(
-        foldSessionEvents(state, action.events),
-        action.channelId,
-        mergeThread(timeline(state, action.channelId), action.rootEventId, action.events),
+      return withSyncCursor(
+        withTimeline(
+          foldSessionEvents(state, action.events),
+          action.channelId,
+          mergeThread(timeline(state, action.channelId), action.rootEventId, action.events),
+        ),
+        maxEventId(action.events),
       );
 
     case 'open-thread':
@@ -251,19 +272,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'server-event': {
       const ev = action.event;
+      const withEventCursor = (next: AppState) =>
+        ev.mock ? next : withSyncCursor(next, ev.id);
       if (ev.type === 'channel.created') {
         const ch = ev.payload?.channel as Channel | undefined;
-        return ch ? appReducer(state, { type: 'channel-added', channel: ch }) : state;
+        return withEventCursor(ch ? appReducer(state, { type: 'channel-added', channel: ch }) : state);
       }
       if (ev.type === 'channel.member_left' && ev.payload?.userId === state.meId) {
-        return ev.channelId ? appReducer(state, { type: 'channel-removed', channelId: ev.channelId }) : state;
+        return withEventCursor(
+          ev.channelId ? appReducer(state, { type: 'channel-removed', channelId: ev.channelId }) : state,
+        );
       }
       let next = state;
       if (ev.type.startsWith('session.')) {
         const sessions = applySessionEvent(state.sessions, ev);
         if (sessions !== state.sessions) next = { ...next, sessions };
       }
-      if (!ev.channelId) return next;
+      if (!ev.channelId) return withEventCursor(next);
       const t = timeline(next, ev.channelId);
       // Only fold timeline events into channels we've actually loaded; untouched
       // channels fetch their history on first open. But always track unread.
@@ -293,7 +318,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (isNewMessage && ev.channelId !== state.activeChannelId) {
         const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
         const channel = state.channels.find((c) => c.id === ev.channelId);
-        if (channel?.muted) return next;
+        if (channel?.muted) return withEventCursor(next);
         const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
         const mentioned =
           isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle))
@@ -303,8 +328,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const level = next.unread[ev.channelId] === 'mention' ? 'mention' : mentioned;
         next = { ...next, unread: { ...next.unread, [ev.channelId]: level } };
       }
-      return next;
+      return withEventCursor(next);
     }
+
+    case 'sync-cursor':
+      return withSyncCursor(state, action.cursor);
 
     case 'send-pending':
       return withTimeline(
