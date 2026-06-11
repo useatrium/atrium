@@ -460,7 +460,8 @@ const MESSAGE_SELECT = `
   LEFT JOIN LATERAL (
     SELECT count(*) AS reply_count, max(x.id) AS last_reply_id
     FROM events x
-    WHERE x.thread_root_event_id = e.id AND x.type = 'message.posted'
+    WHERE x.thread_root_event_id = e.id
+      AND x.type IN ('message.posted', 'session.question_requested', 'session.question_answered', 'session.question_resolved')
       AND NOT EXISTS (
         SELECT 1 FROM events d
         WHERE d.type = 'message.deleted'

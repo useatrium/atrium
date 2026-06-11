@@ -488,6 +488,18 @@ describe('Phase 2 sessions', () => {
     expect(thread.statusCode).toBe(200);
     const types = (thread.json().events as { type: string }[]).map((e) => e.type);
     expect(types).toContain('session.question_requested');
+
+    // The question must also count as a reply so the thread affordance
+    // survives a reload (reply_count previously counted only message.posted).
+    const channel = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages`,
+      headers: { cookie },
+    });
+    const rootRow = (channel.json().events as { id: number; replyCount?: number }[]).find(
+      (e) => e.id === rootId,
+    );
+    expect(rootRow?.replyCount).toBe(1);
     await app.close();
   });
 
