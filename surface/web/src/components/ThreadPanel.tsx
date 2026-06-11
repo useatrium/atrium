@@ -22,6 +22,9 @@ export function ThreadPanel({
   onEdit,
   onDelete,
   onReact,
+  draftKey,
+  initialDraft,
+  onDraftChange,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -39,6 +42,9 @@ export function ThreadPanel({
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  draftKey?: string;
+  initialDraft?: string;
+  onDraftChange?: (key: string, text: string) => void;
 }) {
   const sessionFor = (m: ChatMessage) =>
     m.sessionId != null ? sessions[m.sessionId] : undefined;
@@ -123,6 +129,9 @@ export function ThreadPanel({
         autoFocus
         agentAware
         allowAttachments
+        draftKey={draftKey}
+        initialDraft={initialDraft}
+        onDraftChange={onDraftChange}
       />
     </aside>
   );
