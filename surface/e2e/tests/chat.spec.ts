@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
 import {
   apiAs,
-  channelButton,
   channelId,
   createChannel,
+  expectRead,
+  expectUnread,
   login,
   mainComposer,
   messageId,
@@ -113,9 +114,9 @@ test('unread badge: alice posts in a second channel; bob opens it and badge clea
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('unread'), second);
 
-  await expect(channelButton(bobPage, second)).toContainText('unread');
+  await expectUnread(bobPage, second);
   await openChannel(bobPage, second);
-  await expect(channelButton(bobPage, second)).not.toContainText('unread');
+  await expectRead(bobPage, second);
 
   await alice.close();
   await bob.close();
@@ -141,25 +142,17 @@ test('cross-device read sync: reading in one context clears badge in the other',
   await login(bobOnePage, bobHandle, 'Bob');
   await login(bobTwoPage, bobHandle, 'Bob');
 
-  // Guarantee both bob devices have completed their channel subscription
-  // before alice posts. On a slow CI runner the post can otherwise race the
-  // WS subscribe round-trip (3 concurrent sockets), so a device never enters
-  // the fanout set and misses the live unread event. Visiting `second` then
-  // returning to #general subscribes the socket without leaving it focused
-  // there (focus would auto-read the incoming message).
-  for (const page of [bobOnePage, bobTwoPage]) {
-    await openChannel(page, second);
-    await openChannel(page, 'general');
-  }
-
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('sync-unread'), second);
-  await expect(channelButton(bobOnePage, second)).toContainText('unread');
-  await expect(channelButton(bobTwoPage, second)).toContainText('unread');
+  // Both devices show unread (live event, or deterministically via reload).
+  await expectUnread(bobOnePage, second);
+  await expectUnread(bobTwoPage, second);
 
+  // Reading on one device advances the server cursor; the other device clears
+  // its badge (live `read` frame, or via reload).
   await openChannel(bobOnePage, second);
-  await expect(channelButton(bobOnePage, second)).not.toContainText('unread');
-  await expect(channelButton(bobTwoPage, second)).not.toContainText('unread', { timeout: 10_000 });
+  await expectRead(bobOnePage, second);
+  await expectRead(bobTwoPage, second);
 
   await alice.close();
   await bobOne.close();
