@@ -1,6 +1,6 @@
 # Phase 5: Sync Engine — durable ops, unified sync, exactly-once effects
 
-Status: CHARTERED (2026-06-11). Phase A in progress (codex worker).
+Status: SHIPPED (2026-06-11). All six phases (A–F) merged to master.
 
 ## Decisions (Gary, 2026-06-11)
 
