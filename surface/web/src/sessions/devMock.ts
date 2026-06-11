@@ -383,6 +383,7 @@ export interface SessionsMockApi {
   createSession(body: CreateSessionBody): Promise<{ session: SessionWire }>;
   getSession(id: string): Promise<{ session: SessionWire }>;
   sendMessage(id: string, text: string): Promise<void>;
+  answerQuestion(id: string, questionId: string, answers: Record<string, { answers: string[] }>): Promise<void>;
   cancel(id: string): Promise<void>;
   requestSeat(id: string): Promise<void>;
   grantSeat(id: string, userId: string): Promise<void>;
@@ -457,6 +458,11 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
           run.tickMs = 80;
         }
         ensureRunning(run);
+      },
+
+      async answerQuestion(id) {
+        const run = getRun(id);
+        run.wire.pendingQuestion = null;
       },
 
       async cancel(id) {

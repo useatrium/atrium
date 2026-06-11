@@ -63,6 +63,8 @@ export interface ChatMessage {
   /** Set for agent-session rows (type session.spawned / optimistic spawns):
    * the row renders as a SessionCard looked up by this id. */
   sessionId?: string;
+  sessionEventType?: 'question_requested' | 'question_answered' | 'question_resolved';
+  sessionEventPayload?: Record<string, unknown>;
   /** session.spawned only: the client's optimistic id echoed by the server —
    * reconciles a spawn whose POST response was lost (see upsertConfirmed). */
   spawnClientId?: string;
@@ -92,13 +94,19 @@ export const emptyTimeline: ChannelTimeline = {
 
 /** Event types that produce a timeline row. */
 function isRowEvent(type: string): boolean {
-  return type === 'message.posted' || type === 'session.spawned';
+  return (
+    type === 'message.posted' ||
+    type === 'session.spawned' ||
+    type === 'session.question_requested' ||
+    type === 'session.question_answered' ||
+    type === 'session.question_resolved'
+  );
 }
 
 export function messageFromEvent(ev: WireEvent): ChatMessage {
   const payload = ev.payload ?? {};
   const sessionId =
-    ev.type === 'session.spawned' && typeof payload.sessionId === 'string'
+    ev.type.startsWith('session.') && typeof payload.sessionId === 'string'
       ? payload.sessionId
       : undefined;
   const spawnClientId =
@@ -110,7 +118,21 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
       ? payload.text
       : typeof payload.title === 'string'
         ? payload.title
+        : ev.type === 'session.question_requested'
+          ? 'Agent asked a question'
+          : ev.type === 'session.question_answered'
+            ? 'Question answered'
+            : ev.type === 'session.question_resolved'
+              ? 'Question resolved'
         : '';
+  const sessionEventType =
+    ev.type === 'session.question_requested'
+      ? 'question_requested'
+      : ev.type === 'session.question_answered'
+        ? 'question_answered'
+        : ev.type === 'session.question_resolved'
+          ? 'question_resolved'
+          : undefined;
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
@@ -127,6 +149,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     lastReplyId: ev.lastReplyId ?? 0,
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(sessionEventType !== undefined ? { sessionEventType, sessionEventPayload: payload } : {}),
     ...(spawnClientId !== undefined ? { spawnClientId } : {}),
   };
 }

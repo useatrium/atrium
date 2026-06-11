@@ -343,6 +343,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               : action.session.status,
             spawnerName: action.session.spawnerName ?? existing?.spawnerName,
             driverName: action.session.driverName ?? existing?.driverName,
+            pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
             // GET /api/sessions/:id carries no audit history — keep what the
             // live seat_changed folds already accumulated.
             seatEvents:

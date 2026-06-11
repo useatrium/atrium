@@ -6,7 +6,9 @@ import type {
   CentaurEventFrame,
   ExecutionStatus,
   JsonObject,
+  QuestionPrompt,
 } from "./types.js";
+import { isTerminalExecutionStatus } from "./types.js";
 
 export interface TextItem {
   type: "text";
@@ -38,6 +40,10 @@ export interface SessionState {
   models: string[];
   costUsd: number;
   lastEventId: number;
+  pendingQuestion: {
+    questionId: string;
+    questions: QuestionPrompt[];
+  } | null;
 }
 
 export function initialSessionState(): SessionState {
@@ -48,6 +54,7 @@ export function initialSessionState(): SessionState {
     models: [],
     costUsd: 0,
     lastEventId: 0,
+    pendingQuestion: null,
   };
 }
 
@@ -64,6 +71,22 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     if (frame.data.result_text) {
       next.resultText = frame.data.result_text;
     }
+    if (isTerminalExecutionStatus(frame.data.status)) {
+      next.pendingQuestion = null;
+    }
+    return next;
+  }
+
+  if (frame.event === "question_requested") {
+    next.pendingQuestion = {
+      questionId: frame.data.question_id,
+      questions: frame.data.questions,
+    };
+    return next;
+  }
+
+  if (frame.event === "question_resolved") {
+    next.pendingQuestion = null;
     return next;
   }
 
