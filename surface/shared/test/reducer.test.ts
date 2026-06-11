@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   addPending,
   applyEvent,
+  appReducer,
   emptyTimeline,
+  initialAppState,
   markFailed,
   mergeHistory,
   mergeThread,
@@ -167,5 +169,58 @@ describe('history pagination merge', () => {
     t = applyEvent(t, edit);
     expect(t.main[0]!.text).toBe('edited!');
     expect(t.main[0]!.edited).toBe(true);
+  });
+});
+
+describe('app unread read cursors', () => {
+  it('derives initial unread from channel counters without inventing mention badges', () => {
+    const state = appReducer(
+      { ...initialAppState, unread: { 'ch-mention': 'mention' } },
+      {
+        type: 'channels-loaded',
+        channels: [
+          {
+            id: 'ch-read',
+            workspaceId: 'ws-1',
+            name: 'read',
+            createdAt: new Date(0).toISOString(),
+            kind: 'public',
+            latestEventId: 7,
+            lastReadEventId: 7,
+          },
+          {
+            id: 'ch-unread',
+            workspaceId: 'ws-1',
+            name: 'unread',
+            createdAt: new Date(0).toISOString(),
+            kind: 'public',
+            latestEventId: 8,
+            lastReadEventId: 3,
+          },
+          {
+            id: 'ch-mention',
+            workspaceId: 'ws-1',
+            name: 'mention',
+            createdAt: new Date(0).toISOString(),
+            kind: 'public',
+            latestEventId: 2,
+            lastReadEventId: 2,
+          },
+        ],
+      },
+    );
+
+    expect(state.unread['ch-read']).toBe(false);
+    expect(state.unread['ch-unread']).toBe(true);
+    expect(state.unread['ch-mention']).toBe('mention');
+  });
+
+  it('read-cursor clears unread for the channel', () => {
+    const state = appReducer(
+      { ...initialAppState, unread: { [CH]: 'mention' } },
+      { type: 'read-cursor', channelId: CH, lastReadEventId: 10 },
+    );
+
+    expect(state.unread[CH]).toBe(false);
   });
 });

@@ -114,6 +114,14 @@ export class WsHub {
     }
   }
 
+  sendToUsers(userIds: string[], payload: object): void {
+    const ids = new Set(userIds);
+    const msg = JSON.stringify(payload);
+    for (const client of this.clients) {
+      if (ids.has(client.user.id)) this.sendRaw(client, msg);
+    }
+  }
+
   presenceFor(channelId: string): UserRef[] {
     const byId = new Map<string, UserRef>();
     for (const client of this.clients) {

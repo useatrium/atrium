@@ -186,4 +186,20 @@ describe('fanout ordering', () => {
     expect(s2.received.filter((m) => m.type === 'typing')).toHaveLength(0);
     expect(s3.received.filter((m) => m.type === 'typing')).toHaveLength(0);
   });
+
+  it('sends arbitrary payloads only to the requested users', () => {
+    const hub = new WsHub();
+    const s1 = fakeSocket();
+    const s2 = fakeSocket();
+    const s3 = fakeSocket();
+    hub.addClient(s1, { id: 'u1', handle: 'alice', displayName: 'Alice' });
+    hub.addClient(s2, { id: 'u1', handle: 'alice', displayName: 'Alice' });
+    hub.addClient(s3, { id: 'u2', handle: 'bob', displayName: 'Bob' });
+
+    hub.sendToUsers(['u1'], { type: 'read', channelId: fx.channelId, lastReadEventId: 42 });
+
+    expect(s1.received).toEqual([{ type: 'read', channelId: fx.channelId, lastReadEventId: 42 }]);
+    expect(s2.received).toEqual([{ type: 'read', channelId: fx.channelId, lastReadEventId: 42 }]);
+    expect(s3.received).toEqual([]);
+  });
 });
