@@ -63,6 +63,9 @@ export interface ChatMessage {
   /** Set for agent-session rows (type session.spawned / optimistic spawns):
    * the row renders as a SessionCard looked up by this id. */
   sessionId?: string;
+  /** session.spawned only: the client's optimistic id echoed by the server —
+   * reconciles a spawn whose POST response was lost (see upsertConfirmed). */
+  spawnClientId?: string;
 }
 
 export interface ChannelTimeline {
@@ -98,6 +101,10 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     ev.type === 'session.spawned' && typeof payload.sessionId === 'string'
       ? payload.sessionId
       : undefined;
+  const spawnClientId =
+    ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string'
+      ? payload.client_spawn_id
+      : undefined;
   const text =
     typeof payload.text === 'string'
       ? payload.text
@@ -120,6 +127,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     lastReplyId: ev.lastReplyId ?? 0,
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(spawnClientId !== undefined ? { spawnClientId } : {}),
   };
 }
 
@@ -198,7 +206,10 @@ function upsertConfirmed(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
     (m) =>
       m.status !== 'confirmed' &&
       ((msg.clientMsgId != null && m.clientMsgId === msg.clientMsgId) ||
-        (msg.sessionId != null && m.sessionId === msg.sessionId)),
+        (msg.sessionId != null && m.sessionId === msg.sessionId) ||
+        // Spawn whose POST response was lost: the WS event carries the
+        // optimistic id the pending row is still keyed by.
+        (msg.spawnClientId != null && m.sessionId === msg.spawnClientId)),
   );
   if (i >= 0) {
     const copy = [...list];

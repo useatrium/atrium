@@ -110,6 +110,9 @@ export class SessionRuns {
     threadRootEventId: number | null;
     task: string;
     harness?: string;
+    /** Client's optimistic id, echoed on session.spawned so a spawn whose
+     * POST response was lost still reconciles instead of duplicating. */
+    clientSpawnId?: string;
     user: UserRef;
   }): Promise<SessionJson> {
     const title = args.task.trim().slice(0, 80);
@@ -147,7 +150,13 @@ export class SessionRuns {
         threadRootEventId: args.threadRootEventId,
         type: 'session.spawned',
         actorId: args.user.id,
-        payload: { sessionId: row.id, title: row.title, harness: row.harness, by: args.user.id },
+        payload: {
+          sessionId: row.id,
+          title: row.title,
+          harness: row.harness,
+          by: args.user.id,
+          ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
+        },
       });
       if (args.threadRootEventId == null) {
         const updated = await client.query<SessionRow>(

@@ -175,7 +175,10 @@ export function Composer({
   const canSend = !uploading && (text.trim().length > 0 || ready.length > 0);
   const mentionMatch = !editing ? matchMentionPrefix(text) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
-  const agentMatches = mentionMatch != null && 'agent'.startsWith(mentionPrefix);
+  // @agent only spawns when the whole message starts with it — don't offer
+  // the suggestion for mid-text mentions.
+  const agentMatches =
+    mentionMatch != null && mentionMatch.start === 0 && 'agent'.startsWith(mentionPrefix);
   const matchedUsers = useMemo(() => {
     if (!mentionMatch || !mentionUsers) return [];
     return mentionUsers

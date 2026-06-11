@@ -12,13 +12,14 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AppState as RNAppState, Linking } from 'react-native';
+import { Alert, AppState as RNAppState, Linking } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import {
   ApiError,
   appReducer,
   createApi,
   initialAppState,
+  looksLikeAgentCommand,
   parseAgentTask,
   PENDING_SESSION_PREFIX,
   sessionFromWire,
@@ -506,7 +507,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       };
       dispatch({ type: 'session-spawn-pending', channelId, message: row, session: optimistic });
       api
-        .createAgentSession({ channelId, threadRootEventId, task })
+        .createAgentSession({ channelId, threadRootEventId, task, clientSpawnId: tempId })
         .then(({ session }) =>
           dispatch({
             type: 'session-created',
@@ -530,10 +531,19 @@ export function ChatProvider({ session, children }: { session: Session; children
       threadRootEventId?: number,
       attachments?: AttachmentMeta[],
     ) => {
-      const task = parseAgentTask(text);
-      if (task != null) {
-        spawnSession(channelId, task, threadRootEventId);
-        return;
+      // Attachments can't ride along on a session spawn — let "@agent …"
+      // with attachments fall through as a plain message rather than drop them.
+      const hasAttachments = attachments != null && attachments.length > 0;
+      if (!hasAttachments) {
+        const task = parseAgentTask(text);
+        if (task != null) {
+          spawnSession(channelId, task, threadRootEventId);
+          return;
+        }
+        if (looksLikeAgentCommand(text.trim())) {
+          Alert.alert('Add a task', 'Type @agent followed by the task to run.');
+          return;
+        }
       }
       const clientMsgId = randomUUID();
       const createdAt = new Date().toISOString();

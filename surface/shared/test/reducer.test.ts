@@ -298,3 +298,38 @@ describe('app unread read cursors', () => {
     const unmutedAgain = appReducer(muted, { type: 'mute-changed', channelId: CH, muted: false });
     expect(unmutedAgain.unread[CH]).toBe(false);
   });
+
+  it('session.spawned with client_spawn_id reconciles the optimistic row when the POST response was lost', () => {
+    const tempId = 'pending:lost-post';
+    let t = addPending(emptyTimeline, {
+      id: null,
+      clientMsgId: tempId,
+      channelId: CH,
+      threadRootEventId: null,
+      text: 'do the thing',
+      edited: false,
+      author: alice,
+      createdAt: new Date(1000).toISOString(),
+      replyCount: 0,
+      lastReplyId: 0,
+      status: 'pending',
+      sessionId: tempId,
+    });
+    expect(t.main).toHaveLength(1);
+
+    // The WS event lands but the POST response never did.
+    t = applyEvent(t, {
+      id: 42,
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      type: 'session.spawned',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-real', title: 'do the thing', client_spawn_id: tempId },
+      createdAt: new Date(2000).toISOString(),
+      author: alice,
+    });
+    expect(t.main).toHaveLength(1); // replaced, not duplicated
+    expect(t.main[0]!.sessionId).toBe('sess-real');
+    expect(t.main[0]!.status).toBe('confirmed');
+  });

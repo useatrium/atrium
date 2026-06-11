@@ -348,7 +348,11 @@ export function Chat({
     threadRootEventId?: number,
     attachments?: AttachmentMeta[],
   ) => {
-    if (text && trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch })) return;
+    // Attachments can't ride along on a spawn — "@agent …" with files attached
+    // sends as a plain message instead of silently dropping them.
+    const noAttachments = !attachments || attachments.length === 0;
+    if (text && noAttachments && trySpawnFromComposer(text, { channelId, threadRootEventId, me, dispatch }))
+      return;
     const clientMsgId = crypto.randomUUID();
     const message: ChatMessage = {
       id: null,

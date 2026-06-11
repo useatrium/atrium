@@ -694,11 +694,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!(await canAccessChannel(pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
+    const bodySpawnId = (body as { clientSpawnId?: unknown }).clientSpawnId;
     const session = await sessionRuns.createSession({
       channelId: body.channelId,
       threadRootEventId,
       task,
       harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+      clientSpawnId:
+        typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined,
       user,
     });
     return reply.code(201).send({ session });

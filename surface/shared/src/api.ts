@@ -130,6 +130,8 @@ export function createApi(opts: ApiOptions = {}) {
       task: string;
       harness?: string;
       threadRootEventId?: number;
+      /** Optimistic id echoed on session.spawned for lost-response reconcile. */
+      clientSpawnId?: string;
     }) =>
       req<{ session: SessionWire }>('/api/sessions', {
         method: 'POST',
