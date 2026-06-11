@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { AppState as RNAppState, Linking } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import {
   ApiError,
@@ -60,8 +61,12 @@ interface ChatContextValue {
   startDm: (userId: string) => Promise<Channel>;
   notifyTyping: (channelId: string) => void;
   typing: Record<string, TypingEntry>;
-  /** Authenticated URL for an attachment body. */
+  /** URL for an attachment body — pair with fileHeaders for in-app loads. */
   fileUrl: (fileId: string) => string;
+  /** Auth headers for in-app image/file loads (expo-image source.headers). */
+  fileHeaders: Record<string, string>;
+  /** Open a file externally via a short-lived signed URL (never the session). */
+  openAttachment: (fileId: string) => Promise<void>;
   uploadFile: (file: {
     uri: string;
     name: string;
@@ -165,6 +170,15 @@ export function ChatProvider({ session, children }: { session: Session; children
     return `${ws}/ws?token=${encodeURIComponent(token)}`;
   }, [serverUrl, token]);
 
+  // iOS suspends timers in the background and kills idle sockets silently —
+  // tell the WS layer the instant the app is foregrounded again.
+  const bindWake = useCallback((cb: () => void) => {
+    const sub = RNAppState.addEventListener('change', (s) => {
+      if (s === 'active') cb();
+    });
+    return () => sub.remove();
+  }, []);
+
   const ws = useWs(
     true,
     wsKeys,
@@ -186,7 +200,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
     state.activeChannelId,
-    { url: wsUrl },
+    { url: wsUrl, onWake: bindWake },
   );
 
   const lastTypingSentRef = useRef(0);
@@ -379,8 +393,22 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const fileUrl = useCallback(
-    (fileId: string) => `${serverUrl}/api/files/${fileId}?token=${encodeURIComponent(token)}`,
-    [serverUrl, token],
+    (fileId: string) => `${serverUrl}/api/files/${fileId}`,
+    [serverUrl],
+  );
+
+  const fileHeaders = useMemo(() => ({ authorization: `Bearer ${token}` }), [token]);
+
+  const openAttachment = useCallback(
+    async (fileId: string) => {
+      try {
+        const { url } = await api.fileSignedUrl(fileId);
+        await Linking.openURL(`${serverUrl}${url}`);
+      } catch (err) {
+        onApiError(err);
+      }
+    },
+    [api, serverUrl, onApiError],
   );
 
   // ---- jump to a message from search: page history back until it's loaded ----
@@ -437,6 +465,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       notifyTyping,
       typing,
       fileUrl,
+      fileHeaders,
+      openAttachment,
       uploadFile,
       jumpToMessage,
       highlightId,
@@ -459,6 +489,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       notifyTyping,
       typing,
       fileUrl,
+      fileHeaders,
+      openAttachment,
       uploadFile,
       jumpToMessage,
       highlightId,

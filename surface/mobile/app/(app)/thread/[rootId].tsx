@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Linking, Platform, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { emptyTimeline, type ChatMessage } from '@atrium/surface-client';
@@ -34,7 +34,7 @@ export default function ThreadScreen() {
 
   const openAttachment = useCallback(
     (fileId: string) => {
-      Linking.openURL(chat.fileUrl(fileId)).catch(() => {});
+      void chat.openAttachment(fileId);
     },
     [chat],
   );
@@ -59,6 +59,7 @@ export default function ThreadScreen() {
           inThread
           emptyLabel="No replies yet."
           fileUrl={chat.fileUrl}
+          fileHeaders={chat.fileHeaders}
           onLoadEarlier={() => Promise.resolve()}
           onLongPress={setActionsTarget}
           onToggleReaction={(m, e) => void chat.react(m, e)}

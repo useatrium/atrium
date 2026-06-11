@@ -22,6 +22,7 @@ import {
   type UserRef,
 } from './events.js';
 import { WsHub } from './hub.js';
+import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { sendMessagePush } from './push.js';
 import { ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
@@ -68,14 +69,28 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const sessionId = verifySession(raw, secret);
     if (!sessionId) return null;
     if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
-    const res = await pool.query<{ id: string; handle: string; display_name: string }>(
-      `SELECT u.id, u.handle, u.display_name
+    const res = await pool.query<{
+      id: string;
+      handle: string;
+      display_name: string;
+      expires_at: Date;
+    }>(
+      `SELECT u.id, u.handle, u.display_name, s.expires_at
        FROM auth_sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.id = $1`,
+       WHERE s.id = $1 AND s.expires_at > now()`,
       [sessionId],
     );
     const row = res.rows[0];
-    return row ? { id: row.id, handle: row.handle, displayName: row.display_name } : null;
+    if (!row) return null;
+    // Sliding renewal: active sessions never expire, idle ones die in 30d.
+    if (new Date(row.expires_at).getTime() - Date.now() < 15 * 24 * 60 * 60 * 1000) {
+      void pool
+        .query(`UPDATE auth_sessions SET expires_at = now() + interval '30 days' WHERE id = $1`, [
+          sessionId,
+        ])
+        .catch(() => {});
+    }
+    return { id: row.id, handle: row.handle, displayName: row.display_name };
   }
 
   /** Signed session value from the request: bearer header (native) or cookie (web). */
@@ -128,8 +143,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       [handle, displayName],
     );
     const u = user.rows[0]!;
+    // Opportunistic reaping — keeps the table from accumulating dead rows.
+    void pool.query('DELETE FROM auth_sessions WHERE expires_at < now()').catch(() => {});
     const session = await pool.query<{ id: string }>(
-      'INSERT INTO auth_sessions (user_id) VALUES ($1) RETURNING id',
+      `INSERT INTO auth_sessions (user_id, expires_at)
+       VALUES ($1, now() + interval '30 days') RETURNING id`,
       [u.id],
     );
     const token = signSession(session.rows[0]!.id, secret);
@@ -471,18 +489,36 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(201).send({ fileId, uploadUrl });
   });
 
-  app.get('/api/files/:id', async (req, reply) => {
-    // Native image views can't attach cookies/headers everywhere a file URL is
-    // used, so this route (like /ws) also accepts ?token=.
-    const q = (req.query ?? {}) as { token?: unknown };
-    const user =
-      (typeof q.token === 'string' ? await userFromSession(q.token) : null) ??
-      requireUser(req, reply);
+  // Mint a short-lived signed URL for opening a file outside an authenticated
+  // context (external browser, share sheet). File-scoped — never the session.
+  app.get('/api/files/:id/url', async (req, reply) => {
+    const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
       return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     }
+    const expires = Math.floor(Date.now() / 1000) + FILE_URL_TTL_S;
+    const sig = fileSignature(id, expires, secret);
+    return {
+      url: `/api/files/${id}?expires=${expires}&sig=${encodeURIComponent(sig)}`,
+      expiresAt: new Date(expires * 1000).toISOString(),
+    };
+  });
+
+  app.get('/api/files/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+    // Either a logged-in caller (cookie or bearer header) or a valid
+    // short-lived file signature from /api/files/:id/url.
+    const q = (req.query ?? {}) as { expires?: unknown; sig?: unknown };
+    const signed =
+      typeof q.sig === 'string' &&
+      typeof q.expires === 'string' &&
+      verifyFileSignature(id, Number(q.expires), q.sig, secret);
+    if (!signed && !requireUser(req, reply)) return;
     const res = await pool.query<{
       filename: string;
       content_type: string;

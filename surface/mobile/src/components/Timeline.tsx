@@ -25,6 +25,7 @@ export interface TimelineProps {
   inThread?: boolean;
   emptyLabel?: string;
   fileUrl: (id: string) => string;
+  fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
   onLongPress: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
@@ -44,6 +45,7 @@ export function Timeline({
   inThread,
   emptyLabel,
   fileUrl,
+  fileHeaders,
   onLoadEarlier,
   onLongPress,
   onOpenThread,
@@ -91,6 +93,7 @@ export function Timeline({
           session={m.sessionId ? sessions[m.sessionId] : undefined}
           inThread={inThread}
           fileUrl={fileUrl}
+          fileHeaders={fileHeaders}
           onLongPress={onLongPress}
           onOpenThread={onOpenThread}
           onToggleReaction={onToggleReaction}
@@ -106,6 +109,7 @@ export function Timeline({
       sessions,
       inThread,
       fileUrl,
+      fileHeaders,
       onLongPress,
       onOpenThread,
       onToggleReaction,

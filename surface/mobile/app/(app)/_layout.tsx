@@ -9,6 +9,10 @@ import {
 } from '../../src/lib/notifications';
 import { colors } from '../../src/lib/theme';
 
+// The tap that cold-started the app fires before any listener exists; track
+// what we've already routed so remounts don't re-navigate.
+let handledColdStartTap: string | null = null;
+
 /** Registers for push and routes notification taps to the right channel. */
 function PushBridge() {
   const { api, state } = useChat();
@@ -18,12 +22,31 @@ function PushBridge() {
   useEffect(() => {
     configureNotificationHandler(() => stateRef.current.activeChannelId);
     void registerForPush(api);
-    const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
+
+    const channelFrom = (resp: Notifications.NotificationResponse): string | null => {
       const data = resp.notification.request.content.data as
         | { channelId?: string }
         | undefined;
-      if (data?.channelId) router.push(`/channel/${data.channelId}`);
+      return typeof data?.channelId === 'string' ? data.channelId : null;
+    };
+
+    // Tap while running/backgrounded.
+    const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
+      const channelId = channelFrom(resp);
+      if (channelId) router.push(`/channel/${channelId}`);
     });
+
+    // Tap that launched the app (cold start) — the listener above never sees it.
+    const last = Notifications.getLastNotificationResponse();
+    if (last) {
+      const key = last.notification.request.identifier;
+      const channelId = channelFrom(last);
+      if (channelId && handledColdStartTap !== key) {
+        handledColdStartTap = key;
+        router.push(`/channel/${channelId}`);
+      }
+    }
+
     return () => sub.remove();
   }, [api]);
 

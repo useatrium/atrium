@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { KeyboardAvoidingView, Linking, Platform, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
@@ -47,7 +47,7 @@ export default function ChannelScreen() {
 
   const openAttachment = useCallback(
     (fileId: string) => {
-      Linking.openURL(chat.fileUrl(fileId)).catch(() => {});
+      void chat.openAttachment(fileId);
     },
     [chat],
   );
@@ -88,6 +88,7 @@ export default function ChannelScreen() {
           meHandle={state.meHandle}
           highlightId={chat.highlightId}
           fileUrl={chat.fileUrl}
+          fileHeaders={chat.fileHeaders}
           onLoadEarlier={() => chat.loadEarlier(id)}
           onLongPress={setActionsTarget}
           onOpenThread={openThread}

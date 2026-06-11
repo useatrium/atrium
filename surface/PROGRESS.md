@@ -133,3 +133,24 @@ measured over a real network.
   nothing (no presence, no fanout, no reconnect banner). Handlers now attach
   synchronously and frames buffer until auth resolves (`wsRace.test.ts`
   regression-tests the racing burst against a real listening server).
+
+## Mobile P1 hardening — 2026-06-11
+
+- **Signed file URLs**: session tokens no longer appear in any URL. In-app
+  images load via `Authorization` header (expo-image source.headers);
+  external opens mint a 5-minute file-scoped HMAC URL via
+  `GET /api/files/:id/url` (`src/filesign.ts`, `fileSign.test.ts`). Bare
+  unauthenticated file fetches now 401.
+- **Session expiry** (migration 009): auth_sessions expire after 30 idle
+  days with sliding renewal when <15 days remain; expired rows reaped
+  opportunistically on login. Client 401s route back to login.
+- **Foreground reconnect**: shared `useWs` gained an `onWake` option —
+  mobile binds AppState 'active' to skip reconnect backoff or ping-probe a
+  suspended-dead socket (5s deadline) instead of waiting out the 60s idle
+  timer. (Not provable in the iOS simulator, which doesn't truly suspend
+  apps — verify on device.)
+- **Cold-start notification taps**: `getLastNotificationResponse()` handled
+  with a once-guard, so a push tap that launches the killed app navigates to
+  its channel. (Full push flow still needs the EAS dev build.)
+- Verified live in the simulator: signed-URL mint → anonymous 302, bare
+  401, real image upload → header-auth render arriving over live WS.

@@ -124,6 +124,13 @@ export function createApi(opts: ApiOptions = {}) {
       }),
     /** Authenticated URL for an attachment body (302 → presigned S3 GET). */
     fileUrl: (fileId: string) => `${base}/api/files/${fileId}`,
+    /**
+     * Mint a short-lived signed URL for opening a file outside an
+     * authenticated context (external browser / share sheet). The returned
+     * url is server-relative; prefix with the server origin on native.
+     */
+    fileSignedUrl: (fileId: string) =>
+      req<{ url: string; expiresAt: string }>(`/api/files/${fileId}/url`),
     editMessage: (eventId: number, text: string) =>
       req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
         method: 'PATCH',
