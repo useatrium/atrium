@@ -9,9 +9,12 @@ export function unique(prefix: string): string {
 
 export async function login(page: Page, handle: string, displayName = handle): Promise<void> {
   await page.goto('/');
+  // Email-code is the primary login now; the handle path lives behind a
+  // collapsed "dev login" <details> when AUTH_OPEN is on (the e2e default).
+  await page.getByText('dev login').click();
   await page.getByPlaceholder('gary', { exact: true }).fill(handle);
   await page.getByPlaceholder('Gary Basin').fill(displayName);
-  await page.getByRole('button', { name: 'Join' }).click();
+  await page.getByRole('button', { name: 'Join with handle' }).click();
   await expect(page.getByRole('heading', { name: '# general' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
 }
