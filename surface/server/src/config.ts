@@ -16,4 +16,5 @@ export const config = {
   s3AccessKey: process.env.S3_ACCESS_KEY ?? 'atrium',
   s3SecretKey: process.env.S3_SECRET_KEY ?? 'atrium-dev-secret',
   maxUploadBytes: 25 * 1024 * 1024,
+  pushRedactContent: process.env.PUSH_REDACT === '1',
 };
