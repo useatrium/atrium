@@ -11,11 +11,13 @@ import {
   mentionsHandle,
   parseAgentTask,
   randomId,
+  type AttachmentRef,
   type EnqueueOpInput,
   type MsgSendPayload,
   type OpType,
   type ReactionSetPayload,
   type SessionSpawnPayload,
+  type UploadPayload,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
@@ -85,6 +87,8 @@ export function Chat({
     switch (opType) {
       case 'msg.send':
         return "Couldn't send the message.";
+      case 'upload':
+        return "Couldn't upload the file.";
       case 'msg.edit':
         return "Couldn't save the edit.";
       case 'msg.delete':
@@ -124,6 +128,50 @@ export function Chat({
       return op;
     },
     [opQueue],
+  );
+
+  const waitForUpload = useCallback(
+    (uploadKey: string): Promise<{ fileId: string }> =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearInterval(timer);
+          fn();
+        };
+        const check = () => {
+          void opStorage
+            .listOps()
+            .then((ops) => {
+              const op = ops.find((candidate) => candidate.queueKey === `upload:${uploadKey}`);
+              if (!op) {
+                finish(() => reject(new Error('upload was rejected')));
+                return;
+              }
+              const payload = op.payload as Partial<UploadPayload>;
+              if (op.status === 'completed' && payload.uploaded && payload.fileId) {
+                finish(() => resolve({ fileId: payload.fileId! }));
+              }
+            })
+            .catch((err: unknown) => finish(() => reject(err)));
+        };
+        const timer = setInterval(check, 250);
+        check();
+      }),
+    [opStorage],
+  );
+
+  const queueUpload = useCallback(
+    async (payload: UploadPayload): Promise<{ fileId: string }> => {
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'upload',
+        payload,
+      });
+      return waitForUpload(payload.uploadKey);
+    },
+    [enqueueOp, waitForUpload],
   );
 
   // ---- initial data ----
@@ -544,6 +592,7 @@ export function Chat({
     text: string,
     threadRootEventId?: number,
     attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
   ) => {
     // Attachments can't ride along on a spawn — "@agent …" with files attached
     // sends as a plain message instead of silently dropping them.
@@ -582,6 +631,7 @@ export function Chat({
       clientMsgId,
       threadRootEventId,
       attachments,
+      attachmentRefs,
       createdAt,
     };
     void enqueueOp({
@@ -1056,7 +1106,10 @@ export function Chat({
                   ? `Message ${channelLabel(active, me.id)}`
                   : `Message ${active.kind === 'private' ? '' : '#'}${active.name}`
               }
-              onSend={(text, attachments) => send(active.id, text, undefined, attachments)}
+              onSend={(text, attachments, attachmentRefs) =>
+                send(active.id, text, undefined, attachments, attachmentRefs)
+              }
+              queueUpload={queueUpload}
               onTyping={() => notifyTyping(active.id)}
               onArrowUpOnEmpty={editLastOwn}
               autoFocus
@@ -1120,7 +1173,10 @@ export function Chat({
             meId={me.id}
             meHandle={me.handle}
             onClose={() => dispatch({ type: 'close-thread' })}
-            onSend={(text, attachments) => send(active.id, text, openThreadRoot.id!, attachments)}
+            onSend={(text, attachments, attachmentRefs) =>
+              send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs)
+            }
+            queueUpload={queueUpload}
             onOpenSession={openSession}
             onRetry={retry}
             onEdit={editMessage}
