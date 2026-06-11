@@ -561,6 +561,12 @@ export interface MessagePage {
   hasMore: boolean;
 }
 
+export interface SyncEventsPage {
+  events: WireEvent[];
+  nextCursor: number;
+  limited: boolean;
+}
+
 /**
  * Channel timeline reads, newest-last.
  * - default / before_id: root messages only (thread replies excluded).
@@ -619,6 +625,83 @@ export async function listThreadMessages(
     [args.rootEventId, 1000],
   );
   return { events: res.rows.map((r) => toWireEvent(foldEdit(r))) };
+}
+
+// /sync mirrors the reducer-visible event families. Workspace-scoped
+// workspace.created is intentionally excluded: there is no live fanout today
+// and no client reducer consumes it.
+const SYNC_EVENT_TYPES =
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
+
+function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
+  return `
+  visible AS (
+    SELECT e.id
+    FROM events e
+    LEFT JOIN channels c ON c.id = e.channel_id
+    LEFT JOIN channel_members cm
+      ON cm.channel_id = e.channel_id AND cm.user_id = ${userUuidParam}
+    LEFT JOIN LATERAL (
+      SELECT MAX(j.id) AS join_event_id
+      FROM events j
+      WHERE j.channel_id = e.channel_id
+        AND j.type = 'channel.member_joined'
+        AND j.payload->>'userId' = ${userTextParam}
+    ) latest_join ON true
+    WHERE e.type IN ${SYNC_EVENT_TYPES}
+      AND (
+        c.kind = 'public'
+        OR (
+          c.kind IN ('private', 'dm', 'gdm')
+          AND cm.user_id IS NOT NULL
+          AND e.id >= COALESCE(latest_join.join_event_id, 0)
+        )
+        OR (
+          e.type = 'channel.member_left'
+          AND e.payload->>'userId' = ${userTextParam}
+        )
+      )
+  )
+`;
+}
+
+/**
+ * Unified workspace sync stream. Visibility intentionally follows current
+ * membership for private/DM channels, with the user's join event as the lower
+ * bound when one exists, so /sync guarantees forward continuity without
+ * backfilling pre-join history.
+ */
+export async function listVisibleSyncEvents(
+  db: Db | DbClient,
+  args: { userId: string; after: number; limit: number },
+): Promise<SyncEventsPage> {
+  const summary = await db.query<{ count_after: number; max_id: number }>(
+    `WITH ${syncVisibleCte('$1', '$3')}
+     SELECT COUNT(*) FILTER (WHERE id > $2)::int AS count_after,
+            COALESCE(MAX(id), 0)::bigint AS max_id
+     FROM visible`,
+    [args.userId, args.after, args.userId],
+  );
+  const countAfter = Number(summary.rows[0]?.count_after ?? 0);
+  const nextCursor = Number(summary.rows[0]?.max_id ?? 0);
+  if (countAfter > args.limit) {
+    return { events: [], nextCursor, limited: true };
+  }
+
+  const res = await db.query<EventDbRow>(
+    `WITH ${syncVisibleCte('$1', '$4')}
+     ${MESSAGE_SELECT}
+     JOIN visible v ON v.id = e.id
+     WHERE e.id > $2
+     ORDER BY e.id ASC
+     LIMIT $3`,
+    [args.userId, args.after, args.limit, args.userId],
+  );
+  return {
+    events: res.rows.map((r) => toWireEvent(foldEdit(r))),
+    nextCursor,
+    limited: false,
+  };
 }
 
 export interface SearchHit {
@@ -695,7 +778,7 @@ export async function listChannels(pool: Db, workspaceId?: string): Promise<Chan
 }
 
 /** Public channels plus the user's private channels/DMs/GDMs. */
-export async function listChannelsFor(pool: Db, userId: string): Promise<Channel[]> {
+export async function listChannelsFor(pool: Db | DbClient, userId: string): Promise<Channel[]> {
   const res = await pool.query<{
     id: string;
     workspace_id: string;
