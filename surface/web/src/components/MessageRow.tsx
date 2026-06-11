@@ -381,40 +381,19 @@ function SessionEventCard({
 }) {
   const payload = message.sessionEventPayload ?? {};
   const questions = Array.isArray(payload.questions) ? payload.questions : [];
-  if (message.sessionEventType === 'question_requested') {
-    return (
-      <div className="mt-1 max-w-xl rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-          Agent needs input
-        </div>
-        <div className="mt-1 space-y-1">
-          {questions.map((q, i) => {
-            const raw = q as Record<string, unknown>;
-            return (
-              <div key={typeof raw.id === 'string' ? raw.id : i} className="text-xs text-zinc-200">
-                <span className="font-semibold text-zinc-100">
-                  {typeof raw.header === 'string' ? raw.header : 'Question'}:
-                </span>{' '}
-                {typeof raw.question === 'string' ? raw.question : 'Question requested'}
-              </div>
-            );
-          })}
-        </div>
-        {message.sessionId && (
-          <button
-            onClick={() => onOpenSession?.(message.sessionId!)}
-            className="mt-1.5 text-[11px] font-medium text-amber-200 hover:underline"
-          >
-            open pane →
-          </button>
-        )}
-      </div>
-    );
-  }
+  const firstQuestion = questions[0] as Record<string, unknown> | undefined;
+  const questionText =
+    typeof firstQuestion?.question === 'string' && firstQuestion.question.trim()
+      ? firstQuestion.question
+      : 'Agent asked a question';
   const label =
     message.sessionEventType === 'question_answered'
       ? 'Question answered'
-      : `Question ${typeof payload.reason === 'string' ? payload.reason : 'resolved'}`;
+      : message.sessionEventType === 'question_requested'
+        ? `❓ ${questionText}`
+        : message.sessionEventType === 'question_resolved'
+          ? 'Question dismissed'
+          : 'Session event';
   return (
     <div className="mt-1 text-xs text-zinc-500">
       {label}

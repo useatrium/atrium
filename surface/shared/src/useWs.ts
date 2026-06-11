@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { normalizePrefs, type UserPrefs } from './prefs';
 import type { UserRef, WireEvent } from './timeline';
 
 export type WsStatus = 'connecting' | 'open' | 'closed';
@@ -11,6 +12,8 @@ export interface WsCallbacks {
   onRead?: (channelId: string, lastReadEventId: number) => void;
   onMuted?: (channelId: string, muted: boolean) => void;
   onChannelLeft?: (channelId: string) => void;
+  /** Server-synced user preferences changed (this device or another). */
+  onPrefs?: (prefs: UserPrefs) => void;
   /** Fires on every (re)connect after the subscribe is sent — refetch catch-up here. */
   onOpen: () => void;
   onStatus: (status: WsStatus) => void;
@@ -141,6 +144,7 @@ export function useWs(
           muted?: boolean;
           users?: UserRef[];
           user?: UserRef;
+          prefs?: unknown;
         };
         try {
           msg = JSON.parse(e.data as string);
@@ -162,6 +166,8 @@ export function useWs(
           cbRef.current.onMuted?.(msg.channelId, msg.muted);
         else if (msg.type === 'channel-left' && msg.channelId)
           cbRef.current.onChannelLeft?.(msg.channelId);
+        else if (msg.type === 'prefs' && msg.prefs)
+          cbRef.current.onPrefs?.(normalizePrefs(msg.prefs));
       };
 
       ws.onclose = () => {
