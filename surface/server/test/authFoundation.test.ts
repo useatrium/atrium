@@ -85,6 +85,28 @@ describe('auth foundation', () => {
     expect(verify.headers['set-cookie']).toContain(verify.json().token);
   });
 
+  it('allows only one concurrent verification of a valid email code', async () => {
+    await startApp(false);
+    const code = await requestCode('race@example.com');
+
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        app.inject({
+          method: 'POST',
+          url: '/auth/email/verify',
+          payload: { email: 'race@example.com', code },
+        }),
+      ),
+    );
+
+    expect(attempts.filter((res) => res.statusCode === 200)).toHaveLength(1);
+    expect(attempts.filter((res) => res.statusCode === 400)).toHaveLength(19);
+    const row = await pool.query('SELECT consumed_at, attempts FROM login_codes WHERE email = $1', [
+      'race@example.com',
+    ]);
+    expect(row.rows[0].consumed_at).toBeInstanceOf(Date);
+  });
+
   it('rejects an expired email code', async () => {
     await startApp(false);
     const code = await requestCode('expired@example.com');

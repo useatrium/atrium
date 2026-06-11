@@ -301,7 +301,7 @@ export function applySessionEvent(
   if (ev.type === 'session.question_requested') {
     const questionId = typeof p.questionId === 'string' ? p.questionId : null;
     if (!questionId) return sessions;
-    const questions = parseQuestionSummaries(p.questions);
+    const questions = parseQuestionPrompts(p.questions);
     return {
       ...sessions,
       [sessionId]: {
@@ -379,20 +379,30 @@ export function applySessionEvent(
   return sessions;
 }
 
-function parseQuestionSummaries(value: unknown): QuestionPrompt[] {
+function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item): QuestionPrompt | null => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
       const raw = item as Record<string, unknown>;
       if (typeof raw.id !== 'string' || typeof raw.question !== 'string') return null;
+      const options = Array.isArray(raw.options)
+        ? raw.options
+            .map((option): QuestionOption | null => {
+              if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
+              const o = option as Record<string, unknown>;
+              if (typeof o.label !== 'string' || typeof o.description !== 'string') return null;
+              return { label: o.label, description: o.description };
+            })
+            .filter((option): option is QuestionOption => option !== null)
+        : [];
       return {
         id: raw.id,
         header: typeof raw.header === 'string' ? raw.header : 'Question',
         question: raw.question,
         isOther: raw.isOther === true,
         isSecret: raw.isSecret === true,
-        options: [],
+        options,
       };
     })
     .filter((q): q is QuestionPrompt => q !== null);

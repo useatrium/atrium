@@ -25,7 +25,9 @@ class FakeCentaur {
   readonly requests: RecordedRequest[] = [];
   readonly answers: RecordedRequest[] = [];
   readonly acceptedExecutions: string[] = [];
+  readonly acceptedMessages: string[] = [];
   staleMessages = new Set<string>();
+  private answerNotPendingCount = 0;
   url = '';
 
   constructor() {
@@ -88,6 +90,7 @@ class FakeCentaur {
       const replay = this.replayIdempotent(res, 'message', body.thread_key, body.message_id, body);
       if (replay) return;
       this.rememberIdempotent('message', body.thread_key, body.message_id, body, {});
+      if (body.message_id) this.acceptedMessages.push(body.message_id);
       return sendJson(res, {});
     }
     if (req.method === 'POST' && url.pathname === '/agent/execute') {
@@ -101,6 +104,10 @@ class FakeCentaur {
     }
     if (req.method === 'POST' && /^\/agent\/executions\/[^/]+\/answer$/.test(url.pathname)) {
       this.answers.push({ method: req.method ?? 'POST', path: url.pathname, body, query: url.searchParams });
+      if (this.answerNotPendingCount > 0) {
+        this.answerNotPendingCount -= 1;
+        return sendJson(res, { code: 'QUESTION_NOT_PENDING' }, 409);
+      }
       return sendJson(res, {});
     }
     if (req.method === 'POST' && url.pathname.endsWith('/release')) {
@@ -129,6 +136,15 @@ class FakeCentaur {
   seedAcceptedExecute(threadKey: string, executeId: string, body: object, response: object): void {
     this.acceptedExecutions.push((response as { execution_id: string }).execution_id);
     this.rememberIdempotent('execute', threadKey, executeId, body, response);
+  }
+
+  seedAcceptedMessage(threadKey: string, messageId: string, body: object): void {
+    this.acceptedMessages.push(messageId);
+    this.rememberIdempotent('message', threadKey, messageId, body, {});
+  }
+
+  rejectNextAnswerQuestionNotPending(): void {
+    this.answerNotPendingCount += 1;
   }
 
   private replayIdempotent(
@@ -438,6 +454,17 @@ describe('Phase 2 sessions', () => {
         sessionId: id,
         questionId: 'q-main',
         permalink: `/s/${id}`,
+        questions: [
+          {
+            id: 'choice',
+            header: 'Decision',
+            question: 'Which deployment path should I take?',
+            options: [
+              { label: 'Fast', description: 'Ship the smallest change' },
+              { label: 'Careful', description: 'Run the full suite first' },
+            ],
+          },
+        ],
       });
     });
     await app.close();
@@ -516,6 +543,94 @@ describe('Phase 2 sessions', () => {
       questionId: 'q-main',
       by: fx.userId,
     });
+
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie: driverCookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Careful'] } } },
+    });
+    expect(second.statusCode).toBe(409);
+    expect(fake.answers).toHaveLength(1);
+    const answeredEvents = await pool.query('SELECT id FROM events WHERE type = $1', [
+      'session.question_answered',
+    ]);
+    expect(answeredEvents.rowCount).toBe(1);
+    await app.close();
+  });
+
+  it('answer route returns 404 when the driver no longer has private channel access', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const { channel } = await createChannel(pool, {
+      workspaceId: fx.workspaceId,
+      name: 'priv-answers',
+      actorId: alice.userId,
+      private: true,
+    });
+    const id = await insertSessionRow({
+      channelId: channel.id,
+      title: 'private answer',
+      status: 'running',
+      spawnedBy: alice.userId,
+    });
+    await setPendingQuestion(id);
+    await pool.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [
+      channel.id,
+      alice.userId,
+    ]);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie: alice.cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(fake.answers).toHaveLength(0);
+    await app.close();
+  });
+
+  it('clears a locally pending question when Centaur reports it is no longer pending', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'lapsed answer', status: 'running' });
+    await setPendingQuestion(id);
+    fake.rejectNextAnswerQuestionNotPending();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie: driverCookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('question_not_pending');
+    const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    expect(row.rows[0].pending_question).toBeNull();
+    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
+      'session.question_resolved',
+    ]);
+    expect(resolved.rowCount).toBe(1);
+    expect(resolved.rows[0].payload).toMatchObject({
+      sessionId: id,
+      questionId: 'q-main',
+      reason: 'empty',
+    });
+    const answered = await pool.query('SELECT id FROM events WHERE type = $1', [
+      'session.question_answered',
+    ]);
+    expect(answered.rowCount).toBe(0);
     await app.close();
   });
 
@@ -761,6 +876,108 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('steer with NEW text mints a fresh message id when a pending id holds different content', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, centaur_message_attempt
+       )
+       VALUES ($1, $2, 'thread-wedged-msg', 'claude-code', 'wedged msg', 'running', $3, $3, 'exe_old', 1, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-wedged-msg', 1);
+    // Simulate an earlier steer whose message Centaur accepted (idempotency
+    // row recorded) but whose execute never persisted: the pending id holds
+    // the OLD text.
+    await pool.query('UPDATE sessions SET centaur_message_id = $1 WHERE id = $2', [`msg-${id}-a1`, id]);
+    const seeded = await fetch(`${fake.url}/agent/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        thread_key: 'thread-wedged-msg',
+        assignment_generation: 1,
+        role: 'user',
+        parts: [{ type: 'text', text: 'the earlier, different steer text' }],
+        metadata: { user_id: fx.userId },
+        user_id: fx.userId,
+        message_id: `msg-${id}-a1`,
+      }),
+    });
+    expect(seeded.status).toBe(200);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'a brand new steer' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const messages = fake.requests.filter((r) => r.path === '/agent/message');
+    // seed + wedged attempt (mismatch) + fresh retry
+    expect(messages.at(-1)!.body.message_id).toBe(`msg-${id}-a2`);
+    const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [id]);
+    expect(row.rows[0].centaur_message_id).toBeNull();
+    expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
+    await app.close();
+  });
+
+  it('steer reuses a pending message id after Centaur accepted the message before a crash', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, centaur_message_attempt
+       )
+       VALUES ($1, $2, 'thread-pending-message', 'claude-code', 'pending message', 'running', $3, $3, 'exe_old', 1, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    const messageId = `msg-${id}-a1`;
+    await pool.query('UPDATE sessions SET centaur_message_id = $1 WHERE id = $2', [messageId, id]);
+    fake.seedAcceptedMessage('thread-pending-message', messageId, {
+      thread_key: 'thread-pending-message',
+      assignment_generation: 1,
+      role: 'user',
+      parts: [{ type: 'text', text: 'retry the accepted message' }],
+      metadata: { user_id: fx.userId },
+      user_id: fx.userId,
+      message_id: messageId,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'retry the accepted message' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const message = fake.requests.find((r) => r.path === '/agent/message');
+    expect(message?.body.message_id).toBe(messageId);
+    expect(fake.acceptedMessages).toEqual([messageId]);
+    const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [
+      id,
+    ]);
+    expect(row.rows[0].centaur_message_id).toBeNull();
+    expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
+    await app.close();
+  });
+
   it('re-spawns and retries once when postMessage sees stale assignment generation', async () => {
     const app = await buildApp({
       pool,
@@ -939,6 +1156,7 @@ describe('Phase 2 sessions', () => {
       [fx.workspaceId, fx.channelId, fx.userId],
     );
     const id = inserted.rows[0]!.id;
+    await setPendingQuestion(id);
 
     const res = await app.inject({
       method: 'POST',
@@ -948,8 +1166,18 @@ describe('Phase 2 sessions', () => {
     expect(res.statusCode).toBe(202);
     const release = fake.requests.find((r) => r.path.endsWith('/release'));
     expect(release?.body).toMatchObject({ release_id: `rel-${id}`, cancel_inflight: true });
-    const row = await pool.query('SELECT status FROM sessions WHERE id = $1', [id]);
+    const row = await pool.query('SELECT status, pending_question FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].status).toBe('cancelled');
+    expect(row.rows[0].pending_question).toBeNull();
+    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
+      'session.question_resolved',
+    ]);
+    expect(resolved.rowCount).toBe(1);
+    expect(resolved.rows[0].payload).toMatchObject({
+      sessionId: id,
+      questionId: 'q-main',
+      reason: 'cancelled',
+    });
     await app.close();
   });
 
