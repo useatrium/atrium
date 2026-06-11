@@ -128,16 +128,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'read-cursor':
       return { ...state, unread: { ...state.unread, [action.channelId]: false } };
 
-    case 'mute-changed':
-      return {
-        ...state,
-        channels: state.channels.map((c) =>
-          c.id === action.channelId ? { ...c, muted: action.muted } : c,
-        ),
-        unread: action.muted
-          ? { ...state.unread, [action.channelId]: false }
-          : state.unread,
-      };
+    case 'mute-changed': {
+      const channels = state.channels.map((c) =>
+        c.id === action.channelId ? { ...c, muted: action.muted } : c,
+      );
+      let level: UnreadLevel = false;
+      if (!action.muted) {
+        // Unmuting re-derives unread from the cold counters — messages that
+        // arrived while muted were suppressed by the server-event fold.
+        const ch = channels.find((c) => c.id === action.channelId);
+        level = (ch?.latestEventId ?? 0) > (ch?.lastReadEventId ?? 0);
+      }
+      return { ...state, channels, unread: { ...state.unread, [action.channelId]: level } };
+    }
 
     case 'channel-added': {
       if (state.channels.some((c) => c.id === action.channel.id)) return state;

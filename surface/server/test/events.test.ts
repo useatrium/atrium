@@ -203,3 +203,28 @@ describe('fanout ordering', () => {
     expect(s3.received).toEqual([]);
   });
 });
+
+describe('client_msg_id idempotency', () => {
+  it('resending the same clientMsgId returns the original event, not a duplicate', async () => {
+    const args = {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'offline outbox retry',
+      clientMsgId: 'outbox-retry-1',
+    };
+    const first = await postMessage(pool, args);
+    const second = await postMessage(pool, { ...args, text: 'same id, retried' });
+    expect(second.id).toBe(first.id);
+    expect(second.payload.text).toBe('offline outbox retry');
+
+    const rows = await pool.query(
+      `SELECT id FROM events WHERE type = 'message.posted' AND payload->>'client_msg_id' = $1`,
+      ['outbox-retry-1'],
+    );
+    expect(rows.rowCount).toBe(1);
+
+    const other = await postMessage(pool, { ...args, clientMsgId: 'outbox-retry-2' });
+    expect(other.id).not.toBe(first.id);
+  });
+});

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -601,3 +602,47 @@ function sendJson(res: ServerResponse, body: object): void {
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
 }
+
+describe('session access control', () => {
+  it('sessions in a DM are 404 for non-members, visible to members', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const cara = await loginUser(app, 'cara', 'Cara');
+
+    const { channel } = await getOrCreateDm(pool, {
+      workspaceId: fx.workspaceId,
+      userIdA: alice.userId,
+      userIdB: bob.userId,
+    });
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, $3, 'claude-code', 'dm session', 'running', $4, $4, 'exe_fake', 1)
+       RETURNING id`,
+      [fx.workspaceId, channel.id, `thread-${randomUUID()}`, alice.userId],
+    );
+    const sessionId = inserted.rows[0]!.id;
+
+    const asUser = (cookie: string) =>
+      app.inject({ method: 'GET', url: `/api/sessions/${sessionId}`, headers: { cookie } });
+    expect((await asUser(alice.cookie)).statusCode).toBe(200);
+    expect((await asUser(bob.cookie)).statusCode).toBe(200);
+    // 404, not 403 — existence of someone else's DM session must not leak.
+    expect((await asUser(cara.cookie)).statusCode).toBe(404);
+
+    const stream = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sessionId}/stream`,
+      headers: { cookie: cara.cookie },
+    });
+    expect(stream.statusCode).toBe(404);
+    await app.close();
+  });
+});
