@@ -387,3 +387,60 @@ describe('session spawn reconciliation', () => {
   });
 
 });
+
+describe('live cold-counter advancement (unread divider depends on it)', () => {
+  const loadedWith = (over: Record<string, unknown> = {}) =>
+    appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public' as const,
+          latestEventId: 5,
+          lastReadEventId: 5,
+          ...over,
+        },
+        {
+          id: 'ch-active',
+          workspaceId: 'ws-1',
+          name: 'active',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public' as const,
+          latestEventId: 1,
+          lastReadEventId: 1,
+        },
+      ],
+    });
+
+  it('a live message bumps channels[].latestEventId past the cold value', () => {
+    // 'active' sorts first alphabetically and there is no #general fallback
+    // ambiguity: select ch-active so CH counts as a background channel.
+    let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
+    state = appReducer(state, { type: 'server-event', event: wire(9, 'fresh') });
+    const ch = state.channels.find((c) => c.id === CH)!;
+    expect(ch.latestEventId).toBe(9);
+    expect(state.unread[CH]).toBe(true);
+  });
+
+  it('mock events never advance the counter', () => {
+    let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: { ...wire(9, 'mocked'), mock: true },
+    });
+    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(5);
+  });
+
+  it('read-cursor advances channels[].lastReadEventId monotonically', () => {
+    let state = loadedWith({ lastReadEventId: 3 });
+    state = appReducer(state, { type: 'read-cursor', channelId: CH, lastReadEventId: 8 });
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+    // Stale cursor must not regress it.
+    state = appReducer(state, { type: 'read-cursor', channelId: CH, lastReadEventId: 4 });
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+    expect(state.unread[CH]).toBe(false);
+  });
+});

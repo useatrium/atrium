@@ -459,7 +459,7 @@ function SettingsPopover({
       ref={refEl}
       role="dialog"
       aria-label="Settings"
-      className="absolute bottom-full right-2 z-40 mb-2 w-72 rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl"
+      className="absolute bottom-full left-2 z-40 mb-2 w-72 rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl"
     >
       <div className="space-y-3">
         <SettingRow label="Theme">
@@ -519,6 +519,7 @@ function SettingsPopover({
         <SettingRow label="High contrast">
           <button
             type="button"
+            aria-label="High contrast"
             aria-pressed={prefs.highContrast}
             onClick={() => setPrefs({ highContrast: !prefs.highContrast })}
             className={`flex h-8 w-16 items-center rounded-full border px-1 ${
