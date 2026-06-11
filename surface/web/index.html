@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,6 +9,52 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (() => {
+        const KEY = 'atrium:prefs';
+        const defaults = {
+          theme: 'system',
+          accent: 'indigo',
+          motion: 'system',
+          fontScale: 1,
+          highContrast: false,
+        };
+        const accents = ['indigo', 'teal', 'amber', 'rose'];
+        const fontScales = [0.875, 1, 1.125, 1.25];
+        const motions = ['system', 'reduced', 'full'];
+        const themes = ['system', 'light', 'dark'];
+        const raw = (() => {
+          try {
+            return JSON.parse(localStorage.getItem(KEY) || 'null') || {};
+          } catch {
+            return {};
+          }
+        })();
+        const prefs = {
+          theme: themes.includes(raw.theme) ? raw.theme : defaults.theme,
+          accent: accents.includes(raw.accent) ? raw.accent : defaults.accent,
+          motion: motions.includes(raw.motion) ? raw.motion : defaults.motion,
+          fontScale: fontScales.includes(raw.fontScale) ? raw.fontScale : defaults.fontScale,
+          highContrast:
+            typeof raw.highContrast === 'boolean' ? raw.highContrast : defaults.highContrast,
+        };
+        const scheme =
+          prefs.theme === 'system'
+            ? window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+            : prefs.theme;
+        const root = document.documentElement;
+        root.dataset.theme = scheme;
+        root.dataset.accent = prefs.accent;
+        if (prefs.highContrast) root.dataset.contrast = 'high';
+        if (prefs.motion !== 'system') root.dataset.motion = prefs.motion;
+        if (prefs.fontScale !== 1) root.dataset.fontscale = String(prefs.fontScale);
+        document
+          .querySelector("meta[name='theme-color']")
+          ?.setAttribute('content', scheme === 'dark' ? '#09090b' : '#fafafa');
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -3,6 +3,7 @@ import { api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { Login } from './Login';
 import { Toasts } from './components/Toasts';
+import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
@@ -20,7 +21,10 @@ export function App() {
   useEffect(() => {
     api
       .me()
-      .then(({ user }) => setMe(user))
+      .then(({ user, prefs }) => {
+        setMe(user);
+        if (prefs) adoptPrefs(prefs);
+      })
       .catch(() => {})
       .finally(() => setChecked(true));
   }, []);

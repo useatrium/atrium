@@ -1,4 +1,5 @@
 import { initials, userColorTokens } from '@atrium/surface-client';
+import { useTheme } from '../theme';
 
 export function Avatar({
   name,
@@ -9,7 +10,8 @@ export function Avatar({
   seed: string;
   size?: number;
 }) {
-  const colors = userColorTokens(seed, 'dark');
+  const { resolvedScheme } = useTheme();
+  const colors = userColorTokens(seed, resolvedScheme);
   return (
     <div
       className="flex shrink-0 select-none items-center justify-center rounded-md font-semibold"
