@@ -9,7 +9,7 @@ import {
 import type { Channel, QueuedOp, WireEvent } from '@atrium/surface-client';
 
 class MemoryStorage implements CacheStorage {
-  snapshot: CacheSnapshot = { channels: null, timelines: {} };
+  snapshot: CacheSnapshot = { channels: null, timelines: {}, syncCursor: 0 };
   ops: QueuedOp[] = [];
   drafts = new Map<string, string>();
   timelineWrites = 0;
@@ -25,6 +25,10 @@ class MemoryStorage implements CacheStorage {
   async saveTimeline(channelId: string, timeline: CachedTimeline): Promise<void> {
     this.timelineWrites += 1;
     this.snapshot.timelines[channelId] = structuredClone(timeline);
+  }
+
+  async saveSyncCursor(cursor: number): Promise<void> {
+    this.snapshot.syncCursor = cursor;
   }
 
   async listOps(): Promise<QueuedOp[]> {
@@ -50,7 +54,7 @@ class MemoryStorage implements CacheStorage {
   }
 
   async clearCache(): Promise<void> {
-    this.snapshot = { channels: null, timelines: {} };
+    this.snapshot = { channels: null, timelines: {}, syncCursor: 0 };
     this.ops = [];
     this.drafts.clear();
   }
@@ -99,6 +103,7 @@ describe('event cache', () => {
       timelines: {
         general: { events, hasMore: true },
       },
+      syncCursor: 0,
     });
   });
 
@@ -132,5 +137,16 @@ describe('event cache', () => {
       events: [event(1), event(2)],
       hasMore: false,
     });
+  });
+
+  it('persists the sync cursor monotonically', async () => {
+    const storage = new MemoryStorage();
+    const cache = createEventCache(storage);
+
+    await cache.saveSyncCursor(10);
+    await cache.saveSyncCursor(4);
+
+    const reloaded = createEventCache(storage);
+    await expect(reloaded.loadSnapshot()).resolves.toMatchObject({ syncCursor: 10 });
   });
 });
