@@ -6,12 +6,15 @@ import type { Db } from './db.js';
 import { signSession, verifySession } from './cookie.js';
 import {
   DomainError,
+  canAccessChannel,
   createChannel,
   deleteMessage,
   editMessage,
+  getOrCreateDm,
   listChannelMessages,
-  listChannels,
+  listChannelsFor,
   listThreadMessages,
+  listUsers,
   listWorkspaces,
   postMessage,
   searchMessages,
@@ -151,8 +154,53 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get('/api/channels', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return { channels: await listChannelsFor(pool, user.id) };
+  });
+
+  app.get('/api/users', async (req, reply) => {
     if (!requireUser(req, reply)) return;
-    return { channels: await listChannels(pool) };
+    return { users: await listUsers(pool) };
+  });
+
+  app.post('/api/dms', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { userId?: string };
+    if (!body.userId || typeof body.userId !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
+    }
+    const other = await pool.query('SELECT id FROM users WHERE id = $1', [body.userId]);
+    if (!other.rows[0]) {
+      return reply.code(404).send({ error: 'user_not_found', message: 'user not found' });
+    }
+    const workspaces = await listWorkspaces(pool);
+    const ws = workspaces[0];
+    if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace' });
+    const { channel, created } = await getOrCreateDm(pool, {
+      workspaceId: ws.id,
+      userIdA: user.id,
+      userIdB: body.userId,
+    });
+    if (created) {
+      // Only the two members learn the DM exists.
+      hub.publishToUsers(
+        [user.id, body.userId],
+        {
+          id: 0,
+          workspaceId: ws.id,
+          channelId: channel.id,
+          threadRootEventId: null,
+          type: 'channel.created',
+          actorId: user.id,
+          payload: { name: channel.name, channel },
+          createdAt: new Date().toISOString(),
+          author: user,
+        },
+      );
+    }
+    return reply.code(created ? 201 : 200).send({ channel });
   });
 
   app.post('/api/channels', async (req, reply) => {
@@ -184,8 +232,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // -------------------------------------------------------------------------
 
   app.get('/api/channels/:id/messages', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    const user = requireUser(req, reply);
+    if (!user) return;
     const { id } = req.params as { id: string };
+    if (!(await canAccessChannel(pool, user.id, id))) {
+      // 404, not 403 — don't leak the existence of someone else's DM.
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
     const q = req.query as { before_id?: string; after_id?: string; limit?: string };
     const limit = q.limit ? Number(q.limit) : undefined;
     const beforeId = q.before_id ? Number(q.before_id) : undefined;
@@ -200,7 +253,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get('/api/search', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    const user = requireUser(req, reply);
+    if (!user) return;
     const q = (req.query as { q?: string; limit?: string });
     const query = String(q.q ?? '').trim();
     if (query.length < 2) {
@@ -210,14 +264,23 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (limit !== undefined && !Number.isFinite(limit)) {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
     }
-    return { results: await searchMessages(pool, { query, limit }) };
+    return { results: await searchMessages(pool, { query, userId: user.id, limit }) };
   });
 
   app.get('/api/threads/:rootEventId/messages', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    const user = requireUser(req, reply);
+    if (!user) return;
     const rootEventId = Number((req.params as { rootEventId: string }).rootEventId);
     if (!Number.isFinite(rootEventId)) {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric root event id expected' });
+    }
+    const root = await pool.query<{ channel_id: string | null }>(
+      'SELECT channel_id FROM events WHERE id = $1',
+      [rootEventId],
+    );
+    const channelId = root.rows[0]?.channel_id;
+    if (!channelId || !(await canAccessChannel(pool, user.id, channelId))) {
+      return reply.code(404).send({ error: 'thread_not_found', message: 'thread not found' });
     }
     return listThreadMessages(pool, { rootEventId });
   });
@@ -289,7 +352,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       'SELECT workspace_id FROM channels WHERE id = $1',
       [body.channelId],
     );
-    if (!channel.rows[0]) {
+    if (!channel.rows[0] || !(await canAccessChannel(pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
     const event = await postMessage(pool, {
@@ -460,6 +523,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
+    if (!(await canAccessChannel(pool, user.id, body.channelId))) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
     const session = await sessionRuns.createSession({
       channelId: body.channelId,
       threadRootEventId,
@@ -577,11 +643,34 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           const ids = msg.channelIds
             .filter((c): c is string => typeof c === 'string')
             .slice(0, 500);
-          hub.subscribe(client, ids);
+          // DM channels are member-only: drop ids the user can't access so
+          // fanout/presence can trust subscriptions.
+          void (async () => {
+            const allowed: string[] = [];
+            for (const id of ids) {
+              if (id.startsWith('session:') || (await canAccessChannel(pool, user.id, id))) {
+                allowed.push(id);
+              }
+            }
+            hub.subscribe(client, allowed);
+          })().catch(() => {});
         } else if (msg.type === 'focus') {
-          hub.setFocus(client, typeof msg.channelId === 'string' ? msg.channelId : null);
+          const channelId = typeof msg.channelId === 'string' ? msg.channelId : null;
+          if (!channelId) {
+            hub.setFocus(client, null);
+          } else {
+            void canAccessChannel(pool, user.id, channelId)
+              .then((ok) => {
+                if (ok) hub.setFocus(client, channelId);
+              })
+              .catch(() => {});
+          }
         } else if (msg.type === 'typing') {
-          if (typeof msg.channelId === 'string') hub.relayTyping(client, msg.channelId);
+          // Focus is already access-checked; require it so nobody can signal
+          // into a DM they aren't reading.
+          if (typeof msg.channelId === 'string' && client.focusedChannelId === msg.channelId) {
+            hub.relayTyping(client, msg.channelId);
+          }
         } else if (msg.type === 'ping') {
           hub.sendTo(client, { type: 'pong', t: Date.now() });
         }

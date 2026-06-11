@@ -1,4 +1,18 @@
-import type { ChatMessage } from './state';
+import type { Channel } from './api';
+import type { ChatMessage, UserRef } from './state';
+
+/** The person on the other side of a DM (yourself, for a self-DM). */
+export function dmPartner(c: Channel, meId: string): UserRef | null {
+  if (c.kind !== 'dm' || !c.members || c.members.length === 0) return null;
+  return c.members.find((m) => m.id !== meId) ?? c.members[0]!;
+}
+
+/** Sidebar/header label: "#name" channels render their name, DMs the person. */
+export function channelLabel(c: Channel, meId: string): string {
+  const partner = dmPartner(c, meId);
+  if (!partner) return c.name;
+  return partner.id === meId ? `${partner.displayName} (you)` : partner.displayName;
+}
 
 /** Deterministic accent color per user (no avatars — colored initials).
  * Lightness 42% keeps white initials readable across the whole hue wheel. */

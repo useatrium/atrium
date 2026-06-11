@@ -159,6 +159,9 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
+  kind: 'public' | 'dm';
+  /** DM channels only: the (enforced) member list. */
+  members?: UserRef[];
 }
 
 export async function createChannel(
@@ -190,6 +193,7 @@ export async function createChannel(
           workspaceId: row.workspace_id,
           name: row.name,
           createdAt: new Date(row.created_at).toISOString(),
+          kind: 'public' as const,
         },
         event: toWireEvent(await attachAuthor(client, ev)),
       };
@@ -560,7 +564,7 @@ export interface SearchHit {
  */
 export async function searchMessages(
   pool: Db,
-  args: { query: string; limit?: number },
+  args: { query: string; userId: string; limit?: number },
 ): Promise<SearchHit[]> {
   const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
   const res = await pool.query<EventDbRow & { channel_name: string }>(
@@ -582,8 +586,11 @@ export async function searchMessages(
        LIMIT $2
      ) m
      JOIN channels c ON c.id = m.channel_id
+     WHERE c.kind <> 'dm'
+        OR EXISTS (SELECT 1 FROM channel_members cm
+                   WHERE cm.channel_id = c.id AND cm.user_id = $3)
      ORDER BY m.id DESC`,
-    [args.query, limit],
+    [args.query, limit, args.userId],
   );
   return res.rows.map((r) => ({
     event: toWireEvent(foldEdit(r)),
@@ -605,16 +612,127 @@ export async function listWorkspaces(pool: Db): Promise<Workspace[]> {
 export async function listChannels(pool: Db, workspaceId?: string): Promise<Channel[]> {
   const res = workspaceId
     ? await pool.query(
-        'SELECT * FROM channels WHERE workspace_id = $1 ORDER BY name ASC',
+        "SELECT * FROM channels WHERE workspace_id = $1 AND kind = 'public' ORDER BY name ASC",
         [workspaceId],
       )
-    : await pool.query('SELECT * FROM channels ORDER BY name ASC');
+    : await pool.query("SELECT * FROM channels WHERE kind = 'public' ORDER BY name ASC");
   return res.rows.map((r) => ({
     id: r.id,
     workspaceId: r.workspace_id,
     name: r.name,
     createdAt: new Date(r.created_at).toISOString(),
+    kind: 'public' as const,
   }));
+}
+
+/** Public channels plus the user's DMs (with member lists for display). */
+export async function listChannelsFor(pool: Db, userId: string): Promise<Channel[]> {
+  const res = await pool.query<{
+    id: string;
+    workspace_id: string;
+    name: string;
+    created_at: Date;
+    kind: 'public' | 'dm';
+  }>(
+    `SELECT c.* FROM channels c
+     WHERE c.kind = 'public'
+        OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id = c.id AND m.user_id = $1)
+     ORDER BY c.name ASC`,
+    [userId],
+  );
+  const dmIds = res.rows.filter((r) => r.kind === 'dm').map((r) => r.id);
+  const membersByChannel = new Map<string, UserRef[]>();
+  if (dmIds.length > 0) {
+    const members = await pool.query<{
+      channel_id: string;
+      id: string;
+      handle: string;
+      display_name: string;
+    }>(
+      `SELECT m.channel_id, u.id, u.handle, u.display_name
+       FROM channel_members m JOIN users u ON u.id = m.user_id
+       WHERE m.channel_id = ANY($1::uuid[])
+       ORDER BY u.handle ASC`,
+      [dmIds],
+    );
+    for (const row of members.rows) {
+      const list = membersByChannel.get(row.channel_id) ?? [];
+      list.push({ id: row.id, handle: row.handle, displayName: row.display_name });
+      membersByChannel.set(row.channel_id, list);
+    }
+  }
+  return res.rows.map((r) => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    name: r.name,
+    createdAt: new Date(r.created_at).toISOString(),
+    kind: r.kind,
+    ...(r.kind === 'dm' ? { members: membersByChannel.get(r.id) ?? [] } : {}),
+  }));
+}
+
+/** True when the user may read/post in the channel (public, or DM member). */
+export async function canAccessChannel(
+  pool: Db,
+  userId: string,
+  channelId: string,
+): Promise<boolean> {
+  const res = await pool.query<{ kind: string; member: boolean }>(
+    `SELECT c.kind,
+            EXISTS (SELECT 1 FROM channel_members m
+                    WHERE m.channel_id = c.id AND m.user_id = $2) AS member
+     FROM channels c WHERE c.id = $1`,
+    [channelId, userId],
+  );
+  const row = res.rows[0];
+  if (!row) return false;
+  return row.kind !== 'dm' || row.member;
+}
+
+export async function listUsers(pool: Db): Promise<UserRef[]> {
+  const res = await pool.query<{ id: string; handle: string; display_name: string }>(
+    'SELECT id, handle, display_name FROM users ORDER BY handle ASC',
+  );
+  return res.rows.map((r) => ({ id: r.id, handle: r.handle, displayName: r.display_name }));
+}
+
+/**
+ * Find or create the DM channel between two users (self-DM allowed). The
+ * deterministic name + the (workspace_id, name) unique constraint make this
+ * idempotent under races.
+ */
+export async function getOrCreateDm(
+  pool: Db,
+  args: { workspaceId: string; userIdA: string; userIdB: string },
+): Promise<{ channel: Channel; created: boolean }> {
+  const pair = [args.userIdA, args.userIdB].sort();
+  const name = `dm:${pair[0]}:${pair[1]}`;
+  const load = async (): Promise<Channel | null> => {
+    const channels = await listChannelsFor(pool, args.userIdA);
+    return channels.find((c) => c.name === name) ?? null;
+  };
+  const existing = await load();
+  if (existing) return { channel: existing, created: false };
+  try {
+    await withTx(pool, async (client) => {
+      const ch = await client.query<{ id: string }>(
+        "INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, 'dm', $3) RETURNING id",
+        [args.workspaceId, name, args.userIdA],
+      );
+      const channelId = ch.rows[0]!.id;
+      for (const userId of new Set(pair)) {
+        await client.query(
+          'INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)',
+          [channelId, userId],
+        );
+      }
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code !== '23505') throw err; // lost a race: fall through
+  }
+  const channel = await load();
+  if (!channel) throw new DomainError(500, 'dm_create_failed', 'could not create DM');
+  return { channel, created: true };
 }
 
 /** Idempotent first-boot bootstrap: workspace "atrium" with #general. */

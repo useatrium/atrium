@@ -11,6 +11,10 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
+  /** Absent on older payloads — treat as 'public'. */
+  kind?: 'public' | 'dm';
+  /** DM channels only: both members. */
+  members?: UserRef[];
 }
 
 export class ApiError extends Error {
@@ -113,4 +117,10 @@ export const api = {
     req<{ results: { event: WireEvent; channelName: string }[] }>(
       `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     ),
+  users: () => req<{ users: UserRef[] }>('/api/users'),
+  createDm: (userId: string) =>
+    req<{ channel: Channel }>('/api/dms', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
 };

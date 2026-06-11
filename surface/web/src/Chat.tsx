@@ -21,6 +21,7 @@ import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
+import { channelLabel, dmPartner } from './util';
 
 const PAGE_SIZE = 50;
 const NO_WATCHERS: UserRef[] = [];
@@ -187,10 +188,12 @@ export function Chat({
   function maybeNotify(event: WireEvent) {
     if (event.type === 'message.posted' && event.actorId && event.actorId !== me.id) {
       const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
-      if (!mentionsHandle(text, me.handle)) return;
       const ch = stateRef.current.channels.find((c) => c.id === event.channelId);
+      const isDm = ch?.kind === 'dm';
+      if (!isDm && !mentionsHandle(text, me.handle)) return;
+      const author = event.author?.displayName ?? 'Someone';
       showNotification(
-        `${event.author?.displayName ?? 'Someone'} mentioned you in #${ch?.name ?? 'a channel'}`,
+        isDm ? `${author} (direct message)` : `${author} mentioned you in #${ch?.name ?? 'a channel'}`,
         text.slice(0, 140),
         `evt-${event.id}`,
         () => {
@@ -402,6 +405,16 @@ export function Chat({
     dispatch({ type: 'select-channel', channelId: channel.id });
   };
 
+  const startDm = (userId: string) => {
+    api
+      .createDm(userId)
+      .then(({ channel }) => {
+        dispatch({ type: 'channel-added', channel });
+        dispatch({ type: 'select-channel', channelId: channel.id });
+      })
+      .catch(() => {});
+  };
+
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
@@ -445,14 +458,28 @@ export function Chat({
         wsStatus={state.wsStatus}
         onSelect={(channelId) => dispatch({ type: 'select-channel', channelId })}
         onCreateChannel={createChannel}
+        onStartDm={startDm}
         onLogout={onLogout}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
-          <h1 className="text-sm font-bold text-zinc-100">
-            <span className="mr-0.5 text-zinc-500">#</span>
-            {active?.name ?? '…'}
+          <h1 className="flex items-center gap-1.5 text-sm font-bold text-zinc-100">
+            {active?.kind === 'dm' ? (
+              <>
+                <Avatar
+                  name={channelLabel(active, me.id)}
+                  seed={dmPartner(active, me.id)?.id ?? active.id}
+                  size={18}
+                />
+                {channelLabel(active, me.id)}
+              </>
+            ) : (
+              <>
+                <span className="mr-0.5 text-zinc-500">#</span>
+                {active?.name ?? '…'}
+              </>
+            )}
           </h1>
           {presentUsers.length > 0 && (
             <div
@@ -506,7 +533,11 @@ export function Chat({
           <>
             <TypingLine typing={typing} />
             <Composer
-              placeholder={`Message #${active.name}`}
+              placeholder={
+                active.kind === 'dm'
+                  ? `Message ${channelLabel(active, me.id)}`
+                  : `Message #${active.name}`
+              }
               onSend={(text, attachments) => send(active.id, text, undefined, attachments)}
               onTyping={() => notifyTyping(active.id)}
               onArrowUpOnEmpty={editLastOwn}
@@ -584,6 +615,7 @@ export function Chat({
         <QuickSwitcher
           channels={state.channels}
           activeChannelId={state.activeChannelId}
+          meId={me.id}
           onSelect={(channelId) => {
             dispatch({ type: 'select-channel', channelId });
             setSwitcherOpen(false);

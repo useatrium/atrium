@@ -105,6 +105,15 @@ export class WsHub {
     for (const client of this.clients) this.sendRaw(client, msg);
   }
 
+  /** Send an event only to specific users' sockets (e.g. DM creation). */
+  publishToUsers(userIds: string[], event: WireEvent): void {
+    const ids = new Set(userIds);
+    const msg = JSON.stringify({ type: 'event', event });
+    for (const client of this.clients) {
+      if (ids.has(client.user.id)) this.sendRaw(client, msg);
+    }
+  }
+
   presenceFor(channelId: string): UserRef[] {
     const byId = new Map<string, UserRef>();
     for (const client of this.clients) {

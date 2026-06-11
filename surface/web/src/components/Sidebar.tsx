@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import type { Channel } from '../api';
+import { api, type Channel } from '../api';
 import type { UnreadLevel } from '../appState';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UserRef } from '../state';
+import { channelLabel, dmPartner } from '../util';
+import { Avatar } from './Avatar';
 
 const BELL_TITLES: Record<NotifyState, string> = {
   on: 'Notifications on (mentions + your sessions) — click to turn off',
@@ -20,6 +22,7 @@ export function Sidebar({
   wsStatus,
   onSelect,
   onCreateChannel,
+  onStartDm,
   onLogout,
 }: {
   workspaceName: string;
@@ -30,12 +33,54 @@ export function Sidebar({
   wsStatus: 'connecting' | 'open' | 'closed';
   onSelect: (channelId: string) => void;
   onCreateChannel: (name: string) => Promise<void>;
+  onStartDm: (userId: string) => void;
   onLogout: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notify, setNotify] = useState<NotifyState>(() => notificationState());
+  const [dmPicking, setDmPicking] = useState(false);
+  const [dmQuery, setDmQuery] = useState('');
+  const [people, setPeople] = useState<UserRef[] | null>(null);
+
+  const publicChannels = channels.filter((c) => c.kind !== 'dm');
+  const dms = channels.filter((c) => c.kind === 'dm');
+
+  const openDmPicker = () => {
+    setDmPicking((v) => !v);
+    setDmQuery('');
+    if (people === null) {
+      api
+        .users()
+        .then(({ users }) => setPeople(users))
+        .catch(() => setPeople([]));
+    }
+  };
+  const dmCandidates = (people ?? []).filter(
+    (u) =>
+      u.handle.toLowerCase().includes(dmQuery.trim().toLowerCase()) ||
+      u.displayName.toLowerCase().includes(dmQuery.trim().toLowerCase()),
+  );
+
+  const unreadBadge = (channelId: string, active: boolean) => {
+    const level = active ? false : unread[channelId] ?? false;
+    if (level === 'mention') {
+      return (
+        <span className="ml-auto shrink-0 rounded bg-red-500/90 px-1 text-[10px] font-bold leading-4 text-white">
+          @<span className="sr-only"> mention</span>
+        </span>
+      );
+    }
+    if (level) {
+      return (
+        <span className="ml-auto size-2 shrink-0 rounded-full bg-indigo-400">
+          <span className="sr-only">unread</span>
+        </span>
+      );
+    }
+    return null;
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -109,7 +154,7 @@ export function Sidebar({
         )}
 
         <ul>
-          {channels.map((c) => {
+          {publicChannels.map((c) => {
             const active = c.id === activeChannelId;
             const level = active ? false : unread[c.id] ?? false;
             return (
@@ -126,15 +171,85 @@ export function Sidebar({
                 >
                   <span className="text-zinc-500">#</span>
                   <span className="truncate">{c.name}</span>
-                  {level === 'mention' ? (
-                    <span className="ml-auto shrink-0 rounded bg-red-500/90 px-1 text-[10px] font-bold leading-4 text-white">
-                      @<span className="sr-only"> mention</span>
-                    </span>
-                  ) : level ? (
-                    <span className="ml-auto size-2 shrink-0 rounded-full bg-indigo-400">
-                      <span className="sr-only">unread</span>
-                    </span>
-                  ) : null}
+                  {unreadBadge(c.id, active)}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className="mt-4 flex items-center justify-between px-4 pb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            Direct messages
+          </span>
+          <button
+            onClick={openDmPicker}
+            title="Start a DM"
+            aria-label="Start a DM"
+            className="rounded px-1.5 text-sm leading-5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+          >
+            +
+          </button>
+        </div>
+
+        {dmPicking && (
+          <div className="px-3 pb-2">
+            <input
+              autoFocus
+              value={dmQuery}
+              onChange={(e) => setDmQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape') return;
+                e.stopPropagation();
+                setDmPicking(false);
+              }}
+              placeholder="who?"
+              aria-label="Find a person to message"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+            />
+            <ul className="mt-1 max-h-40 overflow-y-auto">
+              {people === null && <li className="px-2 py-1 text-[11px] text-zinc-500">loading…</li>}
+              {dmCandidates.map((u) => (
+                <li key={u.id}>
+                  <button
+                    onClick={() => {
+                      setDmPicking(false);
+                      onStartDm(u.id);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                  >
+                    <Avatar name={u.displayName} seed={u.id} size={16} />
+                    <span className="truncate">{u.displayName}</span>
+                    <span className="truncate text-zinc-600">@{u.handle}</span>
+                    {u.id === me.id && <span className="text-zinc-600">(you)</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <ul>
+          {dms.map((c) => {
+            const active = c.id === activeChannelId;
+            const level = active ? false : unread[c.id] ?? false;
+            const label = channelLabel(c, me.id);
+            const partner = dmPartner(c, me.id);
+            return (
+              <li key={c.id}>
+                <button
+                  onClick={() => onSelect(c.id)}
+                  className={`flex w-full items-center gap-2 px-4 py-1 text-left text-sm ${
+                    active
+                      ? 'bg-indigo-600/20 font-medium text-zinc-100'
+                      : level
+                        ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
+                        : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                  }`}
+                >
+                  <Avatar name={label} seed={partner?.id ?? c.id} size={16} />
+                  <span className="truncate">{label}</span>
+                  {unreadBadge(c.id, active)}
                 </button>
               </li>
             );
