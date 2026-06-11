@@ -5,11 +5,14 @@ import {
   type CachedTimeline,
   type CacheSnapshot,
   type CacheStorage,
+  type OutboxMessage,
 } from '../src/lib/cache';
 import type { Channel, WireEvent } from '@atrium/surface-client';
 
 class MemoryStorage implements CacheStorage {
   snapshot: CacheSnapshot = { channels: null, timelines: {} };
+  outbox: OutboxMessage[] = [];
+  drafts = new Map<string, string>();
   timelineWrites = 0;
 
   async loadSnapshot(): Promise<CacheSnapshot> {
@@ -25,8 +28,32 @@ class MemoryStorage implements CacheStorage {
     this.snapshot.timelines[channelId] = structuredClone(timeline);
   }
 
+  async enqueueOutbox(msg: OutboxMessage): Promise<void> {
+    this.outbox = this.outbox.filter((m) => m.clientMsgId !== msg.clientMsgId);
+    this.outbox.push(structuredClone(msg));
+  }
+
+  async listOutbox(): Promise<OutboxMessage[]> {
+    return structuredClone(this.outbox);
+  }
+
+  async removeOutbox(clientMsgId: string): Promise<void> {
+    this.outbox = this.outbox.filter((m) => m.clientMsgId !== clientMsgId);
+  }
+
+  async getDraft(key: string): Promise<string | null> {
+    return this.drafts.get(key) ?? null;
+  }
+
+  async setDraft(key: string, text: string): Promise<void> {
+    if (text.length === 0) this.drafts.delete(key);
+    else this.drafts.set(key, text);
+  }
+
   async clearCache(): Promise<void> {
     this.snapshot = { channels: null, timelines: {} };
+    this.outbox = [];
+    this.drafts.clear();
   }
 }
 
