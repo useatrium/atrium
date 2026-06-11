@@ -46,6 +46,34 @@ const IDLE_TIMEOUT_MS = 60_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const MAX_BACKOFF_MS = 10_000;
 
+export interface WsSequenceTracker {
+  expectedSeq: number;
+  disabled: boolean;
+}
+
+export function createWsSequenceTracker(): WsSequenceTracker {
+  return { expectedSeq: 1, disabled: false };
+}
+
+export function resetWsSequenceTracker(tracker: WsSequenceTracker): void {
+  tracker.expectedSeq = 1;
+  tracker.disabled = false;
+}
+
+export function handleWsFrameSequence(
+  tracker: WsSequenceTracker,
+  frame: { seq?: unknown },
+  onGap: () => void,
+): void {
+  if (tracker.disabled) return;
+  if (typeof frame.seq !== 'number' || !Number.isInteger(frame.seq) || frame.seq < 1) {
+    tracker.disabled = true;
+    return;
+  }
+  if (frame.seq > tracker.expectedSeq) onGap();
+  if (frame.seq >= tracker.expectedSeq) tracker.expectedSeq = frame.seq + 1;
+}
+
 function defaultUrl(): string {
   const loc = (globalThis as { location?: { protocol: string; host: string } }).location;
   if (!loc?.host) throw new Error('useWs: pass a websocket url outside the browser');
@@ -101,6 +129,7 @@ export function useWs(
     let pingTimer: ReturnType<typeof setInterval> | null = null;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    const seqTracker = createWsSequenceTracker();
 
     const clearTimers = () => {
       if (pingTimer) clearInterval(pingTimer);
@@ -124,6 +153,7 @@ export function useWs(
 
       ws.onopen = () => {
         attempt = 0;
+        resetWsSequenceTracker(seqTracker);
         cbRef.current.onStatus('open');
         ws!.send(JSON.stringify({ type: 'subscribe', channelIds: channelsRef.current }));
         ws!.send(JSON.stringify({ type: 'focus', channelId: focusRef.current }));
@@ -145,12 +175,14 @@ export function useWs(
           users?: UserRef[];
           user?: UserRef;
           prefs?: unknown;
+          seq?: unknown;
         };
         try {
           msg = JSON.parse(e.data as string);
         } catch {
           return;
         }
+        handleWsFrameSequence(seqTracker, msg, () => cbRef.current.onOpen());
         if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
         else if (msg.type === 'presence' && msg.channelId)
           cbRef.current.onPresence(msg.channelId, msg.users ?? []);

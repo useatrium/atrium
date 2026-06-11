@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { api, type Workspace } from './api';
-import { appReducer, initialAppState, mentionsHandle, randomId } from '@atrium/surface-client';
+import {
+  appReducer,
+  initialAppState,
+  mentionsHandle,
+  nextCatchUpStep,
+  randomId,
+} from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
   emptyTimeline,
@@ -125,25 +131,48 @@ export function Chat({
     return keys;
   }, [state.channels, state.openSessionId]);
 
+  const catchUpChannel = useCallback(async (channelId: string, initialLastEventId: number) => {
+    if (initialLastEventId <= 0) {
+      const { events, hasMore } = await api.messages(channelId, { limit: PAGE_SIZE });
+      dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      return;
+    }
+
+    let afterId = initialLastEventId;
+    let pagesFetched = 0;
+    for (;;) {
+      const { events, hasMore } = await api.messages(channelId, {
+        afterId,
+        limit: PAGE_SIZE,
+      });
+      pagesFetched += 1;
+      for (const ev of events) dispatch({ type: 'server-event', event: ev });
+      afterId = events.reduce((max, ev) => Math.max(max, ev.id), afterId);
+
+      const step = nextCatchUpStep({ hasMore, pagesFetched });
+      if (step === 'done') return;
+      if (step === 'refetch-latest') {
+        const latest = await api.messages(channelId, { limit: PAGE_SIZE });
+        dispatch({
+          type: 'history-reset',
+          channelId,
+          events: latest.events,
+          hasMore: latest.hasMore,
+        });
+        return;
+      }
+    }
+  }, []);
+
   const catchUp = useCallback(() => {
     // On (re)connect: refetch anything we might have missed per loaded channel.
     const s = stateRef.current;
     for (const [channelId, t] of Object.entries(s.timelines)) {
       if (!t.loaded) continue;
-      api
-        .messages(channelId, t.lastEventId > 0 ? { afterId: t.lastEventId } : { limit: PAGE_SIZE })
-        .then(({ events, hasMore }) => {
-          if (t.lastEventId > 0) {
-            for (const ev of events) dispatch({ type: 'server-event', event: ev });
-            if (hasMore) catchUp(); // keep paging until caught up
-          } else {
-            dispatch({ type: 'history-loaded', channelId, events, hasMore });
-          }
-        })
-        .catch(() => {});
+      void catchUpChannel(channelId, t.lastEventId).catch(() => {});
     }
     api.channels().then(({ channels }) => dispatch({ type: 'channels-loaded', channels }));
-  }, []);
+  }, [catchUpChannel]);
 
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, { user: UserRef; until: number }>>({});

@@ -22,6 +22,7 @@ import {
   isPendingSessionId,
   isTerminalSessionStatus,
   looksLikeAgentCommand,
+  nextCatchUpStep,
   parseAgentTask,
   PENDING_SESSION_PREFIX,
   sessionFromWire,
@@ -232,28 +233,58 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, [hydrated, loadChannels]);
 
   // ---- reconnect catch-up: refetch what we might have missed ----
+  const catchUpChannel = useCallback(async (channelId: string, initialLastEventId: number) => {
+    if (initialLastEventId <= 0) {
+      const { events, hasMore } = await api.messages(channelId, { limit: PAGE_SIZE });
+      dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+        console.warn('failed to cache catch-up history', err);
+      });
+      return;
+    }
+
+    let afterId = initialLastEventId;
+    let pagesFetched = 0;
+    for (;;) {
+      const { events, hasMore } = await api.messages(channelId, {
+        afterId,
+        limit: PAGE_SIZE,
+      });
+      pagesFetched += 1;
+      for (const ev of events) dispatch({ type: 'server-event', event: ev });
+      if (events.length > 0) {
+        void eventCache.enqueueEvents(channelId, events);
+      }
+      afterId = events.reduce((max, ev) => Math.max(max, ev.id), afterId);
+
+      const step = nextCatchUpStep({ hasMore, pagesFetched });
+      if (step === 'done') return;
+      if (step === 'refetch-latest') {
+        const latest = await api.messages(channelId, { limit: PAGE_SIZE });
+        dispatch({
+          type: 'history-reset',
+          channelId,
+          events: latest.events,
+          hasMore: latest.hasMore,
+        });
+        void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
+          (err: unknown) => {
+            console.warn('failed to cache catch-up fallback history', err);
+          },
+        );
+        return;
+      }
+    }
+  }, [api]);
+
   const catchUp = useCallback(() => {
     const s = stateRef.current;
     for (const [channelId, t] of Object.entries(s.timelines)) {
       if (!t.loaded) continue;
-      api
-        .messages(channelId, t.lastEventId > 0 ? { afterId: t.lastEventId } : { limit: PAGE_SIZE })
-        .then(({ events, hasMore }) => {
-          if (t.lastEventId > 0) {
-            for (const ev of events) dispatch({ type: 'server-event', event: ev });
-            if (events.length > 0) eventCache.enqueueEvents(channelId, events);
-            if (hasMore) catchUp();
-          } else {
-            dispatch({ type: 'history-loaded', channelId, events, hasMore });
-            void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
-              console.warn('failed to cache catch-up history', err);
-            });
-          }
-        })
-        .catch(onApiError);
+      void catchUpChannel(channelId, t.lastEventId).catch(onApiError);
     }
     loadChannels();
-  }, [api, loadChannels, onApiError]);
+  }, [catchUpChannel, loadChannels, onApiError]);
 
   const flushQueuedOutbox = useCallback(() => {
     if (flushingOutboxRef.current) return;

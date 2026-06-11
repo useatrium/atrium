@@ -17,6 +17,7 @@ export interface HubClient {
   /** Channel the user is actively viewing — drives channel presence. */
   focusedChannelId: string | null;
   isAlive: boolean;
+  nextSeq: number;
 }
 
 /** `session:<id>` keys are subscribed only while the pane is open. */
@@ -42,6 +43,7 @@ export class WsHub {
       channels: new Set(),
       focusedChannelId: null,
       isAlive: true,
+      nextSeq: 1,
     };
     this.clients.add(client);
     return client;
@@ -70,9 +72,10 @@ export class WsHub {
 
   /** Ephemeral typing relay to everyone else viewing the channel. */
   relayTyping(from: HubClient, channelId: string): void {
-    const msg = JSON.stringify({ type: 'typing', channelId, user: from.user });
     for (const client of this.clients) {
-      if (client !== from && client.focusedChannelId === channelId) this.sendRaw(client, msg);
+      if (client !== from && client.focusedChannelId === channelId) {
+        this.sendTo(client, { type: 'typing', channelId, user: from.user });
+      }
     }
   }
 
@@ -93,32 +96,28 @@ export class WsHub {
 
   publishEvent(event: WireEvent): void {
     if (!event.channelId) return;
-    const msg = JSON.stringify({ type: 'event', event });
     for (const client of this.clients) {
-      if (client.channels.has(event.channelId)) this.sendRaw(client, msg);
+      if (client.channels.has(event.channelId)) this.sendTo(client, { type: 'event', event });
     }
   }
 
   /** Broadcast to every connected client regardless of subscriptions. */
   publishGlobal(event: WireEvent): void {
-    const msg = JSON.stringify({ type: 'event', event });
-    for (const client of this.clients) this.sendRaw(client, msg);
+    for (const client of this.clients) this.sendTo(client, { type: 'event', event });
   }
 
   /** Send an event only to specific users' sockets (e.g. DM creation). */
   publishToUsers(userIds: string[], event: WireEvent): void {
     const ids = new Set(userIds);
-    const msg = JSON.stringify({ type: 'event', event });
     for (const client of this.clients) {
-      if (ids.has(client.user.id)) this.sendRaw(client, msg);
+      if (ids.has(client.user.id)) this.sendTo(client, { type: 'event', event });
     }
   }
 
   sendToUsers(userIds: string[], payload: object): void {
     const ids = new Set(userIds);
-    const msg = JSON.stringify(payload);
     for (const client of this.clients) {
-      if (ids.has(client.user.id)) this.sendRaw(client, msg);
+      if (ids.has(client.user.id)) this.sendTo(client, payload);
     }
   }
 
@@ -142,20 +141,16 @@ export class WsHub {
   }
 
   broadcastPresence(channelId: string): void {
-    const msg = JSON.stringify(this.presenceMessage(channelId));
     for (const client of this.clients) {
-      if (client.channels.has(channelId)) this.sendRaw(client, msg);
+      if (client.channels.has(channelId)) this.sendTo(client, this.presenceMessage(channelId));
     }
   }
 
   sendTo(client: HubClient, payload: object): void {
-    this.sendRaw(client, JSON.stringify(payload));
-  }
-
-  private sendRaw(client: HubClient, msg: string): void {
     if (client.socket.readyState === OPEN) {
+      const frame = { ...payload, seq: client.nextSeq++ };
       try {
-        client.socket.send(msg);
+        client.socket.send(JSON.stringify(frame));
       } catch {
         // socket died mid-send; heartbeat will reap it
       }
