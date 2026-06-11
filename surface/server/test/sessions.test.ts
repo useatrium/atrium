@@ -432,6 +432,15 @@ describe('Phase 2 sessions', () => {
   it('folds question_requested into pending state and a thread event', async () => {
     fake.setFrames([questionRequestedFrame()]);
     const id = await insertSessionRow({ title: 'needs input', status: 'running' });
+    // Real sessions are thread-rooted; the question event must land as a
+    // thread child that thread reads return.
+    const root = await pool.query<{ id: number }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'session.spawned', $3, '{}'::jsonb) RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const rootId = root.rows[0]!.id;
+    await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, id]);
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
@@ -467,6 +476,18 @@ describe('Phase 2 sessions', () => {
         ],
       });
     });
+
+    // Thread reads must return the question event (not just live WS push) —
+    // otherwise reloads/thread fetches silently drop it.
+    const cookie = await loginCookie(app);
+    const thread = await app.inject({
+      method: 'GET',
+      url: `/api/threads/${rootId}/messages`,
+      headers: { cookie },
+    });
+    expect(thread.statusCode).toBe(200);
+    const types = (thread.json().events as { type: string }[]).map((e) => e.type);
+    expect(types).toContain('session.question_requested');
     await app.close();
   });
 

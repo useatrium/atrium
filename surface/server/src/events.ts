@@ -506,7 +506,7 @@ const MESSAGE_SELECT = `
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
