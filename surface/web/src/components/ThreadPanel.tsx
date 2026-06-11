@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { AttachmentMeta, ChatMessage } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
@@ -49,17 +49,17 @@ export function ThreadPanel({
     if (el) el.scrollTop = el.scrollHeight;
   }, [count]);
 
-  const items = buildTimelineItems(replies);
+  const items = useMemo(() => buildTimelineItems(replies), [replies]);
 
   return (
     <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-        <div className="text-sm font-semibold text-fg">
+        <h2 className="text-sm font-semibold text-fg">
           Thread
           <span className="ml-2 text-xs font-normal text-fg-muted">
             {root.replyCount} {root.replyCount === 1 ? 'reply' : 'replies'}
           </span>
-        </div>
+        </h2>
         <button
           onClick={onClose}
           title="Close thread"

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { formatTime } from '@atrium/surface-client';
 import {
   formatCost,
@@ -92,22 +92,15 @@ export function SessionCard({
   const pending = isPendingSessionId(session.id);
   const openable = !pending && !spawnFailed;
   const open = () => openable && onOpenPane(session.id);
-  const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      open();
-    }
+  const onCardClick = (e: MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button,a')) return;
+    open();
   };
 
   return (
     <div
       data-testid="session-card"
-      onClick={open}
-      onKeyDown={onCardKeyDown}
-      role={openable ? 'button' : undefined}
-      tabIndex={openable ? 0 : undefined}
-      aria-label={openable ? `Open session: ${session.title}` : undefined}
+      onClick={onCardClick}
       className={`group/card mt-1 max-w-xl rounded-lg border border-edge bg-surface-raised/70 px-3 py-2 ${
         openable ? 'cursor-pointer hover:border-edge-strong' : ''
       }`}
@@ -120,9 +113,19 @@ export function SessionCard({
         ) : (
           <StatusChip status={session.status} stalled={stalled} />
         )}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
-          {session.title}
-        </span>
+        {openable ? (
+          <button
+            type="button"
+            onClick={open}
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-fg hover:underline focus-visible:underline"
+          >
+            {session.title}
+          </button>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
+            {session.title}
+          </span>
+        )}
       </div>
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-fg-muted">
@@ -156,17 +159,6 @@ export function SessionCard({
               {spectators} watching
             </span>
           </>
-        )}
-        {openable && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              open();
-            }}
-            className="ml-auto font-medium text-accent-text opacity-0 transition-opacity hover:underline focus:opacity-100 group-hover/card:opacity-100"
-          >
-            open pane →
-          </button>
         )}
       </div>
 

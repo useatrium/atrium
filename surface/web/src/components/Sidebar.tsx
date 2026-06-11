@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useCallback,
   useRef,
   useState,
   type FormEvent,
@@ -28,6 +29,7 @@ import { StatusChip } from '../sessions/SessionCard';
 import { useTheme } from '../theme';
 import { Avatar } from './Avatar';
 import { BellIcon, BellOffIcon, GearIcon, LockIcon } from './icons';
+import { useDialog } from '../useDialog';
 
 const BELL_TITLES: Record<NotifyState, string> = {
   on: 'Notifications on (mentions + your sessions) — click to turn off',
@@ -134,34 +136,18 @@ export function Sidebar({
     }
   };
 
-  const closeSettings = () => {
+  const closeSettings = useCallback(() => {
     setSettingsOpen(false);
-    settingsButtonRef.current?.focus();
-  };
+  }, []);
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-    firstSettingsControlRef.current?.focus();
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (
-        settingsPopoverRef.current?.contains(target) ||
-        settingsButtonRef.current?.contains(target)
-      ) {
-        return;
-      }
-      closeSettings();
-    };
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') closeSettings();
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [settingsOpen]);
+  useDialog({
+    open: settingsOpen,
+    containerRef: settingsPopoverRef,
+    initialFocusRef: firstSettingsControlRef,
+    invokerRef: settingsButtonRef,
+    closeOnOutsidePointer: true,
+    onClose: closeSettings,
+  });
 
   return (
     <nav className="flex w-56 shrink-0 flex-col border-r border-edge bg-surface-raised/50">
@@ -186,9 +172,9 @@ export function Sidebar({
 
       <div className="flex-1 overflow-y-auto py-3">
         <div className="flex items-center justify-between px-4 pb-1">
-          <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
             Channels
-          </span>
+          </h2>
           <button
             onClick={() => {
               setCreating((v) => !v);
@@ -207,6 +193,7 @@ export function Sidebar({
             <input
               autoFocus
               value={name}
+              aria-label="Channel name"
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key !== 'Escape') return;
@@ -225,7 +212,7 @@ export function Sidebar({
               />
               Private
             </label>
-            {error && <div className="pt-1 text-2xs text-danger">{error}</div>}
+            {error && <div role="alert" className="pt-1 text-2xs text-danger">{error}</div>}
           </form>
         )}
 
@@ -258,7 +245,7 @@ export function Sidebar({
                   title={c.muted ? 'Unmute channel' : 'Mute channel'}
                   aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
                   className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
-                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100'
+                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
                   }`}
                 >
                   {c.muted ? <BellOffIcon /> : <BellIcon />}
@@ -269,9 +256,9 @@ export function Sidebar({
         </ul>
 
         <div className="mt-4 flex items-center justify-between px-4 pb-1">
-          <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
             Direct messages
-          </span>
+          </h2>
           <button
             onClick={openDmPicker}
             title="Start a DM"
@@ -364,7 +351,7 @@ export function Sidebar({
                   title={c.muted ? 'Unmute DM' : 'Mute DM'}
                   aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
                   className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
-                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100'
+                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
                   }`}
                 >
                   {c.muted ? <BellOffIcon /> : <BellIcon />}
@@ -643,9 +630,9 @@ function SessionSidebarSection({
   return (
     <>
       <div className="mt-4 flex items-center justify-between px-4 pb-1">
-        <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+        <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
           Sessions
-        </span>
+        </h2>
         <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold tabular-nums text-fg-tertiary">
           {running.length}
         </span>
@@ -698,13 +685,8 @@ function SessionBrowserModal({
   onOpenSession: (sessionId: string) => void;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialog({ open: true, containerRef: dialogRef, onClose });
 
   return (
     <div
@@ -715,12 +697,13 @@ function SessionBrowserModal({
       aria-label="Browse sessions"
     >
       <div
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
-        <div className="border-b border-edge px-3 py-2.5 text-sm font-semibold text-fg">
+        <h2 className="border-b border-edge px-3 py-2.5 text-sm font-semibold text-fg">
           Sessions
-        </div>
+        </h2>
         <div className="max-h-[60vh] overflow-y-auto py-1">
           {sessions.map((session) => (
             <button
