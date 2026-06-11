@@ -70,6 +70,25 @@ async function dropMutedRecipients(
   for (const row of muted.rows) recipients.delete(row.user_id);
 }
 
+/** Private channels: a mention/thread recipient who isn't a member must not
+ *  receive an out-of-band push containing the message text. */
+async function dropNonMembers(
+  pool: Db,
+  channelId: string,
+  recipients: Map<string, PushReason>,
+): Promise<void> {
+  if (recipients.size === 0) return;
+  const members = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM channel_members
+     WHERE channel_id = $1 AND user_id = ANY($2::uuid[])`,
+    [channelId, [...recipients.keys()]],
+  );
+  const allowed = new Set(members.rows.map((r) => r.user_id));
+  for (const userId of [...recipients.keys()]) {
+    if (!allowed.has(userId)) recipients.delete(userId);
+  }
+}
+
 /** User ids to push for a message: DM partner(s), @mentioned users, or thread participants. */
 export async function pushRecipientsFor(
   pool: Db,
@@ -128,6 +147,11 @@ export async function pushRecipientsFor(
     }
   }
 
+  // Private channels: never push to a non-member (mention/thread of a handle
+  // outside the channel would otherwise leak the message text out of band).
+  if (row.kind === 'private') {
+    await dropNonMembers(pool, ev.channelId, recipients);
+  }
   await dropMutedRecipients(pool, ev.channelId, recipients);
   return {
     userIds: [...recipients.keys()],
@@ -195,6 +219,16 @@ export async function checkExpoPushReceipts(
   await pruneTokens(pool, dead);
 }
 
+// Outstanding receipt-check timers, tracked so shutdown can drain them and so
+// they don't accumulate unboundedly under sustained push load.
+const receiptTimers = new Set<ReturnType<typeof setTimeout>>();
+
+/** Cancel all pending receipt checks (call on server shutdown). */
+export function clearReceiptTimers(): void {
+  for (const t of receiptTimers) clearTimeout(t);
+  receiptTimers.clear();
+}
+
 function scheduleReceiptCheck(
   pool: Db,
   tickets: ExpoReceiptTicket[],
@@ -203,9 +237,11 @@ function scheduleReceiptCheck(
 ): void {
   if (tickets.length === 0) return;
   const timer = setTimeout(() => {
+    receiptTimers.delete(timer);
     void checkExpoPushReceipts(pool, tickets, fetchImpl).catch(() => {});
   }, delayMs);
   timer.unref?.();
+  receiptTimers.add(timer);
 }
 
 /**

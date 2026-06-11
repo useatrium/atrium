@@ -385,4 +385,5 @@ describe('session spawn reconciliation', () => {
     expect(t.main[0]!.sessionId).toBe('sess-real');
     expect(t.main[0]!.status).toBe('confirmed');
   });
+
 });

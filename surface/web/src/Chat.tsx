@@ -288,7 +288,12 @@ export function Chat({
     const channelId = active.id;
     api
       .messages(channelId, { limit: PAGE_SIZE })
-      .then(({ events, hasMore }) => dispatch({ type: 'history-loaded', channelId, events, hasMore }));
+      .then(({ events, hasMore }) => {
+        // Skip if we lost access (kicked from a private channel) while the
+        // fetch was in flight — avoids a ghost timeline.
+        if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
+        dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      });
   }, [active?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadEarlier = (): Promise<void> => {
@@ -327,7 +332,9 @@ export function Chat({
     sessionsApi
       .get(sessionId)
       .then(({ session }) => dispatch({ type: 'session-upsert', session: sessionFromWire(session) }))
-      .catch(() => {});
+      // Without this the pane sits on "Loading session…" forever on failure;
+      // session-load-failed flips it to the recoverable not-found state.
+      .catch(() => dispatch({ type: 'session-load-failed', sessionId }));
   };
 
   const paneSession = state.openSessionId ? state.sessions[state.openSessionId] ?? null : null;

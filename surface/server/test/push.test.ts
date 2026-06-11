@@ -256,3 +256,30 @@ describe('sendMessagePush', () => {
     }
   });
 });
+
+describe('private-channel push membership', () => {
+  it('does not push a private-channel @mention to a non-member', async () => {
+    const priv = await pool.query<{ id: string }>(
+      `INSERT INTO channels (workspace_id, name, kind, created_by)
+       VALUES ($1, 'sekrit', 'private', $2) RETURNING id`,
+      [fx.workspaceId, fx.userId],
+    );
+    const channelId = priv.rows[0]!.id;
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
+      channelId,
+      fx.userId,
+    ]);
+    // ben is NOT a member but is @mentioned and has a push token.
+    await registerToken(benId, 'ExponentPushToken[ben-nonmember]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId,
+      actorId: fx.userId,
+      text: 'secret plans @ben',
+    });
+    await sendMessagePush(pool, hub, ev, fetchImpl);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});

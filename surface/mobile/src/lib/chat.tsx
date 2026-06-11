@@ -19,6 +19,8 @@ import {
   appReducer,
   createApi,
   initialAppState,
+  isPendingSessionId,
+  isTerminalSessionStatus,
   looksLikeAgentCommand,
   parseAgentTask,
   PENDING_SESSION_PREFIX,
@@ -416,6 +418,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       api
         .messages(channelId, { limit: PAGE_SIZE })
         .then(({ events, hasMore }) => {
+          // The fetch can resolve after we were kicked from a private channel;
+          // dropping it avoids a ghost timeline that catch-up keeps 404-ing on.
+          if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
           dispatch({ type: 'history-loaded', channelId, events, hasMore });
           void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
             console.warn('failed to cache history', err);
@@ -616,22 +621,38 @@ export function ChatProvider({ session, children }: { session: Session; children
     [send, spawnSession],
   );
 
+  // A user-triggered mutation that fails must say so — on mobile there is no
+  // global toast layer, so each surfaces an Alert (401s route to login).
+  const reportActionError = useCallback(
+    (err: unknown, message: string) => {
+      onApiError(err);
+      if (!(err instanceof ApiError && err.status === 401)) Alert.alert('Error', message);
+    },
+    [onApiError],
+  );
+
   const editMessage = useCallback(
     (m: ChatMessage, text: string): Promise<void> =>
-      api.editMessage(m.id!, text).then(({ event }) => {
-        dispatch({ type: 'server-event', event });
-        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-      }),
-    [api],
+      api
+        .editMessage(m.id!, text)
+        .then(({ event }) => {
+          dispatch({ type: 'server-event', event });
+          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+        })
+        .catch((err) => reportActionError(err, "Couldn't save the edit.")),
+    [api, reportActionError],
   );
 
   const deleteMessage = useCallback(
     (m: ChatMessage): Promise<void> =>
-      api.deleteMessage(m.id!).then(({ event }) => {
-        dispatch({ type: 'server-event', event });
-        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-      }),
-    [api],
+      api
+        .deleteMessage(m.id!)
+        .then(({ event }) => {
+          dispatch({ type: 'server-event', event });
+          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
+        })
+        .catch((err) => reportActionError(err, "Couldn't delete the message.")),
+    [api, reportActionError],
   );
 
   const react = useCallback(
@@ -641,8 +662,9 @@ export function ChatProvider({ session, children }: { session: Session; children
         .then(({ event }) => {
           dispatch({ type: 'server-event', event });
           if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-        }),
-    [api],
+        })
+        .catch((err) => reportActionError(err, "Couldn't update the reaction.")),
+    [api, reportActionError],
   );
 
   const createChannel = useCallback(
@@ -673,17 +695,27 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const addChannelMember = useCallback(
     async (channelId: string, userId: string) => {
-      await api.addChannelMember(channelId, userId);
+      try {
+        await api.addChannelMember(channelId, userId);
+      } catch (err) {
+        reportActionError(err, "Couldn't add the person.");
+        throw err;
+      }
     },
-    [api],
+    [api, reportActionError],
   );
 
   const leaveMembership = useCallback(
     async (channelId: string) => {
-      await api.leaveChannelMembership(channelId);
+      // Confirm the leave landed before dropping the channel locally, so a
+      // failure doesn't make the UI lie about having left.
+      await api.leaveChannelMembership(channelId).catch((err) => {
+        reportActionError(err, "Couldn't leave the channel.");
+        throw err;
+      });
       dispatch({ type: 'channel-removed', channelId });
     },
-    [api],
+    [api, reportActionError],
   );
 
   const loadMentionUsers = useCallback(() => {
@@ -720,6 +752,23 @@ export function ChatProvider({ session, children }: { session: Session; children
   const upsertSession = useCallback((agentSession: AgentSession) => {
     dispatch({ type: 'session-upsert', session: agentSession });
   }, []);
+
+  // Heal stale session cards: a session.spawned folded from cached history only
+  // advances via live WS events, so a session that finished while the app was
+  // closed shows "spawning" forever. Refetch each non-terminal session once to
+  // converge on server truth (mirrors web/src/Chat.tsx).
+  const reconciledSessionsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const [id, s] of Object.entries(state.sessions)) {
+      if (isPendingSessionId(id) || isTerminalSessionStatus(s.status)) continue;
+      if (reconciledSessionsRef.current.has(id)) continue;
+      reconciledSessionsRef.current.add(id);
+      api
+        .getSession(id)
+        .then(({ session }) => dispatch({ type: 'session-upsert', session: sessionFromWire(session) }))
+        .catch(() => {});
+    }
+  }, [state.sessions, api]);
 
   // ---- uploads ----
   const uploadFile = useCallback(
@@ -774,10 +823,10 @@ export function ChatProvider({ session, children }: { session: Session; children
         const { url } = await api.fileSignedUrl(fileId);
         await Linking.openURL(`${serverUrl}${url}`);
       } catch (err) {
-        onApiError(err);
+        reportActionError(err, 'Could not open the file.');
       }
     },
-    [api, serverUrl, onApiError],
+    [api, serverUrl, reportActionError],
   );
 
   // ---- jump to a message from search: page history back until it's loaded ----

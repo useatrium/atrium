@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import type { UserRef } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
@@ -26,6 +26,8 @@ export default function NewDm() {
       const channel = await startDm([...selected]);
       router.dismiss();
       router.push(`/channel/${channel.id}`);
+    } catch {
+      Alert.alert('Error', "Couldn't start the conversation — try again.");
     } finally {
       setBusy(false);
     }
