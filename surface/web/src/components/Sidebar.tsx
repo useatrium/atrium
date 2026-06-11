@@ -21,6 +21,7 @@ export function Sidebar({
   me,
   wsStatus,
   onSelect,
+  onSetMute,
   onCreateChannel,
   onStartDm,
   onLogout,
@@ -32,6 +33,7 @@ export function Sidebar({
   me: UserRef;
   wsStatus: 'connecting' | 'open' | 'closed';
   onSelect: (channelId: string) => void;
+  onSetMute: (channelId: string, muted: boolean) => void;
   onCreateChannel: (name: string) => Promise<void>;
   onStartDm: (userId: string) => void;
   onLogout: () => void;
@@ -64,6 +66,7 @@ export function Sidebar({
   );
 
   const unreadBadge = (channelId: string, active: boolean) => {
+    if (channels.find((c) => c.id === channelId)?.muted) return null;
     const level = active ? false : unread[channelId] ?? false;
     if (level === 'mention') {
       return (
@@ -156,22 +159,34 @@ export function Sidebar({
         <ul>
           {publicChannels.map((c) => {
             const active = c.id === activeChannelId;
-            const level = active ? false : unread[c.id] ?? false;
+            const level = c.muted || active ? false : unread[c.id] ?? false;
             return (
-              <li key={c.id}>
+              <li key={c.id} className="group flex items-center">
                 <button
                   onClick={() => onSelect(c.id)}
-                  className={`flex w-full items-center gap-1.5 px-4 py-1 text-left text-sm ${
+                  className={`flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-4 text-left text-sm ${
                     active
                       ? 'bg-indigo-600/20 font-medium text-zinc-100'
                       : level
                         ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
-                        : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                        : c.muted
+                          ? 'text-zinc-600 hover:bg-zinc-800/70 hover:text-zinc-500'
+                          : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
                   }`}
                 >
                   <span className="text-zinc-500">#</span>
                   <span className="truncate">{c.name}</span>
                   {unreadBadge(c.id, active)}
+                </button>
+                <button
+                  onClick={() => onSetMute(c.id, !c.muted)}
+                  title={c.muted ? 'Unmute channel' : 'Mute channel'}
+                  aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
+                  className={`shrink-0 px-3 py-1 text-xs hover:bg-zinc-800 hover:text-zinc-200 ${
+                    c.muted ? 'text-zinc-500' : 'text-zinc-600 opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  {c.muted ? '🔕' : '🔔'}
                 </button>
               </li>
             );
@@ -232,24 +247,36 @@ export function Sidebar({
         <ul>
           {dms.map((c) => {
             const active = c.id === activeChannelId;
-            const level = active ? false : unread[c.id] ?? false;
+            const level = c.muted || active ? false : unread[c.id] ?? false;
             const label = channelLabel(c, me.id);
             const partner = dmPartner(c, me.id);
             return (
-              <li key={c.id}>
+              <li key={c.id} className="group flex items-center">
                 <button
                   onClick={() => onSelect(c.id)}
-                  className={`flex w-full items-center gap-2 px-4 py-1 text-left text-sm ${
+                  className={`flex min-w-0 flex-1 items-center gap-2 py-1 pl-4 text-left text-sm ${
                     active
                       ? 'bg-indigo-600/20 font-medium text-zinc-100'
                       : level
                         ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
-                        : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                        : c.muted
+                          ? 'text-zinc-600 hover:bg-zinc-800/70 hover:text-zinc-500'
+                          : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
                   }`}
                 >
                   <Avatar name={label} seed={partner?.id ?? c.id} size={16} />
                   <span className="truncate">{label}</span>
                   {unreadBadge(c.id, active)}
+                </button>
+                <button
+                  onClick={() => onSetMute(c.id, !c.muted)}
+                  title={c.muted ? 'Unmute DM' : 'Mute DM'}
+                  aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
+                  className={`shrink-0 px-3 py-1 text-xs hover:bg-zinc-800 hover:text-zinc-200 ${
+                    c.muted ? 'text-zinc-500' : 'text-zinc-600 opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  {c.muted ? '🔕' : '🔔'}
                 </button>
               </li>
             );

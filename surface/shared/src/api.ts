@@ -17,6 +17,7 @@ export interface Channel {
   createdAt: string;
   lastReadEventId?: number;
   latestEventId?: number;
+  muted?: boolean;
   /** Absent on older payloads — treat as 'public'. */
   kind?: 'public' | 'dm';
   /** DM channels only: both members. */
@@ -103,6 +104,11 @@ export function createApi(opts: ApiOptions = {}) {
       req<{ lastReadEventId: number }>(`/api/channels/${channelId}/read`, {
         method: 'POST',
         body: JSON.stringify({ lastReadEventId }),
+      }),
+    setMute: (channelId: string, muted: boolean) =>
+      req<{ muted: boolean }>(`/api/channels/${channelId}/mute`, {
+        method: 'POST',
+        body: JSON.stringify({ muted }),
       }),
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),

@@ -179,6 +179,7 @@ export function Chat({
         );
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
       },
+      onMuted: (channelId, muted) => dispatch({ type: 'mute-changed', channelId, muted }),
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
@@ -199,6 +200,7 @@ export function Chat({
     if (event.type === 'message.posted' && event.actorId && event.actorId !== me.id) {
       const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
       const ch = stateRef.current.channels.find((c) => c.id === event.channelId);
+      if (ch?.muted) return;
       const isDm = ch?.kind === 'dm';
       if (!isDm && !mentionsHandle(text, me.handle)) return;
       const author = event.author?.displayName ?? 'Someone';
@@ -467,6 +469,14 @@ export function Chat({
       .catch(() => {});
   };
 
+  const setMute = (channelId: string, muted: boolean) => {
+    dispatch({ type: 'mute-changed', channelId, muted });
+    api
+      .setMute(channelId, muted)
+      .then((res) => dispatch({ type: 'mute-changed', channelId, muted: res.muted }))
+      .catch(() => dispatch({ type: 'mute-changed', channelId, muted: !muted }));
+  };
+
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
@@ -509,6 +519,7 @@ export function Chat({
         me={me}
         wsStatus={state.wsStatus}
         onSelect={(channelId) => dispatch({ type: 'select-channel', channelId })}
+        onSetMute={setMute}
         onCreateChannel={createChannel}
         onStartDm={startDm}
         onLogout={onLogout}

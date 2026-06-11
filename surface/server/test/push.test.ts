@@ -114,6 +114,16 @@ describe('pushRecipientsFor', () => {
     expect(r2.userIds).toEqual([]);
   });
 
+  it('skips users who muted the channel', async () => {
+    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [
+      benId,
+      fx.channelId,
+    ]);
+    const mention = await postInChannel(fx.channelId, 'ping @ben');
+    const recipients = await pushRecipientsFor(pool, mention);
+    expect(recipients.userIds).toEqual([]);
+  });
+
   it('thread replies target prior authors, never the actor', async () => {
     const root = await postInChannelAs(fx.channelId, fx.userId, 'root');
     await postInChannelAs(fx.channelId, benId, 'prior reply', root.id);
