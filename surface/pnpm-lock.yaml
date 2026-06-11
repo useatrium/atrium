@@ -17,6 +17,9 @@ importers:
 
   mobile:
     dependencies:
+      '@atrium/centaur-client':
+        specifier: file:../../packages/centaur-client
+        version: file:../packages/centaur-client
       '@atrium/surface-client':
         specifier: workspace:*
         version: link:../shared
