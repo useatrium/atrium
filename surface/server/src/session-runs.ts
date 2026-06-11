@@ -317,6 +317,11 @@ export class SessionRuns {
       }
       throw err;
     }
+    // A newly posted message needs a fresh execution: a pending execute id
+    // left by a crashed earlier steer would make Centaur replay that old
+    // execution and strand this message in the queue. Pending-id reuse is
+    // only for boot resume (startSession), which posts no message.
+    await this.pool.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
     const executeId = await this.reserveExecuteId(row.id);
     const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
     await this.pool.query(

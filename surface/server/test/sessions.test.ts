@@ -512,6 +512,39 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('steer mints a fresh execute id when a crashed steer left one pending', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, centaur_execute_attempt
+       )
+       VALUES ($1, $2, 'thread-pending-exec', 'claude-code', 'pending exec', 'completed', $3, $3, 'exe_done', 1, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    await pool.query('UPDATE sessions SET centaur_execute_id = $1 WHERE id = $2', [`exec-${id}-a1`, id]);
+    fake.setThreadGeneration('thread-pending-exec', 1);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'steer past the crashed turn' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const execute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(execute?.body.execute_id).toBe(`exec-${id}-a2`);
+    await app.close();
+  });
+
   it('re-spawns and retries once when postMessage sees stale assignment generation', async () => {
     const app = await buildApp({
       pool,
