@@ -1,13 +1,40 @@
 // Expo push delivery: DMs notify the other member, channel messages notify
-// @mentioned users. Fire-and-forget from the message route — a push failure
-// must never fail a send.
+// @mentioned users and thread participants. Fire-and-forget from the message
+// route — a push failure must never fail a send.
 
 import type { Db } from './db.js';
 import type { WsHub } from './hub.js';
 import type { WireEvent } from './events.js';
+import { config } from './config.js';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const CHUNK = 100; // Expo's max messages per request
+const RECEIPT_DELAY_MS = 15 * 60 * 1000;
+
+type PushReason = 'dm' | 'mention' | 'thread';
+
+interface PushRecipient {
+  userId: string;
+  reason: PushReason;
+}
+
+interface PushRecipientResult {
+  userIds: string[];
+  channelName: string;
+  isDm: boolean;
+  recipients: PushRecipient[];
+}
+
+interface SendMessagePushOptions {
+  fetchImpl?: typeof fetch;
+  receiptDelayMs?: number;
+}
+
+export interface ExpoReceiptTicket {
+  id: string;
+  token: string;
+}
 
 /** Handles are [a-z0-9][a-z0-9_-]*, so a plain regex extraction is safe. */
 export function mentionedHandles(text: string): string[] {
@@ -18,49 +45,150 @@ export function mentionedHandles(text: string): string[] {
   return [...out];
 }
 
-/** User ids to push for a message: DM partner(s), or @mentioned users. */
+function addRecipient(
+  recipients: Map<string, PushReason>,
+  userId: string | null,
+  actorId: string | null,
+  reason: PushReason,
+): void {
+  if (!userId || userId === actorId || recipients.has(userId)) return;
+  recipients.set(userId, reason);
+}
+
+/** User ids to push for a message: DM partner(s), @mentioned users, or thread participants. */
 export async function pushRecipientsFor(
   pool: Db,
-  ev: Pick<WireEvent, 'channelId' | 'actorId' | 'payload'>,
-): Promise<{ userIds: string[]; channelName: string; isDm: boolean }> {
-  if (!ev.channelId) return { userIds: [], channelName: '', isDm: false };
+  ev: Pick<WireEvent, 'channelId' | 'actorId' | 'payload'> & {
+    threadRootEventId?: number | null;
+  },
+): Promise<PushRecipientResult> {
+  if (!ev.channelId) return { userIds: [], channelName: '', isDm: false, recipients: [] };
   const ch = await pool.query<{ name: string; kind: string }>(
     'SELECT name, kind FROM channels WHERE id = $1',
     [ev.channelId],
   );
   const row = ch.rows[0];
-  if (!row) return { userIds: [], channelName: '', isDm: false };
+  if (!row) return { userIds: [], channelName: '', isDm: false, recipients: [] };
 
+  const recipients = new Map<string, PushReason>();
   if (row.kind === 'dm') {
     const members = await pool.query<{ user_id: string }>(
       'SELECT user_id FROM channel_members WHERE channel_id = $1',
       [ev.channelId],
     );
+    for (const member of members.rows) {
+      addRecipient(recipients, member.user_id, ev.actorId, 'dm');
+    }
     return {
-      userIds: members.rows.map((r) => r.user_id).filter((id) => id !== ev.actorId),
+      userIds: [...recipients.keys()],
       channelName: row.name,
       isDm: true,
+      recipients: [...recipients].map(([userId, reason]) => ({ userId, reason })),
     };
   }
 
   const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
   const handles = mentionedHandles(text);
-  if (handles.length === 0) return { userIds: [], channelName: row.name, isDm: false };
-  const users = await pool.query<{ id: string }>(
-    'SELECT id FROM users WHERE handle = ANY($1::text[])',
-    [handles],
-  );
+  if (handles.length > 0) {
+    const users = await pool.query<{ id: string }>(
+      'SELECT id FROM users WHERE handle = ANY($1::text[])',
+      [handles],
+    );
+    for (const user of users.rows) {
+      addRecipient(recipients, user.id, ev.actorId, 'mention');
+    }
+  }
+
+  if (ev.threadRootEventId != null) {
+    const authors = await pool.query<{ actor_id: string | null }>(
+      `SELECT DISTINCT actor_id
+       FROM events
+       WHERE (id = $1 OR thread_root_event_id = $1)
+         AND type IN ('message.posted', 'session.spawned')`,
+      [ev.threadRootEventId],
+    );
+    for (const author of authors.rows) {
+      addRecipient(recipients, author.actor_id, ev.actorId, 'thread');
+    }
+  }
+
   return {
-    userIds: users.rows.map((r) => r.id).filter((id) => id !== ev.actorId),
+    userIds: [...recipients.keys()],
     channelName: row.name,
     isDm: false,
+    recipients: [...recipients].map(([userId, reason]) => ({ userId, reason })),
   };
 }
 
 interface ExpoTicket {
   status: 'ok' | 'error';
+  id?: string;
   message?: string;
   details?: { error?: string };
+}
+
+interface ExpoReceipt {
+  status: 'ok' | 'error';
+  message?: string;
+  details?: { error?: string };
+}
+
+function sendMessagePushOptions(
+  fetchOrOpts: typeof fetch | SendMessagePushOptions,
+): Required<SendMessagePushOptions> {
+  if (typeof fetchOrOpts === 'function') {
+    return { fetchImpl: fetchOrOpts, receiptDelayMs: RECEIPT_DELAY_MS };
+  }
+  return {
+    fetchImpl: fetchOrOpts.fetchImpl ?? fetch,
+    receiptDelayMs: fetchOrOpts.receiptDelayMs ?? RECEIPT_DELAY_MS,
+  };
+}
+
+function titleFor(reason: PushReason, author: string, channelName: string): string {
+  if (reason === 'dm') return author;
+  if (reason === 'mention') return `${author} mentioned you in #${channelName}`;
+  return `${author} replied in #${channelName}`;
+}
+
+async function pruneTokens(pool: Db, tokens: string[]): Promise<void> {
+  if (tokens.length > 0) {
+    await pool.query('DELETE FROM push_tokens WHERE token = ANY($1::text[])', [tokens]);
+  }
+}
+
+export async function checkExpoPushReceipts(
+  pool: Db,
+  tickets: ExpoReceiptTicket[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  if (tickets.length === 0) return;
+  const byId = new Map(tickets.map((ticket) => [ticket.id, ticket.token]));
+  const res = await fetchImpl(EXPO_RECEIPTS_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ids: [...byId.keys()] }),
+  });
+  if (!res.ok) return;
+  const data = ((await res.json()) as { data?: Record<string, ExpoReceipt> }).data ?? {};
+  const dead = Object.entries(data)
+    .filter(([, receipt]) => receipt.details?.error === 'DeviceNotRegistered')
+    .map(([id]) => byId.get(id))
+    .filter((token): token is string => Boolean(token));
+  await pruneTokens(pool, dead);
+}
+
+function scheduleReceiptCheck(
+  pool: Db,
+  tickets: ExpoReceiptTicket[],
+  fetchImpl: typeof fetch,
+  delayMs: number,
+): void {
+  if (tickets.length === 0) return;
+  const timer = setTimeout(() => {
+    void checkExpoPushReceipts(pool, tickets, fetchImpl).catch(() => {});
+  }, delayMs);
+  timer.unref?.();
 }
 
 /**
@@ -72,32 +200,34 @@ export async function sendMessagePush(
   pool: Db,
   hub: WsHub,
   event: WireEvent,
-  fetchImpl: typeof fetch = fetch,
+  fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
 ): Promise<void> {
-  const { userIds, channelName, isDm } = await pushRecipientsFor(pool, event);
-  const targets = userIds.filter(
-    (id) => !(event.channelId && hub.isUserPresent(event.channelId, id)),
+  const { recipients, channelName } = await pushRecipientsFor(pool, event);
+  const targets = recipients.filter(
+    (recipient) => !(event.channelId && hub.isUserPresent(event.channelId, recipient.userId)),
   );
   if (targets.length === 0) return;
 
-  const tokens = await pool.query<{ token: string }>(
-    'SELECT token FROM push_tokens WHERE user_id = ANY($1::uuid[])',
-    [targets],
+  const reasonByUserId = new Map(targets.map((recipient) => [recipient.userId, recipient.reason]));
+  const tokens = await pool.query<{ token: string; user_id: string }>(
+    'SELECT token, user_id FROM push_tokens WHERE user_id = ANY($1::uuid[])',
+    [[...reasonByUserId.keys()]],
   );
   if (tokens.rows.length === 0) return;
 
+  const { fetchImpl, receiptDelayMs } = sendMessagePushOptions(fetchOrOpts);
   const author = event.author?.displayName ?? 'Someone';
   const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
-  const body = (text || '(attachment)').slice(0, 140);
-  const title = isDm ? author : `${author} mentioned you in #${channelName}`;
+  const body = config.pushRedactContent ? 'New message' : (text || '(attachment)').slice(0, 140);
   const messages = tokens.rows.map((r) => ({
     to: r.token,
-    title,
+    title: titleFor(reasonByUserId.get(r.user_id) ?? 'thread', author, channelName),
     body,
     sound: 'default' as const,
     data: { channelId: event.channelId, eventId: event.id },
   }));
 
+  const receiptTickets: ExpoReceiptTicket[] = [];
   for (let i = 0; i < messages.length; i += CHUNK) {
     const chunk = messages.slice(i, i + CHUNK);
     let tickets: ExpoTicket[];
@@ -115,8 +245,14 @@ export async function sendMessagePush(
     const dead = chunk
       .filter((_, j) => tickets[j]?.details?.error === 'DeviceNotRegistered')
       .map((m) => m.to);
-    if (dead.length > 0) {
-      await pool.query('DELETE FROM push_tokens WHERE token = ANY($1::text[])', [dead]);
+    await pruneTokens(pool, dead);
+
+    for (let j = 0; j < chunk.length; j += 1) {
+      const ticketId = tickets[j]?.id;
+      if (tickets[j]?.status === 'ok' && ticketId) {
+        receiptTickets.push({ id: ticketId, token: chunk[j]!.to });
+      }
     }
   }
+  scheduleReceiptCheck(pool, receiptTickets, fetchImpl, receiptDelayMs);
 }
