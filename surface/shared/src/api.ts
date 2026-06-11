@@ -201,10 +201,16 @@ export function createApi(opts: ApiOptions = {}) {
       size: number;
       width?: number;
       height?: number;
+      contentHash?: string;
     }) =>
-      req<{ fileId: string; uploadUrl: string }>('/api/uploads', {
+      req<{ fileId: string; uploadUrl: string; existing?: boolean }>('/api/uploads', {
         method: 'POST',
         body: JSON.stringify(body),
+      }),
+    refreshUpload: (fileId: string) =>
+      req<{ uploadUrl: string }>(`/api/uploads/${fileId}/refresh`, {
+        method: 'POST',
+        body: '{}',
       }),
     /** Authenticated URL for an attachment body (302 → presigned S3 GET). */
     fileUrl: (fileId: string) => `${base}/api/files/${fileId}`,
