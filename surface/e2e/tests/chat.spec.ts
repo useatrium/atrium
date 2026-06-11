@@ -67,10 +67,12 @@ test('reactions: toggle a reaction, chip count updates', async ({ page }) => {
     data: { emoji: '👍' },
   });
   expect(add.ok()).toBeTruthy();
-  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  // Scope to this message's row — a retry can leave a prior 👍 chip in #general.
+  const row = messageRow(page, text);
+  await expect(row.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
-  await page.getByRole('button', { name: '👍 1, including you' }).click();
-  await expect(page.getByRole('button', { name: /👍 1/ })).toHaveCount(0);
+  await row.getByRole('button', { name: '👍 1, including you' }).click();
+  await expect(row.getByRole('button', { name: /👍 1/ })).toHaveCount(0);
 });
 
 test('edit and delete own message', async ({ page }) => {
@@ -85,10 +87,12 @@ test('edit and delete own message', async ({ page }) => {
   await row.getByLabel('Edit message').click({ force: true });
   await page.getByLabel('Edit message text').fill(edited);
   await page.getByLabel('Edit message text').press('Enter');
-  await expect(page.getByText(edited, { exact: true })).toBeVisible();
-  await expect(page.getByText('(edited)')).toBeVisible();
-
   const editedRow = messageRow(page, edited);
+  await expect(page.getByText(edited, { exact: true })).toBeVisible();
+  // Scope to this message's row: a retry leaves the previous attempt's edited
+  // message in #general, so a page-wide '(edited)' match goes strict-mode.
+  await expect(editedRow.getByText('(edited)')).toBeVisible();
+
   const id = await messageId(page, edited);
   await expect(editedRow.getByLabel('Delete message')).toBeAttached();
   const del = await page.context().request.delete(`/api/messages/${id}`);
