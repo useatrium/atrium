@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { ChatMessage } from '@atrium/surface-client';
 
 /** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
@@ -18,8 +18,9 @@ import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-clien
 import { Avatar } from './Avatar';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { MessageText } from './MessageText';
+import { useDialog } from '../useDialog';
 
-export function MessageRow({
+export const MessageRow = memo(function MessageRow({
   message,
   grouped,
   inThread,
@@ -87,9 +88,32 @@ export function MessageRow({
   const canReact =
     !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const emojiRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const mouseOpenedPickerRef = useRef(false);
   const react = (emoji: string) => {
     setPickerOpen(false);
     onReact?.(m, emoji).catch(() => {});
+  };
+
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  useDialog({
+    open: pickerOpen,
+    containerRef: pickerRef,
+    invokerRef: reactionButtonRef,
+    closeOnOutsidePointer: true,
+    onClose: closePicker,
+  });
+  useEffect(() => {
+    if (!pickerOpen) return;
+    emojiRefs.current[pickerIndex]?.focus();
+  }, [pickerOpen, pickerIndex]);
+  const movePicker = (next: number) => {
+    const clamped = Math.max(0, Math.min(REACTION_EMOJI.length - 1, next));
+    setPickerIndex(clamped);
+    window.setTimeout(() => emojiRefs.current[clamped]?.focus());
   };
 
   const [editing, setEditing] = useState(false);
@@ -153,7 +177,9 @@ export function MessageRow({
   return (
     <div
       data-eid={m.id ?? undefined}
-      onMouseLeave={() => setPickerOpen(false)}
+      onMouseLeave={() => {
+        if (mouseOpenedPickerRef.current) setPickerOpen(false);
+      }}
       className={`group relative flex gap-3 px-4 hover:bg-surface-raised/60 ${
         grouped ? 'py-0.5' : 'mt-2 py-0.5'
       } ${dim ? 'opacity-50' : ''} ${highlighted ? 'bg-accent-hover/10' : ''}`}
@@ -298,35 +324,71 @@ export function MessageRow({
         )}
         {pickerOpen && (
           <div
-            role="menu"
-            aria-label="Pick a reaction"
+            ref={pickerRef}
+            role="dialog"
+            aria-label="Add reaction"
             onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.stopPropagation();
-                setPickerOpen(false);
+              const colCount = 8;
+              if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                movePicker(pickerIndex + 1);
+              } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                movePicker(pickerIndex - 1);
+              } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                movePicker(pickerIndex + colCount);
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                movePicker(pickerIndex - colCount);
+              } else if (e.key === 'Home') {
+                e.preventDefault();
+                movePicker(0);
+              } else if (e.key === 'End') {
+                e.preventDefault();
+                movePicker(REACTION_EMOJI.length - 1);
               }
             }}
             className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
           >
-            {REACTION_EMOJI.map((e2) => (
-              <button
-                key={e2}
-                onClick={() => react(e2)}
-                aria-label={`React with ${e2}`}
-                className="rounded px-1 py-1 text-base leading-none hover:bg-edge-strong"
-              >
-                {e2}
-              </button>
-            ))}
+            <div role="grid" aria-label="Reaction choices" className="contents">
+              {REACTION_EMOJI.map((e2, i) => (
+                <button
+                  key={e2}
+                  ref={(el) => {
+                    emojiRefs.current[i] = el;
+                  }}
+                  tabIndex={i === pickerIndex ? 0 : -1}
+                  onFocus={() => setPickerIndex(i)}
+                  onClick={() => react(e2)}
+                  aria-label={`React with ${e2}`}
+                  className="rounded px-1 py-1 text-base leading-none hover:bg-edge-strong focus:bg-edge-strong"
+                >
+                  {e2}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {(canThread || canEdit || canDelete || canReact) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {canReact && (
               <button
-                onClick={() => setPickerOpen((v) => !v)}
+                ref={reactionButtonRef}
+                onPointerDown={() => {
+                  mouseOpenedPickerRef.current = true;
+                }}
+                onKeyDown={() => {
+                  mouseOpenedPickerRef.current = false;
+                }}
+                onClick={() => {
+                  setPickerIndex(0);
+                  setPickerOpen((v) => !v);
+                }}
                 title="Add reaction"
                 aria-label="Add reaction"
+                aria-expanded={pickerOpen}
+                aria-haspopup="dialog"
                 className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 <SmilePlusIcon />
@@ -371,7 +433,7 @@ export function MessageRow({
       </div>
     </div>
   );
-}
+});
 
 function SessionEventCard({
   message,

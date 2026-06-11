@@ -80,14 +80,18 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
         </p>
 
         <form onSubmit={step === 'email' ? requestCode : verifyCode}>
-          <label className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
+          <label htmlFor="login-email" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
             Email
           </label>
           <input
+            id="login-email"
+            type="email"
             autoFocus
             value={email}
+            aria-describedby={error && step === 'email' ? 'login-error' : undefined}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="gary@example.com"
+            autoComplete="email"
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
@@ -96,11 +100,13 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
           />
           {step === 'code' && (
             <>
-              <label className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
+              <label htmlFor="login-code" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
                 Code
               </label>
               <input
+                id="login-code"
                 value={code}
+                aria-describedby={error && step === 'code' ? 'login-error' : undefined}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="123456"
                 inputMode="numeric"
@@ -109,7 +115,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               />
             </>
           )}
-          {error && <div className="mb-3 text-xs text-danger">{error}</div>}
+          {error && <div id="login-error" role="alert" className="mb-3 text-xs text-danger">{error}</div>}
           <button
             type="submit"
             disabled={
@@ -152,11 +158,13 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               dev login
             </summary>
             <form onSubmit={submitHandle} className="mt-4">
-              <label className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
+              <label htmlFor="dev-login-handle" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
                 Handle
               </label>
               <input
+                id="dev-login-handle"
                 value={handle}
+                aria-describedby={error ? 'login-error' : undefined}
                 onChange={(e) => setHandle(e.target.value)}
                 placeholder="gary"
                 autoCapitalize="off"
@@ -164,11 +172,12 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
                 spellCheck={false}
                 className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
               />
-              <label className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
+              <label htmlFor="dev-login-display-name" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
                 Display name{' '}
                 <span className="font-normal normal-case text-fg-faint">· optional</span>
               </label>
               <input
+                id="dev-login-display-name"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="Gary Basin"

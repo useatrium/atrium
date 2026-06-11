@@ -12,7 +12,7 @@ import {
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { Composer } from './components/Composer';
-import { LockIcon, XIcon } from './components/icons';
+import { LockIcon, SearchIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
@@ -25,6 +25,7 @@ import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 import { adoptPrefs } from './theme';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
+import { useDialog } from './useDialog';
 
 const PAGE_SIZE = 50;
 const NO_WATCHERS: UserRef[] = [];
@@ -48,6 +49,14 @@ export function Chat({
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
+  const selectChannel = useCallback((channelId: string) => {
+    const channel = stateRef.current.channels.find((c) => c.id === channelId);
+    const lastRead = channel?.lastReadEventId ?? 0;
+    const latest = channel?.latestEventId ?? 0;
+    setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
+    dispatch({ type: 'select-channel', channelId });
+  }, []);
 
   // ---- initial data ----
   useEffect(() => {
@@ -65,11 +74,11 @@ export function Chat({
       .get(initialSessionId)
       .then(({ session }) => {
         dispatch({ type: 'session-upsert', session: sessionFromWire(session) });
-        if (session.channelId) dispatch({ type: 'select-channel', channelId: session.channelId });
+        if (session.channelId) selectChannel(session.channelId);
         dispatch({ type: 'open-session', sessionId: session.id });
       })
       .catch(() => dispatch({ type: 'session-load-failed', sessionId: initialSessionId }));
-  }, [initialSessionId]);
+  }, [initialSessionId, selectChannel]);
 
   // ---- heal stale session entities ----
   // Cards folded from history only move via live WS events; a session whose
@@ -216,7 +225,7 @@ export function Chat({
         text.slice(0, 140),
         `evt-${event.id}`,
         () => {
-          if (event.channelId) dispatch({ type: 'select-channel', channelId: event.channelId });
+          if (event.channelId) selectChannel(event.channelId);
         },
       );
       return;
@@ -415,7 +424,7 @@ export function Chat({
   const jumpToMessage = async (event: WireEvent) => {
     const channelId = event.channelId;
     if (!channelId) return;
-    dispatch({ type: 'select-channel', channelId });
+    selectChannel(channelId);
     for (let tries = 0; tries < 30; tries++) {
       const t = stateRef.current.timelines[channelId];
       if (t?.main.some((m) => m.id === event.id)) break;
@@ -474,7 +483,7 @@ export function Chat({
   const createChannel = async (name: string, isPrivate = false) => {
     const { channel } = await api.createChannel(name, { private: isPrivate });
     dispatch({ type: 'channel-added', channel });
-    dispatch({ type: 'select-channel', channelId: channel.id });
+    selectChannel(channel.id);
   };
 
   const startDm = (userIds: string[]) => {
@@ -482,7 +491,7 @@ export function Chat({
       .createDmWithUsers(userIds)
       .then(({ channel }) => {
         dispatch({ type: 'channel-added', channel });
-        dispatch({ type: 'select-channel', channelId: channel.id });
+        selectChannel(channel.id);
       })
       .catch(() => showErrorToast("Couldn't start the conversation — try again."));
   };
@@ -500,6 +509,10 @@ export function Chat({
   const [members, setMembers] = useState<UserRef[] | null>(null);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
   const [memberPeople, setMemberPeople] = useState<UserRef[] | null>(null);
+  const membersButtonRef = useRef<HTMLButtonElement | null>(null);
+  const membersPopoverRef = useRef<HTMLDivElement | null>(null);
+  const addMemberButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [leaveAsk, setLeaveAsk] = useState(false);
 
   const loadMembers = useCallback(() => {
     if (!active || (active.kind !== 'private' && active.kind !== 'gdm')) return;
@@ -513,7 +526,29 @@ export function Chat({
     setMembers(null);
     setMembersOpen(false);
     setMemberPickerOpen(false);
+    setLeaveAsk(false);
   }, [active?.id]);
+
+  const closeMembers = useCallback(() => {
+    setMembersOpen(false);
+    setMemberPickerOpen(false);
+    setLeaveAsk(false);
+  }, []);
+
+  useDialog({
+    open: membersOpen,
+    containerRef: membersPopoverRef,
+    initialFocusRef: addMemberButtonRef,
+    invokerRef: membersButtonRef,
+    closeOnOutsidePointer: true,
+    onClose: closeMembers,
+  });
+
+  useEffect(() => {
+    if (!leaveAsk) return;
+    const t = setTimeout(() => setLeaveAsk(false), 5000);
+    return () => clearTimeout(t);
+  }, [leaveAsk]);
 
   const inviteMember = (userId: string) => {
     if (!active) return;
@@ -528,6 +563,11 @@ export function Chat({
 
   const leaveActive = () => {
     if (!active) return;
+    if (!leaveAsk) {
+      setLeaveAsk(true);
+      return;
+    }
+    setLeaveAsk(false);
     api
       .leaveChannelMembership(active.id)
       .then(() => dispatch({ type: 'channel-removed', channelId: active.id }))
@@ -573,7 +613,7 @@ export function Chat({
         unread={state.unread}
         me={me}
         wsStatus={state.wsStatus}
-        onSelect={(channelId) => dispatch({ type: 'select-channel', channelId })}
+        onSelect={selectChannel}
         onSetMute={setMute}
           onCreateChannel={createChannel}
           onStartDm={startDm}
@@ -606,19 +646,30 @@ export function Chat({
           {active && (active.kind === 'private' || active.kind === 'gdm') && (
             <div className="relative">
               <button
+                ref={membersButtonRef}
                 onClick={() => {
                   setMembersOpen((v) => !v);
                   if (!members) loadMembers();
                 }}
+                aria-expanded={membersOpen}
+                aria-haspopup="dialog"
+                aria-controls="members-popover"
                 className="rounded-md px-2 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
               >
                 Members
               </button>
               {membersOpen && (
-                <div className="absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl">
+                <div
+                  ref={membersPopoverRef}
+                  id="members-popover"
+                  role="dialog"
+                  aria-label="Channel members"
+                  className="absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl"
+                >
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-semibold text-fg-secondary">Members</span>
+                    <h2 className="text-xs font-semibold text-fg-secondary">Members</h2>
                     <button
+                      ref={addMemberButtonRef}
                       onClick={() => {
                         setMemberPickerOpen((v) => !v);
                         if (!memberPeople) {
@@ -654,17 +705,32 @@ export function Chat({
                   </ul>
                   <button
                     onClick={leaveActive}
-                    className="mt-2 w-full rounded border border-danger-border/60 px-2 py-1 text-xs text-danger-text hover:bg-danger-tint/40"
+                    aria-label={leaveAsk ? 'Confirm leave channel' : 'Leave channel'}
+                    className={`mt-2 w-full rounded border px-2 py-1 text-xs ${
+                      leaveAsk
+                        ? 'border-danger-border-strong bg-danger-tint/60 font-medium text-danger-text-strong hover:bg-danger-surface/60'
+                        : 'border-danger-border/60 text-danger-text hover:bg-danger-tint/40'
+                    }`}
                   >
-                    Leave
+                    {leaveAsk ? 'Confirm leave' : 'Leave'}
                   </button>
                 </div>
               )}
             </div>
           )}
+          <button
+            onClick={() => setSwitcherOpen(true)}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+          >
+            <SearchIcon size={14} />
+            <span>Search</span>
+            <kbd className="rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted">
+              ⌘K
+            </kbd>
+          </button>
           {presentUsers.length > 0 && (
             <div
-              className="ml-auto flex items-center gap-2"
+              className="flex items-center gap-2"
               title="Viewing this channel right now"
             >
               <div className="flex -space-x-1.5">
@@ -708,6 +774,7 @@ export function Chat({
           onEdit={editMessage}
           onDelete={removeMessage}
           onReact={reactToMessage}
+          unreadDividerAfterId={unreadDividerAfterId}
         />
 
         {active && (
@@ -741,7 +808,7 @@ export function Chat({
       ) : state.openSessionId ? (
         <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-            <span className="text-sm font-semibold text-fg">Session</span>
+            <h2 className="text-sm font-semibold text-fg">Session</h2>
             <button
               onClick={() => dispatch({ type: 'close-session' })}
               title="Close session pane"
@@ -798,7 +865,7 @@ export function Chat({
           activeChannelId={state.activeChannelId}
           meId={me.id}
           onSelect={(channelId) => {
-            dispatch({ type: 'select-channel', channelId });
+            selectChannel(channelId);
             setSwitcherOpen(false);
           }}
           onJumpToMessage={(event) => {

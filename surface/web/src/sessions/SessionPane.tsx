@@ -192,9 +192,9 @@ export function SessionPane({
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3">
         <StatusChip status={displayStatus} stalled={stalled} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-fg" title={session.title}>
+          <h2 className="truncate text-sm font-semibold text-fg" title={session.title}>
             {session.title}
-          </div>
+          </h2>
           <div className="flex items-center gap-1.5 text-3xs text-fg-muted">
             {driverId !== session.spawnedBy && (
               <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
@@ -638,6 +638,7 @@ const ToolCard = memo(
       >
         <button
           onClick={onToggle}
+          aria-expanded={expanded}
           className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay/40"
         >
           <span className="text-fg-muted">

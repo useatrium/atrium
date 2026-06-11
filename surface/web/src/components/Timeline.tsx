@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
@@ -22,6 +22,7 @@ export function Timeline({
   onEdit,
   onDelete,
   onReact,
+  unreadDividerAfterId,
 }: {
   messages: ChatMessage[];
   /** History fetched at least once — gates the empty state vs. the skeleton. */
@@ -43,6 +44,7 @@ export function Timeline({
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  unreadDividerAfterId?: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -50,8 +52,12 @@ export function Timeline({
   const lastKeyRef = useRef<string>('');
   const [loadingEarlier, setLoadingEarlier] = useState(false);
 
-  const items = buildTimelineItems(messages);
+  const items = useMemo(() => buildTimelineItems(messages), [messages]);
   const lastKey = items.at(-1)?.key ?? '';
+  const firstUnreadId = useMemo(() => {
+    if (unreadDividerAfterId == null || unreadDividerAfterId <= 0) return null;
+    return messages.find((m) => (m.id ?? 0) > unreadDividerAfterId)?.id ?? null;
+  }, [messages, unreadDividerAfterId]);
 
   const onScroll = () => {
     const el = containerRef.current;
@@ -64,6 +70,7 @@ export function Timeline({
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    if (prevHeightRef.current == null && lastKey === lastKeyRef.current) return;
     if (prevHeightRef.current != null) {
       el.scrollTop += el.scrollHeight - prevHeightRef.current;
       prevHeightRef.current = null;
@@ -73,7 +80,7 @@ export function Timeline({
       el.scrollTop = el.scrollHeight;
     }
     lastKeyRef.current = lastKey;
-  });
+  }, [lastKey, items]);
 
   const loadEarlier = () => {
     if (loadingEarlier) return;
@@ -93,7 +100,14 @@ export function Timeline({
   }, [highlightId]);
 
   return (
-    <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto pb-4 pt-2">
+    <div
+      ref={containerRef}
+      onScroll={onScroll}
+      role="log"
+      aria-label="Messages"
+      aria-live="polite"
+      className="flex-1 overflow-y-auto pb-4 pt-2"
+    >
       {hasMoreBefore && (
         <div className="flex justify-center py-2">
           <button
@@ -118,8 +132,12 @@ export function Timeline({
           </span>
         </div>
       )}
-      {items.map((item) =>
-        item.kind === 'day' ? (
+      {items.map((item) => {
+        const showUnreadDivider =
+          item.kind === 'message' &&
+          firstUnreadId != null &&
+          item.message!.id === firstUnreadId;
+        return item.kind === 'day' ? (
           <div key={item.key} className="my-3 flex items-center gap-3 px-4">
             <div className="h-px flex-1 bg-surface-overlay" />
             <span className="text-2xs font-medium uppercase tracking-wide text-fg-muted">
@@ -128,30 +146,37 @@ export function Timeline({
             <div className="h-px flex-1 bg-surface-overlay" />
           </div>
         ) : (
-          <MessageRow
-            key={item.key}
-            message={item.message!}
-            grouped={item.grouped ?? false}
-            session={
-              item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined
-            }
-            spectators={
-              item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0
-            }
-            meId={meId}
-            meHandle={meHandle}
-            highlighted={highlightId != null && item.message!.id === highlightId}
-            editRequested={editRequestId != null && item.message!.id === editRequestId}
-            onEditRequestHandled={onEditRequestHandled}
-            onOpenThread={onOpenThread}
-            onOpenSession={onOpenSession}
-            onRetry={onRetry}
-            onEdit={onEdit}
-            onDelete={onDelete}
-            onReact={onReact}
-          />
-        ),
-      )}
+          <div key={item.key}>
+            {showUnreadDivider && (
+              <div className="my-2 flex items-center gap-3 px-4" aria-label="New messages">
+                <span className="text-3xs font-semibold uppercase tracking-wide text-accent-text">New</span>
+                <div className="h-px flex-1 bg-edge" />
+              </div>
+            )}
+            <MessageRow
+              message={item.message!}
+              grouped={item.grouped ?? false}
+              session={
+                item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined
+              }
+              spectators={
+                item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0
+              }
+              meId={meId}
+              meHandle={meHandle}
+              highlighted={highlightId != null && item.message!.id === highlightId}
+              editRequested={editRequestId != null && item.message!.id === editRequestId}
+              onEditRequestHandled={onEditRequestHandled}
+              onOpenThread={onOpenThread}
+              onOpenSession={onOpenSession}
+              onRetry={onRetry}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onReact={onReact}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

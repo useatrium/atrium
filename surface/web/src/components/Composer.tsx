@@ -229,6 +229,7 @@ export function Composer({
           autoFocus={autoFocus}
           disabled={disabled}
           placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
+          aria-label="Message input"
           onChange={(e) => {
             setText(e.target.value);
             setAgentNeedsTask(false);
