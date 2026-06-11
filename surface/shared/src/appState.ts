@@ -60,6 +60,7 @@ export type AppAction =
   | { type: 'init-me'; handle: string }
   | { type: 'channels-loaded'; channels: Channel[] }
   | { type: 'read-cursor'; channelId: string; lastReadEventId: number }
+  | { type: 'mute-changed'; channelId: string; muted: boolean }
   | { type: 'channel-added'; channel: Channel }
   | { type: 'select-channel'; channelId: string | null }
   | { type: 'history-loaded'; channelId: string; events: WireEvent[]; hasMore: boolean }
@@ -109,6 +110,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         null;
       let unread = state.unread;
       for (const ch of channels) {
+        if (ch.muted) {
+          if (unread[ch.id] !== false) unread = { ...unread, [ch.id]: false };
+          continue;
+        }
         if (unread[ch.id] === 'mention') continue;
         const latest = ch.latestEventId ?? 0;
         const lastRead = ch.lastReadEventId ?? 0;
@@ -122,6 +127,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'read-cursor':
       return { ...state, unread: { ...state.unread, [action.channelId]: false } };
+
+    case 'mute-changed':
+      return {
+        ...state,
+        channels: state.channels.map((c) =>
+          c.id === action.channelId ? { ...c, muted: action.muted } : c,
+        ),
+        unread: action.muted
+          ? { ...state.unread, [action.channelId]: false }
+          : state.unread,
+      };
 
     case 'channel-added': {
       if (state.channels.some((c) => c.id === action.channel.id)) return state;
@@ -192,7 +208,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
       if (isNewMessage && ev.channelId !== state.activeChannelId) {
         const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
-        const isDm = state.channels.find((c) => c.id === ev.channelId)?.kind === 'dm';
+        const channel = state.channels.find((c) => c.id === ev.channelId);
+        if (channel?.muted) return next;
+        const isDm = channel?.kind === 'dm';
         const mentioned =
           isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle))
             ? 'mention'

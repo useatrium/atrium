@@ -162,6 +162,7 @@ export interface Channel {
   kind: 'public' | 'dm';
   lastReadEventId?: number;
   latestEventId?: number;
+  muted?: boolean;
   /** DM channels only: the (enforced) member list. */
   members?: UserRef[];
 }
@@ -637,13 +638,17 @@ export async function listChannelsFor(pool: Db, userId: string): Promise<Channel
     kind: 'public' | 'dm';
     last_read_event_id: string;
     latest_event_id: string;
+    muted: boolean;
   }>(
     `SELECT c.*,
             COALESCE(rc.last_read_event_id, 0) AS last_read_event_id,
-            COALESCE(latest.latest_event_id, 0) AS latest_event_id
+            COALESCE(latest.latest_event_id, 0) AS latest_event_id,
+            (cm.user_id IS NOT NULL) AS muted
      FROM channels c
      LEFT JOIN channel_read_cursors rc
        ON rc.channel_id = c.id AND rc.user_id = $1
+     LEFT JOIN channel_mutes cm
+       ON cm.channel_id = c.id AND cm.user_id = $1
      LEFT JOIN LATERAL (
        SELECT MAX(e.id) AS latest_event_id
        FROM events e
@@ -684,6 +689,7 @@ export async function listChannelsFor(pool: Db, userId: string): Promise<Channel
     kind: r.kind,
     lastReadEventId: Number(r.last_read_event_id),
     latestEventId: Number(r.latest_event_id),
+    muted: r.muted,
     ...(r.kind === 'dm' ? { members: membersByChannel.get(r.id) ?? [] } : {}),
   }));
 }
