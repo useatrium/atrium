@@ -60,7 +60,7 @@ export function Toasts() {
           key={t.id}
           role="alert"
           onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
-          className="pointer-events-auto max-w-md rounded-md border border-red-900/60 bg-red-950/95 px-3 py-2 text-left text-xs text-red-200 shadow-lg"
+          className="pointer-events-auto max-w-md rounded-md border border-danger-border/60 bg-danger-tint/95 px-3 py-2 text-left text-xs text-danger-text-strong shadow-lg"
           title="Dismiss"
         >
           {t.message}

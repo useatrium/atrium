@@ -7,6 +7,7 @@ import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
 import { Avatar } from './Avatar';
+import { BellIcon, BellOffIcon, LockIcon } from './icons';
 
 const BELL_TITLES: Record<NotifyState, string> = {
   on: 'Notifications on (mentions + your sessions) — click to turn off',
@@ -79,14 +80,14 @@ export function Sidebar({
     const level = active ? false : unread[channelId] ?? false;
     if (level === 'mention') {
       return (
-        <span className="ml-auto shrink-0 rounded bg-red-500/90 px-1 text-[10px] font-bold leading-4 text-white">
+        <span className="ml-auto shrink-0 rounded bg-danger-strong px-1 text-3xs font-bold leading-4 text-on-accent">
           @<span className="sr-only"> mention</span>
         </span>
       );
     }
     if (level) {
       return (
-        <span className="ml-auto size-2 shrink-0 rounded-full bg-indigo-400">
+        <span className="ml-auto size-2 shrink-0 rounded-full bg-accent-text">
           <span className="sr-only">unread</span>
         </span>
       );
@@ -110,9 +111,9 @@ export function Sidebar({
   };
 
   return (
-    <nav className="flex w-56 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/50">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-800 px-4">
-        <span className="truncate text-sm font-bold tracking-tight text-zinc-100">
+    <nav className="flex w-56 shrink-0 flex-col border-r border-edge bg-surface-raised/50">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
+        <span className="truncate text-sm font-bold tracking-tight text-fg">
           {workspaceName}
         </span>
         <span
@@ -120,10 +121,10 @@ export function Sidebar({
           title={`connection: ${wsStatus}`}
           className={`ml-auto size-2 shrink-0 rounded-full ${
             wsStatus === 'open'
-              ? 'bg-emerald-500'
+              ? 'bg-success'
               : wsStatus === 'connecting'
-                ? 'animate-pulse bg-amber-500'
-                : 'bg-red-500'
+                ? 'animate-pulse bg-warning'
+                : 'bg-danger'
           }`}
         >
           <span className="sr-only">connection: {wsStatus}</span>
@@ -132,7 +133,7 @@ export function Sidebar({
 
       <div className="flex-1 overflow-y-auto py-3">
         <div className="flex items-center justify-between px-4 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
             Channels
           </span>
           <button
@@ -142,7 +143,7 @@ export function Sidebar({
             }}
             title="Create channel"
             aria-label="Create channel"
-            className="rounded px-1.5 text-sm leading-5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             +
           </button>
@@ -160,18 +161,18 @@ export function Sidebar({
                 setCreating(false);
               }}
               placeholder="new-channel-name"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
             />
-            <label className="mt-1 flex items-center gap-2 text-[11px] text-zinc-400">
+            <label className="mt-1 flex items-center gap-2 text-2xs text-fg-tertiary">
               <input
                 type="checkbox"
                 checked={privateChannel}
                 onChange={(e) => setPrivateChannel(e.target.checked)}
-                className="accent-indigo-500"
+                className="accent-accent-hover"
               />
               Private
             </label>
-            {error && <div className="pt-1 text-[11px] text-red-400">{error}</div>}
+            {error && <div className="pt-1 text-2xs text-danger">{error}</div>}
           </form>
         )}
 
@@ -185,15 +186,17 @@ export function Sidebar({
                   onClick={() => onSelect(c.id)}
                   className={`flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-4 text-left text-sm ${
                     active
-                      ? 'bg-indigo-600/20 font-medium text-zinc-100'
+                      ? 'bg-accent/20 font-medium text-fg'
                       : level
-                        ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
+                        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
                         : c.muted
-                          ? 'text-zinc-600 hover:bg-zinc-800/70 hover:text-zinc-500'
-                          : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
+                          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                   }`}
                 >
-                  <span className="text-zinc-500">{c.kind === 'private' ? '🔒' : '#'}</span>
+                  <span className="text-fg-muted">
+                    {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
+                  </span>
                   <span className="truncate">{c.name}</span>
                   {unreadBadge(c.id, active)}
                 </button>
@@ -201,11 +204,11 @@ export function Sidebar({
                   onClick={() => onSetMute(c.id, !c.muted)}
                   title={c.muted ? 'Unmute channel' : 'Mute channel'}
                   aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
-                  className={`shrink-0 px-3 py-1 text-xs hover:bg-zinc-800 hover:text-zinc-200 ${
-                    c.muted ? 'text-zinc-500' : 'text-zinc-600 opacity-0 group-hover:opacity-100'
+                  className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
+                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100'
                   }`}
                 >
-                  {c.muted ? '🔕' : '🔔'}
+                  {c.muted ? <BellOffIcon /> : <BellIcon />}
                 </button>
               </li>
             );
@@ -213,14 +216,14 @@ export function Sidebar({
         </ul>
 
         <div className="mt-4 flex items-center justify-between px-4 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
             Direct messages
           </span>
           <button
             onClick={openDmPicker}
             title="Start a DM"
             aria-label="Start a DM"
-            className="rounded px-1.5 text-sm leading-5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             +
           </button>
@@ -239,10 +242,10 @@ export function Sidebar({
               }}
               placeholder="who?"
               aria-label="Find a person to message"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
             />
             <ul className="mt-1 max-h-40 overflow-y-auto">
-              {people === null && <li className="px-2 py-1 text-[11px] text-zinc-500">loading…</li>}
+              {people === null && <li className="px-2 py-1 text-2xs text-fg-muted">loading…</li>}
               {dmCandidates.map((u) => (
                 <li key={u.id}>
                   <button
@@ -254,13 +257,13 @@ export function Sidebar({
                         return next;
                       });
                     }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
                   >
                     <Avatar name={u.displayName} seed={u.id} size={16} />
                     <span className="truncate">{u.displayName}</span>
-                    <span className="truncate text-zinc-600">@{u.handle}</span>
-                    {u.id === me.id && <span className="text-zinc-600">(you)</span>}
-                    {selectedDmIds.has(u.id) && <span className="ml-auto text-indigo-300">✓</span>}
+                    <span className="truncate text-fg-faint">@{u.handle}</span>
+                    {u.id === me.id && <span className="text-fg-faint">(you)</span>}
+                    {selectedDmIds.has(u.id) && <span className="ml-auto text-accent-text-strong">✓</span>}
                   </button>
                 </li>
               ))}
@@ -271,7 +274,7 @@ export function Sidebar({
                   setDmPicking(false);
                   onStartDm([...selectedDmIds]);
                 }}
-                className="mt-2 w-full rounded-md bg-indigo-500 px-2 py-1 text-xs font-semibold text-white"
+                className="mt-2 w-full rounded-md bg-accent-hover px-2 py-1 text-xs font-semibold text-on-accent"
               >
                 Start {selectedDmIds.size > 1 ? 'group DM' : 'DM'}
               </button>
@@ -291,12 +294,12 @@ export function Sidebar({
                   onClick={() => onSelect(c.id)}
                   className={`flex min-w-0 flex-1 items-center gap-2 py-1 pl-4 text-left text-sm ${
                     active
-                      ? 'bg-indigo-600/20 font-medium text-zinc-100'
+                      ? 'bg-accent/20 font-medium text-fg'
                       : level
-                        ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
+                        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
                         : c.muted
-                          ? 'text-zinc-600 hover:bg-zinc-800/70 hover:text-zinc-500'
-                          : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
+                          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                   }`}
                 >
                   <Avatar name={label} seed={partner?.id ?? c.id} size={16} />
@@ -307,11 +310,11 @@ export function Sidebar({
                   onClick={() => onSetMute(c.id, !c.muted)}
                   title={c.muted ? 'Unmute DM' : 'Mute DM'}
                   aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
-                  className={`shrink-0 px-3 py-1 text-xs hover:bg-zinc-800 hover:text-zinc-200 ${
-                    c.muted ? 'text-zinc-500' : 'text-zinc-600 opacity-0 group-hover:opacity-100'
+                  className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
+                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100'
                   }`}
                 >
-                  {c.muted ? '🔕' : '🔔'}
+                  {c.muted ? <BellOffIcon /> : <BellIcon />}
                 </button>
               </li>
             );
@@ -324,10 +327,10 @@ export function Sidebar({
         />
       </div>
 
-      <footer className="flex items-center gap-1 border-t border-zinc-800 px-4 py-2.5">
+      <footer className="flex items-center gap-1 border-t border-edge px-4 py-2.5">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium text-zinc-200">{me.displayName}</div>
-          <div className="truncate text-[11px] text-zinc-500">@{me.handle}</div>
+          <div className="truncate text-xs font-medium text-fg-body">{me.displayName}</div>
+          <div className="truncate text-2xs text-fg-muted">@{me.handle}</div>
         </div>
         <button
           onClick={() => {
@@ -336,13 +339,13 @@ export function Sidebar({
           disabled={notify === 'denied' || notify === 'unsupported'}
           title={BELL_TITLES[notify]}
           aria-label={BELL_TITLES[notify]}
-          className="rounded-md px-1.5 py-1 text-sm hover:bg-zinc-800 disabled:opacity-40"
+          className="rounded-md px-1.5 py-1 text-sm hover:bg-surface-overlay disabled:opacity-40"
         >
-          {notify === 'on' ? '🔔' : '🔕'}
+          {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
         </button>
         <button
           onClick={onLogout}
-          className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+          className="rounded-md px-2 py-1 text-2xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
         >
           Log out
         </button>
@@ -404,10 +407,10 @@ function SessionSidebarSection({
   return (
     <>
       <div className="mt-4 flex items-center justify-between px-4 pb-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
           Sessions
         </span>
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400">
+        <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold tabular-nums text-fg-tertiary">
           {running.length}
         </span>
       </div>
@@ -416,15 +419,15 @@ function SessionSidebarSection({
           <li key={session.id}>
             <button
               onClick={() => open(session.id)}
-              className="flex w-full min-w-0 flex-col gap-1 px-4 py-1.5 text-left hover:bg-zinc-800/70"
+              className="flex w-full min-w-0 flex-col gap-1 px-4 py-1.5 text-left hover:bg-surface-overlay/70"
             >
               <span className="flex min-w-0 items-center gap-1.5">
                 <StatusChip status={session.status} />
-                <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-body">
                   {session.title}
                 </span>
               </span>
-              <span className="truncate pl-1 text-[11px] text-zinc-600">
+              <span className="truncate pl-1 text-2xs text-fg-faint">
                 #{session.channelName}
               </span>
             </button>
@@ -433,7 +436,7 @@ function SessionSidebarSection({
         <li>
           <button
             onClick={() => setModalOpen(true)}
-            className="w-full px-4 py-1 text-left text-xs font-medium text-indigo-400 hover:bg-zinc-800/70"
+            className="w-full px-4 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
           >
             View all
           </button>
@@ -469,7 +472,7 @@ function SessionBrowserModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-zinc-950/60"
+      className="fixed inset-0 z-50 bg-surface/60"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -477,9 +480,9 @@ function SessionBrowserModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
-        <div className="border-b border-zinc-800 px-3 py-2.5 text-sm font-semibold text-zinc-100">
+        <div className="border-b border-edge px-3 py-2.5 text-sm font-semibold text-fg">
           Sessions
         </div>
         <div className="max-h-[60vh] overflow-y-auto py-1">
@@ -487,24 +490,24 @@ function SessionBrowserModal({
             <button
               key={session.id}
               onClick={() => onOpenSession(session.id)}
-              className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-indigo-600/20"
+              className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-accent/20"
             >
               <StatusChip status={session.status} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-zinc-100">
+                <span className="block truncate text-sm font-medium text-fg">
                   {session.title}
                 </span>
-                <span className="block truncate text-[11px] text-zinc-500">
+                <span className="block truncate text-2xs text-fg-muted">
                   #{session.channelName} · {session.spawnerName} · {formatTime(session.createdAt)}
                 </span>
               </span>
-              <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+              <span className="shrink-0 text-2xs tabular-nums text-fg-muted">
                 {session.costUsd > 0 ? formatCost(session.costUsd) : ''}
               </span>
             </button>
           ))}
           {sessions.length === 0 && (
-            <div className="px-3 py-8 text-center text-sm text-zinc-500">No sessions yet</div>
+            <div className="px-3 py-8 text-center text-sm text-fg-muted">No sessions yet</div>
           )}
         </div>
       </div>

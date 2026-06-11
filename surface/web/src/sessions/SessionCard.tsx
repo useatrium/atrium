@@ -23,12 +23,12 @@ export function useNow(active: boolean): number {
 }
 
 const CHIP_STYLES: Record<SessionStatus, string> = {
-  spawning: 'bg-amber-500/15 text-amber-300 animate-pulse',
-  queued: 'bg-sky-500/15 text-sky-300',
-  running: 'bg-indigo-500/15 text-indigo-300',
-  completed: 'bg-emerald-500/15 text-emerald-300',
-  failed: 'bg-red-500/15 text-red-300',
-  cancelled: 'bg-zinc-700/40 text-zinc-400',
+  spawning: 'bg-warning/15 text-warning-text animate-pulse',
+  queued: 'bg-info/15 text-info-text',
+  running: 'bg-accent-hover/15 text-accent-text-strong',
+  completed: 'bg-success/15 text-success-text',
+  failed: 'bg-danger/15 text-danger-text',
+  cancelled: 'bg-edge-strong/40 text-fg-tertiary',
 };
 
 /** Human labels where the raw status is dev-speak. */
@@ -47,8 +47,8 @@ export function StatusChip({
   const animatedDot = !stalled && (status === 'queued' || status === 'running');
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-        stalled ? 'bg-zinc-800/80 text-zinc-400' : CHIP_STYLES[status]
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide ${
+        stalled ? 'bg-surface-overlay/80 text-fg-tertiary' : CHIP_STYLES[status]
       }`}
     >
       <span
@@ -108,8 +108,8 @@ export function SessionCard({
       role={openable ? 'button' : undefined}
       tabIndex={openable ? 0 : undefined}
       aria-label={openable ? `Open session: ${session.title}` : undefined}
-      className={`group/card mt-1 max-w-xl rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 ${
-        openable ? 'cursor-pointer hover:border-zinc-700' : ''
+      className={`group/card mt-1 max-w-xl rounded-lg border border-edge bg-surface-raised/70 px-3 py-2 ${
+        openable ? 'cursor-pointer hover:border-edge-strong' : ''
       }`}
     >
       <div className="flex items-center gap-2">
@@ -120,24 +120,24 @@ export function SessionCard({
         ) : (
           <StatusChip status={session.status} stalled={stalled} />
         )}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
           {session.title}
         </span>
       </div>
 
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-fg-muted">
         <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
         {session.driverId !== null && session.driverId !== session.spawnedBy && (
           <>
-            <span className="text-zinc-700">·</span>
-            <span className="truncate text-zinc-400">
+            <span className="text-fg-faint">·</span>
+            <span className="truncate text-fg-tertiary">
               driver: {session.driverName ?? session.driverId}
             </span>
           </>
         )}
-        <span className="text-zinc-700">·</span>
+        <span className="text-fg-faint">·</span>
         <span>{session.harness}</span>
-        <span className="text-zinc-700">·</span>
+        <span className="text-fg-faint">·</span>
         {stalled ? (
           <span className="tabular-nums">started {formatTime(session.createdAt)}</span>
         ) : (
@@ -145,13 +145,13 @@ export function SessionCard({
         )}
         {session.costUsd > 0 && (
           <>
-            <span className="text-zinc-700">·</span>
+            <span className="text-fg-faint">·</span>
             <span className="tabular-nums">{formatCost(session.costUsd)}</span>
           </>
         )}
         {spectators > 0 && (
           <>
-            <span className="text-zinc-700">·</span>
+            <span className="text-fg-faint">·</span>
             <span className="tabular-nums">
               {spectators} watching
             </span>
@@ -163,7 +163,7 @@ export function SessionCard({
               e.stopPropagation();
               open();
             }}
-            className="ml-auto font-medium text-indigo-400 opacity-0 transition-opacity hover:underline focus:opacity-100 group-hover/card:opacity-100"
+            className="ml-auto font-medium text-accent-text opacity-0 transition-opacity hover:underline focus:opacity-100 group-hover/card:opacity-100"
           >
             open pane →
           </button>
@@ -171,7 +171,7 @@ export function SessionCard({
       </div>
 
       {terminal && session.resultText && (
-        <div className="mt-1.5 border-l-2 border-zinc-700 pl-2 text-xs leading-relaxed text-zinc-300">
+        <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
           <span className="line-clamp-3 whitespace-pre-wrap break-words">
             {session.resultText}
           </span>
@@ -182,7 +182,7 @@ export function SessionCard({
               e.stopPropagation();
               open();
             }}
-            className="mt-0.5 inline-block text-[11px] font-medium text-indigo-400 hover:underline"
+            className="mt-0.5 inline-block text-2xs font-medium text-accent-text hover:underline"
           >
             permalink
           </a>

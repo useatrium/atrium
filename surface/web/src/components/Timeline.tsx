@@ -99,7 +99,7 @@ export function Timeline({
           <button
             onClick={loadEarlier}
             disabled={loadingEarlier}
-            className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:text-zinc-600"
+            className="rounded-full border border-edge-strong bg-surface-raised px-3 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:text-fg-faint"
           >
             {loadingEarlier ? 'Loading…' : 'Load earlier messages'}
           </button>
@@ -107,11 +107,11 @@ export function Timeline({
       )}
       {!loaded && items.length === 0 && <TimelineSkeleton />}
       {loaded && items.length === 0 && (
-        <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-sm text-zinc-500">
+        <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-sm text-fg-muted">
           <span>No messages yet. Say something.</span>
-          <span className="text-xs text-zinc-600">
+          <span className="text-xs text-fg-faint">
             Or type{' '}
-            <code className="rounded bg-zinc-800/80 px-1 py-0.5 text-[11px] text-zinc-400">
+            <code className="rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-fg-tertiary">
               @agent &lt;task&gt;
             </code>{' '}
             to put an agent on it.
@@ -121,11 +121,11 @@ export function Timeline({
       {items.map((item) =>
         item.kind === 'day' ? (
           <div key={item.key} className="my-3 flex items-center gap-3 px-4">
-            <div className="h-px flex-1 bg-zinc-800" />
-            <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+            <div className="h-px flex-1 bg-surface-overlay" />
+            <span className="text-2xs font-medium uppercase tracking-wide text-fg-muted">
               {item.label}
             </span>
-            <div className="h-px flex-1 bg-zinc-800" />
+            <div className="h-px flex-1 bg-surface-overlay" />
           </div>
         ) : (
           <MessageRow
@@ -162,10 +162,10 @@ function TimelineSkeleton() {
     <div aria-hidden className="animate-pulse">
       {[0, 1, 2].map((i) => (
         <div key={i} className="mt-2 flex gap-3 px-4 py-0.5">
-          <div className="size-8 shrink-0 rounded-md bg-zinc-800/80" />
+          <div className="size-8 shrink-0 rounded-md bg-surface-overlay/80" />
           <div className="min-w-0 flex-1">
-            <div className="h-3 w-28 rounded bg-zinc-800/80" />
-            <div className="mt-1.5 h-3 rounded bg-zinc-800/50" style={{ width: `${60 - i * 15}%` }} />
+            <div className="h-3 w-28 rounded bg-surface-overlay/80" />
+            <div className="mt-1.5 h-3 rounded bg-surface-overlay/50" style={{ width: `${60 - i * 15}%` }} />
           </div>
         </div>
       ))}

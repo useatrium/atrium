@@ -16,6 +16,7 @@ import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
+import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { MessageText } from './MessageText';
 
 export function MessageRow({
@@ -153,15 +154,15 @@ export function MessageRow({
     <div
       data-eid={m.id ?? undefined}
       onMouseLeave={() => setPickerOpen(false)}
-      className={`group relative flex gap-3 px-4 hover:bg-zinc-900/60 ${
+      className={`group relative flex gap-3 px-4 hover:bg-surface-raised/60 ${
         grouped ? 'py-0.5' : 'mt-2 py-0.5'
-      } ${dim ? 'opacity-50' : ''} ${highlighted ? 'bg-indigo-500/10' : ''}`}
+      } ${dim ? 'opacity-50' : ''} ${highlighted ? 'bg-accent-hover/10' : ''}`}
     >
       <div className="w-8 shrink-0">
         {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} />}
         {grouped && (
           <span
-            className="invisible whitespace-nowrap pt-0.5 text-[10px] tabular-nums text-zinc-500 group-hover:visible"
+            className="invisible whitespace-nowrap pt-0.5 text-3xs tabular-nums text-fg-muted group-hover:visible"
             title={new Date(m.createdAt).toLocaleString()}
           >
             {formatGutterTime(m.createdAt)}
@@ -171,9 +172,9 @@ export function MessageRow({
       <div className="relative min-w-0 max-w-3xl flex-1">
         {!grouped && (
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold text-zinc-100">{m.author.displayName}</span>
+            <span className="text-sm font-semibold text-fg">{m.author.displayName}</span>
             <span
-              className="text-[11px] tabular-nums text-zinc-500"
+              className="text-2xs tabular-nums text-fg-muted"
               title={new Date(m.createdAt).toLocaleString()}
             >
               {formatTime(m.createdAt)}
@@ -199,19 +200,19 @@ export function MessageRow({
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onEditKeyDown}
               aria-label="Edit message text"
-              className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm leading-relaxed text-zinc-100 outline-none focus:border-indigo-500"
+              className="w-full resize-none rounded-md border border-edge-strong bg-surface-raised px-2 py-1.5 text-sm leading-relaxed text-fg outline-none focus:border-accent-hover"
             />
-            <div className="mt-0.5 text-[10px] text-zinc-500">
-              {editFailed && <span className="text-red-400">Couldn't save — Enter to retry · </span>}
+            <div className="mt-0.5 text-3xs text-fg-muted">
+              {editFailed && <span className="text-danger">Couldn't save — Enter to retry · </span>}
               Enter to save · Esc to cancel
             </div>
           </div>
         ) : deleted ? (
-          <div className="text-sm italic leading-relaxed text-zinc-600">Message deleted</div>
+          <div className="text-sm italic leading-relaxed text-fg-faint">Message deleted</div>
         ) : (
-          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200">
+          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
             <MessageText text={m.text} meHandle={meHandle} />
-            {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
+            {m.edited && <span className="ml-1 text-2xs text-fg-muted">(edited)</span>}
           </div>
         )}
         {!deleted && !isSessionRow && !isSessionEventRow && (m.attachments?.length ?? 0) > 0 && (
@@ -232,7 +233,7 @@ export function MessageRow({
                     width={a.width}
                     height={a.height}
                     loading="lazy"
-                    className="max-h-72 w-auto max-w-sm rounded-md border border-zinc-800 object-contain"
+                    className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
                     style={
                       a.width && a.height
                         ? { aspectRatio: `${a.width} / ${a.height}` }
@@ -246,11 +247,11 @@ export function MessageRow({
                   href={`/api/files/${a.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-200 hover:border-zinc-700"
+                  className="flex items-center gap-2 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-sm text-fg-body hover:border-edge-strong"
                 >
-                  <span aria-hidden>📄</span>
+                  <FileIcon />
                   <span className="max-w-56 truncate">{a.filename}</span>
-                  <span className="text-xs text-zinc-500">{formatBytes(a.size)}</span>
+                  <span className="text-xs text-fg-muted">{formatBytes(a.size)}</span>
                 </a>
               ),
             )}
@@ -268,8 +269,8 @@ export function MessageRow({
                   aria-label={`${r.emoji} ${r.userIds.length}${mine ? ', including you' : ''}`}
                   className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums ${
                     mine
-                      ? 'border-indigo-700/70 bg-indigo-500/15 text-indigo-200'
-                      : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600'
+                      ? 'border-accent-border/70 bg-accent-hover/15 text-accent-text-strong'
+                      : 'border-edge-strong bg-surface-raised text-fg-secondary hover:border-edge-hover'
                   }`}
                 >
                   <span>{r.emoji}</span>
@@ -282,7 +283,7 @@ export function MessageRow({
         {failed && (
           <button
             onClick={() => onRetry?.(m)}
-            className="mt-0.5 text-xs font-medium text-red-400 hover:underline"
+            className="mt-0.5 text-xs font-medium text-danger hover:underline"
           >
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
@@ -290,7 +291,7 @@ export function MessageRow({
         {!inThread && m.replyCount > 0 && m.id != null && (
           <button
             onClick={() => onOpenThread?.(m.id!)}
-            className="mt-0.5 text-xs font-medium text-indigo-400 hover:underline"
+            className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
           >
             {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
           </button>
@@ -305,14 +306,14 @@ export function MessageRow({
                 setPickerOpen(false);
               }
             }}
-            className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
+            className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
           >
             {REACTION_EMOJI.map((e2) => (
               <button
                 key={e2}
                 onClick={() => react(e2)}
                 aria-label={`React with ${e2}`}
-                className="rounded px-1 py-1 text-base leading-none hover:bg-zinc-700"
+                className="rounded px-1 py-1 text-base leading-none hover:bg-edge-strong"
               >
                 {e2}
               </button>
@@ -326,9 +327,9 @@ export function MessageRow({
                 onClick={() => setPickerOpen((v) => !v)}
                 title="Add reaction"
                 aria-label="Add reaction"
-                className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 shadow-sm hover:bg-zinc-700 hover:text-zinc-100"
+                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
-                🙂+
+                <SmilePlusIcon />
               </button>
             )}
             {canEdit && (
@@ -336,7 +337,7 @@ export function MessageRow({
                 onClick={startEdit}
                 title="Edit message"
                 aria-label="Edit message"
-                className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 shadow-sm hover:bg-zinc-700 hover:text-zinc-100"
+                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 Edit
               </button>
@@ -348,8 +349,8 @@ export function MessageRow({
                 aria-label={deleteAsk ? 'Confirm delete message' : 'Delete message'}
                 className={`rounded-md border px-2 py-1 text-xs shadow-sm ${
                   deleteAsk
-                    ? 'border-red-700 bg-red-950/70 font-medium text-red-200 hover:bg-red-900/70'
-                    : 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-red-300'
+                    ? 'border-danger-border-strong bg-danger-tint/70 font-medium text-danger-text-strong hover:bg-danger-surface/70'
+                    : 'border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-edge-strong hover:text-danger-text'
                 }`}
               >
                 {deleteAsk ? 'Confirm delete' : 'Delete'}
@@ -360,9 +361,9 @@ export function MessageRow({
                 onClick={() => onOpenThread!(m.id!)}
                 title="Reply in thread"
                 aria-label="Reply in thread"
-                className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 shadow-sm hover:bg-zinc-700 hover:text-zinc-100"
+                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
-                ↩ Reply
+                <CornerUpLeftIcon /> Reply
               </button>
             )}
           </div>
@@ -383,16 +384,16 @@ function SessionEventCard({
   const questions = Array.isArray(payload.questions) ? payload.questions : [];
   if (message.sessionEventType === 'question_requested') {
     return (
-      <div className="mt-1 max-w-xl rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+      <div className="mt-1 max-w-xl rounded-lg border border-warning-border/50 bg-warning-tint/20 px-3 py-2">
+        <div className="text-3xs font-semibold uppercase tracking-wide text-warning-text">
           Agent needs input
         </div>
         <div className="mt-1 space-y-1">
           {questions.map((q, i) => {
             const raw = q as Record<string, unknown>;
             return (
-              <div key={typeof raw.id === 'string' ? raw.id : i} className="text-xs text-zinc-200">
-                <span className="font-semibold text-zinc-100">
+              <div key={typeof raw.id === 'string' ? raw.id : i} className="text-xs text-fg-body">
+                <span className="font-semibold text-fg">
                   {typeof raw.header === 'string' ? raw.header : 'Question'}:
                 </span>{' '}
                 {typeof raw.question === 'string' ? raw.question : 'Question requested'}
@@ -403,7 +404,7 @@ function SessionEventCard({
         {message.sessionId && (
           <button
             onClick={() => onOpenSession?.(message.sessionId!)}
-            className="mt-1.5 text-[11px] font-medium text-amber-200 hover:underline"
+            className="mt-1.5 text-2xs font-medium text-warning-text hover:underline"
           >
             open pane →
           </button>
@@ -416,12 +417,12 @@ function SessionEventCard({
       ? 'Question answered'
       : `Question ${typeof payload.reason === 'string' ? payload.reason : 'resolved'}`;
   return (
-    <div className="mt-1 text-xs text-zinc-500">
+    <div className="mt-1 text-xs text-fg-muted">
       {label}
       {message.sessionId && (
         <button
           onClick={() => onOpenSession?.(message.sessionId!)}
-          className="ml-2 font-medium text-zinc-400 hover:text-zinc-200 hover:underline"
+          className="ml-2 font-medium text-fg-tertiary hover:text-fg-body hover:underline"
         >
           open pane
         </button>

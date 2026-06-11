@@ -35,11 +35,11 @@ export function App() {
 
   // Toasts mount at the root so even login-screen failures surface.
   let body;
-  if (!checked) body = <div className="h-dvh bg-zinc-950" />;
+  if (!checked) body = <div className="h-dvh bg-surface" />;
   else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)
     body = (
-      <div className="flex h-dvh items-center justify-center bg-zinc-950 text-sm text-zinc-500">
+      <div className="flex h-dvh items-center justify-center bg-surface text-sm text-fg-muted">
         Loading workspace…
       </div>
     );
