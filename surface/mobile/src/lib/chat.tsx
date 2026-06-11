@@ -13,10 +13,13 @@ import {
   useState,
 } from 'react';
 import { Alert, AppState as RNAppState, Linking } from 'react-native';
+import * as Crypto from 'expo-crypto';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   ApiError,
   DurableOpQueue,
   appReducer,
+  createDefaultOpRegistry,
   createApi,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
@@ -31,6 +34,7 @@ import {
   useWs,
   type Api,
   type AppState,
+  type AttachmentRef,
   type AttachmentMeta,
   type Channel,
   type ChatMessage,
@@ -41,6 +45,7 @@ import {
   type ReactionSetPayload,
   type SessionSpawnPayload,
   type Session as AgentSession,
+  type UploadPayload,
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
@@ -76,6 +81,7 @@ interface ChatContextValue {
     text: string,
     threadRootEventId?: number,
     attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
   ) => void;
   retry: (m: ChatMessage) => void;
   editMessage: (m: ChatMessage, text: string) => Promise<void>;
@@ -110,7 +116,7 @@ interface ChatContextValue {
     size: number;
     width?: number;
     height?: number;
-  }) => Promise<AttachmentMeta>;
+  }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
   getDraft: (key: string) => Promise<string | null>;
   setDraft: (key: string, text: string) => Promise<void>;
   /** From search: load the message's channel (paging back as needed) + highlight. */
@@ -119,6 +125,37 @@ interface ChatContextValue {
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
+
+const ATTACHMENT_DIR = 'queued-attachments';
+
+function sanitizedFilename(name: string): string {
+  const clean = name.replace(/[^a-z0-9._-]/gi, '_').slice(0, 100);
+  return clean || 'file';
+}
+
+async function copyAttachmentToDocuments(uri: string, uploadKey: string, name: string): Promise<string> {
+  if (!FileSystem.documentDirectory) throw new Error('document storage is unavailable');
+  const dir = `${FileSystem.documentDirectory}${ATTACHMENT_DIR}/`;
+  await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  const localUri = `${dir}${uploadKey}-${sanitizedFilename(name)}`;
+  await FileSystem.copyAsync({ from: uri, to: localUri });
+  return localUri;
+}
+
+async function contentHashForUri(uri: string): Promise<string | undefined> {
+  try {
+    const res = await fetch(uri);
+    const blob = await res.blob();
+    const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, await blob.arrayBuffer());
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return undefined;
+  }
+}
+
+async function deleteLocalUri(uri: string): Promise<void> {
+  await FileSystem.deleteAsync(uri, { idempotent: true });
+}
 
 export function ChatProvider({ session, children }: { session: Session; children: React.ReactNode }) {
   const { invalidate } = useSession();
@@ -173,6 +210,8 @@ export function ChatProvider({ session, children }: { session: Session; children
     switch (opType) {
       case 'msg.send':
         return "Couldn't send the message.";
+      case 'upload':
+        return "Couldn't upload the file.";
       case 'msg.edit':
         return "Couldn't save the edit.";
       case 'msg.delete':
@@ -207,12 +246,54 @@ export function ChatProvider({ session, children }: { session: Session; children
     [cacheMute, cacheSyncCursor],
   );
 
+  const deleteUploadRefs = useCallback(async (refs: AttachmentRef[] | undefined) => {
+    if (!refs || refs.length === 0) return;
+    try {
+      const ops = await eventCache.listOps();
+      await Promise.all(
+        refs.map(async (ref) => {
+          const op = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
+          const payload = op?.payload as Partial<UploadPayload> | undefined;
+          if (payload?.localUri) await deleteLocalUri(payload.localUri).catch(() => {});
+        }),
+      );
+    } catch {
+      // Best-effort cleanup; message confirmation/rejection must still settle.
+    }
+  }, []);
+
+  const opRegistry = useMemo(() => {
+    const registry = createDefaultOpRegistry();
+    const msgSend = registry['msg.send'];
+    registry['msg.send'] = {
+      ...msgSend,
+      onConfirmed: async (dispatchFn, result, payload, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await msgSend.onConfirmed(dispatchFn, result, payload, op);
+      },
+      onRejected: async (dispatchFn, payload, error, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await msgSend.onRejected(dispatchFn, payload, error, op);
+      },
+    };
+    const upload = registry.upload;
+    registry.upload = {
+      ...upload,
+      onRejected: async (dispatchFn, payload, error, op) => {
+        await deleteLocalUri(payload.localUri).catch(() => {});
+        await upload.onRejected(dispatchFn, payload, error, op);
+      },
+    };
+    return registry;
+  }, [deleteUploadRefs]);
+
   const opQueue = useMemo(
     () =>
       new DurableOpQueue({
         storage: eventCache,
         api,
         dispatch: queueDispatch,
+        registry: opRegistry,
         onRejected: (op, err) => {
           onApiError(err);
           if (op.opType === 'mute.set') {
@@ -226,7 +307,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           }
         },
       }),
-    [api, cacheMute, onApiError, queueDispatch, queuedFailureMessage],
+    [api, cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
   );
 
   const enqueueOp = useCallback(
@@ -236,6 +317,38 @@ export function ChatProvider({ session, children }: { session: Session; children
       return op;
     },
     [opQueue],
+  );
+
+  const waitForUpload = useCallback(
+    (uploadKey: string): Promise<{ fileId: string }> =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearInterval(timer);
+          fn();
+        };
+        const check = () => {
+          void eventCache
+            .listOps()
+            .then((ops) => {
+              const op = ops.find((candidate) => candidate.queueKey === `upload:${uploadKey}`);
+              if (!op) {
+                finish(() => reject(new Error('upload was rejected')));
+                return;
+              }
+              const payload = op.payload as Partial<UploadPayload>;
+              if (op.status === 'completed' && payload.uploaded && payload.fileId) {
+                finish(() => resolve({ fileId: payload.fileId! }));
+              }
+            })
+            .catch((err: unknown) => finish(() => reject(err)));
+        };
+        const timer = setInterval(check, 250);
+        check();
+      }),
+    [],
   );
 
   useEffect(() => {
@@ -765,6 +878,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       text: string,
       threadRootEventId?: number,
       attachments?: AttachmentMeta[],
+      attachmentRefs?: AttachmentRef[],
     ) => {
       // Attachments can't ride along on a session spawn — let "@agent …"
       // with attachments fall through as a plain message rather than drop them.
@@ -806,6 +920,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           text,
           threadRootEventId,
           attachments,
+          attachmentRefs,
           createdAt,
         },
       }).catch((err: unknown) => {
@@ -1049,31 +1164,43 @@ export function ChatProvider({ session, children }: { session: Session; children
       size: number;
       width?: number;
       height?: number;
-    }): Promise<AttachmentMeta> => {
-      const { fileId, uploadUrl } = await api.createUpload({
-        filename: file.name,
-        contentType: file.mimeType,
-        size: file.size,
-        width: file.width,
-        height: file.height,
-      });
-      const blob = await (await fetch(file.uri)).blob();
-      const put = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'content-type': file.mimeType },
-        body: blob,
-      });
-      if (!put.ok) throw new Error(`upload failed (${put.status})`);
-      return {
-        id: fileId,
-        filename: file.name,
-        contentType: file.mimeType,
-        size: file.size,
-        ...(file.width ? { width: file.width } : {}),
-        ...(file.height ? { height: file.height } : {}),
-      };
+    }): Promise<AttachmentMeta & { uploadKey: string; localUri: string }> => {
+      const uploadKey = randomId();
+      const localUri = await copyAttachmentToDocuments(file.uri, uploadKey, file.name);
+      try {
+        const contentHash = await contentHashForUri(localUri);
+        const payload: UploadPayload = {
+          uploadKey,
+          localUri,
+          contentHash,
+          filename: file.name,
+          contentType: file.mimeType,
+          size: file.size,
+          width: file.width,
+          height: file.height,
+        };
+        await enqueueOp({
+          opId: randomId(),
+          opType: 'upload',
+          payload,
+        });
+        const { fileId } = await waitForUpload(uploadKey);
+        return {
+          id: fileId,
+          filename: file.name,
+          contentType: file.mimeType,
+          size: file.size,
+          uploadKey,
+          localUri,
+          ...(file.width ? { width: file.width } : {}),
+          ...(file.height ? { height: file.height } : {}),
+        };
+      } catch (err) {
+        await deleteLocalUri(localUri).catch(() => {});
+        throw err;
+      }
     },
-    [api],
+    [enqueueOp, waitForUpload],
   );
 
   const getDraft = useCallback((key: string) => eventCache.getDraft(key), []);
