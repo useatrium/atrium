@@ -503,6 +503,80 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('channel after_id catch-up returns session question events with payloads intact', async () => {
+    const id = await insertSessionRow({ title: 'needs input', status: 'running' });
+    const root = await pool.query<{ id: number }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'session.spawned', $3, $4) RETURNING id`,
+      [
+        fx.workspaceId,
+        fx.channelId,
+        fx.userId,
+        JSON.stringify({ sessionId: id, title: 'needs input' }),
+      ],
+    );
+    const rootId = root.rows[0]!.id;
+    await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, id]);
+    const requestedPayload = {
+      sessionId: id,
+      questionId: 'q-main',
+      questions: questionRequestedFrame().data.questions,
+      permalink: `/s/${id}`,
+    };
+    const answeredPayload = {
+      sessionId: id,
+      questionId: 'q-main',
+      answers: { choice: 'Fast' },
+      answeredBy: fx.userId,
+    };
+    const resolvedPayload = {
+      sessionId: id,
+      questionId: 'q-main',
+      reason: 'answered',
+    };
+    for (const [type, payload] of [
+      ['session.question_requested', requestedPayload],
+      ['session.question_answered', answeredPayload],
+      ['session.question_resolved', resolvedPayload],
+    ] as const) {
+      await pool.query(
+        `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [fx.workspaceId, fx.channelId, rootId, type, fx.userId, JSON.stringify(payload)],
+      );
+    }
+
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages?after_id=${rootId}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const events = res.json().events as {
+      type: string;
+      threadRootEventId: number | null;
+      payload: Record<string, unknown>;
+    }[];
+    expect(events.map((e) => e.type)).toEqual([
+      'session.question_requested',
+      'session.question_answered',
+      'session.question_resolved',
+    ]);
+    expect(events.every((e) => e.threadRootEventId === rootId)).toBe(true);
+    expect(events[0]!.payload).toEqual(requestedPayload);
+    expect(events[1]!.payload).toEqual(answeredPayload);
+    expect(events[2]!.payload).toEqual(resolvedPayload);
+    await app.close();
+  });
+
   it('GET /api/sessions/:id includes pendingQuestion', async () => {
     const id = await insertSessionRow({ title: 'pending get', status: 'running' });
     await setPendingQuestion(id);
