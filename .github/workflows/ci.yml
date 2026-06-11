@@ -67,18 +67,24 @@ jobs:
 
       - name: Typecheck surface workspace
         working-directory: surface
+        timeout-minutes: 4
         run: pnpm -r typecheck
 
       - name: Test surface workspace
         working-directory: surface
+        timeout-minutes: 6
         run: pnpm -r test
 
       - name: Install Playwright Chromium
         working-directory: surface
+        timeout-minutes: 5
         run: pnpm --filter @atrium/e2e exec playwright install --with-deps chromium
 
+      # Per-step timeout so a webServer/teardown hang is killed in 6m and
+      # attributed, instead of silently eating the whole job budget.
       - name: Run Playwright e2e
         working-directory: surface
+        timeout-minutes: 6
         env:
           # e2e/db-reset.mjs creates and truncates this dedicated database while
           # using the atrium database from the same Postgres service as admin DB.

@@ -23,7 +23,10 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   webServer: [
     {
-      command: `node db-reset.mjs && pnpm --filter @atrium/server dev`,
+      // `start` (plain tsx), NOT `dev` (tsx watch): the watcher never exits and
+      // Playwright's teardown can't reap it in CI (no TTY), hanging the job to
+      // its timeout. e2e needs no hot reload.
+      command: `node db-reset.mjs && pnpm --filter @atrium/server start`,
       url: `${apiTarget}/healthz`,
       reuseExistingServer: false,
       timeout: 60_000,
