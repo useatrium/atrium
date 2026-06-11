@@ -23,6 +23,7 @@ import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { spawnSession, trySpawnFromComposer } from './sessions/spawn';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
+import { adoptPrefs } from './theme';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
 
 const PAGE_SIZE = 50;
@@ -185,6 +186,7 @@ export function Chat({
       },
       onMuted: (channelId, muted) => dispatch({ type: 'mute-changed', channelId, muted }),
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
+      onPrefs: adoptPrefs,
       onOpen: catchUp,
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
