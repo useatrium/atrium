@@ -69,8 +69,11 @@ interface ChatContextValue {
   editMessage: (m: ChatMessage, text: string) => Promise<void>;
   deleteMessage: (m: ChatMessage) => Promise<void>;
   react: (m: ChatMessage, emoji: string) => Promise<void>;
-  createChannel: (name: string) => Promise<Channel>;
-  startDm: (userId: string) => Promise<Channel>;
+  createChannel: (name: string, isPrivate?: boolean) => Promise<Channel>;
+  startDm: (userIds: string[]) => Promise<Channel>;
+  channelMembers: (channelId: string) => Promise<UserRef[]>;
+  addChannelMember: (channelId: string, userId: string) => Promise<void>;
+  leaveMembership: (channelId: string) => Promise<void>;
   mentionUsers: UserRef[] | null;
   loadMentionUsers: () => void;
   setMute: (channelId: string, muted: boolean) => void;
@@ -132,8 +135,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   useEffect(() => {
-    dispatch({ type: 'init-me', handle: me.handle });
-  }, [me.handle]);
+    dispatch({ type: 'init-me', handle: me.handle, id: me.id });
+  }, [me.handle, me.id]);
 
   const pendingMessageFromOutbox = useCallback(
     (msg: OutboxMessage): ChatMessage => ({
@@ -336,6 +339,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         dispatch({ type: 'mute-changed', channelId, muted });
         cacheMute(channelId, muted);
       },
+      onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: () => {
         catchUp();
         flushQueuedOutbox();
@@ -642,8 +646,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const createChannel = useCallback(
-    async (name: string) => {
-      const { channel } = await api.createChannel(name);
+    async (name: string, isPrivate = false) => {
+      const { channel } = await api.createChannel(name, { private: isPrivate });
       dispatch({ type: 'channel-added', channel });
       return channel;
     },
@@ -651,10 +655,33 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const startDm = useCallback(
-    async (userId: string) => {
-      const { channel } = await api.createDm(userId);
+    async (userIds: string[]) => {
+      const { channel } = await api.createDmWithUsers(userIds);
       dispatch({ type: 'channel-added', channel });
       return channel;
+    },
+    [api],
+  );
+
+  const channelMembers = useCallback(
+    async (channelId: string) => {
+      const { members } = await api.channelMembers(channelId);
+      return members;
+    },
+    [api],
+  );
+
+  const addChannelMember = useCallback(
+    async (channelId: string, userId: string) => {
+      await api.addChannelMember(channelId, userId);
+    },
+    [api],
+  );
+
+  const leaveMembership = useCallback(
+    async (channelId: string) => {
+      await api.leaveChannelMembership(channelId);
+      dispatch({ type: 'channel-removed', channelId });
     },
     [api],
   );
@@ -807,6 +834,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      channelMembers,
+      addChannelMember,
+      leaveMembership,
       mentionUsers,
       loadMentionUsers,
       setMute,
@@ -837,6 +867,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       createChannel,
       startDm,
+      channelMembers,
+      addChannelMember,
+      leaveMembership,
       mentionUsers,
       loadMentionUsers,
       setMute,

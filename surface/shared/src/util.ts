@@ -9,6 +9,11 @@ export function dmPartner(c: Channel, meId: string): UserRef | null {
 
 /** Sidebar/header label: "#name" channels render their name, DMs the person. */
 export function channelLabel(c: Channel, meId: string): string {
+  if (c.kind === 'gdm' && c.members && c.members.length > 0) {
+    const others = c.members.filter((m) => m.id !== meId);
+    const names = (others.length > 0 ? others : c.members).map((m) => m.displayName);
+    return names.join(', ');
+  }
   const partner = dmPartner(c, meId);
   if (!partner) return c.name;
   return partner.id === meId ? `${partner.displayName} (you)` : partner.displayName;

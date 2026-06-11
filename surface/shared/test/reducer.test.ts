@@ -262,7 +262,6 @@ describe('app unread read cursors', () => {
 
     expect(state.unread[CH]).toBe(false);
   });
-});
 
   it('unmuting re-derives unread from the cold counters', () => {
     const loaded = appReducer(initialAppState, {
@@ -299,6 +298,59 @@ describe('app unread read cursors', () => {
     expect(unmutedAgain.unread[CH]).toBe(false);
   });
 
+  it('group DM messages badge as mentions', () => {
+    const loaded = appReducer(
+      { ...initialAppState, activeChannelId: null },
+      {
+        type: 'channels-loaded',
+        channels: [
+          {
+            id: CH,
+            workspaceId: 'ws-1',
+            name: 'gdm',
+            createdAt: new Date(0).toISOString(),
+            kind: 'gdm',
+            members: [alice, bob],
+          },
+        ],
+      },
+    );
+    const unfocused = appReducer(loaded, { type: 'select-channel', channelId: null });
+    const state = appReducer(unfocused, { type: 'server-event', event: wire(12, 'plain', { author: bob }) });
+    expect(state.unread[CH]).toBe('mention');
+  });
+});
+
+describe('channel removal', () => {
+  it('removes channel state and clears active timeline', () => {
+    const loaded = appReducer(
+      {
+        ...initialAppState,
+        activeChannelId: CH,
+        unread: { [CH]: 'mention' },
+        timelines: { [CH]: mergeHistory(emptyTimeline, [wire(1, 'hi')], { hasMoreBefore: false }) },
+      },
+      {
+        type: 'channels-loaded',
+        channels: [
+          {
+            id: CH,
+            workspaceId: 'ws-1',
+            name: 'private',
+            createdAt: new Date(0).toISOString(),
+            kind: 'private',
+          },
+        ],
+      },
+    );
+    const state = appReducer(loaded, { type: 'channel-removed', channelId: CH });
+    expect(state.channels).toEqual([]);
+    expect(state.timelines[CH]).toBeUndefined();
+    expect(state.unread[CH]).toBeUndefined();
+    expect(state.activeChannelId).toBeNull();
+  });
+});
+describe('session spawn reconciliation', () => {
   it('session.spawned with client_spawn_id reconciles the optimistic row when the POST response was lost', () => {
     const tempId = 'pending:lost-post';
     let t = addPending(emptyTimeline, {
@@ -333,3 +385,4 @@ describe('app unread read cursors', () => {
     expect(t.main[0]!.sessionId).toBe('sess-real');
     expect(t.main[0]!.status).toBe('confirmed');
   });
+});

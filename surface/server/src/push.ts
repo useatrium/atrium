@@ -86,7 +86,7 @@ export async function pushRecipientsFor(
   if (!row) return { userIds: [], channelName: '', isDm: false, recipients: [] };
 
   const recipients = new Map<string, PushReason>();
-  if (row.kind === 'dm') {
+  if (row.kind === 'dm' || row.kind === 'gdm') {
     const members = await pool.query<{ user_id: string }>(
       'SELECT user_id FROM channel_members WHERE channel_id = $1',
       [ev.channelId],
