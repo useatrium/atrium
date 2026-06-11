@@ -235,6 +235,7 @@ function SessionEventLine({
   message: ChatMessage;
   onOpen?: (sessionId: string) => void;
 }) {
+  const { colors } = useTheme();
   const payload = message.sessionEventPayload ?? {};
   const questions = Array.isArray(payload.questions) ? payload.questions : [];
   const firstQuestion = questions[0] as Record<string, unknown> | undefined;
