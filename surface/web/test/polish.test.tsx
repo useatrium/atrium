@@ -3,6 +3,7 @@
 // failure state, status non-regression, terminal pane read-only.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appReducer, initialAppState, mentionsHandle, type AppState } from '@atrium/surface-client';
 import { MessageRow } from '../src/components/MessageRow';
@@ -11,6 +12,7 @@ import { Timeline } from '../src/components/Timeline';
 import type { ChatMessage, WireEvent } from '@atrium/surface-client';
 import { buildTimelineItems } from '@atrium/surface-client';
 import { SessionPane } from '../src/sessions/SessionPane';
+import { ThemeProvider } from '../src/theme';
 import {
   isStalledSessionStatus,
   STALLED_AFTER_MS,
@@ -21,6 +23,10 @@ import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSour
 afterEach(cleanup);
 
 const me = { id: 'u-me', handle: 'me', displayName: 'Me' };
+
+function renderThemed(ui: ReactElement) {
+  return render(<ThemeProvider>{ui}</ThemeProvider>);
+}
 
 describe('MessageText formatting', () => {
   it('renders fenced code blocks, inline code, and links', () => {
@@ -167,7 +173,7 @@ describe('message editing', () => {
 
   it('Edit → modify → Enter calls onEdit and closes the editor on success', async () => {
     const onEdit = vi.fn(async () => {});
-    render(<MessageRow message={msg(me.id)} grouped={false} meId={me.id} onEdit={onEdit} />);
+    renderThemed(<MessageRow message={msg(me.id)} grouped={false} meId={me.id} onEdit={onEdit} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
     const box = screen.getByRole('textbox', { name: 'Edit message text' });
@@ -183,7 +189,7 @@ describe('message editing', () => {
   });
 
   it('offers no Edit button on other people’s messages', () => {
-    render(
+    renderThemed(
       <MessageRow message={msg('u-other')} grouped={false} meId={me.id} onEdit={async () => {}} />,
     );
     expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
@@ -265,7 +271,7 @@ describe('message delete', () => {
 
   it('two-step confirm then onDelete', async () => {
     const onDelete = vi.fn(async () => {});
-    render(<MessageRow message={own()} grouped={false} meId={me.id} onDelete={onDelete} />);
+    renderThemed(<MessageRow message={own()} grouped={false} meId={me.id} onDelete={onDelete} />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete message' }));
     expect(onDelete).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm delete message' }));
@@ -283,7 +289,7 @@ describe('message delete', () => {
   });
 
   it('renders a tombstone with no hover actions', () => {
-    render(
+    renderThemed(
       <MessageRow
         message={own({ deleted: true, replyCount: 1, text: '' })}
         grouped={false}
@@ -322,7 +328,7 @@ describe('reactions', () => {
 
   it('renders chips with counts and marks mine; clicking toggles', async () => {
     const onReact = vi.fn(async () => {});
-    render(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
+    renderThemed(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
     const mine = screen.getByRole('button', { name: '👍 2, including you' });
     expect(mine.className).toContain('accent');
     expect(screen.getByRole('button', { name: '🎉 1' })).toBeTruthy();
@@ -334,7 +340,7 @@ describe('reactions', () => {
 
   it('the picker offers the allowlist and reacts on pick', async () => {
     const onReact = vi.fn(async () => {});
-    render(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
+    renderThemed(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }));
     fireEvent.click(screen.getByRole('button', { name: 'React with 🚀' }));
     await waitFor(() =>
