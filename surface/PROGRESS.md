@@ -220,3 +220,30 @@ sequentially, then a codex read-only review of the integrated diff:
 
 141 unit tests + 8 e2e green. Still needs on-device passes: session viewer
 streaming, outbox wake-flush, sqlite cache.
+
+## Round 3 — CI, mobile spawn + mentions, polish; prod stack live — 2026-06-11
+
+- **CI** (.github/workflows/ci.yml): typecheck + unit suites + Playwright
+  e2e on push/PR (postgres service, centaur-client built first, report
+  artifact on failure). Workflow replicated locally end-to-end by the worker.
+- **Mobile @agent spawn + mention autocomplete**: trigger grammar extracted
+  to shared (spawnTrigger.ts/mentions.ts; web re-exports, behavior
+  preserved), optimistic spawn flow in mobile ChatProvider, suggestion
+  overlay (@agent pinned at message start, lazy user cache). Review fixes:
+  lost-POST spawn reconciliation via client_spawn_id echo, attachments
+  fall through to plain send, bare @agent prompts for a task.
+- **Mobile polish**: in-app ImageViewer (header-auth expo-image, pinch on
+  iOS / double-tap both platforms — Android pan is a known P3 gap), copy
+  text (expo-clipboard), bounded scrollToIndex retries for search jumps,
+  centralized haptics.
+- **Prod stack live on this Mac** (atrium-prod compose project): server
+  :13001 + minio :19000 + loopback postgres :15433, real secrets in
+  surface/deploy/.env (gitignored), S3_ENDPOINT on the Tailscale IP.
+  Verified over Tailscale (100.82.11.20): healthz, login, channels, full
+  presigned upload→fetch round-trip. Phone URL: http://100.82.11.20:13001
+  (requires Tailscale on the phone; Docker Desktop must auto-start).
+- **Session viewer live check**: screen renders real session state
+  (status/cost/elapsed/read-only footer) against a spawned session; the
+  RUN ITSELF failed 401 — the restarted dev server lacks CENTAUR_API_KEY
+  (Gary's normal env has it). Streaming-path live test pending the key.
+- 145 unit + 8 e2e green after review fixes.
