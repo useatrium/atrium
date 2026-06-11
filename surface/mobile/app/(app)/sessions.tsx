@@ -117,6 +117,8 @@ export default function SessionsScreen() {
     const time = relativeTime(fields.completedAt ?? fields.createdAt);
     return (
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${fields.title}, ${fields.status}, #${item.channelName}, ${terminal ? time : `started ${time}`}${fields.costUsd > 0 ? `, ${formatCost(fields.costUsd)}` : ''}`}
         onPress={() => router.push(`/session/${item.id}`)}
         style={({ pressed }) => ({
           paddingHorizontal: space.lg,
@@ -190,11 +192,22 @@ export default function SessionsScreen() {
             />
           }
           ListEmptyComponent={
-            <View style={{ alignItems: 'center', padding: space.xl }}>
-              <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
-                {error ?? 'No sessions yet'}
-              </Text>
-            </View>
+            error ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Sessions failed. Tap to retry."
+                onPress={() => void load()}
+                style={{ alignItems: 'center', justifyContent: 'center', padding: space.xl, minHeight: 44 }}
+              >
+                <Text style={{ color: colors.danger, fontSize: font.sm }}>
+                  Sessions failed — tap to retry
+                </Text>
+              </Pressable>
+            ) : (
+              <View style={{ alignItems: 'center', padding: space.xl }}>
+                <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No sessions yet</Text>
+              </View>
+            )
           }
           contentContainerStyle={rows.length === 0 ? { flex: 1 } : undefined}
         />

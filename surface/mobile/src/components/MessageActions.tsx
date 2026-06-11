@@ -1,6 +1,7 @@
 // Long-press action sheet for a message: quick reactions + reply/edit/delete.
 
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import type { ChatMessage } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
@@ -31,8 +32,12 @@ function Action({
   const { colors } = useTheme();
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
       onPress={onPress}
       style={({ pressed }) => ({
+        minHeight: 44,
+        justifyContent: 'center',
         paddingVertical: 13,
         paddingHorizontal: space.lg,
         backgroundColor: pressed ? colors.bgPressed : 'transparent',
@@ -61,13 +66,16 @@ export function MessageActions({
   onEdit,
   onDelete,
 }: MessageActionsProps) {
-  const { colors } = useTheme();
+  const { colors, reduceMotion } = useTheme();
+  const insets = useSafeAreaInsets();
   const m = message;
   const confirmed = m?.status === 'confirmed' && m.id != null;
   const canCopy = !!m?.text.trim();
   return (
-    <Modal visible={m != null} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={m != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Close message actions"
         style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
         onPress={onClose}
       >
@@ -77,7 +85,7 @@ export function MessageActions({
             backgroundColor: colors.bgElevated,
             borderTopLeftRadius: radius.lg,
             borderTopRightRadius: radius.lg,
-            paddingBottom: 34,
+            paddingBottom: insets.bottom + 8,
             paddingTop: space.md,
           }}
         >
@@ -94,6 +102,8 @@ export function MessageActions({
               {QUICK_EMOJI.map((e) => (
                 <Pressable
                   key={e}
+                  accessibilityRole="button"
+                  accessibilityLabel={`React with ${e}`}
                   onPress={() => {
                     selectionHaptic();
                     onReact(m, e);

@@ -59,8 +59,8 @@ export function TypingLine({ typing }: { typing: Record<string, TypingEntry> }) 
   return (
     <Text
       style={{
-        height: 18,
-        lineHeight: 18,
+        minHeight: 18,
+        lineHeight: font.xs * 1.35,
         paddingHorizontal: space.lg,
         color: colors.textMuted,
         fontSize: font.xs,
@@ -78,9 +78,11 @@ export function UnreadBadge({ level }: { level: UnreadLevel }) {
   if (level === 'mention') {
     return (
       <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
         style={{
           minWidth: 18,
-          height: 18,
+          minHeight: 18,
           borderRadius: 9,
           backgroundColor: colors.mention,
           alignItems: 'center',
@@ -93,6 +95,10 @@ export function UnreadBadge({ level }: { level: UnreadLevel }) {
     );
   }
   return (
-    <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.text }} />
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.text }}
+    />
   );
 }

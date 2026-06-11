@@ -48,6 +48,9 @@ export default function NewDm() {
       {users.map((u) => (
         <Pressable
           key={u.id}
+          accessibilityRole="checkbox"
+          accessibilityLabel={`${u.displayName}, @${u.handle}${u.id === me.id ? ', you' : ''}`}
+          accessibilityState={{ selected: selected.has(u.id), checked: selected.has(u.id), disabled: busy }}
           onPress={() =>
             setSelected((prev) => {
               const next = new Set(prev);
@@ -80,6 +83,9 @@ export default function NewDm() {
     </ScrollView>
     {selected.size > 0 && (
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Start ${selected.size > 1 ? 'group DM' : 'DM'}`}
+        accessibilityState={{ disabled: busy }}
         onPress={() => void start()}
         disabled={busy}
         style={{

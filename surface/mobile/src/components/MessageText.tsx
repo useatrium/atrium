@@ -79,7 +79,7 @@ function InlineRun({
       style={{
         color: muted ? colors.textMuted : colors.text,
         fontSize: font.md,
-        lineHeight: 21,
+        lineHeight: font.md * 1.4,
       }}
     >
       {segments.map((segment, i) => (
