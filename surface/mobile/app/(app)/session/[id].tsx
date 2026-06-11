@@ -27,7 +27,7 @@ import {
 } from '@atrium/surface-client';
 import type { TextItem, ToolCallItem } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
-import { colors, font, radius, space } from '../../../src/lib/theme';
+import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { normalizeExecutionStatus } from '../../../src/lib/sessionStreamCore';
 import { useSessionStream } from '../../../src/lib/useSessionStream';
 
@@ -48,7 +48,7 @@ function sessionElapsedMs(session: Session, now: number): number {
   return end - start;
 }
 
-function statusColor(status: SessionStatus, stalled: boolean): string {
+function statusColor(status: SessionStatus, stalled: boolean, colors: Colors): string {
   if (stalled) return colors.textMuted;
   if (status === 'completed') return colors.online;
   if (status === 'failed' || status === 'cancelled') return colors.danger;
@@ -56,7 +56,8 @@ function statusColor(status: SessionStatus, stalled: boolean): string {
 }
 
 function StatusChip({ status, stalled }: { status: SessionStatus; stalled: boolean }) {
-  const color = statusColor(status, stalled);
+  const { colors } = useTheme();
+  const color = statusColor(status, stalled, colors);
   return (
     <View
       style={{
@@ -84,6 +85,7 @@ function textExcerpt(value: string, limit = 600): string {
 }
 
 function ToolCard({ item }: { item: ToolCallItem }) {
+  const { colors } = useTheme();
   const isError = item.result?.is_error === true;
   const command = typeof item.input.command === 'string' ? item.input.command : null;
   const keys = Object.keys(item.input);
@@ -92,8 +94,8 @@ function ToolCard({ item }: { item: ToolCallItem }) {
     <View
       style={{
         borderWidth: 1,
-        borderColor: isError ? 'rgba(248, 113, 113, 0.55)' : colors.border,
-        backgroundColor: isError ? 'rgba(127, 29, 29, 0.22)' : colors.bgElevated,
+        borderColor: isError ? colors.dangerBorder : colors.border,
+        backgroundColor: isError ? colors.dangerSurface : colors.bgElevated,
         borderRadius: radius.sm,
         padding: space.sm,
         gap: 6,
@@ -135,8 +137,9 @@ function ToolCard({ item }: { item: ToolCallItem }) {
 }
 
 function TextBlock({ item }: { item: TextItem }) {
+  const { colors } = useTheme();
   return (
-    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: 21 }}>
+    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: font.md * 1.4 }}>
       {item.text}
     </Text>
   );
@@ -157,13 +160,14 @@ function MobileQuestionBanner({
   submitting: boolean;
   onSubmit: () => void;
 }) {
+  const { colors } = useTheme();
   const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
   return (
     <View
       style={{
         borderWidth: 1,
-        borderColor: 'rgba(245, 158, 11, 0.45)',
-        backgroundColor: 'rgba(120, 53, 15, 0.22)',
+        borderColor: colors.warningBorder,
+        backgroundColor: colors.warningSurface,
         borderRadius: radius.md,
         padding: space.md,
         gap: space.sm,
@@ -186,13 +190,16 @@ function MobileQuestionBanner({
                 const selected = values[q.id] === option.label;
                 return (
                   <Pressable
+                    accessibilityRole="radio"
+                    accessibilityLabel={option.label}
+                    accessibilityState={{ selected, disabled: !isDriver || submitting }}
                     key={option.label}
                     disabled={!isDriver || submitting}
                     onPress={() => setValue(q.id, option.label)}
                     style={{
                       borderWidth: 1,
                       borderColor: selected ? colors.warning : colors.border,
-                      backgroundColor: selected ? 'rgba(245, 158, 11, 0.18)' : colors.bgElevated,
+                      backgroundColor: selected ? colors.accentBg : colors.bgElevated,
                       borderRadius: radius.sm,
                       padding: space.sm,
                       opacity: !isDriver || submitting ? 0.6 : 1,
@@ -241,7 +248,7 @@ function MobileQuestionBanner({
             opacity: submitting ? 0.6 : 1,
           }}
         >
-          <Text style={{ color: colors.bg, fontSize: font.sm, fontWeight: '900' }}>
+          <Text style={{ color: complete ? colors.onAccent : colors.textFaint, fontSize: font.sm, fontWeight: '900' }}>
             {submitting ? 'Answering...' : 'Submit answer'}
           </Text>
         </Pressable>
@@ -257,6 +264,7 @@ function MobileQuestionBanner({
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
+  const { colors, reduceMotion } = useTheme();
   const { api, me, state, upsertSession } = chat;
   const { stream, connected } = useSessionStream(id ?? null);
   const headerHeight = useHeaderHeight();
@@ -328,8 +336,8 @@ export default function SessionScreen() {
   }, [cancelAsk]);
 
   useEffect(() => {
-    if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: true });
-  }, [stream.lastEventId, resultText]);
+    if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: !reduceMotion });
+  }, [reduceMotion, stream.lastEventId, resultText]);
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -437,7 +445,14 @@ export default function SessionScreen() {
           ),
           headerRight: canCancel
             ? () => (
-                <Pressable onPress={cancel} hitSlop={8}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={cancelAsk === 'confirm' ? 'Confirm cancel session' : 'Cancel session'}
+                  accessibilityState={{ disabled: false }}
+                  onPress={cancel}
+                  hitSlop={8}
+                  style={{ minHeight: 44, justifyContent: 'center' }}
+                >
                   <Text
                     style={{
                       color: cancelAsk === 'confirm' ? colors.danger : colors.textSecondary,
@@ -458,7 +473,7 @@ export default function SessionScreen() {
         }}
       />
       {cancelAsk === 'failed' && (
-        <View style={{ backgroundColor: 'rgba(127, 29, 29, 0.25)', padding: space.sm }}>
+        <View style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}>
           <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
             Cancel failed. Tap retry cancel.
           </Text>
@@ -528,8 +543,8 @@ export default function SessionScreen() {
           <View
             style={{
               borderTopWidth: 1,
-              borderTopColor: 'rgba(248, 113, 113, 0.35)',
-              backgroundColor: 'rgba(127, 29, 29, 0.18)',
+              borderTopColor: colors.dangerBorder,
+              backgroundColor: colors.dangerSurface,
               padding: space.sm,
               gap: space.sm,
             }}
@@ -538,10 +553,22 @@ export default function SessionScreen() {
               Message did not send: "{steerError}"
             </Text>
             <View style={{ flexDirection: 'row', gap: space.sm }}>
-              <Pressable onPress={retrySteer}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry sending session message"
+                onPress={retrySteer}
+                hitSlop={10}
+                style={{ minHeight: 44, justifyContent: 'center' }}
+              >
                 <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '800' }}>Retry</Text>
               </Pressable>
-              <Pressable onPress={() => setSteerError(null)}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss failed session message"
+                onPress={() => setSteerError(null)}
+                hitSlop={10}
+                style={{ minHeight: 44, justifyContent: 'center' }}
+              >
                 <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Dismiss</Text>
               </Pressable>
             </View>
@@ -585,13 +612,17 @@ export default function SessionScreen() {
               }}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send session message"
+              accessibilityState={{ disabled: !steerText.trim() }}
               onPress={sendSteer}
               disabled={!steerText.trim()}
               style={{
                 borderRadius: radius.md,
                 backgroundColor: steerText.trim() ? colors.accent : colors.bgElevated,
                 paddingHorizontal: space.md,
-                height: 38,
+                minHeight: 44,
+                minWidth: 44,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
