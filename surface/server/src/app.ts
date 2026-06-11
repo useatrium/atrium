@@ -32,6 +32,7 @@ import {
 import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
+import { sendLoginCode } from './email.js';
 import { ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import type { AttachmentMeta } from './events.js';
@@ -48,6 +49,8 @@ export interface AppDeps {
   sessionSecret?: string;
   sessionRuns?: SessionRunsOptions;
   rateLimit?: false | { max?: number; loginMax?: number };
+  /** Injectable fetch for the email transport (tests mock Resend). */
+  emailFetch?: typeof fetch;
 }
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
@@ -60,6 +63,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
+  const emailFetch = deps.emailFetch;
   const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
@@ -356,12 +360,24 @@ function rawSession(req: FastifyRequest): string | undefined {
          VALUES ($1, $2, now() + interval '10 minutes')`,
         [email, codeHash(email, code)],
       );
-      // Only ever log the actual code when dev codes are explicitly enabled —
-      // otherwise a prod deploy left in EMAIL_MODE=log would leak login factors.
-      if (config.authDevCodes) {
-        req.log.warn({ email, code }, 'auth email code (dev)');
-      } else if (config.emailMode !== 'log') {
-        req.log.warn({ email, mode: config.emailMode }, 'email transport mode is not implemented');
+      // Deliver via the configured transport. A delivery failure is logged but
+      // never changes the response — the reply must not reveal whether the
+      // address is registered or whether sending succeeded. The actual code is
+      // only logged when dev codes are explicitly enabled.
+      try {
+        await sendLoginCode(email, code, {
+          config: {
+            mode: config.emailMode,
+            from: config.emailFrom,
+            resendApiKey: config.resendApiKey,
+          },
+          fetchImpl: emailFetch,
+          logCode: config.authDevCodes
+            ? (to, c) => req.log.warn({ email: to, code: c }, 'auth email code (dev)')
+            : undefined,
+        });
+      } catch (err) {
+        req.log.error({ err, email }, 'login code delivery failed');
       }
       return config.authDevCodes ? { ok: true, devCode: code } : { ok: true };
     },
