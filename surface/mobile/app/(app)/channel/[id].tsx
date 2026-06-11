@@ -8,8 +8,9 @@ import {
   type AttachmentMeta,
   type ChatMessage,
 } from '@atrium/surface-client';
+import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
-import { colors, font } from '../../../src/lib/theme';
+import { font, useTheme } from '../../../src/lib/theme';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer } from '../../../src/components/Composer';
 import { ImageViewer } from '../../../src/components/ImageViewer';
@@ -19,6 +20,7 @@ import { Timeline } from '../../../src/components/Timeline';
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
+  const { colors } = useTheme();
   const { state, me } = chat;
   const { getDraft, setDraft } = chat;
 
@@ -171,8 +173,14 @@ export default function ChannelScreen() {
           ),
           headerRight: () =>
             isGroupLike ? (
-              <Pressable onPress={openHeaderMenu} hitSlop={8} style={{ paddingHorizontal: 8 }}>
-                <Text style={{ color: colors.textSecondary, fontSize: font.lg }}>…</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open channel menu"
+                onPress={openHeaderMenu}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
               </Pressable>
             ) : null,
           headerBackButtonDisplayMode: 'minimal',

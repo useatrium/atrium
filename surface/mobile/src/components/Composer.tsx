@@ -6,6 +6,7 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
+  Keyboard,
   Platform,
   Pressable,
   Text,
@@ -15,8 +16,10 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { matchMentionPrefix, type AttachmentMeta, type UserRef } from '@atrium/surface-client';
-import { colors, font, radius, space } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { lightImpactHaptic } from '../lib/haptics';
@@ -67,8 +70,11 @@ export function Composer({
   allowAttachments,
   uploadFile,
 }: ComposerProps) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const editing = editingText != null;
   const draftWriter = useMemo(
@@ -77,6 +83,15 @@ export function Composer({
   );
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   // Reset on conversation switch; apply the async-loaded draft only into an
   // untouched input — never clobber text the user already started typing.
@@ -227,7 +242,7 @@ export function Composer({
         backgroundColor: colors.bg,
         paddingHorizontal: space.md,
         paddingTop: space.sm,
-        paddingBottom: space.sm,
+        paddingBottom: keyboardVisible ? space.sm : Math.max(8, insets.bottom),
         gap: space.sm,
       }}
     >
@@ -237,6 +252,8 @@ export function Composer({
             Editing message
           </Text>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel edit"
             onPress={() => {
               setText('');
               onCancelEdit?.();
@@ -338,9 +355,13 @@ export function Composer({
                     backgroundColor: colors.bgElevated,
                     alignItems: 'center',
                     justifyContent: 'center',
-                  }}
-                >
-                  <Text style={{ fontSize: 18 }}>{a.failed ? '⚠️' : '📎'}</Text>
+                }}
+              >
+                  <Ionicons
+                    name={a.failed ? 'alert-circle-outline' : 'attach-outline'}
+                    size={21}
+                    color={a.failed ? colors.danger : colors.textSecondary}
+                  />
                 </View>
               )}
               {!a.meta && !a.failed && (
@@ -351,8 +372,10 @@ export function Composer({
                 />
               )}
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove attachment"
                 onPress={() => setAttachments((prev) => prev.filter((x) => x.key !== a.key))}
-                hitSlop={8}
+                hitSlop={13}
                 style={{
                   position: 'absolute',
                   top: -6,
@@ -365,7 +388,7 @@ export function Composer({
                   justifyContent: 'center',
                 }}
               >
-                <Text style={{ color: colors.text, fontSize: 10, fontWeight: '800' }}>✕</Text>
+                <Ionicons name="close-outline" size={14} color={colors.text} />
               </Pressable>
             </View>
           ))}
@@ -375,19 +398,21 @@ export function Composer({
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
         {allowAttachments && !editing && (
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Attach file"
             onPress={pickAttachment}
             hitSlop={8}
             style={{
-              width: 34,
-              height: 34,
-              borderRadius: 17,
+              minWidth: 44,
+              minHeight: 44,
+              borderRadius: 22,
               backgroundColor: colors.bgElevated,
               alignItems: 'center',
               justifyContent: 'center',
               marginBottom: 2,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 20, lineHeight: 22 }}>+</Text>
+            <Ionicons name="attach-outline" size={21} color={colors.textSecondary} />
           </Pressable>
         )}
         <TextInput
@@ -417,13 +442,16 @@ export function Composer({
           }}
         />
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={editing ? 'Save edit' : 'Send message'}
+          accessibilityState={{ disabled: editing ? text.trim().length === 0 : !canSend }}
           onPress={submit}
           disabled={editing ? text.trim().length === 0 : !canSend}
           hitSlop={8}
           style={{
-            width: 34,
-            height: 34,
-            borderRadius: 17,
+            minWidth: 44,
+            minHeight: 44,
+            borderRadius: 22,
             backgroundColor: (editing ? text.trim().length > 0 : canSend)
               ? colors.accent
               : colors.bgElevated,
@@ -432,9 +460,11 @@ export function Composer({
             marginBottom: 2,
           }}
         >
-          <Text style={{ color: colors.bg, fontSize: 16, fontWeight: '800' }}>
-            {editing ? '✓' : '↑'}
-          </Text>
+          <Ionicons
+            name={editing ? 'checkmark-outline' : 'arrow-up-circle'}
+            size={editing ? 21 : 25}
+            color={(editing ? text.trim().length > 0 : canSend) ? colors.onAccent : colors.textFaint}
+          />
         </Pressable>
       </View>
     </View>

@@ -12,20 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createApi, type AuthMethods } from '@atrium/surface-client';
 import { normalizeServerUrl, useSession } from '../src/lib/session';
-import { colors, font, radius, space } from '../src/lib/theme';
-
-const inputStyle = {
-  backgroundColor: colors.bgInput,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: radius.md,
-  color: colors.text,
-  fontSize: font.md,
-  paddingHorizontal: space.md,
-  paddingVertical: 12,
-} as const;
+import { font, radius, space, useTheme } from '../src/lib/theme';
 
 function Label({ children }: { children: string }) {
+  const { colors } = useTheme();
   return (
     <Text
       style={{
@@ -48,6 +38,7 @@ const AUTO_LOGIN = __DEV__ ? process.env.EXPO_PUBLIC_AUTO_LOGIN : undefined;
 
 export default function Login() {
   const { login, loginWithEmailCode } = useSession();
+  const { colors } = useTheme();
   const [autoServer, autoHandle, autoName] = (AUTO_LOGIN ?? '').split('|');
   const [serverUrl, setServerUrl] = useState(autoServer ?? '');
   const [methods, setMethods] = useState<AuthMethods>({ open: true, email: true, google: false });
@@ -92,6 +83,16 @@ export default function Login() {
   const canVerifyCode =
     serverUrl.trim().length > 0 && email.trim().length > 0 && code.trim().length === 6 && !busy;
   const canSubmitHandle = serverUrl.trim().length > 0 && handle.trim().length >= 2 && !busy;
+  const inputStyle = {
+    backgroundColor: colors.bgInput,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    color: colors.text,
+    fontSize: font.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+  } as const;
 
   const requestCode = async () => {
     if (!canRequestCode) return;
@@ -221,17 +222,17 @@ export default function Login() {
               }}
             >
               {busy ? (
-                <ActivityIndicator color={colors.bg} />
+                <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text
                   style={{
                     color:
                       emailStep === 'email'
                         ? canRequestCode
-                          ? colors.bg
+                          ? colors.onAccent
                           : colors.textFaint
                         : canVerifyCode
-                          ? colors.bg
+                          ? colors.onAccent
                           : colors.textFaint,
                     fontSize: font.md,
                     fontWeight: '700',

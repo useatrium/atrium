@@ -7,7 +7,7 @@ import {
   configureNotificationHandler,
   registerForPush,
 } from '../../src/lib/notifications';
-import { colors } from '../../src/lib/theme';
+import { useTheme } from '../../src/lib/theme';
 
 // The tap that cold-started the app fires before any listener exists; track
 // what we've already routed so remounts don't re-navigate.
@@ -55,6 +55,7 @@ function PushBridge() {
 
 export default function AppLayout() {
   const session = useRequiredSession();
+  const { colors } = useTheme();
   return (
     <ChatProvider session={session}>
       <PushBridge />
@@ -83,6 +84,7 @@ export default function AppLayout() {
           name="new-channel"
           options={{ title: 'New channel', presentation: 'modal' }}
         />
+        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack>
     </ChatProvider>
   );

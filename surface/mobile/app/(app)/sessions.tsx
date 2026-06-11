@@ -16,14 +16,14 @@ import {
   type SessionStatus,
 } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { colors, font, radius, space } from '../../src/lib/theme';
+import { font, radius, space, useTheme, type Colors } from '../../src/lib/theme';
 import { ConnectionBanner } from '../../src/components/bits';
 
 interface DisplaySession extends SessionListItem {
   live?: Session;
 }
 
-function statusColor(status: SessionStatus): string {
+function statusColor(status: SessionStatus, colors: Colors): string {
   if (status === 'completed') return colors.online;
   if (status === 'failed' || status === 'cancelled') return colors.danger;
   if (status === 'running') return colors.accent;
@@ -31,7 +31,8 @@ function statusColor(status: SessionStatus): string {
 }
 
 function StatusChip({ status }: { status: SessionStatus }) {
-  const color = statusColor(status);
+  const { colors } = useTheme();
+  const color = statusColor(status, colors);
   const label = status === 'spawning' ? 'STARTING' : status.toUpperCase();
   return (
     <View
@@ -77,6 +78,7 @@ function displayFields(item: DisplaySession) {
 
 export default function SessionsScreen() {
   const { api, state } = useChat();
+  const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -115,6 +117,8 @@ export default function SessionsScreen() {
     const time = relativeTime(fields.completedAt ?? fields.createdAt);
     return (
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${fields.title}, ${fields.status}, #${item.channelName}, ${terminal ? time : `started ${time}`}${fields.costUsd > 0 ? `, ${formatCost(fields.costUsd)}` : ''}`}
         onPress={() => router.push(`/session/${item.id}`)}
         style={({ pressed }) => ({
           paddingHorizontal: space.lg,
@@ -188,11 +192,22 @@ export default function SessionsScreen() {
             />
           }
           ListEmptyComponent={
-            <View style={{ alignItems: 'center', padding: space.xl }}>
-              <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
-                {error ?? 'No sessions yet'}
-              </Text>
-            </View>
+            error ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Sessions failed. Tap to retry."
+                onPress={() => void load()}
+                style={{ alignItems: 'center', justifyContent: 'center', padding: space.xl, minHeight: 44 }}
+              >
+                <Text style={{ color: colors.danger, fontSize: font.sm }}>
+                  Sessions failed — tap to retry
+                </Text>
+              </Pressable>
+            ) : (
+              <View style={{ alignItems: 'center', padding: space.xl }}>
+                <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No sessions yet</Text>
+              </View>
+            )
           }
           contentContainerStyle={rows.length === 0 ? { flex: 1 } : undefined}
         />
@@ -203,7 +218,7 @@ export default function SessionsScreen() {
             margin: space.lg,
             borderRadius: radius.sm,
             borderWidth: 1,
-            borderColor: 'rgba(248, 113, 113, 0.45)',
+            borderColor: colors.dangerBorder,
             padding: space.sm,
           }}
         >

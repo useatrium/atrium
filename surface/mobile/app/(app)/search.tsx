@@ -13,7 +13,7 @@ import {
 import { router } from 'expo-router';
 import { formatTime, type WireEvent } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { colors, font, radius, space } from '../../src/lib/theme';
+import { font, radius, space, useTheme } from '../../src/lib/theme';
 
 interface Result {
   event: WireEvent;
@@ -22,9 +22,11 @@ interface Result {
 
 export default function Search() {
   const { api, jumpToMessage } = useChat();
+  const { colors } = useTheme();
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
   const seq = useRef(0);
 
   useEffect(() => {
@@ -32,23 +34,55 @@ export default function Search() {
     if (query.length < 2) {
       setResults([]);
       setBusy(false);
+      setError(false);
       return;
     }
     setBusy(true);
+    setError(false);
     const mine = ++seq.current;
-    const t = setTimeout(() => {
+    const run = () => {
       api
         .search(query, 20)
         .then(({ results }) => {
           if (seq.current === mine) setResults(results);
         })
-        .catch(() => {})
+        .catch(() => {
+          if (seq.current === mine) {
+            setResults([]);
+            setError(true);
+          }
+        })
         .finally(() => {
           if (seq.current === mine) setBusy(false);
         });
+    };
+    const t = setTimeout(() => {
+      run();
     }, 250);
     return () => clearTimeout(t);
   }, [q, api]);
+
+  const retry = () => {
+    const query = q.trim();
+    if (query.length < 2) return;
+    setBusy(true);
+    setError(false);
+    const mine = ++seq.current;
+    api
+      .search(query, 20)
+      .then(({ results }) => {
+        if (seq.current === mine) setResults(results);
+      })
+      .catch(() => {
+        if (seq.current === mine) {
+          setResults([]);
+          setError(true);
+        }
+      })
+      .finally(() => {
+        if (seq.current === mine) setBusy(false);
+      });
+  };
 
   const open = (r: Result) => {
     if (!r.event.channelId) return;
@@ -79,7 +113,22 @@ export default function Search() {
       />
       {busy && <ActivityIndicator color={colors.textMuted} />}
       <ScrollView keyboardShouldPersistTaps="handled">
-        {!busy && q.trim().length >= 2 && results.length === 0 && (
+        {!busy && q.trim().length < 2 && (
+          <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
+            Type at least 2 characters to search messages.
+          </Text>
+        )}
+        {!busy && error && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Search failed. Tap to retry."
+            onPress={retry}
+            style={{ minHeight: 44, justifyContent: 'center' }}
+          >
+            <Text style={{ color: colors.danger, fontSize: font.sm }}>Search failed — tap to retry</Text>
+          </Pressable>
+        )}
+        {!busy && !error && q.trim().length >= 2 && results.length === 0 && (
           <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No results.</Text>
         )}
         {results.map((r) => {
@@ -87,6 +136,8 @@ export default function Search() {
           return (
             <Pressable
               key={r.event.id}
+              accessibilityRole="button"
+              accessibilityLabel={`#${r.channelName}, ${r.event.author?.displayName ?? 'Unknown'}, ${formatTime(r.event.createdAt)}: ${text}`}
               onPress={() => open(r)}
               style={({ pressed }) => ({
                 paddingVertical: 10,
