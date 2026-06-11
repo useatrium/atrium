@@ -238,7 +238,11 @@ export const MessageRow = memo(function MessageRow({
         ) : (
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
             <MessageText text={m.text} meHandle={meHandle} />
-            {m.edited && <span className="ml-1 text-2xs text-fg-muted">(edited)</span>}
+            {m.pendingEdit ? (
+              <span className="ml-1 text-2xs text-warning-text">(saving edit)</span>
+            ) : m.edited ? (
+              <span className="ml-1 text-2xs text-fg-muted">(edited)</span>
+            ) : null}
           </div>
         )}
         {!deleted && !isSessionRow && !isSessionEventRow && (m.attachments?.length ?? 0) > 0 && (
