@@ -10,7 +10,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useSession } from '../src/lib/session';
+import { createApi, type AuthMethods } from '@atrium/surface-client';
+import { normalizeServerUrl, useSession } from '../src/lib/session';
 import { colors, font, radius, space } from '../src/lib/theme';
 
 const inputStyle = {
@@ -46,9 +47,13 @@ function Label({ children }: { children: string }) {
 const AUTO_LOGIN = __DEV__ ? process.env.EXPO_PUBLIC_AUTO_LOGIN : undefined;
 
 export default function Login() {
-  const { login } = useSession();
+  const { login, loginWithEmailCode } = useSession();
   const [autoServer, autoHandle, autoName] = (AUTO_LOGIN ?? '').split('|');
   const [serverUrl, setServerUrl] = useState(autoServer ?? '');
+  const [methods, setMethods] = useState<AuthMethods>({ open: true, email: true, google: false });
+  const [emailStep, setEmailStep] = useState<'email' | 'code'>('email');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [handle, setHandle] = useState(autoHandle ?? '');
   const [displayName, setDisplayName] = useState(autoName ?? '');
   const [busy, setBusy] = useState(false);
@@ -65,10 +70,59 @@ export default function Login() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canSubmit = serverUrl.trim().length > 0 && handle.trim().length >= 2 && !busy;
+  useEffect(() => {
+    if (!serverUrl.trim()) return;
+    let canceled = false;
+    const timeout = setTimeout(() => {
+      const api = createApi({ baseUrl: normalizeServerUrl(serverUrl) });
+      api
+        .authMethods()
+        .then((next) => {
+          if (!canceled) setMethods(next);
+        })
+        .catch(() => {});
+    }, 300);
+    return () => {
+      canceled = true;
+      clearTimeout(timeout);
+    };
+  }, [serverUrl]);
 
-  const submit = async () => {
-    if (!canSubmit) return;
+  const canRequestCode = serverUrl.trim().length > 0 && email.trim().length > 0 && !busy;
+  const canVerifyCode =
+    serverUrl.trim().length > 0 && email.trim().length > 0 && code.trim().length === 6 && !busy;
+  const canSubmitHandle = serverUrl.trim().length > 0 && handle.trim().length >= 2 && !busy;
+
+  const requestCode = async () => {
+    if (!canRequestCode) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const api = createApi({ baseUrl: normalizeServerUrl(serverUrl) });
+      await api.requestEmailCode(email.trim());
+      setEmailStep('code');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not request a code.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyCode = async () => {
+    if (!canVerifyCode) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await loginWithEmailCode(serverUrl, email.trim(), code.trim());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not sign in.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitHandle = async () => {
+    if (!canSubmitHandle) return;
     setBusy(true);
     setError(null);
     try {
@@ -122,58 +176,155 @@ export default function Login() {
               </Text>
             </View>
             <View>
-              <Label>Handle</Label>
+              <Label>Email</Label>
               <TextInput
-                style={inputStyle}
-                value={handle}
-                onChangeText={setHandle}
-                placeholder="alice"
+                style={[inputStyle, emailStep === 'code' ? { color: colors.textMuted } : null]}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="alice@example.com"
                 placeholderTextColor={colors.textFaint}
                 autoCapitalize="none"
                 autoCorrect={false}
-              />
-            </View>
-            <View>
-              <Label>Display name</Label>
-              <TextInput
-                style={inputStyle}
-                value={displayName}
-                onChangeText={setDisplayName}
-                placeholder="Alice (leave blank to keep your current name)"
-                placeholderTextColor={colors.textFaint}
+                keyboardType="email-address"
+                editable={emailStep === 'email'}
               />
             </View>
 
-            {error && (
-              <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>
+            {emailStep === 'code' && (
+              <View>
+                <Label>Code</Label>
+                <TextInput
+                  style={inputStyle}
+                  value={code}
+                  onChangeText={(text) => setCode(text.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="123456"
+                  placeholderTextColor={colors.textFaint}
+                  keyboardType="number-pad"
+                  textContentType="oneTimeCode"
+                />
+              </View>
             )}
 
             <Pressable
-              onPress={submit}
-              disabled={!canSubmit}
-              style={({ pressed }) => ({
-                backgroundColor: canSubmit ? colors.accent : colors.bgElevated,
-                opacity: pressed ? 0.85 : 1,
-                borderRadius: radius.md,
-                alignItems: 'center',
-                paddingVertical: 14,
-                marginTop: space.sm,
-              })}
+              onPress={emailStep === 'email' ? requestCode : verifyCode}
+              disabled={emailStep === 'email' ? !canRequestCode : !canVerifyCode}
+              style={({ pressed }) => {
+                const enabled = emailStep === 'email' ? canRequestCode : canVerifyCode;
+                return {
+                  backgroundColor: enabled ? colors.accent : colors.bgElevated,
+                  opacity: pressed ? 0.85 : 1,
+                  borderRadius: radius.md,
+                  alignItems: 'center',
+                  paddingVertical: 14,
+                  marginTop: space.sm,
+                };
+              }}
             >
               {busy ? (
                 <ActivityIndicator color={colors.bg} />
               ) : (
                 <Text
                   style={{
-                    color: canSubmit ? colors.bg : colors.textFaint,
+                    color:
+                      emailStep === 'email'
+                        ? canRequestCode
+                          ? colors.bg
+                          : colors.textFaint
+                        : canVerifyCode
+                          ? colors.bg
+                          : colors.textFaint,
                     fontSize: font.md,
                     fontWeight: '700',
                   }}
                 >
-                  Sign in
+                  {emailStep === 'email' ? 'Email me a code' : 'Sign in'}
                 </Text>
               )}
             </Pressable>
+
+            {emailStep === 'code' && (
+              <Pressable
+                onPress={() => {
+                  setEmailStep('email');
+                  setCode('');
+                  setError(null);
+                }}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
+                  Use a different email
+                </Text>
+              </Pressable>
+            )}
+
+            {/* Google OAuth needs a native redirect/deep-link flow; web only for this round. */}
+
+            {methods.open && (
+              <View
+                style={{
+                  borderTopWidth: 1,
+                  borderTopColor: colors.border,
+                  paddingTop: space.lg,
+                  gap: space.lg,
+                }}
+              >
+                <Text
+                  style={{ color: colors.textMuted, fontSize: font.xs, textAlign: 'center' }}
+                >
+                  dev login
+                </Text>
+                <View>
+                  <Label>Handle</Label>
+                  <TextInput
+                    style={inputStyle}
+                    value={handle}
+                    onChangeText={setHandle}
+                    placeholder="alice"
+                    placeholderTextColor={colors.textFaint}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                <View>
+                  <Label>Display name</Label>
+                  <TextInput
+                    style={inputStyle}
+                    value={displayName}
+                    onChangeText={setDisplayName}
+                    placeholder="Alice (leave blank to keep your current name)"
+                    placeholderTextColor={colors.textFaint}
+                  />
+                </View>
+
+                <Pressable
+                  onPress={submitHandle}
+                  disabled={!canSubmitHandle}
+                  style={({ pressed }) => ({
+                    backgroundColor: canSubmitHandle ? colors.bgPressed : colors.bgElevated,
+                    opacity: pressed ? 0.85 : 1,
+                    borderRadius: radius.md,
+                    alignItems: 'center',
+                    paddingVertical: 14,
+                    marginTop: space.sm,
+                  })}
+                >
+                  {busy ? (
+                    <ActivityIndicator color={colors.text} />
+                  ) : (
+                    <Text
+                      style={{
+                        color: canSubmitHandle ? colors.text : colors.textFaint,
+                        fontSize: font.md,
+                        fontWeight: '700',
+                      }}
+                    >
+                      Join with handle
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            )}
+
+            {error && <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

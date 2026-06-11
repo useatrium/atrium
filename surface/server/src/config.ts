@@ -6,6 +6,13 @@ export const config = {
   // Prototype-grade: dev default secret; override in any real deployment.
   sessionSecret: process.env.SESSION_SECRET ?? 'atrium-dev-secret-change-me',
   sessionCookie: 'atrium_session',
+  authOpen: (process.env.AUTH_OPEN ?? '1') !== '0',
+  authDevCodes: (process.env.AUTH_DEV_CODES ?? '0') === '1',
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+  googleRedirectUrl: process.env.GOOGLE_REDIRECT_URL ?? '',
+  // EMAIL_MODE currently supports "log". Future deployment modes: "resend", "smtp".
+  emailMode: process.env.EMAIL_MODE ?? 'log',
   maxMessageBytes: 8 * 1024,
   centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
   centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
