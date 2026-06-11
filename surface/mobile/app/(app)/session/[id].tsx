@@ -376,7 +376,7 @@ export default function SessionScreen() {
     const answers: Record<string, { answers: string[] }> = {};
     for (const q of pendingQuestion.questions) answers[q.id] = { answers: [questionValues[q.id]!.trim()] };
     setQuestionSubmitting(true);
-    api
+    chat
       .answerSessionQuestion(id, pendingQuestion.questionId, answers)
       .then(() => setQuestionCleared(pendingQuestion.questionId))
       .finally(() => setQuestionSubmitting(false));
