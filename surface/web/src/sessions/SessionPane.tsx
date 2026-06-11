@@ -29,12 +29,18 @@ export function SessionPane({
   me,
   watchers,
   onClose,
+  onAnswerQuestion,
 }: {
   session: Session;
   me: UserRef;
   /** Presence list for `session:<id>` — everyone with this pane open. */
   watchers: UserRef[];
   onClose: () => void;
+  onAnswerQuestion: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
 }) {
   const { stream, connected } = useSessionStream(session.id);
 
@@ -292,6 +298,7 @@ export function SessionPane({
           driverName={driverName}
           seatRequested={seatRequested}
           requestSeat={requestSeat}
+          onAnswerQuestion={onAnswerQuestion}
         />
       )}
 
@@ -434,6 +441,7 @@ function QuestionBanner({
   driverName,
   seatRequested,
   requestSeat,
+  onAnswerQuestion,
 }: {
   sessionId: string;
   pending: { questionId: string; questions: QuestionPrompt[] };
@@ -441,6 +449,11 @@ function QuestionBanner({
   driverName: string;
   seatRequested: boolean;
   requestSeat: () => void;
+  onAnswerQuestion: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -461,8 +474,7 @@ function QuestionBanner({
     const answers: Record<string, { answers: string[] }> = {};
     for (const q of pending.questions) answers[q.id] = { answers: [values[q.id]!.trim()] };
     setSubmitting(true);
-    sessionsApi
-      .answerQuestion(sessionId, pending.questionId, answers)
+    onAnswerQuestion(sessionId, pending.questionId, answers)
       .then(() => setCleared(pending.questionId))
       .finally(() => setSubmitting(false));
   };

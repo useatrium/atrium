@@ -216,6 +216,115 @@ describe('history pagination merge', () => {
   });
 });
 
+describe('optimistic edit/delete/reaction overlays', () => {
+  it('applies a pending edit and clears it when the matching edit event arrives', () => {
+    let state = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(5, 'original')],
+      hasMore: false,
+    });
+
+    state = appReducer(state, {
+      type: 'edit-overlay-pending',
+      channelId: CH,
+      opId: 'op-edit',
+      targetEventId: 5,
+      text: 'local edit',
+    });
+    expect(state.timelines[CH]!.main[0]!.text).toBe('local edit');
+    expect(state.timelines[CH]!.main[0]!.pendingEdit).toBe(true);
+
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        ...wire(8, ''),
+        type: 'message.edited',
+        payload: { target_event_id: 5, text: 'local edit' },
+      },
+    });
+    expect(state.timelines[CH]!.main[0]!.text).toBe('local edit');
+    expect(state.timelines[CH]!.main[0]!.edited).toBe(true);
+    expect(state.timelines[CH]!.main[0]!.pendingEdit).toBe(false);
+  });
+
+  it('reverts a rejected edit to the confirmed text underneath it', () => {
+    let state = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(5, 'original')],
+      hasMore: false,
+    });
+    state = appReducer(state, {
+      type: 'edit-overlay-pending',
+      channelId: CH,
+      opId: 'op-edit',
+      targetEventId: 5,
+      text: 'local edit',
+    });
+    state = appReducer(state, { type: 'overlay-rejected', channelId: CH, opId: 'op-edit' });
+    expect(state.timelines[CH]!.main[0]!.text).toBe('original');
+    expect(state.timelines[CH]!.main[0]!.pendingEdit).toBe(false);
+  });
+
+  it('tombstones a pending delete and reverts it on rejection', () => {
+    let state = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(5, 'doomed')],
+      hasMore: false,
+    });
+    state = appReducer(state, {
+      type: 'delete-overlay-pending',
+      channelId: CH,
+      opId: 'op-delete',
+      targetEventId: 5,
+    });
+    expect(state.timelines[CH]!.main[0]!.deleted).toBe(true);
+    expect(state.timelines[CH]!.main[0]!.pendingDelete).toBe(true);
+
+    state = appReducer(state, { type: 'overlay-rejected', channelId: CH, opId: 'op-delete' });
+    expect(state.timelines[CH]!.main[0]!.text).toBe('doomed');
+    expect(state.timelines[CH]!.main[0]!.deleted).toBe(false);
+    expect(state.timelines[CH]!.main[0]!.pendingDelete).toBe(false);
+  });
+
+  it('applies a reaction overlay and reverts only that reaction on rejection', () => {
+    let state = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(5, 'react here')],
+      hasMore: false,
+    });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        ...wire(6, ''),
+        type: 'reaction.added',
+        actorId: bob.id,
+        payload: { target_event_id: 5, emoji: '👍' },
+      },
+    });
+    state = appReducer(state, {
+      type: 'reaction-overlay-pending',
+      channelId: CH,
+      opId: 'op-react',
+      targetEventId: 5,
+      emoji: '👍',
+      userId: alice.id,
+      action: 'add',
+    });
+    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([
+      { emoji: '👍', userIds: [bob.id, alice.id] },
+    ]);
+
+    state = appReducer(state, { type: 'overlay-rejected', channelId: CH, opId: 'op-react' });
+    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([
+      { emoji: '👍', userIds: [bob.id] },
+    ]);
+  });
+});
+
 describe('catch-up fallback decision', () => {
   it('caps after_id paging and falls back to the latest page when still behind', () => {
     expect(nextCatchUpStep({ hasMore: false, pagesFetched: 5 })).toBe('done');

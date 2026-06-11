@@ -482,7 +482,7 @@ describe('terminal session pane', () => {
       lastEventId: 9,
       permalink: '/s/s-done',
     };
-    render(<SessionPane session={done} me={me} watchers={[]} onClose={() => {}} />);
+    render(<SessionPane session={done} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
     expect(screen.getByText(/Session ended/)).toBeTruthy();
     expect(screen.queryByText('Take seat')).toBeNull();
     expect(screen.queryByText('Request seat')).toBeNull();

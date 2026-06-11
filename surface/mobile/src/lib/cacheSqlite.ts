@@ -3,9 +3,16 @@ import {
   createEventCache,
   type CacheSnapshot,
   type CacheStorage,
-  type OutboxMessage,
 } from './cache';
-import type { AttachmentMeta, Channel, WireEvent } from '@atrium/surface-client';
+import {
+  makeQueuedOp,
+  randomId,
+  type AttachmentMeta,
+  type Channel,
+  type MsgSendPayload,
+  type QueuedOp,
+  type WireEvent,
+} from '@atrium/surface-client';
 
 const DB_NAME = 'atrium-event-cache.db';
 
@@ -29,6 +36,17 @@ interface OutboxRow {
   inserted_at: number;
 }
 
+interface OpRow {
+  op_id: string;
+  op_type: QueuedOp['opType'];
+  queue_key: string;
+  payload_json: string;
+  status: QueuedOp['status'];
+  retry_count: number;
+  created_at: string;
+  inserted_at: number;
+}
+
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 async function db() {
@@ -44,12 +62,13 @@ async function db() {
         has_more INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS send_outbox (
-        client_msg_id TEXT PRIMARY KEY NOT NULL,
-        channel_id TEXT NOT NULL,
-        text TEXT NOT NULL,
-        thread_root_event_id INTEGER,
-        attachments_json TEXT NOT NULL DEFAULT '[]',
+      CREATE TABLE IF NOT EXISTS client_ops (
+        op_id TEXT PRIMARY KEY NOT NULL,
+        op_type TEXT NOT NULL,
+        queue_key TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        retry_count INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         inserted_at INTEGER NOT NULL
       );
@@ -59,9 +78,58 @@ async function db() {
         updated_at INTEGER NOT NULL
       );
     `);
+    await migrateSendOutbox(database);
     return database;
   });
   return dbPromise;
+}
+
+async function migrateSendOutbox(database: SQLite.SQLiteDatabase): Promise<void> {
+  const oldTable = await database.getFirstAsync<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'send_outbox'",
+  );
+  if (!oldTable) return;
+  const rows = await database.getAllAsync<OutboxRow>(
+    `SELECT client_msg_id, channel_id, text, thread_root_event_id, attachments_json, created_at, inserted_at
+       FROM send_outbox
+       ORDER BY inserted_at ASC, rowid ASC`,
+  );
+  for (const row of rows) {
+    const attachments = JSON.parse(row.attachments_json) as AttachmentMeta[];
+    const payload: MsgSendPayload = {
+      clientMsgId: row.client_msg_id,
+      channelId: row.channel_id,
+      text: row.text,
+      ...(row.thread_root_event_id != null
+        ? { threadRootEventId: row.thread_root_event_id }
+        : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      createdAt: row.created_at,
+    };
+    const op = makeQueuedOp(
+      {
+        opId: randomId(),
+        opType: 'msg.send',
+        payload,
+        createdAt: row.created_at,
+      },
+      row.created_at,
+    );
+    await database.runAsync(
+      `INSERT OR IGNORE INTO client_ops
+        (op_id, op_type, queue_key, payload_json, status, retry_count, created_at, inserted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      op.opId,
+      op.opType,
+      op.queueKey,
+      JSON.stringify(op.payload),
+      op.status,
+      op.retryCount,
+      op.createdAt,
+      row.inserted_at,
+    );
+  }
+  await database.execAsync('DROP TABLE send_outbox;');
 }
 
 const storage: CacheStorage = {
@@ -109,47 +177,51 @@ const storage: CacheStorage = {
     );
   },
 
-  enqueueOutbox: async (msg) => {
+  listOps: async (): Promise<QueuedOp[]> => {
+    const database = await db();
+    const rows = await database.getAllAsync<OpRow>(
+      `SELECT op_id, op_type, queue_key, payload_json, status, retry_count, created_at, inserted_at
+        FROM client_ops
+        ORDER BY inserted_at ASC, rowid ASC`,
+    );
+    return rows.map((row) => ({
+      opId: row.op_id,
+      opType: row.op_type,
+      queueKey: row.queue_key,
+      payload: JSON.parse(row.payload_json) as unknown,
+      status: row.status,
+      retryCount: row.retry_count,
+      createdAt: row.created_at,
+    }));
+  },
+
+  putOp: async (op) => {
     const database = await db();
     await database.runAsync(
-      `INSERT OR REPLACE INTO send_outbox
-        (client_msg_id, channel_id, text, thread_root_event_id, attachments_json, created_at, inserted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      msg.clientMsgId,
-      msg.channelId,
-      msg.text,
-      msg.threadRootEventId ?? null,
-      JSON.stringify(msg.attachments ?? []),
-      msg.createdAt,
+      `INSERT INTO client_ops
+        (op_id, op_type, queue_key, payload_json, status, retry_count, created_at, inserted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(op_id) DO UPDATE SET
+          op_type = excluded.op_type,
+          queue_key = excluded.queue_key,
+          payload_json = excluded.payload_json,
+          status = excluded.status,
+          retry_count = excluded.retry_count,
+          created_at = excluded.created_at`,
+      op.opId,
+      op.opType,
+      op.queueKey,
+      JSON.stringify(op.payload),
+      op.status,
+      op.retryCount,
+      op.createdAt,
       Date.now(),
     );
   },
 
-  listOutbox: async (): Promise<OutboxMessage[]> => {
+  removeOp: async (opId) => {
     const database = await db();
-    const rows = await database.getAllAsync<OutboxRow>(
-      `SELECT client_msg_id, channel_id, text, thread_root_event_id, attachments_json, created_at, inserted_at
-        FROM send_outbox
-        ORDER BY inserted_at ASC, rowid ASC`,
-    );
-    return rows.map((row) => {
-      const attachments = JSON.parse(row.attachments_json) as AttachmentMeta[];
-      return {
-        clientMsgId: row.client_msg_id,
-        channelId: row.channel_id,
-        text: row.text,
-        ...(row.thread_root_event_id != null
-          ? { threadRootEventId: row.thread_root_event_id }
-          : {}),
-        ...(attachments.length > 0 ? { attachments } : {}),
-        createdAt: row.created_at,
-      };
-    });
-  },
-
-  removeOutbox: async (clientMsgId) => {
-    const database = await db();
-    await database.runAsync('DELETE FROM send_outbox WHERE client_msg_id = ?', clientMsgId);
+    await database.runAsync('DELETE FROM client_ops WHERE op_id = ?', opId);
   },
 
   getDraft: async (key) => {
@@ -181,7 +253,7 @@ const storage: CacheStorage = {
     await database.execAsync(`
       DELETE FROM cache_meta;
       DELETE FROM channel_timelines;
-      DELETE FROM send_outbox;
+      DELETE FROM client_ops;
       DELETE FROM composer_drafts;
     `);
   },

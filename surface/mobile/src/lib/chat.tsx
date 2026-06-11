@@ -13,9 +13,9 @@ import {
   useState,
 } from 'react';
 import { Alert, AppState as RNAppState, Linking } from 'react-native';
-import { randomUUID } from 'expo-crypto';
 import {
   ApiError,
+  DurableOpQueue,
   appReducer,
   createApi,
   initialAppState,
@@ -25,6 +25,7 @@ import {
   nextCatchUpStep,
   parseAgentTask,
   PENDING_SESSION_PREFIX,
+  randomId,
   sessionFromWire,
   useWs,
   type Api,
@@ -32,18 +33,18 @@ import {
   type AttachmentMeta,
   type Channel,
   type ChatMessage,
+  type EnqueueOpInput,
+  type MsgSendPayload,
+  type OpType,
+  type QueuedOp,
+  type ReactionSetPayload,
+  type SessionSpawnPayload,
   type Session as AgentSession,
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
 import { useSession, type Session } from './session';
-import type { OutboxMessage } from './cache';
 import { eventCache } from './cacheSqlite';
-import {
-  flushOutbox,
-  isNetworkFailure,
-  outboxMessageFromSend,
-} from './outbox';
 import { useTheme } from './theme';
 
 const PAGE_SIZE = 50;
@@ -78,6 +79,11 @@ interface ChatContextValue {
   editMessage: (m: ChatMessage, text: string) => Promise<void>;
   deleteMessage: (m: ChatMessage) => Promise<void>;
   react: (m: ChatMessage, emoji: string) => Promise<void>;
+  answerSessionQuestion: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
   createChannel: (name: string, isPrivate?: boolean) => Promise<Channel>;
   startDm: (userIds: string[]) => Promise<Channel>;
   channelMembers: (channelId: string) => Promise<UserRef[]>;
@@ -134,10 +140,18 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [channelsLoaded, setChannelsLoaded] = useState(false);
   const [channelsError, setChannelsError] = useState<string | null>(null);
   const [threadErrors, setThreadErrors] = useState<Record<number, string>>({});
-  const flushingOutboxRef = useRef(false);
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
   const loadingMentionUsersRef = useRef(false);
+
+  const cacheMute = useCallback((channelId: string, muted: boolean) => {
+    const channels = stateRef.current.channels.map((c) =>
+      c.id === channelId ? { ...c, muted } : c,
+    );
+    void eventCache.saveChannels(channels).catch((err: unknown) => {
+      console.warn('failed to cache mute change', err);
+    });
+  }, []);
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -147,12 +161,79 @@ export function ChatProvider({ session, children }: { session: Session; children
     [invalidate],
   );
 
+  const queuedFailureMessage = useCallback((opType: OpType): string => {
+    switch (opType) {
+      case 'msg.send':
+        return "Couldn't send the message.";
+      case 'msg.edit':
+        return "Couldn't save the edit.";
+      case 'msg.delete':
+        return "Couldn't delete the message.";
+      case 'reaction.set':
+        return "Couldn't update the reaction.";
+      case 'read.mark':
+        return "Couldn't mark the channel read.";
+      case 'mute.set':
+        return "Couldn't update the mute setting.";
+      case 'session.spawn':
+        return "Couldn't start the agent session.";
+      case 'session.answer':
+        return "Couldn't submit the answer.";
+      case 'channel.join':
+        return "Couldn't add the person.";
+      case 'channel.leave':
+        return "Couldn't leave the channel.";
+    }
+  }, []);
+
+  const queueDispatch = useCallback(
+    (action: Parameters<typeof dispatch>[0]) => {
+      dispatch(action);
+      if (action.type === 'server-event' && action.event.channelId) {
+        eventCache.enqueueEvents(action.event.channelId, [action.event]);
+      }
+      if (action.type === 'mute-changed') cacheMute(action.channelId, action.muted);
+    },
+    [cacheMute],
+  );
+
+  const opQueue = useMemo(
+    () =>
+      new DurableOpQueue({
+        storage: eventCache,
+        api,
+        dispatch: queueDispatch,
+        onRejected: (op, err) => {
+          onApiError(err);
+          if (op.opType === 'mute.set') {
+            const payload = op.payload as { channelId?: unknown; previousMuted?: unknown };
+            if (typeof payload.channelId === 'string' && typeof payload.previousMuted === 'boolean') {
+              cacheMute(payload.channelId, payload.previousMuted);
+            }
+          }
+          if (!(err instanceof ApiError && err.status === 401)) {
+            Alert.alert('Action failed', queuedFailureMessage(op.opType));
+          }
+        },
+      }),
+    [api, cacheMute, onApiError, queueDispatch, queuedFailureMessage],
+  );
+
+  const enqueueOp = useCallback(
+    async <T extends OpType>(input: EnqueueOpInput<T>): Promise<QueuedOp | null> => {
+      const op = await opQueue.enqueue(input);
+      if (op) opQueue.nudge();
+      return op;
+    },
+    [opQueue],
+  );
+
   useEffect(() => {
     dispatch({ type: 'init-me', handle: me.handle, id: me.id });
   }, [me.handle, me.id]);
 
-  const pendingMessageFromOutbox = useCallback(
-    (msg: OutboxMessage): ChatMessage => ({
+  const pendingMessageFromSendPayload = useCallback(
+    (msg: MsgSendPayload): ChatMessage => ({
       id: null,
       clientMsgId: msg.clientMsgId,
       channelId: msg.channelId,
@@ -160,13 +241,133 @@ export function ChatProvider({ session, children }: { session: Session; children
       text: msg.text,
       edited: false,
       author: me,
-      createdAt: msg.createdAt,
+      createdAt: msg.createdAt ?? new Date().toISOString(),
       replyCount: 0,
       lastReplyId: 0,
       status: 'pending',
       ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
     }),
     [me],
+  );
+
+  const pendingSpawnFromPayload = useCallback(
+    (payload: SessionSpawnPayload): { message: ChatMessage; session: AgentSession } => {
+      const createdAt = payload.createdAt ?? new Date().toISOString();
+      return {
+        session: {
+          id: payload.clientSpawnId,
+          workspaceId: '',
+          channelId: payload.channelId,
+          threadRootEventId: payload.threadRootEventId ?? null,
+          title: payload.task.slice(0, 80),
+          status: 'spawning',
+          harness: payload.harness ?? 'claude-code',
+          spawnedBy: me.id,
+          spawnerName: me.displayName,
+          driverId: null,
+          pendingSeatRequests: [],
+          seatEvents: [],
+          costUsd: 0,
+          resultText: null,
+          createdAt,
+          completedAt: null,
+          lastEventId: 0,
+          permalink: '',
+        },
+        message: {
+          id: null,
+          clientMsgId: payload.clientSpawnId,
+          channelId: payload.channelId,
+          threadRootEventId: payload.threadRootEventId ?? null,
+          text: payload.task,
+          edited: false,
+          author: me,
+          createdAt,
+          replyCount: 0,
+          lastReplyId: 0,
+          status: 'pending',
+          sessionId: payload.clientSpawnId,
+        },
+      };
+    },
+    [me],
+  );
+
+  const applyQueuedOp = useCallback(
+    (op: QueuedOp) => {
+      if (op.opType === 'msg.send') {
+        const payload = op.payload as MsgSendPayload;
+        dispatch({
+          type: 'send-pending',
+          channelId: payload.channelId,
+          message: pendingMessageFromSendPayload(payload),
+        });
+        return;
+      }
+      if (op.opType === 'session.spawn') {
+        const payload = op.payload as SessionSpawnPayload;
+        const pending = pendingSpawnFromPayload(payload);
+        dispatch({
+          type: 'session-spawn-pending',
+          channelId: payload.channelId,
+          message: pending.message,
+          session: pending.session,
+        });
+        return;
+      }
+      if (op.opType === 'msg.edit') {
+        const payload = op.payload as { channelId: string; eventId: number; text: string };
+        dispatch({
+          type: 'edit-overlay-pending',
+          channelId: payload.channelId,
+          opId: op.opId,
+          targetEventId: payload.eventId,
+          text: payload.text,
+        });
+        return;
+      }
+      if (op.opType === 'msg.delete') {
+        const payload = op.payload as { channelId: string; eventId: number };
+        dispatch({
+          type: 'delete-overlay-pending',
+          channelId: payload.channelId,
+          opId: op.opId,
+          targetEventId: payload.eventId,
+        });
+        return;
+      }
+      if (op.opType === 'reaction.set') {
+        const payload = op.payload as ReactionSetPayload;
+        dispatch({
+          type: 'reaction-overlay-pending',
+          channelId: payload.channelId,
+          opId: op.opId,
+          targetEventId: payload.eventId,
+          emoji: payload.emoji,
+          userId: payload.userId,
+          action: payload.action,
+        });
+        return;
+      }
+      if (op.opType === 'mute.set') {
+        const payload = op.payload as { channelId: string; muted: boolean };
+        dispatch({ type: 'mute-changed', channelId: payload.channelId, muted: payload.muted });
+        return;
+      }
+      if (op.opType === 'read.mark') {
+        const payload = op.payload as { channelId: string; lastReadEventId: number };
+        lastReadSentRef.current[payload.channelId] = Math.max(
+          lastReadSentRef.current[payload.channelId] ?? 0,
+          payload.lastReadEventId,
+        );
+        dispatch({
+          type: 'read-cursor',
+          channelId: payload.channelId,
+          lastReadEventId: payload.lastReadEventId,
+        });
+      }
+    },
+    [pendingMessageFromSendPayload, pendingSpawnFromPayload],
   );
 
   useEffect(() => {
@@ -187,15 +388,10 @@ export function ChatProvider({ session, children }: { session: Session; children
             hasMore: timeline.hasMore,
           });
         }
-        const queued = await eventCache.listOutbox();
+        await opQueue.recoverInflight();
+        const queued = await eventCache.listOps();
         if (disposed) return;
-        for (const msg of queued) {
-          dispatch({
-            type: 'send-pending',
-            channelId: msg.channelId,
-            message: pendingMessageFromOutbox(msg),
-          });
-        }
+        for (const op of queued) applyQueuedOp(op);
       })
       .catch((err: unknown) => {
         console.warn('failed to hydrate event cache', err);
@@ -206,7 +402,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     return () => {
       disposed = true;
     };
-  }, [pendingMessageFromOutbox]);
+  }, [applyQueuedOp, opQueue]);
 
   const loadChannels = useCallback(() => {
     setChannelsError(null);
@@ -286,29 +482,13 @@ export function ChatProvider({ session, children }: { session: Session; children
     loadChannels();
   }, [catchUpChannel, loadChannels, onApiError]);
 
-  const flushQueuedOutbox = useCallback(() => {
-    if (flushingOutboxRef.current) return;
-    flushingOutboxRef.current = true;
-    void flushOutbox({
-      storage: eventCache,
-      postMessage: api.postMessage,
-      onConfirmed: (event) => {
-        dispatch({ type: 'server-event', event });
-        if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-      },
-      onRejected: (msg) => {
-        dispatch({ type: 'send-failed', channelId: msg.channelId, clientMsgId: msg.clientMsgId });
-      },
-    })
-      .catch(onApiError)
-      .finally(() => {
-        flushingOutboxRef.current = false;
-      });
-  }, [api, onApiError]);
+  const flushQueuedOps = useCallback(() => {
+    opQueue.nudge();
+  }, [opQueue]);
 
   useEffect(() => {
-    flushOnWakeRef.current = flushQueuedOutbox;
-  }, [flushQueuedOutbox]);
+    flushOnWakeRef.current = flushQueuedOps;
+  }, [flushQueuedOps]);
 
   // ---- typing indicators (ephemeral, per viewed channel) ----
   const [typing, setTyping] = useState<Record<string, TypingEntry>>({});
@@ -336,15 +516,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     const ws = serverUrl.replace(/^http/i, 'ws');
     return `${ws}/ws?token=${encodeURIComponent(token)}`;
   }, [serverUrl, token]);
-
-  const cacheMute = useCallback((channelId: string, muted: boolean) => {
-    const channels = stateRef.current.channels.map((c) =>
-      c.id === channelId ? { ...c, muted } : c,
-    );
-    void eventCache.saveChannels(channels).catch((err: unknown) => {
-      console.warn('failed to cache mute change', err);
-    });
-  }, []);
 
   // iOS suspends timers in the background and kills idle sockets silently —
   // tell the WS layer the instant the app is foregrounded again.
@@ -391,7 +562,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: () => {
         catchUp();
-        flushQueuedOutbox();
+        flushQueuedOps();
       },
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
@@ -418,21 +589,17 @@ export function ChatProvider({ session, children }: { session: Session; children
         if (previous >= lastEventId) return;
         lastReadAtRef.current[channelId] = Date.now();
         lastReadSentRef.current[channelId] = lastEventId;
-        api
-          .markRead(channelId, lastEventId)
-          .then(({ lastReadEventId }) => {
-            lastReadSentRef.current[channelId] = Math.max(
-              lastReadSentRef.current[channelId] ?? 0,
-              lastReadEventId,
-            );
-            dispatch({ type: 'read-cursor', channelId, lastReadEventId });
-          })
-          .catch((err) => {
-            if (lastReadSentRef.current[channelId] === lastEventId) {
-              lastReadSentRef.current[channelId] = previous;
-            }
-            onApiError(err);
-          });
+        dispatch({ type: 'read-cursor', channelId, lastReadEventId: lastEventId });
+        void enqueueOp({
+          opId: randomId(),
+          opType: 'read.mark',
+          payload: { channelId, lastReadEventId: lastEventId },
+        }).catch((err: unknown) => {
+          if (lastReadSentRef.current[channelId] === lastEventId) {
+            lastReadSentRef.current[channelId] = previous;
+          }
+          onApiError(err);
+        });
       };
       const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
       if (elapsed >= 2000) {
@@ -442,7 +609,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
       readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
     },
-    [api, onApiError],
+    [enqueueOp, onApiError],
   );
 
   useEffect(() => {
@@ -544,59 +711,28 @@ export function ChatProvider({ session, children }: { session: Session; children
   // ---- sending ----
   const spawnSession = useCallback(
     (channelId: string, task: string, threadRootEventId?: number) => {
-      const tempId = `${PENDING_SESSION_PREFIX}${randomUUID()}`;
+      const tempId = `${PENDING_SESSION_PREFIX}${randomId()}`;
       const now = new Date().toISOString();
-      const optimistic: AgentSession = {
-        id: tempId,
-        workspaceId: '',
+      const payload: SessionSpawnPayload = {
         channelId,
-        threadRootEventId: threadRootEventId ?? null,
-        title: task.slice(0, 80),
-        status: 'spawning',
+        task,
+        clientSpawnId: tempId,
+        threadRootEventId,
         harness: 'claude-code',
-        spawnedBy: me.id,
-        spawnerName: me.displayName,
-        driverId: null,
-        pendingSeatRequests: [],
-        seatEvents: [],
-        costUsd: 0,
-        resultText: null,
         createdAt: now,
-        completedAt: null,
-        lastEventId: 0,
-        permalink: '',
       };
-      const row: ChatMessage = {
-        id: null,
-        clientMsgId: tempId,
-        channelId,
-        threadRootEventId: threadRootEventId ?? null,
-        text: task,
-        edited: false,
-        author: me,
-        createdAt: now,
-        replyCount: 0,
-        lastReplyId: 0,
-        status: 'pending',
-        sessionId: tempId,
-      };
-      dispatch({ type: 'session-spawn-pending', channelId, message: row, session: optimistic });
-      api
-        .createAgentSession({ channelId, threadRootEventId, task, clientSpawnId: tempId })
-        .then(({ session }) =>
-          dispatch({
-            type: 'session-created',
-            channelId,
-            tempId,
-            session: sessionFromWire(session),
-          }),
-        )
-        .catch((err) => {
-          onApiError(err);
-          dispatch({ type: 'session-spawn-failed', channelId, tempId });
-        });
+      const pending = pendingSpawnFromPayload(payload);
+      dispatch({ type: 'session-spawn-pending', channelId, message: pending.message, session: pending.session });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'session.spawn',
+        payload,
+      }).catch((err: unknown) => {
+        onApiError(err);
+        dispatch({ type: 'session-spawn-failed', channelId, tempId });
+      });
     },
-    [api, me, onApiError],
+    [enqueueOp, onApiError, pendingSpawnFromPayload],
   );
 
   const send = useCallback(
@@ -620,7 +756,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           return;
         }
       }
-      const clientMsgId = randomUUID();
+      const clientMsgId = randomId();
       const createdAt = new Date().toISOString();
       const message: ChatMessage = {
         id: null,
@@ -637,41 +773,24 @@ export function ChatProvider({ session, children }: { session: Session; children
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
       dispatch({ type: 'send-pending', channelId, message });
-      api
-        .postMessage({
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'msg.send',
+        payload: {
+          clientMsgId,
           channelId,
           text,
-          clientMsgId,
           threadRootEventId,
-          attachments: attachments?.map((a) => a.id),
-        })
-        .then(({ event }) => {
-          dispatch({ type: 'server-event', event });
-          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-        })
-        .catch((err) => {
-          if (isNetworkFailure(err)) {
-            void eventCache
-              .enqueueOutbox(
-                outboxMessageFromSend({
-                  clientMsgId,
-                  channelId,
-                  text,
-                  threadRootEventId,
-                  attachments,
-                  createdAt,
-                }),
-              )
-              .catch((cacheErr: unknown) => {
-                console.warn('failed to queue offline message', cacheErr);
-              });
-            return;
-          }
-          onApiError(err);
-          dispatch({ type: 'send-failed', channelId, clientMsgId });
-        });
+          attachments,
+          createdAt,
+        },
+      }).catch((err: unknown) => {
+        onApiError(err);
+        dispatch({ type: 'send-failed', channelId, clientMsgId });
+        Alert.alert('Action failed', "Couldn't queue the message.");
+      });
     },
-    [api, me, onApiError, spawnSession],
+    [enqueueOp, me, onApiError, spawnSession],
   );
 
   const retry = useCallback(
@@ -698,42 +817,81 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const editMessage = useCallback(
-    (m: ChatMessage, text: string): Promise<void> =>
-      api
-        .editMessage(m.id!, text)
-        .then(({ event }) => {
-          dispatch({ type: 'server-event', event });
-          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-        })
-        .catch((err) => reportActionError(err, "Couldn't save the edit.")),
-    [api, reportActionError],
+    async (m: ChatMessage, text: string): Promise<void> => {
+      if (m.id == null) return;
+      const opId = randomId();
+      dispatch({
+        type: 'edit-overlay-pending',
+        channelId: m.channelId,
+        opId,
+        targetEventId: m.id,
+        text,
+      });
+      try {
+        await enqueueOp({
+          opId,
+          opType: 'msg.edit',
+          payload: { channelId: m.channelId, eventId: m.id, text },
+        });
+      } catch (err) {
+        dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
+        reportActionError(err, "Couldn't queue the edit.");
+      }
+    },
+    [enqueueOp, reportActionError],
   );
 
   const deleteMessage = useCallback(
-    (m: ChatMessage): Promise<void> =>
-      api
-        .deleteMessage(m.id!)
-        .then(({ event }) => {
-          dispatch({ type: 'server-event', event });
-          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-        })
-        .catch((err) => reportActionError(err, "Couldn't delete the message.")),
-    [api, reportActionError],
+    async (m: ChatMessage): Promise<void> => {
+      if (m.id == null) return;
+      const opId = randomId();
+      dispatch({
+        type: 'delete-overlay-pending',
+        channelId: m.channelId,
+        opId,
+        targetEventId: m.id,
+      });
+      try {
+        await enqueueOp({
+          opId,
+          opType: 'msg.delete',
+          payload: { channelId: m.channelId, eventId: m.id },
+        });
+      } catch (err) {
+        dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
+        reportActionError(err, "Couldn't queue the delete.");
+      }
+    },
+    [enqueueOp, reportActionError],
   );
 
   const react = useCallback(
-    (m: ChatMessage, emoji: string): Promise<void> => {
+    async (m: ChatMessage, emoji: string): Promise<void> => {
+      if (m.id == null) return;
       const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
-      return api
-        .setReaction(m.id!, emoji, mine ? 'remove' : 'add')
-        .then(({ event }) => {
-          if (!event) return;
-          dispatch({ type: 'server-event', event });
-          if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
-        })
-        .catch((err) => reportActionError(err, "Couldn't update the reaction."));
+      const action = mine ? 'remove' : 'add';
+      const opId = randomId();
+      dispatch({
+        type: 'reaction-overlay-pending',
+        channelId: m.channelId,
+        opId,
+        targetEventId: m.id,
+        emoji,
+        userId: me.id,
+        action,
+      });
+      try {
+        await enqueueOp({
+          opId,
+          opType: 'reaction.set',
+          payload: { channelId: m.channelId, eventId: m.id, emoji, action, userId: me.id },
+        });
+      } catch (err) {
+        dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
+        reportActionError(err, "Couldn't queue the reaction.");
+      }
     },
-    [api, me.id, reportActionError],
+    [enqueueOp, me.id, reportActionError],
   );
 
   const createChannel = useCallback(
@@ -765,26 +923,31 @@ export function ChatProvider({ session, children }: { session: Session; children
   const addChannelMember = useCallback(
     async (channelId: string, userId: string) => {
       try {
-        await api.addChannelMember(channelId, userId);
+        await enqueueOp({
+          opId: randomId(),
+          opType: 'channel.join',
+          payload: { channelId, userId },
+        });
       } catch (err) {
-        reportActionError(err, "Couldn't add the person.");
+        reportActionError(err, "Couldn't queue the invite.");
         throw err;
       }
     },
-    [api, reportActionError],
+    [enqueueOp, reportActionError],
   );
 
   const leaveMembership = useCallback(
     async (channelId: string) => {
-      // Confirm the leave landed before dropping the channel locally, so a
-      // failure doesn't make the UI lie about having left.
-      await api.leaveChannelMembership(channelId).catch((err) => {
-        reportActionError(err, "Couldn't leave the channel.");
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'channel.leave',
+        payload: { channelId, userId: me.id },
+      }).catch((err) => {
+        reportActionError(err, "Couldn't queue the channel leave.");
         throw err;
       });
-      dispatch({ type: 'channel-removed', channelId });
     },
-    [api, reportActionError],
+    [enqueueOp, me.id, reportActionError],
   );
 
   const loadMentionUsers = useCallback(() => {
@@ -801,21 +964,35 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const setMute = useCallback(
     (channelId: string, muted: boolean) => {
+      const previousMuted = stateRef.current.channels.find((c) => c.id === channelId)?.muted === true;
       dispatch({ type: 'mute-changed', channelId, muted });
       cacheMute(channelId, muted);
-      api
-        .setMute(channelId, muted)
-        .then((res) => {
-          dispatch({ type: 'mute-changed', channelId, muted: res.muted });
-          cacheMute(channelId, res.muted);
-        })
-        .catch((err) => {
-          onApiError(err);
-          dispatch({ type: 'mute-changed', channelId, muted: !muted });
-          cacheMute(channelId, !muted);
-        });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'mute.set',
+        payload: { channelId, muted, previousMuted },
+      }).catch((err: unknown) => {
+        onApiError(err);
+        dispatch({ type: 'mute-changed', channelId, muted: previousMuted });
+        cacheMute(channelId, previousMuted);
+      });
     },
-    [api, cacheMute, onApiError],
+    [cacheMute, enqueueOp, onApiError],
+  );
+
+  const answerSessionQuestion = useCallback(
+    async (
+      sessionId: string,
+      questionId: string,
+      answers: Record<string, { answers: string[] }>,
+    ) => {
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.answer',
+        payload: { sessionId, questionId, answers },
+      });
+    },
+    [enqueueOp],
   );
 
   const upsertSession = useCallback((agentSession: AgentSession) => {
@@ -955,6 +1132,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       editMessage,
       deleteMessage,
       react,
+      answerSessionQuestion,
       createChannel,
       startDm,
       channelMembers,
@@ -993,6 +1171,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       editMessage,
       deleteMessage,
       react,
+      answerSessionQuestion,
       createChannel,
       startDm,
       channelMembers,

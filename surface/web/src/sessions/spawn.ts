@@ -1,18 +1,18 @@
-// Composer grammar: "@agent <task>" spawns a session instead of posting a
-// message. Optimistic card + POST /api/sessions reconciliation.
+// Composer grammar helpers: "@agent <task>" routes to a queued session spawn
+// instead of a plain message.
 
 import type { AppAction } from '@atrium/surface-client';
-import type { ChatMessage, UserRef } from '@atrium/surface-client';
+import type { ChatMessage, SessionSpawnPayload, UserRef } from '@atrium/surface-client';
 export { AGENT_PREFIX, looksLikeAgentCommand, parseAgentTask } from '@atrium/surface-client';
 import { randomId, parseAgentTask } from '@atrium/surface-client';
-import { sessionsApi } from './api';
-import { PENDING_SESSION_PREFIX, sessionFromWire, type Session } from './types';
+import { PENDING_SESSION_PREFIX, type Session } from './types';
 
 export interface SpawnContext {
   channelId: string;
   threadRootEventId?: number;
   me: UserRef;
   dispatch: (action: AppAction) => void;
+  enqueueSpawn: (payload: SessionSpawnPayload) => void;
 }
 
 /**
@@ -27,7 +27,7 @@ export function trySpawnFromComposer(text: string, ctx: SpawnContext): boolean {
 }
 
 export function spawnSession(task: string, ctx: SpawnContext): void {
-  const { channelId, threadRootEventId, me, dispatch } = ctx;
+  const { channelId, threadRootEventId, me, dispatch, enqueueSpawn } = ctx;
   const tempId = `${PENDING_SESSION_PREFIX}${randomId()}`;
   const now = new Date().toISOString();
 
@@ -66,11 +66,12 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
     sessionId: tempId,
   };
   dispatch({ type: 'session-spawn-pending', channelId, message: row, session: optimistic });
-
-  sessionsApi
-    .create({ channelId, threadRootEventId, task, clientSpawnId: tempId })
-    .then(({ session }) =>
-      dispatch({ type: 'session-created', channelId, tempId, session: sessionFromWire(session) }),
-    )
-    .catch(() => dispatch({ type: 'session-spawn-failed', channelId, tempId }));
+  enqueueSpawn({
+    channelId,
+    task,
+    clientSpawnId: tempId,
+    threadRootEventId,
+    harness: 'claude-code',
+    createdAt: now,
+  });
 }

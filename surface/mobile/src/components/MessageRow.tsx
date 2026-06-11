@@ -387,7 +387,9 @@ export const MessageRow = memo(function MessageRow({
           </View>
         )}
         {body}
-        {m.edited && !tombstone ? (
+        {m.pendingEdit && !tombstone ? (
+          <Text style={{ color: colors.warning, fontSize: font.xs }}>(saving edit)</Text>
+        ) : m.edited && !tombstone ? (
           <Text style={{ color: colors.textFaint, fontSize: font.xs }}>(edited)</Text>
         ) : null}
         {failed && (
