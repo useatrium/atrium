@@ -102,7 +102,7 @@ interface SessionListRow extends SessionRow {
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
 
 // Idle window before a terminal session's sandbox assignment is released.
-const RELEASE_IDLE_MS = Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
+const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
 
 export class SessionRuns {
   private readonly centaur: CentaurClient;
@@ -393,6 +393,14 @@ export class SessionRuns {
 
   async resumeActiveSessions(): Promise<void> {
     if (!this.autoResume) return;
+    const terminal = await this.pool.query<Pick<SessionRow, 'id'>>(
+      `SELECT id FROM sessions
+       WHERE status IN ('completed', 'failed', 'cancelled')
+         AND assignment_generation IS NOT NULL
+       ORDER BY completed_at ASC NULLS LAST, created_at ASC`,
+    );
+    for (const row of terminal.rows) this.scheduleRelease(row.id);
+
     const res = await this.pool.query<SessionRow>(
       `SELECT * FROM sessions
        WHERE status NOT IN ('completed', 'failed', 'cancelled')
@@ -578,7 +586,7 @@ export class SessionRuns {
     const timer = setTimeout(() => {
       this.releaseTimers.delete(id);
       void this.releaseAssignment(id);
-    }, RELEASE_IDLE_MS);
+    }, releaseIdleMs());
     timer.unref?.();
     this.releaseTimers.set(id, timer);
   }
@@ -595,6 +603,7 @@ export class SessionRuns {
     try {
       const row = await this.getSessionRow(id);
       if (!row || !TERMINAL_STATUSES.has(row.status)) return;
+      if (row.assignment_generation == null) return;
       await this.centaur.release(row.centaur_thread_key, `rel-${id}-${Date.now()}`, false);
       await this.pool.query('UPDATE sessions SET assignment_generation = NULL WHERE id = $1', [id]);
     } catch (err) {
