@@ -1,0 +1,93 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME:-atrium}
+      POSTGRES_USER: ${DB_USER:-atrium}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    ports:
+      - "${DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - atrium_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-atrium}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?set MINIO_PASSWORD in .env}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
+    ports:
+      - "${MINIO_HOST_PORT:-9000}:9000"
+    volumes:
+      - atrium_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build:
+      context: ../..
+      dockerfile: surface/deploy/Dockerfile.server
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      DATABASE_URL: postgres://${DB_USER:-atrium}:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/${DB_NAME:-atrium}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT to a phone-reachable URL}
+      S3_BUCKET: ${S3_BUCKET:-atrium-files}
+      S3_ACCESS_KEY: ${MINIO_ACCESS_KEY:-atrium}
+      S3_SECRET_KEY: ${MINIO_PASSWORD:?set MINIO_PASSWORD in .env}
+      CENTAUR_BASE_URL: ${CENTAUR_BASE_URL:-http://127.0.0.1:18000}
+      CENTAUR_API_KEY: ${CENTAUR_API_KEY:-}
+      CENTAUR_HARNESS: ${CENTAUR_HARNESS:-claude-code}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PUSH_REDACT: ${PUSH_REDACT:-1}
+    ports:
+      - "${SERVER_HOST_PORT:-3001}:3001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["caddy"]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${HTTP_HOST_PORT:-80}:80"
+      - "${HTTPS_HOST_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../web/dist:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  atrium_pgdata:
+  atrium_minio:
+  caddy_data:
+  caddy_config:
