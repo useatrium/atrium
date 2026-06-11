@@ -154,3 +154,35 @@ measured over a real network.
   its channel. (Full push flow still needs the EAS dev build.)
 - Verified live in the simulator: signed-URL mint → anonymous 302, bare
   401, real image upload → header-auth render arriving over live WS.
+
+## Parallel codex-worker round — 2026-06-11
+
+Four workstreams built concurrently by Codex CLI workers in isolated
+worktrees, integrated sequentially (all merged to master, 128 tests green):
+
+- **Read cursors** (migration 010): `channel_read_cursors` + `POST
+  /api/channels/:id/read` (GREATEST upsert — only advances), per-channel
+  `lastReadEventId`/`latestEventId` in /api/channels, `{type:'read'}` WS
+  fanout to the same user's other devices, reducer cold-unread derivation +
+  `read-cursor` action, throttled mark-read glue in both clients. Reading on
+  the phone now clears the web badge and vice versa; badges survive restarts.
+  Verified live (advance / no-regress / payload).
+- **Mobile offline cache**: expo-sqlite-backed event cache (newest 300 per
+  channel) hydrates the reducer before the WS connects, so cold starts render
+  from disk and after_id catch-up only fetches the gap. Cache cleared on
+  logout. Needs an on-device pass (sqlite runtime not exercised in tests).
+- **Push hardening**: thread replies notify prior thread authors ("X replied
+  in #chan"; precedence dm > mention > thread), Expo receipts checked ~15 min
+  after send with DeviceNotRegistered pruning, `PUSH_REDACT=1` keeps message
+  bodies off Expo's servers.
+- **Rate limiting + initials**: @fastify/rate-limit (global 600/min/IP,
+  login 30/min, `rateLimit: false` escape hatch for tests) and
+  `initials('Gary (mobile)') → 'GM'` (punctuation-stripping) with tests.
+
+Audit recheck (read-only agent): all three June P1s confirmed fixed in
+8951874 — zombie SPAWNING cards, silent steer failures, permalink dead-end.
+
+Orchestration note: the codex plugin's rescue agents background their jobs
+and exit, which let the harness reap their worktrees mid-run (two jobs died,
+one had to be harvested from a /tmp git dir). Reliable pattern: `codex exec`
+driven directly in self-managed `git worktree add` checkouts.
