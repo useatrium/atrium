@@ -34,6 +34,14 @@ export default function ChannelScreen() {
   const presentCount = id ? (state.presence[id]?.length ?? 0) : 0;
   const headerHeight = useHeaderHeight();
 
+  // Kicked from a private channel (or it was deleted) while viewing it: the
+  // channel drops out of state. Leave rather than sit on a dead screen whose
+  // composer would 403 on send.
+  const channelGone = id != null && channel == null && state.channels.length > 0;
+  useEffect(() => {
+    if (channelGone && router.canGoBack()) router.back();
+  }, [channelGone]);
+
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
   const [imageTarget, setImageTarget] = useState<AttachmentMeta | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);

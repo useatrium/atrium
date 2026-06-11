@@ -9,6 +9,7 @@ import {
   addChannelMember,
   DomainError,
   canAccessChannel,
+  canAccessFile,
   createChannel,
   deleteMessage,
   editMessage,
@@ -28,7 +29,7 @@ import {
 } from './events.js';
 import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
-import { sendMessagePush } from './push.js';
+import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import type { AttachmentMeta } from './events.js';
@@ -687,6 +688,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
       return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     }
+    if (!(await canAccessFile(pool, user.id, id))) {
+      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
     const expires = Math.floor(Date.now() / 1000) + FILE_URL_TTL_S;
     const sig = fileSignature(id, expires, secret);
     return {
@@ -700,14 +704,23 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
       return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     }
-    // Either a logged-in caller (cookie or bearer header) or a valid
-    // short-lived file signature from /api/files/:id/url.
+    // Either a valid short-lived file signature (the capability was minted by
+    // someone with access via /api/files/:id/url) or a logged-in caller who
+    // can access a channel the file is attached to. The signed path is the
+    // mobile/in-app image hot path's sibling; the authed path gates on
+    // canAccessFile so a non-member can't pull a file by its id.
     const q = (req.query ?? {}) as { expires?: unknown; sig?: unknown };
     const signed =
       typeof q.sig === 'string' &&
       typeof q.expires === 'string' &&
       verifyFileSignature(id, Number(q.expires), q.sig, secret);
-    if (!signed && !requireUser(req, reply)) return;
+    if (!signed) {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      if (!(await canAccessFile(pool, user.id, id))) {
+        return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+      }
+    }
     const res = await pool.query<{
       filename: string;
       content_type: string;
@@ -835,8 +848,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     await sessionRuns.streamCentaurEvents(session, user.id, afterEventId, reply.raw, abort.signal);
   });
 
-  app.post('/api/sessions/:id/messages', async (req, reply) => {
+  // Every session sub-resource is channel-access gated (404, like
+  // getSessionForUser) so a guessed session id in a private/DM channel can't
+  // be steered, seat-hijacked, or cancelled by a non-member.
+  async function requireSessionAccess(
+    req: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<UserRef | null> {
     const user = requireUser(req, reply);
+    if (!user) return null;
+    const { id } = req.params as { id: string };
+    if (!(await sessionRuns.userCanAccessSession(id, user.id))) {
+      reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+      return null;
+    }
+    return user;
+  }
+
+  app.post('/api/sessions/:id/messages', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { text?: string };
@@ -852,7 +882,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.post('/api/sessions/:id/seat/request', async (req, reply) => {
-    const user = requireUser(req, reply);
+    const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     await sessionRuns.requestSeat(id, user.id);
@@ -860,7 +890,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.post('/api/sessions/:id/seat/grant', async (req, reply) => {
-    const user = requireUser(req, reply);
+    const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { userId?: string };
@@ -872,7 +902,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.post('/api/sessions/:id/seat/take', async (req, reply) => {
-    const user = requireUser(req, reply);
+    const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     await sessionRuns.takeSeat(id, user.id);
@@ -880,7 +910,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.post('/api/sessions/:id/cancel', async (req, reply) => {
-    const user = requireUser(req, reply);
+    const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     await sessionRuns.cancelSession(id, user.id);
@@ -952,14 +982,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           const ids = msg.channelIds
             .filter((v): v is string => typeof v === 'string')
             .slice(0, 500);
-          // DM channels are member-only: drop ids the user can't access so
-          // fanout/presence can trust subscriptions.
+          // Member-only channels (and session: presence keys) drop ids the
+          // user can't access so fanout/presence can trust subscriptions. A
+          // session: key is gated on the session's channel — otherwise a
+          // non-member could appear as a watcher of a foreign private session.
           void (async () => {
             const allowed: string[] = [];
             for (const id of ids) {
-              if (id.startsWith('session:') || (await canAccessChannel(pool, user.id, id))) {
-                allowed.push(id);
-              }
+              const ok = id.startsWith('session:')
+                ? await sessionRuns.userCanAccessSession(id.slice('session:'.length), user.id)
+                : await canAccessChannel(pool, user.id, id);
+              if (ok) allowed.push(id);
             }
             hub.subscribe(c, allowed);
           })().catch(() => {});
@@ -1022,6 +1055,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     await sessionRuns.resumeActiveSessions();
   });
   app.addHook('onClose', async () => {
+    clearReceiptTimers();
     await sessionRuns.close();
   });
 

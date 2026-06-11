@@ -633,6 +633,14 @@ export class SessionRuns {
     return res.rows[0] ?? null;
   }
 
+  /** True iff the user may see this session (its channel is public or they're
+   *  a member). Seat/cancel ops gate on this so a guessed session id in a
+   *  private/DM channel can't be hijacked or cancelled by an outsider. */
+  async userCanAccessSession(id: string, userId: string): Promise<boolean> {
+    const row = await this.getSessionRow(id);
+    return row != null && canAccessChannel(this.pool, userId, row.channel_id);
+  }
+
   private async requireDriver(id: string, userId: string): Promise<SessionRow> {
     const row = await this.getSessionRow(id);
     if (!row) {

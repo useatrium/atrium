@@ -757,6 +757,38 @@ export async function canAccessChannel(
   return row.kind === 'public' || row.member;
 }
 
+/**
+ * May this user fetch this file? Files are uploaded before they're attached,
+ * so the uploader always can; otherwise access follows the channel(s) the file
+ * is attached to (so a member who left a private channel can no longer pull
+ * its attachments). File ids are unguessable UUIDv4s, so this is defense in
+ * depth against a leaked/retained id, not the primary boundary.
+ */
+export async function canAccessFile(pool: Db, userId: string, fileId: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(fileId)) return false;
+  // Cast columns to text (not the params) so $1/$2 stay unambiguously text —
+  // casting a param to ::uuid makes Postgres infer it as uuid everywhere,
+  // which then breaks the text `a->>'id' = $1` comparison.
+  const res = await pool.query<{ ok: boolean }>(
+    `SELECT (
+       EXISTS (SELECT 1 FROM files f WHERE f.id::text = $1 AND f.uploader_id::text = $2)
+       OR EXISTS (
+         SELECT 1 FROM events e
+         JOIN channels c ON c.id = e.channel_id
+         WHERE e.type = 'message.posted'
+           AND (c.kind = 'public'
+                OR EXISTS (SELECT 1 FROM channel_members m
+                           WHERE m.channel_id = c.id AND m.user_id::text = $2))
+           AND jsonb_typeof(e.payload->'attachments') = 'array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'attachments') a
+                       WHERE a->>'id' = $1)
+       )
+     ) AS ok`,
+    [fileId, userId],
+  );
+  return res.rows[0]?.ok === true;
+}
+
 export async function listUsers(pool: Db): Promise<UserRef[]> {
   const res = await pool.query<{ id: string; handle: string; display_name: string }>(
     'SELECT id, handle, display_name FROM users ORDER BY handle ASC',

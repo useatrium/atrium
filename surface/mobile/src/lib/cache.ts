@@ -77,6 +77,10 @@ export function createEventCache(
   let channels: Channel[] | null = null;
   let timelines: Record<string, CachedTimeline> = {};
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  // After clearCache (logout / 401) the singleton must reject late writes —
+  // an in-flight outbox flush or WS event resolving after the wipe would
+  // otherwise persist the previous user's data for the next login to hydrate.
+  let invalidated = false;
 
   const clearTimer = (channelId: string) => {
     const timer = timers.get(channelId);
@@ -93,6 +97,7 @@ export function createEventCache(
 
   const cache: EventCache = {
     loadSnapshot: async () => {
+      invalidated = false; // a fresh session re-arms writes
       const snapshot = await storage.loadSnapshot();
       channels = snapshot.channels;
       timelines = Object.fromEntries(
@@ -105,11 +110,13 @@ export function createEventCache(
     },
 
     saveChannels: async (nextChannels) => {
+      if (invalidated) return;
       channels = nextChannels;
       await storage.saveChannels(nextChannels);
     },
 
     saveTimeline: async (channelId, events, hasMore) => {
+      if (invalidated) return;
       const timeline = mergeEvents(timelines[channelId], events, hasMore);
       timelines = { ...timelines, [channelId]: timeline };
       clearTimer(channelId);
@@ -117,7 +124,7 @@ export function createEventCache(
     },
 
     enqueueEvents: (channelId, events) => {
-      if (events.length === 0) return;
+      if (invalidated || events.length === 0) return;
       timelines = { ...timelines, [channelId]: mergeEvents(timelines[channelId], events) };
       clearTimer(channelId);
       timers.set(
@@ -147,6 +154,7 @@ export function createEventCache(
     },
 
     clearCache: async () => {
+      invalidated = true; // reject any write that resolves after this point
       for (const channelId of timers.keys()) clearTimer(channelId);
       channels = null;
       timelines = {};
