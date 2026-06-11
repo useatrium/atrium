@@ -100,6 +100,8 @@ interface SessionRow {
   centaur_spawn_id: string | null;
   centaur_execute_attempt: number;
   centaur_execute_id: string | null;
+  centaur_message_attempt: number;
+  centaur_message_id: string | null;
   pending_question: unknown | null;
   last_event_id: number;
   result_text: string | null;
@@ -325,7 +327,15 @@ export class SessionRuns {
       throw new DomainError(409, 'execution_not_running', 'session has no running execution');
     }
 
-    await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+    try {
+      await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+    } catch (err) {
+      if (isCentaurCode(err, 'QUESTION_NOT_PENDING')) {
+        await this.clearPendingQuestion(id, questionId, 'empty');
+        throw new DomainError(409, 'question_not_pending', 'question is not pending');
+      }
+      throw err;
+    }
 
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
@@ -362,12 +372,13 @@ export class SessionRuns {
       row = spawned.row;
     }
     try {
+      const messageId = await this.reserveMessageId(row.id);
       await this.centaur.postMessage(
         row.centaur_thread_key,
         generation,
         [{ type: 'text', text }],
         { user_id: userId },
-        { messageId: `msg-${randomUUID()}` },
+        { messageId },
       );
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
@@ -388,7 +399,8 @@ export class SessionRuns {
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
            completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END,
-           centaur_execute_id = NULL
+           centaur_execute_id = NULL,
+           centaur_message_id = NULL
        WHERE id = $2`,
       [exec.execution_id, row.id],
     );
@@ -657,7 +669,7 @@ export class SessionRuns {
         payload: {
           sessionId: id,
           questionId: pending.questionId,
-          questions: summarizeQuestions(pending.questions),
+          questions: eventQuestions(pending.questions),
           permalink: `/s/${id}`,
         },
       });
@@ -694,21 +706,65 @@ export class SessionRuns {
   }
 
   private async updateStatus(id: string, status: SessionStatus): Promise<void> {
+    const events = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      if (!row || row.status === status || TERMINAL_STATUSES.has(row.status)) return [];
+      const pending = parsePendingQuestion(row.pending_question);
+      const terminal = TERMINAL_STATUSES.has(status);
+      const updated = await client.query<SessionRow>(
+        `UPDATE sessions
+         SET status = $1,
+             pending_question = CASE WHEN $3 THEN NULL ELSE pending_question END
+         WHERE id = $2
+         RETURNING *`,
+        [status, id, terminal],
+      );
+      const next = updated.rows[0]!;
+      const statusEvent = await appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.status_changed',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, status },
+      });
+      if (!terminal || !pending) return [statusEvent];
+      const resolvedEvent = await appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_resolved',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, questionId: pending.questionId, reason: 'cancelled' },
+      });
+      return [statusEvent, resolvedEvent];
+    });
+    for (const event of events) this.hub.publishEvent(event);
+  }
+
+  private async clearPendingQuestion(
+    id: string,
+    questionId: string,
+    reason: 'cancelled' | 'empty',
+  ): Promise<void> {
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];
-      if (!row || row.status === status || TERMINAL_STATUSES.has(row.status)) return null;
+      const pending = row ? parsePendingQuestion(row.pending_question) : null;
+      if (!row || !pending || pending.questionId !== questionId) return null;
       const updated = await client.query<SessionRow>(
-        'UPDATE sessions SET status = $1 WHERE id = $2 RETURNING *',
-        [status, id],
+        'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
+        [id],
       );
+      const next = updated.rows[0]!;
       return appendEvent(client, {
-        workspaceId: updated.rows[0]!.workspace_id,
-        channelId: updated.rows[0]!.channel_id,
-        threadRootEventId: updated.rows[0]!.thread_root_event_id,
-        type: 'session.status_changed',
-        actorId: updated.rows[0]!.spawned_by,
-        payload: { sessionId: id, status },
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_resolved',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, questionId, reason },
       });
     });
     if (event) this.hub.publishEvent(event);
@@ -720,10 +776,11 @@ export class SessionRuns {
     resultText: string | null,
     lastEventId: number,
   ): Promise<void> {
-    const event = await withTx(this.pool, async (client) => {
+    const events = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];
-      if (!row || TERMINAL_STATUSES.has(row.status)) return null;
+      if (!row || TERMINAL_STATUSES.has(row.status)) return [];
+      const pending = parsePendingQuestion(row.pending_question);
       const completed = await client.query<SessionRow>(
         `UPDATE sessions
          SET status = $1, result_text = $2, completed_at = now(), pending_question = NULL,
@@ -733,7 +790,7 @@ export class SessionRuns {
         [status, resultText, lastEventId, id],
       );
       const next = completed.rows[0]!;
-      return appendEvent(client, {
+      const completedEvent = await appendEvent(client, {
         workspaceId: next.workspace_id,
         channelId: next.channel_id,
         threadRootEventId: next.thread_root_event_id,
@@ -746,9 +803,19 @@ export class SessionRuns {
           permalink: `/s/${id}`,
         },
       });
+      if (!pending) return [completedEvent];
+      const resolvedEvent = await appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_resolved',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, questionId: pending.questionId, reason: 'cancelled' },
+      });
+      return [completedEvent, resolvedEvent];
     });
-    if (event) this.hub.publishEvent(event);
-    if (event) this.scheduleRelease(id);
+    for (const event of events) this.hub.publishEvent(event);
+    if (events.length > 0) this.scheduleRelease(id);
   }
 
   // Free the sandbox after an idle window: terminal sessions must not pin a
@@ -801,7 +868,8 @@ export class SessionRuns {
       `UPDATE sessions
        SET current_execution_id = COALESCE($1, current_execution_id),
            assignment_generation = $2,
-           centaur_execute_id = CASE WHEN $1::text IS NULL THEN centaur_execute_id ELSE NULL END
+           centaur_execute_id = CASE WHEN $1::text IS NULL THEN centaur_execute_id ELSE NULL END,
+           centaur_message_id = CASE WHEN $1::text IS NULL THEN centaur_message_id ELSE NULL END
        WHERE id = $3
        RETURNING *`,
       [executionId, generation, id],
@@ -868,6 +936,24 @@ export class SessionRuns {
       [id],
     );
     return res.rows[0]!.centaur_execute_id;
+  }
+
+  private async reserveMessageId(id: string): Promise<string> {
+    const res = await this.pool.query<{ centaur_message_id: string }>(
+      `UPDATE sessions
+       SET centaur_message_attempt = CASE
+             WHEN centaur_message_id IS NULL THEN centaur_message_attempt + 1
+             ELSE centaur_message_attempt
+           END,
+           centaur_message_id = COALESCE(
+             centaur_message_id,
+             'msg-' || id::text || '-a' || (centaur_message_attempt + 1)::text
+           )
+       WHERE id = $1
+       RETURNING centaur_message_id`,
+      [id],
+    );
+    return res.rows[0]!.centaur_message_id;
   }
 
   private async clearAssignment(id: string): Promise<SessionRow> {
@@ -1119,14 +1205,17 @@ function isQuestionPrompt(value: unknown): value is QuestionPrompt {
   return true;
 }
 
-function summarizeQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] {
-  return questions.map((q) => ({
+function eventQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] {
+  return questions.slice(0, 4).map((q) => ({
     id: q.id,
     header: q.header,
     question: q.question,
-    optionCount: q.options?.length ?? 0,
     isOther: q.isOther === true,
     isSecret: q.isSecret === true,
+    options: (q.options ?? []).slice(0, 8).map((option) => ({
+      label: option.label.slice(0, 120),
+      description: option.description.slice(0, 300),
+    })),
   }));
 }
 
