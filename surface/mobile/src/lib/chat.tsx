@@ -722,15 +722,18 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const react = useCallback(
-    (m: ChatMessage, emoji: string): Promise<void> =>
-      api
-        .toggleReaction(m.id!, emoji)
+    (m: ChatMessage, emoji: string): Promise<void> => {
+      const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
+      return api
+        .setReaction(m.id!, emoji, mine ? 'remove' : 'add')
         .then(({ event }) => {
+          if (!event) return;
           dispatch({ type: 'server-event', event });
           if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
         })
-        .catch((err) => reportActionError(err, "Couldn't update the reaction.")),
-    [api, reportActionError],
+        .catch((err) => reportActionError(err, "Couldn't update the reaction."));
+    },
+    [api, me.id, reportActionError],
   );
 
   const createChannel = useCallback(

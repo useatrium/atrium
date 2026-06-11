@@ -15,6 +15,7 @@ export interface CreateSessionBody {
   harness?: string;
   /** Optimistic id echoed on session.spawned for lost-response reconcile. */
   clientSpawnId?: string;
+  opId?: string;
 }
 
 export interface SessionStreamHandle {
@@ -133,17 +134,21 @@ export const sessionsApi = {
     id: string,
     questionId: string,
     answers: Record<string, { answers: string[] }>,
+    opId?: string,
   ): Promise<void> {
     if (sessionsMock) return sessionsMock.answerQuestion(id, questionId, answers);
     return reqAccepted(`/api/sessions/${id}/answer`, {
       method: 'POST',
-      body: JSON.stringify({ questionId, answers }),
+      body: JSON.stringify({ questionId, answers, ...(opId ? { opId } : {}) }),
     });
   },
 
-  cancel(id: string): Promise<void> {
+  cancel(id: string, opId?: string): Promise<void> {
     if (sessionsMock) return sessionsMock.cancel(id);
-    return reqAccepted(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' });
+    return reqAccepted(`/api/sessions/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify(opId ? { opId } : {}),
+    });
   },
 
   // ---- driver seat (Phase 3) ----
