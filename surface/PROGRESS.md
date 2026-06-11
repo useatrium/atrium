@@ -247,3 +247,21 @@ streaming, outbox wake-flush, sqlite cache.
   RUN ITSELF failed 401 — the restarted dev server lacks CENTAUR_API_KEY
   (Gary's normal env has it). Streaming-path live test pending the key.
 - 145 unit + 8 e2e green after review fixes.
+
+## Round 4 + reviews — 2026-06-11
+- Session browser (GET /api/sessions, web sidebar + modal, mobile screen),
+  private channels + group DMs (migration 013), mobile code-block formatting
+  (shared tokenizer), email-code auth + Google OAuth scaffold (migration 014,
+  AUTH_OPEN compat). Web now served from the prod stack via Caddy at
+  http://100.82.11.20:18080.
+- Reviews this round: my own seam pass (caught session-list private/gdm leak),
+  3 parallel self-run review agents (security/state/parity — found 7 P1s incl.
+  session seat-hijack, private-channel push leak, file ACL, cache cross-session
+  leak, ghost timelines, silent mobile failures), and a Codex pass on the
+  salvaged auth (atomic email-code redemption race, OAuth state-CSRF +
+  unverified id_token, EMAIL_MODE prod leak). All fixed + regression-tested.
+- Auth worker stalled on its e2e step (~1h); salvaged its complete-but-
+  uncommitted work, caught the compat regression it introduced (handle login
+  moved behind a collapsed dev-login panel broke the e2e selectors), fixed.
+- 172 unit + 8 e2e green; pushed (ec47ea2); prod stack rebuilt + verified over
+  Tailscale (healthz, auth methods, session list, web SPA).
