@@ -7,6 +7,7 @@ import {
   emptyTimeline,
   markFailed,
   mergeHistory,
+  resetToLatest,
   mergeThread,
   removeByClientMsgId,
   resolveSpawn,
@@ -67,6 +68,7 @@ export type AppAction =
   | { type: 'channel-removed'; channelId: string }
   | { type: 'select-channel'; channelId: string | null }
   | { type: 'history-loaded'; channelId: string; events: WireEvent[]; hasMore: boolean }
+  | { type: 'history-reset'; channelId: string; events: WireEvent[]; hasMore: boolean }
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
   | { type: 'open-thread'; rootEventId: number }
   | { type: 'close-thread' }
@@ -197,6 +199,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         foldSessionEvents(state, action.events),
         action.channelId,
         mergeHistory(timeline(state, action.channelId), action.events, {
+          hasMoreBefore: action.hasMore,
+        }),
+      );
+
+    case 'history-reset':
+      return withTimeline(
+        foldSessionEvents(state, action.events),
+        action.channelId,
+        resetToLatest(timeline(state, action.channelId), action.events, {
           hasMoreBefore: action.hasMore,
         }),
       );

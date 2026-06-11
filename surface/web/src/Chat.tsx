@@ -154,7 +154,7 @@ export function Chat({
       if (step === 'refetch-latest') {
         const latest = await api.messages(channelId, { limit: PAGE_SIZE });
         dispatch({
-          type: 'history-loaded',
+          type: 'history-reset',
           channelId,
           events: latest.events,
           hasMore: latest.hasMore,
