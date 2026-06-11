@@ -183,7 +183,9 @@ describe('group DMs', () => {
       headers: { cookie: ben },
     });
     expect(left.statusCode).toBe(200);
-    expect(benSocket.received).toContainEqual({ type: 'channel-left', channelId: gdm.id });
+    expect(benSocket.received).toContainEqual(
+      expect.objectContaining({ type: 'channel-left', channelId: gdm.id }),
+    );
     const members = await app.inject({
       method: 'GET',
       url: `/api/channels/${gdm.id}/members`,

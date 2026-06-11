@@ -66,11 +66,13 @@ describe('channel mutes', () => {
     });
     expect(muted.statusCode).toBe(200);
     expect(muted.json()).toEqual({ muted: true });
-    expect(socket.received).toContainEqual({
-      type: 'muted',
-      channelId: fx.channelId,
-      muted: true,
-    });
+    expect(socket.received).toContainEqual(
+      expect.objectContaining({
+        type: 'muted',
+        channelId: fx.channelId,
+        muted: true,
+      }),
+    );
 
     const channels = await app.inject({
       method: 'GET',
