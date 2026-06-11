@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
-import { CentaurClient, isTerminalExecutionStatus, type CentaurEventFrame } from '@atrium/centaur-client';
+import {
+  CentaurApiError,
+  CentaurClient,
+  isTerminalExecutionStatus,
+  type CentaurEventFrame,
+} from '@atrium/centaur-client';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -76,6 +81,10 @@ interface SessionRow {
   driver_id: string | null;
   current_execution_id: string | null;
   assignment_generation: number | null;
+  centaur_spawn_attempt: number;
+  centaur_spawn_id: string | null;
+  centaur_execute_attempt: number;
+  centaur_execute_id: string | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -281,24 +290,43 @@ export class SessionRuns {
   async postUserMessage(id: string, userId: string, text: string): Promise<void> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriver(id, userId);
+    await this.postUserMessageOnce(row, userId, text, true);
+    this.startTailer(id);
+  }
+
+  private async postUserMessageOnce(row: SessionRow, userId: string, text: string, allowStaleRetry: boolean): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
-      const spawned = await this.centaur.spawn(row.centaur_thread_key, row.harness);
+      const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
       generation = spawned.assignment_generation;
-      await this.pool.query('UPDATE sessions SET assignment_generation = $1 WHERE id = $2', [generation, id]);
+      row = spawned.row;
     }
-    await this.centaur.postMessage(row.centaur_thread_key, generation, [{ type: 'text', text }], {
-      user_id: userId,
-    });
-    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness);
+    try {
+      await this.centaur.postMessage(
+        row.centaur_thread_key,
+        generation,
+        [{ type: 'text', text }],
+        { user_id: userId },
+        { messageId: `msg-${randomUUID()}` },
+      );
+    } catch (err) {
+      if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
+        const refreshed = await this.clearAssignment(row.id);
+        await this.postUserMessageOnce(refreshed, userId, text, false);
+        return;
+      }
+      throw err;
+    }
+    const executeId = await this.reserveExecuteId(row.id);
+    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
     await this.pool.query(
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
-           completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END
+           completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END,
+           centaur_execute_id = NULL
        WHERE id = $2`,
-      [exec.execution_id, id],
+      [exec.execution_id, row.id],
     );
-    this.startTailer(id);
   }
 
   async cancelSession(id: string, userId: string): Promise<void> {
@@ -433,17 +461,21 @@ export class SessionRuns {
       if (!row) return;
       let generation = row.assignment_generation;
       if (generation == null) {
-        const spawned = await this.centaur.spawn(row.centaur_thread_key, row.harness);
+        const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
         generation = spawned.assignment_generation;
-        if (generation == null) throw new Error('centaur spawn missing assignment_generation');
-        row = await this.updateExecution(id, null, generation);
+        row = spawned.row;
       }
       if (task != null) {
-        await this.centaur.postMessage(row.centaur_thread_key, generation, [{ type: 'text', text: task }], {
-          user_id: row.spawned_by,
-        });
+        await this.centaur.postMessage(
+          row.centaur_thread_key,
+          generation,
+          [{ type: 'text', text: task }],
+          { user_id: row.spawned_by },
+          { messageId: `msg-${id}-initial` },
+        );
       }
-      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness);
+      const executeId = await this.reserveExecuteId(id);
+      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
       await this.updateExecution(id, exec.execution_id, generation);
       this.startTailer(id);
     } catch (err) {
@@ -626,10 +658,84 @@ export class SessionRuns {
     const res = await this.pool.query<SessionRow>(
       `UPDATE sessions
        SET current_execution_id = COALESCE($1, current_execution_id),
-           assignment_generation = $2
+           assignment_generation = $2,
+           centaur_execute_id = CASE WHEN $1::text IS NULL THEN centaur_execute_id ELSE NULL END
        WHERE id = $3
        RETURNING *`,
       [executionId, generation, id],
+    );
+    return res.rows[0]!;
+  }
+
+  private async spawnAssignment(
+    id: string,
+    threadKey: string,
+    harness: string,
+  ): Promise<{ row: SessionRow; assignment_generation: number }> {
+    const spawnId = await this.reserveSpawnId(id);
+    const spawned = await this.centaur.spawn(threadKey, harness, { spawnId });
+    const generation = spawned.assignment_generation;
+    if (generation == null) throw new Error('centaur spawn missing assignment_generation');
+    const row = await this.persistSpawnedAssignment(id, generation);
+    return { row, assignment_generation: generation };
+  }
+
+  private async reserveSpawnId(id: string): Promise<string> {
+    const res = await this.pool.query<{ centaur_spawn_id: string }>(
+      `UPDATE sessions
+       SET centaur_spawn_attempt = CASE
+             WHEN centaur_spawn_id IS NULL THEN centaur_spawn_attempt + 1
+             ELSE centaur_spawn_attempt
+           END,
+           centaur_spawn_id = COALESCE(
+             centaur_spawn_id,
+             'spawn-' || id::text || '-a' || (centaur_spawn_attempt + 1)::text
+           )
+       WHERE id = $1
+       RETURNING centaur_spawn_id`,
+      [id],
+    );
+    return res.rows[0]!.centaur_spawn_id;
+  }
+
+  private async persistSpawnedAssignment(id: string, generation: number): Promise<SessionRow> {
+    const res = await this.pool.query<SessionRow>(
+      `UPDATE sessions
+       SET assignment_generation = $1,
+           centaur_spawn_id = NULL
+       WHERE id = $2
+       RETURNING *`,
+      [generation, id],
+    );
+    return res.rows[0]!;
+  }
+
+  private async reserveExecuteId(id: string): Promise<string> {
+    const res = await this.pool.query<{ centaur_execute_id: string }>(
+      `UPDATE sessions
+       SET centaur_execute_attempt = CASE
+             WHEN centaur_execute_id IS NULL THEN centaur_execute_attempt + 1
+             ELSE centaur_execute_attempt
+           END,
+           centaur_execute_id = COALESCE(
+             centaur_execute_id,
+             'exec-' || id::text || '-a' || (centaur_execute_attempt + 1)::text
+           )
+       WHERE id = $1
+       RETURNING centaur_execute_id`,
+      [id],
+    );
+    return res.rows[0]!.centaur_execute_id;
+  }
+
+  private async clearAssignment(id: string): Promise<SessionRow> {
+    const res = await this.pool.query<SessionRow>(
+      `UPDATE sessions
+       SET assignment_generation = NULL,
+           centaur_spawn_id = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [id],
     );
     return res.rows[0]!;
   }
@@ -772,6 +878,10 @@ function normalizeStatus(status: string): SessionStatus {
   if (status === 'queued' || status === 'running') return status;
   if (status === 'failed' || status === 'failed_permanent') return 'failed';
   return 'running';
+}
+
+function isCentaurCode(err: unknown, code: string): boolean {
+  return err instanceof CentaurApiError && err.code === code;
 }
 
 function toJson(
