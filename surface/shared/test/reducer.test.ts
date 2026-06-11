@@ -3,6 +3,8 @@ import {
   addPending,
   applyEvent,
   appReducer,
+  DEFAULT_PREFS,
+  dispatchSyncResponse,
   emptyTimeline,
   initialAppState,
   markFailed,
@@ -11,6 +13,8 @@ import {
   nextCatchUpStep,
   resetToLatest,
   type ChatMessage,
+  type Session,
+  type SyncResponse,
   type WireEvent,
 } from '../src/index';
 
@@ -603,5 +607,121 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     state = appReducer(state, { type: 'read-cursor', channelId: CH, lastReadEventId: 4 });
     expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
     expect(state.unread[CH]).toBe(false);
+  });
+});
+
+describe('unified sync application', () => {
+  it('applies events and state snapshot through existing actions', () => {
+    let state = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+          latestEventId: 5,
+          lastReadEventId: 5,
+        },
+      ],
+    });
+    state = appReducer(state, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(5, 'already loaded')],
+      hasMore: false,
+    });
+    let prefs = DEFAULT_PREFS;
+    const response: SyncResponse = {
+      events: [wire(9, 'synced row', { author: bob })],
+      nextCursor: 12,
+      limited: false,
+      state: {
+        readCursors: { [CH]: 9 },
+        mutes: ['ch-muted'],
+        prefs: { ...DEFAULT_PREFS, theme: 'dark' },
+        channels: [
+          {
+            id: CH,
+            workspaceId: 'ws-1',
+            name: 'general',
+            createdAt: new Date(0).toISOString(),
+            kind: 'public',
+            latestEventId: 9,
+            lastReadEventId: 9,
+          },
+          {
+            id: 'ch-muted',
+            workspaceId: 'ws-1',
+            name: 'muted',
+            createdAt: new Date(0).toISOString(),
+            kind: 'public',
+            muted: true,
+          },
+        ],
+      },
+    };
+
+    dispatchSyncResponse((action) => {
+      state = appReducer(state, action);
+    }, response, { onPrefs: (next) => { prefs = next; } });
+
+    expect(state.timelines[CH]!.main.map((m) => m.text)).toEqual([
+      'already loaded',
+      'synced row',
+    ]);
+    expect(state.channels.map((channel) => channel.id)).toEqual([CH, 'ch-muted']);
+    expect(state.channels.find((channel) => channel.id === CH)!.lastReadEventId).toBe(9);
+    expect(state.channels.find((channel) => channel.id === 'ch-muted')!.muted).toBe(true);
+    expect(state.unread[CH]).toBe(false);
+    expect(state.syncCursor).toBe(12);
+    expect(prefs.theme).toBe('dark');
+  });
+
+  it('folds session events even when the channel timeline is not loaded', () => {
+    const session: Session = {
+      id: 'sess-1',
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      title: 'open pane',
+      status: 'running',
+      harness: 'claude-code',
+      spawnedBy: alice.id,
+      driverId: alice.id,
+      pendingSeatRequests: [],
+      pendingQuestion: null,
+      seatEvents: [],
+      costUsd: 0,
+      resultText: null,
+      createdAt: new Date(0).toISOString(),
+      completedAt: null,
+      lastEventId: 1,
+      permalink: '/s/sess-1',
+    };
+    let state = appReducer(initialAppState, { type: 'session-upsert', session });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        id: 11,
+        workspaceId: 'ws-1',
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'session.question_requested',
+        actorId: alice.id,
+        payload: {
+          sessionId: session.id,
+          questionId: 'q-1',
+          questions: [{ id: 'choice', header: 'Pick', question: 'Choose?' }],
+        },
+        createdAt: new Date(11_000).toISOString(),
+        author: alice,
+      },
+    });
+
+    expect(state.timelines[CH]).toBeUndefined();
+    expect(state.sessions[session.id]!.pendingQuestion?.questionId).toBe('q-1');
+    expect(state.syncCursor).toBe(11);
   });
 });

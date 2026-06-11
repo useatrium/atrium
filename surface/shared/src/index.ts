@@ -8,6 +8,7 @@ export * from './spawnTrigger';
 export * from './mentions';
 export * from './formatting';
 export * from './api';
+export * from './sync';
 export * from './opQueue';
 export * from './catchup';
 export * from './prefs';
