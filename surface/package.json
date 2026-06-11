@@ -5,6 +5,7 @@
   "description": "Atrium Phase 1 — Places: minimal multiplayer team chat",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"pnpm --filter @atrium/server dev\" \"pnpm --filter @atrium/web dev\"",
+    "e2e": "pnpm --filter @atrium/e2e e2e",
     "migrate": "pnpm --filter @atrium/server migrate",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
