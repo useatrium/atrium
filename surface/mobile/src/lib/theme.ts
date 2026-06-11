@@ -29,9 +29,11 @@ const schemeTokens = {
     borderSoft: '#1c1c20',
     text: '#f4f4f5',
     textSecondary: '#a1a1aa',
-    textMuted: '#71717a',
+    // #71717a (zinc-500) is 4.1:1 on bg — below AA; matches web's fg-muted bump.
+    textMuted: '#8f8f98',
     textFaint: '#52525b',
-    mention: '#ef4444',
+    // red-500 leaves the white "@" at 3.85:1; red-600 clears 4.5 (parity with web).
+    mention: '#dc2626',
     onMention: '#ffffff',
     danger: '#f87171',
     dangerSurface: 'rgba(127, 29, 29, 0.22)',
