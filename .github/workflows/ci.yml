@@ -75,10 +75,29 @@ jobs:
         timeout-minutes: 6
         run: pnpm -r test
 
+      # Cache the downloaded browsers so steady-state runs skip the download
+      # entirely (keyed on the pinned Playwright version).
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.49.1
+
+      # The browser download occasionally stalls after the main artifact hits
+      # 100% (secondary headless-shell/ffmpeg fetch); retry so a transient CDN
+      # hiccup doesn't fail the run. System deps install once via --with-deps.
       - name: Install Playwright Chromium
         working-directory: surface
-        timeout-minutes: 5
-        run: pnpm --filter @atrium/e2e exec playwright install --with-deps chromium
+        timeout-minutes: 12
+        run: |
+          for attempt in 1 2 3; do
+            echo "playwright install attempt $attempt"
+            if timeout 200 pnpm --filter @atrium/e2e exec playwright install --with-deps chromium; then
+              exit 0
+            fi
+            echo "attempt $attempt failed/stalled; retrying"
+          done
+          exit 1
 
       # Per-step timeout so a webServer/teardown hang is killed in 6m and
       # attributed, instead of silently eating the whole job budget.
