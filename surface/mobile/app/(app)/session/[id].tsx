@@ -21,6 +21,7 @@ import {
   isTerminalSessionStatus,
   sessionDriverId,
   sessionFromWire,
+  type QuestionPrompt,
   type Session,
   type SessionStatus,
 } from '@atrium/surface-client';
@@ -141,6 +142,118 @@ function TextBlock({ item }: { item: TextItem }) {
   );
 }
 
+function MobileQuestionBanner({
+  pending,
+  isDriver,
+  values,
+  setValue,
+  submitting,
+  onSubmit,
+}: {
+  pending: { questionId: string; questions: QuestionPrompt[] };
+  isDriver: boolean;
+  values: Record<string, string>;
+  setValue: (id: string, value: string) => void;
+  submitting: boolean;
+  onSubmit: () => void;
+}) {
+  const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: 'rgba(245, 158, 11, 0.45)',
+        backgroundColor: 'rgba(120, 53, 15, 0.22)',
+        borderRadius: radius.md,
+        padding: space.md,
+        gap: space.sm,
+      }}
+    >
+      <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '900' }}>
+        NEEDS INPUT
+      </Text>
+      {pending.questions.map((q) => (
+        <View key={q.id} style={{ gap: 6 }}>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
+            {q.header}
+          </Text>
+          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
+            {q.question}
+          </Text>
+          {q.options?.length ? (
+            <View style={{ gap: 6 }}>
+              {q.options.map((option) => {
+                const selected = values[q.id] === option.label;
+                return (
+                  <Pressable
+                    key={option.label}
+                    disabled={!isDriver || submitting}
+                    onPress={() => setValue(q.id, option.label)}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: selected ? colors.warning : colors.border,
+                      backgroundColor: selected ? 'rgba(245, 158, 11, 0.18)' : colors.bgElevated,
+                      borderRadius: radius.sm,
+                      padding: space.sm,
+                      opacity: !isDriver || submitting ? 0.6 : 1,
+                    }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
+                      {option.label}
+                    </Text>
+                    <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+                      {option.description}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <TextInput
+              value={values[q.id] ?? ''}
+              onChangeText={(value) => setValue(q.id, value)}
+              editable={isDriver && !submitting}
+              secureTextEntry={q.isSecret === true}
+              placeholder="Answer"
+              placeholderTextColor={colors.textFaint}
+              style={{
+                borderRadius: radius.md,
+                backgroundColor: colors.bgInput,
+                color: colors.text,
+                paddingHorizontal: space.md,
+                paddingVertical: space.sm,
+                fontSize: font.md,
+              }}
+            />
+          )}
+        </View>
+      ))}
+      {isDriver ? (
+        <Pressable
+          onPress={onSubmit}
+          disabled={!complete || submitting}
+          style={{
+            alignSelf: 'flex-start',
+            borderRadius: radius.md,
+            backgroundColor: complete ? colors.warning : colors.bgElevated,
+            paddingHorizontal: space.md,
+            paddingVertical: space.sm,
+            opacity: submitting ? 0.6 : 1,
+          }}
+        >
+          <Text style={{ color: colors.bg, fontSize: font.sm, fontWeight: '900' }}>
+            {submitting ? 'Answering...' : 'Submit answer'}
+          </Text>
+        </Pressable>
+      ) : (
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+          Waiting for the driver to answer.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
@@ -153,6 +266,9 @@ export default function SessionScreen() {
   const [loading, setLoading] = useState(false);
   const [steerText, setSteerText] = useState('');
   const [steerError, setSteerError] = useState<string | null>(null);
+  const [questionValues, setQuestionValues] = useState<Record<string, string>>({});
+  const [questionSubmitting, setQuestionSubmitting] = useState(false);
+  const [questionCleared, setQuestionCleared] = useState<string | null>(null);
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
   const scrollRef = useRef<ScrollView>(null);
   const stickRef = useRef(true);
@@ -196,6 +312,14 @@ export default function SessionScreen() {
   const canCancel = !!session && (isDriver || isSpawner) && !terminal;
   const canSteer = !!session && isDriver && !terminal;
   const elapsed = session ? formatElapsed(sessionElapsedMs(session, now)) : '';
+  const pendingQuestion =
+    session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
+
+  useEffect(() => {
+    setQuestionValues({});
+    setQuestionSubmitting(false);
+    setQuestionCleared(null);
+  }, [pendingQuestion?.questionId]);
 
   useEffect(() => {
     if (cancelAsk !== 'confirm') return;
@@ -237,6 +361,17 @@ export default function SessionScreen() {
     }
     setCancelAsk('idle');
     api.cancelSession(id).catch(() => setCancelAsk('failed'));
+  };
+
+  const answerQuestion = () => {
+    if (!id || !pendingQuestion) return;
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const q of pendingQuestion.questions) answers[q.id] = { answers: [questionValues[q.id]!.trim()] };
+    setQuestionSubmitting(true);
+    api
+      .answerSessionQuestion(id, pendingQuestion.questionId, answers)
+      .then(() => setQuestionCleared(pendingQuestion.questionId))
+      .finally(() => setQuestionSubmitting(false));
   };
 
   const headerSubtitle = useMemo(() => {
@@ -359,6 +494,19 @@ export default function SessionScreen() {
                 {resultText}
               </Text>
             </View>
+          ) : null}
+
+          {pendingQuestion && pendingQuestion.questionId !== questionCleared && !terminal ? (
+            <MobileQuestionBanner
+              pending={pendingQuestion}
+              isDriver={isDriver}
+              values={questionValues}
+              setValue={(qid, value) =>
+                setQuestionValues((prev) => ({ ...prev, [qid]: value }))
+              }
+              submitting={questionSubmitting}
+              onSubmit={answerQuestion}
+            />
           ) : null}
 
           {stream.items.length === 0 ? (

@@ -123,10 +123,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   }
 
   /** Signed session value from the request: bearer header (native) or cookie (web). */
-  function rawSession(req: FastifyRequest): string | undefined {
+function rawSession(req: FastifyRequest): string | undefined {
     const auth = req.headers.authorization;
     if (auth?.startsWith('Bearer ')) return auth.slice('Bearer '.length);
     return req.cookies[config.sessionCookie];
+  }
+
+  function isAnswerBody(value: unknown): value is Record<string, { answers: string[] }> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    for (const entry of Object.values(value as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+      const answers = (entry as { answers?: unknown }).answers;
+      if (!Array.isArray(answers) || !answers.every((answer) => typeof answer === 'string')) {
+        return false;
+      }
+    }
+    return true;
   }
 
   async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
@@ -848,6 +860,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
     await sessionRuns.postUserMessage(id, user.id, text);
+    return reply.code(202).send({ ok: true });
+  });
+
+  app.post('/api/sessions/:id/answer', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown };
+    if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
+      return reply
+        .code(400)
+        .send({ error: 'bad_request', message: 'questionId and answers are required' });
+    }
+    await sessionRuns.answerQuestion(id, user, body.questionId, body.answers);
     return reply.code(202).send({ ok: true });
   });
 

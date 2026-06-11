@@ -9,6 +9,7 @@ export type {
   SessionSeatUser,
   SeatChangeReason,
   SeatAuditEntry,
+  QuestionPrompt,
   SessionWire,
   SessionListItem,
   Session,

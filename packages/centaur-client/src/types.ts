@@ -181,6 +181,33 @@ export interface ResultObserved extends ObservationBase {
   text_chars: number;
 }
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionPrompt {
+  id: string;
+  header: string;
+  question: string;
+  isOther?: boolean;
+  isSecret?: boolean;
+  options?: QuestionOption[];
+}
+
+export interface QuestionRequested {
+  type: "question_requested";
+  question_id: string;
+  turn_id: string;
+  questions: QuestionPrompt[];
+}
+
+export interface QuestionResolved {
+  type: "question_resolved";
+  question_id: string;
+  reason: "answered" | "cancelled" | "empty";
+}
+
 export type ProjectionEvent =
   | AssistantTextObserved
   | AssistantToolUseObserved
@@ -201,7 +228,9 @@ export type CentaurEventFrame =
   | { event: "tool_result_observed"; event_id: number; data: ToolResultObserved }
   | { event: "usage_observed"; event_id: number; data: UsageObserved }
   | { event: "result_observed"; event_id: number; data: ResultObserved }
-  | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved };
+  | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved }
+  | { event: "question_requested"; event_id: number; data: QuestionRequested }
+  | { event: "question_resolved"; event_id: number; data: QuestionResolved };
 
 export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
   return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";

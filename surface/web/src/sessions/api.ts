@@ -129,6 +129,18 @@ export const sessionsApi = {
     });
   },
 
+  answerQuestion(
+    id: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ): Promise<void> {
+    if (sessionsMock) return sessionsMock.answerQuestion(id, questionId, answers);
+    return reqAccepted(`/api/sessions/${id}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ questionId, answers }),
+    });
+  },
+
   cancel(id: string): Promise<void> {
     if (sessionsMock) return sessionsMock.cancel(id);
     return reqAccepted(`/api/sessions/${id}/cancel`, { method: 'POST', body: '{}' });

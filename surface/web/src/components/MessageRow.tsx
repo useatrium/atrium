@@ -66,8 +66,10 @@ export function MessageRow({
   const deleted = m.deleted === true;
   const canThread = !inThread && m.id != null && onOpenThread && !deleted;
   const isSessionRow = m.sessionId != null && session != null;
+  const isSessionEventRow = m.sessionEventType != null;
   const canEdit =
     !isSessionRow &&
+    !isSessionEventRow &&
     !deleted &&
     m.status === 'confirmed' &&
     m.id != null &&
@@ -75,12 +77,14 @@ export function MessageRow({
     !!onEdit;
   const canDelete =
     !isSessionRow &&
+    !isSessionEventRow &&
     !deleted &&
     m.status === 'confirmed' &&
     m.id != null &&
     meId === m.author.id &&
     !!onDelete;
-  const canReact = !isSessionRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
+  const canReact =
+    !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
   const [pickerOpen, setPickerOpen] = useState(false);
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -176,7 +180,9 @@ export function MessageRow({
             </span>
           </div>
         )}
-        {isSessionRow ? (
+        {isSessionEventRow ? (
+          <SessionEventCard message={m} onOpenSession={onOpenSession} />
+        ) : isSessionRow ? (
           <SessionCard
             session={session}
             spectators={spectators}
@@ -208,7 +214,7 @@ export function MessageRow({
             {m.edited && <span className="ml-1 text-[11px] text-zinc-500">(edited)</span>}
           </div>
         )}
-        {!deleted && !isSessionRow && (m.attachments?.length ?? 0) > 0 && (
+        {!deleted && !isSessionRow && !isSessionEventRow && (m.attachments?.length ?? 0) > 0 && (
           <div className="mt-1 flex flex-wrap gap-2">
             {m.attachments!.map((a) =>
               a.contentType.startsWith('image/') ? (
@@ -250,7 +256,7 @@ export function MessageRow({
             )}
           </div>
         )}
-        {!deleted && !isSessionRow && (m.reactions?.length ?? 0) > 0 && (
+        {!deleted && !isSessionRow && !isSessionEventRow && (m.reactions?.length ?? 0) > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {m.reactions!.map((r) => {
               const mine = meId != null && r.userIds.includes(meId);
@@ -362,6 +368,64 @@ export function MessageRow({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function SessionEventCard({
+  message,
+  onOpenSession,
+}: {
+  message: ChatMessage;
+  onOpenSession?: (sessionId: string) => void;
+}) {
+  const payload = message.sessionEventPayload ?? {};
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  if (message.sessionEventType === 'question_requested') {
+    return (
+      <div className="mt-1 max-w-xl rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+          Agent needs input
+        </div>
+        <div className="mt-1 space-y-1">
+          {questions.map((q, i) => {
+            const raw = q as Record<string, unknown>;
+            return (
+              <div key={typeof raw.id === 'string' ? raw.id : i} className="text-xs text-zinc-200">
+                <span className="font-semibold text-zinc-100">
+                  {typeof raw.header === 'string' ? raw.header : 'Question'}:
+                </span>{' '}
+                {typeof raw.question === 'string' ? raw.question : 'Question requested'}
+              </div>
+            );
+          })}
+        </div>
+        {message.sessionId && (
+          <button
+            onClick={() => onOpenSession?.(message.sessionId!)}
+            className="mt-1.5 text-[11px] font-medium text-amber-200 hover:underline"
+          >
+            open pane →
+          </button>
+        )}
+      </div>
+    );
+  }
+  const label =
+    message.sessionEventType === 'question_answered'
+      ? 'Question answered'
+      : `Question ${typeof payload.reason === 'string' ? payload.reason : 'resolved'}`;
+  return (
+    <div className="mt-1 text-xs text-zinc-500">
+      {label}
+      {message.sessionId && (
+        <button
+          onClick={() => onOpenSession?.(message.sessionId!)}
+          className="ml-2 font-medium text-zinc-400 hover:text-zinc-200 hover:underline"
+        >
+          open pane
+        </button>
+      )}
     </div>
   );
 }
