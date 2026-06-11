@@ -11,8 +11,13 @@ export const config = {
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
   googleRedirectUrl: process.env.GOOGLE_REDIRECT_URL ?? '',
-  // EMAIL_MODE currently supports "log". Future deployment modes: "resend", "smtp".
-  emailMode: process.env.EMAIL_MODE ?? 'log',
+  // EMAIL_MODE: "log" (dev) or "resend" (HTTP API). EMAIL_FROM + RESEND_API_KEY
+  // required for resend. SMTP is a future branch in email.ts.
+  emailMode: ((process.env.EMAIL_MODE ?? 'log') === 'resend' ? 'resend' : 'log') as
+    | 'log'
+    | 'resend',
+  emailFrom: process.env.EMAIL_FROM ?? '',
+  resendApiKey: process.env.RESEND_API_KEY ?? '',
   maxMessageBytes: 8 * 1024,
   centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
   centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
