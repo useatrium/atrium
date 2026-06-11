@@ -1,8 +1,10 @@
 // Long-press action sheet for a message: quick reactions + reply/edit/delete.
 
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import type { ChatMessage } from '@atrium/surface-client';
 import { colors, font, radius, space } from '../lib/theme';
+import { selectionHaptic } from '../lib/haptics';
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🔥', '😢', '🚀', '🙏', '💯', '🤔'];
 
@@ -60,6 +62,7 @@ export function MessageActions({
 }: MessageActionsProps) {
   const m = message;
   const confirmed = m?.status === 'confirmed' && m.id != null;
+  const canCopy = !!m?.text.trim();
   return (
     <Modal visible={m != null} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable
@@ -90,6 +93,7 @@ export function MessageActions({
                 <Pressable
                   key={e}
                   onPress={() => {
+                    selectionHaptic();
                     onReact(m, e);
                     onClose();
                   }}
@@ -113,6 +117,15 @@ export function MessageActions({
               label="Reply in thread"
               onPress={() => {
                 onReply(m);
+                onClose();
+              }}
+            />
+          )}
+          {m && canCopy && (
+            <Action
+              label="Copy text"
+              onPress={() => {
+                void Clipboard.setStringAsync(m.text);
                 onClose();
               }}
             />

@@ -5,12 +5,14 @@ import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
   channelLabel,
   emptyTimeline,
+  type AttachmentMeta,
   type ChatMessage,
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { colors, font } from '../../../src/lib/theme';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer } from '../../../src/components/Composer';
+import { ImageViewer } from '../../../src/components/ImageViewer';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
 
@@ -33,6 +35,7 @@ export default function ChannelScreen() {
   const headerHeight = useHeaderHeight();
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
+  const [imageTarget, setImageTarget] = useState<AttachmentMeta | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
 
@@ -123,6 +126,7 @@ export default function ChannelScreen() {
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
           onOpenAttachment={openAttachment}
+          onOpenImageAttachment={setImageTarget}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
         />
         <TypingLine typing={chat.typing} />
@@ -153,6 +157,13 @@ export default function ChannelScreen() {
         onReply={openThread}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
+      />
+      <ImageViewer
+        attachment={imageTarget}
+        fileUrl={chat.fileUrl}
+        fileHeaders={chat.fileHeaders}
+        onClose={() => setImageTarget(null)}
+        onOpenExternal={(fileId) => void chat.openAttachment(fileId)}
       />
     </View>
   );

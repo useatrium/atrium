@@ -6,6 +6,7 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import {
   buildTimelineItems,
+  type AttachmentMeta,
   type ChatMessage,
   type Session,
   type TimelineItem,
@@ -32,6 +33,7 @@ export interface TimelineProps {
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
   onOpenAttachment: (fileId: string) => void;
+  onOpenImageAttachment: (attachment: AttachmentMeta) => void;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -53,6 +55,7 @@ export function Timeline({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
+  onOpenImageAttachment,
   onOpenSession,
 }: TimelineProps) {
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
@@ -65,11 +68,22 @@ export function Timeline({
     if (highlightId == null) return;
     const index = items.findIndex((it) => it.message?.id === highlightId);
     if (index < 0) return;
-    try {
-      listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-    } catch {
-      /* row recycled away — highlight still shows when reached manually */
-    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scroll = (attempt: number) => {
+      if (cancelled) return;
+      try {
+        listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      } catch {
+        /* row may not be measured yet; bounded retry below */
+      }
+      if (attempt < 3) timer = setTimeout(() => scroll(attempt + 1), 250);
+    };
+    scroll(1);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [highlightId, items]);
 
   const loadingOlder = useRef(false);
@@ -101,6 +115,7 @@ export function Timeline({
           onToggleReaction={onToggleReaction}
           onRetry={onRetry}
           onOpenAttachment={onOpenAttachment}
+          onOpenImageAttachment={onOpenImageAttachment}
           onOpenSession={onOpenSession}
         />
       );
@@ -118,6 +133,7 @@ export function Timeline({
       onToggleReaction,
       onRetry,
       onOpenAttachment,
+      onOpenImageAttachment,
       onOpenSession,
     ],
   );

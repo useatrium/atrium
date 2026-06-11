@@ -18,6 +18,7 @@ import { Image } from 'expo-image';
 import type { AttachmentMeta } from '@atrium/surface-client';
 import { colors, font, radius, space } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
+import { lightImpactHaptic } from '../lib/haptics';
 
 interface PendingAttachment {
   key: string;
@@ -177,6 +178,7 @@ export function Composer({
       return;
     }
     if (!canSend) return;
+    lightImpactHaptic();
     onSend(trimmed, ready);
     if (draftKey) draftWriter.saveNow(draftKey, '');
     setText('');

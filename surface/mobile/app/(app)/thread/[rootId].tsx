@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
-import { emptyTimeline, type ChatMessage } from '@atrium/surface-client';
+import { emptyTimeline, type AttachmentMeta, type ChatMessage } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { colors } from '../../../src/lib/theme';
 import { Composer } from '../../../src/components/Composer';
+import { ImageViewer } from '../../../src/components/ImageViewer';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
 
@@ -31,6 +32,7 @@ export default function ThreadScreen() {
   const messages = root ? [root, ...(replies ?? [])] : (replies ?? []);
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
+  const [imageTarget, setImageTarget] = useState<AttachmentMeta | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
   const draftKey =
@@ -94,6 +96,7 @@ export default function ThreadScreen() {
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
           onOpenAttachment={openAttachment}
+          onOpenImageAttachment={setImageTarget}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
         />
         <Composer
@@ -123,6 +126,13 @@ export default function ThreadScreen() {
         onReply={() => {}}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
+      />
+      <ImageViewer
+        attachment={imageTarget}
+        fileUrl={chat.fileUrl}
+        fileHeaders={chat.fileHeaders}
+        onClose={() => setImageTarget(null)}
+        onOpenExternal={(fileId) => void chat.openAttachment(fileId)}
       />
     </View>
   );
