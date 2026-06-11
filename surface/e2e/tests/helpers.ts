@@ -39,7 +39,9 @@ export async function messageId(page: Page, text: string): Promise<number> {
 }
 
 export function channelButton(page: Page, channelName: string) {
-  return page.getByRole('button', { name: new RegExp(`(^|\\s)${channelName}(\\s|$|unread)`) });
+  // Anchored at the start: each sidebar row also has a "Mute <name>" button
+  // whose accessible name would match a loose substring regex.
+  return page.getByRole('button', { name: new RegExp(`^#?\\s*${channelName}(\\s|$|unread)`) });
 }
 
 export async function openChannel(page: Page, channelName: string): Promise<void> {
