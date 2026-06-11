@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
+import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import type { Db } from './db.js';
@@ -39,6 +40,7 @@ export interface AppDeps {
   hub?: WsHub;
   sessionSecret?: string;
   sessionRuns?: SessionRunsOptions;
+  rateLimit?: false | { max?: number; loginMax?: number };
 }
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
@@ -56,12 +58,35 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     options: { maxPayload: 64 * 1024 },
   });
 
+  const rateLimit = deps.rateLimit;
+  if (rateLimit !== false) {
+    await app.register(fastifyRateLimit, {
+      max: rateLimit?.max ?? 600,
+      timeWindow: '1 minute',
+      errorResponseBuilder: (_req, context) => ({
+        statusCode: context.statusCode,
+        error: 'rate_limited',
+        message: `rate limit exceeded, retry in ${context.after}`,
+      }),
+    });
+  }
+
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof DomainError) {
       return reply.code(err.statusCode).send({ error: err.code, message: err.message });
     }
+    const error = err as { statusCode?: number; message?: unknown };
+    if (error.statusCode === 429) {
+      return reply.code(429).send({
+        error: 'rate_limited',
+        message:
+          typeof error.message === 'string' && error.message.length > 0
+            ? error.message
+            : 'rate limit exceeded',
+      });
+    }
     app.log.error(err);
-    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    const status = error.statusCode ?? 500;
     return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
 
@@ -121,46 +146,54 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Auth
   // -------------------------------------------------------------------------
 
-  app.post('/auth/login', async (req, reply) => {
-    const body = (req.body ?? {}) as { handle?: string; displayName?: string };
-    const handle = String(body.handle ?? '').trim().toLowerCase();
-    const displayName = String(body.displayName ?? '').trim();
-    if (!HANDLE_RE.test(handle)) {
-      return reply.code(400).send({
-        error: 'invalid_handle',
-        message: 'handle must be 2-32 chars: letters, digits, - or _',
+  app.post(
+    '/auth/login',
+    {
+      config: { rateLimit: rateLimit === false ? false : { max: rateLimit?.loginMax ?? 30 } },
+    },
+    async (req, reply) => {
+      const body = (req.body ?? {}) as { handle?: string; displayName?: string };
+      const handle = String(body.handle ?? '').trim().toLowerCase();
+      const displayName = String(body.displayName ?? '').trim();
+      if (!HANDLE_RE.test(handle)) {
+        return reply.code(400).send({
+          error: 'invalid_handle',
+          message: 'handle must be 2-32 chars: letters, digits, - or _',
+        });
+      }
+      if (displayName.length > 64) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_display_name', message: 'display name too long' });
+      }
+      // A blank display name means "keep what I had" for returning users —
+      // re-logins must not silently rewrite attribution across history.
+      const user = await pool.query<{ id: string; handle: string; display_name: string }>(
+        `INSERT INTO users (handle, display_name) VALUES ($1, COALESCE(NULLIF($2, ''), $1))
+         ON CONFLICT (handle) DO UPDATE SET display_name = COALESCE(NULLIF($2, ''), users.display_name)
+         RETURNING id, handle, display_name`,
+        [handle, displayName],
+      );
+      const u = user.rows[0]!;
+      // Opportunistic reaping — keeps the table from accumulating dead rows.
+      void pool.query('DELETE FROM auth_sessions WHERE expires_at < now()').catch(() => {});
+      const session = await pool.query<{ id: string }>(
+        `INSERT INTO auth_sessions (user_id, expires_at)
+         VALUES ($1, now() + interval '30 days') RETURNING id`,
+        [u.id],
+      );
+      const token = signSession(session.rows[0]!.id, secret);
+      reply.setCookie(config.sessionCookie, token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 30,
       });
-    }
-    if (displayName.length > 64) {
-      return reply.code(400).send({ error: 'invalid_display_name', message: 'display name too long' });
-    }
-    // A blank display name means "keep what I had" for returning users —
-    // re-logins must not silently rewrite attribution across history.
-    const user = await pool.query<{ id: string; handle: string; display_name: string }>(
-      `INSERT INTO users (handle, display_name) VALUES ($1, COALESCE(NULLIF($2, ''), $1))
-       ON CONFLICT (handle) DO UPDATE SET display_name = COALESCE(NULLIF($2, ''), users.display_name)
-       RETURNING id, handle, display_name`,
-      [handle, displayName],
-    );
-    const u = user.rows[0]!;
-    // Opportunistic reaping — keeps the table from accumulating dead rows.
-    void pool.query('DELETE FROM auth_sessions WHERE expires_at < now()').catch(() => {});
-    const session = await pool.query<{ id: string }>(
-      `INSERT INTO auth_sessions (user_id, expires_at)
-       VALUES ($1, now() + interval '30 days') RETURNING id`,
-      [u.id],
-    );
-    const token = signSession(session.rows[0]!.id, secret);
-    reply.setCookie(config.sessionCookie, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30,
-    });
-    // Native clients can't rely on cookies — they store the token and send it
-    // as `Authorization: Bearer` (HTTP) or `?token=` (WS upgrade).
-    return { user: { id: u.id, handle: u.handle, displayName: u.display_name }, token };
-  });
+      // Native clients can't rely on cookies — they store the token and send it
+      // as `Authorization: Bearer` (HTTP) or `?token=` (WS upgrade).
+      return { user: { id: u.id, handle: u.handle, displayName: u.display_name }, token };
+    },
+  );
 
   app.get('/auth/me', async (req, reply) => {
     const user = requireUser(req, reply);
@@ -710,14 +743,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return { ok: true };
   });
 
-  app.get('/healthz', async () => ({ ok: true }));
+  app.get('/healthz', { config: { rateLimit: false } }, async () => ({ ok: true }));
 
   // -------------------------------------------------------------------------
   // WebSocket
   // -------------------------------------------------------------------------
 
   app.register(async (instance) => {
-    instance.get('/ws', { websocket: true }, (socket, req) => {
+    instance.get('/ws', { websocket: true, config: { rateLimit: false } }, (socket, req) => {
       // Handlers must attach synchronously: clients send subscribe/focus the
       // moment the socket opens, and frames that arrive while auth is still
       // awaiting the DB would otherwise be dropped on the floor (the client
