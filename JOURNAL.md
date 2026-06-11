@@ -155,3 +155,31 @@ probe). Final run: 14/14 incl. 35ms seat handoff.
 Dev stack LEFT RUNNING for Gary: web http://127.0.0.1:5173 (login with any
 handle), server :3001, port-forward :18000. Restart recipe in this journal
 (Phase-2 entry). Cluster: kind "centaur" w/ mock LLM.
+
+## 2026-06-11 — Phase 5 sync engine SHIPPED (A–F, codex fleet, 6 merges)
+
+Charter: phase5/DESIGN.md (decisions block has Gary's four calls: full web
+parity, reactions clean break, fleet-per-phase, chaos harness as merge gate).
+All six phases merged to master in one day: A baee1d2, B d060665, C 8b85a68,
+D 9a40d44, F 0a00427, E fc04abd. Final state: 262 unit/integration tests +
+11 e2e (3 new offline flows) green.
+
+What exists now: WS frames carry per-connection seq (gap → repair); every
+mutation route is exactly-once via idempotency_keys + opId (reactions moved
+toggle→add/remove set semantics — the one breaking wire change); both clients
+run a durable typed op queue (SQLite / IndexedDB) with FIFO-per-queueKey,
+coalescing, crash recovery re-running with persisted opIds; optimistic
+edit/delete/react overlays rematerialize over base state and rebase reverts
+across concurrent foreign edits; GET /api/sync returns cursor events + full
+sideband snapshot with limited→snapshot-repair; uploads are durable ops with
+content-hash dedupe + presigned refresh, msg.send dependsOn uploads; web has
+an offline app shell (network-first SW) and cursor-after-flush durability.
+
+Review catches worth remembering: Phase A worker's catch-up fallback merged
+the latest page over stale state leaving silent unfillable timeline holes —
+the worker's own test enshrined the bug (fixed with resetToLatest; check what
+tests ASSERT, not that they exist). Two migrations are both numbered 020
+(name-tracked, both applied — do not rename; next is 021). /sync has no
+workspace scoping because the schema has no user→workspace mapping (single-
+tenant assumption is systemic, not new). Sync count query is O(visible
+events) per call — revisit ~10⁷ events.
