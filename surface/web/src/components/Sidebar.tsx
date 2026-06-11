@@ -1,12 +1,35 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { api, type Channel } from '../api';
-import { formatCost, formatTime, isTerminalSessionStatus, type SessionListItem } from '@atrium/surface-client';
+import {
+  ACCENTS,
+  FONT_SCALES,
+  formatCost,
+  formatTime,
+  isTerminalSessionStatus,
+  type Accent,
+  type FontScale,
+  type MotionPref,
+  type SessionListItem,
+  type ThemeMode,
+} from '@atrium/surface-client';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
+import { useTheme } from '../theme';
 import { Avatar } from './Avatar';
+import { BellIcon, BellOffIcon, GearIcon, LockIcon } from './icons';
+import { useDialog } from '../useDialog';
 
 const BELL_TITLES: Record<NotifyState, string> = {
   on: 'Notifications on (mentions + your sessions) — click to turn off',
@@ -53,6 +76,10 @@ export function Sidebar({
   const [dmQuery, setDmQuery] = useState('');
   const [people, setPeople] = useState<UserRef[] | null>(null);
   const [selectedDmIds, setSelectedDmIds] = useState<Set<string>>(new Set());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const settingsPopoverRef = useRef<HTMLDivElement | null>(null);
+  const firstSettingsControlRef = useRef<HTMLButtonElement | null>(null);
 
   const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
   const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
@@ -79,14 +106,14 @@ export function Sidebar({
     const level = active ? false : unread[channelId] ?? false;
     if (level === 'mention') {
       return (
-        <span className="ml-auto shrink-0 rounded bg-red-500/90 px-1 text-[10px] font-bold leading-4 text-white">
+        <span className="ml-auto shrink-0 rounded bg-danger-strong px-1 text-3xs font-bold leading-4 text-on-accent">
           @<span className="sr-only"> mention</span>
         </span>
       );
     }
     if (level) {
       return (
-        <span className="ml-auto size-2 shrink-0 rounded-full bg-indigo-400">
+        <span className="ml-auto size-2 shrink-0 rounded-full bg-accent-text">
           <span className="sr-only">unread</span>
         </span>
       );
@@ -109,10 +136,23 @@ export function Sidebar({
     }
   };
 
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+  }, []);
+
+  useDialog({
+    open: settingsOpen,
+    containerRef: settingsPopoverRef,
+    initialFocusRef: firstSettingsControlRef,
+    invokerRef: settingsButtonRef,
+    closeOnOutsidePointer: true,
+    onClose: closeSettings,
+  });
+
   return (
-    <nav className="flex w-56 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/50">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-800 px-4">
-        <span className="truncate text-sm font-bold tracking-tight text-zinc-100">
+    <nav className="flex w-56 shrink-0 flex-col border-r border-edge bg-surface-raised/50">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
+        <span className="truncate text-sm font-bold tracking-tight text-fg">
           {workspaceName}
         </span>
         <span
@@ -120,10 +160,10 @@ export function Sidebar({
           title={`connection: ${wsStatus}`}
           className={`ml-auto size-2 shrink-0 rounded-full ${
             wsStatus === 'open'
-              ? 'bg-emerald-500'
+              ? 'bg-success'
               : wsStatus === 'connecting'
-                ? 'animate-pulse bg-amber-500'
-                : 'bg-red-500'
+                ? 'animate-pulse bg-warning'
+                : 'bg-danger'
           }`}
         >
           <span className="sr-only">connection: {wsStatus}</span>
@@ -132,9 +172,9 @@ export function Sidebar({
 
       <div className="flex-1 overflow-y-auto py-3">
         <div className="flex items-center justify-between px-4 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
             Channels
-          </span>
+          </h2>
           <button
             onClick={() => {
               setCreating((v) => !v);
@@ -142,7 +182,7 @@ export function Sidebar({
             }}
             title="Create channel"
             aria-label="Create channel"
-            className="rounded px-1.5 text-sm leading-5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             +
           </button>
@@ -153,6 +193,7 @@ export function Sidebar({
             <input
               autoFocus
               value={name}
+              aria-label="Channel name"
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key !== 'Escape') return;
@@ -160,18 +201,18 @@ export function Sidebar({
                 setCreating(false);
               }}
               placeholder="new-channel-name"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
             />
-            <label className="mt-1 flex items-center gap-2 text-[11px] text-zinc-400">
+            <label className="mt-1 flex items-center gap-2 text-2xs text-fg-tertiary">
               <input
                 type="checkbox"
                 checked={privateChannel}
                 onChange={(e) => setPrivateChannel(e.target.checked)}
-                className="accent-indigo-500"
+                className="accent-accent-hover"
               />
               Private
             </label>
-            {error && <div className="pt-1 text-[11px] text-red-400">{error}</div>}
+            {error && <div role="alert" className="pt-1 text-2xs text-danger">{error}</div>}
           </form>
         )}
 
@@ -185,15 +226,17 @@ export function Sidebar({
                   onClick={() => onSelect(c.id)}
                   className={`flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-4 text-left text-sm ${
                     active
-                      ? 'bg-indigo-600/20 font-medium text-zinc-100'
+                      ? 'bg-accent/20 font-medium text-fg'
                       : level
-                        ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
+                        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
                         : c.muted
-                          ? 'text-zinc-600 hover:bg-zinc-800/70 hover:text-zinc-500'
-                          : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
+                          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                   }`}
                 >
-                  <span className="text-zinc-500">{c.kind === 'private' ? '🔒' : '#'}</span>
+                  <span className="text-fg-muted">
+                    {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
+                  </span>
                   <span className="truncate">{c.name}</span>
                   {unreadBadge(c.id, active)}
                 </button>
@@ -201,11 +244,11 @@ export function Sidebar({
                   onClick={() => onSetMute(c.id, !c.muted)}
                   title={c.muted ? 'Unmute channel' : 'Mute channel'}
                   aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
-                  className={`shrink-0 px-3 py-1 text-xs hover:bg-zinc-800 hover:text-zinc-200 ${
-                    c.muted ? 'text-zinc-500' : 'text-zinc-600 opacity-0 group-hover:opacity-100'
+                  className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
+                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
                   }`}
                 >
-                  {c.muted ? '🔕' : '🔔'}
+                  {c.muted ? <BellOffIcon /> : <BellIcon />}
                 </button>
               </li>
             );
@@ -213,14 +256,14 @@ export function Sidebar({
         </ul>
 
         <div className="mt-4 flex items-center justify-between px-4 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
             Direct messages
-          </span>
+          </h2>
           <button
             onClick={openDmPicker}
             title="Start a DM"
             aria-label="Start a DM"
-            className="rounded px-1.5 text-sm leading-5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             +
           </button>
@@ -239,10 +282,10 @@ export function Sidebar({
               }}
               placeholder="who?"
               aria-label="Find a person to message"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
             />
             <ul className="mt-1 max-h-40 overflow-y-auto">
-              {people === null && <li className="px-2 py-1 text-[11px] text-zinc-500">loading…</li>}
+              {people === null && <li className="px-2 py-1 text-2xs text-fg-muted">loading…</li>}
               {dmCandidates.map((u) => (
                 <li key={u.id}>
                   <button
@@ -254,13 +297,13 @@ export function Sidebar({
                         return next;
                       });
                     }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
                   >
                     <Avatar name={u.displayName} seed={u.id} size={16} />
                     <span className="truncate">{u.displayName}</span>
-                    <span className="truncate text-zinc-600">@{u.handle}</span>
-                    {u.id === me.id && <span className="text-zinc-600">(you)</span>}
-                    {selectedDmIds.has(u.id) && <span className="ml-auto text-indigo-300">✓</span>}
+                    <span className="truncate text-fg-faint">@{u.handle}</span>
+                    {u.id === me.id && <span className="text-fg-faint">(you)</span>}
+                    {selectedDmIds.has(u.id) && <span className="ml-auto text-accent-text-strong">✓</span>}
                   </button>
                 </li>
               ))}
@@ -271,7 +314,7 @@ export function Sidebar({
                   setDmPicking(false);
                   onStartDm([...selectedDmIds]);
                 }}
-                className="mt-2 w-full rounded-md bg-indigo-500 px-2 py-1 text-xs font-semibold text-white"
+                className="mt-2 w-full rounded-md bg-accent-hover px-2 py-1 text-xs font-semibold text-on-accent"
               >
                 Start {selectedDmIds.size > 1 ? 'group DM' : 'DM'}
               </button>
@@ -291,12 +334,12 @@ export function Sidebar({
                   onClick={() => onSelect(c.id)}
                   className={`flex min-w-0 flex-1 items-center gap-2 py-1 pl-4 text-left text-sm ${
                     active
-                      ? 'bg-indigo-600/20 font-medium text-zinc-100'
+                      ? 'bg-accent/20 font-medium text-fg'
                       : level
-                        ? 'font-semibold text-zinc-100 hover:bg-zinc-800/70'
+                        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
                         : c.muted
-                          ? 'text-zinc-600 hover:bg-zinc-800/70 hover:text-zinc-500'
-                          : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200'
+                          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
+                          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                   }`}
                 >
                   <Avatar name={label} seed={partner?.id ?? c.id} size={16} />
@@ -307,11 +350,11 @@ export function Sidebar({
                   onClick={() => onSetMute(c.id, !c.muted)}
                   title={c.muted ? 'Unmute DM' : 'Mute DM'}
                   aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
-                  className={`shrink-0 px-3 py-1 text-xs hover:bg-zinc-800 hover:text-zinc-200 ${
-                    c.muted ? 'text-zinc-500' : 'text-zinc-600 opacity-0 group-hover:opacity-100'
+                  className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
+                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
                   }`}
                 >
-                  {c.muted ? '🔕' : '🔔'}
+                  {c.muted ? <BellOffIcon /> : <BellIcon />}
                 </button>
               </li>
             );
@@ -324,30 +367,213 @@ export function Sidebar({
         />
       </div>
 
-      <footer className="flex items-center gap-1 border-t border-zinc-800 px-4 py-2.5">
+      <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium text-zinc-200">{me.displayName}</div>
-          <div className="truncate text-[11px] text-zinc-500">@{me.handle}</div>
+          <div className="truncate text-xs font-medium text-fg-body">{me.displayName}</div>
+          <div className="truncate text-2xs text-fg-muted">@{me.handle}</div>
         </div>
         <button
-          onClick={() => {
-            void toggleNotifications().then(setNotify);
-          }}
-          disabled={notify === 'denied' || notify === 'unsupported'}
-          title={BELL_TITLES[notify]}
-          aria-label={BELL_TITLES[notify]}
-          className="rounded-md px-1.5 py-1 text-sm hover:bg-zinc-800 disabled:opacity-40"
+          ref={settingsButtonRef}
+          onClick={() => setSettingsOpen((v) => !v)}
+          title="Settings"
+          aria-label="Settings"
+          aria-expanded={settingsOpen}
+          aria-haspopup="dialog"
+          className="rounded-md px-1.5 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
         >
-          {notify === 'on' ? '🔔' : '🔕'}
+          <GearIcon />
         </button>
+        {settingsOpen && (
+          <SettingsPopover
+            refEl={settingsPopoverRef}
+            firstControlRef={firstSettingsControlRef}
+            notify={notify}
+            setNotify={setNotify}
+          />
+        )}
         <button
           onClick={onLogout}
-          className="rounded-md px-2 py-1 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+          className="rounded-md px-2 py-1 text-2xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
         >
           Log out
         </button>
       </footer>
     </nav>
+  );
+}
+
+const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+const MOTION_OPTIONS: { value: MotionPref; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'reduced', label: 'Reduced' },
+  { value: 'full', label: 'Full' },
+];
+
+const ACCENT_LABELS: Record<Accent, string> = {
+  indigo: 'Indigo',
+  teal: 'Teal',
+  amber: 'Amber',
+  rose: 'Rose',
+};
+
+const FONT_LABELS: Record<FontScale, string> = {
+  0.875: 'S',
+  1: 'M',
+  1.125: 'L',
+  1.25: 'XL',
+};
+
+const SWATCH_CLASSES: Record<Accent, string> = {
+  indigo: 'accent-swatch-indigo',
+  teal: 'accent-swatch-teal',
+  amber: 'accent-swatch-amber',
+  rose: 'accent-swatch-rose',
+};
+
+function SettingsPopover({
+  refEl,
+  firstControlRef,
+  notify,
+  setNotify,
+}: {
+  refEl: RefObject<HTMLDivElement | null>;
+  firstControlRef: RefObject<HTMLButtonElement | null>;
+  notify: NotifyState;
+  setNotify: (state: NotifyState) => void;
+}) {
+  const { prefs, setPrefs } = useTheme();
+  const segmentButton = (active: boolean) =>
+    `h-8 flex-1 rounded px-2 text-xs font-medium ${
+      active
+        ? 'bg-accent text-on-accent'
+        : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
+    }`;
+
+  return (
+    <div
+      ref={refEl}
+      role="dialog"
+      aria-label="Settings"
+      className="absolute bottom-full right-2 z-40 mb-2 w-72 rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl"
+    >
+      <div className="space-y-3">
+        <SettingRow label="Theme">
+          <div className="flex rounded-md border border-edge bg-surface p-0.5">
+            {THEME_OPTIONS.map((option, index) => (
+              <button
+                key={option.value}
+                ref={index === 0 ? firstControlRef : undefined}
+                type="button"
+                aria-pressed={prefs.theme === option.value}
+                onClick={() => setPrefs({ theme: option.value })}
+                className={segmentButton(prefs.theme === option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Accent">
+          <div className="flex items-center gap-2">
+            {ACCENTS.map((accent) => (
+              <button
+                key={accent}
+                type="button"
+                aria-label={`${ACCENT_LABELS[accent]} accent`}
+                title={ACCENT_LABELS[accent]}
+                aria-pressed={prefs.accent === accent}
+                onClick={() => setPrefs({ accent })}
+                className={`flex size-8 items-center justify-center rounded-md border border-edge ${
+                  prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
+                }`}
+              >
+                <span className={`size-4 rounded-full ${SWATCH_CLASSES[accent]}`} />
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Text size">
+          <div className="grid grid-cols-4 rounded-md border border-edge bg-surface p-0.5">
+            {FONT_SCALES.map((fontScale) => (
+              <button
+                key={fontScale}
+                type="button"
+                aria-label={`${FONT_LABELS[fontScale]} text size`}
+                aria-pressed={prefs.fontScale === fontScale}
+                onClick={() => setPrefs({ fontScale })}
+                className={segmentButton(prefs.fontScale === fontScale)}
+              >
+                {FONT_LABELS[fontScale]}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="High contrast">
+          <button
+            type="button"
+            aria-pressed={prefs.highContrast}
+            onClick={() => setPrefs({ highContrast: !prefs.highContrast })}
+            className={`flex h-8 w-16 items-center rounded-full border px-1 ${
+              prefs.highContrast
+                ? 'justify-end border-accent bg-accent text-on-accent'
+                : 'justify-start border-edge-strong bg-surface text-fg-muted'
+            }`}
+          >
+            <span className="size-5 rounded-full bg-current" />
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Motion">
+          <div className="flex rounded-md border border-edge bg-surface p-0.5">
+            {MOTION_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={prefs.motion === option.value}
+                onClick={() => setPrefs({ motion: option.value })}
+                className={segmentButton(prefs.motion === option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Notifications">
+          <button
+            type="button"
+            onClick={() => {
+              void toggleNotifications().then(setNotify);
+            }}
+            disabled={notify === 'denied' || notify === 'unsupported'}
+            title={BELL_TITLES[notify]}
+            aria-label={BELL_TITLES[notify]}
+            aria-pressed={notify === 'on'}
+            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:opacity-40"
+          >
+            {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
+            <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
+          </button>
+        </SettingRow>
+      </div>
+    </div>
+  );
+}
+
+function SettingRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">{label}</div>
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }
 
@@ -404,10 +630,10 @@ function SessionSidebarSection({
   return (
     <>
       <div className="mt-4 flex items-center justify-between px-4 pb-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+        <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
           Sessions
-        </span>
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400">
+        </h2>
+        <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold tabular-nums text-fg-tertiary">
           {running.length}
         </span>
       </div>
@@ -416,15 +642,15 @@ function SessionSidebarSection({
           <li key={session.id}>
             <button
               onClick={() => open(session.id)}
-              className="flex w-full min-w-0 flex-col gap-1 px-4 py-1.5 text-left hover:bg-zinc-800/70"
+              className="flex w-full min-w-0 flex-col gap-1 px-4 py-1.5 text-left hover:bg-surface-overlay/70"
             >
               <span className="flex min-w-0 items-center gap-1.5">
                 <StatusChip status={session.status} />
-                <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-body">
                   {session.title}
                 </span>
               </span>
-              <span className="truncate pl-1 text-[11px] text-zinc-600">
+              <span className="truncate pl-1 text-2xs text-fg-faint">
                 #{session.channelName}
               </span>
             </button>
@@ -433,7 +659,7 @@ function SessionSidebarSection({
         <li>
           <button
             onClick={() => setModalOpen(true)}
-            className="w-full px-4 py-1 text-left text-xs font-medium text-indigo-400 hover:bg-zinc-800/70"
+            className="w-full px-4 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
           >
             View all
           </button>
@@ -459,52 +685,48 @@ function SessionBrowserModal({
   onOpenSession: (sessionId: string) => void;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialog({ open: true, containerRef: dialogRef, onClose });
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-zinc-950/60"
+      className="fixed inset-0 z-50 bg-surface/60"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Browse sessions"
     >
       <div
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
-        <div className="border-b border-zinc-800 px-3 py-2.5 text-sm font-semibold text-zinc-100">
+        <h2 className="border-b border-edge px-3 py-2.5 text-sm font-semibold text-fg">
           Sessions
-        </div>
+        </h2>
         <div className="max-h-[60vh] overflow-y-auto py-1">
           {sessions.map((session) => (
             <button
               key={session.id}
               onClick={() => onOpenSession(session.id)}
-              className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-indigo-600/20"
+              className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-accent/20"
             >
               <StatusChip status={session.status} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-zinc-100">
+                <span className="block truncate text-sm font-medium text-fg">
                   {session.title}
                 </span>
-                <span className="block truncate text-[11px] text-zinc-500">
+                <span className="block truncate text-2xs text-fg-muted">
                   #{session.channelName} · {session.spawnerName} · {formatTime(session.createdAt)}
                 </span>
               </span>
-              <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+              <span className="shrink-0 text-2xs tabular-nums text-fg-muted">
                 {session.costUsd > 0 ? formatCost(session.costUsd) : ''}
               </span>
             </button>
           ))}
           {sessions.length === 0 && (
-            <div className="px-3 py-8 text-center text-sm text-zinc-500">No sessions yet</div>
+            <div className="px-3 py-8 text-center text-sm text-fg-muted">No sessions yet</div>
           )}
         </div>
       </div>

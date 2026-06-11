@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api, type Channel } from '../api';
 import type { WireEvent } from '@atrium/surface-client';
 import { channelLabel, formatTime } from '@atrium/surface-client';
+import { LockIcon } from './icons';
+import { useDialog } from '../useDialog';
 
 interface MessageHit {
   event: WireEvent;
@@ -31,6 +33,9 @@ export function QuickSwitcher({
   const [index, setIndex] = useState(0);
   const [hits, setHits] = useState<MessageHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const listboxId = 'quick-switcher-results';
 
   const channelMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -62,6 +67,14 @@ export function QuickSwitcher({
 
   const total = channelMatches.length + hits.length;
   const selected = Math.min(index, Math.max(0, total - 1));
+  const activeOptionId = total > 0 ? `quick-switcher-option-${selected}` : undefined;
+
+  useDialog({
+    open: true,
+    containerRef: dialogRef,
+    initialFocusRef: inputRef,
+    onClose,
+  });
 
   const activate = (i: number) => {
     if (i < channelMatches.length) {
@@ -91,19 +104,25 @@ export function QuickSwitcher({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-zinc-950/60"
+      className="fixed inset-0 z-50 bg-surface/60"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Jump to channel or search messages"
     >
       <div
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-24 w-[520px] overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="mx-auto mt-24 w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <input
+          ref={inputRef}
           autoFocus
           value={query}
+          role="combobox"
+          aria-expanded={total > 0}
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
           placeholder="Jump to channel or search messages…"
           onChange={(e) => {
             setQuery(e.target.value);
@@ -111,28 +130,31 @@ export function QuickSwitcher({
           }}
           onKeyDown={onKeyDown}
           aria-label="Channel and message search"
-          className="w-full border-b border-zinc-800 bg-transparent px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          className="w-full border-b border-edge bg-transparent px-3 py-2.5 text-sm text-fg placeholder-fg-muted outline-none"
         />
-        <div className="max-h-96 overflow-y-auto py-1">
+        <div id={listboxId} role="listbox" aria-label="Search results" className="max-h-96 overflow-y-auto py-1">
           {channelMatches.length > 0 && (
-            <ul role="listbox" aria-label="Channels">
+            <ul role="presentation">
               {channelMatches.map((c, i) => (
-                <li key={c.id} role="option" aria-selected={i === selected}>
-                  <button
-                    onClick={() => onSelect(c.id)}
-                    onMouseEnter={() => setIndex(i)}
-                    className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm ${
-                      i === selected ? 'bg-indigo-600/20 text-zinc-100' : 'text-zinc-300'
-                    }`}
-                  >
-                    <span className="text-zinc-500">
-                      {c.kind === 'dm' || c.kind === 'gdm' ? '@' : c.kind === 'private' ? '🔒' : '#'}
-                    </span>
-                    <span className="truncate">{channelLabel(c, meId)}</span>
-                    {c.id === activeChannelId && (
-                      <span className="ml-auto text-[10px] text-zinc-500">current</span>
-                    )}
-                  </button>
+                <li
+                  key={c.id}
+                  id={`quick-switcher-option-${i}`}
+                  role="option"
+                  aria-selected={i === selected}
+                  tabIndex={-1}
+                  onClick={() => onSelect(c.id)}
+                  onMouseEnter={() => setIndex(i)}
+                  className={`flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-left text-sm ${
+                    i === selected ? 'bg-accent/20 text-fg' : 'text-fg-secondary'
+                  }`}
+                >
+                  <span className="text-fg-muted">
+                    {c.kind === 'dm' || c.kind === 'gdm' ? '@' : c.kind === 'private' ? <LockIcon size={14} /> : '#'}
+                  </span>
+                  <span className="truncate">{channelLabel(c, meId)}</span>
+                  {c.id === activeChannelId && (
+                    <span className="ml-auto text-3xs text-fg-muted">current</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -141,36 +163,39 @@ export function QuickSwitcher({
           {query.trim().length >= 2 && (
             <>
               <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
                   Messages
                 </span>
-                {searching && <span className="text-[10px] text-zinc-600">searching…</span>}
+                {searching && <span className="text-3xs text-fg-faint">searching…</span>}
               </div>
               {!searching && hits.length === 0 && (
-                <div className="px-3 py-2 text-xs text-zinc-500">No messages match "{query}"</div>
+                <div className="px-3 py-2 text-xs text-fg-muted">No messages match "{query}"</div>
               )}
-              <ul role="listbox" aria-label="Message results">
+              <ul role="presentation">
                 {hits.map((h, j) => {
                   const i = channelMatches.length + j;
                   const text = typeof h.event.payload?.text === 'string' ? h.event.payload.text : '';
                   return (
-                    <li key={h.event.id} role="option" aria-selected={i === selected}>
-                      <button
-                        onClick={() => onJumpToMessage(h.event)}
-                        onMouseEnter={() => setIndex(i)}
-                        className={`w-full px-3 py-1.5 text-left ${
-                          i === selected ? 'bg-indigo-600/20' : ''
-                        }`}
-                      >
-                        <div className="flex items-baseline gap-1.5 text-[11px] text-zinc-500">
-                          <span className="text-zinc-400">#{h.channelName}</span>
-                          <span>·</span>
-                          <span>{h.event.author?.displayName ?? 'Unknown'}</span>
-                          <span>·</span>
-                          <span className="tabular-nums">{formatTime(h.event.createdAt)}</span>
-                        </div>
-                        <div className="truncate text-sm text-zinc-200">{text}</div>
-                      </button>
+                    <li
+                      key={h.event.id}
+                      id={`quick-switcher-option-${i}`}
+                      role="option"
+                      aria-selected={i === selected}
+                      tabIndex={-1}
+                      onClick={() => onJumpToMessage(h.event)}
+                      onMouseEnter={() => setIndex(i)}
+                      className={`cursor-pointer px-3 py-1.5 text-left ${
+                        i === selected ? 'bg-accent/20' : ''
+                      }`}
+                    >
+                      <div className="flex items-baseline gap-1.5 text-2xs text-fg-muted">
+                        <span className="text-fg-tertiary">#{h.channelName}</span>
+                        <span>·</span>
+                        <span>{h.event.author?.displayName ?? 'Unknown'}</span>
+                        <span>·</span>
+                        <span className="tabular-nums">{formatTime(h.event.createdAt)}</span>
+                      </div>
+                      <div className="truncate text-sm text-fg-body">{text}</div>
                     </li>
                   );
                 })}
@@ -179,7 +204,7 @@ export function QuickSwitcher({
           )}
 
           {total === 0 && query.trim().length < 2 && (
-            <div className="px-3 py-2 text-xs text-zinc-500">No channels match "{query}"</div>
+            <div className="px-3 py-2 text-xs text-fg-muted">No channels match "{query}"</div>
           )}
         </div>
       </div>

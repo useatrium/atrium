@@ -52,19 +52,26 @@ export function Toasts() {
     };
   }, []);
 
-  if (toasts.length === 0) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2">
+    <div
+      aria-live="assertive"
+      aria-atomic="false"
+      className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2"
+    >
       {toasts.map((t) => (
-        <button
+        <div
           key={t.id}
-          role="alert"
-          onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
-          className="pointer-events-auto max-w-md rounded-md border border-red-900/60 bg-red-950/95 px-3 py-2 text-left text-xs text-red-200 shadow-lg"
-          title="Dismiss"
+          className="pointer-events-auto flex max-w-md items-start gap-3 rounded-md border border-danger-border/60 bg-danger-tint/95 px-3 py-2 text-left text-xs text-danger-text-strong shadow-lg"
         >
-          {t.message}
-        </button>
+          <span className="min-w-0 flex-1">{t.message}</span>
+          <button
+            type="button"
+            onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
+            className="shrink-0 rounded px-1 text-danger-text hover:bg-danger-surface/50 hover:text-danger-text-strong"
+          >
+            Dismiss
+          </button>
+        </div>
       ))}
     </div>
   );

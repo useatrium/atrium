@@ -3,6 +3,7 @@ import { api } from '../api';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta } from '@atrium/surface-client';
 import { randomId } from '@atrium/surface-client';
+import { FileIcon, PaperclipIcon, XIcon } from './icons';
 
 interface PendingFile {
   key: string;
@@ -34,7 +35,7 @@ export function Composer({
   autoFocus?: boolean;
   /** Show the "@agent spawns a session" hint chip while the grammar matches. */
   agentAware?: boolean;
-  /** Enable paste / drag-drop / 📎 file uploads. */
+  /** Enable paste / drag-drop / file uploads. */
   allowAttachments?: boolean;
   disabled?: boolean;
   disabledHint?: string;
@@ -144,7 +145,7 @@ export function Composer({
   };
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-950 p-3">
+    <div className="border-t border-edge bg-surface p-3">
       <div
         title={disabled ? disabledHint : undefined}
         onDragOver={(e) => {
@@ -156,10 +157,10 @@ export function Composer({
         onDrop={onDrop}
         className={`rounded-lg border px-3 py-2 ${
           disabled
-            ? 'border-zinc-800 bg-zinc-900/40'
+            ? 'border-edge bg-surface-raised/40'
             : dragOver
-              ? 'border-indigo-500 bg-zinc-900'
-              : 'border-zinc-700 bg-zinc-900 focus-within:border-zinc-500'
+              ? 'border-accent-hover bg-surface-raised'
+              : 'border-edge-strong bg-surface-raised focus-within:border-edge-focus'
         }`}
       >
         {files.length > 0 && (
@@ -169,13 +170,13 @@ export function Composer({
                 key={p.key}
                 className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
                   p.status === 'failed'
-                    ? 'border-red-800 text-red-300'
-                    : 'border-zinc-700 text-zinc-300'
+                    ? 'border-danger-border text-danger-text'
+                    : 'border-edge-strong text-fg-secondary'
                 }`}
               >
-                <span aria-hidden>{p.file.type.startsWith('image/') ? '🖼️' : '📄'}</span>
+                <span aria-hidden>{p.file.type.startsWith('image/') ? '🖼️' : <FileIcon />}</span>
                 <span className="max-w-40 truncate">{p.file.name || 'pasted image'}</span>
-                {p.status === 'uploading' && <span className="text-zinc-500">uploading…</span>}
+                {p.status === 'uploading' && <span className="text-fg-muted">uploading…</span>}
                 {p.status === 'failed' && (
                   <button
                     onClick={() => {
@@ -190,9 +191,9 @@ export function Composer({
                 <button
                   onClick={() => removeFile(p.key)}
                   aria-label={`Remove ${p.file.name || 'pasted image'}`}
-                  className="text-zinc-500 hover:text-zinc-200"
+                  className="text-fg-muted hover:text-fg-body"
                 >
-                  ✕
+                  <XIcon />
                 </button>
               </span>
             ))}
@@ -205,9 +206,9 @@ export function Composer({
               onClick={() => fileInputRef.current?.click()}
               title="Attach a file"
               aria-label="Attach a file"
-              className="rounded-md px-1 py-1 text-sm text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+              className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
             >
-              📎
+              <PaperclipIcon />
             </button>
             <input
               ref={fileInputRef}
@@ -228,6 +229,7 @@ export function Composer({
           autoFocus={autoFocus}
           disabled={disabled}
           placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
+          aria-label="Message input"
           onChange={(e) => {
             setText(e.target.value);
             setAgentNeedsTask(false);
@@ -243,25 +245,25 @@ export function Composer({
               addFiles(e.clipboardData.files);
             }
           }}
-          className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-zinc-100 placeholder-zinc-500 outline-none disabled:cursor-not-allowed disabled:placeholder-zinc-600"
+          className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
         />
         <button
           onClick={send}
           disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
           title={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : undefined}
-          className="rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-default disabled:bg-zinc-800 disabled:text-zinc-500"
+          className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
         >
           Send
         </button>
         </div>
       </div>
-      <div className="mt-1 flex items-center gap-2 px-1 text-[10px] text-zinc-500">
+      <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">
         {agentNeedsTask ? (
-          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-300">
+          <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
             Add a task: @agent &lt;task&gt;
           </span>
         ) : agentHint ? (
-          <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 font-medium text-indigo-300">
+          <span className="rounded-full bg-accent-hover/15 px-2 py-0.5 font-medium text-accent-text-strong">
             @agent — spawns an agent session
           </span>
         ) : footer !== undefined ? (
