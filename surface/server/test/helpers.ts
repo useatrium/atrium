@@ -4,7 +4,12 @@ import { createPool } from '../src/db.js';
 import { createChannel, createWorkspace } from '../src/events.js';
 
 const ADMIN_URL = process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium';
-const TEST_DB = 'atrium_test';
+// Overridable so parallel checkouts (worktrees/CI shards) don't truncate each
+// other's fixtures mid-test. Identifier-safe names only — it's interpolated
+// into CREATE DATABASE.
+const TEST_DB = /^[a-z0-9_]{1,40}$/.test(process.env.ATRIUM_TEST_DB ?? '')
+  ? process.env.ATRIUM_TEST_DB!
+  : 'atrium_test';
 
 /** Create (once) and migrate the dedicated test database. */
 export async function createTestPool(): Promise<pg.Pool> {
