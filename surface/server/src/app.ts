@@ -37,7 +37,7 @@ import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
-import { ensureBucket, presignGet, presignPut } from './s3.js';
+import { deleteObject, ensureBucket, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
@@ -56,6 +56,7 @@ export interface AppDeps {
   rateLimit?: false | { max?: number; loginMax?: number };
   fileStorage?: {
     ensureBucket: typeof ensureBucket;
+    deleteObject: typeof deleteObject;
     presignGet: typeof presignGet;
     presignPut: typeof presignPut;
   };
@@ -73,7 +74,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
-  const fileStorage = deps.fileStorage ?? { ensureBucket, presignGet, presignPut };
+  const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
   const emailFetch = deps.emailFetch;
   const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
