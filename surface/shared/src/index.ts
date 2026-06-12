@@ -10,6 +10,7 @@ export * from './formatting';
 export * from './api';
 export * from './sync';
 export * from './opQueue';
+export * from './queueStatus';
 export * from './cache';
 export * from './drafts';
 export * from './catchup';

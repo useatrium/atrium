@@ -1,7 +1,7 @@
 // Small presentational pieces shared across screens.
 
 import { Text, View } from 'react-native';
-import type { UnreadLevel } from '@atrium/surface-client';
+import { queuedChangesLabel, type UnreadLevel } from '@atrium/surface-client';
 import { font, space, useTheme } from '../lib/theme';
 import type { TypingEntry } from '../lib/chat';
 
@@ -24,21 +24,31 @@ export function DayDivider({ label }: { label?: string }) {
   );
 }
 
-export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | 'closed' }) {
+export function ConnectionBanner({
+  status,
+  queuedChangesCount = 0,
+}: {
+  status: 'connecting' | 'open' | 'closed';
+  queuedChangesCount?: number;
+}) {
   const { colors } = useTheme();
-  if (status !== 'closed') return null;
+  const label = queuedChangesLabel(status, queuedChangesCount);
+  if (!label) return null;
+  const reconnecting = status !== 'open';
   return (
     <View
+      accessibilityLabel={label}
+      accessibilityLiveRegion="polite"
       style={{
-        backgroundColor: colors.warningSurface,
-        borderBottomColor: colors.warningBorder,
+        backgroundColor: reconnecting ? colors.warningSurface : colors.accentBg,
+        borderBottomColor: reconnecting ? colors.warningBorder : colors.accent,
         borderBottomWidth: 1,
         paddingVertical: 4,
         alignItems: 'center',
       }}
     >
-      <Text style={{ color: colors.warning, fontSize: font.xs }}>
-        Connection lost — reconnecting…
+      <Text style={{ color: reconnecting ? colors.warning : colors.accent, fontSize: font.xs }}>
+        {label}
       </Text>
     </View>
   );

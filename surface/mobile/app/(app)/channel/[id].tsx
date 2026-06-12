@@ -185,7 +185,7 @@ export default function ChannelScreen() {
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
-      <ConnectionBanner status={state.wsStatus} />
+      <ConnectionBanner status={state.wsStatus} queuedChangesCount={chat.queuedChangesCount} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

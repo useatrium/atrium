@@ -58,7 +58,16 @@ function SectionHeader({ title }: { title: string }) {
 }
 
 export default function ChannelList() {
-  const { state, me, leaveChannel, setMute, channelsLoaded, channelsError, refreshChannels } = useChat();
+  const {
+    state,
+    me,
+    queuedChangesCount,
+    leaveChannel,
+    setMute,
+    channelsLoaded,
+    channelsError,
+    refreshChannels,
+  } = useChat();
   const { colors } = useTheme();
 
   useFocusEffect(
@@ -188,7 +197,7 @@ export default function ChannelList() {
           ),
         }}
       />
-      <ConnectionBanner status={state.wsStatus} />
+      <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
       <FlatList
         style={{ flex: 1 }}
         data={sections}
