@@ -1,6 +1,7 @@
 // Route-level coverage for the audit-driven server fixes: message editing,
 // re-login display-name keep, and 404 (not 500) for mangled session ids.
 
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
@@ -49,6 +50,19 @@ async function post(cookie: string, text: string) {
   });
   expect(res.statusCode).toBe(201);
   return res.json().event;
+}
+
+async function reactionNet(targetEventId: number, actorId: string, emoji: string): Promise<number> {
+  const res = await pool.query<{ net: number }>(
+    `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0)::int AS net
+     FROM events
+     WHERE type IN ('reaction.added', 'reaction.removed')
+       AND (payload->>'target_event_id')::bigint = $1
+       AND actor_id = $2
+       AND payload->>'emoji' = $3`,
+    [targetEventId, actorId, emoji],
+  );
+  return res.rows[0]?.net ?? 0;
 }
 
 describe('PATCH /api/messages/:id (edit)', () => {
@@ -265,6 +279,70 @@ describe('POST /api/messages/:id/reactions', () => {
     });
     expect(removeAgain.statusCode).toBe(200);
     expect(removeAgain.json()).toEqual({ event: null, applied: false });
+  });
+
+  it('serializes concurrent same-user removes without driving the stored net negative', async () => {
+    const { cookie, user } = await login('alice', 'Alice');
+    const msg = await post(cookie, 'remove race');
+    const added = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍', action: 'add', opId: randomUUID() },
+    });
+    expect(added.statusCode).toBe(200);
+    expect(added.json().event.type).toBe('reaction.added');
+
+    const blocker = await pool.connect();
+    let locked = false;
+    try {
+      await blocker.query('BEGIN');
+      locked = true;
+      await blocker.query('SELECT id FROM events WHERE id = $1 FOR UPDATE', [msg.id]);
+
+      const remove = (opId: string) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/messages/${msg.id}/reactions`,
+          headers: { cookie },
+          payload: { emoji: '👍', action: 'remove', opId },
+        });
+      const first = remove(randomUUID());
+      const second = remove(randomUUID());
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await blocker.query('COMMIT');
+      locked = false;
+
+      const responses = await Promise.all([first, second]);
+      for (const response of responses) {
+        expect(response.statusCode).toBe(200);
+      }
+    } finally {
+      if (locked) await blocker.query('ROLLBACK').catch(() => {});
+      blocker.release();
+    }
+
+    const removedNet = await reactionNet(msg.id, user.id, '👍');
+    expect(removedNet).toBeGreaterThanOrEqual(0);
+    expect(removedNet).toBe(0);
+
+    const addAgain = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${msg.id}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '👍', action: 'add', opId: randomUUID() },
+    });
+    expect(addAgain.statusCode).toBe(200);
+    expect(addAgain.json().event.type).toBe('reaction.added');
+    expect(await reactionNet(msg.id, user.id, '👍')).toBe(1);
+
+    const read = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages`,
+      headers: { cookie },
+    });
+    const row = read.json().events.find((e: any) => e.id === msg.id);
+    expect(row.payload.reactions).toEqual([{ emoji: '👍', userIds: [user.id] }]);
   });
 
   it('rejects emojis outside the allowlist and missing targets', async () => {

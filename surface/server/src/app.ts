@@ -664,9 +664,16 @@ function rawSession(req: FastifyRequest): string | undefined {
     const limit = Math.min(rawLimit, 1000);
     const client = await pool.connect();
     try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      // Events and state are read from one snapshot so nextCursor covers
+      // exactly the event set represented in this sync response.
       const page = await listVisibleSyncEvents(client, { userId: user.id, after, limit });
       const state = await syncStateSnapshot(client, user.id);
+      await client.query('COMMIT');
       return { ...page, state };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
     } finally {
       client.release();
     }
