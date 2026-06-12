@@ -39,6 +39,7 @@ import {
   addWorkspaceMember,
   isWorkspaceMember,
   workspaceIdsFor,
+  workspaceMemberExists,
   workspaceMemberIds,
 } from './membership.js';
 import { WsHub } from './hub.js';
@@ -252,7 +253,8 @@ function rawSession(req: FastifyRequest): string | undefined {
        LEFT JOIN channel_members cm
          ON cm.channel_id = c.id AND cm.user_id = $1
        WHERE rc.user_id = $1
-         AND (c.kind = 'public' OR cm.user_id IS NOT NULL)
+         AND ((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$1')})
+              OR cm.user_id IS NOT NULL)
        ORDER BY rc.channel_id ASC`,
       [userId],
     );
@@ -263,7 +265,8 @@ function rawSession(req: FastifyRequest): string | undefined {
        LEFT JOIN channel_members cm
          ON cm.channel_id = c.id AND cm.user_id = $1
        WHERE m.user_id = $1
-         AND (c.kind = 'public' OR cm.user_id IS NOT NULL)
+         AND ((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$1')})
+              OR cm.user_id IS NOT NULL)
        ORDER BY m.channel_id ASC`,
       [userId],
     );

@@ -172,6 +172,37 @@ describe('/api/sync', () => {
       muted: true,
     });
   });
+
+  it('omits cursors and mutes for public channels outside the user workspaces', async () => {
+    const alice = await login('alice', 'Alice');
+    const message = await post(alice.cookie, fx.channelId, 'in-workspace');
+    await markRead(alice.cookie, fx.channelId, message.id);
+
+    // Residue of a workspace alice no longer belongs to: her own cursor/mute
+    // rows survive on a channel whose workspace she isn't a member of.
+    const wsB = await pool.query<{ id: string }>(
+      `INSERT INTO workspaces (name) VALUES ('elsewhere') RETURNING id`,
+    );
+    const channelB = await pool.query<{ id: string }>(
+      `INSERT INTO channels (workspace_id, name, kind) VALUES ($1, 'b-general', 'public')
+       RETURNING id`,
+      [wsB.rows[0]!.id],
+    );
+    await pool.query(
+      `INSERT INTO channel_read_cursors (user_id, channel_id, last_read_event_id)
+       VALUES ($1, $2, 1)`,
+      [alice.user.id, channelB.rows[0]!.id],
+    );
+    await pool.query(`INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)`, [
+      alice.user.id,
+      channelB.rows[0]!.id,
+    ]);
+
+    const healed = await sync(alice.cookie, 0, 1000);
+    expect(healed.state.readCursors[fx.channelId]).toBe(message.id);
+    expect(healed.state.readCursors).not.toHaveProperty(channelB.rows[0]!.id);
+    expect(healed.state.mutes).not.toContain(channelB.rows[0]!.id);
+  });
 });
 
 async function login(handle: string, displayName: string): Promise<Login> {
