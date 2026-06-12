@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
@@ -321,6 +321,23 @@ async function setPendingQuestion(id: string): Promise<void> {
   );
 }
 
+async function registerToken(userId: string, token: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`,
+    [token, userId],
+  );
+}
+
+function okPushFetch() {
+  return vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+    const sent = JSON.parse(String((init as { body: string }).body)) as { to: string }[];
+    return {
+      ok: true,
+      json: async () => ({ data: sent.map(() => ({ status: 'ok' })) }),
+    } as Response;
+  }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+}
+
 async function waitFor(assertion: () => Promise<void> | void, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
   let lastError: unknown;
@@ -547,6 +564,99 @@ describe('Phase 2 sessions', () => {
       (e) => e.id === rootId,
     );
     expect(rootRow?.replyCount).toBe(1);
+    await app.close();
+  });
+
+  it('renotifies once when a question is still unanswered', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator]');
+    const fetchImpl = okPushFetch();
+    fake.setFrames([questionRequestedFrame()]);
+    const id = await insertSessionRow({ title: 'needs input', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'test',
+        autoResume: true,
+        questionRenotifyMinutes: 0.001,
+        questionPushFetchImpl: fetchImpl,
+      },
+    });
+    await app.ready();
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2), 2000);
+    const first = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    const second = JSON.parse(fetchImpl.mock.calls[1]![1]!.body as string);
+    expect(first[0].data).toMatchObject({ sessionId: id, questionId: 'q-main' });
+    expect(second[0].data).toMatchObject({ sessionId: id, questionId: 'q-main' });
+    await app.close();
+  });
+
+  it('cancels question renotify when the question is answered before the deadline', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator]');
+    const fetchImpl = okPushFetch();
+    fake.setFrames([questionRequestedFrame()]);
+    const id = await insertSessionRow({ title: 'answer before renotify', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'test',
+        autoResume: true,
+        questionRenotifyMinutes: 0.01,
+        questionPushFetchImpl: fetchImpl,
+      },
+    });
+    await app.ready();
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    const cookie = await loginCookie(app);
+
+    const answer = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+
+    expect(answer.statusCode).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('does not send a stale renotify when pending_question changed', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator]');
+    const fetchImpl = okPushFetch();
+    fake.setFrames([questionRequestedFrame()]);
+    const id = await insertSessionRow({ title: 'stale question', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'test',
+        autoResume: true,
+        questionRenotifyMinutes: 0.01,
+        questionPushFetchImpl: fetchImpl,
+      },
+    });
+    await app.ready();
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+
+    await pool.query(
+      `UPDATE sessions SET pending_question = $1 WHERE id = $2`,
+      [
+        JSON.stringify({
+          questionId: 'q-other',
+          turnId: 'turn-2',
+          eventId: 2,
+          questions: questionRequestedFrame(2).data.questions,
+        }),
+        id,
+      ],
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     await app.close();
   });
 

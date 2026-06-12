@@ -29,4 +29,5 @@ export const config = {
   s3SecretKey: process.env.S3_SECRET_KEY ?? 'atrium-dev-secret',
   maxUploadBytes: 25 * 1024 * 1024,
   pushRedactContent: process.env.PUSH_REDACT === '1',
+  questionRenotifyMinutes: Number(process.env.QUESTION_RENOTIFY_MINUTES ?? 10),
 };

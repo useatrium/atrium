@@ -192,6 +192,16 @@ function titleFor(reason: PushReason, author: string, channelName: string): stri
   return `${author} replied in #${channelName}`;
 }
 
+function firstQuestionText(payload: Record<string, unknown>): string {
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  const first = questions[0];
+  if (!first || typeof first !== 'object') return 'Open Atrium to respond.';
+  const q = first as { question?: unknown; header?: unknown };
+  if (typeof q.question === 'string' && q.question.trim()) return q.question;
+  if (typeof q.header === 'string' && q.header.trim()) return q.header;
+  return 'Open Atrium to respond.';
+}
+
 async function pruneTokens(pool: Db, tokens: string[]): Promise<void> {
   if (tokens.length > 0) {
     await pool.query('DELETE FROM push_tokens WHERE token = ANY($1::text[])', [tokens]);
@@ -244,6 +254,50 @@ function scheduleReceiptCheck(
   receiptTimers.add(timer);
 }
 
+interface ExpoPushMessage {
+  to: string;
+  title: string;
+  body: string;
+  sound: 'default';
+  data: Record<string, unknown>;
+}
+
+async function sendExpoPushes(
+  pool: Db,
+  messages: ExpoPushMessage[],
+  fetchImpl: typeof fetch,
+  receiptDelayMs: number,
+): Promise<void> {
+  const receiptTickets: ExpoReceiptTicket[] = [];
+  for (let i = 0; i < messages.length; i += CHUNK) {
+    const chunk = messages.slice(i, i + CHUNK);
+    let tickets: ExpoTicket[];
+    try {
+      const res = await fetchImpl(EXPO_PUSH_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(chunk),
+      });
+      if (!res.ok) continue; // transient Expo failure — badges still cover it
+      tickets = ((await res.json()) as { data?: ExpoTicket[] }).data ?? [];
+    } catch {
+      continue;
+    }
+    const dead = chunk
+      .filter((_, j) => tickets[j]?.details?.error === 'DeviceNotRegistered')
+      .map((m) => m.to);
+    await pruneTokens(pool, dead);
+
+    for (let j = 0; j < chunk.length; j += 1) {
+      const ticketId = tickets[j]?.id;
+      if (tickets[j]?.status === 'ok' && ticketId) {
+        receiptTickets.push({ id: ticketId, token: chunk[j]!.to });
+      }
+    }
+  }
+  scheduleReceiptCheck(pool, receiptTickets, fetchImpl, receiptDelayMs);
+}
+
 /**
  * Send the push fanout for a freshly posted message. Users with a socket
  * focused on the channel are reading it live and are skipped. Tokens Expo
@@ -280,32 +334,45 @@ export async function sendMessagePush(
     data: { channelId: event.channelId, eventId: event.id },
   }));
 
-  const receiptTickets: ExpoReceiptTicket[] = [];
-  for (let i = 0; i < messages.length; i += CHUNK) {
-    const chunk = messages.slice(i, i + CHUNK);
-    let tickets: ExpoTicket[];
-    try {
-      const res = await fetchImpl(EXPO_PUSH_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(chunk),
-      });
-      if (!res.ok) continue; // transient Expo failure — badges still cover it
-      tickets = ((await res.json()) as { data?: ExpoTicket[] }).data ?? [];
-    } catch {
-      continue;
-    }
-    const dead = chunk
-      .filter((_, j) => tickets[j]?.details?.error === 'DeviceNotRegistered')
-      .map((m) => m.to);
-    await pruneTokens(pool, dead);
+  await sendExpoPushes(pool, messages, fetchImpl, receiptDelayMs);
+}
 
-    for (let j = 0; j < chunk.length; j += 1) {
-      const ticketId = tickets[j]?.id;
-      if (tickets[j]?.status === 'ok' && ticketId) {
-        receiptTickets.push({ id: ticketId, token: chunk[j]!.to });
-      }
-    }
-  }
-  scheduleReceiptCheck(pool, receiptTickets, fetchImpl, receiptDelayMs);
+export async function sendQuestionPush(
+  pool: Db,
+  hub: WsHub,
+  event: WireEvent,
+  fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
+): Promise<void> {
+  if (!event.channelId || !event.actorId) return;
+  const recipients = new Map<string, PushReason>([[event.actorId, 'thread']]);
+  await dropMutedRecipients(pool, event.channelId, recipients);
+  if (recipients.size === 0 || hub.isUserPresent(event.channelId, event.actorId)) return;
+
+  const tokens = await pool.query<{ token: string }>(
+    'SELECT token FROM push_tokens WHERE user_id = $1',
+    [event.actorId],
+  );
+  if (tokens.rows.length === 0) return;
+
+  const { fetchImpl, receiptDelayMs } = sendMessagePushOptions(fetchOrOpts);
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
+  const questionId = typeof event.payload.questionId === 'string' ? event.payload.questionId : '';
+  const permalink =
+    typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const body = firstQuestionText(event.payload).slice(0, 140);
+  const messages = tokens.rows.map((r) => ({
+    to: r.token,
+    title: 'Centaur needs your input',
+    body,
+    sound: 'default' as const,
+    data: {
+      channelId: event.channelId,
+      eventId: event.id,
+      permalink,
+      sessionId,
+      questionId,
+    },
+  }));
+
+  await sendExpoPushes(pool, messages, fetchImpl, receiptDelayMs);
 }

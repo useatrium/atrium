@@ -4,12 +4,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { config } from '../src/config.js';
-import { getOrCreateDm, getOrCreateGdm, postMessage, type WireEvent } from '../src/events.js';
+import { withTx } from '../src/db.js';
+import { appendEvent, getOrCreateDm, getOrCreateGdm, postMessage, type WireEvent } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import {
   checkExpoPushReceipts,
   mentionedHandles,
   pushRecipientsFor,
+  sendQuestionPush,
   sendMessagePush,
 } from '../src/push.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
@@ -254,6 +256,80 @@ describe('sendMessagePush', () => {
     } finally {
       config.pushRedactContent = oldRedact;
     }
+  });
+});
+
+describe('sendQuestionPush', () => {
+  async function questionEvent(text = 'Which deployment path should I take?'): Promise<WireEvent> {
+    return withTx(pool, (client) => appendEvent(client, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'session.question_requested',
+      actorId: fx.userId,
+      payload: {
+        sessionId: 'session-1',
+        questionId: 'q-main',
+        permalink: '/s/session-1',
+        questions: [{ id: 'choice', header: 'Decision', question: text }],
+      },
+    }));
+  }
+
+  it('pushes question requests to the session creator', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-1]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await questionEvent('Which deployment path should I take?');
+
+    await sendQuestionPush(pool, hub, ev, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      to: 'ExponentPushToken[creator-1]',
+      title: 'Centaur needs your input',
+      body: 'Which deployment path should I take?',
+      data: {
+        channelId: fx.channelId,
+        eventId: ev.id,
+        permalink: '/s/session-1',
+        sessionId: 'session-1',
+        questionId: 'q-main',
+      },
+    });
+  });
+
+  it('skips the creator when focused on the question channel', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-1]');
+    const hub = new WsHub();
+    const client = hub.addClient(fakeSocket(), {
+      id: fx.userId,
+      handle: 'alice',
+      displayName: 'Alice',
+    });
+    hub.setFocus(client, fx.channelId);
+    const fetchImpl = okFetch();
+    const ev = await questionEvent();
+
+    await sendQuestionPush(pool, hub, ev, fetchImpl);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('skips the creator when the channel is muted', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-1]');
+    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [
+      fx.userId,
+      fx.channelId,
+    ]);
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await questionEvent();
+
+    await sendQuestionPush(pool, hub, ev, fetchImpl);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
