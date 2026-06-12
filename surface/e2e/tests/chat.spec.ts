@@ -90,8 +90,10 @@ test('edit and delete own message', async ({ page }) => {
   await row.getByLabel('Edit message').click({ force: true });
   await page.getByLabel('Edit message text').fill(edited);
   await page.getByLabel('Edit message text').press('Enter');
+  // No exact-text match here: the message body element also contains the
+  // "(edited)"/"(saving edit)" marker span, so an exact match never resolves.
   const editedRow = messageRow(page, edited);
-  await expect(page.getByText(edited, { exact: true })).toBeVisible();
+  await expect(editedRow).toBeVisible();
   // Scope to this message's row: a retry leaves the previous attempt's edited
   // message in #general, so a page-wide '(edited)' match goes strict-mode.
   await expect(editedRow.getByText('(edited)')).toBeVisible();
