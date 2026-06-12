@@ -215,7 +215,7 @@ const registry: ChaosOp[] = [
 
 describe('idempotent mutation chaos invariants', () => {
   const seed = chaosSeed();
-  const rounds = Number(process.env.CHAOS_ROUNDS ?? 2);
+  const rounds = Number(process.env.CHAOS_ROUNDS ?? 5);
 
   for (const op of registry) {
     it(`${op.name}: one effect and stable replayed response`, async () => {
