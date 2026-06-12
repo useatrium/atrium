@@ -395,6 +395,7 @@ export class DurableOpQueue {
         .filter((op) => op.status === 'inflight')
         .map((op) => this.storage.putOp({ ...op, status: 'pending' })),
     );
+    await this.rejectOrphanedPendingDependents();
   }
 
   async enqueue<T extends OpType>(input: EnqueueOpInput<T>): Promise<QueuedOp | null> {
@@ -505,14 +506,7 @@ export class DurableOpQueue {
     }
 
     if (shouldRejectHttp(error) || isRetryableServerError(error)) {
-      await this.storage.removeOp(op.opId);
-      const handler = this.registry[op.opType] as OpHandler<OpType>;
-      await handler.onRejected(this.dispatch, asPayload(op), error, op);
-      if (handler.removeDependenciesOnSettled) {
-        await this.removeDependencies(op);
-      }
-      this.onRejected?.(op, error);
-      await this.rejectDependents(op.queueKey, error);
+      await this.rejectOpAndDependentsBeforeRemove(op, error);
       return;
     }
 
@@ -545,6 +539,21 @@ export class DurableOpQueue {
     }
   }
 
+  private async rejectOpAndDependentsBeforeRemove(
+    op: QueuedOp,
+    error: unknown,
+    visited = new Set<string>(),
+  ): Promise<void> {
+    const handler = this.registry[op.opType] as OpHandler<OpType>;
+    await handler.onRejected(this.dispatch, asPayload(op), error, op);
+    this.onRejected?.(op, error);
+    await this.rejectDependents(op.queueKey, error, visited);
+    if (handler.removeDependenciesOnSettled) {
+      await this.removeDependencies(op);
+    }
+    await this.storage.removeOp(op.opId);
+  }
+
   private async rejectDependents(
     failedQueueKey: string,
     error: unknown,
@@ -557,14 +566,24 @@ export class DurableOpQueue {
       this.dependenciesFor(candidate).includes(failedQueueKey),
     );
     for (const dependent of dependents) {
-      await this.storage.removeOp(dependent.opId);
-      const handler = this.registry[dependent.opType] as OpHandler<OpType>;
-      await handler.onRejected(this.dispatch, asPayload(dependent), error, dependent);
-      if (handler.removeDependenciesOnSettled) {
-        await this.removeDependencies(dependent);
-      }
-      this.onRejected?.(dependent, error);
-      await this.rejectDependents(dependent.queueKey, error, visited);
+      await this.rejectOpAndDependentsBeforeRemove(dependent, error, visited);
+    }
+  }
+
+  private async rejectOrphanedPendingDependents(): Promise<void> {
+    for (;;) {
+      const ops = await this.storage.listOps();
+      const queueKeys = new Set(ops.map((op) => op.queueKey));
+      const orphan = ops.find((op) => {
+        if (op.status !== 'pending') return false;
+        return this.dependenciesFor(op).some((queueKey) => !queueKeys.has(queueKey));
+      });
+      if (!orphan) return;
+      const missing = this.dependenciesFor(orphan).filter((queueKey) => !queueKeys.has(queueKey));
+      await this.rejectOpAndDependentsBeforeRemove(
+        orphan,
+        new Error(`queued op dependency missing: ${missing.join(', ')}`),
+      );
     }
   }
 }

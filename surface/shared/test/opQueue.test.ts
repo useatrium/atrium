@@ -340,6 +340,24 @@ describe('upload op dependencies', () => {
     expect(await storage.listOps()).toEqual([]);
   });
 
+  it('rejects a pending message whose upload dependency disappeared during recovery', async () => {
+    const storage = new MemoryOpStorage([msgWithUpload('msg-1')]);
+    const actions: AppAction[] = [];
+    const postMessage = vi.fn();
+    const queue = new DurableOpQueue({
+      storage,
+      api: { postMessage } as unknown as Api,
+      dispatch: (action) => actions.push(action),
+    });
+
+    await queue.recoverInflight();
+    await queue.flush();
+
+    expect(actions).toEqual([{ type: 'send-failed', channelId: 'ch-1', clientMsgId: 'msg-1' }]);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(await storage.listOps()).toEqual([]);
+  });
+
   it('persists fileId after upload intent creation and resumes with refresh before PUT', async () => {
     const storage = new MemoryOpStorage([upload('upload-1')]);
     let createCalls = 0;
