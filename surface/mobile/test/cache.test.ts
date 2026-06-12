@@ -160,6 +160,19 @@ describe('event cache', () => {
     await expect(reloaded.loadSnapshot()).resolves.toMatchObject({ syncCursor: 10 });
   });
 
+  it('removes cached drafts when set to empty text', async () => {
+    const storage = new MemoryStorage();
+    const cache = createEventCache(storage);
+
+    await cache.setDraft('channel:one', 'stale', '2026-06-11T12:00:00.000Z');
+    await expect(cache.getDraft('channel:one')).resolves.toBe('stale');
+
+    await cache.setDraft('channel:one', '');
+
+    await expect(cache.getDraft('channel:one')).resolves.toBeNull();
+    await expect(cache.listDrafts()).resolves.toEqual({});
+  });
+
   it('does not persist a cursor ahead of pending timeline flushes', async () => {
     vi.useFakeTimers();
     const storage = new MemoryStorage();

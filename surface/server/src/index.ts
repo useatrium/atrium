@@ -5,17 +5,22 @@ import { runMigrations } from './migrate.js';
 import { WsHub } from './hub.js';
 import { buildApp } from './app.js';
 import { pruneIdempotencyKeys } from './idempotency.js';
+import { pruneDraftTombstones } from './drafts.js';
 
 async function main() {
   const pool = createPool(config.databaseUrl);
   await runMigrations(pool);
   await pruneIdempotencyKeys(pool);
+  await pruneDraftTombstones(pool);
   const workspace = await ensureDefaultWorkspace(pool);
   const hub = new WsHub();
   const heartbeat = hub.startHeartbeat(30_000);
   const idempotencyPrune = setInterval(() => {
     void pruneIdempotencyKeys(pool).catch((err) => {
       console.warn('idempotency prune failed', err);
+    });
+    void pruneDraftTombstones(pool).catch((err) => {
+      console.warn('draft tombstone prune failed', err);
     });
   }, 24 * 60 * 60 * 1000);
   idempotencyPrune.unref?.();
