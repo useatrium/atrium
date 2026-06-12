@@ -900,8 +900,9 @@ function rawSession(req: FastifyRequest): string | undefined {
   });
 
   app.get('/api/users', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
-    return { users: await listUsers(pool) };
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return { users: await listUsers(pool, user.id) };
   });
 
   app.post('/api/dms', async (req, reply) => {
