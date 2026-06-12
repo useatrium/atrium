@@ -3,6 +3,7 @@ import { DEFAULT_PREFS } from '@atrium/surface-client/prefs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 import { chaosSeed, SeededPrng } from './chaosHarness.js';
 
@@ -171,6 +172,37 @@ describe('/api/sync', () => {
       muted: true,
     });
   });
+
+  it('omits cursors and mutes for public channels outside the user workspaces', async () => {
+    const alice = await login('alice', 'Alice');
+    const message = await post(alice.cookie, fx.channelId, 'in-workspace');
+    await markRead(alice.cookie, fx.channelId, message.id);
+
+    // Residue of a workspace alice no longer belongs to: her own cursor/mute
+    // rows survive on a channel whose workspace she isn't a member of.
+    const wsB = await pool.query<{ id: string }>(
+      `INSERT INTO workspaces (name) VALUES ('elsewhere') RETURNING id`,
+    );
+    const channelB = await pool.query<{ id: string }>(
+      `INSERT INTO channels (workspace_id, name, kind) VALUES ($1, 'b-general', 'public')
+       RETURNING id`,
+      [wsB.rows[0]!.id],
+    );
+    await pool.query(
+      `INSERT INTO channel_read_cursors (user_id, channel_id, last_read_event_id)
+       VALUES ($1, $2, 1)`,
+      [alice.user.id, channelB.rows[0]!.id],
+    );
+    await pool.query(`INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)`, [
+      alice.user.id,
+      channelB.rows[0]!.id,
+    ]);
+
+    const healed = await sync(alice.cookie, 0, 1000);
+    expect(healed.state.readCursors[fx.channelId]).toBe(message.id);
+    expect(healed.state.readCursors).not.toHaveProperty(channelB.rows[0]!.id);
+    expect(healed.state.mutes).not.toContain(channelB.rows[0]!.id);
+  });
 });
 
 async function login(handle: string, displayName: string): Promise<Login> {
@@ -180,7 +212,9 @@ async function login(handle: string, displayName: string): Promise<Login> {
     payload: { handle, displayName },
   });
   expect(res.statusCode).toBe(200);
-  return { cookie: res.headers['set-cookie'] as string, user: res.json().user };
+  const user = res.json().user;
+  await addWorkspaceMember(pool, fx.workspaceId, user.id);
+  return { cookie: res.headers['set-cookie'] as string, user };
 }
 
 async function sync(cookie: string, after: number, limit: number) {
@@ -347,7 +381,11 @@ async function visibleEventIds(userId: string): Promise<number[]> {
      ) latest_join ON true
      WHERE e.type = ANY($3::text[])
        AND (
-         c.kind = 'public'
+         (
+           c.kind = 'public'
+           AND EXISTS (SELECT 1 FROM workspace_members wm
+                       WHERE wm.workspace_id = e.workspace_id AND wm.user_id = $1)
+         )
          OR (
            c.kind IN ('private', 'dm', 'gdm')
            AND cm.user_id IS NOT NULL

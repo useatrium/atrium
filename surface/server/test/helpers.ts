@@ -2,6 +2,7 @@ import pg from 'pg';
 import { runMigrations } from '../src/migrate.js';
 import { createPool } from '../src/db.js';
 import { createChannel, createWorkspace } from '../src/events.js';
+import { addWorkspaceMember } from '../src/membership.js';
 
 const ADMIN_URL = process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium';
 // Overridable so parallel checkouts (worktrees/CI shards) don't truncate each
@@ -27,7 +28,7 @@ export async function createTestPool(): Promise<pg.Pool> {
 
 export async function truncateAll(pool: pg.Pool): Promise<void> {
   await pool.query(
-    'TRUNCATE idempotency_keys, user_drafts, events, channels, workspaces, seat_requests, session_views, sessions, auth_sessions, login_codes, oauth_identities, users RESTART IDENTITY CASCADE',
+    'TRUNCATE idempotency_keys, user_drafts, workspace_members, events, channels, workspaces, seat_requests, session_views, sessions, auth_sessions, login_codes, oauth_identities, users RESTART IDENTITY CASCADE',
   );
 }
 
@@ -48,10 +49,26 @@ export async function seedFixture(pool: pg.Pool): Promise<Fixture> {
   const user = await pool.query<{ id: string }>(
     `INSERT INTO users (handle, display_name) VALUES ('alice', 'Alice') RETURNING id`,
   );
+  await addWorkspaceMember(pool, workspace.id, user.rows[0]!.id);
   return {
     workspaceId: workspace.id,
     channelId: channel.id,
     otherChannelId: other.id,
     userId: user.rows[0]!.id,
   };
+}
+
+/** Create a user and join them to the workspace — the post-tenancy default. */
+export async function seedMember(
+  pool: pg.Pool,
+  workspaceId: string,
+  handle: string,
+  displayName = handle,
+): Promise<string> {
+  const user = await pool.query<{ id: string }>(
+    `INSERT INTO users (handle, display_name) VALUES ($1, $2) RETURNING id`,
+    [handle, displayName],
+  );
+  await addWorkspaceMember(pool, workspaceId, user.rows[0]!.id);
+  return user.rows[0]!.id;
 }
