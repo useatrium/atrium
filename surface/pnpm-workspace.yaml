@@ -1,6 +1,7 @@
 packages:
   - server
   - shared
+  - centaur-client
   - web
   - e2e
   - mobile

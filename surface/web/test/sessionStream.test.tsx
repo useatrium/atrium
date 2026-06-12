@@ -5,7 +5,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CentaurEventFrame, TextItem } from '@atrium/centaur-client';
-import rawC from '../../../packages/centaur-client/test/fixtures/C_longstream.json';
+import rawC from '../../centaur-client/test/fixtures/C_longstream.json';
 import { useSessionStream } from '../src/sessions/useSessionStream';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
