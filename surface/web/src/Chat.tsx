@@ -3,6 +3,7 @@ import { ApiError, api, type Workspace } from './api';
 import {
   DurableOpQueue,
   appReducer,
+  queuedChangesLabel,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
   initialAppState,
@@ -19,6 +20,7 @@ import {
   type ReactionSetPayload,
   type SessionSpawnPayload,
   type UploadPayload,
+  useQueuedChangesCount,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
@@ -91,6 +93,7 @@ export function Chat({
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const authInvalidatedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
+  const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
   const selectChannel = useCallback((channelId: string) => {
     const channel = stateRef.current.channels.find((c) => c.id === channelId);
@@ -120,6 +123,10 @@ export function Chat({
     authInvalidatedRef.current = true;
     void clearCache().finally(onLogout);
   }, [onLogout]);
+
+  const markQueueNudged = useCallback(() => {
+    setQueueNudgeSeq((n) => n + 1);
+  }, []);
 
   const onApiError = useCallback(
     (err: unknown) => {
@@ -225,11 +232,12 @@ export function Chat({
       const op = await opQueue.enqueue(input);
       if (op) {
         opQueue.nudge();
+        markQueueNudged();
         broadcastQueueNudge();
       }
       return op;
     },
-    [opQueue],
+    [markQueueNudged, opQueue],
   );
 
   const activeDraftKeysForSync = useCallback((): ReadonlySet<string> => {
@@ -323,11 +331,16 @@ export function Chat({
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === QUEUE_NUDGE_KEY) opQueue.nudge();
+      if (event.key === QUEUE_NUDGE_KEY) {
+        opQueue.nudge();
+        markQueueNudged();
+      }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [opQueue]);
+  }, [markQueueNudged, opQueue]);
+
+  const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
 
   useEffect(() => {
     const flushHiddenCache = () => {
@@ -1368,6 +1381,8 @@ export function Chat({
     [enqueueOp, markDraftTouched],
   );
 
+  const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
+
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -1511,12 +1526,17 @@ export function Chat({
           )}
         </header>
 
-        {state.wsStatus === 'closed' && (
+        {queueStatusText && (
           <div
             role="status"
-            className="flex shrink-0 items-center justify-center border-b border-warning-border/40 bg-warning-tint/30 px-4 py-1 text-2xs text-warning-text"
+            aria-live="polite"
+            className={`flex shrink-0 items-center justify-center border-b px-4 py-1 text-2xs ${
+              state.wsStatus === 'open'
+                ? 'border-info/20 bg-info/10 text-info-text'
+                : 'border-warning-border/40 bg-warning-tint/30 text-warning-text'
+            }`}
           >
-            Connection lost — reconnecting…
+            {queueStatusText}
           </div>
         )}
 

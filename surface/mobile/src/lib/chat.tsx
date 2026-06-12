@@ -33,6 +33,7 @@ import {
   randomId,
   reconcileDraftSnapshot,
   sessionFromWire,
+  useQueuedChangesCount,
   useWs,
   type Api,
   type AppState,
@@ -67,6 +68,7 @@ export interface TypingEntry {
 interface ChatContextValue {
   state: AppState;
   me: UserRef;
+  queuedChangesCount: number;
   api: Api;
   channelsLoaded: boolean;
   channelsError: string | null;
@@ -195,6 +197,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [failedSessionCancels, setFailedSessionCancels] = useState<Record<string, true>>({});
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
+  const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const loadingMentionUsersRef = useRef(false);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
@@ -355,13 +358,20 @@ export function ChatProvider({ session, children }: { session: Session; children
     [adoptPrefs, api, cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
   );
 
+  const markQueueNudged = useCallback(() => {
+    setQueueNudgeSeq((n) => n + 1);
+  }, []);
+
   const enqueueOp = useCallback(
     async <T extends OpType>(input: EnqueueOpInput<T>): Promise<QueuedOp | null> => {
       const op = await opQueue.enqueue(input);
-      if (op) opQueue.nudge();
+      if (op) {
+        opQueue.nudge();
+        markQueueNudged();
+      }
       return op;
     },
-    [opQueue],
+    [markQueueNudged, opQueue],
   );
 
   const clearFailedSessionSteer = useCallback((sessionId: string) => {
@@ -450,6 +460,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         console.warn('failed to reconcile draft snapshot', err);
       });
   }, []);
+
+  const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -1406,6 +1418,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     () => ({
       state,
       me,
+      queuedChangesCount,
       api,
       channelsLoaded,
       channelsError,
@@ -1454,6 +1467,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     [
       state,
       me,
+      queuedChangesCount,
       api,
       channelsLoaded,
       channelsError,
