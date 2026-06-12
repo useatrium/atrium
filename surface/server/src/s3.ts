@@ -3,6 +3,7 @@
 
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
@@ -53,4 +54,8 @@ export function presignGet(key: string, filename: string, inline: boolean): Prom
     }),
     { expiresIn: 600 },
   );
+}
+
+export async function deleteObject(key: string): Promise<void> {
+  await client.send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
 }
