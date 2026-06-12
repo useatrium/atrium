@@ -675,16 +675,23 @@ export async function listVisibleSyncEvents(
   db: Db | DbClient,
   args: { userId: string; after: number; limit: number },
 ): Promise<SyncEventsPage> {
-  const summary = await db.query<{ count_after: number; max_id: number }>(
-    `WITH ${syncVisibleCte('$1', '$3')}
-     SELECT COUNT(*) FILTER (WHERE id > $2)::int AS count_after,
-            COALESCE(MAX(id), 0)::bigint AS max_id
-     FROM visible`,
-    [args.userId, args.after, args.userId],
+  const maxCursor = await db.query<{ max_id: number }>(
+    `WITH ${syncVisibleCte('$1', '$2')}
+     SELECT COALESCE((SELECT id FROM visible ORDER BY id DESC LIMIT 1), 0)::bigint AS max_id`,
+    [args.userId, args.userId],
   );
-  const countAfter = Number(summary.rows[0]?.count_after ?? 0);
-  const nextCursor = Number(summary.rows[0]?.max_id ?? 0);
-  if (countAfter > args.limit) {
+  const nextCursor = Number(maxCursor.rows[0]?.max_id ?? 0);
+
+  const probe = await db.query<{ id: number }>(
+    `WITH ${syncVisibleCte('$1', '$4')}
+     SELECT id
+     FROM visible
+     WHERE id > $2
+     ORDER BY id ASC
+     LIMIT $3`,
+    [args.userId, args.after, args.limit + 1, args.userId],
+  );
+  if (probe.rows.length > args.limit) {
     return { events: [], nextCursor, limited: true };
   }
 
