@@ -2,7 +2,7 @@
 
 This package runs the Atrium surface stack with Postgres, MinIO, the Fastify API server, and optional Caddy for the built web SPA.
 
-The server image uses `node:24-alpine` to match the repo's current Node 24 type/runtime target. It compiles the TypeScript server during the Docker build, builds the local `@atrium/centaur-client` package first, then runs `node dist/index.js` as a non-root user. Migrations run automatically when the server boots.
+The server image uses `node:24-alpine` to match the repo's current Node 24 type/runtime target. It installs the filtered surface workspace, bundles the server with esbuild (workspace `@atrium/*` packages export TypeScript source, so they are compiled into the artifact; real dependencies come from `pnpm deploy --prod`), then runs `node dist/index.js` as a non-root user. Migrations run automatically when the server boots.
 
 ## Build The Web App
 

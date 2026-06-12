@@ -45,7 +45,7 @@ class FakeCentaur {
 
   async start(): Promise<void> {
     const fixture = await readFile(
-      join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'packages', 'centaur-client', 'test', 'fixtures', 'A_pong.json'),
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'centaur-client', 'test', 'fixtures', 'A_pong.json'),
       'utf8',
     );
     this.frames = JSON.parse(fixture);

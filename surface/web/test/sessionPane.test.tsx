@@ -5,7 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
-import rawB from '../../../packages/centaur-client/test/fixtures/B_tooltest.json';
+import rawB from '../../centaur-client/test/fixtures/B_tooltest.json';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
 import { SessionPane } from '../src/sessions/SessionPane';
 import type { Session } from '../src/sessions/types';

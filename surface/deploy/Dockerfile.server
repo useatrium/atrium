@@ -10,52 +10,30 @@ FROM base AS deps
 COPY surface/package.json surface/pnpm-lock.yaml surface/pnpm-workspace.yaml ./surface/
 COPY surface/server/package.json ./surface/server/package.json
 COPY surface/shared/package.json ./surface/shared/package.json
-COPY packages/centaur-client/package.json ./packages/centaur-client/package.json
+COPY surface/centaur-client/package.json ./surface/centaur-client/package.json
 RUN cd surface && pnpm install --frozen-lockfile --ignore-scripts --filter @atrium/server...
 
 FROM deps AS build
 COPY surface/server ./surface/server
 COPY surface/shared ./surface/shared
-COPY packages/centaur-client ./packages/centaur-client
-RUN cd packages/centaur-client && pnpm install --frozen-lockfile --ignore-scripts && pnpm build
-# The repo manifest exports TypeScript source (./src/index.ts) so dev tooling
-# (vite, tsx, vitest) never sees a stale dist/. Node and tsc in this image need
-# built artifacts, so rewrite the manifest here to point at dist/ instead. The
-# runtime stage copies this patched manifest, keeping build and runtime
-# resolution consistent.
-RUN node -e ' \
-  const fs = require("fs"); \
-  const path = "packages/centaur-client/package.json"; \
-  const p = JSON.parse(fs.readFileSync(path, "utf8")); \
-  p.main = "./dist/index.js"; \
-  p.types = "./dist/index.d.ts"; \
-  p.exports = { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } }; \
-  p.files = ["dist", "README.md"]; \
-  fs.writeFileSync(path, JSON.stringify(p, null, 2) + "\n");'
-RUN mkdir -p surface/server/node_modules/@atrium/centaur-client \
-  && cp packages/centaur-client/package.json surface/server/node_modules/@atrium/centaur-client/package.json \
-  && cp -R packages/centaur-client/dist surface/server/node_modules/@atrium/centaur-client/dist
-RUN cd surface/server && pnpm exec tsc \
-  --target ES2023 \
-  --module NodeNext \
-  --moduleResolution NodeNext \
-  --lib ES2023 \
-  --types node \
-  --strict \
-  --noUncheckedIndexedAccess \
-  --esModuleInterop \
-  --skipLibCheck \
-  --forceConsistentCasingInFileNames \
-  --outDir dist \
-  --rootDir src \
-  src/index.ts
-
-FROM base AS prod-deps
-COPY surface/package.json surface/pnpm-lock.yaml surface/pnpm-workspace.yaml ./surface/
-COPY surface/server/package.json ./surface/server/package.json
-COPY surface/shared/package.json ./surface/shared/package.json
-COPY packages/centaur-client/package.json ./packages/centaur-client/package.json
-RUN cd surface && pnpm install --prod --frozen-lockfile --ignore-scripts --filter @atrium/server...
+COPY surface/centaur-client ./surface/centaur-client
+# Bundle the server with workspace packages compiled in. @atrium/* packages
+# export TypeScript source by design (vite/tsx/vitest/metro all transpile),
+# but node in the runtime image cannot type-strip inside node_modules — so
+# the prod artifact must be self-contained. Real deps stay external and come
+# from the pnpm deploy below. Types are CI's job (tsc --noEmit there).
+RUN cd surface/server && pnpm exec esbuild src/index.ts \
+  --bundle \
+  --platform=node \
+  --format=esm \
+  --target=node24 \
+  --sourcemap \
+  --outfile=dist/index.js \
+  --external:fastify \
+  --external:@fastify/* \
+  --external:pg \
+  --external:@aws-sdk/*
+RUN cd surface && pnpm --filter @atrium/server deploy --prod --legacy /out
 
 FROM node:24-alpine AS runtime
 WORKDIR /app/surface/server
@@ -63,15 +41,9 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3001
 
-COPY --from=prod-deps /app/surface/node_modules /app/surface/node_modules
-COPY --from=prod-deps /app/surface/server/node_modules /app/surface/server/node_modules
-COPY --from=prod-deps /app/packages /app/packages
-COPY --from=build /app/packages/centaur-client/dist /app/packages/centaur-client/dist
-COPY --from=build /app/packages/centaur-client/package.json /app/surface/server/node_modules/@atrium/centaur-client/package.json
-COPY --from=build /app/packages/centaur-client/dist /app/surface/server/node_modules/@atrium/centaur-client/dist
+COPY --from=build /out ./
 COPY --from=build /app/surface/server/dist ./dist
 COPY --from=build /app/surface/server/migrations ./migrations
-COPY --from=build /app/surface/server/package.json ./package.json
 
 RUN addgroup -S atrium && adduser -S -G atrium atrium
 USER atrium
