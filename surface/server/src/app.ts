@@ -14,8 +14,10 @@ import {
   canAccessChannel,
   canAccessFile,
   createChannel,
+  createWorkspace,
   deleteMessageTx,
   editMessageTx,
+  ensureDefaultWorkspace,
   getOrCreateGdm,
   getOrCreateDm,
   leaveChannelTx,
@@ -25,14 +27,20 @@ import {
   listThreadMessages,
   listUsers,
   listVisibleSyncEvents,
-  listWorkspaces,
   postMessage,
   searchMessages,
   setReactionTx,
+  type Workspace,
   type ReactionAction,
   type WireEvent,
   type UserRef,
 } from './events.js';
+import {
+  addWorkspaceMember,
+  isWorkspaceMember,
+  workspaceIdsFor,
+  workspaceMemberIds,
+} from './membership.js';
 import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
@@ -69,6 +77,10 @@ const CHANNEL_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_RE = /^\d{6}$/;
 const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
+
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string }).code === '23505';
+}
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
@@ -345,6 +357,19 @@ function rawSession(req: FastifyRequest): string | undefined {
     return handle;
   }
 
+  async function joinDefaultWorkspace(userId: string): Promise<void> {
+    const workspace = await ensureDefaultWorkspace(pool);
+    await addWorkspaceMember(pool, workspace.id, userId);
+  }
+
+  async function activeWorkspaceIdFor(userId: string): Promise<string | null> {
+    return (await workspaceIdsFor(pool, userId))[0] ?? null;
+  }
+
+  function noWorkspace(reply: FastifyReply) {
+    return reply.code(403).send({ error: 'no_workspace', message: 'user has no workspace' });
+  }
+
   async function createUserForEmail(email: string) {
     const displayName = displayNameFromEmail(email);
     const base = handleBaseFromEmail(email).slice(0, 29);
@@ -358,7 +383,10 @@ function rawSession(req: FastifyRequest): string | undefined {
          RETURNING id, handle, display_name`,
         [handle, displayName, email],
       );
-      if (inserted.rows[0]) return inserted.rows[0]!;
+      if (inserted.rows[0]) {
+        await joinDefaultWorkspace(inserted.rows[0]!.id);
+        return inserted.rows[0]!;
+      }
       const existingEmail = await pool.query<{ id: string; handle: string; display_name: string }>(
         `SELECT id, handle, display_name FROM users WHERE email = $1`,
         [email],
@@ -643,12 +671,23 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       // A blank display name means "keep what I had" for returning users —
       // re-logins must not silently rewrite attribution across history.
-      const user = await pool.query<{ id: string; handle: string; display_name: string }>(
+      let user = await pool.query<{ id: string; handle: string; display_name: string }>(
         `INSERT INTO users (handle, display_name) VALUES ($1, COALESCE(NULLIF($2, ''), $1))
-         ON CONFLICT (handle) DO UPDATE SET display_name = COALESCE(NULLIF($2, ''), users.display_name)
+         ON CONFLICT DO NOTHING
          RETURNING id, handle, display_name`,
         [handle, displayName],
       );
+      if (user.rows[0]) {
+        await joinDefaultWorkspace(user.rows[0].id);
+      } else {
+        user = await pool.query<{ id: string; handle: string; display_name: string }>(
+          `UPDATE users
+           SET display_name = COALESCE(NULLIF($2, ''), display_name)
+           WHERE handle = $1
+           RETURNING id, handle, display_name`,
+          [handle, displayName],
+        );
+      }
       const u = user.rows[0]!;
       // Native clients can't rely on cookies — they store the token and send it
       // as `Authorization: Bearer` (HTTP) or `?token=` (WS upgrade).
@@ -679,8 +718,72 @@ function rawSession(req: FastifyRequest): string | undefined {
   // -------------------------------------------------------------------------
 
   app.get('/api/workspaces', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
-    return { workspaces: await listWorkspaces(pool) };
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const res = await pool.query<{ id: string; name: string; created_at: Date }>(
+      `SELECT w.id, w.name, w.created_at
+       FROM workspaces w
+       JOIN workspace_members wm ON wm.workspace_id = w.id
+       WHERE wm.user_id = $1
+       ORDER BY wm.created_at ASC, w.id ASC`,
+      [user.id],
+    );
+    return {
+      workspaces: res.rows.map(
+        (r): Workspace => ({
+          id: r.id,
+          name: r.name,
+          createdAt: new Date(r.created_at).toISOString(),
+        }),
+      ),
+    };
+  });
+
+  app.post('/api/workspaces', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { name?: unknown };
+    const name = String(body.name ?? '').trim();
+    if (name.length < 1 || name.length > 64) {
+      return reply
+        .code(400)
+        .send({ error: 'invalid_workspace_name', message: 'workspace name must be 1-64 chars' });
+    }
+    try {
+      const { workspace } = await createWorkspace(pool, { name, actorId: user.id });
+      await addWorkspaceMember(pool, workspace.id, user.id);
+      return reply.code(201).send({ workspace });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return reply
+          .code(409)
+          .send({ error: 'workspace_exists', message: 'workspace name already exists' });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/workspaces/:id/members', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    if (!isUuid(id) || !(await isWorkspaceMember(pool, user.id, id))) {
+      return reply.code(404).send({ error: 'workspace_not_found', message: 'workspace not found' });
+    }
+    const body = (req.body ?? {}) as { handle?: unknown };
+    const handle = String(body.handle ?? '').trim().toLowerCase();
+    const target = await pool.query<{ id: string; handle: string; display_name: string }>(
+      'SELECT id, handle, display_name FROM users WHERE handle = $1',
+      [handle],
+    );
+    const member = target.rows[0];
+    if (!member) {
+      return reply.code(404).send({ error: 'user_not_found', message: 'user not found' });
+    }
+    await addWorkspaceMember(pool, id, member.id);
+    return {
+      member: { id: member.id, handle: member.handle, displayName: member.display_name },
+    };
   });
 
   app.get('/api/channels', async (req, reply) => {
@@ -924,18 +1027,17 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (existingUsers.rows.length !== distinctUserIds.length) {
       return reply.code(404).send({ error: 'user_not_found', message: 'user not found' });
     }
-    const workspaces = await listWorkspaces(pool);
-    const ws = workspaces[0];
-    if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace' });
+    const workspaceId = await activeWorkspaceIdFor(user.id);
+    if (!workspaceId) return noWorkspace(reply);
     const isOneToOne = new Set([user.id, ...distinctUserIds]).size <= 2;
     const { channel, created } = isOneToOne
       ? await getOrCreateDm(pool, {
-          workspaceId: ws.id,
+          workspaceId,
           userIdA: user.id,
           userIdB: distinctUserIds[0]!,
         })
       : await getOrCreateGdm(pool, {
-          workspaceId: ws.id,
+          workspaceId,
           creatorId: user.id,
           userIds: distinctUserIds,
         });
@@ -945,7 +1047,7 @@ function rawSession(req: FastifyRequest): string | undefined {
         channel.members?.map((m) => m.id) ?? [user.id, ...distinctUserIds],
         {
           id: 0,
-          workspaceId: ws.id,
+          workspaceId,
           channelId: channel.id,
           threadRootEventId: null,
           type: 'channel.created',
@@ -970,19 +1072,17 @@ function rawSession(req: FastifyRequest): string | undefined {
         message: 'channel name must be 1-32 chars: lowercase letters, digits, - or _',
       });
     }
-    const workspaces = await listWorkspaces(pool);
-    const ws = workspaces[0];
-    if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace bootstrapped' });
+    const workspaceId = await activeWorkspaceIdFor(user.id);
+    if (!workspaceId) return noWorkspace(reply);
     const { channel, event } = await createChannel(pool, {
-      workspaceId: ws.id,
+      workspaceId,
       name,
       actorId: user.id,
       private: body.private === true,
     });
     const createdEvent = { ...event, payload: { ...event.payload, channel } };
     if (channel.kind === 'public') {
-      // channel.created is broadcast to everyone so sidebars stay live.
-      hub.publishGlobal(createdEvent);
+      hub.publishToUsers(await workspaceMemberIds(pool, channel.workspaceId), createdEvent);
     } else {
       hub.publishToUsers([user.id], createdEvent);
     }
@@ -1313,9 +1413,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     const dim = (v: unknown) =>
       Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : null;
-    const workspaces = await listWorkspaces(pool);
-    const ws = workspaces[0];
-    if (!ws) return reply.code(500).send({ error: 'no_workspace', message: 'no workspace' });
+    const workspaceId = await activeWorkspaceIdFor(user.id);
+    if (!workspaceId) return noWorkspace(reply);
     try {
       await fileStorage.ensureBucket();
     } catch {
@@ -1347,7 +1446,7 @@ function rawSession(req: FastifyRequest): string | undefined {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         fileId,
-        ws.id,
+        workspaceId,
         user.id,
         filename,
         contentType,
