@@ -269,10 +269,10 @@ export function createApi(opts: ApiOptions = {}) {
       const qs = q.toString();
       return req<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
     },
-    steerSession: (id: string, text: string) =>
+    steerSession: (id: string, text: string, op: OpOptions = {}) =>
       req<{ ok: true }>(`/api/sessions/${id}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     answerSessionQuestion: (
       id: string,
