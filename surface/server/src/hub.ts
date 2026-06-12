@@ -101,11 +101,6 @@ export class WsHub {
     }
   }
 
-  /** Broadcast to every connected client regardless of subscriptions. */
-  publishGlobal(event: WireEvent): void {
-    for (const client of this.clients) this.sendTo(client, { type: 'event', event });
-  }
-
   /** Send an event only to specific users' sockets (e.g. DM creation). */
   publishToUsers(userIds: string[], event: WireEvent): void {
     const ids = new Set(userIds);
