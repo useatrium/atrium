@@ -9,8 +9,12 @@ const apiTarget = `http://127.0.0.1:${serverPort}`;
 
 export default defineConfig({
   testDir: './tests',
-  fullyParallel: false,
-  workers: 1,
+  // Tests isolate state via unique() handles/channels, so they tolerate
+  // running concurrently against the one shared app + database. Two workers
+  // roughly halves wall-clock; four also passed locally but provoked the Vite
+  // WS proxy resets described below, so hold at two until repeated green runs.
+  fullyParallel: true,
+  workers: 2,
   // Generous on CI: shared runners are slow and variable, and the vite WS
   // proxy can reset a socket under load — the client recovers (reconnect →
   // channel refetch surfaces the missed unread) but needs more than a few
