@@ -50,6 +50,9 @@ export function SessionPane({
   onSteer = async () => {},
   failedSteer = null,
   onClearFailedSteer = () => {},
+  onCancelSession = async () => {},
+  failedCancel = false,
+  onClearFailedCancel = () => {},
 }: {
   session: Session;
   me: UserRef;
@@ -64,6 +67,9 @@ export function SessionPane({
   onSteer?: (sessionId: string, text: string) => Promise<void>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
+  onCancelSession?: (sessionId: string) => Promise<void>;
+  failedCancel?: boolean;
+  onClearFailedCancel?: () => void;
 }) {
   const { stream, connected } = useSessionStream(session.id);
 
@@ -154,18 +160,20 @@ export function SessionPane({
 
   // Cancel is destructive and possibly shared — two-step inline confirm.
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
+  const displayCancelAsk = failedCancel ? 'failed' : cancelAsk;
   useEffect(() => {
     if (cancelAsk !== 'confirm') return;
     const t = setTimeout(() => setCancelAsk('idle'), 5000);
     return () => clearTimeout(t);
   }, [cancelAsk]);
   const onCancel = () => {
-    if (cancelAsk === 'idle') {
+    if (displayCancelAsk === 'idle') {
       setCancelAsk('confirm');
       return;
     }
     setCancelAsk('idle');
-    sessionsApi.cancel(session.id).catch(() => setCancelAsk('failed'));
+    onClearFailedCancel();
+    onCancelSession(session.id).catch(() => setCancelAsk('failed'));
   };
 
   // Driver-side grant banner; Ignore is a local dismissal only.
@@ -274,14 +282,14 @@ export function SessionPane({
             onClick={onCancel}
             title="Cancel this session"
             className={`rounded-md border px-2 py-1 text-2xs font-medium ${
-              cancelAsk === 'confirm'
+              displayCancelAsk === 'confirm'
                 ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
                 : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
             }`}
           >
-            {cancelAsk === 'confirm'
+            {displayCancelAsk === 'confirm'
               ? 'Confirm cancel'
-              : cancelAsk === 'failed'
+              : displayCancelAsk === 'failed'
                 ? 'Cancel failed — retry'
                 : 'Cancel'}
           </button>

@@ -79,6 +79,7 @@ export function Chat({
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
+  const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
   const stateRef = useRef(state);
   stateRef.current = state;
   const lastReadSentRef = useRef<Record<string, number>>({});
@@ -159,6 +160,8 @@ export function Chat({
         return "Couldn't submit the answer.";
       case 'session.steer':
         return "Couldn't send the session message.";
+      case 'session.cancel':
+        return "Couldn't cancel the session.";
       case 'prefs.set':
         return "Couldn't sync settings.";
       case 'channel.join':
@@ -194,6 +197,13 @@ export function Chat({
               const sessionId = payload.sessionId;
               const text = payload.text;
               setFailedSteers((prev) => ({ ...prev, [sessionId]: text }));
+            }
+          }
+          if (op.opType === 'session.cancel') {
+            const payload = op.payload as { sessionId?: unknown };
+            if (typeof payload.sessionId === 'string') {
+              const sessionId = payload.sessionId;
+              setFailedCancels((prev) => ({ ...prev, [sessionId]: true }));
             }
           }
           if (!(err instanceof ApiError && err.status === 401)) {
@@ -235,6 +245,27 @@ export function Chat({
       });
     },
     [clearFailedSteer, enqueueOp],
+  );
+
+  const clearFailedCancel = useCallback((sessionId: string) => {
+    setFailedCancels((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const cancelSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      clearFailedCancel(sessionId);
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.cancel',
+        payload: { sessionId },
+      });
+    },
+    [clearFailedCancel, enqueueOp],
   );
 
   useEffect(() => {
@@ -1474,6 +1505,9 @@ export function Chat({
           onSteer={steerSession}
           failedSteer={failedSteers[paneSession.id] ?? null}
           onClearFailedSteer={() => clearFailedSteer(paneSession.id)}
+          onCancelSession={cancelSession}
+          failedCancel={failedCancels[paneSession.id] === true}
+          onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
         />
       ) : state.openSessionId ? (
         <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">

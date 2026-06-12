@@ -213,6 +213,24 @@ describe('durable op queue coalescing', () => {
     expect(ops.map((op) => op.queueKey)).toEqual(['steer:sess-1', 'steer:sess-1']);
     expect(ops.map((op) => (op.payload as { text: string }).text)).toEqual(['first', 'second']);
   });
+
+  it('coalesces duplicate session cancels', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'session.cancel',
+      payload: { sessionId: 'sess-1' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'session.cancel',
+      payload: { sessionId: 'sess-1' },
+    });
+    const ops = await storage.listOps();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.queueKey).toBe('cancel:sess-1');
+  });
 });
 
 describe('durable op queue flushing', () => {
