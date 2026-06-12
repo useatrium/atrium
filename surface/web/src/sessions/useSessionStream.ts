@@ -31,6 +31,7 @@ export function useSessionStream(sessionId: string | null): SessionStream {
     let handle: SessionStreamHandle | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let flushScheduled = false;
+    let generation = 0;
     setStream(acc);
     setConnected(false);
 
@@ -59,14 +60,21 @@ export function useSessionStream(sessionId: string | null): SessionStream {
 
     const connect = () => {
       if (disposed) return;
+      generation += 1;
+      const handleGeneration = generation;
+      const isCurrent = () => !disposed && generation === handleGeneration;
       handle = sessionsApi.openStream(sessionId, acc.lastEventId, {
-        onFrame,
+        onFrame: (frame) => {
+          if (isCurrent()) onFrame(frame);
+        },
         onOpen: () => {
-          if (!disposed) setConnected(true);
+          if (isCurrent()) setConnected(true);
         },
         onError: () => {
+          if (!isCurrent()) return;
           handle?.close();
           handle = null;
+          generation += 1;
           if (disposed) return;
           setConnected(false);
           // A finished replay ends with a terminal state — don't loop forever.

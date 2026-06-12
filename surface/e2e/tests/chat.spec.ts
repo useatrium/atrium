@@ -122,6 +122,93 @@ async function injectQuestionRequested(args: {
   }
 }
 
+async function injectTranscriptSession(args: {
+  handle: string;
+  channelId: string;
+  title: string;
+}): Promise<{ rootId: number; sessionId: string }> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
+      args.handle,
+    ]);
+    const channel = await client.query<{ workspace_id: string }>(
+      'SELECT workspace_id FROM channels WHERE id = $1',
+      [args.channelId],
+    );
+    if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
+
+    const userId = user.rows[0].id;
+    const workspaceId = channel.rows[0].workspace_id;
+    const session = await client.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, $3, 'claude-code', $4, 'running', $5, $5, 'exe_e2e_stream', 1)
+       RETURNING id`,
+      [workspaceId, args.channelId, `thread-${unique('stream')}`, args.title, userId],
+    );
+    const sessionId = session.rows[0]!.id;
+    const root = await client.query<{ id: string }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'session.spawned', $3, $4)
+       RETURNING id`,
+      [
+        workspaceId,
+        args.channelId,
+        userId,
+        JSON.stringify({
+          sessionId,
+          title: args.title,
+          harness: 'claude-code',
+          by: userId,
+        }),
+      ],
+    );
+    const rootId = Number(root.rows[0]!.id);
+    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [
+      rootId,
+      sessionId,
+    ]);
+    await client.query('COMMIT');
+    return { rootId, sessionId };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+function transcriptSseFrame(
+  event: string,
+  eventId: number,
+  data: Record<string, unknown>,
+): string {
+  return `event: ${event}\ndata: ${JSON.stringify({ ...data, event_id: eventId })}\n\n`;
+}
+
+function assistantTextFrame(eventId: number, text: string): string {
+  return transcriptSseFrame('amp_raw_event', eventId, {
+    type: 'assistant',
+    message: { id: `msg-${eventId}`, content: [{ type: 'text', text }] },
+  });
+}
+
+function executionStateFrame(eventId: number, status: string): string {
+  return transcriptSseFrame('execution_state', eventId, {
+    type: 'execution.state',
+    status,
+    thread_key: 'thread-e2e-stream',
+    execution_id: 'exe_e2e_stream',
+    ...(status === 'completed' ? { result_text: 'resume complete' } : {}),
+  });
+}
+
 test('login lands in #general; sent message appears', async ({ page }) => {
   await login(page, unique('alice'), 'Alice');
 
@@ -455,4 +542,49 @@ test('session question requested while disconnected heals without reload', async
   expect(injected.sessionId).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   );
+});
+
+test('session transcript stream resumes after disconnect without duplicating replayed frames', async ({
+  page,
+}) => {
+  const handle = unique('stream-resume');
+  await login(page, handle, 'Stream Resume');
+  const generalId = await channelId(page.context().request, 'general');
+  const title = unique('stream-transcript-session');
+  const injected = await injectTranscriptSession({ handle, channelId: generalId, title });
+  const seenAfterIds: string[] = [];
+  let requestCount = 0;
+
+  await page.route('**/api/sessions/*/stream*', async (route) => {
+    const url = new URL(route.request().url());
+    seenAfterIds.push(url.searchParams.get('after_event_id') ?? '');
+    requestCount += 1;
+    if (requestCount === 1) {
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+        body: executionStateFrame(1, 'running') + assistantTextFrame(2, 'alpha'),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      body:
+        assistantTextFrame(2, 'alpha') +
+        assistantTextFrame(3, 'beta') +
+        executionStateFrame(4, 'completed'),
+    });
+  });
+
+  await page.goto(`/s/${injected.sessionId}`);
+
+  await expect(page.getByText('alpha')).toBeVisible();
+  await expect(page.getByText('alphabeta')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('alphaalphabeta')).toHaveCount(0);
+  expect(seenAfterIds[0]).toBe('0');
+  await expect.poll(() => seenAfterIds.at(-1)).toBe('2');
+  expect(injected.rootId).toBeGreaterThan(0);
+
+  await page.unroute('**/api/sessions/*/stream*');
 });

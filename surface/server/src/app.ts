@@ -1580,9 +1580,9 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     const q = req.query as { after_event_id?: string };
-    const afterEventId = q.after_event_id ? Number(q.after_event_id) : 0;
-    if (!Number.isFinite(afterEventId)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'after_event_id must be numeric' });
+    const afterEventId = q.after_event_id == null ? 0 : Number(q.after_event_id);
+    if (!Number.isSafeInteger(afterEventId) || afterEventId < 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'after_event_id must be a nonnegative integer' });
     }
     const session = await sessionRuns.getSessionForUser(id, user.id);
     const abort = new AbortController();
