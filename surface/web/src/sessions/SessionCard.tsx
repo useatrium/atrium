@@ -105,7 +105,7 @@ export function SessionCard({
         openable ? 'cursor-pointer hover:border-edge-strong' : ''
       }`}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-start gap-2">
         {spawnFailed ? (
           <StatusChip status="failed" label="spawn failed" />
         ) : session.pendingQuestion ? (
@@ -117,12 +117,12 @@ export function SessionCard({
           <button
             type="button"
             onClick={open}
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-fg hover:underline focus-visible:underline"
+            className="min-w-0 flex-1 whitespace-pre-wrap break-words text-left text-sm font-medium leading-snug text-fg hover:underline focus-visible:underline"
           >
             {session.title}
           </button>
         ) : (
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
+          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm font-medium leading-snug text-fg">
             {session.title}
           </span>
         )}
@@ -176,7 +176,7 @@ export function SessionCard({
             }}
             className="mt-0.5 inline-block text-2xs font-medium text-accent-text hover:underline"
           >
-            permalink
+            Open full transcript
           </a>
         </div>
       )}

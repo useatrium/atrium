@@ -94,7 +94,7 @@ describe('session card transitions across session.* events', () => {
     rerender(cardFor(s));
     expect(screen.getByText('completed')).toBeTruthy();
     expect(screen.getByText(/All green: 12 tests passed/)).toBeTruthy();
-    expect(screen.getByText('permalink').getAttribute('href')).toBe('/s/sess-1');
+    expect(screen.getByText('Open full transcript').getAttribute('href')).toBe('/s/sess-1');
   });
 
   it('renders a failed terminal state from session.completed', () => {

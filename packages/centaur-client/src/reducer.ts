@@ -12,6 +12,7 @@ import type {
   ExecutionStatus,
   JsonObject,
   QuestionPrompt,
+  QuestionResolved,
 } from "./types.js";
 import { isTerminalExecutionStatus } from "./types.js";
 
@@ -36,7 +37,18 @@ export interface ToolCallItem {
   sourceEventIds: number[];
 }
 
-export type SessionItem = TextItem | ToolCallItem;
+export interface QuestionItem {
+  type: "question";
+  id: string;
+  questionId: string;
+  turnId?: string;
+  questions: QuestionPrompt[];
+  status: "pending" | "resolved";
+  reason?: QuestionResolved["reason"];
+  sourceEventIds: number[];
+}
+
+export type SessionItem = TextItem | ToolCallItem | QuestionItem;
 
 export interface SessionState {
   status: ExecutionStatus | "idle";
@@ -47,6 +59,7 @@ export interface SessionState {
   lastEventId: number;
   pendingQuestion: {
     questionId: string;
+    turnId?: string;
     questions: QuestionPrompt[];
   } | null;
 }
@@ -78,6 +91,7 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     }
     if (isTerminalExecutionStatus(frame.data.status)) {
       next.pendingQuestion = null;
+      resolveOpenQuestions(next, frame.event_id, "cancelled");
     }
     return next;
   }
@@ -85,13 +99,16 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
   if (frame.event === "question_requested") {
     next.pendingQuestion = {
       questionId: frame.data.question_id,
+      ...(frame.data.turn_id !== undefined ? { turnId: frame.data.turn_id } : {}),
       questions: frame.data.questions,
     };
+    upsertQuestionItem(next, frame.event_id, frame.data);
     return next;
   }
 
   if (frame.event === "question_resolved") {
     next.pendingQuestion = null;
+    resolveQuestionItem(next, frame.event_id, frame.data.question_id, frame.data.reason);
     return next;
   }
 
@@ -128,6 +145,85 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
   }
 
   return next;
+}
+
+function upsertQuestionItem(
+  state: SessionState,
+  eventId: number,
+  event: { question_id: string; turn_id?: string; questions: QuestionPrompt[] },
+): void {
+  const existing = state.items.find(
+    (item): item is QuestionItem => item.type === "question" && item.questionId === event.question_id,
+  );
+
+  if (existing) {
+    if (event.turn_id !== undefined) {
+      existing.turnId = event.turn_id;
+    } else {
+      delete existing.turnId;
+    }
+    existing.questions = event.questions;
+    existing.status = "pending";
+    delete existing.reason;
+    pushSourceEventId(existing, eventId);
+    return;
+  }
+
+  state.items.push({
+    type: "question",
+    id: `question:${event.question_id}`,
+    questionId: event.question_id,
+    ...(event.turn_id !== undefined ? { turnId: event.turn_id } : {}),
+    questions: event.questions,
+    status: "pending",
+    sourceEventIds: [eventId],
+  });
+}
+
+function resolveQuestionItem(
+  state: SessionState,
+  eventId: number,
+  questionId: string,
+  reason: QuestionResolved["reason"],
+): void {
+  const existing = state.items.find(
+    (item): item is QuestionItem => item.type === "question" && item.questionId === questionId,
+  );
+  if (existing) {
+    existing.status = "resolved";
+    existing.reason = reason;
+    pushSourceEventId(existing, eventId);
+    return;
+  }
+
+  state.items.push({
+    type: "question",
+    id: `question:${questionId}`,
+    questionId,
+    questions: [],
+    status: "resolved",
+    reason,
+    sourceEventIds: [eventId],
+  });
+}
+
+function resolveOpenQuestions(
+  state: SessionState,
+  eventId: number,
+  reason: QuestionResolved["reason"],
+): void {
+  for (const item of state.items) {
+    if (item.type !== "question" || item.status !== "pending") continue;
+    item.status = "resolved";
+    item.reason = reason;
+    pushSourceEventId(item, eventId);
+  }
+}
+
+function pushSourceEventId(item: SessionItem, eventId: number): void {
+  if (!item.sourceEventIds.includes(eventId)) {
+    item.sourceEventIds.push(eventId);
+  }
 }
 
 function reduceAssistant(state: SessionState, eventId: number, event: AmpAssistantEvent): void {

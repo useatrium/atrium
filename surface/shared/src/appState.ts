@@ -478,8 +478,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             spawnerName: action.session.spawnerName ?? existing?.spawnerName,
             driverName: action.session.driverName ?? existing?.driverName,
             pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
-            // GET /api/sessions/:id carries no audit history — keep what the
-            // live seat_changed folds already accumulated.
+            questionEvents:
+              (action.session.questionEvents?.length ?? 0) > 0
+                ? action.session.questionEvents
+                : existing?.questionEvents ?? [],
+            // GET /api/sessions/:id carries no audit history, so keep what
+            // live session.* folds already accumulated.
             seatEvents:
               action.session.seatEvents.length > 0
                 ? action.session.seatEvents

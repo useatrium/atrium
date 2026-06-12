@@ -213,16 +213,16 @@ function SessionCard({
           {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
         </Text>
       </View>
-      <Text style={{ color: colors.text, fontSize: font.sm }} numberOfLines={3}>
+      <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
         {session?.title ?? message.text}
       </Text>
       {session?.resultText ? (
-        <Text style={{ color: colors.textSecondary, fontSize: font.xs }} numberOfLines={2}>
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>
           {session.resultText}
         </Text>
       ) : null}
       <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
-        View live session
+        Open full transcript
       </Text>
     </Pressable>
   );
@@ -237,33 +237,121 @@ function SessionEventLine({
 }) {
   const { colors } = useTheme();
   const payload = message.sessionEventPayload ?? {};
-  const questions = Array.isArray(payload.questions) ? payload.questions : [];
-  const firstQuestion = questions[0] as Record<string, unknown> | undefined;
-  const questionText =
-    typeof firstQuestion?.question === 'string' && firstQuestion.question.trim()
-      ? firstQuestion.question
-      : 'Agent asked a question';
-  const label =
-    message.sessionEventType === 'question_answered'
-      ? 'Question answered'
-      : message.sessionEventType === 'question_requested'
-        ? `❓ ${questionText}`
-        : message.sessionEventType === 'question_resolved'
-          ? 'Question dismissed'
-          : 'Session event';
+  const questions = questionPayloadPrompts(payload);
+  const answers = questionPayloadAnswers(payload);
+  const questionText = questions[0]?.question ?? 'Agent asked a question';
+  const label = sessionQuestionEventLabel(message.sessionEventType, payload.reason);
 
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', marginTop: 2 }}>
-      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{label}</Text>
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: radius.sm,
+        backgroundColor: colors.bgElevated,
+        padding: space.sm,
+        gap: 6,
+        marginTop: 4,
+      }}
+    >
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>
+          {label}
+        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+          {formatTime(message.createdAt)}
+        </Text>
+      </View>
+      {message.sessionEventType === 'question_requested' ? (
+        <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
+          {questionText}
+        </Text>
+      ) : null}
+      {answers.map((answer) => (
+        <View
+          key={answer.id}
+          style={{
+            borderWidth: 1,
+            borderColor: colors.accent,
+            backgroundColor: colors.accentBg,
+            borderRadius: radius.sm,
+            padding: space.sm,
+            gap: 3,
+          }}
+        >
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>
+            {answer.header}
+          </Text>
+          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
+            {answer.answers.length > 0
+              ? answer.answers.join('\n')
+              : answer.count === 1
+                ? '1 answer recorded'
+                : `${answer.count} answers recorded`}
+          </Text>
+        </View>
+      ))}
       {message.sessionId && onOpen ? (
-        <Pressable onPress={() => onOpen(message.sessionId!)}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open session pane for this question event"
+          onPress={() => onOpen(message.sessionId!)}
+          hitSlop={8}
+          style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
+        >
           <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
-            {'  '}open pane
+            Open pane
           </Text>
         </Pressable>
       ) : null}
     </View>
   );
+}
+
+function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ question: string }> {
+  if (!Array.isArray(payload.questions)) return [];
+  return payload.questions
+    .map((item): { question: string } | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Record<string, unknown>;
+      return typeof raw.question === 'string' && raw.question.trim()
+        ? { question: raw.question }
+        : null;
+    })
+    .filter((item): item is { question: string } => item !== null);
+}
+
+function questionPayloadAnswers(
+  payload: Record<string, unknown>,
+): Array<{ id: string; header: string; answers: string[]; count: number }> {
+  if (!Array.isArray(payload.answers)) return [];
+  return payload.answers
+    .map((item): { id: string; header: string; answers: string[]; count: number } | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Record<string, unknown>;
+      if (typeof raw.id !== 'string') return null;
+      const answers = Array.isArray(raw.answers)
+        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
+        : [];
+      return {
+        id: raw.id,
+        header: typeof raw.header === 'string' ? raw.header : raw.id,
+        answers,
+        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
+      };
+    })
+    .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
+}
+
+function sessionQuestionEventLabel(
+  type: ChatMessage['sessionEventType'],
+  reason: unknown,
+): string {
+  if (type === 'question_requested') return 'Question asked';
+  if (type === 'question_answered') return 'Question answered';
+  if (reason === 'empty') return 'Question expired without an answer';
+  if (reason === 'cancelled') return 'Question cancelled';
+  return 'Question resolved';
 }
 
 export const MessageRow = memo(function MessageRow({

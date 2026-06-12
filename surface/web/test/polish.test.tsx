@@ -213,7 +213,7 @@ describe('session question events', () => {
     ...over,
   });
 
-  it('renders requested questions as a compact open-pane line', async () => {
+  it('renders requested questions as a wrapped open-pane event', async () => {
     const onOpenSession = vi.fn();
     renderThemed(
       <MessageRow
@@ -228,8 +228,9 @@ describe('session question events', () => {
       />,
     );
 
-    expect(screen.getByText('❓ Deploy now?')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'open pane' }));
+    expect(screen.getByText('Question asked')).toBeTruthy();
+    expect(screen.getByText('Deploy now?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open session pane for this question' }));
     await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('sess-1'));
   });
 
@@ -244,10 +245,29 @@ describe('session question events', () => {
       />,
     );
 
-    expect(screen.getByText('❓ Agent asked a question')).toBeTruthy();
+    expect(screen.getByText('Question asked')).toBeTruthy();
+    expect(screen.getByText('Agent asked a question')).toBeTruthy();
   });
 
-  it('renders resolved questions as a quiet dismissed line', () => {
+  it('renders answered questions with answer summaries', () => {
+    renderThemed(
+      <MessageRow
+        message={sessionEvent({
+          sessionEventType: 'question_answered',
+          sessionEventPayload: {
+            answers: [{ id: 'q1', header: 'Decision', answers: ['Ship it'], count: 1 }],
+          },
+        })}
+        grouped={false}
+      />,
+    );
+
+    expect(screen.getByText('Question answered')).toBeTruthy();
+    expect(screen.getByText('Decision')).toBeTruthy();
+    expect(screen.getByText('Ship it')).toBeTruthy();
+  });
+
+  it('renders resolved questions with the reason', () => {
     renderThemed(
       <MessageRow
         message={sessionEvent({
@@ -258,7 +278,7 @@ describe('session question events', () => {
       />,
     );
 
-    expect(screen.getByText('Question dismissed')).toBeTruthy();
+    expect(screen.getByText('Question cancelled')).toBeTruthy();
   });
 });
 

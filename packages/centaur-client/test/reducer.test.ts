@@ -230,6 +230,16 @@ describe("reduceSession", () => {
       questionId: "q-1",
       questions: [{ id: "choice", header: "Decision" }],
     });
+    expect(withQuestion.items).toHaveLength(1);
+    expect(withQuestion.items[0]).toMatchObject({
+      type: "question",
+      id: "question:q-1",
+      questionId: "q-1",
+      turnId: "turn-1",
+      status: "pending",
+      questions: [{ id: "choice", header: "Decision", question: "Which path?" }],
+      sourceEventIds: [10],
+    });
 
     const resolved = reduceSession(withQuestion, {
       event: "question_resolved",
@@ -237,6 +247,12 @@ describe("reduceSession", () => {
       data: { type: "question_resolved", question_id: "q-1", reason: "answered" },
     });
     expect(resolved.pendingQuestion).toBeNull();
+    expect(resolved.items[0]).toMatchObject({
+      type: "question",
+      status: "resolved",
+      reason: "answered",
+      sourceEventIds: [10, 11],
+    });
 
     const terminal = reduceSession(withQuestion, {
       event: "execution_state",
@@ -249,5 +265,11 @@ describe("reduceSession", () => {
       },
     });
     expect(terminal.pendingQuestion).toBeNull();
+    expect(terminal.items[0]).toMatchObject({
+      type: "question",
+      status: "resolved",
+      reason: "cancelled",
+      sourceEventIds: [10, 12],
+    });
   });
 });

@@ -19,13 +19,16 @@ import {
   formatTime,
   isStalledSessionStatus,
   isTerminalSessionStatus,
+  mergeSpawnResponse,
   sessionDriverId,
   sessionFromWire,
   type QuestionPrompt,
   type Session,
+  type SessionQuestionAnswerSummary,
+  type SessionQuestionEvent,
   type SessionStatus,
 } from '@atrium/surface-client';
-import type { TextItem, ToolCallItem } from '@atrium/centaur-client';
+import type { QuestionItem, TextItem, ToolCallItem } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { normalizeExecutionStatus } from '../../../src/lib/sessionStreamCore';
@@ -145,12 +148,161 @@ function TextBlock({ item }: { item: TextItem }) {
   );
 }
 
+function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<string, SessionQuestionEvent[]> {
+  const grouped = new Map<string, SessionQuestionEvent[]>();
+  for (const event of events) {
+    const current = grouped.get(event.questionId) ?? [];
+    current.push(event);
+    grouped.set(event.questionId, current);
+  }
+  for (const [questionId, current] of grouped) {
+    grouped.set(questionId, [...current].sort((a, b) => a.id - b.id));
+  }
+  return grouped;
+}
+
+function latestQuestionEvent(
+  events: SessionQuestionEvent[],
+  kind: SessionQuestionEvent['kind'],
+): SessionQuestionEvent | undefined {
+  return [...events].reverse().find((event) => event.kind === kind);
+}
+
+function answerByPromptId(events: SessionQuestionEvent[]): Map<string, SessionQuestionAnswerSummary> {
+  const answered = latestQuestionEvent(events, 'answered');
+  const summaries = new Map<string, SessionQuestionAnswerSummary>();
+  for (const summary of answered?.answers ?? []) {
+    summaries.set(summary.id, summary);
+  }
+  return summaries;
+}
+
+function questionResolutionText(reason: QuestionItem['reason'] | undefined): string {
+  if (reason === 'empty') return 'Expired without an answer';
+  if (reason === 'cancelled') return 'Cancelled';
+  return 'Answered';
+}
+
+function questionStatusLabel(item: QuestionItem, events: SessionQuestionEvent[]): string {
+  const answered = latestQuestionEvent(events, 'answered');
+  const resolved = latestQuestionEvent(events, 'resolved');
+  const reason = item.reason ?? resolved?.reason ?? (answered ? 'answered' : undefined);
+  if (item.status === 'pending' && !answered && !resolved) return 'Waiting for answer';
+  return questionResolutionText(reason);
+}
+
+function answerValueText(summary: SessionQuestionAnswerSummary): string {
+  if (summary.answers.length > 0) return summary.answers.join('\n');
+  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
+}
+
+function MobileQuestionTranscriptCard({
+  item,
+  events,
+}: {
+  item: QuestionItem;
+  events: SessionQuestionEvent[];
+}) {
+  const { colors } = useTheme();
+  const requested = latestQuestionEvent(events, 'requested');
+  const prompts = item.questions.length > 0 ? item.questions : requested?.questions ?? [];
+  const answerSummaries = answerByPromptId(events);
+  const status = questionStatusLabel(item, events);
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: colors.warningBorder,
+        backgroundColor: colors.warningSurface,
+        borderRadius: radius.sm,
+        padding: space.sm,
+        gap: space.sm,
+      }}
+    >
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '900' }}>
+          AGENT QUESTION
+        </Text>
+        <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '800' }}>
+          {status.toUpperCase()}
+        </Text>
+      </View>
+      {prompts.length > 0 ? (
+        prompts.map((question) => {
+          const summary = answerSummaries.get(question.id);
+          return (
+            <View key={question.id} style={{ gap: 6 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
+                  {question.header}
+                </Text>
+                {question.isSecret ? (
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs }}>secret</Text>
+                ) : null}
+              </View>
+              <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
+                {question.question}
+              </Text>
+              {question.options?.length ? (
+                <View style={{ gap: 6 }}>
+                  {question.options.map((option) => (
+                    <View
+                      key={option.label}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                        backgroundColor: colors.bgElevated,
+                        borderRadius: radius.sm,
+                        padding: space.sm,
+                        gap: 2,
+                      }}
+                    >
+                      <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
+                        {option.label}
+                      </Text>
+                      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+                        {option.description}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              {summary ? (
+                <View
+                  style={{
+                    borderWidth: 1,
+                    borderColor: colors.accent,
+                    backgroundColor: colors.accentBg,
+                    borderRadius: radius.sm,
+                    padding: space.sm,
+                    gap: 3,
+                  }}
+                >
+                  <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>
+                    ANSWER
+                  </Text>
+                  <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
+                    {answerValueText(summary)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        })
+      ) : (
+        <Text style={{ color: colors.text, fontSize: font.sm }}>Agent asked a question.</Text>
+      )}
+    </View>
+  );
+}
+
 function MobileQuestionBanner({
   pending,
   isDriver,
   values,
   setValue,
   submitting,
+  error,
   onSubmit,
 }: {
   pending: { questionId: string; questions: QuestionPrompt[] };
@@ -158,6 +310,7 @@ function MobileQuestionBanner({
   values: Record<string, string>;
   setValue: (id: string, value: string) => void;
   submitting: boolean;
+  error: string | null;
   onSubmit: () => void;
 }) {
   const { colors } = useTheme();
@@ -191,7 +344,7 @@ function MobileQuestionBanner({
                 return (
                   <Pressable
                     accessibilityRole="radio"
-                    accessibilityLabel={option.label}
+                    accessibilityLabel={`${option.label}. ${option.description}`}
                     accessibilityState={{ selected, disabled: !isDriver || submitting }}
                     key={option.label}
                     disabled={!isDriver || submitting}
@@ -217,6 +370,7 @@ function MobileQuestionBanner({
             </View>
           ) : (
             <TextInput
+              accessibilityLabel={`Answer for ${q.header}`}
               value={values[q.id] ?? ''}
               onChangeText={(value) => setValue(q.id, value)}
               editable={isDriver && !submitting}
@@ -235,6 +389,11 @@ function MobileQuestionBanner({
           )}
         </View>
       ))}
+      {error ? (
+        <Text accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: font.xs }}>
+          {error}
+        </Text>
+      ) : null}
       {isDriver ? (
         <Pressable
           onPress={onSubmit}
@@ -277,6 +436,7 @@ export default function SessionScreen() {
   const [questionValues, setQuestionValues] = useState<Record<string, string>>({});
   const [questionSubmitting, setQuestionSubmitting] = useState(false);
   const [questionCleared, setQuestionCleared] = useState<string | null>(null);
+  const [questionError, setQuestionError] = useState<string | null>(null);
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
   const scrollRef = useRef<ScrollView>(null);
   const stickRef = useRef(true);
@@ -307,7 +467,7 @@ export default function SessionScreen() {
     }, [api, id, upsertSession]),
   );
 
-  const session = snapshot ?? cached;
+  const session = snapshot ? mergeSpawnResponse(cached ?? undefined, snapshot) : cached;
   const streamStatus = stream.status !== 'idle' ? normalizeExecutionStatus(stream.status) : null;
   const displayStatus = (streamStatus ?? session?.status ?? 'spawning') as SessionStatus;
   const terminal = isTerminalSessionStatus(displayStatus);
@@ -322,11 +482,17 @@ export default function SessionScreen() {
   const elapsed = session ? formatElapsed(sessionElapsedMs(session, now)) : '';
   const pendingQuestion =
     session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
+  const questionEvents = session?.questionEvents ?? [];
+  const questionEventsByQuestion = useMemo(
+    () => groupQuestionEventsByQuestion(questionEvents),
+    [questionEvents],
+  );
 
   useEffect(() => {
     setQuestionValues({});
     setQuestionSubmitting(false);
     setQuestionCleared(null);
+    setQuestionError(null);
   }, [pendingQuestion?.questionId]);
 
   useEffect(() => {
@@ -376,9 +542,11 @@ export default function SessionScreen() {
     const answers: Record<string, { answers: string[] }> = {};
     for (const q of pendingQuestion.questions) answers[q.id] = { answers: [questionValues[q.id]!.trim()] };
     setQuestionSubmitting(true);
+    setQuestionError(null);
     chat
       .answerSessionQuestion(id, pendingQuestion.questionId, answers)
       .then(() => setQuestionCleared(pendingQuestion.questionId))
+      .catch(() => setQuestionError("Answer didn't send. Try again."))
       .finally(() => setQuestionSubmitting(false));
   };
 
@@ -516,10 +684,12 @@ export default function SessionScreen() {
               pending={pendingQuestion}
               isDriver={isDriver}
               values={questionValues}
-              setValue={(qid, value) =>
-                setQuestionValues((prev) => ({ ...prev, [qid]: value }))
-              }
+              setValue={(qid, value) => {
+                setQuestionError(null);
+                setQuestionValues((prev) => ({ ...prev, [qid]: value }));
+              }}
               submitting={questionSubmitting}
+              error={questionError}
               onSubmit={answerQuestion}
             />
           ) : null}
@@ -533,7 +703,16 @@ export default function SessionScreen() {
           ) : (
             stream.items.map((item) => (
               <View key={item.id}>
-                {item.type === 'text' ? <TextBlock item={item} /> : <ToolCard item={item} />}
+                {item.type === 'text' ? (
+                  <TextBlock item={item} />
+                ) : item.type === 'question' ? (
+                  <MobileQuestionTranscriptCard
+                    item={item}
+                    events={questionEventsByQuestion.get(item.questionId) ?? []}
+                  />
+                ) : (
+                  <ToolCard item={item} />
+                )}
               </View>
             ))
           )}
