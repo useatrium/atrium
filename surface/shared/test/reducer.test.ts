@@ -218,6 +218,47 @@ describe('history pagination merge', () => {
       ['latest', 'confirmed'],
     ]);
   });
+
+  it('drops stale loadEarlier pages from an older timeline epoch but accepts post-reset pages', () => {
+    let state = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(40, 'old edge'), wire(41, 'old latest')],
+      hasMore: true,
+    });
+    const staleEpoch = state.timelineEpochs[CH] ?? 0;
+
+    state = appReducer(state, {
+      type: 'history-reset',
+      channelId: CH,
+      events: [wire(90, 'repair window')],
+      hasMore: true,
+    });
+    expect(state.timelineEpochs[CH]).toBe(staleEpoch + 1);
+
+    state = appReducer(state, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(10, 'stale page')],
+      hasMore: false,
+      expectedTimelineEpoch: staleEpoch,
+    });
+
+    expect(state.timelines[CH]!.main.map((m) => m.id)).toEqual([90]);
+    expect(state.timelines[CH]!.hasMoreBefore).toBe(true);
+
+    const currentEpoch = state.timelineEpochs[CH] ?? 0;
+    state = appReducer(state, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(10, 'legitimate earlier page')],
+      hasMore: false,
+      expectedTimelineEpoch: currentEpoch,
+    });
+
+    expect(state.timelines[CH]!.main.map((m) => m.id)).toEqual([10, 90]);
+    expect(state.timelines[CH]!.hasMoreBefore).toBe(false);
+  });
 });
 
 describe('optimistic edit/delete/reaction overlays', () => {

@@ -34,6 +34,7 @@ export type UnreadLevel = false | true | 'mention';
 export interface AppState {
   channels: Channel[];
   timelines: Record<string, ChannelTimeline>;
+  timelineEpochs: Record<string, number>;
   presence: Record<string, UserRef[]>;
   /** Session entities by id (incl. optimistic `pending:*` ids until POST resolves). */
   sessions: Record<string, Session>;
@@ -54,6 +55,7 @@ export interface AppState {
 export const initialAppState: AppState = {
   channels: [],
   timelines: {},
+  timelineEpochs: {},
   presence: {},
   sessions: {},
   activeChannelId: null,
@@ -75,7 +77,13 @@ export type AppAction =
   | { type: 'channel-added'; channel: Channel }
   | { type: 'channel-removed'; channelId: string }
   | { type: 'select-channel'; channelId: string | null }
-  | { type: 'history-loaded'; channelId: string; events: WireEvent[]; hasMore: boolean }
+  | {
+      type: 'history-loaded';
+      channelId: string;
+      events: WireEvent[];
+      hasMore: boolean;
+      expectedTimelineEpoch?: number;
+    }
   | { type: 'history-reset'; channelId: string; events: WireEvent[]; hasMore: boolean }
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
   | { type: 'open-thread'; rootEventId: number }
@@ -129,6 +137,10 @@ function maxEventId(events: WireEvent[]): number {
 
 function withSyncCursor(state: AppState, cursor: number): AppState {
   return cursor > state.syncCursor ? { ...state, syncCursor: cursor } : state;
+}
+
+function timelineEpoch(state: AppState, channelId: string): number {
+  return state.timelineEpochs[channelId] ?? 0;
 }
 
 /** Does `text` @-mention the user? Handles are [a-z0-9_-], so no escaping. */
@@ -201,15 +213,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'channel-removed': {
       const timelines = { ...state.timelines };
+      const timelineEpochs = { ...state.timelineEpochs };
       const presence = { ...state.presence };
       const unread = { ...state.unread };
       delete timelines[action.channelId];
+      delete timelineEpochs[action.channelId];
       delete presence[action.channelId];
       delete unread[action.channelId];
       return {
         ...state,
         channels: state.channels.filter((c) => c.id !== action.channelId),
         timelines,
+        timelineEpochs,
         presence,
         unread,
         activeChannelId:
@@ -231,6 +246,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'history-loaded':
+      if (
+        action.expectedTimelineEpoch !== undefined &&
+        timelineEpoch(state, action.channelId) !== action.expectedTimelineEpoch
+      ) {
+        return state;
+      }
       return withSyncCursor(
         withTimeline(
           foldSessionEvents(state, action.events),
@@ -242,8 +263,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         maxEventId(action.events),
       );
 
-    case 'history-reset':
-      return withSyncCursor(
+    case 'history-reset': {
+      const next = withSyncCursor(
         withTimeline(
           foldSessionEvents(state, action.events),
           action.channelId,
@@ -253,6 +274,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ),
         maxEventId(action.events),
       );
+      return {
+        ...next,
+        timelineEpochs: {
+          ...next.timelineEpochs,
+          [action.channelId]: timelineEpoch(state, action.channelId) + 1,
+        },
+      };
+    }
 
     case 'thread-loaded':
       return withSyncCursor(

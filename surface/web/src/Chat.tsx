@@ -757,10 +757,12 @@ export function Chat({
     const oldest = timeline.main.find((m) => m.status === 'confirmed');
     if (!oldest?.id) return Promise.resolve();
     const channelId = active.id;
+    const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
     return api
       .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
       .then(({ events, hasMore }) => {
-        dispatch({ type: 'history-loaded', channelId, events, hasMore });
+        if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) return;
+        dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache earlier history', err);
         });
@@ -996,11 +998,13 @@ export function Chat({
       if (!t.hasMoreBefore) break;
       const oldest = t.main.find((m) => m.status === 'confirmed');
       if (!oldest?.id) break;
+      const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
       const { events, hasMore } = await api.messages(channelId, {
         beforeId: oldest.id,
         limit: PAGE_SIZE,
       });
-      dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) continue;
+      dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
       void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
         console.warn('failed to cache jump history', err);
       });
