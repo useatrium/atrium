@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { Pool } from 'pg';
 import {
   apiAs,
   channelId,
@@ -17,6 +18,109 @@ import {
   unique,
   warmOfflineShell,
 } from './helpers.js';
+
+const e2eDatabaseUrl =
+  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+
+const questionPrompts = [
+  {
+    id: 'choice',
+    header: 'Decision',
+    question: 'Which deployment path should I take?',
+    options: [
+      { label: 'Fast', description: 'Ship the smallest change' },
+      { label: 'Careful', description: 'Run the full suite first' },
+    ],
+  },
+];
+
+async function injectQuestionRequested(args: {
+  handle: string;
+  channelId: string;
+  title: string;
+}): Promise<{ rootId: number; sessionId: string; questionText: string }> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
+      args.handle,
+    ]);
+    const channel = await client.query<{ workspace_id: string }>(
+      'SELECT workspace_id FROM channels WHERE id = $1',
+      [args.channelId],
+    );
+    if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
+
+    const userId = user.rows[0].id;
+    const workspaceId = channel.rows[0].workspace_id;
+    const session = await client.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, $3, 'claude-code', $4, 'running', $5, $5, 'exe_e2e_question', 1)
+       RETURNING id`,
+      [workspaceId, args.channelId, `thread-${unique('question')}`, args.title, userId],
+    );
+    const sessionId = session.rows[0]!.id;
+    const root = await client.query<{ id: string }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'session.spawned', $3, $4)
+       RETURNING id`,
+      [
+        workspaceId,
+        args.channelId,
+        userId,
+        JSON.stringify({
+          sessionId,
+          title: args.title,
+          harness: 'claude-code',
+          by: userId,
+        }),
+      ],
+    );
+    const rootId = Number(root.rows[0]!.id);
+    const pendingQuestion = {
+      questionId: 'q-main',
+      turnId: 'turn-1',
+      eventId: 1,
+      questions: questionPrompts,
+    };
+    await client.query(
+      `UPDATE sessions
+       SET thread_root_event_id = $1,
+           pending_question = $2,
+           last_event_id = GREATEST(last_event_id, $3)
+       WHERE id = $4`,
+      [rootId, JSON.stringify(pendingQuestion), pendingQuestion.eventId, sessionId],
+    );
+    await client.query(
+      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+       VALUES ($1, $2, $3, 'session.question_requested', $4, $5)`,
+      [
+        workspaceId,
+        args.channelId,
+        rootId,
+        userId,
+        JSON.stringify({
+          sessionId,
+          questionId: pendingQuestion.questionId,
+          questions: questionPrompts,
+          permalink: `/s/${sessionId}`,
+        }),
+      ],
+    );
+    await client.query('COMMIT');
+    return { rootId, sessionId, questionText: questionPrompts[0]!.question };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
 
 test('login lands in #general; sent message appears', async ({ page }) => {
   await login(page, unique('alice'), 'Alice');
@@ -314,4 +418,38 @@ test('disconnect burst heals through sync without reload', async ({ browser }) =
 
   await alice.close();
   await bob.close();
+});
+
+test('session question requested while disconnected heals without reload', async ({
+  page,
+  context,
+}) => {
+  const handle = unique('question-offline');
+  await login(page, handle, 'Question Offline');
+  const generalId = await channelId(page.context().request, 'general');
+
+  await context.setOffline(true);
+  // Chromium's Playwright offline emulation blocks traffic but does not fire
+  // the page-level event the app receives from a real browser.
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/Reconnecting/)).toBeVisible({
+    timeout: 15_000,
+  });
+  const title = unique('offline-question-session');
+  const injected = await injectQuestionRequested({ handle, channelId: generalId, title });
+
+  await context.setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({
+    timeout: 15_000,
+  });
+  const sessionRow = messageRow(page, title);
+  await expect(sessionRow).toBeVisible({ timeout: 15_000 });
+  await expect(sessionRow.getByText('needs input')).toBeVisible();
+  await sessionRow.getByRole('button', { name: '1 reply →' }).click();
+  await expect(page.getByText(`❓ ${injected.questionText}`)).toBeVisible();
+  expect(injected.rootId).toBeGreaterThan(0);
+  expect(injected.sessionId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  );
 });

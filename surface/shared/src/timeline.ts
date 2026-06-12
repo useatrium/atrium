@@ -736,7 +736,7 @@ export function mergeThread(
   let thread = t.threads[rootEventId] ?? [];
   for (const ev of events) {
     if (!isRowEvent(ev.type)) continue;
-    if (seenIds.has(ev.id)) continue;
+    if (seenIds.has(ev.id) && thread.some((m) => m.id === ev.id)) continue;
     seenIds.add(ev.id);
     thread = upsertConfirmed(thread, messageFromEvent(ev));
   }
