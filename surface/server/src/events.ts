@@ -439,6 +439,8 @@ export async function setReactionTx(
     thread_root_event_id: number | null;
     type: string;
   }>(
+    // Lock the target message before folding reaction events so same-message
+    // reaction writes serialize and the per-user net cannot go negative.
     'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1 FOR UPDATE',
     [args.targetEventId],
   );
