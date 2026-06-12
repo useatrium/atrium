@@ -1,11 +1,11 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import {
   createEventCache,
+  parseQueuedOp,
   type CachedTimeline,
   type CacheSnapshot,
   type CacheStorage,
   type Channel,
-  type OpType,
   type QueuedOp,
   type UserPrefs,
   type UserRef,
@@ -68,21 +68,6 @@ interface AtriumCacheDb extends DBSchema {
 
 const EMPTY_SNAPSHOT: CacheSnapshot = { channels: null, timelines: {}, syncCursor: 0 };
 
-const VALID_STATUSES = new Set<QueuedOp['status']>(['pending', 'inflight', 'completed']);
-const VALID_OP_TYPES = new Set<OpType>([
-  'msg.send',
-  'upload',
-  'msg.edit',
-  'msg.delete',
-  'reaction.set',
-  'read.mark',
-  'mute.set',
-  'session.spawn',
-  'session.answer',
-  'channel.join',
-  'channel.leave',
-]);
-
 let dbPromise: Promise<IDBPDatabase<AtriumCacheDb>> | null = null;
 
 function hasIndexedDb(): boolean {
@@ -114,12 +99,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stringField(row: Record<string, unknown>, key: string): string {
   const value = row[key];
   if (typeof value !== 'string') throw new Error(`invalid ${key}`);
-  return value;
-}
-
-function numberField(row: Record<string, unknown>, key: string): number {
-  const value = row[key];
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`invalid ${key}`);
   return value;
 }
 
@@ -182,24 +161,6 @@ function asTimeline(row: unknown): { channelId: string; timeline: CachedTimeline
       events: asEventArray(row.events),
       hasMore: booleanField(row, 'hasMore'),
     },
-  };
-}
-
-function asQueuedOp(row: unknown): QueuedOp {
-  if (!isRecord(row)) throw new Error('invalid op row');
-  const opType = stringField(row, 'opType') as OpType;
-  const status = stringField(row, 'status') as QueuedOp['status'];
-  if (!VALID_OP_TYPES.has(opType)) throw new Error('invalid opType');
-  if (!VALID_STATUSES.has(status)) throw new Error('invalid op status');
-  numberField(row, 'seq');
-  return {
-    opId: stringField(row, 'opId'),
-    opType,
-    queueKey: stringField(row, 'queueKey'),
-    payload: clone(row.payload),
-    status,
-    retryCount: numberField(row, 'retryCount'),
-    createdAt: stringField(row, 'createdAt'),
   };
 }
 
@@ -294,12 +255,19 @@ const idbStorage: CacheStorage = {
   listOps: async (): Promise<QueuedOp[]> => {
     try {
       const database = await db();
+      const tx = database.transaction('clientOps', 'readwrite');
       const ops: QueuedOp[] = [];
-      let cursor = await database.transaction('clientOps').store.index('seq').openCursor();
+      let cursor = await tx.store.index('seq').openCursor();
       while (cursor) {
-        ops.push(asQueuedOp(cursor.value));
+        try {
+          ops.push(parseQueuedOp(cursor.value));
+        } catch (err) {
+          console.warn('dropping invalid IndexedDB queued op', err);
+          await cursor.delete();
+        }
         cursor = await cursor.continue();
       }
+      await tx.done;
       return ops;
     } catch (err) {
       return clearAfterCorruption([], err);
