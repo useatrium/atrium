@@ -8,6 +8,7 @@ import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
+import { SeededPrng } from './chaosHarness.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 interface RecordedRequest {
@@ -26,7 +27,12 @@ class FakeCentaur {
   readonly answers: RecordedRequest[] = [];
   readonly acceptedExecutions: string[] = [];
   readonly acceptedMessages: string[] = [];
+  readonly streamAfterIds: number[] = [];
   staleMessages = new Set<string>();
+  streamHangOpen = false;
+  streamResetBeyondHistory = false;
+  streamWriteCommentBeforeSecondFrame = false;
+  streamClosedCount = 0;
   private answerNotPendingCount = 0;
   url = '';
 
@@ -115,12 +121,24 @@ class FakeCentaur {
     }
     if (req.method === 'GET' && /\/agent\/threads\/[^/]+\/events/.test(url.pathname)) {
       const after = Number(url.searchParams.get('after_event_id') ?? 0);
+      this.streamAfterIds.push(after);
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      for (const frame of this.frames.filter((f) => f.event_id > after)) {
+      const maxEventId = Math.max(0, ...this.frames.map((f) => Number(f.event_id) || 0));
+      const effectiveAfter = this.streamResetBeyondHistory && after > maxEventId ? 0 : after;
+      let index = 0;
+      res.on('close', () => {
+        this.streamClosedCount += 1;
+      });
+      for (const frame of this.frames.filter((f) => f.event_id > effectiveAfter)) {
+        if (this.streamWriteCommentBeforeSecondFrame && index === 1) {
+          res.write(': keep-alive\n\n');
+        }
         res.write(`id: ${frame.event_id}\n`);
         res.write(`event: ${frame.event}\n`);
         res.write(`data: ${JSON.stringify(frame.data)}\n\n`);
+        index += 1;
       }
+      if (this.streamHangOpen) return;
       res.end();
       return;
     }
@@ -1330,6 +1348,170 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('stream proxy resumes from after_event_id mid-history without replaying older frames', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+
+    const streamed = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=50`,
+      headers: { cookie },
+    });
+
+    expect(streamed.statusCode).toBe(200);
+    const eventIds = sseEventIds(streamed.body);
+    expect(eventIds).toEqual([51, 52, 53, 54]);
+    expect(fake.streamAfterIds[0]).toBe(50);
+    await app.close();
+  });
+
+  it('stream proxy rejects garbage cursors and survives stale cursors beyond history', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+
+    const bad = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=wat`,
+      headers: { cookie },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    fake.streamResetBeyondHistory = true;
+    const stale = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=999999`,
+      headers: { cookie },
+    });
+    expect(stale.statusCode).toBe(200);
+    expect(sseEventIds(stale.body)[0]).toBe(40);
+    expect(sseEventIds(stale.body).at(-1)).toBe(54);
+    expect(fake.streamAfterIds).toContain(999999);
+    await app.close();
+  });
+
+  it('stream proxy closes cleanly after terminal session state', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+
+    const streamed = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=53`,
+      headers: { cookie },
+    });
+
+    expect(streamed.statusCode).toBe(200);
+    expect(sseEventIds(streamed.body)).toEqual([54]);
+    expect(streamed.body).toContain('"status":"completed"');
+    await app.close();
+  });
+
+  it('stream proxy tears down the Centaur iterator when the client disconnects', async () => {
+    fake.streamHangOpen = true;
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('test app did not bind tcp');
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+    const abort = new AbortController();
+
+    const res = await fetch(`http://127.0.0.1:${address.port}/api/sessions/${id}/stream`, {
+      headers: { cookie },
+      signal: abort.signal,
+    });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+
+    abort.abort();
+
+    await waitFor(() => {
+      expect(fake.streamClosedCount).toBeGreaterThan(0);
+    });
+    await reader.cancel().catch(() => {});
+    await app.close();
+  });
+
+  it('stream proxy ignores keep-alive-style comments before later frames', async () => {
+    fake.streamWriteCommentBeforeSecondFrame = true;
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+
+    const streamed = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=52`,
+      headers: { cookie },
+    });
+
+    expect(streamed.statusCode).toBe(200);
+    expect(sseEventIds(streamed.body)).toEqual([53, 54]);
+    expect(streamed.body).toContain('event: execution_summary');
+    await app.close();
+  });
+
+  it('stream resume is lossless and duplicate-free across random disconnect boundaries', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+    const full = sseEventIds(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/sessions/${id}/stream?after_event_id=0`,
+          headers: { cookie },
+        })
+      ).body,
+    );
+    const rng = new SeededPrng(0x55e);
+    let lastDelivered = 0;
+    const delivered: number[] = [];
+
+    while (delivered.length < full.length) {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/sessions/${id}/stream?after_event_id=${lastDelivered}`,
+        headers: { cookie },
+      });
+      const ids = sseEventIds(res.body);
+      const take = Math.max(1, rng.int(ids.length + 1));
+      for (const eventId of ids.slice(0, take)) {
+        delivered.push(eventId);
+        lastDelivered = eventId;
+      }
+    }
+
+    expect(delivered).toEqual(full);
+    await app.close();
+  });
+
   it('GET /api/sessions/:id includes viewerCount excluding the spawner', async () => {
     const app = await buildApp({
       pool,
@@ -1640,6 +1822,20 @@ async function readJson(req: IncomingMessage): Promise<any> {
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+function sseEventIds(body: string): number[] {
+  const ids: number[] = [];
+  for (const part of body.split(/\r?\n\r?\n/)) {
+    const data = part
+      .split(/\r?\n/)
+      .find((line) => line.startsWith('data: '))
+      ?.slice('data: '.length);
+    if (!data) continue;
+    const parsed = JSON.parse(data) as { event_id?: unknown };
+    if (typeof parsed.event_id === 'number') ids.push(parsed.event_id);
+  }
+  return ids;
 }
 
 function sendJson(res: ServerResponse, body: object, status = 200): void {
