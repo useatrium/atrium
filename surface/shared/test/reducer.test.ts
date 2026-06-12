@@ -152,6 +152,51 @@ describe('threads and reply counts', () => {
     expect(t.threads[1]!.at(-1)!.id).toBe(3);
     expect(t.main[0]!.replyCount).toBe(2);
   });
+
+  it('thread fetch materializes a session question already seen by catch-up', () => {
+    const root: WireEvent = {
+      id: 1,
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      type: 'session.spawned',
+      actorId: alice.id,
+      payload: {
+        sessionId: 'sess-1',
+        title: 'needs input',
+        harness: 'claude-code',
+        by: alice.id,
+      },
+      createdAt: new Date(1000).toISOString(),
+      author: alice,
+    };
+    const question: WireEvent = {
+      id: 2,
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: 1,
+      type: 'session.question_requested',
+      actorId: alice.id,
+      payload: {
+        sessionId: 'sess-1',
+        questionId: 'q-1',
+        questions: [{ id: 'choice', header: 'Decision', question: 'Deploy now?' }],
+        permalink: '/s/sess-1',
+      },
+      createdAt: new Date(2000).toISOString(),
+      author: alice,
+    };
+
+    let t = applyEvent(emptyTimeline, root);
+    t = applyEvent(t, question);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.threads[1]).toBeUndefined();
+
+    t = mergeThread(t, 1, [question]);
+    expect(t.threads[1]!.map((m) => [m.id, m.sessionEventType, m.text])).toEqual([
+      [2, 'question_requested', 'Agent asked a question'],
+    ]);
+  });
 });
 
 describe('history pagination merge', () => {
