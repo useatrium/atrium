@@ -14,7 +14,11 @@ type Command =
   | { kind: 'post'; author: number; text: string }
   | { kind: 'edit'; target: number; text: string }
   | { kind: 'delete'; target: number }
-  | { kind: 'reaction'; target: number; user: number; emoji: number; action: 'add' | 'remove' };
+  | { kind: 'reaction'; target: number; user: number; emoji: number; action: 'add' | 'remove' }
+  | { kind: 'session.spawned'; author: number; title: string }
+  | { kind: 'session.question_requested'; target: number; question: string }
+  | { kind: 'session.question_answered'; target: number; user: number }
+  | { kind: 'session.question_resolved'; target: number; reason: 'answered' | 'cancelled' | 'empty' };
 
 const commandArb: fc.Arbitrary<Command> = fc.oneof(
   fc.record({
@@ -38,6 +42,26 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
     emoji: fc.integer({ min: 0, max: emoji.length - 1 }),
     action: fc.constantFrom('add' as const, 'remove' as const),
   }),
+  fc.record({
+    kind: fc.constant('session.spawned'),
+    author: fc.integer({ min: 0, max: users.length - 1 }),
+    title: fc.string({ minLength: 1, maxLength: 32 }),
+  }),
+  fc.record({
+    kind: fc.constant('session.question_requested'),
+    target: fc.nat(12),
+    question: fc.string({ minLength: 1, maxLength: 48 }),
+  }),
+  fc.record({
+    kind: fc.constant('session.question_answered'),
+    target: fc.nat(12),
+    user: fc.integer({ min: 0, max: users.length - 1 }),
+  }),
+  fc.record({
+    kind: fc.constant('session.question_resolved'),
+    target: fc.nat(12),
+    reason: fc.constantFrom('answered' as const, 'cancelled' as const, 'empty' as const),
+  }),
 );
 
 describe('reducer convergence', () => {
@@ -48,7 +72,7 @@ describe('reducer convergence', () => {
         fc.array(fc.nat(100), { minLength: 1, maxLength: 60 }),
         (commands, noise) => {
           const events = buildEvents(commands);
-          fc.pre(events.some((ev) => ev.type === 'message.posted'));
+          fc.pre(events.some((ev) => ev.type === 'message.posted' || ev.type === 'session.spawned'));
 
           const canonical = applyAll(emptyTimeline, events);
           const delivered = applyAll(emptyTimeline, noisyDelivery(events, noise));
@@ -64,6 +88,13 @@ describe('reducer convergence', () => {
 function buildEvents(commands: Command[]): WireEvent[] {
   const events: WireEvent[] = [];
   const postIds: number[] = [];
+  const sessions: Array<{
+    rootId: number;
+    sessionId: string;
+    spawnedBy: number;
+    pendingQuestionId?: string;
+    questionSeq: number;
+  }> = [];
   const reactions = new Set<string>();
   let id = 1;
 
@@ -82,6 +113,117 @@ function buildEvents(commands: Command[]): WireEvent[] {
         author,
       });
       postIds.push(id - 1);
+      continue;
+    }
+
+    if (command.kind === 'session.spawned') {
+      const author = users[command.author]!;
+      const sessionId = `sess-${id}`;
+      events.push({
+        id: id++,
+        workspaceId: WS,
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'session.spawned',
+        actorId: author.id,
+        payload: {
+          sessionId,
+          title: command.title,
+          harness: 'claude-code',
+          by: author.id,
+        },
+        createdAt: new Date(id * 1000).toISOString(),
+        author,
+      });
+      sessions.push({
+        rootId: id - 1,
+        sessionId,
+        spawnedBy: command.author,
+        questionSeq: 0,
+      });
+      continue;
+    }
+
+    if (
+      command.kind === 'session.question_requested' ||
+      command.kind === 'session.question_answered' ||
+      command.kind === 'session.question_resolved'
+    ) {
+      if (sessions.length === 0) continue;
+      const session = sessions[command.target % sessions.length]!;
+      const actor = users[session.spawnedBy]!;
+      if (command.kind === 'session.question_requested') {
+        if (session.pendingQuestionId) continue;
+        session.questionSeq += 1;
+        const questionId = `q-${session.sessionId}-${session.questionSeq}`;
+        session.pendingQuestionId = questionId;
+        events.push({
+          id: id++,
+          workspaceId: WS,
+          channelId: CH,
+          threadRootEventId: session.rootId,
+          type: 'session.question_requested',
+          actorId: actor.id,
+          payload: {
+            sessionId: session.sessionId,
+            questionId,
+            questions: [
+              {
+                id: 'choice',
+                header: 'Decision',
+                question: command.question,
+                options: [
+                  { label: 'Fast', description: 'Ship the smallest change' },
+                  { label: 'Careful', description: 'Run the full suite first' },
+                ],
+              },
+            ],
+            permalink: `/s/${session.sessionId}`,
+          },
+          createdAt: new Date(id * 1000).toISOString(),
+          author: actor,
+        });
+        continue;
+      }
+
+      if (!session.pendingQuestionId) continue;
+      const questionId = session.pendingQuestionId;
+      if (command.kind === 'session.question_answered') {
+        const by = users[command.user]!;
+        events.push({
+          id: id++,
+          workspaceId: WS,
+          channelId: CH,
+          threadRootEventId: session.rootId,
+          type: 'session.question_answered',
+          actorId: by.id,
+          payload: {
+            sessionId: session.sessionId,
+            questionId,
+            by: by.id,
+            answers: [{ id: 'choice', header: 'Decision', answers: ['Fast'], count: 1 }],
+          },
+          createdAt: new Date(id * 1000).toISOString(),
+          author: by,
+        });
+      } else {
+        events.push({
+          id: id++,
+          workspaceId: WS,
+          channelId: CH,
+          threadRootEventId: session.rootId,
+          type: 'session.question_resolved',
+          actorId: actor.id,
+          payload: {
+            sessionId: session.sessionId,
+            questionId,
+            reason: command.reason,
+          },
+          createdAt: new Date(id * 1000).toISOString(),
+          author: actor,
+        });
+      }
+      session.pendingQuestionId = undefined;
       continue;
     }
 
@@ -173,7 +315,22 @@ function snapshot(timeline: ChannelTimeline) {
       text: m.text,
       edited: m.edited,
       deleted: m.deleted === true,
+      replyCount: m.replyCount,
+      lastReplyId: m.lastReplyId,
+      sessionId: m.sessionId,
+      sessionEventType: m.sessionEventType,
       reactions: (m.reactions ?? []).map((r) => ({ emoji: r.emoji, userIds: r.userIds })),
     })),
+    threads: Object.fromEntries(
+      Object.entries(timeline.threads).map(([rootId, thread]) => [
+        rootId,
+        thread.map((m) => ({
+          id: m.id,
+          text: m.text,
+          sessionId: m.sessionId,
+          sessionEventType: m.sessionEventType,
+        })),
+      ]),
+    ),
   };
 }
