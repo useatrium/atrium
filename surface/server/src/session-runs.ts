@@ -18,6 +18,7 @@ import {
   type WireEvent,
 } from './events.js';
 import type { WsHub } from './hub.js';
+import { sendQuestionPush } from './push.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -81,6 +82,8 @@ export interface SessionRunsOptions {
   apiKey?: string;
   harness?: string;
   autoResume?: boolean;
+  questionRenotifyMinutes?: number;
+  questionPushFetchImpl?: typeof fetch;
 }
 
 export interface SessionCreateResult {
@@ -143,8 +146,11 @@ export class SessionRuns {
   private readonly centaur: CentaurClient;
   private readonly harness: string;
   private readonly autoResume: boolean;
+  private readonly questionRenotifyMinutes: number;
+  private readonly questionPushFetchImpl?: typeof fetch;
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly questionRenotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly pool: Db,
@@ -159,6 +165,9 @@ export class SessionRuns {
       });
     this.harness = options.harness ?? config.centaurHarness;
     this.autoResume = options.autoResume ?? true;
+    this.questionRenotifyMinutes =
+      options.questionRenotifyMinutes ?? config.questionRenotifyMinutes;
+    this.questionPushFetchImpl = options.questionPushFetchImpl;
   }
 
   async createSession(args: {
@@ -410,7 +419,10 @@ export class SessionRuns {
         },
       });
     });
-    if (event) this.hub.publishEvent(event);
+    if (event) {
+      this.cancelScheduledQuestionRenotify(id);
+      this.hub.publishEvent(event);
+    }
   }
 
   async answerQuestionInTx(
@@ -442,6 +454,7 @@ export class SessionRuns {
       'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
       [id],
     );
+    this.cancelScheduledQuestionRenotify(id);
     const next = updated.rows[0]!;
     return appendEvent(client, {
       workspaceId: next.workspace_id,
@@ -687,6 +700,8 @@ export class SessionRuns {
   async close(): Promise<void> {
     for (const timer of this.releaseTimers.values()) clearTimeout(timer);
     this.releaseTimers.clear();
+    for (const timer of this.questionRenotifyTimers.values()) clearTimeout(timer);
+    this.questionRenotifyTimers.clear();
     const handles = [...this.tailers.values()];
     for (const handle of handles) handle.controller.abort();
     this.tailers.clear();
@@ -837,7 +852,18 @@ export class SessionRuns {
         },
       });
     });
-    if (event) this.hub.publishEvent(event);
+    if (event) {
+      this.hub.publishEvent(event);
+      void sendQuestionPush(
+        this.pool,
+        this.hub,
+        event,
+        this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+      ).catch((err) =>
+        console.warn('question push fanout failed', { id, err }),
+      );
+      this.scheduleQuestionRenotify(id, event);
+    }
   }
 
   private async persistQuestionResolved(
@@ -845,6 +871,7 @@ export class SessionRuns {
     questionId: string,
     reason: 'answered' | 'cancelled' | 'empty',
   ): Promise<void> {
+    let cleared = false;
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];
@@ -854,6 +881,7 @@ export class SessionRuns {
         'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
         [id],
       );
+      cleared = true;
       if (reason === 'answered') return null;
       const next = updated.rows[0]!;
       return appendEvent(client, {
@@ -865,6 +893,7 @@ export class SessionRuns {
         payload: { sessionId: id, questionId, reason },
       });
     });
+    if (cleared) this.cancelScheduledQuestionRenotify(id);
     if (event) this.hub.publishEvent(event);
   }
 
@@ -904,6 +933,9 @@ export class SessionRuns {
       return [statusEvent, resolvedEvent];
     });
     for (const event of events) this.hub.publishEvent(event);
+    if (events.some((event) => event.type === 'session.question_resolved')) {
+      this.cancelScheduledQuestionRenotify(id);
+    }
   }
 
   private async clearPendingQuestion(
@@ -911,6 +943,7 @@ export class SessionRuns {
     questionId: string,
     reason: 'cancelled' | 'empty',
   ): Promise<void> {
+    let cleared = false;
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];
@@ -920,6 +953,7 @@ export class SessionRuns {
         'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
         [id],
       );
+      cleared = true;
       const next = updated.rows[0]!;
       return appendEvent(client, {
         workspaceId: next.workspace_id,
@@ -930,6 +964,7 @@ export class SessionRuns {
         payload: { sessionId: id, questionId, reason },
       });
     });
+    if (cleared) this.cancelScheduledQuestionRenotify(id);
     if (event) this.hub.publishEvent(event);
   }
 
@@ -978,6 +1013,9 @@ export class SessionRuns {
       return [completedEvent, resolvedEvent];
     });
     for (const event of events) this.hub.publishEvent(event);
+    if (events.some((event) => event.type === 'session.question_resolved')) {
+      this.cancelScheduledQuestionRenotify(id);
+    }
     if (events.length > 0) this.scheduleRelease(id);
   }
 
@@ -1000,6 +1038,48 @@ export class SessionRuns {
     if (existing) {
       clearTimeout(existing);
       this.releaseTimers.delete(id);
+    }
+  }
+
+  private scheduleQuestionRenotify(id: string, event: WireEvent): void {
+    this.cancelScheduledQuestionRenotify(id);
+    if (this.questionRenotifyMinutes <= 0) return;
+    const questionId =
+      typeof event.payload.questionId === 'string' ? event.payload.questionId : null;
+    if (!questionId) return;
+    const timer = setTimeout(() => {
+      this.questionRenotifyTimers.delete(id);
+      void this.renotifyQuestionIfStillPending(id, questionId, event);
+    }, this.questionRenotifyMinutes * 60_000);
+    timer.unref?.();
+    this.questionRenotifyTimers.set(id, timer);
+  }
+
+  private cancelScheduledQuestionRenotify(id: string): void {
+    const existing = this.questionRenotifyTimers.get(id);
+    if (existing) {
+      clearTimeout(existing);
+      this.questionRenotifyTimers.delete(id);
+    }
+  }
+
+  private async renotifyQuestionIfStillPending(
+    id: string,
+    questionId: string,
+    event: WireEvent,
+  ): Promise<void> {
+    try {
+      const row = await this.getSessionRow(id);
+      const pending = row ? parsePendingQuestion(row.pending_question) : null;
+      if (!pending || pending.questionId !== questionId) return;
+      await sendQuestionPush(
+        this.pool,
+        this.hub,
+        event,
+        this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+      );
+    } catch (err) {
+      console.warn('question renotify failed', { id, err });
     }
   }
 
