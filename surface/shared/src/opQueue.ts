@@ -15,6 +15,7 @@ export const VALID_OP_TYPES = [
   'session.spawn',
   'session.answer',
   'session.steer',
+  'session.cancel',
   'prefs.set',
   'channel.join',
   'channel.leave',
@@ -121,6 +122,10 @@ export interface SessionSteerPayload {
   text: string;
 }
 
+export interface SessionCancelPayload {
+  sessionId: string;
+}
+
 export type PrefsSetPayload = Partial<UserPrefs>;
 
 export interface ChannelJoinPayload {
@@ -144,6 +149,7 @@ export type OpPayloadByType = {
   'session.spawn': SessionSpawnPayload;
   'session.answer': SessionAnswerPayload;
   'session.steer': SessionSteerPayload;
+  'session.cancel': SessionCancelPayload;
   'prefs.set': PrefsSetPayload;
   'channel.join': ChannelJoinPayload;
   'channel.leave': ChannelLeavePayload;
@@ -160,6 +166,7 @@ type OpResultByType = {
   'session.spawn': Awaited<ReturnType<Api['createAgentSession']>>;
   'session.answer': { ok: true };
   'session.steer': { ok: true };
+  'session.cancel': { ok: true };
   'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
   'channel.join': Awaited<ReturnType<Api['addChannelMember']>>;
   'channel.leave': { ok: true };
@@ -231,6 +238,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `answer:${(payload as SessionAnswerPayload).sessionId}`;
     case 'session.steer':
       return `steer:${(payload as SessionSteerPayload).sessionId}`;
+    case 'session.cancel':
+      return `cancel:${(payload as SessionCancelPayload).sessionId}`;
     case 'prefs.set':
       return 'prefs:me';
     case 'channel.join': {
@@ -374,6 +383,7 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'reaction.set' ||
     op.opType === 'mute.set' ||
     op.opType === 'session.answer' ||
+    op.opType === 'session.cancel' ||
     op.opType === 'prefs.set' ||
     op.opType === 'channel.join' ||
     op.opType === 'channel.leave'
@@ -813,6 +823,11 @@ export function createDefaultOpRegistry(): OpRegistry {
     },
     'session.steer': {
       execute: (api, payload, op) => api.steerSession(payload.sessionId, payload.text, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.cancel': {
+      execute: (api, payload, op) => api.cancelSession(payload.sessionId, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

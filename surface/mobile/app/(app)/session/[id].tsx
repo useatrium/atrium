@@ -479,6 +479,7 @@ export default function SessionScreen() {
   const isSpawner = !!session && session.spawnedBy === me.id;
   const canCancel = !!session && (isDriver || isSpawner) && !terminal;
   const canSteer = !!session && isDriver && !terminal;
+  const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
   const elapsed = session ? formatElapsed(sessionElapsedMs(session, now)) : '';
   const pendingQuestion =
     session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
@@ -532,12 +533,13 @@ export default function SessionScreen() {
 
   const cancel = () => {
     if (!id) return;
-    if (cancelAsk === 'idle' || cancelAsk === 'failed') {
+    if (displayCancelAsk === 'idle') {
       setCancelAsk('confirm');
       return;
     }
     setCancelAsk('idle');
-    api.cancelSession(id).catch(() => setCancelAsk('failed'));
+    chat.clearFailedSessionCancel(id);
+    chat.cancelSession(id).catch(() => setCancelAsk('failed'));
   };
 
   const answerQuestion = () => {
@@ -618,7 +620,7 @@ export default function SessionScreen() {
             ? () => (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={cancelAsk === 'confirm' ? 'Confirm cancel session' : 'Cancel session'}
+                  accessibilityLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel session' : 'Cancel session'}
                   accessibilityState={{ disabled: false }}
                   onPress={cancel}
                   hitSlop={8}
@@ -626,14 +628,14 @@ export default function SessionScreen() {
                 >
                   <Text
                     style={{
-                      color: cancelAsk === 'confirm' ? colors.danger : colors.textSecondary,
+                      color: displayCancelAsk === 'confirm' ? colors.danger : colors.textSecondary,
                       fontSize: font.xs,
                       fontWeight: '800',
                     }}
                   >
-                    {cancelAsk === 'confirm'
+                    {displayCancelAsk === 'confirm'
                       ? 'CONFIRM'
-                      : cancelAsk === 'failed'
+                      : displayCancelAsk === 'failed'
                         ? 'RETRY CANCEL'
                         : 'CANCEL'}
                   </Text>
@@ -643,7 +645,7 @@ export default function SessionScreen() {
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
-      {cancelAsk === 'failed' && (
+      {displayCancelAsk === 'failed' && (
         <View style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}>
           <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
             Cancel failed. Tap retry cancel.

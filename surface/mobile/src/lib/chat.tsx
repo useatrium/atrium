@@ -96,6 +96,9 @@ interface ChatContextValue {
   steerSession: (sessionId: string, text: string) => Promise<void>;
   failedSessionSteers: Record<string, string>;
   clearFailedSessionSteer: (sessionId: string) => void;
+  cancelSession: (sessionId: string) => Promise<void>;
+  failedSessionCancels: Record<string, true>;
+  clearFailedSessionCancel: (sessionId: string) => void;
   createChannel: (name: string, isPrivate?: boolean) => Promise<Channel>;
   startDm: (userIds: string[]) => Promise<Channel>;
   channelMembers: (channelId: string) => Promise<UserRef[]>;
@@ -184,6 +187,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [channelsError, setChannelsError] = useState<string | null>(null);
   const [threadErrors, setThreadErrors] = useState<Record<number, string>>({});
   const [failedSessionSteers, setFailedSessionSteers] = useState<Record<string, string>>({});
+  const [failedSessionCancels, setFailedSessionCancels] = useState<Record<string, true>>({});
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
   const loadingMentionUsersRef = useRef(false);
@@ -233,6 +237,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         return "Couldn't submit the answer.";
       case 'session.steer':
         return "Couldn't send the session message.";
+      case 'session.cancel':
+        return "Couldn't cancel the session.";
       case 'prefs.set':
         return "Couldn't sync settings.";
       case 'channel.join':
@@ -325,6 +331,13 @@ export function ChatProvider({ session, children }: { session: Session; children
               setFailedSessionSteers((prev) => ({ ...prev, [sessionId]: text }));
             }
           }
+          if (op.opType === 'session.cancel') {
+            const payload = op.payload as { sessionId?: unknown };
+            if (typeof payload.sessionId === 'string') {
+              const sessionId = payload.sessionId;
+              setFailedSessionCancels((prev) => ({ ...prev, [sessionId]: true }));
+            }
+          }
           if (!(err instanceof ApiError && err.status === 401)) {
             Alert.alert('Action failed', queuedFailureMessage(op.opType));
           }
@@ -361,6 +374,27 @@ export function ChatProvider({ session, children }: { session: Session; children
       });
     },
     [clearFailedSessionSteer, enqueueOp],
+  );
+
+  const clearFailedSessionCancel = useCallback((sessionId: string) => {
+    setFailedSessionCancels((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const cancelSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      clearFailedSessionCancel(sessionId);
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.cancel',
+        payload: { sessionId },
+      });
+    },
+    [clearFailedSessionCancel, enqueueOp],
   );
 
   const waitForUpload = useCallback(
@@ -1335,6 +1369,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       steerSession,
       failedSessionSteers,
       clearFailedSessionSteer,
+      cancelSession,
+      failedSessionCancels,
+      clearFailedSessionCancel,
       createChannel,
       startDm,
       channelMembers,
@@ -1377,6 +1414,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       steerSession,
       failedSessionSteers,
       clearFailedSessionSteer,
+      cancelSession,
+      failedSessionCancels,
+      clearFailedSessionCancel,
       createChannel,
       startDm,
       channelMembers,
