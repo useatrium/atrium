@@ -41,6 +41,7 @@ import {
   type AttachmentMeta,
   type Channel,
   type ChatMessage,
+  type DraftDeletionSnapshot,
   type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
@@ -440,26 +441,32 @@ export function ChatProvider({ session, children }: { session: Session; children
     else activeDraftKeysRef.current.delete(key);
   }, []);
 
-  const reconcileDraftsFromSnapshot = useCallback((snapshot: DraftSnapshot) => {
-    void eventCache
-      .listDrafts()
-      .then(async (local) => {
-        const { hydrate } = reconcileDraftSnapshot({
-          snapshot,
-          local,
-          touchedThisSession: touchedDraftKeysRef.current,
-          activeDraftKeys: activeDraftKeysRef.current,
+  const reconcileDraftsFromSnapshot = useCallback(
+    (snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
+      void eventCache
+        .listDrafts()
+        .then(async (local) => {
+          const { hydrate, remove } = reconcileDraftSnapshot({
+            snapshot,
+            deletions,
+            local,
+            touchedThisSession: touchedDraftKeysRef.current,
+            activeDraftKeys: activeDraftKeysRef.current,
+          });
+          await Promise.all(
+            Object.entries(hydrate)
+              .map(([draftKey, draft]) =>
+                eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
+              )
+              .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
+          );
+        })
+        .catch((err: unknown) => {
+          console.warn('failed to reconcile draft snapshot', err);
         });
-        await Promise.all(
-          Object.entries(hydrate).map(([draftKey, draft]) =>
-            eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
-          ),
-        );
-      })
-      .catch((err: unknown) => {
-        console.warn('failed to reconcile draft snapshot', err);
-      });
-  }, []);
+    },
+    [],
+  );
 
   const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
 
@@ -726,7 +733,10 @@ export function ChatProvider({ session, children }: { session: Session; children
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
-        reconcileDraftsFromSnapshot(response.state.drafts ?? {});
+        reconcileDraftsFromSnapshot(
+          response.state.drafts ?? {},
+          response.state.draftDeletions ?? {},
+        );
         void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
           console.warn('failed to cache sync channels', err);
         });
@@ -742,7 +752,10 @@ export function ChatProvider({ session, children }: { session: Session; children
           cacheSyncCursor(event.id);
         },
       });
-      reconcileDraftsFromSnapshot(response.state.drafts ?? {});
+      reconcileDraftsFromSnapshot(
+        response.state.drafts ?? {},
+        response.state.draftDeletions ?? {},
+      );
       void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
         console.warn('failed to cache sync channels', err);
       });

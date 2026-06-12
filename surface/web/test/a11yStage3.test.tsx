@@ -191,6 +191,7 @@ describe('private channel leave confirmation', () => {
               mutes: [],
               prefs: {},
               drafts: {},
+              draftDeletions: {},
               channels: [privateChannel],
             },
           }),

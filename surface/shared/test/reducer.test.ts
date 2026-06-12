@@ -728,6 +728,7 @@ describe('unified sync application', () => {
         mutes: ['ch-muted'],
         prefs: { ...DEFAULT_PREFS, theme: 'dark' },
         drafts: {},
+        draftDeletions: {},
         channels: [
           {
             id: CH,
