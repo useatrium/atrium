@@ -7,5 +7,7 @@ export {
   type CachedTimeline,
   type CacheSnapshot,
   type CacheStorage,
+  type DraftSnapshot,
+  type DraftSnapshotEntry,
   type EventCache,
 } from '@atrium/surface-client';

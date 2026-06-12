@@ -231,6 +231,25 @@ describe('durable op queue coalescing', () => {
     expect(ops).toHaveLength(1);
     expect(ops[0]!.queueKey).toBe('cancel:sess-1');
   });
+
+  it('keeps only the latest draft value per draft key', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'draft.set',
+      payload: { draftKey: 'channel:one', text: 'hello' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'draft.set',
+      payload: { draftKey: 'channel:one', text: 'hello world' },
+    });
+    const ops = await storage.listOps();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.queueKey).toBe('draft:channel:one');
+    expect(ops[0]!.payload).toEqual({ draftKey: 'channel:one', text: 'hello world' });
+  });
 });
 
 describe('durable op queue flushing', () => {

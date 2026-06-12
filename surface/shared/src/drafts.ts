@@ -1,8 +1,57 @@
+export interface DraftSnapshotEntry {
+  text: string;
+  updatedAt: string;
+}
+
+export type DraftSnapshot = Record<string, DraftSnapshotEntry>;
+
+export interface DraftReconcileDecision {
+  hydrate: DraftSnapshot;
+}
+
+function timestampMs(value: string | undefined): number {
+  if (!value) return -Infinity;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : -Infinity;
+}
+
+export function reconcileDraftSnapshot(args: {
+  snapshot: DraftSnapshot;
+  local: DraftSnapshot;
+  touchedThisSession: ReadonlySet<string>;
+  activeDraftKeys: ReadonlySet<string>;
+}): DraftReconcileDecision {
+  const hydrate: DraftSnapshot = {};
+  for (const [draftKey, remote] of Object.entries(args.snapshot)) {
+    // Drafts are roaming backup, not collaborative editing: a server snapshot
+    // hydrates only inactive composer keys that this app session has never
+    // touched, and only when the server copy is newer than local cache. This
+    // deliberately never overwrites the active composer while the user types.
+    if (args.activeDraftKeys.has(draftKey) || args.touchedThisSession.has(draftKey)) {
+      continue;
+    }
+    const local = args.local[draftKey];
+    if (!local || timestampMs(remote.updatedAt) > timestampMs(local.updatedAt)) {
+      hydrate[draftKey] = remote;
+    }
+  }
+  return { hydrate };
+}
+
 export function createDraftChangeDebouncer(
-  save: (key: string, text: string) => void,
+  save: (key: string, text: string) => void | Promise<void>,
   delayMs = 400,
+  afterSave?: (key: string, text: string) => void | Promise<void>,
 ) {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const persist = (key: string, text: string) => {
+    void Promise.resolve(save(key, text))
+      .then(() => afterSave?.(key, text))
+      .catch((err: unknown) => {
+        console.warn('failed to persist draft', err);
+      });
+  };
 
   const clear = (key: string) => {
     const timer = timers.get(key);
@@ -17,13 +66,13 @@ export function createDraftChangeDebouncer(
         key,
         setTimeout(() => {
           timers.delete(key);
-          save(key, text);
+          persist(key, text);
         }, delayMs),
       );
     },
     saveNow(key: string, text: string) {
       clear(key);
-      save(key, text);
+      persist(key, text);
     },
     cancel(key?: string) {
       if (key) {

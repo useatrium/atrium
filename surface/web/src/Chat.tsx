@@ -10,7 +10,9 @@ import {
   mentionsHandle,
   parseAgentTask,
   randomId,
+  reconcileDraftSnapshot,
   type AttachmentRef,
+  type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
   type OpType,
@@ -80,8 +82,10 @@ export function Chat({
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const stateRef = useRef(state);
   stateRef.current = state;
+  const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -164,6 +168,8 @@ export function Chat({
         return "Couldn't cancel the session.";
       case 'prefs.set':
         return "Couldn't sync settings.";
+      case 'draft.set':
+        return "Couldn't sync the draft.";
       case 'channel.join':
         return "Couldn't add the person.";
       case 'channel.leave':
@@ -224,6 +230,53 @@ export function Chat({
       return op;
     },
     [opQueue],
+  );
+
+  const activeDraftKeysForSync = useCallback((): ReadonlySet<string> => {
+    const current = stateRef.current;
+    const keys = new Set<string>();
+    if (current.activeChannelId) {
+      keys.add(`channel:${current.activeChannelId}`);
+      if (current.openThreadRootId != null) {
+        keys.add(`channel:${current.activeChannelId}:thread:${current.openThreadRootId}`);
+      }
+    }
+    return keys;
+  }, []);
+
+  const reconcileDraftsFromSnapshot = useCallback(
+    (snapshot: DraftSnapshot) => {
+      void eventCache
+        .listDrafts()
+        .then(async (local) => {
+          const { hydrate } = reconcileDraftSnapshot({
+            snapshot,
+            local,
+            touchedThisSession: touchedDraftKeysRef.current,
+            activeDraftKeys: activeDraftKeysForSync(),
+          });
+          const entries = Object.entries(hydrate);
+          if (entries.length === 0) return;
+          await Promise.all(
+            entries.map(([draftKey, draft]) =>
+              eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
+            ),
+          );
+          setDrafts((prev) => {
+            let next = prev;
+            for (const [draftKey, draft] of entries) {
+              if (!(draftKey in prev) || prev[draftKey] === draft.text) continue;
+              if (next === prev) next = { ...prev };
+              next[draftKey] = draft.text;
+            }
+            return next;
+          });
+        })
+        .catch((err: unknown) => {
+          console.warn('failed to reconcile draft snapshot', err);
+        });
+    },
+    [activeDraftKeysForSync],
   );
 
   const clearFailedSteer = useCallback((sessionId: string) => {
@@ -606,6 +659,7 @@ export function Chat({
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
+        reconcileDraftsFromSnapshot(response.state.drafts ?? {});
         void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
           console.warn('failed to cache sync channels', err);
         });
@@ -622,6 +676,7 @@ export function Chat({
           cacheSyncCursor(event.id);
         },
       });
+      reconcileDraftsFromSnapshot(response.state.drafts ?? {});
       void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
         console.warn('failed to cache sync channels', err);
       });
@@ -629,7 +684,7 @@ export function Chat({
       cursor = Math.max(cursor, response.nextCursor);
       if (response.events.length < SYNC_LIMIT) return;
     }
-  }, [cacheSyncCursor, resetLoadedTimelinesToLatest]);
+  }, [cacheSyncCursor, reconcileDraftsFromSnapshot, resetLoadedTimelinesToLatest]);
 
   const syncInFlightRef = useRef<Promise<void> | null>(null);
   const runReconnectSync = useCallback(() => {
@@ -1261,7 +1316,6 @@ export function Chat({
   const activeDraftKey = active ? `channel:${active.id}` : '';
   const threadDraftKey =
     active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const loadDraft = useCallback((key: string, label: string) => {
     let disposed = false;
@@ -1289,11 +1343,25 @@ export function Chat({
     return loadDraft(threadDraftKey, 'thread');
   }, [loadDraft, threadDraftKey]);
 
-  const saveDraft = useCallback((key: string, text: string) => {
-    void eventCache.setDraft(key, text).catch((err: unknown) => {
-      console.warn('failed to save draft', err);
-    });
+  const saveDraft = useCallback((key: string, text: string) => eventCache.setDraft(key, text), []);
+
+  const markDraftTouched = useCallback((key: string) => {
+    touchedDraftKeysRef.current.add(key);
   }, []);
+
+  const enqueueDraft = useCallback(
+    (key: string, text: string) => {
+      markDraftTouched(key);
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'draft.set',
+        payload: { draftKey: key, text },
+      }).catch((err: unknown) => {
+        console.warn('failed to queue draft sync', err);
+      });
+    },
+    [enqueueOp, markDraftTouched],
+  );
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -1486,6 +1554,8 @@ export function Chat({
               draftKey={activeDraftKey}
               initialDraft={drafts[activeDraftKey] ?? ''}
               onDraftChange={saveDraft}
+              onDraftPersisted={enqueueDraft}
+              onDraftTouched={markDraftTouched}
               autoFocus
               agentAware
               allowAttachments
@@ -1565,6 +1635,8 @@ export function Chat({
             draftKey={threadDraftKey}
             initialDraft={drafts[threadDraftKey] ?? ''}
             onDraftChange={saveDraft}
+            onDraftPersisted={enqueueDraft}
+            onDraftTouched={markDraftTouched}
           />
         )
       )}

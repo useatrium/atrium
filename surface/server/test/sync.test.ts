@@ -144,18 +144,20 @@ describe('/api/sync', () => {
     expect(privateEvents.some((event: any) => event.type === 'channel.created')).toBe(false);
   });
 
-  it('ships read cursor, mutes, prefs, and channels in the state snapshot', async () => {
+  it('ships read cursor, mutes, prefs, drafts, and channels in the state snapshot', async () => {
     const alice = await login('alice', 'Alice');
     const initial = await sync(alice.cookie, 0, 1000);
     const message = await post(alice.cookie, fx.channelId, 'read me');
     await markRead(alice.cookie, fx.channelId, message.id);
     await setMute(alice.cookie, fx.otherChannelId, true);
     await patchPrefs(alice.cookie, { theme: 'dark', accent: 'teal' });
+    await putDraft(alice.cookie, `channel:${fx.channelId}`, 'draft text');
 
     const healed = await sync(alice.cookie, initial.nextCursor, 1000);
     expect(healed.state.readCursors[fx.channelId]).toBe(message.id);
     expect(healed.state.mutes).toContain(fx.otherChannelId);
     expect(healed.state.prefs).toEqual({ ...DEFAULT_PREFS, theme: 'dark', accent: 'teal' });
+    expect(healed.state.drafts[`channel:${fx.channelId}`]).toMatchObject({ text: 'draft text' });
     expect(healed.state.channels.find((channel: any) => channel.id === fx.channelId)).toMatchObject({
       lastReadEventId: message.id,
     });
@@ -271,6 +273,16 @@ async function patchPrefs(cookie: string, patch: Record<string, unknown>) {
     url: '/api/me/prefs',
     headers: { cookie },
     payload: { ...patch, opId: randomUUID() },
+  });
+  expect(res.statusCode).toBe(200);
+}
+
+async function putDraft(cookie: string, draftKey: string, text: string) {
+  const res = await app.inject({
+    method: 'PUT',
+    url: `/api/me/drafts/${encodeURIComponent(draftKey)}`,
+    headers: { cookie },
+    payload: { text, opId: randomUUID() },
   });
   expect(res.statusCode).toBe(200);
 }

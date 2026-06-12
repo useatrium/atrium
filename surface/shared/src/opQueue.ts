@@ -17,6 +17,7 @@ export const VALID_OP_TYPES = [
   'session.steer',
   'session.cancel',
   'prefs.set',
+  'draft.set',
   'channel.join',
   'channel.leave',
 ] as const;
@@ -128,6 +129,11 @@ export interface SessionCancelPayload {
 
 export type PrefsSetPayload = Partial<UserPrefs>;
 
+export interface DraftSetPayload {
+  draftKey: string;
+  text: string;
+}
+
 export interface ChannelJoinPayload {
   channelId: string;
   userId: string;
@@ -151,6 +157,7 @@ export type OpPayloadByType = {
   'session.steer': SessionSteerPayload;
   'session.cancel': SessionCancelPayload;
   'prefs.set': PrefsSetPayload;
+  'draft.set': DraftSetPayload;
   'channel.join': ChannelJoinPayload;
   'channel.leave': ChannelLeavePayload;
 };
@@ -168,6 +175,7 @@ type OpResultByType = {
   'session.steer': { ok: true };
   'session.cancel': { ok: true };
   'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
+  'draft.set': { ok: true };
   'channel.join': Awaited<ReturnType<Api['addChannelMember']>>;
   'channel.leave': { ok: true };
 };
@@ -242,6 +250,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `cancel:${(payload as SessionCancelPayload).sessionId}`;
     case 'prefs.set':
       return 'prefs:me';
+    case 'draft.set':
+      return `draft:${(payload as DraftSetPayload).draftKey}`;
     case 'channel.join': {
       const p = payload as ChannelJoinPayload;
       return `member:${p.channelId}:${p.userId}`;
@@ -385,6 +395,7 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'session.answer' ||
     op.opType === 'session.cancel' ||
     op.opType === 'prefs.set' ||
+    op.opType === 'draft.set' ||
     op.opType === 'channel.join' ||
     op.opType === 'channel.leave'
   ) {
@@ -833,6 +844,11 @@ export function createDefaultOpRegistry(): OpRegistry {
     },
     'prefs.set': {
       execute: (api, payload, op) => api.patchPrefs(payload, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'draft.set': {
+      execute: (api, payload, op) => api.setDraft(payload.draftKey, payload.text, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

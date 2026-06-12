@@ -682,6 +682,7 @@ describe('unified sync application', () => {
         readCursors: { [CH]: 9 },
         mutes: ['ch-muted'],
         prefs: { ...DEFAULT_PREFS, theme: 'dark' },
+        drafts: {},
         channels: [
           {
             id: CH,
