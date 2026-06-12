@@ -152,12 +152,18 @@ describe('/api/sync', () => {
     await setMute(alice.cookie, fx.otherChannelId, true);
     await patchPrefs(alice.cookie, { theme: 'dark', accent: 'teal' });
     await putDraft(alice.cookie, `channel:${fx.channelId}`, 'draft text');
+    await putDraft(alice.cookie, `channel:${fx.otherChannelId}`, 'stale draft');
+    await putDraft(alice.cookie, `channel:${fx.otherChannelId}`, '');
 
     const healed = await sync(alice.cookie, initial.nextCursor, 1000);
     expect(healed.state.readCursors[fx.channelId]).toBe(message.id);
     expect(healed.state.mutes).toContain(fx.otherChannelId);
     expect(healed.state.prefs).toEqual({ ...DEFAULT_PREFS, theme: 'dark', accent: 'teal' });
     expect(healed.state.drafts[`channel:${fx.channelId}`]).toMatchObject({ text: 'draft text' });
+    expect(healed.state.drafts).not.toHaveProperty(`channel:${fx.otherChannelId}`);
+    expect(Date.parse(healed.state.draftDeletions[`channel:${fx.otherChannelId}`])).toBeGreaterThan(
+      0,
+    );
     expect(healed.state.channels.find((channel: any) => channel.id === fx.channelId)).toMatchObject({
       lastReadEventId: message.id,
     });

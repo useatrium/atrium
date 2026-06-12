@@ -257,8 +257,13 @@ function rawSession(req: FastifyRequest): string | undefined {
     const prefs = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
       userId,
     ]);
-    const draftRows = await client.query<{ draft_key: string; text: string; updated_at: Date }>(
-      `SELECT draft_key, text, updated_at
+    const draftRows = await client.query<{
+      draft_key: string;
+      text: string;
+      updated_at: Date;
+      deleted_at: Date | null;
+    }>(
+      `SELECT draft_key, text, updated_at, deleted_at
        FROM user_drafts
        WHERE user_id = $1
        ORDER BY draft_key ASC`,
@@ -267,7 +272,12 @@ function rawSession(req: FastifyRequest): string | undefined {
     const readCursors: Record<string, number> = {};
     for (const row of readRows.rows) readCursors[row.channel_id] = Number(row.last_read_event_id);
     const drafts: Record<string, { text: string; updatedAt: string }> = {};
+    const draftDeletions: Record<string, string> = {};
     for (const row of draftRows.rows) {
+      if (row.deleted_at) {
+        draftDeletions[row.draft_key] = row.deleted_at.toISOString();
+        continue;
+      }
       drafts[row.draft_key] = { text: row.text, updatedAt: row.updated_at.toISOString() };
     }
     return {
@@ -275,6 +285,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       mutes: muteRows.rows.map((row) => row.channel_id),
       prefs: normalizePrefs(prefs.rows[0]?.prefs),
       drafts,
+      draftDeletions,
       channels: await listChannelsFor(client, userId),
     };
   }
@@ -867,17 +878,19 @@ function rawSession(req: FastifyRequest): string | undefined {
       body: { draftKey, text: body.text },
       fn: async (client) => {
         if (body.text === '') {
-          await client.query('DELETE FROM user_drafts WHERE user_id = $1 AND draft_key = $2', [
-            user.id,
-            draftKey,
-          ]);
+          await client.query(
+            `UPDATE user_drafts
+             SET text = '', deleted_at = now(), updated_at = now()
+             WHERE user_id = $1 AND draft_key = $2`,
+            [user.id, draftKey],
+          );
           return { ok: true as const };
         }
         await client.query(
           `INSERT INTO user_drafts (user_id, draft_key, text, updated_at)
            VALUES ($1, $2, $3, now())
            ON CONFLICT (user_id, draft_key)
-           DO UPDATE SET text = EXCLUDED.text, updated_at = now()`,
+           DO UPDATE SET text = EXCLUDED.text, updated_at = now(), deleted_at = NULL`,
           [user.id, draftKey, body.text],
         );
         return { ok: true as const };
