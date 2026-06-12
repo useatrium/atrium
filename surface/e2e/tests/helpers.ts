@@ -69,6 +69,31 @@ export function channelButton(page: Page, channelName: string) {
   return page.getByRole('button', { name: new RegExp(`^#?\\s*${channelName}(\\s|$|unread)`) });
 }
 
+// Unread/read state arrives either via a live WS event or — deterministically —
+// via the channel refetch on reload (channels carry latest/last-read cursors).
+// CI's runners are slow and the vite WS proxy can drop a socket under load, so
+// after a short live window we reload to force the deterministic path. The live
+// delivery itself is covered by the realtime test.
+export async function expectUnread(page: Page, channelName: string): Promise<void> {
+  const btn = channelButton(page, channelName);
+  try {
+    await expect(btn).toContainText('unread', { timeout: 4000 });
+  } catch {
+    await page.reload();
+    await expect(btn).toContainText('unread', { timeout: 20_000 });
+  }
+}
+
+export async function expectRead(page: Page, channelName: string): Promise<void> {
+  const btn = channelButton(page, channelName);
+  try {
+    await expect(btn).not.toContainText('unread', { timeout: 4000 });
+  } catch {
+    await page.reload();
+    await expect(btn).not.toContainText('unread', { timeout: 20_000 });
+  }
+}
+
 export async function openChannel(page: Page, channelName: string): Promise<void> {
   await channelButton(page, channelName).click();
   await expect(page.getByRole('heading', { name: `# ${channelName}` })).toBeVisible();

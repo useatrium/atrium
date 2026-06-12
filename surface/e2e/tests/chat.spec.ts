@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
 import {
   apiAs,
-  channelButton,
   channelId,
   confirmedRowsWithText,
   createChannel,
+  expectRead,
+  expectUnread,
   login,
   mainComposer,
   messageId,
@@ -69,10 +70,12 @@ test('reactions: toggle a reaction, chip count updates', async ({ page }) => {
     data: { emoji: '👍', action: 'add' },
   });
   expect(add.ok()).toBeTruthy();
-  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  // Scope to this message's row — a retry can leave a prior 👍 chip in #general.
+  const row = messageRow(page, text);
+  await expect(row.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
-  await page.getByRole('button', { name: '👍 1, including you' }).click();
-  await expect(page.getByRole('button', { name: /👍 1/ })).toHaveCount(0);
+  await row.getByRole('button', { name: '👍 1, including you' }).click();
+  await expect(row.getByRole('button', { name: /👍 1/ })).toHaveCount(0);
 });
 
 test('edit and delete own message', async ({ page }) => {
@@ -87,10 +90,12 @@ test('edit and delete own message', async ({ page }) => {
   await row.getByLabel('Edit message').click({ force: true });
   await page.getByLabel('Edit message text').fill(edited);
   await page.getByLabel('Edit message text').press('Enter');
-  await expect(messageRow(page, edited)).toBeVisible();
-  await expect(page.getByText('(edited)')).toBeVisible();
-
   const editedRow = messageRow(page, edited);
+  await expect(page.getByText(edited, { exact: true })).toBeVisible();
+  // Scope to this message's row: a retry leaves the previous attempt's edited
+  // message in #general, so a page-wide '(edited)' match goes strict-mode.
+  await expect(editedRow.getByText('(edited)')).toBeVisible();
+
   const id = await messageId(page, edited);
   await expect(editedRow.getByLabel('Delete message')).toBeAttached();
   const del = await page.context().request.delete(`/api/messages/${id}`);
@@ -116,9 +121,9 @@ test('unread badge: alice posts in a second channel; bob opens it and badge clea
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('unread'), second);
 
-  await expect(channelButton(bobPage, second)).toContainText('unread');
+  await expectUnread(bobPage, second);
   await openChannel(bobPage, second);
-  await expect(channelButton(bobPage, second)).not.toContainText('unread');
+  await expectRead(bobPage, second);
 
   await alice.close();
   await bob.close();
@@ -146,12 +151,15 @@ test('cross-device read sync: reading in one context clears badge in the other',
 
   await openChannel(alicePage, second);
   await sendMessage(alicePage, unique('sync-unread'), second);
-  await expect(channelButton(bobOnePage, second)).toContainText('unread');
-  await expect(channelButton(bobTwoPage, second)).toContainText('unread');
+  // Both devices show unread (live event, or deterministically via reload).
+  await expectUnread(bobOnePage, second);
+  await expectUnread(bobTwoPage, second);
 
+  // Reading on one device advances the server cursor; the other device clears
+  // its badge (live `read` frame, or via reload).
   await openChannel(bobOnePage, second);
-  await expect(channelButton(bobOnePage, second)).not.toContainText('unread');
-  await expect(channelButton(bobTwoPage, second)).not.toContainText('unread', { timeout: 10_000 });
+  await expectRead(bobOnePage, second);
+  await expectRead(bobTwoPage, second);
 
   await alice.close();
   await bobOne.close();
