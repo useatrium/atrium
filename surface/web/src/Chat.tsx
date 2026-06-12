@@ -13,6 +13,7 @@ import {
   randomId,
   reconcileDraftSnapshot,
   type AttachmentRef,
+  type DraftDeletionSnapshot,
   type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
@@ -253,29 +254,37 @@ export function Chat({
   }, []);
 
   const reconcileDraftsFromSnapshot = useCallback(
-    (snapshot: DraftSnapshot) => {
+    (snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
       void eventCache
         .listDrafts()
         .then(async (local) => {
-          const { hydrate } = reconcileDraftSnapshot({
+          const { hydrate, remove } = reconcileDraftSnapshot({
             snapshot,
+            deletions,
             local,
             touchedThisSession: touchedDraftKeysRef.current,
             activeDraftKeys: activeDraftKeysForSync(),
           });
           const entries = Object.entries(hydrate);
-          if (entries.length === 0) return;
           await Promise.all(
-            entries.map(([draftKey, draft]) =>
-              eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
-            ),
+            entries
+              .map(([draftKey, draft]) =>
+                eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
+              )
+              .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
           );
+          if (entries.length === 0 && remove.length === 0) return;
           setDrafts((prev) => {
             let next = prev;
             for (const [draftKey, draft] of entries) {
               if (!(draftKey in prev) || prev[draftKey] === draft.text) continue;
               if (next === prev) next = { ...prev };
               next[draftKey] = draft.text;
+            }
+            for (const draftKey of remove) {
+              if (!(draftKey in prev) || prev[draftKey] === '') continue;
+              if (next === prev) next = { ...prev };
+              next[draftKey] = '';
             }
             return next;
           });
@@ -672,7 +681,10 @@ export function Chat({
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
-        reconcileDraftsFromSnapshot(response.state.drafts ?? {});
+        reconcileDraftsFromSnapshot(
+          response.state.drafts ?? {},
+          response.state.draftDeletions ?? {},
+        );
         void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
           console.warn('failed to cache sync channels', err);
         });
@@ -689,7 +701,10 @@ export function Chat({
           cacheSyncCursor(event.id);
         },
       });
-      reconcileDraftsFromSnapshot(response.state.drafts ?? {});
+      reconcileDraftsFromSnapshot(
+        response.state.drafts ?? {},
+        response.state.draftDeletions ?? {},
+      );
       void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
         console.warn('failed to cache sync channels', err);
       });

@@ -4,9 +4,11 @@ export interface DraftSnapshotEntry {
 }
 
 export type DraftSnapshot = Record<string, DraftSnapshotEntry>;
+export type DraftDeletionSnapshot = Record<string, string>;
 
 export interface DraftReconcileDecision {
   hydrate: DraftSnapshot;
+  remove: string[];
 }
 
 function timestampMs(value: string | undefined): number {
@@ -17,6 +19,7 @@ function timestampMs(value: string | undefined): number {
 
 export function reconcileDraftSnapshot(args: {
   snapshot: DraftSnapshot;
+  deletions?: DraftDeletionSnapshot;
   local: DraftSnapshot;
   touchedThisSession: ReadonlySet<string>;
   activeDraftKeys: ReadonlySet<string>;
@@ -35,7 +38,17 @@ export function reconcileDraftSnapshot(args: {
       hydrate[draftKey] = remote;
     }
   }
-  return { hydrate };
+  const remove: string[] = [];
+  for (const [draftKey, deletedAt] of Object.entries(args.deletions ?? {})) {
+    if (args.activeDraftKeys.has(draftKey) || args.touchedThisSession.has(draftKey)) {
+      continue;
+    }
+    const local = args.local[draftKey];
+    if (local && timestampMs(local.updatedAt) < timestampMs(deletedAt)) {
+      remove.push(draftKey);
+    }
+  }
+  return { hydrate, remove };
 }
 
 export function createDraftChangeDebouncer(
