@@ -107,7 +107,10 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          pnpm --filter '!@atrium/server' -r test > /tmp/test-rest.log 2>&1 &
+          # '!atrium-surface' matters: a bare '!@atrium/server' filter selects
+          # the workspace root too, whose test script is `pnpm -r test` — which
+          # recursively re-runs every suite (server included) without filters.
+          pnpm --filter '!@atrium/server' --filter '!atrium-surface' -r test > /tmp/test-rest.log 2>&1 &
           rest_pid=$!
           shard_pids=()
           for i in 1 2 3; do
