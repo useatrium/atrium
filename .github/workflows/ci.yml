@@ -20,7 +20,7 @@ jobs:
     # deterministically hung after the main artifact on GitHub runners). Tag
     # MUST track the pinned @playwright/test version in surface/e2e.
     container:
-      image: mcr.microsoft.com/playwright:v1.49.1-noble
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
 
     services:
       postgres:
