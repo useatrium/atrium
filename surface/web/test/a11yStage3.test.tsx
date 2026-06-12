@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useRef, useState } from 'react';
 import type { ChatMessage } from '@atrium/surface-client';
@@ -228,8 +228,22 @@ describe('private channel leave confirmation', () => {
       </ThemeProvider>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Members' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Leave channel' }));
+    // Settle the app's initial async work before interacting: the Members
+    // button proves the channel snapshot was applied, the connection badge
+    // proves the (macrotask-deferred) socket open fired, and one flushed
+    // timer turn drains straggler fetch continuations. Each await below
+    // yields to the event loop, so interleaving them with clicks lets late
+    // re-renders race the popover — keep all interactions after this block
+    // synchronous.
+    await screen.findByRole('button', { name: 'Members' });
+    await screen.findByTitle('connection: open');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Members' }));
+    expect(screen.getByRole('dialog', { name: 'Channel members' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Leave channel' }));
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith('/members/me') && init?.method === 'DELETE')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm leave channel' }));
     await waitFor(() =>
