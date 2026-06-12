@@ -1169,9 +1169,14 @@ export function Chat({
   };
 
   const createChannel = async (name: string, isPrivate = false) => {
-    const { channel } = await api.createChannel(name, { private: isPrivate });
-    dispatch({ type: 'channel-added', channel });
-    selectChannel(channel.id);
+    try {
+      const { channel } = await api.createChannel(name, { private: isPrivate });
+      dispatch({ type: 'channel-added', channel });
+      selectChannel(channel.id);
+    } catch (err) {
+      showErrorToast("Couldn't create the channel — try again.");
+      throw err;
+    }
   };
 
   const startDm = (userIds: string[]) => {
