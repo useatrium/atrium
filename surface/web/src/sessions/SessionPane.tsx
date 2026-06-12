@@ -1,5 +1,20 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { isTerminalExecutionStatus, type TextItem, type ToolCallItem } from '@atrium/centaur-client';
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
+import {
+  isTerminalExecutionStatus,
+  type QuestionItem,
+  type TextItem,
+  type ToolCallItem,
+} from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { Composer } from '../components/Composer';
 import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
@@ -17,6 +32,8 @@ import {
   type SeatAuditEntry,
   type QuestionPrompt,
   type Session,
+  type SessionQuestionAnswerSummary,
+  type SessionQuestionEvent,
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
@@ -59,6 +76,11 @@ export function SessionPane({
   const spectators = watchers.length;
   const pendingQuestion =
     session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
+  const questionEvents = session.questionEvents ?? [];
+  const questionEventsByQuestion = useMemo(
+    () => groupQuestionEventsByQuestion(questionEvents),
+    [questionEvents],
+  );
 
   // ---- driver seat (Phase 3) ----
   const driverId = sessionDriverId(session);
@@ -184,10 +206,11 @@ export function SessionPane({
   const stickRef = useRef(true);
   const lastEventId = stream.lastEventId;
   const seatEventCount = session.seatEvents.length;
+  const questionEventCount = questionEvents.length;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [lastEventId, seatEventCount]);
+  }, [lastEventId, seatEventCount, questionEventCount]);
   const onScroll = () => {
     const el = scrollRef.current;
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -335,6 +358,11 @@ export function SessionPane({
             ))}
             {item.type === 'text' ? (
               <TextBlock item={item} />
+            ) : item.type === 'question' ? (
+              <QuestionTranscriptCard
+                item={item}
+                events={questionEventsByQuestion.get(item.questionId) ?? []}
+              />
             ) : (
               <ToolCard
                 item={item}
@@ -455,17 +483,22 @@ function QuestionBanner({
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
 }) {
+  const bannerId = useId();
+  const titleId = `${bannerId}-title`;
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [cleared, setCleared] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setValues({});
     setSubmitting(false);
     setCleared(null);
+    setError(null);
   }, [pending.questionId]);
   if (cleared === pending.questionId) return null;
 
   const setAnswer = (id: string, value: string) => {
+    setError(null);
     setValues((prev) => ({ ...prev, [id]: value }));
   };
   const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
@@ -474,18 +507,26 @@ function QuestionBanner({
     const answers: Record<string, { answers: string[] }> = {};
     for (const q of pending.questions) answers[q.id] = { answers: [values[q.id]!.trim()] };
     setSubmitting(true);
+    setError(null);
     onAnswerQuestion(sessionId, pending.questionId, answers)
       .then(() => setCleared(pending.questionId))
+      .catch(() => setError("Answer didn't send. Try again."))
       .finally(() => setSubmitting(false));
   };
 
   return (
     <div
       data-testid="question-banner"
+      role="region"
+      aria-labelledby={titleId}
+      aria-live="polite"
       className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
     >
       <div className="mb-2 flex items-center gap-2">
-        <span className="rounded-full bg-warning/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-warning-text">
+        <span
+          id={titleId}
+          className="rounded-full bg-warning/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-warning-text"
+        >
           needs input
         </span>
         {!isDriver && (
@@ -495,51 +536,89 @@ function QuestionBanner({
         )}
       </div>
       <div className="space-y-2">
-        {pending.questions.map((q) => (
-          <div key={q.id} className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="rounded bg-surface-overlay px-1.5 py-px text-3xs font-semibold text-fg-secondary">
-                {q.header}
-              </span>
-              {q.isSecret && <span className="text-3xs text-fg-muted">secret</span>}
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg">
-              {q.question}
-            </div>
-            {q.options?.length ? (
-              <div className="flex flex-wrap gap-1.5">
-                {q.options.map((option) => {
-                  const selected = values[q.id] === option.label;
-                  return (
-                    <button
-                      key={option.label}
-                      disabled={!isDriver || submitting}
-                      onClick={() => setAnswer(q.id, option.label)}
-                      title={option.description}
-                      className={`rounded-md border px-2 py-1 text-left text-2xs ${
-                        selected
-                          ? 'border-warning bg-warning/15 text-warning-text-strong'
-                          : 'border-edge-strong bg-surface-raised/70 text-fg-body hover:border-edge-hover'
-                      } disabled:cursor-not-allowed disabled:opacity-60`}
-                    >
-                      <span className="block font-semibold">{option.label}</span>
-                      <span className="block text-fg-muted">{option.description}</span>
-                    </button>
-                  );
-                })}
+        {pending.questions.map((q, questionIndex) => {
+          const promptId = `${bannerId}-prompt-${questionIndex}`;
+          const inputId = `${bannerId}-answer-${questionIndex}`;
+          const groupName = `${bannerId}-options-${questionIndex}`;
+          return (
+            <fieldset key={q.id} className="space-y-1" disabled={!isDriver || submitting}>
+              <legend className="flex items-center gap-2">
+                <span className="rounded bg-surface-overlay px-1.5 py-px text-3xs font-semibold text-fg-secondary">
+                  {q.header}
+                </span>
+                {q.isSecret && <span className="text-3xs text-fg-muted">secret</span>}
+              </legend>
+              <div
+                id={promptId}
+                className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg"
+              >
+                {q.question}
               </div>
-            ) : (
-              <input
-                type={q.isSecret ? 'password' : 'text'}
-                disabled={!isDriver || submitting}
-                value={values[q.id] ?? ''}
-                onChange={(e) => setAnswer(q.id, e.target.value)}
-                className="w-full rounded-md border border-edge-strong bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-warning disabled:opacity-60"
-              />
-            )}
-          </div>
-        ))}
+              {q.options?.length ? (
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {q.options.map((option, optionIndex) => {
+                    const selected = values[q.id] === option.label;
+                    const optionDescId = `${bannerId}-option-${questionIndex}-${optionIndex}-description`;
+                    return (
+                      <label
+                        key={option.label}
+                        title={option.description}
+                        className={`min-w-0 cursor-pointer rounded-md border px-2 py-1 text-left text-2xs ${
+                          selected
+                            ? 'border-warning bg-warning/15 text-warning-text-strong'
+                            : 'border-edge-strong bg-surface-raised/70 text-fg-body hover:border-edge-hover'
+                        } ${!isDriver || submitting ? 'cursor-not-allowed opacity-60' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name={groupName}
+                          value={option.label}
+                          checked={selected}
+                          disabled={!isDriver || submitting}
+                          onChange={() => setAnswer(q.id, option.label)}
+                          aria-describedby={`${promptId} ${optionDescId}`}
+                          className="sr-only"
+                        />
+                        <span className="block font-semibold">{option.label}</span>
+                        <span
+                          id={optionDescId}
+                          className="block whitespace-normal break-words text-fg-muted"
+                        >
+                          {option.description}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <>
+                  <label htmlFor={inputId} className="sr-only">
+                    Answer for {q.header}
+                  </label>
+                  <input
+                    id={inputId}
+                    type={q.isSecret ? 'password' : 'text'}
+                    disabled={!isDriver || submitting}
+                    value={values[q.id] ?? ''}
+                    onChange={(e) => setAnswer(q.id, e.target.value)}
+                    aria-describedby={promptId}
+                    autoComplete={q.isSecret ? 'off' : undefined}
+                    className="w-full rounded-md border border-edge-strong bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-warning disabled:opacity-60"
+                  />
+                </>
+              )}
+            </fieldset>
+          );
+        })}
       </div>
+      {error && (
+        <div
+          role="alert"
+          className="mt-2 rounded border border-danger-border/50 bg-danger-tint/20 px-2 py-1 text-2xs text-danger-text"
+        >
+          {error}
+        </div>
+      )}
       <div className="mt-2 flex items-center justify-between gap-2">
         {isDriver ? (
           <button
@@ -602,6 +681,181 @@ function SeatAuditLine({
 }
 
 // ---- transcript items -------------------------------------------------------
+
+function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<string, SessionQuestionEvent[]> {
+  const grouped = new Map<string, SessionQuestionEvent[]>();
+  for (const event of events) {
+    const current = grouped.get(event.questionId) ?? [];
+    current.push(event);
+    grouped.set(event.questionId, current);
+  }
+  for (const [questionId, current] of grouped) {
+    grouped.set(questionId, [...current].sort((a, b) => a.id - b.id));
+  }
+  return grouped;
+}
+
+function latestQuestionEvent(
+  events: SessionQuestionEvent[],
+  kind: SessionQuestionEvent['kind'],
+): SessionQuestionEvent | undefined {
+  return [...events].reverse().find((event) => event.kind === kind);
+}
+
+function answerByPromptId(events: SessionQuestionEvent[]): Map<string, SessionQuestionAnswerSummary> {
+  const answered = latestQuestionEvent(events, 'answered');
+  const summaries = new Map<string, SessionQuestionAnswerSummary>();
+  for (const summary of answered?.answers ?? []) {
+    summaries.set(summary.id, summary);
+  }
+  return summaries;
+}
+
+function questionResolutionText(reason: QuestionItem['reason'] | undefined): string {
+  if (reason === 'empty') return 'Expired without an answer';
+  if (reason === 'cancelled') return 'Cancelled';
+  return 'Answered';
+}
+
+function questionStatusLabel(
+  item: QuestionItem,
+  events: SessionQuestionEvent[],
+): { label: string; tone: 'pending' | 'answered' | 'cancelled' } {
+  const answered = latestQuestionEvent(events, 'answered');
+  const resolved = latestQuestionEvent(events, 'resolved');
+  const reason = item.reason ?? resolved?.reason ?? (answered ? 'answered' : undefined);
+  if (item.status === 'pending' && !answered && !resolved) {
+    return { label: 'Waiting for answer', tone: 'pending' };
+  }
+  if (reason === 'cancelled' || reason === 'empty') {
+    return { label: questionResolutionText(reason), tone: 'cancelled' };
+  }
+  return { label: 'Answered', tone: 'answered' };
+}
+
+function answerValueText(summary: SessionQuestionAnswerSummary): string {
+  if (summary.answers.length > 0) return summary.answers.join('\n');
+  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
+}
+
+function QuestionTranscriptCard({
+  item,
+  events,
+}: {
+  item: QuestionItem;
+  events: SessionQuestionEvent[];
+}) {
+  const labelId = useId();
+  const requested = latestQuestionEvent(events, 'requested');
+  const answered = latestQuestionEvent(events, 'answered');
+  const resolved = latestQuestionEvent(events, 'resolved');
+  const prompts = item.questions.length > 0 ? item.questions : requested?.questions ?? [];
+  const status = questionStatusLabel(item, events);
+  const answerSummaries = answerByPromptId(events);
+  const statusClass =
+    status.tone === 'pending'
+      ? 'border-warning-border/50 bg-warning-tint/15 text-warning-text'
+      : status.tone === 'cancelled'
+        ? 'border-edge bg-surface-overlay/50 text-fg-muted'
+        : 'border-accent-border-muted/50 bg-accent-tint/20 text-accent-text-strong';
+  const answeredBy = answered?.actorName ?? answered?.actorId;
+  const resolvedReason = item.reason ?? resolved?.reason;
+
+  return (
+    <article
+      style={ITEM_VIS}
+      role="group"
+      aria-labelledby={labelId}
+      data-testid="question-transcript-card"
+      className="my-2 rounded-md border border-warning-border/40 bg-warning-tint/10 px-3 py-2 text-xs text-fg-body"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span id={labelId} className="font-semibold text-fg">
+          Agent question
+        </span>
+        <span className={`rounded-full border px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide ${statusClass}`}>
+          {status.label}
+        </span>
+        {answered && (
+          <span className="text-2xs text-fg-muted">
+            {answeredBy ? `by ${answeredBy}` : 'answered'} at {hhmm(answered.at)}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-2 space-y-2">
+        {prompts.length > 0 ? (
+          prompts.map((question) => {
+            const summary = answerSummaries.get(question.id);
+            return (
+              <section key={question.id} className="space-y-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded bg-surface-overlay px-1.5 py-px text-3xs font-semibold text-fg-secondary">
+                    {question.header}
+                  </span>
+                  {question.isSecret && <span className="text-3xs text-fg-muted">secret</span>}
+                </div>
+                <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg">
+                  {question.question}
+                </div>
+                {question.options?.length ? (
+                  <ul className="grid gap-1 sm:grid-cols-2">
+                    {question.options.map((option) => (
+                      <li key={option.label} className="rounded border border-edge bg-surface-raised/50 px-2 py-1">
+                        <span className="block font-semibold text-fg-secondary">{option.label}</span>
+                        <span className="block whitespace-pre-wrap break-words text-2xs text-fg-muted">
+                          {option.description}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {summary && (
+                  <div className="rounded border border-accent-border-muted/40 bg-accent-tint/10 px-2 py-1">
+                    <div className="text-3xs font-semibold uppercase tracking-wide text-accent-text-strong">
+                      Answer
+                    </div>
+                    <div className="mt-0.5 whitespace-pre-wrap break-words text-xs text-fg-body">
+                      {answerValueText(summary)}
+                    </div>
+                  </div>
+                )}
+              </section>
+            );
+          })
+        ) : (
+          <div className="whitespace-pre-wrap break-words text-sm text-fg">
+            Agent asked a question.
+          </div>
+        )}
+      </div>
+
+      <details className="mt-2 text-2xs text-fg-muted">
+        <summary className="cursor-pointer text-fg-tertiary hover:text-fg-body">
+          Show event details
+        </summary>
+        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
+          <dt>Question id</dt>
+          <dd className="break-all font-mono">{item.questionId}</dd>
+          {item.turnId && (
+            <>
+              <dt>Turn id</dt>
+              <dd className="break-all font-mono">{item.turnId}</dd>
+            </>
+          )}
+          <dt>Source events</dt>
+          <dd className="break-words font-mono">{item.sourceEventIds.join(', ')}</dd>
+          {resolvedReason && (
+            <>
+              <dt>Resolution</dt>
+              <dd>{questionResolutionText(resolvedReason)}</dd>
+            </>
+          )}
+        </dl>
+      </details>
+    </article>
+  );
+}
 
 const TextBlock = memo(
   function TextBlock({ item }: { item: TextItem }) {

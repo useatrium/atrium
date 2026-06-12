@@ -722,6 +722,45 @@ describe('unified sync application', () => {
 
     expect(state.timelines[CH]).toBeUndefined();
     expect(state.sessions[session.id]!.pendingQuestion?.questionId).toBe('q-1');
+    expect(state.sessions[session.id]!.questionEvents).toMatchObject([
+      {
+        id: 11,
+        questionId: 'q-1',
+        kind: 'requested',
+        questions: [{ id: 'choice', header: 'Pick', question: 'Choose?' }],
+      },
+    ]);
     expect(state.syncCursor).toBe(11);
+
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        id: 12,
+        workspaceId: 'ws-1',
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'session.question_answered',
+        actorId: alice.id,
+        payload: {
+          sessionId: session.id,
+          questionId: 'q-1',
+          by: alice.id,
+          answers: [{ id: 'choice', header: 'Pick', answers: ['A'], count: 1 }],
+        },
+        createdAt: new Date(12_000).toISOString(),
+        author: alice,
+      },
+    });
+
+    expect(state.sessions[session.id]!.pendingQuestion).toBeNull();
+    expect(state.sessions[session.id]!.questionEvents).toMatchObject([
+      { id: 11, kind: 'requested' },
+      {
+        id: 12,
+        questionId: 'q-1',
+        kind: 'answered',
+        answers: [{ id: 'choice', header: 'Pick', answers: ['A'], count: 1 }],
+      },
+    ]);
   });
 });

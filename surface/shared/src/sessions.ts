@@ -52,6 +52,29 @@ export interface SessionPendingQuestion {
   eventId?: number;
 }
 
+export type QuestionResolutionReason = 'answered' | 'cancelled' | 'empty';
+
+export interface SessionQuestionAnswerSummary {
+  id: string;
+  header: string;
+  answers: string[];
+  count: number;
+}
+
+export interface SessionQuestionEvent {
+  /** Workspace event id. Dedupe key across WS fanout + catch-up overlap. */
+  id: number;
+  questionId: string;
+  kind: 'requested' | 'answered' | 'resolved';
+  at: string;
+  actorId?: string;
+  actorName?: string;
+  turnId?: string;
+  questions?: QuestionPrompt[];
+  answers?: SessionQuestionAnswerSummary[];
+  reason?: QuestionResolutionReason;
+}
+
 /** Session JSON as served by POST/GET /api/sessions. */
 export interface SessionWire {
   id: string;
@@ -107,6 +130,8 @@ export interface Session {
   /** Open seat requests, oldest-first (deduped by userId). */
   pendingSeatRequests: SessionSeatUser[];
   pendingQuestion?: SessionPendingQuestion | null;
+  /** Live-only client audit log folded from session.question_* events. */
+  questionEvents?: SessionQuestionEvent[];
   /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
   seatEvents: SeatAuditEntry[];
   costUsd: number;
@@ -199,6 +224,7 @@ export function sessionFromWire(w: SessionWire): Session {
     driverName: w.driver?.displayName,
     pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
+    questionEvents: [],
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
     resultText: w.resultText ?? null,
@@ -230,6 +256,8 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     pendingSeatRequests:
       live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
     pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
+    questionEvents:
+      (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
     seatEvents: live.seatEvents.length > 0 ? live.seatEvents : resp.seatEvents,
     lastEventId: Math.max(live.lastEventId, resp.lastEventId),
   };
@@ -261,6 +289,7 @@ export function applySessionEvent(
       driverId: null,
       pendingSeatRequests: [],
       pendingQuestion: null,
+      questionEvents: [],
       seatEvents: [],
       costUsd: 0,
       resultText: null,
@@ -302,23 +331,39 @@ export function applySessionEvent(
     const questionId = typeof p.questionId === 'string' ? p.questionId : null;
     if (!questionId) return sessions;
     const questions = parseQuestionPrompts(p.questions);
+    const turnId = typeof p.turnId === 'string' ? p.turnId : undefined;
+    const entry = questionEventFromPayload(ev, questionId, 'requested', {
+      questions,
+      ...(turnId !== undefined ? { turnId } : {}),
+    });
     return {
       ...sessions,
       [sessionId]: {
         ...prev,
         pendingQuestion: { questionId, questions },
+        questionEvents: appendQuestionEvent(prev.questionEvents, entry),
       },
     };
   }
 
   if (ev.type === 'session.question_answered' || ev.type === 'session.question_resolved') {
     const questionId = typeof p.questionId === 'string' ? p.questionId : null;
-    if (!prev.pendingQuestion || (questionId && prev.pendingQuestion.questionId !== questionId)) return sessions;
+    if (!questionId) return sessions;
+    const isMatchingPending = prev.pendingQuestion?.questionId === questionId;
+    const entry =
+      ev.type === 'session.question_answered'
+        ? questionEventFromPayload(ev, questionId, 'answered', {
+            answers: parseQuestionAnswerSummaries(p.answers),
+          })
+        : questionEventFromPayload(ev, questionId, 'resolved', {
+            reason: parseQuestionResolutionReason(p.reason),
+          });
     return {
       ...sessions,
       [sessionId]: {
         ...prev,
-        pendingQuestion: null,
+        pendingQuestion: isMatchingPending ? null : prev.pendingQuestion,
+        questionEvents: appendQuestionEvent(prev.questionEvents, entry),
       },
     };
   }
@@ -379,6 +424,36 @@ export function applySessionEvent(
   return sessions;
 }
 
+function questionEventFromPayload(
+  ev: WireEvent,
+  questionId: string,
+  kind: SessionQuestionEvent['kind'],
+  details: Partial<Pick<SessionQuestionEvent, 'questions' | 'answers' | 'reason' | 'turnId'>>,
+): SessionQuestionEvent {
+  const entry: SessionQuestionEvent = {
+    id: ev.id,
+    questionId,
+    kind,
+    at: ev.createdAt,
+  };
+  if (ev.actorId !== null) entry.actorId = ev.actorId;
+  if (ev.author?.displayName) entry.actorName = ev.author.displayName;
+  if (details.questions !== undefined) entry.questions = details.questions;
+  if (details.answers !== undefined) entry.answers = details.answers;
+  if (details.reason !== undefined) entry.reason = details.reason;
+  if (details.turnId !== undefined) entry.turnId = details.turnId;
+  return entry;
+}
+
+function appendQuestionEvent(
+  current: SessionQuestionEvent[] | undefined,
+  entry: SessionQuestionEvent,
+): SessionQuestionEvent[] {
+  const events = current ?? [];
+  if (events.some((e) => e.id === entry.id)) return events;
+  return [...events, entry].sort((a, b) => a.id - b.id);
+}
+
 function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -406,6 +481,30 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
       };
     })
     .filter((q): q is QuestionPrompt => q !== null);
+}
+
+function parseQuestionAnswerSummaries(value: unknown): SessionQuestionAnswerSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item): SessionQuestionAnswerSummary | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Record<string, unknown>;
+      if (typeof raw.id !== 'string') return null;
+      const answers = Array.isArray(raw.answers)
+        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
+        : [];
+      return {
+        id: raw.id,
+        header: typeof raw.header === 'string' ? raw.header : raw.id,
+        answers,
+        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
+      };
+    })
+    .filter((summary): summary is SessionQuestionAnswerSummary => summary !== null);
+}
+
+function parseQuestionResolutionReason(value: unknown): QuestionResolutionReason {
+  return value === 'empty' || value === 'cancelled' || value === 'answered' ? value : 'cancelled';
 }
 
 export function formatCost(v: number): string {
