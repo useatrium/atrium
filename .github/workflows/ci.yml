@@ -15,6 +15,12 @@ jobs:
     name: Surface
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Run inside the official Playwright image: browsers + system deps are
+    # pre-installed, so there is no flaky azureedge browser download (which
+    # deterministically hung after the main artifact on GitHub runners). Tag
+    # MUST track the pinned @playwright/test version in surface/e2e.
+    container:
+      image: mcr.microsoft.com/playwright:v1.49.1-noble
 
     services:
       postgres:
@@ -23,8 +29,6 @@ jobs:
           POSTGRES_USER: atrium
           POSTGRES_PASSWORD: atrium
           POSTGRES_DB: atrium
-        ports:
-          - 5433:5432
         options: >-
           --health-cmd "pg_isready -U atrium -d atrium"
           --health-interval 10s
@@ -32,7 +36,9 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgres://atrium:atrium@localhost:5433/atrium
+      # Inside a job container, service containers are reached by their label
+      # hostname on the container port (not localhost:5433).
+      DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium
 
     steps:
       - name: Checkout
@@ -67,22 +73,26 @@ jobs:
 
       - name: Typecheck surface workspace
         working-directory: surface
+        timeout-minutes: 4
         run: pnpm -r typecheck
 
       - name: Test surface workspace
         working-directory: surface
+        timeout-minutes: 6
         run: pnpm -r test
 
-      - name: Install Playwright Chromium
-        working-directory: surface
-        run: pnpm --filter @atrium/e2e exec playwright install --with-deps chromium
-
+      # No browser-install step: the Playwright container already has Chromium.
+      # Per-step timeout so a webServer/teardown hang is killed fast and
+      # attributed, instead of silently eating the whole job budget.
       - name: Run Playwright e2e
         working-directory: surface
+        timeout-minutes: 10
         env:
-          # e2e/db-reset.mjs creates and truncates this dedicated database while
-          # using the atrium database from the same Postgres service as admin DB.
-          DATABASE_URL: postgres://atrium:atrium@localhost:5433/atrium_e2e
+          # playwright.config.ts reads E2E_DATABASE_URL for the webServer (it
+          # falls back to a localhost:5433 default otherwise). db-reset.mjs
+          # creates/truncates this dedicated DB using the atrium DB on the same
+          # Postgres service as admin.
+          E2E_DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium_e2e
         run: pnpm e2e
 
       - name: Upload Playwright report

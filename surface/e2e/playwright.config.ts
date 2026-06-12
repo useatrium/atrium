@@ -11,9 +11,13 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
   workers: 1,
-  timeout: 30_000,
-  expect: { timeout: 8_000 },
-  retries: process.env.CI ? 1 : 0,
+  // Generous on CI: shared runners are slow and variable, and the vite WS
+  // proxy can reset a socket under load — the client recovers (reconnect →
+  // channel refetch surfaces the missed unread) but needs more than a few
+  // seconds. Local runs stay snappy via the lower timeouts.
+  timeout: process.env.CI ? 60_000 : 30_000,
+  expect: { timeout: process.env.CI ? 20_000 : 8_000 },
+  retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     ...devices['Desktop Chrome'],
@@ -23,7 +27,10 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   webServer: [
     {
-      command: `node db-reset.mjs && pnpm --filter @atrium/server dev`,
+      // `start` (plain tsx), NOT `dev` (tsx watch): the watcher never exits and
+      // Playwright's teardown can't reap it in CI (no TTY), hanging the job to
+      // its timeout. e2e needs no hot reload.
+      command: `node db-reset.mjs && pnpm --filter @atrium/server start`,
       url: `${apiTarget}/healthz`,
       reuseExistingServer: false,
       timeout: 60_000,
