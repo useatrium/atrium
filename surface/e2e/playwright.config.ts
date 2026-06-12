@@ -53,6 +53,11 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         ATRIUM_API_TARGET: apiTarget,
+        // A shell exporting NODE_ENV=production skews plugin-react on Vite 8:
+        // the oxc refresh transform keys on `command === "serve"` but the
+        // preamble injection keys on isProduction, so served modules reference
+        // an undefined $RefreshSig$. Dev servers must run in development.
+        NODE_ENV: 'development',
       },
     },
   ],
