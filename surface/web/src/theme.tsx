@@ -1,7 +1,10 @@
 import {
   ApiError,
   DEFAULT_PREFS,
+  DurableOpQueue,
   normalizePrefs,
+  normalizePrefsPatch,
+  randomId,
   type UserPrefs,
 } from '@atrium/surface-client';
 import {
@@ -13,6 +16,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api } from './api';
+import { eventCache } from './cacheIdb';
 import { showErrorToast } from './components/Toasts';
 
 const PREFS_KEY = 'atrium:prefs';
@@ -32,6 +36,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 let currentPrefs = loadPrefs();
 let currentScheme = resolveScheme(currentPrefs);
 const listeners = new Set<() => void>();
+let prefsQueue: DurableOpQueue | null = null;
 
 function canUseDom(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -106,6 +111,44 @@ function commitPrefs(next: UserPrefs): void {
   notify();
 }
 
+function restorePrefsFromServer(): void {
+  void api
+    .me()
+    .then(({ prefs }) => adoptPrefs(prefs ?? DEFAULT_PREFS))
+    .catch((err: unknown) => {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        showErrorToast("Couldn't restore settings from the server.");
+      }
+    });
+}
+
+function getPrefsQueue(): DurableOpQueue {
+  prefsQueue ??= new DurableOpQueue({
+    storage: eventCache,
+    api,
+    dispatch: () => {},
+    onRejected: (_op, err) => {
+      restorePrefsFromServer();
+      if (!(err instanceof ApiError && err.status === 401)) {
+        showErrorToast("Couldn't sync settings. Restored server settings.");
+      }
+    },
+  });
+  return prefsQueue;
+}
+
+async function enqueuePrefsPatch(patch: Partial<UserPrefs>): Promise<void> {
+  const normalized = normalizePrefsPatch(patch);
+  if (Object.keys(normalized).length === 0) return;
+  const queue = getPrefsQueue();
+  const op = await queue.enqueue({
+    opId: randomId(),
+    opType: 'prefs.set',
+    payload: normalized,
+  });
+  if (op) queue.nudge();
+}
+
 applyPrefs(currentPrefs);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -138,11 +181,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     () => ({
       ...snapshot,
       setPrefs: (patch) => {
-        const next = normalizePrefs({ ...currentPrefs, ...patch });
+        const normalized = normalizePrefsPatch(patch);
+        const next = normalizePrefs({ ...currentPrefs, ...normalized });
         commitPrefs(next);
-        void api.patchPrefs(patch).catch((err) => {
-          if (err instanceof ApiError && err.status === 404) return;
-          showErrorToast("Couldn't sync settings. Your local change was kept.");
+        void enqueuePrefsPatch(normalized).catch(() => {
+          restorePrefsFromServer();
+          showErrorToast("Couldn't queue settings. Restored server settings.");
         });
       },
     }),

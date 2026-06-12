@@ -156,6 +156,8 @@ export function Chat({
         return "Couldn't start the agent session.";
       case 'session.answer':
         return "Couldn't submit the answer.";
+      case 'prefs.set':
+        return "Couldn't sync settings.";
       case 'channel.join':
         return "Couldn't add the person.";
       case 'channel.leave':
@@ -176,6 +178,12 @@ export function Chat({
             if (typeof payload.channelId === 'string' && typeof payload.previousMuted === 'boolean') {
               cacheMute(payload.channelId, payload.previousMuted);
             }
+          }
+          if (op.opType === 'prefs.set') {
+            void api
+              .me()
+              .then(({ prefs }) => adoptPrefs(prefs))
+              .catch(onApiError);
           }
           if (!(err instanceof ApiError && err.status === 401)) {
             showErrorToast(queuedFailureMessage(op.opType));

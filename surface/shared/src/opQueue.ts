@@ -1,5 +1,6 @@
 import { ApiError, type Api, type ReactionAction } from './api';
 import type { AppAction } from './appState';
+import type { UserPrefs } from './prefs';
 import { sessionFromWire } from './sessions';
 import type { AttachmentMeta, WireEvent } from './timeline';
 
@@ -13,6 +14,7 @@ export const VALID_OP_TYPES = [
   'mute.set',
   'session.spawn',
   'session.answer',
+  'prefs.set',
   'channel.join',
   'channel.leave',
 ] as const;
@@ -113,6 +115,8 @@ export interface SessionAnswerPayload {
   answers: Record<string, { answers: string[] }>;
 }
 
+export type PrefsSetPayload = Partial<UserPrefs>;
+
 export interface ChannelJoinPayload {
   channelId: string;
   userId: string;
@@ -133,6 +137,7 @@ export type OpPayloadByType = {
   'mute.set': MuteSetPayload;
   'session.spawn': SessionSpawnPayload;
   'session.answer': SessionAnswerPayload;
+  'prefs.set': PrefsSetPayload;
   'channel.join': ChannelJoinPayload;
   'channel.leave': ChannelLeavePayload;
 };
@@ -147,6 +152,7 @@ type OpResultByType = {
   'mute.set': { muted: boolean };
   'session.spawn': Awaited<ReturnType<Api['createAgentSession']>>;
   'session.answer': { ok: true };
+  'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
   'channel.join': Awaited<ReturnType<Api['addChannelMember']>>;
   'channel.leave': { ok: true };
 };
@@ -215,6 +221,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `spawn:${(payload as SessionSpawnPayload).clientSpawnId}`;
     case 'session.answer':
       return `answer:${(payload as SessionAnswerPayload).sessionId}`;
+    case 'prefs.set':
+      return 'prefs:me';
     case 'channel.join': {
       const p = payload as ChannelJoinPayload;
       return `member:${p.channelId}:${p.userId}`;
@@ -313,6 +321,11 @@ function coalescedPayload(existing: QueuedOp, next: QueuedOp): unknown {
           : nextPayload.previousMuted,
     };
   }
+  if (existing.opType === 'prefs.set' && next.opType === 'prefs.set') {
+    const prevPayload = isRecord(existing.payload) ? existing.payload : {};
+    const nextPayload = isRecord(next.payload) ? next.payload : {};
+    return { ...prevPayload, ...nextPayload };
+  }
   return next.payload;
 }
 
@@ -349,6 +362,7 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'reaction.set' ||
     op.opType === 'mute.set' ||
     op.opType === 'session.answer' ||
+    op.opType === 'prefs.set' ||
     op.opType === 'channel.join' ||
     op.opType === 'channel.leave'
   ) {
@@ -782,6 +796,11 @@ export function createDefaultOpRegistry(): OpRegistry {
     'session.answer': {
       execute: (api, payload, op) =>
         api.answerSessionQuestion(payload.sessionId, payload.questionId, payload.answers, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'prefs.set': {
+      execute: (api, payload, op) => api.patchPrefs(payload, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },
