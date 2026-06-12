@@ -1,5 +1,6 @@
 import type { Channel } from './api';
 import type { AppAction } from './appState';
+import type { DraftSnapshot } from './drafts';
 import { normalizePrefs, type UserPrefs } from './prefs';
 import type { WireEvent } from './timeline';
 
@@ -7,6 +8,7 @@ export interface SyncStateSnapshot {
   readCursors: Record<string, number>;
   mutes: string[];
   prefs: UserPrefs;
+  drafts: DraftSnapshot;
   channels: Channel[];
 }
 

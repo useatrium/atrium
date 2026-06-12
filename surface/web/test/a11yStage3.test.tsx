@@ -190,6 +190,7 @@ describe('private channel leave confirmation', () => {
               readCursors: { 'ch-private': 1 },
               mutes: [],
               prefs: {},
+              drafts: {},
               channels: [privateChannel],
             },
           }),

@@ -10,6 +10,8 @@ import {
   randomId,
   type AttachmentMeta,
   type Channel,
+  type DraftSnapshot,
+  type DraftSnapshotEntry,
   type MsgSendPayload,
   type QueuedOp,
   type WireEvent,
@@ -19,6 +21,12 @@ const DB_NAME = 'atrium-event-cache.db';
 
 interface JsonRow {
   value: string;
+}
+
+interface DraftRow {
+  draft_key: string;
+  text: string;
+  updated_at: number;
 }
 
 interface TimelineRow {
@@ -260,18 +268,41 @@ const storage: CacheStorage = {
     return row?.value ?? null;
   },
 
-  setDraft: async (key, text) => {
+  getDraftEntry: async (key): Promise<DraftSnapshotEntry | null> => {
+    const database = await db();
+    const row = await database.getFirstAsync<DraftRow>(
+      'SELECT draft_key, text, updated_at FROM composer_drafts WHERE draft_key = ?',
+      key,
+    );
+    return row ? { text: row.text, updatedAt: new Date(row.updated_at).toISOString() } : null;
+  },
+
+  listDrafts: async (): Promise<DraftSnapshot> => {
+    const database = await db();
+    const rows = await database.getAllAsync<DraftRow>(
+      'SELECT draft_key, text, updated_at FROM composer_drafts',
+    );
+    return Object.fromEntries(
+      rows.map((row) => [
+        row.draft_key,
+        { text: row.text, updatedAt: new Date(row.updated_at).toISOString() },
+      ]),
+    );
+  },
+
+  setDraft: async (key, text, updatedAt) => {
     const database = await db();
     if (text.length === 0) {
       await database.runAsync('DELETE FROM composer_drafts WHERE draft_key = ?', key);
       return;
     }
+    const parsed = updatedAt ? Date.parse(updatedAt) : Date.now();
     await database.runAsync(
       `INSERT OR REPLACE INTO composer_drafts (draft_key, text, updated_at)
         VALUES (?, ?, ?)`,
       key,
       text,
-      Date.now(),
+      Number.isFinite(parsed) ? parsed : Date.now(),
     );
   },
 

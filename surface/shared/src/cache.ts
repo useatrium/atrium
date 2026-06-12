@@ -1,4 +1,5 @@
 import type { Channel } from './api';
+import type { DraftSnapshot, DraftSnapshotEntry } from './drafts';
 import type { QueuedOp } from './opQueue';
 import type { WireEvent } from './timeline';
 
@@ -25,7 +26,9 @@ export interface CacheStorage {
   putOp: (op: QueuedOp) => Promise<void>;
   removeOp: (opId: string) => Promise<void>;
   getDraft: (key: string) => Promise<string | null>;
-  setDraft: (key: string, text: string) => Promise<void>;
+  getDraftEntry: (key: string) => Promise<DraftSnapshotEntry | null>;
+  listDrafts: () => Promise<DraftSnapshot>;
+  setDraft: (key: string, text: string, updatedAt?: string) => Promise<void>;
   clearCache: () => Promise<void>;
 }
 
@@ -39,7 +42,9 @@ export interface EventCache {
   putOp: (op: QueuedOp) => Promise<void>;
   removeOp: (opId: string) => Promise<void>;
   getDraft: (key: string) => Promise<string | null>;
-  setDraft: (key: string, text: string) => Promise<void>;
+  getDraftEntry: (key: string) => Promise<DraftSnapshotEntry | null>;
+  listDrafts: () => Promise<DraftSnapshot>;
+  setDraft: (key: string, text: string, updatedAt?: string) => Promise<void>;
   flushChannel: (channelId: string) => Promise<void>;
   flushAll: () => Promise<void>;
   clearCache: () => Promise<void>;
@@ -171,9 +176,16 @@ export function createEventCache(
 
     removeOp: (opId) => storage.removeOp(opId),
 
-    getDraft: (key) => storage.getDraft(key),
+    getDraft: (key) => (invalidated ? Promise.resolve(null) : storage.getDraft(key)),
 
-    setDraft: (key, text) => storage.setDraft(key, text),
+    getDraftEntry: (key) => (invalidated ? Promise.resolve(null) : storage.getDraftEntry(key)),
+
+    listDrafts: () => (invalidated ? Promise.resolve({}) : storage.listDrafts()),
+
+    setDraft: (key, text, updatedAt) => {
+      if (invalidated) return Promise.resolve();
+      return storage.setDraft(key, text, updatedAt);
+    },
 
     flushChannel,
 

@@ -25,6 +25,8 @@ export function ThreadPanel({
   draftKey,
   initialDraft,
   onDraftChange,
+  onDraftPersisted,
+  onDraftTouched,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -44,7 +46,9 @@ export function ThreadPanel({
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
   draftKey?: string;
   initialDraft?: string;
-  onDraftChange?: (key: string, text: string) => void;
+  onDraftChange?: (key: string, text: string) => void | Promise<void>;
+  onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
+  onDraftTouched?: (key: string) => void;
 }) {
   const sessionFor = (m: ChatMessage) =>
     m.sessionId != null ? sessions[m.sessionId] : undefined;
@@ -132,6 +136,8 @@ export function ThreadPanel({
         draftKey={draftKey}
         initialDraft={initialDraft}
         onDraftChange={onDraftChange}
+        onDraftPersisted={onDraftPersisted}
+        onDraftTouched={onDraftTouched}
       />
     </aside>
   );

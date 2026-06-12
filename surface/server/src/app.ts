@@ -257,12 +257,24 @@ function rawSession(req: FastifyRequest): string | undefined {
     const prefs = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
       userId,
     ]);
+    const draftRows = await client.query<{ draft_key: string; text: string; updated_at: Date }>(
+      `SELECT draft_key, text, updated_at
+       FROM user_drafts
+       WHERE user_id = $1
+       ORDER BY draft_key ASC`,
+      [userId],
+    );
     const readCursors: Record<string, number> = {};
     for (const row of readRows.rows) readCursors[row.channel_id] = Number(row.last_read_event_id);
+    const drafts: Record<string, { text: string; updatedAt: string }> = {};
+    for (const row of draftRows.rows) {
+      drafts[row.draft_key] = { text: row.text, updatedAt: row.updated_at.toISOString() };
+    }
     return {
       readCursors,
       mutes: muteRows.rows.map((row) => row.channel_id),
       prefs: normalizePrefs(prefs.rows[0]?.prefs),
+      drafts,
       channels: await listChannelsFor(client, userId),
     };
   }
@@ -832,6 +844,43 @@ function rawSession(req: FastifyRequest): string | undefined {
       },
       onApplied: (response) => {
         hub.sendToUsers([user.id], { type: 'prefs', prefs: response.prefs });
+      },
+    });
+  });
+
+  app.put('/api/me/drafts/:draftKey', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    if (!isPlainObject(req.body)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'body must be object' });
+    }
+    const { draftKey } = req.params as { draftKey: string };
+    const body = req.body as { text?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
+    if (typeof body.text !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'text is required' });
+    }
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'draft.set',
+      body: { draftKey, text: body.text },
+      fn: async (client) => {
+        if (body.text === '') {
+          await client.query('DELETE FROM user_drafts WHERE user_id = $1 AND draft_key = $2', [
+            user.id,
+            draftKey,
+          ]);
+          return { ok: true as const };
+        }
+        await client.query(
+          `INSERT INTO user_drafts (user_id, draft_key, text, updated_at)
+           VALUES ($1, $2, $3, now())
+           ON CONFLICT (user_id, draft_key)
+           DO UPDATE SET text = EXCLUDED.text, updated_at = now()`,
+          [user.id, draftKey, body.text],
+        );
+        return { ok: true as const };
       },
     });
   });

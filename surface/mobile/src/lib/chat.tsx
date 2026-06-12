@@ -31,6 +31,7 @@ import {
   parseAgentTask,
   PENDING_SESSION_PREFIX,
   randomId,
+  reconcileDraftSnapshot,
   sessionFromWire,
   useWs,
   type Api,
@@ -39,6 +40,7 @@ import {
   type AttachmentMeta,
   type Channel,
   type ChatMessage,
+  type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
   type OpType,
@@ -126,6 +128,9 @@ interface ChatContextValue {
   }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
   getDraft: (key: string) => Promise<string | null>;
   setDraft: (key: string, text: string) => Promise<void>;
+  enqueueDraft: (key: string, text: string) => void;
+  markDraftTouched: (key: string) => void;
+  setActiveDraftKey: (key: string, active: boolean) => void;
   /** From search: load the message's channel (paging back as needed) + highlight. */
   jumpToMessage: (event: WireEvent) => Promise<void>;
   highlightId: number | null;
@@ -191,6 +196,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
   const loadingMentionUsersRef = useRef(false);
+  const touchedDraftKeysRef = useRef<Set<string>>(new Set());
+  const activeDraftKeysRef = useRef<Set<string>>(new Set());
 
   const cacheMute = useCallback((channelId: string, muted: boolean) => {
     const channels = stateRef.current.channels.map((c) =>
@@ -241,6 +248,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         return "Couldn't cancel the session.";
       case 'prefs.set':
         return "Couldn't sync settings.";
+      case 'draft.set':
+        return "Couldn't sync the draft.";
       case 'channel.join':
         return "Couldn't add the person.";
       case 'channel.leave':
@@ -396,6 +405,51 @@ export function ChatProvider({ session, children }: { session: Session; children
     },
     [clearFailedSessionCancel, enqueueOp],
   );
+
+  const markDraftTouched = useCallback((key: string) => {
+    touchedDraftKeysRef.current.add(key);
+  }, []);
+
+  const enqueueDraft = useCallback(
+    (key: string, text: string) => {
+      markDraftTouched(key);
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'draft.set',
+        payload: { draftKey: key, text },
+      }).catch((err: unknown) => {
+        console.warn('failed to queue draft sync', err);
+      });
+    },
+    [enqueueOp, markDraftTouched],
+  );
+
+  const setActiveDraftKey = useCallback((key: string, active: boolean) => {
+    if (!key) return;
+    if (active) activeDraftKeysRef.current.add(key);
+    else activeDraftKeysRef.current.delete(key);
+  }, []);
+
+  const reconcileDraftsFromSnapshot = useCallback((snapshot: DraftSnapshot) => {
+    void eventCache
+      .listDrafts()
+      .then(async (local) => {
+        const { hydrate } = reconcileDraftSnapshot({
+          snapshot,
+          local,
+          touchedThisSession: touchedDraftKeysRef.current,
+          activeDraftKeys: activeDraftKeysRef.current,
+        });
+        await Promise.all(
+          Object.entries(hydrate).map(([draftKey, draft]) =>
+            eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
+          ),
+        );
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to reconcile draft snapshot', err);
+      });
+  }, []);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -660,6 +714,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
+        reconcileDraftsFromSnapshot(response.state.drafts ?? {});
         void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
           console.warn('failed to cache sync channels', err);
         });
@@ -675,6 +730,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           cacheSyncCursor(event.id);
         },
       });
+      reconcileDraftsFromSnapshot(response.state.drafts ?? {});
       void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
         console.warn('failed to cache sync channels', err);
       });
@@ -682,7 +738,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       cursor = Math.max(cursor, response.nextCursor);
       if (response.events.length < SYNC_LIMIT) return;
     }
-  }, [adoptPrefs, api, cacheSyncCursor, resetLoadedTimelinesToLatest]);
+  }, [adoptPrefs, api, cacheSyncCursor, reconcileDraftsFromSnapshot, resetLoadedTimelinesToLatest]);
 
   const syncInFlightRef = useRef<Promise<void> | null>(null);
   const runReconnectSync = useCallback(() => {
@@ -1389,6 +1445,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       uploadFile,
       getDraft,
       setDraft,
+      enqueueDraft,
+      markDraftTouched,
+      setActiveDraftKey,
       jumpToMessage,
       highlightId,
     }),
@@ -1434,6 +1493,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       uploadFile,
       getDraft,
       setDraft,
+      enqueueDraft,
+      markDraftTouched,
+      setActiveDraftKey,
       jumpToMessage,
       highlightId,
     ],
