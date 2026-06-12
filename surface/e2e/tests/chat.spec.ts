@@ -210,6 +210,34 @@ test('offline send survives reload and confirms once', async ({ page, context })
   await expect(timelineText(page, text)).toHaveCount(1);
 });
 
+test('lost POST response retries with same client id and confirms once', async ({ page }) => {
+  await login(page, unique('lost-response'), 'Lost Response');
+
+  let dropped = false;
+  let droppedStatus: number | null = null;
+  await page.route('**/api/messages', async (route) => {
+    if (!dropped && route.request().method() === 'POST') {
+      dropped = true;
+      const response = await route.fetch();
+      droppedStatus = response.status();
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+
+  const text = unique('lost-response');
+  await sendMessage(page, text);
+
+  await expect(confirmedRowsWithText(page, text)).toHaveCount(1, { timeout: 15_000 });
+  await expect(timelineText(page, text)).toHaveCount(1);
+  expect(dropped).toBe(true);
+  expect(droppedStatus).toBeGreaterThanOrEqual(200);
+  expect(droppedStatus).toBeLessThan(300);
+
+  await page.unroute('**/api/messages');
+});
+
 test('offline edit and reaction land and survive reload', async ({ page, context }) => {
   await login(page, unique('offline-editor'), 'Offline Editor');
   const original = unique('offline-edit-original');
