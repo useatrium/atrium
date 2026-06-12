@@ -1043,7 +1043,7 @@ export class SessionRuns {
 
   private scheduleQuestionRenotify(id: string, event: WireEvent): void {
     this.cancelScheduledQuestionRenotify(id);
-    if (this.questionRenotifyMinutes <= 0) return;
+    if (!(this.questionRenotifyMinutes > 0)) return;
     const questionId =
       typeof event.payload.questionId === 'string' ? event.payload.questionId : null;
     if (!questionId) return;
