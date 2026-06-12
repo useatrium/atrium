@@ -172,6 +172,84 @@ describe('durable op queue coalescing', () => {
     });
     expect((await storage.listOps()).map((op) => op.status)).toEqual(['inflight', 'pending']);
   });
+
+  it('merges pending prefs patches with later keys winning', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'prefs.set',
+      payload: { theme: 'dark', accent: 'teal' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'prefs.set',
+      payload: { accent: 'rose', highContrast: true },
+    });
+    const ops = await storage.listOps();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.queueKey).toBe('prefs:me');
+    expect(ops[0]!.payload).toEqual({
+      theme: 'dark',
+      accent: 'rose',
+      highContrast: true,
+    });
+  });
+
+  it('does not coalesce session steer messages', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'session.steer',
+      payload: { sessionId: 'sess-1', text: 'first' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'session.steer',
+      payload: { sessionId: 'sess-1', text: 'second' },
+    });
+    const ops = await storage.listOps();
+    expect(ops.map((op) => op.queueKey)).toEqual(['steer:sess-1', 'steer:sess-1']);
+    expect(ops.map((op) => (op.payload as { text: string }).text)).toEqual(['first', 'second']);
+  });
+
+  it('coalesces duplicate session cancels', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'session.cancel',
+      payload: { sessionId: 'sess-1' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'session.cancel',
+      payload: { sessionId: 'sess-1' },
+    });
+    const ops = await storage.listOps();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.queueKey).toBe('cancel:sess-1');
+  });
+
+  it('keeps only the latest draft value per draft key', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'draft.set',
+      payload: { draftKey: 'channel:one', text: 'hello' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'draft.set',
+      payload: { draftKey: 'channel:one', text: 'hello world' },
+    });
+    const ops = await storage.listOps();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.queueKey).toBe('draft:channel:one');
+    expect(ops[0]!.payload).toEqual({ draftKey: 'channel:one', text: 'hello world' });
+  });
 });
 
 describe('durable op queue flushing', () => {

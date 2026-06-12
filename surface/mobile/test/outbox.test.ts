@@ -9,7 +9,9 @@ describe('draft persistence debounce', () => {
   it('debounces saves and clears immediately on send', async () => {
     vi.useFakeTimers();
     const writes: { key: string; text: string }[] = [];
-    const drafts = createDraftChangeDebouncer((key, text) => writes.push({ key, text }), 400);
+    const drafts = createDraftChangeDebouncer((key, text) => {
+      writes.push({ key, text });
+    }, 400);
 
     drafts.schedule('channel:one', 'h');
     drafts.schedule('channel:one', 'he');

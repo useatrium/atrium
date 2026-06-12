@@ -5,13 +5,15 @@ import {
   type CachedTimeline,
   type CacheSnapshot,
   type CacheStorage,
+  type DraftSnapshot,
+  type DraftSnapshotEntry,
 } from '../src/lib/cache';
 import type { Channel, QueuedOp, WireEvent } from '@atrium/surface-client';
 
 class MemoryStorage implements CacheStorage {
   snapshot: CacheSnapshot = { channels: null, timelines: {}, syncCursor: 0 };
   ops: QueuedOp[] = [];
-  drafts = new Map<string, string>();
+  drafts = new Map<string, DraftSnapshotEntry>();
   timelineWrites = 0;
 
   async loadSnapshot(): Promise<CacheSnapshot> {
@@ -45,12 +47,20 @@ class MemoryStorage implements CacheStorage {
   }
 
   async getDraft(key: string): Promise<string | null> {
+    return this.drafts.get(key)?.text ?? null;
+  }
+
+  async getDraftEntry(key: string): Promise<DraftSnapshotEntry | null> {
     return this.drafts.get(key) ?? null;
   }
 
-  async setDraft(key: string, text: string): Promise<void> {
+  async listDrafts(): Promise<DraftSnapshot> {
+    return Object.fromEntries(this.drafts);
+  }
+
+  async setDraft(key: string, text: string, updatedAt?: string): Promise<void> {
     if (text.length === 0) this.drafts.delete(key);
-    else this.drafts.set(key, text);
+    else this.drafts.set(key, { text, updatedAt: updatedAt ?? new Date().toISOString() });
   }
 
   async clearCache(): Promise<void> {
