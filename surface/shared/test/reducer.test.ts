@@ -222,6 +222,46 @@ describe('history pagination merge', () => {
     expect(t.main[0]!.edited).toBe(true);
   });
 
+  it('folds raw cached modifier events on hydrate, in either commit order', () => {
+    // The IndexedDB cache stores raw ack/WS events — message.posted with its
+    // original text plus separate edit/reaction events — unlike server history
+    // pages, which materialize modifiers into the row payload. The server can
+    // also commit a queued reaction before the queued edit of the same
+    // message, so both id orders must survive a reload hydrate.
+    const posted = wire(3, 'original');
+    const orders: Array<[WireEvent, WireEvent]> = [
+      [
+        { ...wire(4, ''), type: 'reaction.added', payload: { emoji: '👍', target_event_id: 3 } },
+        { ...wire(5, ''), type: 'message.edited', payload: { target_event_id: 3, text: 'edited!' } },
+      ],
+      [
+        { ...wire(4, ''), type: 'message.edited', payload: { target_event_id: 3, text: 'edited!' } },
+        { ...wire(5, ''), type: 'reaction.added', payload: { emoji: '👍', target_event_id: 3 } },
+      ],
+    ];
+    for (const [first, second] of orders) {
+      const t = mergeHistory(emptyTimeline, [posted, first, second], { hasMoreBefore: false });
+      expect(t.main.map((m) => m.id)).toEqual([3]);
+      expect(t.main[0]!.text).toBe('edited!');
+      expect(t.main[0]!.edited).toBe(true);
+      expect(t.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: [alice.id] }]);
+      expect(t.lastEventId).toBe(5);
+    }
+  });
+
+  it('folds a raw cached message.deleted on hydrate', () => {
+    const t = mergeHistory(
+      emptyTimeline,
+      [
+        wire(3, 'doomed'),
+        { ...wire(4, ''), type: 'message.deleted', payload: { target_event_id: 3 } },
+      ],
+      { hasMoreBefore: false },
+    );
+    expect(t.main[0]!.deleted).toBe(true);
+    expect(t.main[0]!.text).toBe('');
+  });
+
   it('snapshot reset drops stale confirmed rows but keeps local and newer rows', () => {
     let t = mergeHistory(emptyTimeline, [wire(1, 'old')], { hasMoreBefore: true });
     t = addPending(t, pending('cm-pending', 'still sending'));

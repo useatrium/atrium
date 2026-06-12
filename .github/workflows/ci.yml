@@ -20,7 +20,7 @@ jobs:
     # deterministically hung after the main artifact on GitHub runners). Tag
     # MUST track the pinned @playwright/test version in surface/e2e.
     container:
-      image: mcr.microsoft.com/playwright:v1.49.1-noble
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
 
     services:
       postgres:
@@ -39,26 +39,33 @@ jobs:
       # Inside a job container, service containers are reached by their label
       # hostname on the container port (not localhost:5433).
       DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium
+      # The mobile typecheck regenerates Expo typed routes; keep the CLI off
+      # the network.
+      EXPO_NO_TELEMETRY: "1"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
-          version: 10
+          # Must match the packageManager pins in surface/package.json and
+          # packages/centaur-client/package.json (the action fails on mismatch,
+          # which is the point — one pnpm line everywhere, including Docker).
+          version: 10.33.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: surface/pnpm-lock.yaml
 
-      # surface depends on packages/centaur-client as a local file package. Its
-      # dist/ directory is intentionally gitignored, so build it before installing
-      # surface or TypeScript cannot resolve the package exports in CI.
+      # surface resolves packages/centaur-client's TypeScript source directly
+      # (exports point at src/), so dist/ is not needed for typecheck or tests
+      # here — but the Docker server image compiles against dist/, so keep the
+      # build honest in CI. It doubles as the package's typecheck (~1s).
       - name: Install centaur client dependencies
         working-directory: packages/centaur-client
         run: pnpm install --frozen-lockfile
@@ -66,6 +73,12 @@ jobs:
       - name: Build centaur client
         working-directory: packages/centaur-client
         run: pnpm build
+
+      # This package sits outside the surface workspace, so `pnpm -r test`
+      # below never reaches it — run its suite explicitly.
+      - name: Test centaur client
+        working-directory: packages/centaur-client
+        run: pnpm test
 
       - name: Install surface workspace
         working-directory: surface
@@ -76,10 +89,45 @@ jobs:
         timeout-minutes: 4
         run: pnpm -r typecheck
 
+      # Production web build: Caddy serves web/dist in prod but nothing else
+      # exercises it (e2e uses the Vite dev server). ~3s, so verify it here.
+      - name: Build web production bundle
+        working-directory: surface
+        run: pnpm --filter @atrium/web build
+
+      # Server tests dominate the suite (~31s of ~34s) because every file
+      # shares one Postgres database serially (vitest.config.ts). The helper
+      # creates the database named by ATRIUM_TEST_DB on demand, so three vitest
+      # shards on three databases run concurrently (max shard ~16s), with the
+      # non-server suites alongside. Each stream logs to its own file and is
+      # replayed sequentially so failures stay attributable.
       - name: Test surface workspace
         working-directory: surface
         timeout-minutes: 6
-        run: pnpm -r test
+        shell: bash
+        run: |
+          set -uo pipefail
+          # '!atrium-surface' matters: a bare '!@atrium/server' filter selects
+          # the workspace root too, whose test script is `pnpm -r test` — which
+          # recursively re-runs every suite (server included) without filters.
+          pnpm --filter '!@atrium/server' --filter '!atrium-surface' -r test > /tmp/test-rest.log 2>&1 &
+          rest_pid=$!
+          shard_pids=()
+          for i in 1 2 3; do
+            (cd server && ATRIUM_TEST_DB="atrium_test_shard_${i}" pnpm vitest run --shard="${i}/3") \
+              > "/tmp/test-server-${i}.log" 2>&1 &
+            shard_pids+=("$!")
+          done
+          status=0
+          wait "$rest_pid" || status=1
+          echo "===== non-server suites ====="
+          cat /tmp/test-rest.log
+          for i in 1 2 3; do
+            wait "${shard_pids[$((i - 1))]}" || status=1
+            echo "===== server shard ${i}/3 ====="
+            cat "/tmp/test-server-${i}.log"
+          done
+          exit "$status"
 
       # No browser-install step: the Playwright container already has Chromium.
       # Per-step timeout so a webServer/teardown hang is killed fast and
@@ -97,7 +145,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: surface/e2e/playwright-report/

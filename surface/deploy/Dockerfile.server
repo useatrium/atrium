@@ -18,6 +18,20 @@ COPY surface/server ./surface/server
 COPY surface/shared ./surface/shared
 COPY packages/centaur-client ./packages/centaur-client
 RUN cd packages/centaur-client && pnpm install --frozen-lockfile --ignore-scripts && pnpm build
+# The repo manifest exports TypeScript source (./src/index.ts) so dev tooling
+# (vite, tsx, vitest) never sees a stale dist/. Node and tsc in this image need
+# built artifacts, so rewrite the manifest here to point at dist/ instead. The
+# runtime stage copies this patched manifest, keeping build and runtime
+# resolution consistent.
+RUN node -e ' \
+  const fs = require("fs"); \
+  const path = "packages/centaur-client/package.json"; \
+  const p = JSON.parse(fs.readFileSync(path, "utf8")); \
+  p.main = "./dist/index.js"; \
+  p.types = "./dist/index.d.ts"; \
+  p.exports = { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } }; \
+  p.files = ["dist", "README.md"]; \
+  fs.writeFileSync(path, JSON.stringify(p, null, 2) + "\n");'
 RUN mkdir -p surface/server/node_modules/@atrium/centaur-client \
   && cp packages/centaur-client/package.json surface/server/node_modules/@atrium/centaur-client/package.json \
   && cp -R packages/centaur-client/dist surface/server/node_modules/@atrium/centaur-client/dist
