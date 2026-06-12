@@ -8,6 +8,7 @@ import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
+import { addWorkspaceMember } from '../src/membership.js';
 import { SeededPrng } from './chaosHarness.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -238,7 +239,9 @@ async function loginUser(
     url: '/auth/login',
     payload: { handle, displayName },
   });
-  return { cookie: login.headers['set-cookie'] as string, userId: login.json().user.id };
+  const userId = login.json().user.id;
+  await addWorkspaceMember(pool, fx.workspaceId, userId);
+  return { cookie: login.headers['set-cookie'] as string, userId };
 }
 
 async function loginCookie(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {

@@ -1,5 +1,6 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { workspaceMemberExists } from './membership.js';
 
 export interface UserRef {
   id: string;
@@ -636,6 +637,7 @@ const SYNC_EVENT_TYPES =
   "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
+  const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);
   return `
   visible AS (
     SELECT e.id
@@ -652,13 +654,14 @@ function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
     ) latest_join ON true
     WHERE e.type IN ${SYNC_EVENT_TYPES}
       AND (
-        c.kind = 'public'
+        (c.kind = 'public' AND ${workspaceMember})
         OR (
           c.kind IN ('private', 'dm', 'gdm')
           AND cm.user_id IS NOT NULL
           AND e.id >= COALESCE(latest_join.join_event_id, 0)
         )
         OR (
+          -- A user keeps seeing their own leave event after channel_members is removed.
           e.type = 'channel.member_left'
           AND e.payload->>'userId' = ${userTextParam}
         )
@@ -747,7 +750,7 @@ export async function searchMessages(
        LIMIT $2
      ) m
      JOIN channels c ON c.id = m.channel_id
-    WHERE c.kind = 'public'
+    WHERE (c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$3')})
         OR EXISTS (SELECT 1 FROM channel_members cm
                    WHERE cm.channel_id = c.id AND cm.user_id = $3)
      ORDER BY m.id DESC`,
@@ -770,13 +773,27 @@ export async function listWorkspaces(pool: Db): Promise<Workspace[]> {
   }));
 }
 
-export async function listChannels(pool: Db, workspaceId?: string): Promise<Channel[]> {
+export async function listChannels(
+  pool: Db,
+  userId: string,
+  workspaceId?: string,
+): Promise<Channel[]> {
   const res = workspaceId
     ? await pool.query(
-        "SELECT * FROM channels WHERE workspace_id = $1 AND kind = 'public' ORDER BY name ASC",
-        [workspaceId],
+        `SELECT c.* FROM channels c
+         WHERE c.workspace_id = $1
+           AND c.kind = 'public'
+           AND ${workspaceMemberExists('c.workspace_id', '$2')}
+         ORDER BY name ASC`,
+        [workspaceId, userId],
       )
-    : await pool.query("SELECT * FROM channels WHERE kind = 'public' ORDER BY name ASC");
+    : await pool.query(
+        `SELECT c.* FROM channels c
+         WHERE c.kind = 'public'
+           AND ${workspaceMemberExists('c.workspace_id', '$1')}
+         ORDER BY name ASC`,
+        [userId],
+      );
   return res.rows.map((r) => ({
     id: r.id,
     workspaceId: r.workspace_id,
@@ -820,7 +837,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        WHERE e.channel_id = c.id
          AND e.type IN ('message.posted', 'session.spawned')
      ) latest ON true
-     WHERE c.kind = 'public'
+     WHERE (c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$1')})
         OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id = c.id AND m.user_id = $1)
      ORDER BY c.name ASC`,
     [userId],
@@ -868,14 +885,16 @@ export async function canAccessChannel(
 ): Promise<boolean> {
   const res = await pool.query<{ kind: string; member: boolean }>(
     `SELECT c.kind,
-            EXISTS (SELECT 1 FROM channel_members m
-                    WHERE m.channel_id = c.id AND m.user_id = $2) AS member
+            CASE WHEN c.kind = 'public' THEN ${workspaceMemberExists('c.workspace_id', '$2')}
+                 ELSE EXISTS (SELECT 1 FROM channel_members m
+                              WHERE m.channel_id = c.id AND m.user_id = $2)
+            END AS member
      FROM channels c WHERE c.id = $1`,
     [channelId, userId],
   );
   const row = res.rows[0];
   if (!row) return false;
-  return row.kind === 'public' || row.member;
+  return row.member;
 }
 
 /**
@@ -897,7 +916,9 @@ export async function canAccessFile(pool: Db, userId: string, fileId: string): P
          SELECT 1 FROM events e
          JOIN channels c ON c.id = e.channel_id
          WHERE e.type = 'message.posted'
-           AND (c.kind = 'public'
+           AND ((c.kind = 'public'
+                AND EXISTS (SELECT 1 FROM workspace_members wm
+                            WHERE wm.workspace_id = c.workspace_id AND wm.user_id::text = $2))
                 OR EXISTS (SELECT 1 FROM channel_members m
                            WHERE m.channel_id = c.id AND m.user_id::text = $2))
            AND jsonb_typeof(e.payload->'attachments') = 'array'
@@ -910,9 +931,15 @@ export async function canAccessFile(pool: Db, userId: string, fileId: string): P
   return res.rows[0]?.ok === true;
 }
 
-export async function listUsers(pool: Db): Promise<UserRef[]> {
+export async function listUsers(pool: Db, userId: string): Promise<UserRef[]> {
   const res = await pool.query<{ id: string; handle: string; display_name: string }>(
-    'SELECT id, handle, display_name FROM users ORDER BY handle ASC',
+    `SELECT DISTINCT u.id, u.handle, u.display_name
+     FROM users u
+     JOIN workspace_members theirs ON theirs.user_id = u.id
+     JOIN workspace_members mine
+       ON mine.workspace_id = theirs.workspace_id AND mine.user_id = $1
+     ORDER BY u.handle ASC`,
+    [userId],
   );
   return res.rows.map((r) => ({ id: r.id, handle: r.handle, displayName: r.display_name }));
 }
