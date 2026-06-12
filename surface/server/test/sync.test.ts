@@ -3,6 +3,7 @@ import { DEFAULT_PREFS } from '@atrium/surface-client/prefs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 import { chaosSeed, SeededPrng } from './chaosHarness.js';
 
@@ -180,7 +181,9 @@ async function login(handle: string, displayName: string): Promise<Login> {
     payload: { handle, displayName },
   });
   expect(res.statusCode).toBe(200);
-  return { cookie: res.headers['set-cookie'] as string, user: res.json().user };
+  const user = res.json().user;
+  await addWorkspaceMember(pool, fx.workspaceId, user.id);
+  return { cookie: res.headers['set-cookie'] as string, user };
 }
 
 async function sync(cookie: string, after: number, limit: number) {
@@ -347,7 +350,11 @@ async function visibleEventIds(userId: string): Promise<number[]> {
      ) latest_join ON true
      WHERE e.type = ANY($3::text[])
        AND (
-         c.kind = 'public'
+         (
+           c.kind = 'public'
+           AND EXISTS (SELECT 1 FROM workspace_members wm
+                       WHERE wm.workspace_id = e.workspace_id AND wm.user_id = $1)
+         )
          OR (
            c.kind IN ('private', 'dm', 'gdm')
            AND cm.user_id IS NOT NULL
