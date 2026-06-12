@@ -2,7 +2,7 @@
 // ⚠️  DEV MOCK — sessions API stand-in. NOT PRODUCTION CODE.
 //
 // Serves the exact /api/sessions shapes from the Phase-0 capture fixtures in
-// packages/centaur-client/test/fixtures so the Sessions UI can be exercised
+// centaur-client/test/fixtures so the Sessions UI can be exercised
 // before the real server endpoints exist.
 //
 // Enabled ONLY when the dev server runs with VITE_SESSIONS_MOCK=1:
@@ -35,8 +35,8 @@ import { ApiError } from '../api';
 import type { UserRef, WireEvent } from '@atrium/surface-client';
 import type { SessionStreamCallbacks, SessionStreamHandle, CreateSessionBody } from './api';
 import { normalizeExecutionStatus, type SessionStatus, type SessionWire } from './types';
-import rawB from '../../../../packages/centaur-client/test/fixtures/B_tooltest.json';
-import rawC from '../../../../packages/centaur-client/test/fixtures/C_longstream.json';
+import rawB from '../../../centaur-client/test/fixtures/B_tooltest.json';
+import rawC from '../../../centaur-client/test/fixtures/C_longstream.json';
 
 const ENABLED =
   typeof import.meta.env !== 'undefined' &&

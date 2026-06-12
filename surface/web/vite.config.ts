@@ -23,7 +23,7 @@ export default defineConfig({
     fs: {
       // Allow serving @atrium/centaur-client and @atrium/surface-client
       // (linked from outside this root) and their test fixtures.
-      allow: ['.', '../shared', '../../packages/centaur-client'],
+      allow: ['.', '../shared', '../centaur-client'],
     },
     proxy: {
       '/api': apiTarget,
