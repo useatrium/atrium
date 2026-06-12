@@ -1,5 +1,6 @@
 import { ApiError, type Api, type ReactionAction } from './api';
 import type { AppAction } from './appState';
+import type { UserPrefs } from './prefs';
 import { sessionFromWire } from './sessions';
 import type { AttachmentMeta, WireEvent } from './timeline';
 
@@ -13,6 +14,10 @@ export const VALID_OP_TYPES = [
   'mute.set',
   'session.spawn',
   'session.answer',
+  'session.steer',
+  'session.cancel',
+  'prefs.set',
+  'draft.set',
   'channel.join',
   'channel.leave',
 ] as const;
@@ -113,6 +118,22 @@ export interface SessionAnswerPayload {
   answers: Record<string, { answers: string[] }>;
 }
 
+export interface SessionSteerPayload {
+  sessionId: string;
+  text: string;
+}
+
+export interface SessionCancelPayload {
+  sessionId: string;
+}
+
+export type PrefsSetPayload = Partial<UserPrefs>;
+
+export interface DraftSetPayload {
+  draftKey: string;
+  text: string;
+}
+
 export interface ChannelJoinPayload {
   channelId: string;
   userId: string;
@@ -133,6 +154,10 @@ export type OpPayloadByType = {
   'mute.set': MuteSetPayload;
   'session.spawn': SessionSpawnPayload;
   'session.answer': SessionAnswerPayload;
+  'session.steer': SessionSteerPayload;
+  'session.cancel': SessionCancelPayload;
+  'prefs.set': PrefsSetPayload;
+  'draft.set': DraftSetPayload;
   'channel.join': ChannelJoinPayload;
   'channel.leave': ChannelLeavePayload;
 };
@@ -147,6 +172,10 @@ type OpResultByType = {
   'mute.set': { muted: boolean };
   'session.spawn': Awaited<ReturnType<Api['createAgentSession']>>;
   'session.answer': { ok: true };
+  'session.steer': { ok: true };
+  'session.cancel': { ok: true };
+  'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
+  'draft.set': { ok: true };
   'channel.join': Awaited<ReturnType<Api['addChannelMember']>>;
   'channel.leave': { ok: true };
 };
@@ -215,6 +244,14 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `spawn:${(payload as SessionSpawnPayload).clientSpawnId}`;
     case 'session.answer':
       return `answer:${(payload as SessionAnswerPayload).sessionId}`;
+    case 'session.steer':
+      return `steer:${(payload as SessionSteerPayload).sessionId}`;
+    case 'session.cancel':
+      return `cancel:${(payload as SessionCancelPayload).sessionId}`;
+    case 'prefs.set':
+      return 'prefs:me';
+    case 'draft.set':
+      return `draft:${(payload as DraftSetPayload).draftKey}`;
     case 'channel.join': {
       const p = payload as ChannelJoinPayload;
       return `member:${p.channelId}:${p.userId}`;
@@ -313,12 +350,19 @@ function coalescedPayload(existing: QueuedOp, next: QueuedOp): unknown {
           : nextPayload.previousMuted,
     };
   }
+  if (existing.opType === 'prefs.set' && next.opType === 'prefs.set') {
+    const prevPayload = isRecord(existing.payload) ? existing.payload : {};
+    const nextPayload = isRecord(next.payload) ? next.payload : {};
+    return { ...prevPayload, ...nextPayload };
+  }
   return next.payload;
 }
 
 function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | null; remove: string[] } {
   const pendingSameKey = ops.filter((current) => current.status === 'pending' && current.queueKey === op.queueKey);
-  if (op.opType === 'msg.send' || op.opType === 'session.spawn') return { op, remove: [] };
+  if (op.opType === 'msg.send' || op.opType === 'session.spawn' || op.opType === 'session.steer') {
+    return { op, remove: [] };
+  }
 
   if (op.opType === 'read.mark') {
     let maxExisting: QueuedOp | null = null;
@@ -349,6 +393,9 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'reaction.set' ||
     op.opType === 'mute.set' ||
     op.opType === 'session.answer' ||
+    op.opType === 'session.cancel' ||
+    op.opType === 'prefs.set' ||
+    op.opType === 'draft.set' ||
     op.opType === 'channel.join' ||
     op.opType === 'channel.leave'
   ) {
@@ -782,6 +829,26 @@ export function createDefaultOpRegistry(): OpRegistry {
     'session.answer': {
       execute: (api, payload, op) =>
         api.answerSessionQuestion(payload.sessionId, payload.questionId, payload.answers, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.steer': {
+      execute: (api, payload, op) => api.steerSession(payload.sessionId, payload.text, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.cancel': {
+      execute: (api, payload, op) => api.cancelSession(payload.sessionId, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'prefs.set': {
+      execute: (api, payload, op) => api.patchPrefs(payload, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'draft.set': {
+      execute: (api, payload, op) => api.setDraft(payload.draftKey, payload.text, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

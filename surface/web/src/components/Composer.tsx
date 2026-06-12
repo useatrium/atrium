@@ -38,6 +38,8 @@ export function Composer({
   draftKey,
   initialDraft,
   onDraftChange,
+  onDraftPersisted,
+  onDraftTouched,
 }: {
   placeholder: string;
   onSend: (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
@@ -57,7 +59,9 @@ export function Composer({
   footer?: ReactNode;
   draftKey?: string;
   initialDraft?: string;
-  onDraftChange?: (key: string, text: string) => void;
+  onDraftChange?: (key: string, text: string) => void | Promise<void>;
+  onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
+  onDraftTouched?: (key: string) => void;
 }) {
   const [text, setText] = useState('');
   // "@agent" with no task: refuse to post the literal string — show what's
@@ -68,8 +72,13 @@ export function Composer({
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const draftWriter = useMemo(
-    () => createDraftChangeDebouncer((key, value) => onDraftChange?.(key, value)),
-    [onDraftChange],
+    () =>
+      createDraftChangeDebouncer(
+        (key, value) => onDraftChange?.(key, value),
+        400,
+        (key, value) => onDraftPersisted?.(key, value),
+      ),
+    [onDraftChange, onDraftPersisted],
   );
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
   const uploading = files.some((f) => f.status === 'uploading');
@@ -184,7 +193,10 @@ export function Composer({
         : undefined,
       readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined,
     );
-    if (draftKey) draftWriter.saveNow(draftKey, '');
+    if (draftKey) {
+      onDraftTouched?.(draftKey);
+      draftWriter.saveNow(draftKey, '');
+    }
     setText('');
     setFiles([]);
     if (ref.current) ref.current.style.height = 'auto';
@@ -288,7 +300,10 @@ export function Composer({
           aria-label="Message input"
           onChange={(e) => {
             setText(e.target.value);
-            if (draftKey) draftWriter.schedule(draftKey, e.target.value);
+            if (draftKey) {
+              onDraftTouched?.(draftKey);
+              draftWriter.schedule(draftKey, e.target.value);
+            }
             setAgentNeedsTask(false);
             if (e.target.value.trim()) onTyping?.();
             e.target.style.height = 'auto';

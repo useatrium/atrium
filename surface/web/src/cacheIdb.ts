@@ -6,6 +6,8 @@ import {
   type CacheSnapshot,
   type CacheStorage,
   type Channel,
+  type DraftSnapshot,
+  type DraftSnapshotEntry,
   type QueuedOp,
   type UserPrefs,
   type UserRef,
@@ -108,6 +110,12 @@ function booleanField(row: Record<string, unknown>, key: string): boolean {
   return value;
 }
 
+function numberField(row: Record<string, unknown>, key: string): number {
+  const value = row[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`invalid ${key}`);
+  return value;
+}
+
 function asEventArray(value: unknown): WireEvent[] {
   if (!Array.isArray(value)) throw new Error('invalid events');
   for (const event of value) {
@@ -162,6 +170,12 @@ function asTimeline(row: unknown): { channelId: string; timeline: CachedTimeline
       hasMore: booleanField(row, 'hasMore'),
     },
   };
+}
+
+function asDraftEntry(row: unknown): DraftSnapshotEntry {
+  if (!isRecord(row) || typeof row.text !== 'string') throw new Error('invalid draft');
+  const updatedAt = numberField(row, 'updatedAt');
+  return { text: row.text, updatedAt: new Date(updatedAt).toISOString() };
 }
 
 async function clearStores(database: IDBPDatabase<AtriumCacheDb>): Promise<void> {
@@ -302,20 +316,44 @@ const idbStorage: CacheStorage = {
     try {
       const row = await (await db()).get('composerDrafts', key);
       if (row == null) return null;
-      if (!isRecord(row) || typeof row.text !== 'string') throw new Error('invalid draft');
-      return row.text;
+      return asDraftEntry(row).text;
     } catch (err) {
       return clearAfterCorruption(null, err);
     }
   },
 
-  setDraft: async (key, text) => {
+  getDraftEntry: async (key) => {
+    try {
+      const row = await (await db()).get('composerDrafts', key);
+      return row == null ? null : asDraftEntry(row);
+    } catch (err) {
+      return clearAfterCorruption(null, err);
+    }
+  },
+
+  listDrafts: async () => {
+    try {
+      const rows = await (await db()).getAll('composerDrafts');
+      const drafts: DraftSnapshot = {};
+      for (const row of rows) drafts[row.key] = asDraftEntry(row);
+      return drafts;
+    } catch (err) {
+      return clearAfterCorruption({}, err);
+    }
+  },
+
+  setDraft: async (key, text, updatedAt) => {
     const database = await db();
     if (text.length === 0) {
       await database.delete('composerDrafts', key);
       return;
     }
-    await database.put('composerDrafts', { key, text, updatedAt: Date.now() });
+    const parsed = updatedAt ? Date.parse(updatedAt) : Date.now();
+    await database.put('composerDrafts', {
+      key,
+      text,
+      updatedAt: Number.isFinite(parsed) ? parsed : Date.now(),
+    });
   },
 
   clearCache: async () => {
@@ -327,7 +365,7 @@ function createMemoryStorage(): CacheStorage {
   let snapshot: CacheSnapshot = clone(EMPTY_SNAPSHOT);
   let ops: Array<QueuedOp & { seq: number }> = [];
   let nextSeq = 1;
-  const drafts = new Map<string, string>();
+  const drafts = new Map<string, DraftSnapshotEntry>();
   return {
     loadSnapshot: async () => clone(snapshot),
     saveChannels: async (channels) => {
@@ -355,10 +393,13 @@ function createMemoryStorage(): CacheStorage {
     removeOp: async (opId) => {
       ops = ops.filter((op) => op.opId !== opId);
     },
-    getDraft: async (key) => drafts.get(key) ?? null,
-    setDraft: async (key, text) => {
+    getDraft: async (key) => drafts.get(key)?.text ?? null,
+    getDraftEntry: async (key) => drafts.get(key) ?? null,
+    listDrafts: async () =>
+      Object.fromEntries([...drafts].map(([key, draft]) => [key, structuredClone(draft)])),
+    setDraft: async (key, text, updatedAt) => {
       if (text.length === 0) drafts.delete(key);
-      else drafts.set(key, text);
+      else drafts.set(key, { text, updatedAt: updatedAt ?? new Date().toISOString() });
     },
     clearCache: async () => {
       snapshot = clone(EMPTY_SNAPSHOT);

@@ -56,6 +56,12 @@ export default function ChannelScreen() {
 
   useEffect(() => {
     if (!draftKey) return;
+    chat.setActiveDraftKey(draftKey, true);
+    return () => chat.setActiveDraftKey(draftKey, false);
+  }, [chat.setActiveDraftKey, draftKey]);
+
+  useEffect(() => {
+    if (!draftKey) return;
     let disposed = false;
     setInitialDraft('');
     void getDraft(draftKey)
@@ -70,14 +76,7 @@ export default function ChannelScreen() {
     };
   }, [draftKey, getDraft]);
 
-  const saveDraft = useCallback(
-    (key: string, text: string) => {
-      void setDraft(key, text).catch((err: unknown) => {
-        console.warn('failed to save draft', err);
-      });
-    },
-    [setDraft],
-  );
+  const saveDraft = useCallback((key: string, text: string) => setDraft(key, text), [setDraft]);
 
   const openThread = useCallback(
     (m: ChatMessage) => {
@@ -221,6 +220,8 @@ export default function ChannelScreen() {
           draftKey={draftKey}
           initialDraft={initialDraft}
           onDraftChange={saveDraft}
+          onDraftPersisted={chat.enqueueDraft}
+          onDraftTouched={chat.markDraftTouched}
           mentionUsers={chat.mentionUsers}
           onMentionTrigger={chat.loadMentionUsers}
           editingText={editing?.text ?? null}

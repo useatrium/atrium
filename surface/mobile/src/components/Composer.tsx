@@ -46,7 +46,9 @@ export interface ComposerProps {
   onCancelEdit?: () => void;
   draftKey?: string;
   initialDraft?: string;
-  onDraftChange?: (key: string, text: string) => void;
+  onDraftChange?: (key: string, text: string) => void | Promise<void>;
+  onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
+  onDraftTouched?: (key: string) => void;
   mentionUsers?: UserRef[] | null;
   onMentionTrigger?: () => void;
   allowAttachments?: boolean;
@@ -70,6 +72,8 @@ export function Composer({
   draftKey,
   initialDraft,
   onDraftChange,
+  onDraftPersisted,
+  onDraftTouched,
   mentionUsers,
   onMentionTrigger,
   allowAttachments,
@@ -83,8 +87,13 @@ export function Composer({
   const inputRef = useRef<TextInput>(null);
   const editing = editingText != null;
   const draftWriter = useMemo(
-    () => createDraftChangeDebouncer((key, value) => onDraftChange?.(key, value)),
-    [onDraftChange],
+    () =>
+      createDraftChangeDebouncer(
+        (key, value) => onDraftChange?.(key, value),
+        400,
+        (key, value) => onDraftPersisted?.(key, value),
+      ),
+    [onDraftChange, onDraftPersisted],
   );
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
@@ -231,7 +240,10 @@ export function Composer({
     if (!mentionMatch) return;
     const next = `${text.slice(0, mentionMatch.start)}@${value} `;
     setText(next);
-    if (draftKey) draftWriter.saveNow(draftKey, next);
+    if (draftKey) {
+      onDraftTouched?.(draftKey);
+      draftWriter.saveNow(draftKey, next);
+    }
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -246,7 +258,10 @@ export function Composer({
     if (!canSend) return;
     lightImpactHaptic();
     onSend(trimmed, readyMeta, readyRefs.length > 0 ? readyRefs : undefined);
-    if (draftKey) draftWriter.saveNow(draftKey, '');
+    if (draftKey) {
+      onDraftTouched?.(draftKey);
+      draftWriter.saveNow(draftKey, '');
+    }
     setText('');
     setAttachments([]);
   };
@@ -437,7 +452,10 @@ export function Composer({
           value={text}
           onChangeText={(v) => {
             setText(v);
-            if (!editing && draftKey) draftWriter.schedule(draftKey, v);
+            if (!editing && draftKey) {
+              onDraftTouched?.(draftKey);
+              draftWriter.schedule(draftKey, v);
+            }
             if (v.trim()) onTyping();
           }}
           placeholder={placeholder}
