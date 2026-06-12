@@ -240,6 +240,34 @@ export function useWs(
       }
     };
     const unWake = options.onWake?.(onWakeSignal);
+    const globalEvents = globalThis as unknown as {
+      addEventListener?: (type: string, listener: EventListener) => void;
+      removeEventListener?: (type: string, listener: EventListener) => void;
+    };
+    const onOfflineSignal = () => {
+      if (disposed) return;
+      clearTimers();
+      cbRef.current.onStatus('closed');
+      ws?.close();
+    };
+    const onOnlineSignal = () => {
+      if (disposed) return;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        attempt = 0;
+        connect();
+        return;
+      }
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        attempt = 0;
+        connect();
+        return;
+      }
+      if (ws.readyState === WebSocket.OPEN) cbRef.current.onOpen();
+    };
+    globalEvents.addEventListener?.('offline', onOfflineSignal);
+    globalEvents.addEventListener?.('online', onOnlineSignal);
 
     connect();
     return () => {
@@ -247,6 +275,8 @@ export function useWs(
       clearTimers();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       unWake?.();
+      globalEvents.removeEventListener?.('offline', onOfflineSignal);
+      globalEvents.removeEventListener?.('online', onOnlineSignal);
       socketRef.current = null;
       ws?.close();
     };
