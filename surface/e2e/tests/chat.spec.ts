@@ -368,6 +368,13 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   await context.setOffline(false);
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('(saving edit)')).toHaveCount(0, { timeout: 15_000 });
+  // '(saving edit)' clearing only proves the edit op landed; the reaction op
+  // has no per-item marker and its button renders optimistically, so wait for
+  // the queued-changes banner to drain before reloading — otherwise the
+  // reload races the in-flight reaction op and it never survives.
+  await expect(page.getByRole('status').filter({ hasText: /queued/ })).toHaveCount(0, {
+    timeout: 15_000,
+  });
   await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
   await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
