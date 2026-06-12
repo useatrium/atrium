@@ -17,6 +17,7 @@ import {
   type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
+  type OpQueueLockProvider,
   type OpType,
   type ReactionSetPayload,
   type SessionSpawnPayload,
@@ -60,6 +61,21 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
 const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
+
+function createQueueLockProvider(): OpQueueLockProvider | undefined {
+  if (typeof navigator === 'undefined') return undefined;
+  const locks = (
+    navigator as Navigator & {
+      locks?: {
+        request<T>(name: string, callback: () => T | PromiseLike<T>): Promise<T>;
+      };
+    }
+  ).locks;
+  if (!locks) return undefined;
+  return {
+    request: <T,>(name: string, callback: () => Promise<T>) => locks.request<T>(name, callback),
+  };
+}
 
 function broadcastQueueNudge(): void {
   try {
@@ -191,6 +207,7 @@ export function Chat({
         storage: eventCache,
         api,
         dispatch: queueDispatch,
+        lockProvider: createQueueLockProvider(),
         onRejected: (op, err) => {
           onApiError(err);
           if (op.opType === 'mute.set') {

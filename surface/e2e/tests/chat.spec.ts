@@ -429,6 +429,35 @@ test('lost POST response retries with same client id and confirms once', async (
   await page.unroute('**/api/messages');
 });
 
+test('same-context tabs send without duplicate messages or queue error toasts', async ({ browser }) => {
+  const context = await browser.newContext();
+  const firstPage = await context.newPage();
+  const secondPage = await context.newPage();
+  await login(firstPage, unique('two-tab'), 'Two Tab');
+  await secondPage.goto('/');
+  await expect(secondPage.getByRole('heading', { name: '# general' })).toBeVisible();
+  await expect(secondPage.getByRole('status', { name: 'connection: open' })).toBeVisible();
+
+  const firstText = unique('tab-one');
+  const secondText = unique('tab-two');
+  await mainComposer(firstPage).fill(firstText);
+  await mainComposer(secondPage).fill(secondText);
+  await Promise.all([
+    mainComposer(firstPage).press('Enter'),
+    mainComposer(secondPage).press('Enter'),
+  ]);
+
+  for (const page of [firstPage, secondPage]) {
+    await expect(confirmedRowsWithText(page, firstText)).toHaveCount(1, { timeout: 15_000 });
+    await expect(confirmedRowsWithText(page, secondText)).toHaveCount(1, { timeout: 15_000 });
+    await expect(timelineText(page, firstText)).toHaveCount(1);
+    await expect(timelineText(page, secondText)).toHaveCount(1);
+    await expect(page.getByText(/Couldn't/)).toHaveCount(0);
+  }
+
+  await context.close();
+});
+
 test('offline edit and reaction land and survive reload', async ({ page, context }) => {
   await login(page, unique('offline-editor'), 'Offline Editor');
   const original = unique('offline-edit-original');

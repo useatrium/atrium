@@ -182,6 +182,7 @@ export function createApi(opts: ApiOptions = {}) {
       threadRootEventId?: number;
       /** Uploaded file ids to attach. */
       attachments?: string[];
+      opId?: string;
     }) =>
       req<{ event: WireEvent }>('/api/messages', {
         method: 'POST',

@@ -108,6 +108,20 @@ function msgWithUpload(opId: string, uploadKey = 'up-1'): QueuedOp {
   );
 }
 
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(error: unknown): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('durable op queue coalescing', () => {
   it('keeps the max read cursor per channel', async () => {
     await fc.assert(
@@ -362,6 +376,188 @@ describe('durable op queue flushing', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('retries op_in_flight without surfacing rejection and confirms on replay', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new MemoryOpStorage([msg('op-in-flight', 'a')]);
+      const attempts: string[] = [];
+      const rejected: string[] = [];
+      const actions: AppAction[] = [];
+      const queue = new DurableOpQueue({
+        storage,
+        api,
+        dispatch: (action) => actions.push(action),
+        registry: registryFor(async (payload, op) => {
+          attempts.push(op.opId);
+          if (attempts.length === 1) {
+            throw new ApiError(409, 'op_in_flight', 'operation is still in flight');
+          }
+          return { event: eventFor(payload) };
+        }),
+        onRejected: (op) => rejected.push(op.opId),
+      });
+
+      await queue.flush();
+      expect(attempts).toEqual(['op-in-flight']);
+      expect(rejected).toEqual([]);
+      expect(actions).toEqual([]);
+      let remaining = await storage.listOps();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]).toMatchObject({ opId: 'op-in-flight', status: 'pending', retryCount: 1 });
+
+      await vi.advanceTimersByTimeAsync(500);
+      await queue.flush();
+
+      expect(attempts).toEqual(['op-in-flight', 'op-in-flight']);
+      expect(rejected).toEqual([]);
+      expect(actions).toEqual([]);
+      remaining = await storage.listOps();
+      expect(remaining).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('hard-rejects op_id_reuse 409 responses', async () => {
+    const storage = new MemoryOpStorage([msg('op-reuse', 'a')]);
+    const rejected: string[] = [];
+    const actions: AppAction[] = [];
+    const queue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: (action) => actions.push(action),
+      registry: registryFor(async () => {
+        throw new ApiError(409, 'op_id_reuse', 'opId was already used');
+      }),
+      onRejected: (op) => rejected.push(op.opId),
+    });
+
+    await queue.flush();
+
+    expect(rejected).toEqual(['op-reuse']);
+    expect(actions).toEqual([{ type: 'send-failed', channelId: 'a', clientMsgId: 'op-reuse' }]);
+    expect(await storage.listOps()).toEqual([]);
+  });
+
+  it('serializes enqueue coalescing behind the pending-to-inflight transition', async () => {
+    const inflightWrite = deferred();
+    const executeStarted = deferred();
+    const finishExecute = deferred<{ event: WireEvent }>();
+    let blockedInflight = false;
+    class BlockingInflightStorage extends MemoryOpStorage {
+      override async putOp(op: QueuedOp): Promise<void> {
+        if (op.opId === 'edit-1' && op.status === 'inflight' && !blockedInflight) {
+          blockedInflight = true;
+          await inflightWrite.promise;
+        }
+        await super.putOp(op);
+      }
+    }
+
+    const first = makeQueuedOp({
+      opId: 'edit-1',
+      opType: 'msg.edit',
+      payload: { channelId: 'ch-1', eventId: 7, text: 'first' },
+    });
+    const storage = new BlockingInflightStorage([first]);
+    const registry = createDefaultOpRegistry();
+    registry['msg.edit'] = {
+      execute: async () => {
+        executeStarted.resolve(undefined);
+        return finishExecute.promise;
+      },
+      onConfirmed: () => {},
+      onRejected: () => {},
+    };
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {}, registry });
+
+    const flushPromise = queue.flush();
+    await vi.waitFor(() => expect(blockedInflight).toBe(true));
+
+    let enqueueSettled = false;
+    const enqueuePromise = queue
+      .enqueue({
+        opId: 'edit-2',
+        opType: 'msg.edit',
+        payload: { channelId: 'ch-1', eventId: 7, text: 'second' },
+      })
+      .finally(() => {
+        enqueueSettled = true;
+      });
+    await Promise.resolve();
+    expect(enqueueSettled).toBe(false);
+
+    inflightWrite.resolve(undefined);
+    await enqueuePromise;
+    await executeStarted.promise;
+    const duringExecute = await storage.listOps();
+    expect(duringExecute.map((op) => [op.opId, op.status])).toEqual([
+      ['edit-1', 'inflight'],
+      ['edit-2', 'pending'],
+    ]);
+
+    finishExecute.resolve({ event: eventFor(msg('sentinel', 'ch-1').payload as MsgSendPayload) });
+    await flushPromise;
+    expect(await storage.listOps()).toEqual([]);
+  });
+
+  it('uses the lock provider as a cross-instance single writer', async () => {
+    class SerialLockProvider {
+      private tail: Promise<void> = Promise.resolve();
+
+      request<T>(_name: string, callback: () => Promise<T>): Promise<T> {
+        const run = this.tail.then(callback, callback);
+        this.tail = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      }
+    }
+
+    const storage = new MemoryOpStorage([msg('op-locked', 'a')]);
+    const lockProvider = new SerialLockProvider();
+    const firstStarted = deferred();
+    const releaseFirst = deferred();
+    const executed: string[] = [];
+    const firstQueue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: () => {},
+      registry: registryFor(async (_payload, op) => {
+        executed.push(`first:${op.opId}`);
+        firstStarted.resolve(undefined);
+        await releaseFirst.promise;
+        throw new TypeError('offline');
+      }),
+      lockProvider,
+      setTimer: () => undefined,
+    });
+    const secondQueue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: () => {},
+      registry: registryFor(async (payload, op) => {
+        executed.push(`second:${op.opId}`);
+        return { event: eventFor(payload) };
+      }),
+      lockProvider,
+    });
+
+    const firstFlush = firstQueue.flush();
+    await firstStarted.promise;
+    const secondFlush = secondQueue.flush();
+    await Promise.resolve();
+    expect(executed).toEqual(['first:op-locked']);
+
+    releaseFirst.resolve(undefined);
+    await firstFlush;
+    await secondFlush;
+
+    expect(executed).toEqual(['first:op-locked', 'second:op-locked']);
+    expect(await storage.listOps()).toEqual([]);
   });
 });
 
