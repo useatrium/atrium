@@ -347,6 +347,7 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   const original = unique('offline-edit-original');
   const edited = unique('offline-edit-final');
   await sendMessage(page, original);
+  await expect(messageRow(page, original)).toBeVisible();
 
   await context.setOffline(true);
   const originalRow = messageRow(page, original);
