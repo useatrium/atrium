@@ -140,6 +140,16 @@ function isRowEvent(type: string): boolean {
   );
 }
 
+/** Event types that mutate an existing row instead of producing one. */
+function isModifierEvent(type: string): boolean {
+  return (
+    type === 'message.edited' ||
+    type === 'message.deleted' ||
+    type === 'reaction.added' ||
+    type === 'reaction.removed'
+  );
+}
+
 export function messageFromEvent(ev: WireEvent): ChatMessage {
   const payload = ev.payload ?? {};
   const sessionId =
@@ -672,14 +682,25 @@ export function mergeHistory(
 ): ChannelTimeline {
   let main = t.main;
   const seenIds = new Set(t.seenIds);
+  // Server history pages materialize edits/deletes/reactions into the row
+  // payloads, so they carry row events only. The IndexedDB cache instead
+  // accumulates raw events from the ack/WS path — message.posted with its
+  // original text plus separate modifier events — so a cached hydrate must
+  // re-apply those modifiers or acked edits/reactions silently vanish on
+  // reload.
+  const modifiers: WireEvent[] = [];
   for (const ev of events) {
-    if (!isRowEvent(ev.type) || ev.threadRootEventId != null) continue;
     if (seenIds.has(ev.id)) continue;
+    if (isModifierEvent(ev.type)) {
+      modifiers.push(ev);
+      continue;
+    }
+    if (!isRowEvent(ev.type) || ev.threadRootEventId != null) continue;
     seenIds.add(ev.id);
     main = upsertConfirmed(main, messageFromEvent(ev));
   }
   const maxId = events.reduce((acc, e) => Math.max(acc, e.id), t.lastEventId);
-  return rematerializeAll({
+  let next = rematerializeAll({
     ...t,
     main,
     seenIds,
@@ -687,6 +708,12 @@ export function mergeHistory(
     hasMoreBefore: opts.hasMoreBefore,
     loaded: true,
   });
+  // Ascending id order: a cached reaction can precede the edit of the same
+  // message (server commit order), and applyEvent is idempotent by event id.
+  for (const ev of [...modifiers].sort((a, b) => a.id - b.id)) {
+    next = applyEvent(next, ev);
+  }
+  return next;
 }
 
 /**

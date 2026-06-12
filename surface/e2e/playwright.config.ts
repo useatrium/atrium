@@ -9,8 +9,12 @@ const apiTarget = `http://127.0.0.1:${serverPort}`;
 
 export default defineConfig({
   testDir: './tests',
-  fullyParallel: false,
-  workers: 1,
+  // Tests isolate state via unique() handles/channels, so they tolerate
+  // running concurrently against the one shared app + database. Two workers
+  // roughly halves wall-clock; four also passed locally but provoked the Vite
+  // WS proxy resets described below, so hold at two until repeated green runs.
+  fullyParallel: true,
+  workers: 2,
   // Generous on CI: shared runners are slow and variable, and the vite WS
   // proxy can reset a socket under load — the client recovers (reconnect →
   // channel refetch surfaces the missed unread) but needs more than a few
@@ -49,6 +53,11 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         ATRIUM_API_TARGET: apiTarget,
+        // A shell exporting NODE_ENV=production skews plugin-react on Vite 8:
+        // the oxc refresh transform keys on `command === "serve"` but the
+        // preamble injection keys on isProduction, so served modules reference
+        // an undefined $RefreshSig$. Dev servers must run in development.
+        NODE_ENV: 'development',
       },
     },
   ],
