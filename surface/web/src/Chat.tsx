@@ -49,6 +49,7 @@ import { adoptPrefs } from './theme';
 import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { useDialog } from './useDialog';
 import { clearCache, eventCache } from './cacheIdb';
+import { hydrateCachedTimelines } from './hydration';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -203,6 +204,17 @@ export function Chat({
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [opQueue]);
+
+  useEffect(() => {
+    const flushHiddenCache = () => {
+      if (document.visibilityState !== 'hidden') return;
+      void eventCache.flushAll().catch((err: unknown) => {
+        console.warn('failed to flush event cache on hide', err);
+      });
+    };
+    document.addEventListener('visibilitychange', flushHiddenCache);
+    return () => document.removeEventListener('visibilitychange', flushHiddenCache);
+  }, []);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -398,14 +410,25 @@ export function Chat({
       .then(async ({ channels, timelines, syncCursor }) => {
         if (disposed) return;
         if (channels) dispatch({ type: 'channels-loaded', channels });
-        for (const [channelId, timeline] of Object.entries(timelines)) {
-          dispatch({
-            type: 'history-loaded',
-            channelId,
-            events: timeline.events,
-            hasMore: timeline.hasMore,
-          });
-        }
+        await hydrateCachedTimelines({
+          timelines,
+          syncCursor,
+          dispatch,
+          fetchLatest: (channelId) => api.messages(channelId, { limit: PAGE_SIZE }),
+          isDisposed: () => disposed,
+          onRepaired: (channelId, latest) => {
+            void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
+              (err: unknown) => {
+                console.warn('failed to cache repaired hydrate history', err);
+              },
+            );
+          },
+          onRepairFailed: (_channelId, err) => {
+            console.warn('failed to repair stale cached history', err);
+            onApiError(err);
+          },
+        });
+        if (disposed) return;
         if (syncCursor > 0) dispatch({ type: 'sync-cursor', cursor: syncCursor });
         await opQueue.recoverInflight();
         const queued = await eventCache.listOps();
@@ -421,7 +444,7 @@ export function Chat({
     return () => {
       disposed = true;
     };
-  }, [applyQueuedOp, opQueue]);
+  }, [applyQueuedOp, onApiError, opQueue]);
 
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
@@ -734,10 +757,12 @@ export function Chat({
     const oldest = timeline.main.find((m) => m.status === 'confirmed');
     if (!oldest?.id) return Promise.resolve();
     const channelId = active.id;
+    const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
     return api
       .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
       .then(({ events, hasMore }) => {
-        dispatch({ type: 'history-loaded', channelId, events, hasMore });
+        if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) return;
+        dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache earlier history', err);
         });
@@ -973,11 +998,13 @@ export function Chat({
       if (!t.hasMoreBefore) break;
       const oldest = t.main.find((m) => m.status === 'confirmed');
       if (!oldest?.id) break;
+      const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
       const { events, hasMore } = await api.messages(channelId, {
         beforeId: oldest.id,
         limit: PAGE_SIZE,
       });
-      dispatch({ type: 'history-loaded', channelId, events, hasMore });
+      if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) continue;
+      dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
       void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
         console.warn('failed to cache jump history', err);
       });

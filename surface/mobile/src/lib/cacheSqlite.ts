@@ -6,6 +6,7 @@ import {
 } from './cache';
 import {
   makeQueuedOp,
+  parseQueuedOp,
   randomId,
   type AttachmentMeta,
   type Channel,
@@ -37,6 +38,7 @@ interface OutboxRow {
 }
 
 interface OpRow {
+  row_id: number;
   op_id: string;
   op_type: QueuedOp['opType'];
   queue_key: string;
@@ -194,19 +196,30 @@ const storage: CacheStorage = {
   listOps: async (): Promise<QueuedOp[]> => {
     const database = await db();
     const rows = await database.getAllAsync<OpRow>(
-      `SELECT op_id, op_type, queue_key, payload_json, status, retry_count, created_at, inserted_at
+      `SELECT rowid AS row_id, op_id, op_type, queue_key, payload_json, status, retry_count, created_at, inserted_at
         FROM client_ops
         ORDER BY inserted_at ASC, rowid ASC`,
     );
-    return rows.map((row) => ({
-      opId: row.op_id,
-      opType: row.op_type,
-      queueKey: row.queue_key,
-      payload: JSON.parse(row.payload_json) as unknown,
-      status: row.status,
-      retryCount: row.retry_count,
-      createdAt: row.created_at,
-    }));
+    const ops: QueuedOp[] = [];
+    for (const row of rows) {
+      try {
+        ops.push(
+          parseQueuedOp({
+            opId: row.op_id,
+            opType: row.op_type,
+            queueKey: row.queue_key,
+            payload: JSON.parse(row.payload_json) as unknown,
+            status: row.status,
+            retryCount: row.retry_count,
+            createdAt: row.created_at,
+          }),
+        );
+      } catch (err) {
+        console.warn('dropping invalid SQLite queued op', err);
+        await database.runAsync('DELETE FROM client_ops WHERE rowid = ?', row.row_id);
+      }
+    }
+    return ops;
   },
 
   putOp: async (op) => {
