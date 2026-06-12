@@ -6,4 +6,4 @@ Idempotency keys are short-lived replay guards. The server deletes keys older th
 
 Uploaded file metadata lives in `files`; object bodies live in S3-compatible storage. Files are created before a message references them, so abandoned uploads can leave orphan rows and objects. The server prunes file rows older than `ATRIUM_FILE_GC_DAYS` days, defaulting to 7. Set `ATRIUM_FILE_GC_DAYS=0` to disable this sweep. A file is kept if any `message.posted` event payload contains its id in `attachments`, even if the message is later edited or deleted by tombstone events. The sweep deletes the S3 object first, treats `NoSuchKey` or HTTP 404 as already deleted, and removes the `files` row only after object deletion succeeds or the object is already missing. Other storage errors keep the row for the next sweep.
 
-Draft tombstone cleanup is out of scope for this lifecycle pass.
+Draft tombstones (`user_drafts.deleted_at`, used to roam deletions across devices) are pruned after 30 days, alongside the idempotency-key sweep at startup and every 24 hours.
