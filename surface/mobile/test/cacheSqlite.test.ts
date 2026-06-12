@@ -12,6 +12,7 @@ interface OutboxRow {
 }
 
 interface OpRow {
+  row_id: number;
   op_id: string;
   op_type: QueuedOp['opType'];
   queue_key: string;
@@ -23,6 +24,7 @@ interface OpRow {
 }
 
 class FakeDb {
+  nextRowId = 1;
   sendOutbox: OutboxRow[] | null = [
     {
       client_msg_id: 'client-a',
@@ -66,6 +68,7 @@ class FakeDb {
   async runAsync(sql: string, ...args: unknown[]): Promise<void> {
     if (sql.includes('INSERT OR IGNORE INTO client_ops')) {
       const row: OpRow = {
+        row_id: this.nextRowId++,
         op_id: String(args[0]),
         op_type: args[1] as QueuedOp['opType'],
         queue_key: String(args[2]),
@@ -80,6 +83,7 @@ class FakeDb {
     }
     if (sql.includes('INSERT INTO client_ops')) {
       const row: OpRow = {
+        row_id: this.nextRowId++,
         op_id: String(args[0]),
         op_type: args[1] as QueuedOp['opType'],
         queue_key: String(args[2]),
@@ -91,6 +95,10 @@ class FakeDb {
       };
       this.clientOps = this.clientOps.filter((op) => op.op_id !== row.op_id);
       this.clientOps.push(row);
+      return;
+    }
+    if (sql.includes('DELETE FROM client_ops WHERE rowid = ?')) {
+      this.clientOps = this.clientOps.filter((op) => op.row_id !== args[0]);
       return;
     }
     if (sql.includes('DELETE FROM client_ops WHERE op_id = ?')) {
@@ -128,5 +136,48 @@ describe('SQLite client op migration', () => {
       threadRootEventId: 5,
       attachments: [{ id: 'file-1', filename: 'a.txt' }],
     });
+  });
+
+  it('drops corrupted client_ops rows instead of returning them to the queue', async () => {
+    const fakeDb = new FakeDb();
+    fakeDb.sendOutbox = null;
+    fakeDb.clientOps = [
+      {
+        row_id: fakeDb.nextRowId++,
+        op_id: 'bad-op',
+        op_type: 'legacy.bad' as QueuedOp['opType'],
+        queue_key: 'msg:ch-1',
+        payload_json: '{"channelId":"ch-1"}',
+        status: 'pending',
+        retry_count: 0,
+        created_at: '2026-06-11T12:00:00.000Z',
+        inserted_at: 1,
+      },
+      {
+        row_id: fakeDb.nextRowId++,
+        op_id: 'good-op',
+        op_type: 'read.mark',
+        queue_key: 'read:ch-1',
+        payload_json: '{"channelId":"ch-1","lastReadEventId":7}',
+        status: 'pending',
+        retry_count: 0,
+        created_at: '2026-06-11T12:00:01.000Z',
+        inserted_at: 2,
+      },
+    ];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.doMock('expo-sqlite', () => ({
+      openDatabaseAsync: vi.fn(async () => fakeDb),
+    }));
+
+    const { eventCache } = await import('../src/lib/cacheSqlite');
+    const ops = await eventCache.listOps();
+
+    expect(ops.map((op) => op.opId)).toEqual(['good-op']);
+    expect(fakeDb.clientOps.map((op) => op.op_id)).toEqual(['good-op']);
+    expect(warn).toHaveBeenCalledWith(
+      'dropping invalid SQLite queued op',
+      expect.any(Error),
+    );
   });
 });

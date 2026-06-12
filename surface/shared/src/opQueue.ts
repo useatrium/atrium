@@ -3,25 +3,32 @@ import type { AppAction } from './appState';
 import { sessionFromWire } from './sessions';
 import type { AttachmentMeta, WireEvent } from './timeline';
 
-export type OpType =
-  | 'msg.send'
-  | 'upload'
-  | 'msg.edit'
-  | 'msg.delete'
-  | 'reaction.set'
-  | 'read.mark'
-  | 'mute.set'
-  | 'session.spawn'
-  | 'session.answer'
-  | 'channel.join'
-  | 'channel.leave';
+export const VALID_OP_TYPES = [
+  'msg.send',
+  'upload',
+  'msg.edit',
+  'msg.delete',
+  'reaction.set',
+  'read.mark',
+  'mute.set',
+  'session.spawn',
+  'session.answer',
+  'channel.join',
+  'channel.leave',
+] as const;
+
+export type OpType = (typeof VALID_OP_TYPES)[number];
+
+export const VALID_OP_STATUSES = ['pending', 'inflight', 'completed'] as const;
+
+export type QueuedOpStatus = (typeof VALID_OP_STATUSES)[number];
 
 export interface QueuedOp {
   opId: string;
   opType: OpType;
   queueKey: string;
   payload: unknown;
-  status: 'pending' | 'inflight' | 'completed';
+  status: QueuedOpStatus;
   retryCount: number;
   createdAt: string;
 }
@@ -250,6 +257,44 @@ function retryDelayMs(retryCount: number): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isPayloadRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringField(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  if (typeof value !== 'string') throw new Error(`invalid ${key}`);
+  return value;
+}
+
+function numberField(row: Record<string, unknown>, key: string): number {
+  const value = row[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`invalid ${key}`);
+  return value;
+}
+
+const validOpTypeSet = new Set<OpType>(VALID_OP_TYPES);
+const validOpStatusSet = new Set<QueuedOpStatus>(VALID_OP_STATUSES);
+
+export function parseQueuedOp(row: unknown): QueuedOp {
+  if (!isRecord(row)) throw new Error('invalid op row');
+  const opType = stringField(row, 'opType') as OpType;
+  const status = stringField(row, 'status') as QueuedOpStatus;
+  const payload = row.payload;
+  if (!validOpTypeSet.has(opType)) throw new Error('invalid opType');
+  if (!validOpStatusSet.has(status)) throw new Error('invalid op status');
+  if (!isPayloadRecord(payload)) throw new Error('invalid op payload');
+  return {
+    opId: stringField(row, 'opId'),
+    opType,
+    queueKey: stringField(row, 'queueKey'),
+    payload: structuredClone(payload),
+    status,
+    retryCount: numberField(row, 'retryCount'),
+    createdAt: stringField(row, 'createdAt'),
+  };
 }
 
 function asPayload<T extends OpType>(op: QueuedOp): OpPayloadByType[T] {
