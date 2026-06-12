@@ -51,3 +51,19 @@ export function normalizePrefs(input: unknown): UserPrefs {
   if (typeof raw.highContrast === 'boolean') out.highContrast = raw.highContrast;
   return out;
 }
+
+export function normalizePrefsPatch(input: unknown): Partial<UserPrefs> {
+  const raw = (typeof input === 'object' && input !== null ? input : {}) as Record<
+    string,
+    unknown
+  >;
+  const patch: Partial<UserPrefs> = {};
+  for (const key of Object.keys(DEFAULT_PREFS) as (keyof UserPrefs)[]) {
+    const value = raw[key];
+    if (Object.is(normalizePrefs({ [key]: value })[key], value)) {
+      (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[key] =
+        value as UserPrefs[keyof UserPrefs];
+    }
+  }
+  return patch;
+}

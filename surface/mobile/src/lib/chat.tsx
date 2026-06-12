@@ -17,6 +17,7 @@ import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   ApiError,
+  DEFAULT_PREFS,
   DurableOpQueue,
   appReducer,
   createDefaultOpRegistry,
@@ -226,6 +227,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         return "Couldn't start the agent session.";
       case 'session.answer':
         return "Couldn't submit the answer.";
+      case 'prefs.set':
+        return "Couldn't sync settings.";
       case 'channel.join':
         return "Couldn't add the person.";
       case 'channel.leave':
@@ -302,12 +305,18 @@ export function ChatProvider({ session, children }: { session: Session; children
               cacheMute(payload.channelId, payload.previousMuted);
             }
           }
+          if (op.opType === 'prefs.set') {
+            void api
+              .me()
+              .then(({ prefs }) => adoptPrefs(prefs ?? DEFAULT_PREFS))
+              .catch(onApiError);
+          }
           if (!(err instanceof ApiError && err.status === 401)) {
             Alert.alert('Action failed', queuedFailureMessage(op.opType));
           }
         },
       }),
-    [api, cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
+    [adoptPrefs, api, cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
   );
 
   const enqueueOp = useCallback(

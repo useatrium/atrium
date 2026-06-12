@@ -172,6 +172,29 @@ describe('durable op queue coalescing', () => {
     });
     expect((await storage.listOps()).map((op) => op.status)).toEqual(['inflight', 'pending']);
   });
+
+  it('merges pending prefs patches with later keys winning', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'prefs.set',
+      payload: { theme: 'dark', accent: 'teal' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'prefs.set',
+      payload: { accent: 'rose', highContrast: true },
+    });
+    const ops = await storage.listOps();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.queueKey).toBe('prefs:me');
+    expect(ops[0]!.payload).toEqual({
+      theme: 'dark',
+      accent: 'rose',
+      highContrast: true,
+    });
+  });
 });
 
 describe('durable op queue flushing', () => {
