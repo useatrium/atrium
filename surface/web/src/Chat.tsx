@@ -78,6 +78,7 @@ export function Chat({
 }) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
+  const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
   const stateRef = useRef(state);
   stateRef.current = state;
   const lastReadSentRef = useRef<Record<string, number>>({});
@@ -156,6 +157,8 @@ export function Chat({
         return "Couldn't start the agent session.";
       case 'session.answer':
         return "Couldn't submit the answer.";
+      case 'session.steer':
+        return "Couldn't send the session message.";
       case 'prefs.set':
         return "Couldn't sync settings.";
       case 'channel.join':
@@ -185,6 +188,14 @@ export function Chat({
               .then(({ prefs }) => adoptPrefs(prefs))
               .catch(onApiError);
           }
+          if (op.opType === 'session.steer') {
+            const payload = op.payload as { sessionId?: unknown; text?: unknown };
+            if (typeof payload.sessionId === 'string' && typeof payload.text === 'string') {
+              const sessionId = payload.sessionId;
+              const text = payload.text;
+              setFailedSteers((prev) => ({ ...prev, [sessionId]: text }));
+            }
+          }
           if (!(err instanceof ApiError && err.status === 401)) {
             showErrorToast(queuedFailureMessage(op.opType));
           }
@@ -203,6 +214,27 @@ export function Chat({
       return op;
     },
     [opQueue],
+  );
+
+  const clearFailedSteer = useCallback((sessionId: string) => {
+    setFailedSteers((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const steerSession = useCallback(
+    async (sessionId: string, text: string): Promise<void> => {
+      clearFailedSteer(sessionId);
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.steer',
+        payload: { sessionId, text },
+      });
+    },
+    [clearFailedSteer, enqueueOp],
   );
 
   useEffect(() => {
@@ -1439,6 +1471,9 @@ export function Chat({
           watchers={paneWatchers}
           onClose={() => dispatch({ type: 'close-session' })}
           onAnswerQuestion={answerSessionQuestion}
+          onSteer={steerSession}
+          failedSteer={failedSteers[paneSession.id] ?? null}
+          onClearFailedSteer={() => clearFailedSteer(paneSession.id)}
         />
       ) : state.openSessionId ? (
         <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">

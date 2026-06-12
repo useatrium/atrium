@@ -14,6 +14,7 @@ export const VALID_OP_TYPES = [
   'mute.set',
   'session.spawn',
   'session.answer',
+  'session.steer',
   'prefs.set',
   'channel.join',
   'channel.leave',
@@ -115,6 +116,11 @@ export interface SessionAnswerPayload {
   answers: Record<string, { answers: string[] }>;
 }
 
+export interface SessionSteerPayload {
+  sessionId: string;
+  text: string;
+}
+
 export type PrefsSetPayload = Partial<UserPrefs>;
 
 export interface ChannelJoinPayload {
@@ -137,6 +143,7 @@ export type OpPayloadByType = {
   'mute.set': MuteSetPayload;
   'session.spawn': SessionSpawnPayload;
   'session.answer': SessionAnswerPayload;
+  'session.steer': SessionSteerPayload;
   'prefs.set': PrefsSetPayload;
   'channel.join': ChannelJoinPayload;
   'channel.leave': ChannelLeavePayload;
@@ -152,6 +159,7 @@ type OpResultByType = {
   'mute.set': { muted: boolean };
   'session.spawn': Awaited<ReturnType<Api['createAgentSession']>>;
   'session.answer': { ok: true };
+  'session.steer': { ok: true };
   'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
   'channel.join': Awaited<ReturnType<Api['addChannelMember']>>;
   'channel.leave': { ok: true };
@@ -221,6 +229,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `spawn:${(payload as SessionSpawnPayload).clientSpawnId}`;
     case 'session.answer':
       return `answer:${(payload as SessionAnswerPayload).sessionId}`;
+    case 'session.steer':
+      return `steer:${(payload as SessionSteerPayload).sessionId}`;
     case 'prefs.set':
       return 'prefs:me';
     case 'channel.join': {
@@ -331,7 +341,9 @@ function coalescedPayload(existing: QueuedOp, next: QueuedOp): unknown {
 
 function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | null; remove: string[] } {
   const pendingSameKey = ops.filter((current) => current.status === 'pending' && current.queueKey === op.queueKey);
-  if (op.opType === 'msg.send' || op.opType === 'session.spawn') return { op, remove: [] };
+  if (op.opType === 'msg.send' || op.opType === 'session.spawn' || op.opType === 'session.steer') {
+    return { op, remove: [] };
+  }
 
   if (op.opType === 'read.mark') {
     let maxExisting: QueuedOp | null = null;
@@ -796,6 +808,11 @@ export function createDefaultOpRegistry(): OpRegistry {
     'session.answer': {
       execute: (api, payload, op) =>
         api.answerSessionQuestion(payload.sessionId, payload.questionId, payload.answers, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.steer': {
+      execute: (api, payload, op) => api.steerSession(payload.sessionId, payload.text, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

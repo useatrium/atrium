@@ -517,14 +517,17 @@ export default function SessionScreen() {
     if (!text) return;
     setSteerText('');
     setSteerError(null);
-    api.steerSession(id, text).catch(() => setSteerError(text));
+    chat.clearFailedSessionSteer(id);
+    chat.steerSession(id, text).catch(() => setSteerError(text));
   };
 
   const retrySteer = () => {
-    if (!id || !steerError) return;
-    const text = steerError;
+    const visibleSteerError = id ? (steerError ?? chat.failedSessionSteers[id] ?? null) : steerError;
+    if (!id || !visibleSteerError) return;
+    const text = visibleSteerError;
     setSteerError(null);
-    api.steerSession(id, text).catch(() => setSteerError(text));
+    chat.clearFailedSessionSteer(id);
+    chat.steerSession(id, text).catch(() => setSteerError(text));
   };
 
   const cancel = () => {
@@ -718,7 +721,7 @@ export default function SessionScreen() {
           )}
         </ScrollView>
 
-        {steerError ? (
+        {(steerError ?? chat.failedSessionSteers[id] ?? null) ? (
           <View
             style={{
               borderTopWidth: 1,
@@ -729,7 +732,7 @@ export default function SessionScreen() {
             }}
           >
             <Text style={{ color: colors.danger, fontSize: font.xs }} numberOfLines={2}>
-              Message did not send: "{steerError}"
+              Message did not send: "{steerError ?? chat.failedSessionSteers[id] ?? ''}"
             </Text>
             <View style={{ flexDirection: 'row', gap: space.sm }}>
               <Pressable
@@ -744,7 +747,10 @@ export default function SessionScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Dismiss failed session message"
-                onPress={() => setSteerError(null)}
+                onPress={() => {
+                  setSteerError(null);
+                  if (id) chat.clearFailedSessionSteer(id);
+                }}
                 hitSlop={10}
                 style={{ minHeight: 44, justifyContent: 'center' }}
               >

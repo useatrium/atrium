@@ -1554,7 +1554,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { text?: string };
+    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+    const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
     if (text.trim().length === 0) {
       return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
@@ -1562,7 +1563,19 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
-    await sessionRuns.postUserMessage(id, user.id, text);
+    await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.steer',
+      body: { sessionId: id, text },
+      fn: async (client) => {
+        await sessionRuns.postUserMessageInTx(client, id, user.id, text);
+        return { ok: true as const };
+      },
+      onApplied: () => {
+        sessionRuns.afterPostUserMessage(id);
+      },
+    });
     return reply.code(202).send({ ok: true });
   });
 

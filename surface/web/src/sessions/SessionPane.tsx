@@ -47,6 +47,9 @@ export function SessionPane({
   watchers,
   onClose,
   onAnswerQuestion,
+  onSteer = async () => {},
+  failedSteer = null,
+  onClearFailedSteer = () => {},
 }: {
   session: Session;
   me: UserRef;
@@ -58,6 +61,9 @@ export function SessionPane({
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
+  onSteer?: (sessionId: string, text: string) => Promise<void>;
+  failedSteer?: string | null;
+  onClearFailedSteer?: () => void;
 }) {
   const { stream, connected } = useSessionStream(session.id);
 
@@ -138,10 +144,12 @@ export function SessionPane({
 
   // Driver steer sends: never swallow a lost instruction — keep the text and
   // surface a retry right where the action happened.
-  const [steerError, setSteerError] = useState<string | null>(null);
+  const [localSteerError, setLocalSteerError] = useState<string | null>(null);
+  const steerError = localSteerError ?? failedSteer;
   const sendSteer = (text: string) => {
-    setSteerError(null);
-    sessionsApi.sendMessage(session.id, text).catch(() => setSteerError(text));
+    setLocalSteerError(null);
+    onClearFailedSteer();
+    onSteer(session.id, text).catch(() => setLocalSteerError(text));
   };
 
   // Cancel is destructive and possibly shared — two-step inline confirm.
@@ -404,7 +412,10 @@ export function SessionPane({
                 Retry
               </button>
               <button
-                onClick={() => setSteerError(null)}
+                onClick={() => {
+                  setLocalSteerError(null);
+                  onClearFailedSteer();
+                }}
                 className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
               >
                 Dismiss

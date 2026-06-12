@@ -351,6 +351,16 @@ export class SessionRuns {
     this.startTailer(id);
   }
 
+  async postUserMessageInTx(client: DbClient, id: string, userId: string, text: string): Promise<void> {
+    this.cancelScheduledRelease(id);
+    const row = await this.requireDriverInTx(client, id, userId);
+    await this.postUserMessageOnce(row, userId, text, true, client);
+  }
+
+  afterPostUserMessage(id: string): void {
+    this.startTailer(id);
+  }
+
   async answerQuestion(
     id: string,
     user: UserRef,
@@ -448,15 +458,21 @@ export class SessionRuns {
     });
   }
 
-  private async postUserMessageOnce(row: SessionRow, userId: string, text: string, allowStaleRetry: boolean): Promise<void> {
+  private async postUserMessageOnce(
+    row: SessionRow,
+    userId: string,
+    text: string,
+    allowStaleRetry: boolean,
+    client: Db | DbClient = this.pool,
+  ): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
-      const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
+      const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness, client);
       generation = spawned.assignment_generation;
       row = spawned.row;
     }
     try {
-      const messageId = await this.reserveMessageId(row.id);
+      const messageId = await this.reserveMessageId(row.id, client);
       await this.centaur.postMessage(
         row.centaur_thread_key,
         generation,
@@ -466,8 +482,8 @@ export class SessionRuns {
       );
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
-        const refreshed = await this.clearAssignment(row.id);
-        await this.postUserMessageOnce(refreshed, userId, text, false);
+        const refreshed = await this.clearAssignment(row.id, client);
+        await this.postUserMessageOnce(refreshed, userId, text, false, client);
         return;
       }
       if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
@@ -476,8 +492,8 @@ export class SessionRuns {
         // That delivered message still sits in Centaur's queue (the next
         // execute consumes it), so this steer is a NEW logical message:
         // mint a fresh id and post exactly once.
-        await this.pool.query('UPDATE sessions SET centaur_message_id = NULL WHERE id = $1', [row.id]);
-        const freshId = await this.reserveMessageId(row.id);
+        await client.query('UPDATE sessions SET centaur_message_id = NULL WHERE id = $1', [row.id]);
+        const freshId = await this.reserveMessageId(row.id, client);
         await this.centaur.postMessage(
           row.centaur_thread_key,
           generation,
@@ -493,10 +509,10 @@ export class SessionRuns {
     // left by a crashed earlier steer would make Centaur replay that old
     // execution and strand this message in the queue. Pending-id reuse is
     // only for boot resume (startSession), which posts no message.
-    await this.pool.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
-    const executeId = await this.reserveExecuteId(row.id);
+    await client.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
+    const executeId = await this.reserveExecuteId(row.id, client);
     const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
-    await this.pool.query(
+    await client.query(
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
            completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END,
@@ -1028,17 +1044,18 @@ export class SessionRuns {
     id: string,
     threadKey: string,
     harness: string,
+    client: Db | DbClient = this.pool,
   ): Promise<{ row: SessionRow; assignment_generation: number }> {
-    const spawnId = await this.reserveSpawnId(id);
+    const spawnId = await this.reserveSpawnId(id, client);
     const spawned = await this.centaur.spawn(threadKey, harness, { spawnId });
     const generation = spawned.assignment_generation;
     if (generation == null) throw new Error('centaur spawn missing assignment_generation');
-    const row = await this.persistSpawnedAssignment(id, generation);
+    const row = await this.persistSpawnedAssignment(id, generation, client);
     return { row, assignment_generation: generation };
   }
 
-  private async reserveSpawnId(id: string): Promise<string> {
-    const res = await this.pool.query<{ centaur_spawn_id: string }>(
+  private async reserveSpawnId(id: string, client: Db | DbClient = this.pool): Promise<string> {
+    const res = await client.query<{ centaur_spawn_id: string }>(
       `UPDATE sessions
        SET centaur_spawn_attempt = CASE
              WHEN centaur_spawn_id IS NULL THEN centaur_spawn_attempt + 1
@@ -1055,8 +1072,12 @@ export class SessionRuns {
     return res.rows[0]!.centaur_spawn_id;
   }
 
-  private async persistSpawnedAssignment(id: string, generation: number): Promise<SessionRow> {
-    const res = await this.pool.query<SessionRow>(
+  private async persistSpawnedAssignment(
+    id: string,
+    generation: number,
+    client: Db | DbClient = this.pool,
+  ): Promise<SessionRow> {
+    const res = await client.query<SessionRow>(
       `UPDATE sessions
        SET assignment_generation = $1,
            centaur_spawn_id = NULL
@@ -1067,8 +1088,8 @@ export class SessionRuns {
     return res.rows[0]!;
   }
 
-  private async reserveExecuteId(id: string): Promise<string> {
-    const res = await this.pool.query<{ centaur_execute_id: string }>(
+  private async reserveExecuteId(id: string, client: Db | DbClient = this.pool): Promise<string> {
+    const res = await client.query<{ centaur_execute_id: string }>(
       `UPDATE sessions
        SET centaur_execute_attempt = CASE
              WHEN centaur_execute_id IS NULL THEN centaur_execute_attempt + 1
@@ -1085,8 +1106,8 @@ export class SessionRuns {
     return res.rows[0]!.centaur_execute_id;
   }
 
-  private async reserveMessageId(id: string): Promise<string> {
-    const res = await this.pool.query<{ centaur_message_id: string }>(
+  private async reserveMessageId(id: string, client: Db | DbClient = this.pool): Promise<string> {
+    const res = await client.query<{ centaur_message_id: string }>(
       `UPDATE sessions
        SET centaur_message_attempt = CASE
              WHEN centaur_message_id IS NULL THEN centaur_message_attempt + 1
@@ -1103,8 +1124,8 @@ export class SessionRuns {
     return res.rows[0]!.centaur_message_id;
   }
 
-  private async clearAssignment(id: string): Promise<SessionRow> {
-    const res = await this.pool.query<SessionRow>(
+  private async clearAssignment(id: string, client: Db | DbClient = this.pool): Promise<SessionRow> {
+    const res = await client.query<SessionRow>(
       `UPDATE sessions
        SET assignment_generation = NULL,
            centaur_spawn_id = NULL
@@ -1146,6 +1167,18 @@ export class SessionRuns {
 
   private async requireDriver(id: string, userId: string): Promise<SessionRow> {
     const row = await this.getSessionRow(id);
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    if (row.driver_id !== userId) {
+      throw new DomainError(403, 'forbidden', 'only the current driver may steer this session');
+    }
+    return row;
+  }
+
+  private async requireDriverInTx(client: DbClient, id: string, userId: string): Promise<SessionRow> {
+    const res = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+    const row = res.rows[0];
     if (!row) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }

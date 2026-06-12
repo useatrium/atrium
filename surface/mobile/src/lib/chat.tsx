@@ -93,6 +93,9 @@ interface ChatContextValue {
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
+  steerSession: (sessionId: string, text: string) => Promise<void>;
+  failedSessionSteers: Record<string, string>;
+  clearFailedSessionSteer: (sessionId: string) => void;
   createChannel: (name: string, isPrivate?: boolean) => Promise<Channel>;
   startDm: (userIds: string[]) => Promise<Channel>;
   channelMembers: (channelId: string) => Promise<UserRef[]>;
@@ -180,6 +183,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [channelsLoaded, setChannelsLoaded] = useState(false);
   const [channelsError, setChannelsError] = useState<string | null>(null);
   const [threadErrors, setThreadErrors] = useState<Record<number, string>>({});
+  const [failedSessionSteers, setFailedSessionSteers] = useState<Record<string, string>>({});
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
   const loadingMentionUsersRef = useRef(false);
@@ -227,6 +231,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         return "Couldn't start the agent session.";
       case 'session.answer':
         return "Couldn't submit the answer.";
+      case 'session.steer':
+        return "Couldn't send the session message.";
       case 'prefs.set':
         return "Couldn't sync settings.";
       case 'channel.join':
@@ -311,6 +317,14 @@ export function ChatProvider({ session, children }: { session: Session; children
               .then(({ prefs }) => adoptPrefs(prefs ?? DEFAULT_PREFS))
               .catch(onApiError);
           }
+          if (op.opType === 'session.steer') {
+            const payload = op.payload as { sessionId?: unknown; text?: unknown };
+            if (typeof payload.sessionId === 'string' && typeof payload.text === 'string') {
+              const sessionId = payload.sessionId;
+              const text = payload.text;
+              setFailedSessionSteers((prev) => ({ ...prev, [sessionId]: text }));
+            }
+          }
           if (!(err instanceof ApiError && err.status === 401)) {
             Alert.alert('Action failed', queuedFailureMessage(op.opType));
           }
@@ -326,6 +340,27 @@ export function ChatProvider({ session, children }: { session: Session; children
       return op;
     },
     [opQueue],
+  );
+
+  const clearFailedSessionSteer = useCallback((sessionId: string) => {
+    setFailedSessionSteers((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const steerSession = useCallback(
+    async (sessionId: string, text: string): Promise<void> => {
+      clearFailedSessionSteer(sessionId);
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.steer',
+        payload: { sessionId, text },
+      });
+    },
+    [clearFailedSessionSteer, enqueueOp],
   );
 
   const waitForUpload = useCallback(
@@ -1297,6 +1332,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       deleteMessage,
       react,
       answerSessionQuestion,
+      steerSession,
+      failedSessionSteers,
+      clearFailedSessionSteer,
       createChannel,
       startDm,
       channelMembers,
@@ -1336,6 +1374,9 @@ export function ChatProvider({ session, children }: { session: Session; children
       deleteMessage,
       react,
       answerSessionQuestion,
+      steerSession,
+      failedSessionSteers,
+      clearFailedSessionSteer,
       createChannel,
       startDm,
       channelMembers,
