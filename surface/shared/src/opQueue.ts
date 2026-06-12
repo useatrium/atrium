@@ -284,8 +284,12 @@ function isRetryableServerError(err: unknown): boolean {
   return err instanceof ApiError && err.status >= 500 && err.status < 600;
 }
 
+function isOpInFlight(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409 && err.code === 'op_in_flight';
+}
+
 function shouldRejectHttp(err: unknown): boolean {
-  return err instanceof ApiError && err.status >= 400 && err.status < 500;
+  return err instanceof ApiError && err.status >= 400 && err.status < 500 && !isOpInFlight(err);
 }
 
 function retryDelayMs(retryCount: number): number {
@@ -443,6 +447,11 @@ export interface OpQueueOptions {
   uploadFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readUploadBody?: (payload: UploadPayload) => Promise<BodyInit>;
   setTimer?: (cb: () => void, ms: number) => unknown;
+  lockProvider?: OpQueueLockProvider;
+}
+
+export interface OpQueueLockProvider {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
 }
 
 export class DurableOpQueue {
@@ -456,8 +465,10 @@ export class DurableOpQueue {
   private readonly uploadFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   private readonly readUploadBody: (payload: UploadPayload) => Promise<BodyInit>;
   private readonly setTimer: (cb: () => void, ms: number) => unknown;
+  private readonly lockProvider?: OpQueueLockProvider;
   private readonly activeKeys = new Set<string>();
   private readonly retryAfter = new Map<string, number>();
+  private storageChain: Promise<void> = Promise.resolve();
   private flushRunning = false;
   private flushAgain = false;
 
@@ -478,6 +489,7 @@ export class DurableOpQueue {
         return res.blob();
       });
     this.setTimer = options.setTimer ?? ((cb, ms) => setTimeout(cb, ms));
+    this.lockProvider = options.lockProvider;
   }
 
   async recoverInflight(): Promise<void> {
@@ -491,13 +503,15 @@ export class DurableOpQueue {
   }
 
   async enqueue<T extends OpType>(input: EnqueueOpInput<T>): Promise<QueuedOp | null> {
-    const next = makeQueuedOp(input);
-    const ops = await this.storage.listOps();
-    const coalesced = coalescePendingOps(ops, next);
-    for (const opId of coalesced.remove) await this.storage.removeOp(opId);
-    if (!coalesced.op) return null;
-    await this.storage.putOp(coalesced.op);
-    return coalesced.op;
+    return this.withStorageLock(async () => {
+      const next = makeQueuedOp(input);
+      const ops = await this.storage.listOps();
+      const coalesced = coalescePendingOps(ops, next);
+      for (const opId of coalesced.remove) await this.storage.removeOp(opId);
+      if (!coalesced.op) return null;
+      await this.storage.putOp(coalesced.op);
+      return coalesced.op;
+    });
   }
 
   nudge(): void {
@@ -513,16 +527,24 @@ export class DurableOpQueue {
     }
     this.flushRunning = true;
     try {
-      do {
-        this.flushAgain = false;
-        const ops = await this.storage.listOps();
-        const due = this.nextDueOps(ops);
-        if (due.length === 0) break;
-        await Promise.all(due.map((op) => this.runOp(op)));
-      } while (this.flushAgain || this.activeKeys.size === 0);
+      if (this.lockProvider) {
+        await this.lockProvider.request('atrium:queue-writer', () => this.flushUnlocked());
+      } else {
+        await this.flushUnlocked();
+      }
     } finally {
       this.flushRunning = false;
     }
+  }
+
+  private async flushUnlocked(): Promise<void> {
+    do {
+      this.flushAgain = false;
+      const ops = await this.storage.listOps();
+      const due = this.nextDueOps(ops);
+      if (due.length === 0) break;
+      await Promise.all(due.map((op) => this.runOp(op)));
+    } while (this.flushAgain || this.activeKeys.size === 0);
   }
 
   private nextDueOps(ops: QueuedOp[]): QueuedOp[] {
@@ -551,7 +573,9 @@ export class DurableOpQueue {
     try {
       const inflight = { ...op, status: 'inflight' as const };
       currentOp = inflight;
-      await this.storage.putOp(currentOp);
+      await this.withStorageLock(async () => {
+        await this.storage.putOp(currentOp);
+      });
       const handler = this.registry[op.opType] as OpHandler<OpType>;
       const context: OpExecuteContext = {
         listOps: () => this.storage.listOps(),
@@ -587,6 +611,7 @@ export class DurableOpQueue {
     const retryCount = op.retryCount + 1;
     if (
       isNetworkFailure(error) ||
+      isOpInFlight(error) ||
       (isRetryableServerError(error) && retryCount <= this.maxServerRetries)
     ) {
       const pending = { ...op, status: 'pending' as const, retryCount };
@@ -604,6 +629,15 @@ export class DurableOpQueue {
 
     const pending = { ...op, status: 'pending' as const, retryCount };
     await this.storage.putOp(pending);
+  }
+
+  private withStorageLock<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.storageChain.then(work, work);
+    this.storageChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private dependenciesFor(op: QueuedOp): string[] {
@@ -683,7 +717,7 @@ export class DurableOpQueue {
 export function createDefaultOpRegistry(): OpRegistry {
   return {
     'msg.send': {
-      execute: async (api, payload, _op, context) => {
+      execute: async (api, payload, op, context) => {
         let attachments = payload.attachments?.map((a) => a.id);
         if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
           const ops = await context.listOps();
@@ -702,6 +736,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           clientMsgId: payload.clientMsgId,
           threadRootEventId: payload.threadRootEventId,
           attachments,
+          opId: op.opId,
         });
       },
       dependsOn: (payload) =>
