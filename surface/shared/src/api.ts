@@ -182,6 +182,9 @@ export function createApi(opts: ApiOptions = {}) {
       threadRootEventId?: number;
       /** Uploaded file ids to attach. */
       attachments?: string[];
+      /** Present for voice messages: the audio is `attachments[0]`. The server
+       * stores this on `payload.voice` and enqueues async transcription. */
+      voice?: { durationMs: number; waveform?: number[] };
       opId?: string;
     }) =>
       req<{ event: WireEvent }>('/api/messages', {
