@@ -80,6 +80,37 @@ export function MicIcon(props: IconProps) {
   );
 }
 
+export function MicOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m2 2 20 20" />
+      <path d="M9 9v3a3 3 0 0 0 5.1 2.1" />
+      <path d="M15 9.3V5a3 3 0 0 0-5.1-2.1" />
+      <path d="M19 10v2a7 7 0 0 1-.7 3" />
+      <path d="M5 10v2a7 7 0 0 0 9.7 6.5" />
+      <path d="M12 19v3" />
+    </Icon>
+  );
+}
+
+export function PhoneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.7 2.6a2 2 0 0 1-.4 2.1L8.1 9.7a16 16 0 0 0 6.2 6.2l1.3-1.3a2 2 0 0 1 2.1-.4c.8.3 1.7.6 2.6.7a2 2 0 0 1 1.7 2Z" />
+    </Icon>
+  );
+}
+
+export function PhoneOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m2 2 20 20" />
+      <path d="M5.8 5.8A19.5 19.5 0 0 0 4.2 12a19.5 19.5 0 0 0 6 6 19.8 19.8 0 0 0 8.6 3.1 2 2 0 0 0 2.2-2v-3a2 2 0 0 0-1.7-2c-.9-.1-1.8-.4-2.6-.7" />
+      <path d="M9.4 8.4a2 2 0 0 0 .4-2.1c-.3-.8-.6-1.7-.7-2.6A2 2 0 0 0 7.1 2h-3a2 2 0 0 0-2 2.2 19.8 19.8 0 0 0 .7 3.1" />
+    </Icon>
+  );
+}
+
 export function PlayIcon(props: IconProps) {
   return (
     <Icon {...props}>
