@@ -35,7 +35,7 @@ import {
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
-import { useWs } from './useCallWs';
+import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { Composer } from './components/Composer';
