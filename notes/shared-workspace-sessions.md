@@ -141,6 +141,71 @@ Visual direction (after a hard "what would Jobs cut" pass):
 These are presentation decisions for the eventual real UI; the data/seam
 decisions below (mirror, anchors, ops, seat model) are unchanged.
 
+## Agent runtime & work-product affordances (round 5, 2026-06-13)
+
+**Two clocks, not one.** A "session" is really two decoupled lifecycles: the
+**conversation/thread** (durable, mirrored, resumable forever) and the
+**environment/sandbox** (compute — shorter-lived, costly). The UI must show the
+environment's state as distinct from the agent's execution state. The header
+carries an **env chip** (warm / sleeping / expired).
+
+**A session = three durable records + two restorable/ephemeral layers:**
+- Transcript (raw-frame mirror) — *what happened*.
+- **Artifact ledger** (auto-mirrored to blob, typed, per turn/driver) — *what it
+  made*.
+- **Side-effect audit** — *what it changed in the world*.
+- Environment snapshot — *restorable working state* (kept until archive).
+- Live state (preview, processes, ports) — dies on sleep.
+The conversation outlives all ephemeral layers: live state dies first (sleep),
+the snapshot is held until the session is archived, but transcript + artifacts +
+audit persist forever. Expired env → **record-only** (read-only composer, "rebuild
+to continue"); everything it produced is still there.
+
+**Decisions (Gary, round 5):**
+- **Environment lifecycle: warm → snapshot → sleep**, snapshot **kept until the
+  session is explicitly archived** (matches resumable-forever; storage cost
+  accepted). Sending a steer to a sleeping session wakes + rebuilds (~cold start).
+- **Assets: auto-mirror everything** the agent writes (outputs area) to our blob
+  store (S3 already in surface), tracked per session/turn/driver. Needs a sane
+  "what counts as an artifact" scope (ignore node_modules/.git/build caches).
+- **Code output: generic artifact substrate + repo-aware detector.** Every
+  output is a typed artifact `{type, turn, driver, blobRef, detectedAs}`; most
+  are generic (image/file/log/data/url). A detector recognizes when changes
+  constitute a code change against a git repo and **auto-surfaces them as a
+  first-class Changes artifact** (diff + branch + optional PR); otherwise generic.
+  No upfront repo config. Promotion ("track as repo change") bridges the two.
+- **Side effects: classify + gate the dangerous ones.** Irreversible classes
+  (open PR, send email, deploy, prod writes) require approval before execution —
+  reuse the HITL question flow; everything logged to the audit. Driver approves.
+  The gate must be **actionable where it's shown** (Approve/Deny on the blocked
+  audit row, the inline side-effect card, and near the transcript's "waiting for
+  approval" line) — a gate with no button is broken. Approving propagates across
+  all three surfaces (proto demonstrates this live).
+
+**Color principle for the work surfaces:** the transcript stays monochrome +
+one blue (live, send). The *work-product* surfaces earn restrained **semantic**
+color because it carries state, not decoration: diff add/del green/red, env
+warm/expired, approved(green)/needs-approval(amber)/denied badges. Artifact
+thumbnails use monochrome type labels (PNG/HTML/CSV), not colorful emoji.
+
+**Four work-product surfaces to account for** (all wanted): Changes/diff ·
+Artifacts gallery · Side-effect audit · Live preview + environment status.
+
+**Information architecture — UNDECIDED, prototyped for feel-test.**
+`notes/protos/session-surfaces.html` mocks four arrangements over the same data
+(changes/artifacts/side-effects/preview) with a warm/sleeping/expired env toggle:
+- *Inline + expand* — work products as blocks in the transcript → drawer.
+- *Tabbed* — top tabs switch the whole view per surface (full width; loses
+  transcript context).
+- *Two-pane* — transcript + persistent workspace panel (IDE-like; cramps wide
+  diffs, less calm).
+- *Summary strip* — clean transcript + a glanceable stat strip → drill into a
+  drawer (most minimal at rest).
+Claude's lean (not yet ratified): **summary-strip resting + a *tabbed* drawer**
+for drill-in, **two-pane as an optional "workspace mode"**, inline cards reserved
+for the gated side-effect moment (a decision, not a reference). Awaiting Gary's
+verdict after using the proto.
+
 ## Annotation/navigation rail UX (round 3, ChatGPT-validated)
 
 ChatGPT Pro ships nearly this exact pattern (Gary's screenshots, 2026-06-13):
