@@ -201,6 +201,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
         : ev.type === 'session.question_resolved'
           ? 'question_resolved'
           : undefined;
+  const voice = parseVoice(payload.voice);
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
@@ -211,7 +212,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     deleted: payload.deleted === true,
     reactions: parseReactions(payload.reactions),
     attachments: parseAttachments(payload.attachments),
-    ...(parseVoice(payload.voice) !== undefined ? { voice: parseVoice(payload.voice) } : {}),
+    ...(voice !== undefined ? { voice } : {}),
     author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,

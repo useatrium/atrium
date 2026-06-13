@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS transcripts (
   event_id     bigint REFERENCES events(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   channel_id   uuid REFERENCES channels(id) ON DELETE CASCADE,
-  status       text NOT NULL DEFAULT 'pending',  -- pending | processing | done | failed
+  status       text NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'processing', 'done', 'failed')),
   text         text,
   lang         text,
   segments     jsonb,

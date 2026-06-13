@@ -94,6 +94,9 @@ export function VoiceRecorder({
 
   useEffect(() => {
     return () => {
+      // Unmount mid-recording: mark the in-flight take cancelled so onstop takes
+      // the cleanup branch (no dangling object URL) and release mic + audio graph.
+      cancelledRef.current = true;
       stopTimers();
       stopStream();
       if (previewUrl) URL.revokeObjectURL(previewUrl);
