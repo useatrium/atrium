@@ -8,9 +8,10 @@ import {
   type ReactNode,
 } from 'react';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
-import type { AttachmentMeta, AttachmentRef, UploadPayload } from '@atrium/surface-client';
+import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
 import { createDraftChangeDebouncer, randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
+import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
 
 interface PendingFile {
   key: string;
@@ -42,7 +43,12 @@ export function Composer({
   onDraftTouched,
 }: {
   placeholder: string;
-  onSend: (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
+  onSend: (
+    text: string,
+    attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
+    voice?: Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>,
+  ) => void;
   queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   /** Fired while the user types non-empty text (throttle at the call site). */
   onTyping?: () => void;
@@ -69,6 +75,7 @@ export function Composer({
   const [agentNeedsTask, setAgentNeedsTask] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const draftWriter = useMemo(
@@ -202,6 +209,39 @@ export function Composer({
     if (ref.current) ref.current.style.height = 'auto';
   };
 
+  const sendVoice = async (recorded: RecordedVoice) => {
+    if (disabled || !queueUpload) throw new Error('upload queue unavailable');
+    const uploadKey = randomId();
+    const localUri = URL.createObjectURL(recorded.blob);
+    // Strip codec params (e.g. "audio/webm;codecs=opus") — /api/uploads only
+    // accepts bare type/subtype and otherwise stores octet-stream.
+    const contentType = recorded.blob.type.split(';')[0] || 'audio/webm';
+    try {
+      const { fileId } = await queueUpload({
+        uploadKey,
+        localUri,
+        filename: recorded.filename,
+        contentType,
+        size: recorded.blob.size,
+      });
+      onSend(
+        '',
+        [
+          {
+            id: fileId,
+            filename: recorded.filename,
+            contentType,
+            size: recorded.blob.size,
+          },
+        ],
+        [{ uploadKey }],
+        { fileId, durationMs: recorded.durationMs, waveform: recorded.waveform },
+      );
+    } finally {
+      URL.revokeObjectURL(localUri);
+    }
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -290,43 +330,54 @@ export function Composer({
             />
           </>
         )}
-        <textarea
-          ref={ref}
-          rows={1}
-          value={text}
-          autoFocus={autoFocus}
-          disabled={disabled}
-          placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
-          aria-label="Message input"
-          onChange={(e) => {
-            setText(e.target.value);
-            if (draftKey) {
-              onDraftTouched?.(draftKey);
-              draftWriter.schedule(draftKey, e.target.value);
-            }
-            setAgentNeedsTask(false);
-            if (e.target.value.trim()) onTyping?.();
-            e.target.style.height = 'auto';
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-          }}
-          onKeyDown={onKeyDown}
-          onPaste={(e) => {
-            if (!allowAttachments || disabled) return;
-            if (e.clipboardData?.files?.length) {
-              e.preventDefault();
-              addFiles(e.clipboardData.files);
-            }
-          }}
-          className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
-        />
-        <button
-          onClick={send}
-          disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
-          title={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : undefined}
-          className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
-        >
-          Send
-        </button>
+        {allowAttachments && !disabled && (
+          <VoiceRecorder
+            disabled={disabled || uploading || files.length > 0 || text.trim().length > 0}
+            onSend={sendVoice}
+            onActiveChange={setVoiceActive}
+          />
+        )}
+        {!voiceActive && (
+          <>
+            <textarea
+              ref={ref}
+              rows={1}
+              value={text}
+              autoFocus={autoFocus}
+              disabled={disabled}
+              placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
+              aria-label="Message input"
+              onChange={(e) => {
+                setText(e.target.value);
+                if (draftKey) {
+                  onDraftTouched?.(draftKey);
+                  draftWriter.schedule(draftKey, e.target.value);
+                }
+                setAgentNeedsTask(false);
+                if (e.target.value.trim()) onTyping?.();
+                e.target.style.height = 'auto';
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+              }}
+              onKeyDown={onKeyDown}
+              onPaste={(e) => {
+                if (!allowAttachments || disabled) return;
+                if (e.clipboardData?.files?.length) {
+                  e.preventDefault();
+                  addFiles(e.clipboardData.files);
+                }
+              }}
+              className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
+            />
+            <button
+              onClick={send}
+              disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
+              title={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : undefined}
+              className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+            >
+              Send
+            </button>
+          </>
+        )}
         </div>
       </div>
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">

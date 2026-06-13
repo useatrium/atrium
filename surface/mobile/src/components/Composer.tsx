@@ -15,7 +15,16 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+  type RecordingOptions,
+} from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -28,6 +37,12 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { lightImpactHaptic } from '../lib/haptics';
+import {
+  downsamplePeaks,
+  formatVoiceDuration,
+  normalizeMetering,
+  type VoiceSendMeta,
+} from '../lib/voice';
 
 interface PendingAttachment {
   key: string;
@@ -38,7 +53,12 @@ interface PendingAttachment {
 
 export interface ComposerProps {
   placeholder: string;
-  onSend: (text: string, attachments: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
+  onSend: (
+    text: string,
+    attachments: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
+    voice?: VoiceSendMeta,
+  ) => void;
   onTyping: () => void;
   /** Non-null puts the composer into edit mode for that message text. */
   editingText?: string | null;
@@ -62,6 +82,11 @@ export interface ComposerProps {
   }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
 }
 
+const VOICE_RECORDING_OPTIONS: RecordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
+  isMeteringEnabled: true,
+};
+
 export function Composer({
   placeholder,
   onSend,
@@ -84,7 +109,12 @@ export function Composer({
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
+  const recorderState = useAudioRecorderState(audioRecorder, 125);
   const inputRef = useRef<TextInput>(null);
+  const meterSamplesRef = useRef<number[]>([]);
   const editing = editingText != null;
   const draftWriter = useMemo(
     () =>
@@ -236,6 +266,12 @@ export function Composer({
     if (mentionMatch) onMentionTrigger?.();
   }, [mentionMatch, onMentionTrigger]);
 
+  useEffect(() => {
+    if (!recorderState.isRecording) return;
+    const peak = normalizeMetering(recorderState.metering);
+    if (peak != null) meterSamplesRef.current.push(peak);
+  }, [recorderState.isRecording, recorderState.metering]);
+
   const insertMention = (value: string) => {
     if (!mentionMatch) return;
     const next = `${text.slice(0, mentionMatch.start)}@${value} `;
@@ -265,6 +301,92 @@ export function Composer({
     setText('');
     setAttachments([]);
   };
+
+  const startRecording = async () => {
+    if (!uploadFile || editing || recordingBusy || uploading) return;
+    try {
+      setRecordingError(null);
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Microphone access needed', 'Enable microphone access to send voice messages.');
+        return;
+      }
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+      });
+      meterSamplesRef.current = [];
+      await audioRecorder.prepareToRecordAsync(VOICE_RECORDING_OPTIONS);
+      audioRecorder.record();
+      lightImpactHaptic();
+    } catch (err) {
+      console.warn('failed to start recording', err);
+      setRecordingError('Could not start recording.');
+      Alert.alert('Voice message', 'Could not start recording.');
+      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+    }
+  };
+
+  const finishRecording = async (sendVoice: boolean) => {
+    if (recordingBusy) return;
+    setRecordingBusy(true);
+    try {
+      await audioRecorder.stop();
+      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+      const status = audioRecorder.getStatus();
+      const uri = audioRecorder.uri ?? status.url;
+      const durationMs = Math.max(
+        status.durationMillis,
+        Math.round(audioRecorder.currentTime * 1000),
+      );
+      if (!sendVoice) {
+        if (uri) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        return;
+      }
+      if (!uri || durationMs < 300) {
+        if (uri) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        Alert.alert('Voice message', 'Recording was too short to send.');
+        return;
+      }
+      if (!uploadFile) return;
+      const info = await FileSystem.getInfoAsync(uri);
+      if (!info.exists) throw new Error('recording file is unavailable');
+      const contentType = Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4';
+      const extension = Platform.OS === 'web' ? 'webm' : 'm4a';
+      const filename = `voice-${Date.now()}.${extension}`;
+      const meta = await uploadFile({
+        uri,
+        name: filename,
+        mimeType: contentType,
+        size: info.size ?? 0,
+      });
+      await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      const waveform = downsamplePeaks(meterSamplesRef.current);
+      onSend(
+        '',
+        [
+          {
+            id: meta.id,
+            filename: meta.filename,
+            contentType: meta.contentType,
+            size: meta.size,
+          },
+        ],
+        [{ uploadKey: meta.uploadKey }],
+        { durationMs, ...(waveform ? { waveform } : {}) },
+      );
+      lightImpactHaptic();
+    } catch (err) {
+      console.warn('failed to finish recording', err);
+      setRecordingError('Could not send voice message.');
+      Alert.alert('Voice message', 'Could not send the recording.');
+    } finally {
+      meterSamplesRef.current = [];
+      setRecordingBusy(false);
+    }
+  };
+
+  const recording = recorderState.isRecording;
 
   return (
     <View
@@ -427,6 +549,80 @@ export function Composer({
         </View>
       )}
 
+      {(recording || recordingBusy || recordingError) && !editing && (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: space.sm,
+            paddingHorizontal: space.sm,
+            paddingVertical: space.xs,
+            borderRadius: radius.md,
+            backgroundColor: recording ? colors.dangerSurface : colors.bgElevated,
+            borderWidth: 1,
+            borderColor: recording ? colors.dangerBorder : colors.border,
+          }}
+        >
+          {recordingBusy ? (
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          ) : (
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: recording ? colors.danger : colors.textMuted,
+              }}
+            />
+          )}
+          <Text
+            style={{
+              flex: 1,
+              color: recording ? colors.text : colors.textMuted,
+              fontSize: font.sm,
+              fontVariant: ['tabular-nums'],
+            }}
+          >
+            {recording
+              ? `Recording ${formatVoiceDuration(recorderState.durationMillis)}`
+              : recordingBusy
+                ? 'Finishing voice message...'
+                : recordingError}
+          </Text>
+          {recording && (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cancel voice recording"
+                onPress={() => void finishRecording(false)}
+                hitSlop={8}
+                style={{ minHeight: 36, justifyContent: 'center' }}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
+                  Cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Stop and send voice recording"
+                onPress={() => void finishRecording(true)}
+                hitSlop={8}
+                style={{
+                  minWidth: 36,
+                  minHeight: 36,
+                  borderRadius: 18,
+                  backgroundColor: colors.danger,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="stop" size={16} color="#ffffff" />
+              </Pressable>
+            </>
+          )}
+        </View>
+      )}
+
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
         {allowAttachments && !editing && (
           <Pressable
@@ -445,6 +641,40 @@ export function Composer({
             }}
           >
             <Ionicons name="attach-outline" size={21} color={colors.textSecondary} />
+          </Pressable>
+        )}
+        {allowAttachments && !editing && uploadFile && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={recording ? 'Stop and send voice message' : 'Record voice message'}
+            accessibilityState={{ disabled: recordingBusy || uploading }}
+            onPress={() => {
+              if (recording) void finishRecording(true);
+              else void startRecording();
+            }}
+            disabled={recordingBusy || uploading}
+            hitSlop={8}
+            style={{
+              minWidth: 44,
+              minHeight: 44,
+              borderRadius: 22,
+              backgroundColor: recording
+                ? colors.dangerSurface
+                : recordingBusy || uploading
+                  ? colors.bgElevated
+                  : colors.bgElevated,
+              borderWidth: recording ? 1 : 0,
+              borderColor: recording ? colors.dangerBorder : 'transparent',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 2,
+            }}
+          >
+            <Ionicons
+              name={recording ? 'stop' : 'mic-outline'}
+              size={21}
+              color={recording ? colors.danger : colors.textSecondary}
+            />
           </Pressable>
         )}
         <TextInput
@@ -479,9 +709,11 @@ export function Composer({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={editing ? 'Save edit' : 'Send message'}
-          accessibilityState={{ disabled: editing ? text.trim().length === 0 : !canSend }}
+          accessibilityState={{
+            disabled: recording || recordingBusy || (editing ? text.trim().length === 0 : !canSend),
+          }}
           onPress={submit}
-          disabled={editing ? text.trim().length === 0 : !canSend}
+          disabled={recording || recordingBusy || (editing ? text.trim().length === 0 : !canSend)}
           hitSlop={8}
           style={{
             minWidth: 44,

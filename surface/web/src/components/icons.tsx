@@ -70,6 +70,61 @@ export function PaperclipIcon(props: IconProps) {
   );
 }
 
+export function MicIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <path d="M12 19v3" />
+    </Icon>
+  );
+}
+
+export function PlayIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m8 5 11 7-11 7V5Z" />
+    </Icon>
+  );
+}
+
+export function PauseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 4v16" />
+      <path d="M14 4v16" />
+    </Icon>
+  );
+}
+
+export function SquareIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect width="14" height="14" x="5" y="5" rx="2" />
+    </Icon>
+  );
+}
+
+export function SendIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m22 2-7 20-4-9-9-4Z" />
+      <path d="M22 2 11 13" />
+    </Icon>
+  );
+}
+
+export function RefreshCwIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 12a9 9 0 0 1-15.6 6.1L3 16" />
+      <path d="M3 21v-5h5" />
+      <path d="M3 12a9 9 0 0 1 15.6-6.1L21 8" />
+      <path d="M16 8h5V3" />
+    </Icon>
+  );
+}
+
 export function SmilePlusIcon(props: IconProps) {
   return (
     <Icon {...props}>

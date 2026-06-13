@@ -1,4 +1,7 @@
 services:
+  # Voice STT is disabled by default. To test real local transcription, run the
+  # server with STT_PROVIDER=whispercpp plus WHISPER_MODEL_PATH/WHISPER_BIN
+  # after installing ffmpeg and whisper.cpp on the server host/container.
   db:
     image: postgres:16
     container_name: atrium-surface-db
