@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Atrium · session — minimal</title>
+<style>
+  :root{
+    --bg:#fff; --ink:#1d1d1f; --ink-2:#4a4a52; --ink-3:#86868b; --ink-4:#b0b0b6;
+    --line:#f1f1f2; --line-2:#e4e4e6; --blue:#0071e3; --blue-ink:#0a5fc0;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#ececee;color:var(--ink);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}
+  .hidden{display:none!important}
+
+  /* whisper-quiet proto controls */
+  .controls{position:sticky;top:0;z-index:50;display:flex;gap:16px;align-items:center;
+    padding:8px 18px;background:rgba(255,255,255,.8);backdrop-filter:blur(8px);border-bottom:1px solid var(--line-2)}
+  .grp{display:flex;align-items:center;gap:6px}
+  .grp .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-4)}
+  .seg{display:flex;gap:1px}
+  .seg button{padding:3px 10px;border-radius:7px;color:var(--ink-3);font-size:12px}
+  .seg button.on{color:var(--ink);font-weight:600}
+  .seg button:not(.on):hover{color:var(--ink-2)}
+  .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4)}
+
+  .stage{display:flex;justify-content:center;padding:26px}
+  .frame{width:min(1080px,100%);height:720px;background:var(--bg);border-radius:16px;overflow:hidden;
+    display:flex;box-shadow:0 18px 50px -20px rgba(20,20,40,.3)}
+  .frame.mobile{width:380px;border-radius:30px;flex-direction:column;position:relative}
+
+  /* left nav — barely there */
+  .nav{width:50px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;
+    align-items:center;padding:12px 0;gap:9px}
+  .logo{width:26px;height:26px;border-radius:7px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
+  .nv{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-4);font-size:14px}
+  .nv.on{color:var(--ink)}
+
+  /* channel = the secondary context column (you're still in the room) */
+  .channel{width:340px;flex-shrink:0;min-width:0;border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .ch-h{height:52px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 18px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
+  .ch-h .cnt{font-weight:400;color:var(--ink-4);font-size:12px}
+  .ch-b{flex:1;overflow:auto;padding:6px 0;display:flex;flex-direction:column;justify-content:flex-end}
+  .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
+  .cmsg{padding:6px 20px}
+  .cmsg .cn{font-weight:600;color:var(--ink)}.cmsg .cn .tm{font-weight:400;color:var(--ink-4);font-size:11.5px;margin-left:6px}
+  .cmsg .cb{color:var(--ink-2)}
+  .scard{margin:10px 20px;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;cursor:pointer}
+  .scard:hover{border-color:var(--ink-4)}
+  .scard .t{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ink)}
+  .scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
+  .live{width:7px;height:7px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 0 rgba(0,113,227,.5);animation:pulse 2s infinite}
+  @keyframes pulse{70%{box-shadow:0 0 0 6px rgba(0,113,227,0)}100%{box-shadow:0 0 0 0 rgba(0,113,227,0)}}
+
+  /* the session — a reading column */
+  .session{display:flex;min-width:0;height:100%;position:relative}
+  .session.peek{flex:1;min-width:0}
+  .session.focus{flex:1}
+  .sess-main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+  .sess-h{height:52px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 22px;border-bottom:1px solid var(--line)}
+  .sess-h .ti{font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .lv{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);flex-shrink:0}
+  .sess-h .sp{margin-left:auto}
+  .sess-h .ib{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center}
+  .sess-h .ib:hover{background:var(--line);color:var(--ink-2)}
+
+  .read{flex:1;overflow:auto}
+  .col{max-width:600px;margin:0 auto;padding:26px 26px 8px}
+  .peek .col{padding:22px 22px 8px}
+
+  .beat{margin-top:22px}.tblk:first-child>.beat:first-child{margin-top:2px}
+  .beat .nm{font-weight:600;color:var(--ink);margin-bottom:1px}
+  .beat .say{color:var(--ink)}
+  .resp{color:var(--ink-2);margin-top:9px;padding-left:15px;position:relative}
+  .resp.tool{margin-top:7px}
+  .tg{color:var(--ink-3);text-align:left}
+  .tg:hover{color:var(--ink-2)}
+  .tg .err{color:#c0392b}.tg .ok{color:var(--ink-3)}
+  .tout{margin-top:6px;color:var(--ink-3);white-space:pre-wrap;padding:9px 12px;background:#fafafa;border-radius:8px}
+  .live-line{display:flex;align-items:center;gap:8px;color:var(--ink-3);margin-top:9px;padding-left:15px}
+  .ld{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 2s infinite}
+
+  /* margin comment dot — hidden weight until used */
+  .cdot{position:absolute;right:-2px;top:2px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;
+    font-size:10px;color:var(--ink-3);cursor:pointer}
+  .cdot:hover{color:var(--ink)}
+  .cdot .b{width:6px;height:6px;border-radius:50%;background:var(--ink-4)}
+  .note{margin:8px 0 2px 15px;padding-left:12px;border-left:2px solid var(--line-2);color:var(--ink-2);font-size:13px}
+  .note .nn{font-weight:600;color:var(--ink)}
+  .note .rz{display:block;margin-top:4px;font-size:11px;color:var(--ink-4)}
+  .note .rz:hover{color:var(--ink-2)}
+  .addc{opacity:0;transition:.12s;position:absolute;right:-2px;top:2px;width:18px;height:18px;border-radius:6px;
+    display:grid;place-items:center;font-size:10px;color:var(--ink-4)}
+  .resp:hover .addc{opacity:1}.addc:hover{color:var(--ink-2)}
+
+  /* question — minimal */
+  .ask{margin-top:20px}
+  .ask .q{color:var(--ink)}
+  .ask .opts{display:flex;gap:8px;margin-top:9px}
+  .ask .opt{padding:5px 14px;border:1px solid var(--line-2);border-radius:9px;font-size:13px;color:var(--ink)}
+  .ask .opt:hover{border-color:var(--ink-3)}
+  .ask .opt.lead{border-color:var(--ink);font-weight:500}
+  .ask .pr{margin-top:8px;font-size:12px;color:var(--ink-3)}.ask .pr b{color:var(--ink-2)}
+
+  /* composer */
+  .comp{flex-shrink:0;border-top:1px solid var(--line);padding:12px 22px 14px}
+  .comp-in{max-width:600px;margin:0 auto}
+  .queue{border:1px solid var(--line-2);border-radius:11px;padding:3px;margin-bottom:10px}
+  .qhead{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:6px 9px 4px}
+  .sugg{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-2);padding:5px 9px;border-radius:8px}
+  .sugg:hover{background:var(--fill)}
+  .sugg b{color:var(--ink);font-weight:600;flex-shrink:0}
+  .sugg .sq{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-3)}
+  .sugg .a{font-size:11px;font-weight:600;color:var(--ink);border:1px solid var(--line-2);border-radius:6px;padding:2px 10px;flex-shrink:0}
+  .sugg .a:hover{border-color:var(--ink-3);background:var(--bg)}
+  .sugg .x{font-size:12px;color:var(--ink-4);flex-shrink:0}.sugg .x:hover{color:var(--ink-2)}
+  .field{display:flex;align-items:center;gap:10px;border:1px solid var(--line-2);border-radius:13px;padding:9px 14px}
+  .field:focus-within{border-color:var(--ink-3)}
+  .field input{flex:1;border:none;outline:none;background:none;color:var(--ink);font:inherit}
+  .field input::placeholder{color:var(--ink-4)}
+  .field .go{width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:14px;flex-shrink:0}
+  .field .plus{color:var(--ink-4);font-size:17px;flex-shrink:0}
+  /* the session composer is addressed to the agent — a dark target chip makes that unmistakable */
+  .field .to{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;
+    background:var(--ink);color:#fff;border-radius:6px;padding:3px 7px;letter-spacing:.01em}
+  .field.steer{border-color:var(--ink-3)}
+  .comp .by{font-size:11px;color:var(--ink-4);margin-top:7px;text-align:right}
+
+  /* diverse transcript elements */
+  .resp .tg .dim{color:var(--ink-4)}
+  .plan{margin-top:9px;padding-left:15px}
+  .plan .pl{display:flex;align-items:flex-start;gap:9px;color:var(--ink-2);padding:2px 0}
+  .pc{width:15px;height:15px;flex-shrink:0;border:1.5px solid var(--line-2);border-radius:5px;display:grid;place-items:center;font-size:9px;color:#fff;margin-top:2px}
+  .pc.on{background:var(--ink);border-color:var(--ink)}
+  .diff{margin-top:7px;border:1px solid var(--line-2);border-radius:8px;overflow:hidden}
+  .diff .dl{padding:1px 11px;white-space:pre-wrap;color:var(--ink-2)}
+  .diff .dl.add{background:#f1faf4;color:#1c7a45}
+  .diff .dl.del{background:#fdf2f2;color:#b23636}
+  .art{display:inline-flex;align-items:center;gap:11px;margin-top:8px;border:1px solid var(--line-2);border-radius:10px;padding:8px 11px;color:var(--ink-3);position:relative}
+  .art .thumb{width:54px;height:34px;border-radius:6px;border:1px solid var(--line-2);
+    background:linear-gradient(135deg,#ededf1,#f7f7f9)}
+  .seatline{display:flex;align-items:center;gap:12px;margin:22px 0 4px;color:var(--ink-4);font-size:11.5px;letter-spacing:.01em}
+  .seatline::before,.seatline::after{content:"";height:1px;background:var(--line);flex:1}
+  .cdot.res .b{background:transparent;border:1px solid var(--ink-4)}
+  .note.res{opacity:.5}
+
+  /* contents = a handle floating at the right edge, vertically centered; pops out leftward on hover */
+  .toc{position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:30}
+  /* ChatGPT-style: bare stacked tick-lines, one per turn (capped), no border/pill */
+  .toc-lines{display:flex;flex-direction:column;align-items:flex-end;gap:5px;padding:8px 6px;cursor:pointer}
+  .tl{width:14px;height:2px;border-radius:2px;background:var(--ink-4);opacity:.5;transition:.12s}
+  .toc-lines:hover .tl,.toc.open .tl{opacity:.85}
+  .tl.on{background:var(--ink);opacity:1;width:17px}
+  .tl.run{background:var(--blue);opacity:1}
+  .toc-menu{position:absolute;right:100%;top:50%;padding-right:9px;width:262px;opacity:0;pointer-events:none;
+    transform:translateY(-50%) translateX(10px);transition:.16s;z-index:40}
+  .toc:hover .toc-menu,.toc.open .toc-menu{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0)}
+  .toc-card{background:#fff;border:1px solid var(--line-2);border-radius:12px;
+    box-shadow:0 16px 44px -16px rgba(20,20,40,.32);padding:6px;max-height:360px;overflow:auto}
+  .toc-ttl{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:4px 9px 3px}
+  .frow{padding:8px 10px;border-radius:9px;cursor:pointer}
+  .frow:hover{background:#f6f6f7}.frow.sel{background:#f0f0f1}
+  .frow .f1{display:flex;align-items:center;gap:8px}
+  .frow .fn{font-size:10px;color:var(--ink-4);width:16px}
+  .frow .fl{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+  .frow .fm{font-size:11px;color:var(--ink-3);flex-shrink:0}
+
+  /* mobile */
+  .m-h{height:52px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line)}
+  .m-h .bk{color:var(--ink-3);font-size:18px}
+  .m-h .ti{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .m-h .ix{color:var(--ink-3);font-size:16px}
+  .m-b{flex:1;overflow:auto}
+  .m-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
+  .scrim{position:absolute;inset:0;background:rgba(20,20,30,.3);opacity:0;pointer-events:none;transition:.22s;z-index:18}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:20px 20px 0 0;transform:translateY(100%);
+    transition:transform .24s cubic-bezier(.2,.8,.2,1);z-index:19;max-height:68%;display:flex;flex-direction:column;
+    box-shadow:0 -14px 36px -16px rgba(20,20,40,.3)}
+  .sheet.open{transform:translateY(0)}
+  .sheet .grab{width:34px;height:4px;border-radius:3px;background:var(--line-2);margin:9px auto 6px}
+  .sheet .sh{padding:2px 18px 10px;font-weight:600;display:flex;align-items:center}.sheet .sh .x{margin-left:auto;color:var(--ink-3)}
+  .sheet .sb{overflow:auto;padding:0 10px 22px}
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <div class="grp"><span class="lbl">Device</span>
+    <div class="seg" id="seg-device"><button data-v="desktop" class="on">Desktop</button><button data-v="mobile">Mobile</button></div></div>
+  <div class="grp"><span class="lbl">View</span>
+    <div class="seg" id="seg-mode"><button data-v="focus" class="on">Focus</button><button data-v="peek">In channel</button></div></div>
+  <div class="grp"><span class="lbl">You</span>
+    <div class="seg" id="seg-role"><button data-v="driver" class="on">Driver</button><button data-v="spectator">Spectator</button></div></div>
+  <div class="hint" id="hint"></div>
+</div>
+
+<div class="stage" id="stage"></div>
+
+<script>
+const SESSION={title:"migrate sessions → driver set",driver:"Mara",
+  turns:[
+    {n:1,who:"Mara",lead:"plan the migration",
+     items:[{k:"steer",who:"Mara",text:"We need sessions to support more than one driver. Plan the migration before touching anything."},
+            {k:"reason",sec:6,text:"The sessions table has a single driver_id uuid. Moving to a set means either a driver_ids[] column or a join table. A column is simpler and keeps the row self-contained; backfill from driver_id, keep it during transition, drop later."},
+            {k:"plan",steps:[{t:"add driver_ids uuid[] column",done:true},{t:"backfill from driver_id",done:true},{t:"update seat grant/take to set semantics",done:false},{t:"reflect multiple drivers in the pane UI",done:false}]}]},
+    {n:2,who:"Mara",lead:"add the column",
+     items:[{k:"steer",who:"Mara",text:"Add the column and the migration."},
+            {k:"tool",cmd:"sed -n 1,40p 002_phase2_sessions.sql",out:"create table sessions (\n  id uuid primary key,\n  driver_id uuid not null,\n  ...\n);"},
+            {k:"file",path:"migrations/003_driver_set.sql",add:18,del:0,diff:[["add","+ alter table sessions add column driver_ids uuid[];"],["add","+ update sessions set driver_ids = array[driver_id];"]]},
+            {k:"text",text:"Added driver_ids uuid[] with a backfill from driver_id. Kept driver_id in place for now."}]},
+    {n:3,who:"Mara",lead:"check the down-migration",
+     items:[{k:"steer",who:"Mara",text:"Check the down-migration too — make sure it reverses cleanly."},
+            {k:"tool",cmd:"pnpm migrate:down",err:true,out:"2 tests failed\n  seatHandoff › grants seat\n  tenancy › scopes cursors",
+             notes:[{by:"Alex",text:"those 2 are pre-existing on master — don't let it chase them",resolved:false}]},
+            {k:"text",text:"The down migration drops driver_ids cleanly; the two failures look unrelated to this change."}]},
+    {n:"s1",who:"system",lead:"",seat:"Alex took the seat"},
+    {n:4,who:"Alex",lead:"add a NOT NULL default",
+     items:[{k:"steer",who:"Alex",text:"Right, ignore those. Add a NOT NULL default so the column is never null after backfill."},
+            {k:"file",path:"migrations/003_driver_set.sql",add:4,del:1,diff:[["del","- add column driver_ids uuid[];"],["add","+ add column driver_ids uuid[] not null default '{}';"]],
+             notes:[{by:"Sam",text:"defaulting to '{}' means a row can momentarily have zero drivers — fine?",resolved:true}]},
+            {k:"text",text:"Done. Backfill runs before the NOT NULL takes effect, so no row is ever empty in practice."}]},
+    {n:5,who:"Alex",lead:"run the full suite",
+     items:[{k:"steer",who:"Alex",text:"Run the whole suite, not just the migration tests."},
+            {k:"tool",cmd:"pnpm test",out:"312 passed · 0 failed (41.2s)"},
+            {k:"text",text:"All 312 green. The two earlier failures were indeed pre-existing and unrelated."}]},
+    {n:6,who:"agent",lead:"keep driver_id?",ask:true,
+     items:[{k:"ask",q:"Keep driver_id for back-compat, or drop it now that driver_ids is backfilled and NOT NULL?",opts:["Keep both","Drop driver_id"],prop:{by:"Alex",pick:"Keep both"}}]},
+    {n:"s2",who:"system",lead:"",seat:"Mara took the seat back"},
+    {n:7,who:"Mara",lead:"show multiple drivers in the pane",
+     items:[{k:"steer",who:"Mara",text:"Update the session header to show all current drivers, not just one chip."},
+            {k:"file",path:"surface/web/src/sessions/SessionPane.tsx",add:19,del:7,diff:[["del","- driver: {driverName}"],["add","+ {drivers.map(d => <Chip key={d.id}>{d.name}</Chip>)}"]]},
+            {k:"text",text:"Header now renders a chip per active driver and falls back to “unseated” when the set is empty."}]},
+    {n:8,who:"Mara",lead:"screenshot the result",
+     items:[{k:"steer",who:"Mara",text:"Screenshot the new header so the team can eyeball it."},
+            {k:"tool",cmd:"playwright screenshot --selector .sess-h",out:"saved seat-row.png (1024×120)"},
+            {k:"art",name:"seat-row.png",dim:"1024×120",notes:[{by:"Alex",text:"two chips look great — ship it",resolved:false}]}]},
+    {n:9,who:"agent",lead:"running tests",run:true,
+     items:[{k:"live",text:"re-running the suite after the UI change… 280 / 312"}]},
+  ]};
+const noteCount=t=>t.items.reduce((a,it)=>a+((it.notes&&it.notes.length)||0),0);
+const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const S={device:"desktop",mode:"focus",role:"driver",sel:3,open:{}};
+(function(){const h=location.hash.replace(/^#/,'');if(!h)return;h.split(',').forEach(kv=>{const[k,v]=kv.split('=');if(k&&v&&k in S)S[k]=v;});})();
+
+function noteCtrl(it,id){
+  if(it.notes&&it.notes.length){const res=it.notes.every(n=>n.resolved);
+    return `<button class="cdot ${res?'res':''}" data-note="${id}" title="${it.notes.length} comment"><span class="b"></span></button>`;}
+  return `<button class="addc" title="Comment">💬</button>`;
+}
+function noteBox(it,id){
+  if(!(it.notes&&it.notes.length&&S.open['n'+id]))return '';
+  return it.notes.map(n=>`<div class="note ${n.resolved?'res':''}"><span class="nn">${n.by}</span>${esc(n.text)}<button class="rz">${n.resolved?'resolved ✓':'Resolve'}</button></div>`).join('');
+}
+function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
+  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}</div><div class="say">${esc(it.text)}</div></div>`;
+  if(it.k==="text")return `<div class="resp">${esc(it.text)}${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
+  if(it.k==="reason")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${o?`<div class="tout">${esc(it.text)}</div>`:''}</div>`;
+  if(it.k==="plan")return `<div class="plan">${it.steps.map(s=>`<div class="pl"><span class="pc ${s.done?'on':''}">${s.done?'✓':''}</span>${esc(s.t)}</div>`).join('')}</div>`;
+  if(it.k==="tool")return `<div class="resp">
+      <button class="tg" data-tool="${id}">${o?'▾':'▸'} ran <span class="mono">${esc(it.cmd)}</span> · ${it.err?'<span class="err">exited 1</span>':'<span class="ok">done</span>'}</button>
+      ${noteCtrl(it,id)}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}</div>`;
+  if(it.k==="file")return `<div class="resp">
+      <button class="tg" data-tool="${id}">${o?'▾':'▸'} edited <span class="mono">${esc(it.path)}</span> <span class="dim">+${it.add} −${it.del}</span></button>
+      ${noteCtrl(it,id)}${o?`<div class="diff mono">${it.diff.map(d=>`<div class="dl ${d[0]}">${esc(d[1])}</div>`).join('')}</div>`:''}${noteBox(it,id)}</div>`;
+  if(it.k==="art")return `<div class="resp"><div class="art"><span class="thumb"></span><span>${esc(it.name)} · ${esc(it.dim)}</span>${noteCtrl(it,id)}</div>${noteBox(it,id)}</div>`;
+  if(it.k==="seat")return `<div class="seatline">${esc(it.seat)}</div>`;
+  if(it.k==="ask")return `<div class="ask"><div class="q">${esc(it.q)}</div>
+    <div class="opts">${it.opts.map(o2=>`<button class="opt ${it.prop&&it.prop.pick===o2?'lead':''}">${esc(o2)}</button>`).join('')}</div>
+    ${it.prop?`<div class="pr">${S.role==='driver'?`<b>${it.prop.by}</b> suggests <b>${esc(it.prop.pick)}</b>`:`waiting for ${SESSION.driver}`}</div>`:''}</div>`;
+  if(it.k==="live")return `<div class="live-line"><span class="ld"></span>${esc(it.text)}</div>`;
+  return "";
+}
+function readHTML(){return `<div class="col">${SESSION.turns.map(t=>`<div class="tblk" id="t-${t.n}">${t.seat?`<div class="seatline">${esc(t.seat)}</div>`:t.items.map((it,ti)=>itemHTML(it,t,ti)).join('')}</div>`).join('')}</div>`;}
+
+const TOC_CAP=14;
+function tocLines(){const turns=SESSION.turns.filter(t=>!t.seat).slice(0,TOC_CAP);
+  return turns.map(t=>`<span class="tl ${S.sel===t.n?'on':''} ${t.run?'run':''}"></span>`).join('');}
+function tocHTML(){return `<div class="toc" id="toc"><div class="toc-lines" title="Turns">${tocLines()}</div>
+  <div class="toc-menu"><div class="toc-card"><div class="toc-ttl">Turns</div>${tocRows()}</div></div></div>`;}
+function tocRows(){return SESSION.turns.filter(t=>!t.seat).map(t=>{const nc=noteCount(t);
+  return `<div class="frow ${S.sel===t.n?'sel':''}" data-seg="${t.n}"><div class="f1">
+  <span class="fn">${t.who==='agent'?'··':'T'+t.n}</span><span class="fl">${esc(t.lead)}</span>
+  <span class="fm">${t.run?'<span style="color:var(--blue)">●</span>':t.ask?'?':nc?nc+(nc>1?' notes':' note'):''}</span></div></div>`;}).join('');}
+function composerHTML(){
+  const spec=S.role==='spectator';
+  const sugg=spec?'':`<div class="queue"><div class="qhead">Suggestions · 2</div>
+    <div class="sugg"><b>Sam</b><span class="sq">“add a NOT NULL default first”</span><button class="a">Send</button><button class="x">✕</button></div>
+    <div class="sugg"><b>Priya</b><span class="sq">“also update the e2e seat fixture”</span><button class="a">Send</button><button class="x">✕</button></div></div>`;
+  const chip=spec?'↳ suggest':'↳ agent';
+  const ph=spec?`Suggest a steer to ${SESSION.driver}…`:'Message the agent…';
+  const by=spec?`${SESSION.driver} has the seat`:'you have the seat';
+  return `<div class="comp"><div class="comp-in">${sugg}
+    <div class="field steer"><span class="to">${chip}</span><input placeholder="${ph}"/><button class="go">↑</button></div>
+    <div class="by">${by}</div></div></div>`;
+}
+function channelComposerHTML(){return `<div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #sessions"/><button class="go">↑</button></div></div>`;}
+
+function desktopHTML(){
+  const focus=S.mode!=='peek';
+  const channel=focus?'':`<div class="channel">
+    <div class="ch-h"># sessions <span class="cnt">· 6</span></div>
+    <div class="ch-b">
+      <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb">kicking off the multi-driver migration — going to drive a session</div></div>
+      <div class="cmsg"><div class="cn">Mara<span class="tm">9:02</span></div><div class="cb">spinning it up now</div></div>
+      <div class="scard"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">Mara driving · turn 9 running · 4 watching</div></div>
+      <div class="cmsg"><div class="cn">Alex<span class="tm">9:08</span></div><div class="cb">jumping in to take the seat for the NOT NULL bit</div></div>
+      <div class="cmsg"><div class="cn">Sam<span class="tm">9:10</span></div><div class="cb">left a couple of suggestions in the session 👍</div></div>
+      <div class="cmsg"><div class="cn">Alex<span class="tm">9:12</span></div><div class="cb">noted the failing down-migration — pre-existing, ignore</div></div>
+    </div>
+    ${channelComposerHTML()}</div>`;
+  return `<div class="frame">
+    <div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>
+    ${channel}
+    <div class="session ${focus?'focus':'peek'}">
+      <div class="sess-main">
+        <div class="sess-h"><span class="ti">${esc(SESSION.title)}</span>
+          <span class="lv"><span class="live"></span>${SESSION.driver}</span>
+          <button class="ib" title="Close">✕</button></div>
+        <div class="read">${readHTML()}</div>
+        ${tocHTML()}
+        ${composerHTML()}
+      </div>
+    </div>
+  </div>`;
+}
+function mobileHTML(){
+  return `<div class="frame mobile">
+    <div class="m-h"><span class="bk">‹</span><span class="ti">${esc(SESSION.title)}</span><span class="lv"><span class="live"></span>${SESSION.driver}</span></div>
+    <div class="m-b">${readHTML()}</div>
+    ${tocHTML()}
+    ${S.role==='spectator'
+      ?`<div class="m-c"><div class="field steer"><span class="to">↳ suggest</span><input placeholder="Suggest to ${SESSION.driver}…"/><button class="go">↑</button></div></div>`
+      :`<div class="m-c"><div class="queue"><div class="qhead">Suggestions · 1</div><div class="sugg"><b>Sam</b><span class="sq">“add a NOT NULL default first”</span><button class="a">Send</button><button class="x">✕</button></div></div>
+        <div class="field steer"><span class="to">↳ agent</span><input placeholder="Message the agent…"/><button class="go">↑</button></div></div>`}
+  </div>`;
+}
+
+function render(){const st=document.getElementById('stage');
+  st.innerHTML=S.device==='mobile'?mobileHTML():desktopHTML();
+  document.getElementById('seg-mode').style.opacity=S.device==='mobile'?.4:1;
+  wire();hint();try{location.hash=`device=${S.device},mode=${S.mode},role=${S.role}`;}catch(e){}}
+function hint(){const h=document.getElementById('hint');
+  h.textContent=S.device==='mobile'?'Tap the turn-lines at the right edge for contents'
+    :(S.mode==='peek'?'Beside the channel · turn-lines float at the right edge':'Hover the turn-lines at the right edge for contents');}
+function syncSeg(k,v){document.querySelectorAll(`#seg-${k} button`).forEach(x=>x.classList.toggle('on',x.dataset.v===v));}
+
+function wire(){
+  ['device','mode','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+    S[k]=b.dataset.v;syncSeg(k,b.dataset.v);render();}));
+  // tool expand
+  document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{const id=b.dataset.tool;S.open[id]=!S.open[id];render();});
+  document.querySelectorAll('[data-note]').forEach(b=>b.onclick=()=>{const id=b.dataset.note;S.open['n'+id]=!S.open['n'+id];render();});
+  // contents = the bare tick-line handle (desktop + mobile) — hover/tap opens; click pins; row jumps
+  const toc=document.getElementById('toc');
+  if(toc){
+    toc.querySelector('.toc-lines').onclick=(e)=>{e.stopPropagation();toc.classList.toggle('open');};
+    toc.querySelectorAll('.frow[data-seg]').forEach(r=>r.onclick=(e)=>{e.stopPropagation();const n=+r.dataset.seg;S.sel=n;
+      toc.querySelectorAll('.frow').forEach(x=>x.classList.toggle('sel',+x.dataset.seg===n));
+      toc.querySelectorAll('.tl').forEach((x,i)=>x.classList.toggle('on',SESSION.turns.filter(t=>!t.seat)[i]?.n===n));
+      toc.classList.remove('open');const el=document.getElementById('t-'+n);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});});
+    document.onclick=()=>toc.classList.remove('open');
+  }
+}
+render();
+</script>
+</body>
+</html>
