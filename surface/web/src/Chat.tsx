@@ -3,6 +3,7 @@ import { ApiError, api, type Workspace } from './api';
 import {
   DurableOpQueue,
   appReducer,
+  createDefaultOpRegistry,
   queuedChangesLabel,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
@@ -22,6 +23,7 @@ import {
   type ReactionSetPayload,
   type SessionSpawnPayload,
   type UploadPayload,
+  type VoiceMeta,
   useQueuedChangesCount,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
@@ -61,6 +63,11 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
 const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
+
+type VoiceSendMeta = Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
+type VoiceMsgSendPayload = MsgSendPayload & {
+  voice?: Pick<VoiceMeta, 'durationMs' | 'waveform'>;
+};
 
 function createQueueLockProvider(): OpQueueLockProvider | undefined {
   if (typeof navigator === 'undefined') return undefined;
@@ -201,11 +208,45 @@ export function Chat({
     }
   }, []);
 
+  const opRegistry = useMemo(() => {
+    const registry = createDefaultOpRegistry();
+    const baseSend = registry['msg.send'];
+    registry['msg.send'] = {
+      ...baseSend,
+      execute: async (apiClient, payload, op, context) => {
+        const voicePayload = (payload as VoiceMsgSendPayload).voice;
+        let attachments = payload.attachments?.map((a) => a.id);
+        if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
+          const ops = await context.listOps();
+          attachments = payload.attachmentRefs.map((ref) => {
+            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
+            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
+            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
+              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
+            }
+            return uploadPayload.fileId;
+          });
+        }
+        return apiClient.postMessage({
+          channelId: payload.channelId,
+          text: payload.text,
+          clientMsgId: payload.clientMsgId,
+          threadRootEventId: payload.threadRootEventId,
+          attachments,
+          ...(voicePayload ? { voice: voicePayload } : {}),
+          opId: op.opId,
+        });
+      },
+    };
+    return registry;
+  }, []);
+
   const opQueue = useMemo(
     () =>
       new DurableOpQueue({
         storage: eventCache,
         api,
+        registry: opRegistry,
         dispatch: queueDispatch,
         lockProvider: createQueueLockProvider(),
         onRejected: (op, err) => {
@@ -242,7 +283,7 @@ export function Chat({
           }
         },
       }),
-    [cacheMute, onApiError, queueDispatch, queuedFailureMessage],
+    [cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
   );
 
   const enqueueOp = useCallback(
@@ -424,20 +465,34 @@ export function Chat({
   );
 
   const pendingMessageFromSendPayload = useCallback(
-    (msg: MsgSendPayload): ChatMessage => ({
-      id: null,
-      clientMsgId: msg.clientMsgId,
-      channelId: msg.channelId,
-      threadRootEventId: msg.threadRootEventId ?? null,
-      text: msg.text,
-      edited: false,
-      author: me,
-      createdAt: msg.createdAt ?? new Date().toISOString(),
-      replyCount: 0,
-      lastReplyId: 0,
-      status: 'pending',
-      ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
-    }),
+    (msg: MsgSendPayload): ChatMessage => {
+      const voice = (msg as VoiceMsgSendPayload).voice;
+      const voiceFileId = msg.attachments?.[0]?.id;
+      return {
+        id: null,
+        clientMsgId: msg.clientMsgId,
+        channelId: msg.channelId,
+        threadRootEventId: msg.threadRootEventId ?? null,
+        text: msg.text,
+        edited: false,
+        author: me,
+        createdAt: msg.createdAt ?? new Date().toISOString(),
+        replyCount: 0,
+        lastReplyId: 0,
+        status: 'pending',
+        ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
+        ...(voice && voiceFileId
+          ? {
+              voice: {
+                fileId: voiceFileId,
+                durationMs: voice.durationMs,
+                ...(voice.waveform ? { waveform: voice.waveform } : {}),
+                transcript: { status: 'pending' },
+              },
+            }
+          : {}),
+      };
+    },
     [me],
   );
 
@@ -1023,6 +1078,7 @@ export function Chat({
     threadRootEventId?: number,
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
+    voice?: VoiceSendMeta,
   ) => {
     // Attachments can't ride along on a spawn — "@agent …" with files attached
     // sends as a plain message instead of silently dropping them.
@@ -1053,9 +1109,19 @@ export function Chat({
       lastReplyId: 0,
       status: 'pending',
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(voice
+        ? {
+            voice: {
+              fileId: voice.fileId,
+              durationMs: voice.durationMs,
+              ...(voice.waveform ? { waveform: voice.waveform } : {}),
+              transcript: { status: 'pending' },
+            },
+          }
+        : {}),
     };
     dispatch({ type: 'send-pending', channelId, message });
-    const payload: MsgSendPayload = {
+    const payload: VoiceMsgSendPayload = {
       channelId,
       text,
       clientMsgId,
@@ -1063,11 +1129,14 @@ export function Chat({
       attachments,
       attachmentRefs,
       createdAt,
+      ...(voice
+        ? { voice: { durationMs: voice.durationMs, ...(voice.waveform ? { waveform: voice.waveform } : {}) } }
+        : {}),
     };
     void enqueueOp({
       opId: randomId(),
       opType: 'msg.send',
-      payload,
+      payload: payload as MsgSendPayload,
     }).catch(() => {
       dispatch({ type: 'send-failed', channelId, clientMsgId });
       showErrorToast("Couldn't queue the message.");
@@ -1210,7 +1279,16 @@ export function Chat({
       spawnQueuedSession(m.channelId, m.text, m.threadRootEventId ?? undefined);
       return;
     }
-    send(m.channelId, m.text, m.threadRootEventId ?? undefined, m.attachments);
+    send(
+      m.channelId,
+      m.text,
+      m.threadRootEventId ?? undefined,
+      m.attachments,
+      undefined,
+      m.voice
+        ? { fileId: m.voice.fileId, durationMs: m.voice.durationMs, waveform: m.voice.waveform }
+        : undefined,
+    );
   };
 
   const createChannel = async (name: string, isPrivate = false) => {
@@ -1602,8 +1680,8 @@ export function Chat({
                   ? `Message ${channelLabel(active, me.id)}`
                   : `Message ${active.kind === 'private' ? '' : '#'}${active.name}`
               }
-              onSend={(text, attachments, attachmentRefs) =>
-                send(active.id, text, undefined, attachments, attachmentRefs)
+              onSend={(text, attachments, attachmentRefs, voice) =>
+                send(active.id, text, undefined, attachments, attachmentRefs, voice)
               }
               queueUpload={queueUpload}
               onTyping={() => notifyTyping(active.id)}
@@ -1680,8 +1758,8 @@ export function Chat({
             meId={me.id}
             meHandle={me.handle}
             onClose={() => dispatch({ type: 'close-thread' })}
-            onSend={(text, attachments, attachmentRefs) =>
-              send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs)
+            onSend={(text, attachments, attachmentRefs, voice) =>
+              send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
             }
             queueUpload={queueUpload}
             onOpenSession={openSession}

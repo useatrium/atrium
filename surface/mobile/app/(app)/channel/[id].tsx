@@ -213,8 +213,8 @@ export default function ChannelScreen() {
         <TypingLine typing={chat.typing} />
         <Composer
           placeholder={isDm || channel?.kind === 'gdm' ? `Message ${title}` : `Message ${channel?.kind === 'private' ? '🔒' : '#'}${title}`}
-          onSend={(text, attachments, attachmentRefs) =>
-            chat.send(id, text, undefined, attachments, attachmentRefs)
+          onSend={(text, attachments, attachmentRefs, voice) =>
+            chat.send(id, text, undefined, attachments, attachmentRefs, voice)
           }
           onTyping={() => chat.notifyTyping(id)}
           draftKey={draftKey}

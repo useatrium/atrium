@@ -41,6 +41,11 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3001
 
+# Voice STT stays optional. The default STT_PROVIDER=noop needs no native
+# packages. To enable STT_PROVIDER=whispercpp, extend this image with ffmpeg,
+# a whisper.cpp build that provides whisper-cli, and a mounted/downloaded model
+# referenced by WHISPER_MODEL_PATH.
+
 COPY --from=build /out ./
 COPY --from=build /app/surface/server/dist ./dist
 COPY --from=build /app/surface/server/migrations ./migrations
