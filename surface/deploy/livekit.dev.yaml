@@ -2,12 +2,18 @@ port: 7880
 
 rtc:
   tcp_port: 7881
+  # Single muxed UDP port for local dev: mapping a large UDP range is unreliable
+  # on Docker Desktop (it mangles the port bindings, incl. signaling). One port
+  # is plenty for small local calls.
+  udp_port: 7882
   use_external_ip: false
-  port_range_start: 50000
-  port_range_end: 50100
+  # Advertise localhost so the host browser can reach media via the published
+  # ports (bridge networking otherwise advertises the container's 172.x IP).
+  node_ip: 127.0.0.1
 
+# LiveKit requires the secret to be >= 32 chars. Dev-only value; prod uses real keys.
 keys:
-  devkey: devsecret
+  devkey: devsecret_devsecret_devsecret_01
 
 logging:
   level: info
