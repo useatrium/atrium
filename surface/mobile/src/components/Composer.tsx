@@ -344,6 +344,7 @@ export function Composer({
         return;
       }
       if (!uri || durationMs < 300) {
+        if (uri) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
         Alert.alert('Voice message', 'Recording was too short to send.');
         return;
       }

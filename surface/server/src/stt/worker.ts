@@ -4,6 +4,10 @@ import { appendVoiceTranscribedEventTx, type WireEvent } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { getSttAdapter } from './adapter.js';
 
+// Cap transcription retries so a job that repeatedly wedges the worker (e.g. a
+// crash between claim and completion) can't loop forever across restarts.
+const MAX_ATTEMPTS = 5;
+
 interface TranscriptJob {
   fileId: string;
   eventId: number;
@@ -58,8 +62,11 @@ export class SttWorker {
   async sweepOnBoot(): Promise<void> {
     await this.pool.query(
       `UPDATE transcripts
-       SET status = 'pending', updated_at = now()
-       WHERE status = 'processing'`,
+       SET status = CASE WHEN attempts >= $1 THEN 'failed' ELSE 'pending' END,
+           error = CASE WHEN attempts >= $1 THEN 'exceeded max transcription attempts' ELSE error END,
+           updated_at = now()
+       WHERE status IN ('pending', 'processing')`,
+      [MAX_ATTEMPTS],
     );
     this.enqueue();
   }
@@ -96,16 +103,17 @@ export class SttWorker {
         `WITH next_job AS (
            SELECT file_id
            FROM transcripts
-           WHERE status = 'pending'
+           WHERE status = 'pending' AND attempts < $1
            ORDER BY created_at ASC
            LIMIT 1
            FOR UPDATE SKIP LOCKED
          )
          UPDATE transcripts t
-         SET status = 'processing', updated_at = now()
+         SET status = 'processing', attempts = attempts + 1, updated_at = now()
          FROM next_job
          WHERE t.file_id = next_job.file_id
          RETURNING t.file_id, t.event_id, t.workspace_id, t.channel_id`,
+        [MAX_ATTEMPTS],
       );
       const row = res.rows[0];
       if (!row) return null;
@@ -145,7 +153,6 @@ export class SttWorker {
                segments = $4,
                model = $5,
                error = NULL,
-               attempts = attempts + 1,
                updated_at = now()
            WHERE file_id = $1`,
           [
@@ -175,7 +182,6 @@ export class SttWorker {
           `UPDATE transcripts
            SET status = 'failed',
                error = $2,
-               attempts = attempts + 1,
                updated_at = now()
            WHERE file_id = $1`,
           [job.fileId, message],

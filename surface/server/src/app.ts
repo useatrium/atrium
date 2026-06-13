@@ -205,8 +205,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw new DomainError(400, 'bad_voice', 'voice must be an object');
     }
     const durationMs = Number(input.durationMs);
-    if (!Number.isFinite(durationMs)) {
-      throw new DomainError(400, 'bad_voice', 'voice.durationMs must be finite');
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      throw new DomainError(400, 'bad_voice', 'voice.durationMs must be a positive number');
     }
     // A voice message references exactly one attachment (the audio). Accept
     // audio/* or the generic octet-stream some browsers report for MediaRecorder
