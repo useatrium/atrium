@@ -59,3 +59,12 @@ export function presignGet(key: string, filename: string, inline: boolean): Prom
 export async function deleteObject(key: string): Promise<void> {
   await client.send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
 }
+
+// === voice additions ===
+export async function downloadObject(key: string, destinationPath: string): Promise<void> {
+  const { createWriteStream } = await import('node:fs');
+  const { pipeline } = await import('node:stream/promises');
+  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+  if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
+  await pipeline(res.Body as NodeJS.ReadableStream, createWriteStream(destinationPath));
+}

@@ -14,6 +14,7 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
+import { VoiceMessage } from './VoiceMessage';
 
 const IMAGE_MAX_W = 240;
 
@@ -381,7 +382,9 @@ export const MessageRow = memo(function MessageRow({
     : '';
   const rowText = tombstone
     ? 'Message deleted'
-    : m.text.trim() || attachmentDescription || (m.sessionId ? 'Agent session' : 'Message');
+    : m.text.trim() ||
+      (m.voice ? 'Voice message' : attachmentDescription) ||
+      (m.sessionId ? 'Agent session' : 'Message');
   const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
   const accessibilityActions = [
@@ -423,13 +426,17 @@ export const MessageRow = memo(function MessageRow({
   ) : (
     <>
       {m.text ? <MessageText text={m.text} meHandle={meHandle} muted={pending} /> : null}
-      <Attachments
-        message={m}
-        fileUrl={fileUrl}
-        fileHeaders={fileHeaders}
-        onOpen={onOpenAttachment}
-        onOpenImage={onOpenImageAttachment}
-      />
+      {m.voice ? (
+        <VoiceMessage voice={m.voice} fileUrl={fileUrl} fileHeaders={fileHeaders} />
+      ) : (
+        <Attachments
+          message={m}
+          fileUrl={fileUrl}
+          fileHeaders={fileHeaders}
+          onOpen={onOpenAttachment}
+          onOpenImage={onOpenImageAttachment}
+        />
+      )}
     </>
   );
 

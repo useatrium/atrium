@@ -57,6 +57,7 @@ import {
 import { useSession, type Session } from './session';
 import { eventCache } from './cacheSqlite';
 import { useTheme } from './theme';
+import type { VoiceSendMeta } from './voice';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -88,6 +89,7 @@ interface ChatContextValue {
     threadRootEventId?: number,
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
+    voice?: VoiceSendMeta,
   ) => void;
   retry: (m: ChatMessage) => void;
   editMessage: (m: ChatMessage, text: string) => Promise<void>;
@@ -142,6 +144,10 @@ interface ChatContextValue {
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 const ATTACHMENT_DIR = 'queued-attachments';
+
+type MobileMsgSendPayload = MsgSendPayload & {
+  voice?: VoiceSendMeta;
+};
 
 function sanitizedFilename(name: string): string {
   const clean = name.replace(/[^a-z0-9._-]/gi, '_').slice(0, 100);
@@ -295,6 +301,30 @@ export function ChatProvider({ session, children }: { session: Session; children
     const msgSend = registry['msg.send'];
     registry['msg.send'] = {
       ...msgSend,
+      execute: async (apiClient, payload, op, context) => {
+        const mobilePayload = payload as MobileMsgSendPayload;
+        let attachments = mobilePayload.attachments?.map((a) => a.id);
+        if (mobilePayload.attachmentRefs && mobilePayload.attachmentRefs.length > 0) {
+          const ops = await context.listOps();
+          attachments = mobilePayload.attachmentRefs.map((ref) => {
+            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
+            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
+            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
+              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
+            }
+            return uploadPayload.fileId;
+          });
+        }
+        return apiClient.postMessage({
+          channelId: mobilePayload.channelId,
+          text: mobilePayload.text,
+          clientMsgId: mobilePayload.clientMsgId,
+          threadRootEventId: mobilePayload.threadRootEventId,
+          attachments,
+          voice: mobilePayload.voice,
+          opId: op.opId,
+        });
+      },
       onConfirmed: async (dispatchFn, result, payload, op) => {
         await deleteUploadRefs(payload.attachmentRefs);
         await msgSend.onConfirmed(dispatchFn, result, payload, op);
@@ -507,20 +537,33 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, [me.handle, me.id]);
 
   const pendingMessageFromSendPayload = useCallback(
-    (msg: MsgSendPayload): ChatMessage => ({
-      id: null,
-      clientMsgId: msg.clientMsgId,
-      channelId: msg.channelId,
-      threadRootEventId: msg.threadRootEventId ?? null,
-      text: msg.text,
-      edited: false,
-      author: me,
-      createdAt: msg.createdAt ?? new Date().toISOString(),
-      replyCount: 0,
-      lastReplyId: 0,
-      status: 'pending',
-      ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
-    }),
+    (msg: MobileMsgSendPayload): ChatMessage => {
+      const voiceFileId = msg.voice ? msg.attachments?.[0]?.id : null;
+      return {
+        id: null,
+        clientMsgId: msg.clientMsgId,
+        channelId: msg.channelId,
+        threadRootEventId: msg.threadRootEventId ?? null,
+        text: msg.text,
+        edited: false,
+        author: me,
+        createdAt: msg.createdAt ?? new Date().toISOString(),
+        replyCount: 0,
+        lastReplyId: 0,
+        status: 'pending',
+        ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
+        ...(msg.voice && voiceFileId
+          ? {
+              voice: {
+                fileId: voiceFileId,
+                durationMs: msg.voice.durationMs,
+                waveform: msg.voice.waveform,
+                transcript: { status: 'pending' },
+              },
+            }
+          : {}),
+      };
+    },
     [me],
   );
 
@@ -570,7 +613,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const applyQueuedOp = useCallback(
     (op: QueuedOp) => {
       if (op.opType === 'msg.send') {
-        const payload = op.payload as MsgSendPayload;
+        const payload = op.payload as MobileMsgSendPayload;
         dispatch({
           type: 'send-pending',
           channelId: payload.channelId,
@@ -1040,6 +1083,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       threadRootEventId?: number,
       attachments?: AttachmentMeta[],
       attachmentRefs?: AttachmentRef[],
+      voice?: VoiceSendMeta,
     ) => {
       // Attachments can't ride along on a session spawn — let "@agent …"
       // with attachments fall through as a plain message rather than drop them.
@@ -1070,20 +1114,32 @@ export function ChatProvider({ session, children }: { session: Session; children
         lastReplyId: 0,
         status: 'pending',
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(voice && attachments?.[0]
+          ? {
+              voice: {
+                fileId: attachments[0].id,
+                durationMs: voice.durationMs,
+                waveform: voice.waveform,
+                transcript: { status: 'pending' },
+              },
+            }
+          : {}),
       };
       dispatch({ type: 'send-pending', channelId, message });
+      const payload: MobileMsgSendPayload = {
+        clientMsgId,
+        channelId,
+        text,
+        threadRootEventId,
+        attachments,
+        attachmentRefs,
+        createdAt,
+        voice,
+      };
       void enqueueOp({
         opId: randomId(),
         opType: 'msg.send',
-        payload: {
-          clientMsgId,
-          channelId,
-          text,
-          threadRootEventId,
-          attachments,
-          attachmentRefs,
-          createdAt,
-        },
+        payload,
       }).catch((err: unknown) => {
         onApiError(err);
         dispatch({ type: 'send-failed', channelId, clientMsgId });
@@ -1101,7 +1157,14 @@ export function ChatProvider({ session, children }: { session: Session; children
         spawnSession(m.channelId, m.text, m.threadRootEventId ?? undefined);
         return;
       }
-      send(m.channelId, m.text, m.threadRootEventId ?? undefined, m.attachments);
+      send(
+        m.channelId,
+        m.text,
+        m.threadRootEventId ?? undefined,
+        m.attachments,
+        undefined,
+        m.voice ? { durationMs: m.voice.durationMs, waveform: m.voice.waveform } : undefined,
+      );
     },
     [send, spawnSession],
   );

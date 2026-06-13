@@ -19,6 +19,7 @@ import { Avatar } from './Avatar';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { MessageText } from './MessageText';
 import { useDialog } from '../useDialog';
+import { VoiceMessage } from '../VoiceMessage';
 
 export const MessageRow = memo(function MessageRow({
   message,
@@ -76,6 +77,7 @@ export const MessageRow = memo(function MessageRow({
     m.status === 'confirmed' &&
     m.id != null &&
     meId === m.author.id &&
+    !m.voice &&
     !!onEdit;
   const canDelete =
     !isSessionRow &&
@@ -235,6 +237,8 @@ export const MessageRow = memo(function MessageRow({
           </div>
         ) : deleted ? (
           <div className="text-sm italic leading-relaxed text-fg-faint">Message deleted</div>
+        ) : m.voice ? (
+          <VoiceMessage voice={m.voice} />
         ) : (
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
             <MessageText text={m.text} meHandle={meHandle} />
@@ -245,7 +249,7 @@ export const MessageRow = memo(function MessageRow({
             ) : null}
           </div>
         )}
-        {!deleted && !isSessionRow && !isSessionEventRow && (m.attachments?.length ?? 0) > 0 && (
+        {!deleted && !m.voice && !isSessionRow && !isSessionEventRow && (m.attachments?.length ?? 0) > 0 && (
           <div className="mt-1 flex flex-wrap gap-2">
             {m.attachments!.map((a) =>
               a.contentType.startsWith('image/') ? (

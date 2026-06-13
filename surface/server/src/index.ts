@@ -8,8 +8,13 @@ import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
 import { deleteObject } from './s3.js';
+import { SttWorker } from './stt/worker.js';
+import { registerWhisperCppAdapter } from './stt/whispercpp.js';
 
 async function main() {
+  if ((process.env.STT_PROVIDER ?? 'noop') === 'whispercpp') {
+    registerWhisperCppAdapter();
+  }
   const pool = createPool(config.databaseUrl);
   await runMigrations(pool);
   await pruneIdempotencyKeys(pool);
@@ -19,6 +24,8 @@ async function main() {
   });
   const workspace = await ensureDefaultWorkspace(pool);
   const hub = new WsHub();
+  const sttWorker = new SttWorker({ pool, hub });
+  await sttWorker.sweepOnBoot();
   const heartbeat = hub.startHeartbeat(30_000);
   const idempotencyPrune = setInterval(() => {
     void pruneIdempotencyKeys(pool).catch((err) => {
@@ -35,9 +42,10 @@ async function main() {
     });
   }, 24 * 60 * 60 * 1000);
   filePrune.unref?.();
-  const app = await buildApp({ pool, hub });
+  const app = await buildApp({ pool, hub, stt: sttWorker });
 
   const shutdown = async () => {
+    sttWorker.stop();
     clearInterval(heartbeat);
     clearInterval(idempotencyPrune);
     clearInterval(filePrune);
