@@ -208,7 +208,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!Number.isFinite(durationMs)) {
       throw new DomainError(400, 'bad_voice', 'voice.durationMs must be finite');
     }
-    if (attachments?.length !== 1 || !attachments[0]!.contentType.toLowerCase().startsWith('audio/')) {
+    // A voice message references exactly one attachment (the audio). Accept
+    // audio/* or the generic octet-stream some browsers report for MediaRecorder
+    // blobs — don't reject on brittle content-type sniffing.
+    const ct = attachments?.[0]?.contentType.toLowerCase() ?? '';
+    if (attachments?.length !== 1 || !(ct.startsWith('audio/') || ct === 'application/octet-stream')) {
       throw new DomainError(400, 'bad_voice', 'voice messages require exactly one audio attachment');
     }
     const waveform = Array.isArray(input.waveform)

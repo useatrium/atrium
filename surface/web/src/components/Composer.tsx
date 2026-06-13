@@ -213,7 +213,9 @@ export function Composer({
     if (disabled || !queueUpload) throw new Error('upload queue unavailable');
     const uploadKey = randomId();
     const localUri = URL.createObjectURL(recorded.blob);
-    const contentType = recorded.blob.type || 'application/octet-stream';
+    // Strip codec params (e.g. "audio/webm;codecs=opus") — /api/uploads only
+    // accepts bare type/subtype and otherwise stores octet-stream.
+    const contentType = recorded.blob.type.split(';')[0] || 'audio/webm';
     try {
       const { fileId } = await queueUpload({
         uploadKey,

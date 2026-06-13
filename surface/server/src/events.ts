@@ -298,9 +298,8 @@ export async function postMessage(
         if (!Number.isFinite(args.voice.durationMs)) {
           throw new DomainError(400, 'bad_voice', 'voice.durationMs must be finite');
         }
-        const audio = args.attachments?.find((attachment) =>
-          attachment.contentType.toLowerCase().startsWith('audio/'),
-        );
+        // The single attachment is the audio (the route validated this).
+        const audio = args.attachments?.length === 1 ? args.attachments[0] : undefined;
         if (!audio) {
           throw new DomainError(400, 'bad_voice', 'voice messages require one audio attachment');
         }
