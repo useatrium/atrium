@@ -55,6 +55,11 @@ services:
       CENTAUR_HARNESS: ${CENTAUR_HARNESS:-claude-code}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PUSH_REDACT: ${PUSH_REDACT:-1}
+      # Voice message STT defaults to noop. To enable self-hosted whisper.cpp,
+      # install ffmpeg + whisper.cpp + a model in the image and set:
+      # STT_PROVIDER: whispercpp
+      # WHISPER_MODEL_PATH: /models/ggml-base.en.bin
+      # WHISPER_BIN: whisper-cli
     ports:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_HOST_PORT:-3001}:3001"
     healthcheck:

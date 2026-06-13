@@ -48,6 +48,9 @@ interface EventDbRow {
   author_display_name?: string | null;
   reply_count?: number;
   last_reply_id?: number;
+  transcript_status?: string | null;
+  transcript_text?: string | null;
+  transcript_lang?: string | null;
 }
 
 function toWireEvent(row: EventDbRow): WireEvent {
@@ -230,6 +233,11 @@ export interface AttachmentMeta {
   height?: number;
 }
 
+export interface VoicePostMeta {
+  durationMs: number;
+  waveform?: number[];
+}
+
 export async function postMessage(
   pool: Db,
   args: {
@@ -240,6 +248,7 @@ export async function postMessage(
     clientMsgId?: string | null;
     threadRootEventId?: number | null;
     attachments?: AttachmentMeta[];
+    voice?: VoicePostMeta;
   },
 ): Promise<WireEvent> {
   // Idempotency: the mobile offline outbox retries sends whose response was
@@ -285,6 +294,24 @@ export async function postMessage(
       const payload: Record<string, unknown> = { text: args.text };
       if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
       if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
+      if (args.voice) {
+        if (!Number.isFinite(args.voice.durationMs)) {
+          throw new DomainError(400, 'bad_voice', 'voice.durationMs must be finite');
+        }
+        // The single attachment is the audio (the route validated this).
+        const audio = args.attachments?.length === 1 ? args.attachments[0] : undefined;
+        if (!audio) {
+          throw new DomainError(400, 'bad_voice', 'voice messages require one audio attachment');
+        }
+        const waveform = args.voice.waveform
+          ?.slice(0, 256)
+          .map((value) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0)));
+        payload.voice = {
+          fileId: audio.id,
+          durationMs: args.voice.durationMs,
+          ...(waveform && waveform.length > 0 ? { waveform } : {}),
+        };
+      }
       const ev = await insertEvent(client, {
         workspaceId: args.workspaceId,
         channelId: args.channelId,
@@ -293,6 +320,14 @@ export async function postMessage(
         actorId: args.actorId,
         payload,
       });
+      if (args.voice) {
+        const voice = payload.voice as { fileId: string };
+        await client.query(
+          `INSERT INTO transcripts (file_id, event_id, workspace_id, channel_id, status)
+           VALUES ($1, $2, $3, $4, 'pending')`,
+          [voice.fileId, ev.id, args.workspaceId, args.channelId],
+        );
+      }
       return toWireEvent(await attachAuthor(client, ev));
     });
   } catch (err) {
@@ -473,6 +508,39 @@ export async function setReactionTx(
   return { event: toWireEvent(await attachAuthor(client, ev)), applied: true };
 }
 
+export async function appendVoiceTranscribedEventTx(
+  client: DbClient,
+  args: {
+    targetEventId: number;
+    transcript: { status: 'done' | 'failed'; text?: string; lang?: string };
+  },
+): Promise<WireEvent> {
+  const target = await client.query<{
+    workspace_id: string;
+    channel_id: string | null;
+    thread_root_event_id: number | null;
+    type: string;
+  }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1',
+    [args.targetEventId],
+  );
+  const t = target.rows[0];
+  if (!t || t.type !== 'message.posted') {
+    throw new DomainError(404, 'message_not_found', 'message not found');
+  }
+  const transcript: Record<string, unknown> = { status: args.transcript.status };
+  if (args.transcript.text != null) transcript.text = args.transcript.text;
+  if (args.transcript.lang != null) transcript.lang = args.transcript.lang;
+  return appendEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: 'voice.transcribed',
+    actorId: null,
+    payload: { target_event_id: args.targetEventId, transcript },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reads (straight off the events table)
 // ---------------------------------------------------------------------------
@@ -485,7 +553,10 @@ const MESSAGE_SELECT = `
          coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
          edit.text AS edited_text,
          (del.id IS NOT NULL) AS is_deleted,
-         rx.reactions AS reactions
+         rx.reactions AS reactions,
+         vt.status AS transcript_status,
+         vt.text AS transcript_text,
+         vt.lang AS transcript_lang
   FROM events e
   LEFT JOIN users u ON u.id = e.actor_id
   LEFT JOIN LATERAL (
@@ -532,13 +603,14 @@ const MESSAGE_SELECT = `
       ORDER BY MIN(first_id)
     ) agg
   ) rx ON true
+  LEFT JOIN transcripts vt ON vt.event_id = e.id
 `;
 
 // message.edited / message.deleted / reaction.* are included so after_id
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
@@ -555,6 +627,18 @@ function foldEdit(
   }
   if (row.reactions != null) {
     row.payload = { ...row.payload, reactions: row.reactions };
+  }
+  if (row.payload.voice && typeof row.payload.voice === 'object' && !Array.isArray(row.payload.voice)) {
+    const status = row.transcript_status === 'done' || row.transcript_status === 'failed'
+      ? row.transcript_status
+      : 'pending';
+    const transcript: Record<string, unknown> = { status };
+    if (row.transcript_text != null) transcript.text = row.transcript_text;
+    if (row.transcript_lang != null) transcript.lang = row.transcript_lang;
+    row.payload = {
+      ...row.payload,
+      voice: { ...(row.payload.voice as Record<string, unknown>), transcript },
+    };
   }
   return row;
 }
@@ -634,7 +718,7 @@ export async function listThreadMessages(
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);

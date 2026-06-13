@@ -42,6 +42,24 @@ export interface AttachmentMeta {
   height?: number;
 }
 
+/** Async speech-to-text result for a voice message. Starts `pending`; a
+ * `voice.transcribed` modifier event flips it to `done`/`failed`. */
+export interface VoiceTranscript {
+  status: 'pending' | 'done' | 'failed';
+  text?: string;
+  lang?: string;
+}
+
+/** Voice-message metadata carried in a `message.posted` payload's `voice`
+ * block. The audio body is one of the message's `attachments` (fileId). */
+export interface VoiceMeta {
+  fileId: string;
+  durationMs: number;
+  /** 0..1 peaks for the scrubber (≈40-64 buckets). */
+  waveform?: number[];
+  transcript: VoiceTranscript;
+}
+
 export interface ChatMessage {
   /** Server event id; null while pending/failed. */
   id: number | null;
@@ -58,6 +76,8 @@ export interface ChatMessage {
   pendingDelete?: boolean;
   reactions?: MessageReaction[];
   attachments?: AttachmentMeta[];
+  /** Present on voice messages; transcript fills in asynchronously. */
+  voice?: VoiceMeta;
   author: UserRef;
   createdAt: string;
   replyCount: number;
@@ -146,7 +166,8 @@ function isModifierEvent(type: string): boolean {
     type === 'message.edited' ||
     type === 'message.deleted' ||
     type === 'reaction.added' ||
-    type === 'reaction.removed'
+    type === 'reaction.removed' ||
+    type === 'voice.transcribed'
   );
 }
 
@@ -180,6 +201,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
         : ev.type === 'session.question_resolved'
           ? 'question_resolved'
           : undefined;
+  const voice = parseVoice(payload.voice);
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
@@ -190,6 +212,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     deleted: payload.deleted === true,
     reactions: parseReactions(payload.reactions),
     attachments: parseAttachments(payload.attachments),
+    ...(voice !== undefined ? { voice } : {}),
     author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
@@ -218,6 +241,32 @@ function parseAttachments(v: unknown): AttachmentMeta[] | undefined {
     }
   }
   return out.length > 0 ? out : undefined;
+}
+
+function parseTranscript(v: unknown): VoiceTranscript | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const r = v as Record<string, unknown>;
+  const status = r.status === 'done' || r.status === 'failed' ? r.status : 'pending';
+  return {
+    status,
+    ...(typeof r.text === 'string' ? { text: r.text } : {}),
+    ...(typeof r.lang === 'string' ? { lang: r.lang } : {}),
+  };
+}
+
+function parseVoice(v: unknown): VoiceMeta | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const r = v as Record<string, unknown>;
+  if (typeof r.fileId !== 'string') return undefined;
+  const waveform = Array.isArray(r.waveform)
+    ? r.waveform.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+    : undefined;
+  return {
+    fileId: r.fileId,
+    durationMs: Number(r.durationMs) || 0,
+    ...(waveform && waveform.length > 0 ? { waveform } : {}),
+    transcript: parseTranscript(r.transcript) ?? { status: 'pending' },
+  };
 }
 
 function parseReactions(v: unknown): MessageReaction[] | undefined {
@@ -646,6 +695,23 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId),
       ev.id,
     );
+  }
+
+  if (ev.type === 'voice.transcribed') {
+    const p = ev.payload ?? {};
+    const targetId = Number(p.target_event_id);
+    const seenIds = new Set(t.seenIds).add(ev.id);
+    const transcript = parseTranscript(p.transcript);
+    if (!Number.isFinite(targetId) || !transcript) {
+      return bumpLastEvent({ ...t, seenIds }, ev.id);
+    }
+    const fold = (list: ChatMessage[]) =>
+      list.map((m) =>
+        m.id === targetId && m.voice ? { ...m, voice: { ...m.voice, transcript } } : m,
+      );
+    const threads: Record<number, ChatMessage[]> = {};
+    for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
+    return bumpLastEvent({ ...t, main: fold(t.main), threads, seenIds }, ev.id);
   }
 
   if (!isRowEvent(ev.type)) {

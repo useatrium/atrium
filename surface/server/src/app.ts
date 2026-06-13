@@ -69,6 +69,9 @@ export interface AppDeps {
     presignGet: typeof presignGet;
     presignPut: typeof presignPut;
   };
+  stt?: {
+    enqueue(): void;
+  };
   /** Injectable fetch for the email transport (tests mock Resend). */
   emailFetch?: typeof fetch;
 }
@@ -191,6 +194,35 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
     }
     return patch;
+  }
+
+  function parseVoicePost(
+    input: unknown,
+    attachments: AttachmentMeta[] | undefined,
+  ): { durationMs: number; waveform?: number[] } | undefined {
+    if (input == null) return undefined;
+    if (!isPlainObject(input)) {
+      throw new DomainError(400, 'bad_voice', 'voice must be an object');
+    }
+    const durationMs = Number(input.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      throw new DomainError(400, 'bad_voice', 'voice.durationMs must be a positive number');
+    }
+    // A voice message references exactly one attachment (the audio). Accept
+    // audio/* or the generic octet-stream some browsers report for MediaRecorder
+    // blobs — don't reject on brittle content-type sniffing.
+    const ct = attachments?.[0]?.contentType.toLowerCase() ?? '';
+    if (attachments?.length !== 1 || !(ct.startsWith('audio/') || ct === 'application/octet-stream')) {
+      throw new DomainError(400, 'bad_voice', 'voice messages require exactly one audio attachment');
+    }
+    const waveform = Array.isArray(input.waveform)
+      ? input.waveform.slice(0, 256).map((value) => {
+          const n = Number(value);
+          if (!Number.isFinite(n)) return 0;
+          return Math.min(1, Math.max(0, n));
+        })
+      : undefined;
+    return { durationMs, ...(waveform && waveform.length > 0 ? { waveform } : {}) };
   }
 
   async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
@@ -1243,6 +1275,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       clientMsgId?: string;
       threadRootEventId?: number;
       attachments?: unknown;
+      voice?: unknown;
     };
     const text = typeof body.text === 'string' ? body.text : '';
     if (!body.channelId || typeof body.channelId !== 'string') {
@@ -1251,7 +1284,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     const attachmentIds = Array.isArray(body.attachments)
       ? body.attachments.filter((a): a is string => typeof a === 'string').slice(0, 10)
       : [];
-    if (text.trim().length === 0 && attachmentIds.length === 0) {
+    if (text.trim().length === 0 && attachmentIds.length === 0 && body.voice == null) {
       return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
     }
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
@@ -1297,6 +1330,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
+    const voice = parseVoicePost(body.voice, attachments);
     const channel = await pool.query<{ workspace_id: string }>(
       'SELECT workspace_id FROM channels WHERE id = $1',
       [body.channelId],
@@ -1312,8 +1346,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       clientMsgId,
       threadRootEventId,
       attachments,
+      voice,
     });
     hub.publishEvent(event);
+    if (voice) deps.stt?.enqueue();
     void sendMessagePush(pool, hub, event).catch((err) =>
       app.log.warn({ err }, 'push fanout failed'),
     );

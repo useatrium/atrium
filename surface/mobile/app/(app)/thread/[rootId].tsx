@@ -117,8 +117,8 @@ export default function ThreadScreen() {
         )}
         <Composer
           placeholder="Reply in thread"
-          onSend={(text, attachments, attachmentRefs) =>
-            chat.send(channelId, text, rootId, attachments, attachmentRefs)
+          onSend={(text, attachments, attachmentRefs, voice) =>
+            chat.send(channelId, text, rootId, attachments, attachmentRefs, voice)
           }
           onTyping={() => chat.notifyTyping(channelId)}
           draftKey={draftKey}
