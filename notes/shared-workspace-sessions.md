@@ -1,0 +1,247 @@
+# Shared-workspace session panes — design (2026-06-12, round 2)
+
+Origin: codex exploration (`rollout-2026-06-12T08-19-12`) — (1) spectators can't
+see driver typing (drafts are local React state); (2) sketch of a Figma-like
+"shared workspace" pane. Round 1 mapped the architecture + a prior-art sweep
+(~15 agent products, classic multiplayer UX, collab infra). Round 2 (Gary Q&A)
+resolved the architecture forks. Design only — nothing built yet.
+
+## Decisions (Gary, 2026-06-12)
+
+1. **Durability: full raw-frame mirror.** Every piece of agent output stored in
+   our DB, mirroring the agent JSON logs "if not even more than that" — i.e.
+   raw Centaur frames AND the human-side record (steers with attribution,
+   suggestions, dispositions, seat changes).
+2. **Peek/focus split.** In-channel pane = peek (unchanged). `/s/:id` becomes
+   **focus mode**: session as canvas, channel demoted to a right rail with
+   Discussion / Channel tabs. Async permalink visitors land in focus; expand
+   toggle on the pane header switches peek→focus. Focus mode doubles as the
+   future mobile session UI.
+3. **Turn model: idle vs ended, NO auto-archive.** Sessions stay resumable
+   indefinitely until explicitly archived. UI catches up to the server (steer
+   already regresses `completed → queued`, session-runs.ts:517-518). Turn end
+   renders a **turn card** (result summary, cost delta, suggestions open,
+   composer alive), not "Session ended — read-only". Running/recent lists need
+   last-activity sorting to cope with long-idle sessions.
+4. **Sequencing: control loop first.**
+   1. Turn card + idle/ended split + suggestion queue (incl. spectator-proposed
+      HITL answers) + session-scoped typing indicator.
+   2. Durable layer: raw-frame mirror + user-message fold fix + anchored
+      threads + session record.
+   3. Attention layer (viewing dots, follow-driver, agent presence).
+   4. Focus mode + mobile parity.
+5. Control model (round 1): **driver + suggestions**; escalation ladder
+   watch → comment → suggest → request seat → take seat.
+6. Pane↔chat (round 1): **Variant C** — annotations are chat threads rooted on
+   `session.item_thread` events; markers in the pane; reuses thread
+   unreads/mentions/mobile/draft roaming.
+7. Cut: shared scratchpad, multi-driver seats, pixel cursors, default-on
+   keystroke sharing, public session links. Live drafts = opt-in "open-hand
+   mode" later, maybe never (suggestions absorb the demand).
+8. Audit: dismissed suggestions persist (retro value); optional one-line "why"
+   on dispositions, never required.
+
+## Architecture facts (verified in code)
+
+**Two append-only logs.** Workspace events table (chat backbone) holds messages,
+reactions, and *folded* session facts only (`session.spawned/status_changed/
+seat_changed/question_*/completed`) plus mutable `sessions` row state. The full
+transcript lives in **Centaur's per-thread event log**; the surface server is a
+pass-through: `/api/sessions/:id/stream` pipes `centaur.tailEvents(threadKey,
+{afterEventId})` as SSE (session-runs.ts:330-345). A server tailer folds frames
+into the workspace facts but does NOT persist transcript items.
+
+**Client materialization** (`useSessionStream` → shared `reduceSession` in
+packages/centaur-client): pure fold of frames into `SessionState.items[]`.
+Resume via `after_event_id=lastEventId`; dedupe drops `event_id <= lastEventId`
+(terminal `execution_state` re-emits allowed); folds batch into one React
+commit per animation frame. Finished sessions replay the full stream from
+Centaur — durability currently depends on Centaur retention (mirror fixes).
+
+**Anchoring coordinates.** `event_id` is the only monotonic, never-reassigned
+timeline coordinate; items carry `sourceEventIds[]`. Item IDs are *eventually*
+stable but mutate mid-stream: `reconcileCompleteText` rewrites `text:<eventId>`
+→ `text:<messageId|uuid>` (reducer.ts:288-296). Anchor schema:
+`{sessionId, anchorEventId, itemId, itemType, excerpt}`; resolution: item whose
+sourceEventIds contains anchorEventId → item by id → detached rail w/ excerpt.
+Moment-anchors (turn boundaries) use the same coordinate.
+
+**Steers are invisible today.** Centaur's item types include `"userMessage"`
+(centaur-client types.ts:112) and steers post with `user_id` metadata, but
+`reduceSession` folds only agentMessage/commandExecution (+ Amp assistant/tool/
+result) — **driver instructions never render in the transcript**; spectators
+infer them from agent behavior. Fix in the fold + render attributed steer items.
+Prereq for the retro record.
+
+**Mirror design.** Dedicated `session_events(session_id, event_id, frame
+jsonb, ...)` table — NOT the workspace events table the sync engine replicates
+(raw frames are harness-specific + delta-chatty). Tailer already sees every
+frame; upsert on (session_id, event_id) handles re-delivery on tailer restart.
+Optionally cache the folded SessionState snapshot per session for fast
+permalink render; the unified "session record" view = mirror + workspace
+`session.*` events + suggestions/threads, joined by sessionId and ordered by
+event_id/timestamps.
+
+**Turn boundary is a soft state.** `postUserMessageOnce` regresses
+`completed → queued`, nulls `completed_at` (session-runs.ts:517-518); UI's
+`TERMINAL_STATUSES` wrongly includes 'completed' (treated as ended/read-only in
+SessionPane via `displayTerminal`). Seat release scheduling exists
+(`cancelScheduledRelease`) — suggestion queue must outlive seat release so
+queued suggestions greet the next driver.
+
+**Existing seams** (round 1): seat model request/grant/take
+(session-runs.ts:579-660), driver-only enforcement (:1168), `session:<id>`
+presence topic, op queue (new op ≈ 5 lines + handler, idempotency baked in;
+template `session.steer`), disabled spectator composer
+(SessionPane.tsx:433-439) = natural suggest box, right rail mutually exclusive
+(Chat.tsx:1592-1667) → phase-1 in-pane thread drawer, `session.*` events
+already render as channel timeline cards (SessionCard precedent for
+`session.item_thread` roots).
+
+## Prototype — resolved visual UX (round 4, 2026-06-13)
+
+Canonical interactive prototype: **`notes/protos/session-min.html`** (served on the
+tailnet during design at `http://macbook-m1p.tailf13d53.ts.net:8089/session-min.html`).
+Toggle device/view/role via the top bar; deep-link state via URL hash
+(`#device=mobile,mode=focus,role=spectator`). The earlier busy variant
+(`session-workspace.html`) was retired. Verified in a real headless browser
+(every view + affordance clicked/hovered), not eyeballed.
+
+Visual direction (after a hard "what would Jobs cut" pass):
+- **Near-monochrome.** Black/grays on white; ONE accent (blue) meaning exactly
+  two things: *live* (the running dot) and *send*. No semantic color-coding —
+  steers/agent/comments/suggestions are distinguished by weight, indent, space.
+- **No bubbles/boxes.** A steer = the person's name in bold + the words; the
+  agent's reply = plain text indented underneath (call-and-response). Tool runs,
+  file edits, reasoning collapse to one quiet line you expand on demand. Diffs
+  use faint green/red only when expanded.
+- **Reading column** is a centered ~600px measure; composer + suggestions share
+  the same measure (one grid).
+- **Contents = ChatGPT's pancake**, copied closely: bare stacked tick-lines
+  (no border/pill) floating at the **right edge, vertically centered** (left of
+  the scroll track), one line per turn capped at 14; current turn's line is
+  longer/darker, the running turn's line is blue. Hover/tap → the turn list
+  pops out **sideways to the left**, centered on the handle; click pins, a row
+  jumps to that turn. **Same handle + behavior on mobile** (slides out from the
+  right; no bottom sheet).
+- **Two composers in peek** (the Slack-thread model, made faithful): a narrow
+  secondary **channel** column (340px, bottom-aligned history) with its own
+  `Message #sessions` composer, and the **dominant session** column with the
+  steer composer. The session composer carries a dark **`↳ agent`** target chip
+  + "Message the agent…" so it's unmistakably addressed to the agent, not the
+  room. Spectator → `↳ suggest` + "Suggest to {driver}…".
+- **Suggestion queue** is one quiet grouped object ("SUGGESTIONS · N") with
+  neutral actions — Send is an outline button, not blue — so blue stays scarce.
+- **Focus** drops the channel to one-at-a-time (no two-composer competition);
+  **peek** is session-dominant so the side-by-side never feels 50/50.
+- Transcript stress-tested at 9 turns across two drivers (seat handoffs),
+  exercising reasoning/plan/tool/file-diff/artifact/question/live + resolved &
+  unresolved comments + stacked suggestions.
+
+These are presentation decisions for the eventual real UI; the data/seam
+decisions below (mirror, anchors, ops, seat model) are unchanged.
+
+## Annotation/navigation rail UX (round 3, ChatGPT-validated)
+
+ChatGPT Pro ships nearly this exact pattern (Gary's screenshots, 2026-06-13):
+collapsed = thin tick-lines at the right edge, one per **user message**; hover =
+the ticks expand into a floating panel listing every prompt (current
+highlighted), floating OVER the conversation (no reflow), click-to-jump. Takeaways:
+- **Index the user's turns, not the agent's** — prompts are the navigation
+  skeleton; long agent replies are the bulk you scroll past. Maps 1:1 onto
+  *index the steers* → another payoff of the steer-fold fix (folded
+  `userMessage` items ARE the ticks).
+- **Default = thin spine; "expand" = floating list overlay, not a persistent
+  column.** Persistent column is reserved for focus mode. Settles the variant
+  question: hybrid (spine in peek, pin-to-outline in focus).
+- Our enrichment over ChatGPT: each tick carries collaboration marks
+  (💬 unresolved / ◆ suggestion / ❓ question) so the minimap shows *where the
+  humans argued*, and floating rows preview them.
+
+Three rail states (one component, three zoom levels = turn cards zoomed out):
+1. **Collapsed spine** — ticks at the pane's right edge, proportional height,
+   marks for threads/suggestions/questions, pulse on the live turn.
+2. **Hover** — full turn list floats out over the transcript (no reflow);
+   rows = turn lead + marks; click jumps. (Peek default.)
+3. **Pinned outline** — persistent ~248px column with Turns/Discussion/Channel
+   tabs. (Focus default.)
+Inline 💬 markers stay in the transcript (linked to the rail, Google-Docs-style
+two-views) so comments read in-context while reading top-to-bottom. Interaction
+rule: hover never reflows the canvas (overlay), click pins (deliberate reflow).
+Mobile: no edge spine — rail collapses to a "Turns ▾" bottom sheet; turn
+skeleton ports, spine metaphor doesn't.
+
+Interactive prototype: `notes/protos/session-workspace.html` (switch
+device/mode/rail/role live). Open questions surfaced by it: peek width at 524px
+(floating list mitigates); how loud the suggestion queue gets on mobile (inline
+vs count-chip→sheet).
+
+## Feature designs
+
+- **Turn card** (general case of HITL): at idle, show turn result summary +
+  cost/model delta; suggestion queue open; driver composer alive ("what
+  next?"); spectator propose box alive. HITL question card = the explicit-ask
+  special case; same sync-and-decide interaction at both.
+- **Suggestion queue**: spectator composer relabeled "Suggest a message —
+  {driver} decides"; `suggestion.create` op → `session_suggestions` table →
+  `session.suggestion_added` over `session:<id>`. Driver strip above composer:
+  Send / Edit-then-send / Dismiss(+optional why). Dual attribution. Never
+  enters agent context unforwarded (Cognition single-instruction-stream).
+- **Spectator-proposed HITL answers**: answer form renders for all; spectator
+  submit = proposal attached to the question; driver one-click submits.
+  Server driver-only enforcement untouched.
+- **Anchored annotations**: hover item → 💬 → thread rooted on
+  `session.item_thread` (compact card in channel); margin markers w/ avatar +
+  count; resolved state; inbox notifications (not toasts), auto-subscribe
+  participants; detached rail for orphans.
+- **Attention**: object-level presence, not pixel cursors. Throttled ephemeral
+  `viewing` relay → avatar dots per item; follow-driver viewport toggle; agent
+  in the presence stack ("⚙ running tests…"). Symmetric visibility.
+- **Typing indicator**: extend typing relay (`useWs.ts:287`, `hub.ts:74`) with
+  optional sessionId → "Mara is composing a steer…" (~20 lines).
+- **Session record (for agents + async humans)**: mirror + overlay
+  (suggestion dispositions, thread resolutions, question answers, seat
+  history, turn structure). Edited-then-sent suggestion = preference gradient;
+  dismissed+why = negative example; resolved error thread = ops knowledge.
+  Later: `GET /api/sessions/:id/record` / MCP surface, queryable. In-situ
+  steering rationale is the thing no product ships (Devin Knowledge/Amp
+  threads are the nearest prior art).
+
+## Research basis (round 1 sweep, key citations in session transcript)
+
+Live keystrokes = most-documented failure (Google Wave autopsy, WSJ Docs dread,
+Wang et al. CSCW 2017). Anchored comments = most proven (Docs 2014 + Notion
+2024 convergence; Factory headline). Single accountable driver = universal
+(Warp approve-to-edit, Copilot write-gate, Cursor owner-only, mob programming
+navigator, Cognition "Don't Build Multi-Agents"). Object-level presence beats
+cursors (Notion block presence, Ably member location; Figma cursor-anxiety
+threads). Atrium's channel+live-pane combo ships nowhere; closest is GitHub
+Next's unshipped Ace prototype.
+
+## User stories
+
+1. **Mara (driver, pairing)**: suggestions staged by her composer;
+   edit-then-send; grants seat from the pane — suggestion→seat one ladder.
+2. **Alex (senior spectator)**: anchors a thread on the failing-test tool
+   output; files corrective suggestion; escalates to seat request if needed.
+3. **Priya (async, +3h)**: `/s/:id` lands in focus mode — transcript +
+   markers + unresolved threads; replies flow through normal thread unreads.
+4. **Sam (new hire, broadcast)**: follow-driver; avatar dots show where
+   seniors look; visible queue teaches good steers; driver's "suggestions
+   paused" toggle = no-backseating norm.
+5. **The agent (live)**: one instruction stream (seat-holder only);
+   participates in presence; its questions/turn-ends are the room's moments.
+6. **Future agents (retro)**: read session records — attributed steers,
+   dispositions with rationale, resolved threads — as organizational
+   priors for how/why humans steer.
+
+## Remaining open questions
+
+- Mirror scope details: store SSE-derived frames only, or also fetch Centaur
+  thread history on archive for anything the live tail missed?
+- Idle-session list UX: last-activity sort sufficient, or need an explicit
+  "parked" shelf?
+- Anchored-card compactness/grouping in the channel timeline (defer until
+  visible noise).
+- When focus mode lands, does peek lose any affordances (e.g. drawer) to stay
+  simple?
