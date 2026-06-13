@@ -2,6 +2,7 @@
 // the session cookie, while native clients pass an absolute server origin and
 // a bearer token (React Native cookie handling is unreliable).
 
+import type { CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionWire } from './sessions';
@@ -260,6 +261,21 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ userIds }),
       }),
+    /** Start a call in a channel: creates the call, mints the caller's LiveKit
+     * token, and rings the other channel members over the WS hub. */
+    startCall: (channelId: string, op: OpOptions = {}) =>
+      req<CallJoin>('/api/calls', {
+        method: 'POST',
+        body: JSON.stringify({ channelId, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    /** Accept a ringing call: mints this user's token + marks them joined. */
+    acceptCall: (callId: string) =>
+      req<CallJoin>(`/api/calls/${callId}/accept`, { method: 'POST', body: '{}' }),
+    declineCall: (callId: string) =>
+      req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),
+    /** Leave a call; the server ends it when the last participant leaves. */
+    leaveCall: (callId: string) =>
+      req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
     registerPush: (body: { token: string; platform: 'ios' | 'android' }) =>
       req<{ ok: true }>('/api/push/register', {
         method: 'POST',
