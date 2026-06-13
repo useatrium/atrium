@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Atrium · session surfaces — IA comparison</title>
+<style>
+  :root{
+    --bg:#fff;--ink:#1d1d1f;--ink-2:#4a4a52;--ink-3:#6c6c75;--ink-4:#9a9aa2;--ink-5:#c2c2c8;
+    --line:#f1f1f2;--line-2:#e4e4e6;--line-3:#d6d6da;--fill:#f5f5f6;
+    --blue:#0071e3;--blue-ink:#0a5fc0;--green:#1f9d57;--amber:#b9810c;--red:#cf3b3b;
+    --add-bg:#f1faf4;--add-fg:#1c7a45;--del-bg:#fdf2f2;--del-fg:#b23636;
+  }
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:#ececee;color:var(--ink-2);font:14px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}.hidden{display:none!important}
+
+  .controls{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;gap:18px;align-items:center;
+    padding:9px 18px;background:rgba(255,255,255,.85);backdrop-filter:blur(8px);border-bottom:1px solid var(--line-2)}
+  .grp{display:flex;align-items:center;gap:7px}
+  .grp .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-4)}
+  .seg{display:flex;background:var(--fill);border:1px solid var(--line-2);border-radius:8px;padding:2px}
+  .seg button{padding:4px 11px;border-radius:6px;color:var(--ink-3);font-size:12px;font-weight:500;white-space:nowrap}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .seg button:not(.on):hover{color:var(--ink)}
+  .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4);max-width:40ch;text-align:right}
+
+  .stage{display:flex;justify-content:center;padding:22px}
+  .frame{width:min(1180px,100%);height:752px;background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
+    overflow:hidden;display:flex;box-shadow:0 18px 50px -20px rgba(20,20,40,.3)}
+  .nav{width:50px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:11px 0;gap:9px}
+  .logo{width:26px;height:26px;border-radius:7px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
+  .nv{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-4);font-size:14px}.nv.on{color:var(--ink)}
+
+  .session{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+  .sess-h{height:50px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:1px solid var(--line)}
+  .sess-h .ti{font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lv{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);flex-shrink:0}
+  .live{width:7px;height:7px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 0 rgba(0,113,227,.5);animation:pulse 2s infinite}
+  @keyframes pulse{70%{box-shadow:0 0 0 6px rgba(0,113,227,0)}100%{box-shadow:0 0 0 0 rgba(0,113,227,0)}}
+  .envchip{display:flex;align-items:center;gap:5px;font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line-2);color:var(--ink-3);flex-shrink:0}
+  .envchip .d{width:6px;height:6px;border-radius:50%}
+  .envchip.warm .d{background:var(--green)} .envchip.warm{color:var(--green)}
+  .envchip.sleeping .d{background:var(--ink-4)}
+  .envchip.expired{color:var(--red);border-color:#f0d6d6} .envchip.expired .d{background:var(--red)}
+  .sp{margin-left:auto}
+  .ib{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center}.ib:hover{background:var(--fill);color:var(--ink-2)}
+
+  .body{flex:1;min-height:0;display:flex;position:relative}
+  .scroll{overflow:auto}
+  .scroll::-webkit-scrollbar{width:10px}.scroll::-webkit-scrollbar-thumb{background:var(--line-3);border-radius:8px;border:3px solid var(--bg)}
+
+  /* transcript */
+  .read{flex:1;min-width:0;overflow:auto}
+  .col{max-width:600px;margin:0 auto;padding:22px 24px 90px}
+  .beat{margin-top:20px}.beat:first-child{margin-top:2px}
+  .nm{font-weight:600;color:var(--ink);margin-bottom:1px}.say{color:var(--ink)}
+  .resp{color:var(--ink-2);margin-top:9px;padding-left:15px}
+  .tg{color:var(--ink-3);text-align:left}.tg:hover{color:var(--ink-2)}.tg .dim{color:var(--ink-4)}
+  .live-line{display:flex;align-items:center;gap:8px;color:var(--ink-3);margin-top:9px;padding-left:15px}
+  .ld{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 2s infinite}
+
+  /* inline work-product cards */
+  .card{margin:10px 0 4px;border:1px solid var(--line-2);border-radius:11px;overflow:hidden}
+  .card .ch{display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer}
+  .card .ch:hover{background:var(--fill)}
+  .card .ch .ci{width:22px;height:22px;border-radius:6px;background:var(--fill);display:grid;place-items:center;font-size:12px;flex-shrink:0}
+  .card .ch .ct{font-weight:600;color:var(--ink);flex:1;min-width:0}
+  .card .ch .cm{font-size:11.5px;color:var(--ink-4)}
+  .card .ch .go{font-size:11.5px;color:var(--blue);font-weight:600}
+  .sideline{display:flex;align-items:center;gap:9px;margin-top:11px;padding-left:15px;font-size:13px;color:var(--ink-2)}
+  .sideline .si{color:var(--ink-3)}
+  .badge{font-size:10px;font-weight:600;border-radius:5px;padding:1px 6px;border:1px solid var(--line-2);color:var(--ink-3)}
+  .badge.ok{color:var(--green);border-color:#cfe9da}.badge.wait{color:var(--amber);border-color:#eee0bf}
+
+  .gallery-inline{display:flex;gap:10px;margin-top:10px;padding-left:15px;flex-wrap:wrap}
+  .acard{width:150px;border:1px solid var(--line-2);border-radius:10px;overflow:hidden;cursor:pointer}
+  .acard:hover{border-color:var(--line-3)}
+  .acard .thumb{height:84px;background:linear-gradient(135deg,#ededf1,#f7f7f9);display:grid;place-items:center;color:var(--ink-4);font-size:20px}
+  .acard .an{padding:6px 8px;font-size:11.5px;color:var(--ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .acard .am{padding:0 8px 7px;font-size:10.5px;color:var(--ink-4)}
+  .acard .thumb .ext{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--ink-4)}
+  /* gated side-effect approve/deny */
+  .aact{display:inline-flex;gap:6px;align-items:center;flex-shrink:0;margin-left:4px}
+  .aact button{font-size:11px;font-weight:600;border-radius:6px;padding:3px 10px;border:1px solid var(--line-2);color:var(--ink-3)}
+  .aact .approve{color:var(--ink);border-color:var(--ink-3)}.aact .approve:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .aact .deny:hover{color:var(--ink-2)}
+  .arow .aact{margin-right:10px}
+
+  /* contents handle (tick lines) */
+  .toc{position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:30}
+  .toc-lines{display:flex;flex-direction:column;align-items:flex-end;gap:5px;padding:8px 6px;cursor:pointer}
+  .tl{width:14px;height:2px;border-radius:2px;background:var(--ink-4);opacity:.5}.toc-lines:hover .tl{opacity:.8}
+  .tl.on{background:var(--ink);opacity:1;width:17px}.tl.run{background:var(--blue);opacity:1}
+  .toc-menu{position:absolute;right:100%;top:50%;padding-right:9px;width:230px;opacity:0;pointer-events:none;
+    transform:translateY(-50%) translateX(10px);transition:.15s;z-index:40}
+  .toc:hover .toc-menu{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0)}
+  .toc-card{background:#fff;border:1px solid var(--line-2);border-radius:11px;box-shadow:0 16px 44px -16px rgba(20,20,40,.3);padding:5px;max-height:360px;overflow:auto}
+  .toc-card .tt{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:6px 9px 3px}
+  .frow{display:flex;gap:8px;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--ink)}
+  .frow:hover{background:var(--fill)}.frow .fn{font-size:10px;color:var(--ink-4);width:16px}.frow .fl{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.frow .fm{font-size:11px;color:var(--ink-4)}
+
+  /* tabs layout */
+  .tabs{display:flex;gap:3px;padding:7px 14px;border-bottom:1px solid var(--line);flex-shrink:0;overflow:auto}
+  .tab{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;color:var(--ink-3);font-size:12.5px;font-weight:500;white-space:nowrap}
+  .tab.on{background:var(--fill);color:var(--ink)}.tab:not(.on):hover{color:var(--ink)}
+  .tab .n{font-size:10px;color:var(--ink-4);background:var(--bg);border:1px solid var(--line-2);border-radius:999px;padding:0 5px}
+  .tab.on .n{background:#fff}
+
+  /* changes surface */
+  .changes{flex:1;display:flex;min-height:0}
+  .flist{width:300px;flex-shrink:0;border-right:1px solid var(--line);overflow:auto;padding:8px}
+  .fitem{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:12.5px}
+  .fitem:hover{background:var(--fill)}.fitem.on{background:var(--fill)}
+  .fitem .fp{flex:1;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+  .fitem .pm{font-size:11px;flex-shrink:0}.fitem .pm .p{color:var(--add-fg)}.fitem .pm .m{color:var(--del-fg)}
+  .diffview{flex:1;overflow:auto;padding:0}
+  .difffile{padding:9px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink);font-weight:600;position:sticky;top:0;background:rgba(255,255,255,.9);backdrop-filter:blur(4px)}
+  .dl{display:flex;padding:1px 0;font-size:12.5px}
+  .dl .ln{width:40px;flex-shrink:0;text-align:right;padding-right:12px;color:var(--ink-5)}
+  .dl .tx{white-space:pre-wrap;padding-right:12px}
+  .dl.add{background:var(--add-bg)}.dl.add .tx{color:var(--add-fg)}
+  .dl.del{background:var(--del-bg)}.dl.del .tx{color:var(--del-fg)}
+  .dl.ctx .tx{color:var(--ink-3)}
+  .changes-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;row-gap:5px;padding:9px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+  .changes-top b{color:var(--ink)}
+  .prbtn{margin-left:auto;flex-shrink:0;font-size:12px;font-weight:600;color:#fff;background:var(--ink);border-radius:8px;padding:5px 12px}
+  .workspace .flist{width:190px}
+  .workspace .changes-top{font-size:12px}
+
+  /* artifacts surface */
+  .gallery{flex:1;overflow:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;align-content:start}
+
+  /* audit surface */
+  .audit{flex:1;overflow:auto;padding:10px 0}
+  .arow{display:flex;gap:11px;padding:10px 18px;align-items:flex-start}
+  .arow:hover{background:var(--fill)}
+  .arow .ai{width:24px;height:24px;border-radius:7px;background:var(--fill);display:grid;place-items:center;font-size:12px;flex-shrink:0}
+  .arow .at{flex:1;min-width:0}.arow .at .a1{color:var(--ink)}.arow .at .a2{font-size:11.5px;color:var(--ink-4);margin-top:1px}
+  .arow .atime{font-size:11px;color:var(--ink-4);flex-shrink:0}
+  .arow.blocked .ai{background:#fbf3e2;color:var(--amber)}
+
+  /* preview surface */
+  .preview{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .browser{border:1px solid var(--line-2);border-radius:11px;overflow:hidden;flex:1;min-height:280px;display:flex;flex-direction:column}
+  .urlbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--fill);font-size:12px;color:var(--ink-3)}
+  .urlbar .dots{display:flex;gap:5px}.urlbar .dots i{width:9px;height:9px;border-radius:50%;background:var(--line-3)}
+  .urlbar .u{flex:1;background:#fff;border:1px solid var(--line-2);border-radius:7px;padding:3px 9px;color:var(--ink-2)}
+  .pview{flex:1;display:grid;place-items:center;color:var(--ink-4);background:repeating-linear-gradient(45deg,#fcfcfd,#fcfcfd 10px,#f7f7f9 10px,#f7f7f9 20px)}
+  .pmock{width:80%;max-width:420px;background:#fff;border:1px solid var(--line-2);border-radius:10px;padding:14px;box-shadow:0 8px 24px -12px rgba(0,0,0,.15)}
+  .pmock .pb{height:9px;border-radius:5px;background:var(--line-2);margin:7px 0}.pmock .pb.s{width:60%}.pmock .pb.a{width:40%;background:var(--blue);opacity:.5}
+  .envcard{border:1px solid var(--line-2);border-radius:11px;padding:12px 14px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+  .envcard .et{flex:1}.envcard .e1{font-weight:600;color:var(--ink)}.envcard .e2{font-size:12px;color:var(--ink-4);margin-top:2px}
+  .wake{font-size:12px;font-weight:600;color:#fff;background:var(--blue);border-radius:8px;padding:6px 13px}
+
+  /* two-pane workspace */
+  .twopane .read{flex:1}
+  .workspace{width:520px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .ws-tabs{display:flex;gap:3px;padding:8px 10px;border-bottom:1px solid var(--line);flex-shrink:0}
+  .ws-body{flex:1;display:flex;min-height:0}
+
+  /* summary strip */
+  .strip{display:flex;align-items:center;gap:7px;padding:8px 18px;border-bottom:1px solid var(--line);flex-shrink:0;overflow:auto}
+  .stat{display:flex;align-items:center;gap:6px;padding:4px 11px;border:1px solid var(--line-2);border-radius:999px;font-size:12px;color:var(--ink-2);white-space:nowrap;cursor:pointer}
+  .stat:hover{border-color:var(--line-3);background:var(--fill)}
+  .stat b{color:var(--ink);font-weight:600}.stat .ic{font-size:12px}
+
+  /* drawer */
+  .scrim{position:absolute;inset:0;background:rgba(20,20,30,.28);opacity:0;pointer-events:none;transition:.2s;z-index:45}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .drawer{position:absolute;top:0;right:0;bottom:0;width:560px;max-width:84%;background:#fff;border-left:1px solid var(--line-2);
+    transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.8,.2,1);z-index:46;display:flex;flex-direction:column;box-shadow:-20px 0 50px -24px rgba(20,20,40,.35)}
+  .drawer.open{transform:none}
+  .drawer-h{height:48px;flex-shrink:0;display:flex;align-items:center;gap:9px;padding:0 16px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
+  .drawer-h .x{margin-left:auto;color:var(--ink-3)}
+  .drawer-b{flex:1;display:flex;min-height:0}
+
+  /* read-only banner (expired) */
+  .ro{display:flex;align-items:center;gap:8px;padding:7px 18px;background:#fbf3f3;border-bottom:1px solid #f0d6d6;font-size:12.5px;color:var(--red)}
+
+  /* composer */
+  .comp{flex-shrink:0;border-top:1px solid var(--line);padding:12px 22px 14px}
+  .comp-in{max-width:600px;margin:0 auto}
+  .field{display:flex;align-items:center;gap:9px;border:1px solid var(--line-2);border-radius:13px;padding:9px 14px}
+  .field.steer{border-color:var(--ink-3)}.field.off{opacity:.55}
+  .field .to{flex-shrink:0;font-size:10.5px;font-weight:600;background:var(--ink);color:#fff;border-radius:6px;padding:3px 7px}
+  .field input{flex:1;border:none;outline:none;background:none;color:var(--ink);font:inherit}.field input::placeholder{color:var(--ink-4)}
+  .field .gobtn{width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;flex-shrink:0}
+</style>
+</head>
+<body>
+<div class="controls">
+  <div class="grp"><span class="lbl">Layout</span>
+    <div class="seg" id="seg-layout">
+      <button data-v="inline" class="on">Inline + expand</button>
+      <button data-v="tabs">Tabbed</button>
+      <button data-v="twopane">Two-pane</button>
+      <button data-v="summary">Summary strip</button>
+    </div></div>
+  <div class="grp"><span class="lbl">Environment</span>
+    <div class="seg" id="seg-env">
+      <button data-v="warm" class="on">Warm</button>
+      <button data-v="sleeping">Sleeping</button>
+      <button data-v="expired">Expired</button>
+    </div></div>
+  <div class="hint" id="hint"></div>
+</div>
+<div class="stage" id="stage"></div>
+
+<script>
+const SESSION={title:"migrate sessions → driver set",driver:"Mara",cost:0.42,
+  turns:[
+    {n:1,who:"Mara",lead:"plan + add column",items:[
+      {k:"steer",who:"Mara",text:"Sessions need more than one driver. Add a driver_ids[] column + migration."},
+      {k:"text",text:"Added driver_ids uuid[] with a backfill; kept driver_id for now."},
+      {k:"changes"}]},
+    {n:2,who:"Mara",lead:"run the suite",items:[
+      {k:"steer",who:"Mara",text:"Run the whole suite and screenshot the new seat row."},
+      {k:"tool",cmd:"pnpm test",out:"312 passed"},
+      {k:"artifacts"}]},
+    {n:3,who:"Mara",lead:"open the PR",items:[
+      {k:"steer",who:"Mara",text:"Looks good — open a PR and start a staging deploy."},
+      {k:"side"}]},
+    {n:4,who:"agent",lead:"deploy gate",items:[
+      {k:"text",text:"PR #128 opened. The staging deploy is an irreversible action — I need approval before continuing."},
+      {k:"live",text:"waiting for approval to deploy → staging"}]},
+  ]};
+const CHANGES=[
+  {path:"migrations/003_driver_set.sql",add:18,del:1,diff:[["ctx","create table sessions ("],["del","  driver_id uuid not null,"],["add","  driver_id uuid,"],["add","  driver_ids uuid[] not null default '{}',"],["ctx","  ..."],["ctx",");"],["add","update sessions set driver_ids = array[driver_id];"]]},
+  {path:"surface/web/src/sessions/SessionPane.tsx",add:19,del:7,diff:[["ctx","<div className=\"meta\">"],["del","  driver: {driverName}"],["add","  {drivers.map(d => ("],["add","    <Chip key={d.id}>{d.name}</Chip>"],["add","  ))}"],["ctx","</div>"]]},
+  {path:"surface/server/src/session-runs.ts",add:24,del:4,diff:[["add","async function grantSeatToSet(id, userId) {"],["add","  // append to driver_ids instead of replacing driver_id"],["add","}"]]},
+];
+const ARTIFACTS=[
+  {name:"seat-row.png",type:"image",ic:"🖼",meta:"1024×120 · turn 2 · Mara"},
+  {name:"coverage.html",type:"report",ic:"📄",meta:"312 tests · turn 2 · Mara"},
+  {name:"bench-before-after.csv",type:"data",ic:"▦",meta:"24 rows · turn 2 · Mara"},
+];
+const AUDIT=[
+  {kind:"cmd",ic:"▸",a1:"ran pnpm test",a2:"312 passed · exit 0",by:"Mara",t:"9:11"},
+  {kind:"pr",ic:"⤴",a1:"opened PR #128 — multi-driver migration",a2:"github.com/atrium · approved by Mara",by:"Mara",t:"9:14",ok:true},
+  {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
+];
+const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const S={layout:"inline",env:"warm",tab:"transcript",ws:"changes",file:0,drawer:null,open:{},approved:null};
+
+const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
+
+/* ---- shared surface renderers ---- */
+function surfaceChanges(){
+  const t=totals();
+  return `<div class="changes" style="flex-direction:column">
+    <div class="changes-top"><b>${t.files} files</b> changed · <span style="color:var(--add-fg)">+${t.add}</span> <span style="color:var(--del-fg)">−${t.del}</span>
+      · auto-detected repo <b>atrium</b> · branch <span class="mono">feat/driver-set</span>
+      <button class="prbtn">Open PR ↗</button></div>
+    <div class="changes" style="flex:1">
+      <div class="flist scroll">${CHANGES.map((c,i)=>`<div class="fitem ${S.file===i?'on':''}" data-file="${i}">
+        <span class="fp mono">${esc(c.path)}</span><span class="pm"><span class="p">+${c.add}</span> <span class="m">−${c.del}</span></span></div>`).join('')}</div>
+      <div class="diffview scroll">
+        <div class="difffile mono">${esc(CHANGES[S.file].path)}</div>
+        ${CHANGES[S.file].diff.map(d=>`<div class="dl ${d[0]} mono"><span class="ln">${d[0]==='add'?'+':d[0]==='del'?'−':' '}</span><span class="tx">${esc(d[1])}</span></div>`).join('')}
+      </div></div></div>`;
+}
+function surfaceArtifacts(){
+  return `<div class="gallery scroll">${ARTIFACTS.map(a=>`<div class="acard">
+    <div class="thumb"><span class="ext">${a.name.split(".").pop().toUpperCase()}</span></div><div class="an">${esc(a.name)}</div><div class="am">${esc(a.meta)}</div></div>`).join('')}</div>`;
+}
+function surfaceAudit(){
+  return `<div class="audit scroll">${AUDIT.map(e=>{
+    let badge=e.ok?'<span class="badge ok">approved</span>':'',a2=e.a2,act='',blocked=false;
+    if(e.blocked){
+      if(S.approved==='yes'){badge='<span class="badge ok">approved</span>';a2='deploying → staging · started by Mara 9:16';}
+      else if(S.approved==='no'){badge='<span class="badge">denied</span>';a2='blocked by Mara — agent continued without it';}
+      else{blocked=true;badge='<span class="badge wait">needs approval</span>';
+        act='<div class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></div>';}
+    }
+    return `<div class="arow ${blocked?'blocked':''}">
+      <div class="ai">${e.ic}</div><div class="at"><div class="a1">${esc(e.a1)} ${badge}</div><div class="a2">${esc(a2)}</div></div>
+      ${act}<div class="atime">${e.t}</div></div>`;}).join('')}</div>`;
+}
+function surfacePreview(){
+  if(S.env==='warm')return `<div class="preview scroll">
+    <div class="envcard"><div class="et"><div class="e1">Environment · warm</div><div class="e2">snapshot kept until archived · $${SESSION.cost.toFixed(2)} so far · port 3000 exposed</div></div></div>
+    <div class="browser"><div class="urlbar"><span class="dots"><i></i><i></i><i></i></span><span class="u mono">7f3a.preview.atrium.dev:3000</span><span>↻</span></div>
+      <div class="pview"><div class="pmock"><div class="pb a"></div><div class="pb"></div><div class="pb s"></div><div class="pb"></div><div class="pb s"></div></div></div></div></div>`;
+  if(S.env==='sleeping')return `<div class="preview scroll">
+    <div class="envcard"><div class="et"><div class="e1">Environment · sleeping</div><div class="e2">snapshot preserved · resume rebuilds the box (~30s) · no live preview while asleep</div></div>
+      <button class="wake">Wake & resume</button></div>
+    <div class="browser"><div class="urlbar"><span class="dots"><i></i><i></i><i></i></span><span class="u mono">preview offline</span></div>
+      <div class="pview">preview sleeps with the environment — wake to view</div></div></div>`;
+  return `<div class="preview scroll">
+    <div class="envcard" style="border-color:#f0d6d6"><div class="et"><div class="e1" style="color:var(--red)">Environment · expired</div><div class="e2">snapshot GC'd · transcript, changes & artifacts remain · resume rebuilds from scratch</div></div>
+      <button class="wake" style="background:var(--ink)">Rebuild fresh</button></div>
+    <div class="browser"><div class="urlbar"><span class="dots"><i></i><i></i><i></i></span><span class="u mono">no environment</span></div>
+      <div class="pview">record-only — the working state is gone, but everything it produced is kept</div></div></div>`;
+}
+function surface(name){return name==='changes'?surfaceChanges():name==='artifacts'?surfaceArtifacts():name==='audit'?surfaceAudit():name==='preview'?surfacePreview():'';}
+
+/* ---- transcript ---- */
+function inlineCard(kind){
+  if(kind==='changes'){const t=totals();return `<div class="card" data-open="changes"><div class="ch">
+    <span class="ci">±</span><span class="ct">Changes · ${t.files} files</span><span class="cm"><span style="color:var(--add-fg)">+${t.add}</span> <span style="color:var(--del-fg)">−${t.del}</span> · feat/driver-set</span><span class="go">View ↗</span></div></div>`;}
+  if(kind==='artifacts')return `<div class="gallery-inline">${ARTIFACTS.map(a=>`<div class="acard" data-open="artifacts"><div class="thumb"><span class="ext">${a.name.split(".").pop().toUpperCase()}</span></div><div class="an">${esc(a.name)}</div><div class="am">${esc(a.meta)}</div></div>`).join('')}</div>`;
+  if(kind==='side'){const gate=S.approved==='yes'?'<span class="badge ok">deploying</span>':S.approved==='no'?'<span class="badge">denied</span>':'<span class="badge wait">needs approval</span><span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span>';
+    return `<div class="sideline" data-open="audit"><span class="si">⤴</span> Opened <b style="color:var(--ink)">PR #128</b> <span class="badge ok">approved</span> · then <b style="color:var(--ink)">deploy → staging</b> ${gate}</div>`;}
+  return '';
+}
+function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];const inline=S.layout==='inline';
+  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}</div><div class="say">${esc(it.text)}</div></div>`;
+  if(it.k==="text")return `<div class="resp">${esc(it.text)}</div>`;
+  if(it.k==="tool")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} ran <span class="mono">${esc(it.cmd)}</span> · ${esc(it.out)}</button></div>`;
+  if(it.k==="live"){const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
+    return `<div class="live-line"><span class="ld"></span>${txt}</div>`;}
+  if(it.k==="changes"||it.k==="artifacts"||it.k==="side")return inline?inlineCard(it.k):'';
+  return "";
+}
+function transcriptHTML(){return `<div class="read scroll"><div class="col">${SESSION.turns.map(t=>`<div class="tblk" id="t-${t.n}">${t.items.map((it,ti)=>itemHTML(it,t,ti)).join('')}</div>`).join('')}</div></div>`;}
+
+function tocHTML(){const turns=SESSION.turns;
+  const lines=turns.map(t=>`<span class="tl ${t.n===2?'on':''} ${t.items.some(i=>i.k==='live')?'run':''}"></span>`).join('');
+  const rows=turns.map(t=>`<div class="frow" data-seg="${t.n}"><span class="fn">T${t.n}</span><span class="fl">${esc(t.lead)}</span></div>`).join('');
+  return `<div class="toc"><div class="toc-lines">${lines}</div>
+    <div class="toc-menu"><div class="toc-card"><div class="tt">Turns</div>${rows}
+      <div class="tt" style="margin-top:4px">Jump to</div>
+      <div class="frow" data-open="changes"><span class="fn">±</span><span class="fl">Changes</span><span class="fm">${totals().files}</span></div>
+      <div class="frow" data-open="artifacts"><span class="fn">▦</span><span class="fl">Artifacts</span><span class="fm">${ARTIFACTS.length}</span></div>
+      <div class="frow" data-open="audit"><span class="fn">⤴</span><span class="fl">Side-effects</span><span class="fm">3</span></div>
+    </div></div></div>`;
+}
+
+function composerHTML(){
+  if(S.env==='expired')return `<div class="comp"><div class="comp-in"><div class="field off"><span class="to">↳ agent</span><input disabled placeholder="environment expired — rebuild to continue"/></div></div></div>`;
+  return `<div class="comp"><div class="comp-in"><div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.env==='sleeping'?'Message — sending wakes the environment':'Message the agent…'}"/><button class="gobtn">↑</button></div></div></div>`;
+}
+
+/* ---- header + layouts ---- */
+function headerHTML(){
+  const e=S.env;const lbl=e==='warm'?'warm':e==='sleeping'?'sleeping':'expired';
+  return `<div class="sess-h"><span class="ti">${esc(SESSION.title)}</span>
+    <span class="lv"><span class="live"></span>Mara</span>
+    <span class="envchip ${e}"><span class="d"></span>env ${lbl}</span>
+    <button class="ib sp" title="Close">✕</button></div>`;
+}
+function roBanner(){return S.env==='expired'?`<div class="ro">⚠ Environment expired — this session is record-only. Transcript, changes, and artifacts are preserved; rebuild to keep working.</div>`:'';}
+
+function layoutInline(){
+  return `<div class="session">${headerHTML()}${roBanner()}
+    <div class="body">${transcriptHTML()}${tocHTML()}${drawerHTML()}</div>${composerHTML()}</div>`;
+}
+function layoutTabs(){
+  const t=totals();
+  const tab=(id,label,n)=>`<button class="tab ${S.tab===id?'on':''}" data-tab="${id}">${label}${n!=null?`<span class="n">${n}</span>`:''}</button>`;
+  const main=S.tab==='transcript'?transcriptHTML():`<div class="body" style="flex-direction:column">${surface(S.tab)}</div>`;
+  return `<div class="session">${headerHTML()}${roBanner()}
+    <div class="tabs">${tab('transcript','Transcript')}${tab('changes','Changes',t.files)}${tab('artifacts','Artifacts',t.arts)}${tab('audit','Side-effects',3)}${tab('preview','Preview')}</div>
+    <div class="body">${main}${S.tab==='transcript'?tocHTML():''}</div>${composerHTML()}</div>`;
+}
+function layoutTwopane(){
+  const wtab=(id,label)=>`<button class="tab ${S.ws===id?'on':''}" data-ws="${id}">${label}</button>`;
+  return `<div class="session twopane">${headerHTML()}${roBanner()}
+    <div class="body">
+      ${transcriptHTML()}
+      <div class="workspace">
+        <div class="ws-tabs">${wtab('changes','Changes')}${wtab('preview','Preview')}${wtab('artifacts','Artifacts')}${wtab('audit','Side-effects')}</div>
+        <div class="ws-body">${surface(S.ws)}</div>
+      </div>
+    </div>${composerHTML()}</div>`;
+}
+function layoutSummary(){
+  const t=totals();
+  const stat=(open,ic,html)=>`<div class="stat" data-open="${open}"><span class="ic">${ic}</span>${html}</div>`;
+  const strip=`<div class="strip">
+    ${stat('changes','±',`<b>${t.files}</b> files <span style="color:var(--add-fg)">+${t.add}</span> <span style="color:var(--del-fg)">−${t.del}</span>`)}
+    ${stat('artifacts','▦',`<b>${t.arts}</b> artifacts`)}
+    ${stat('audit','⤴',`<b>1</b> PR · <b>1</b> gated`)}
+    ${stat('preview',S.env==='warm'?'●':'○',`preview ${S.env==='warm'?'live':S.env}`)}
+  </div>`;
+  return `<div class="session">${headerHTML()}${roBanner()}${strip}
+    <div class="body">${transcriptHTML()}${tocHTML()}${drawerHTML()}</div>${composerHTML()}</div>`;
+}
+function drawerHTML(){
+  const titles={changes:'Changes',artifacts:'Artifacts',audit:'Side-effects',preview:'Preview'};
+  return `<div class="scrim ${S.drawer?'open':''}" data-close="1"></div>
+    <div class="drawer ${S.drawer?'open':''}"><div class="drawer-h">${S.drawer?titles[S.drawer]:''}<span class="x" data-close="1">✕</span></div>
+      <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
+}
+
+function frameHTML(){
+  const L=S.layout==='tabs'?layoutTabs():S.layout==='twopane'?layoutTwopane():S.layout==='summary'?layoutSummary():layoutInline();
+  return `<div class="frame"><div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>${L}</div>`;
+}
+
+function render(){document.getElementById('stage').innerHTML=frameHTML();wire();hint();
+  try{location.hash=`layout=${S.layout},env=${S.env}`;}catch(e){}}
+function hint(){const h=document.getElementById('hint');const m={
+  inline:'Work products are blocks IN the transcript; click to expand into a drawer.',
+  tabs:'Top tabs switch the whole view between transcript and each surface.',
+  twopane:'Transcript left, a persistent workspace panel right (IDE-like).',
+  summary:'A status strip under the title; click a stat to drill into its surface.'};
+  h.textContent=m[S.layout]+(S.env!=='warm'?` · env ${S.env}: see Preview / composer`:'');}
+
+function wire(){
+  ['layout','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+    S[k]=b.dataset.v;if(k==='layout'){S.tab='transcript';S.drawer=null;}render();}));
+  document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{S.open[b.dataset.tool]=!S.open[b.dataset.tool];render();});
+  document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>{S.file=+b.dataset.file;render();});
+  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();});
+  document.querySelectorAll('[data-ws]').forEach(b=>b.onclick=()=>{S.ws=b.dataset.ws;render();});
+  document.querySelectorAll('[data-open]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();
+    if(S.layout==='tabs'){S.tab=b.dataset.open;}else if(S.layout==='twopane'){S.ws=b.dataset.open;}else{S.drawer=b.dataset.open;}render();});
+  document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{S.drawer=null;render();});
+  document.querySelectorAll('.approve').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.approved='yes';render();});
+  document.querySelectorAll('.deny').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.approved='no';render();});
+}
+(function(){const h=location.hash.replace(/^#/,'');if(h)h.split(',').forEach(kv=>{const[k,v]=kv.split('=');if(k in S)S[k]=v;});})();
+render();
+</script>
+</body>
+</html>
