@@ -46,7 +46,7 @@ services:
     ports:
       - "7880:7880" # WebSocket signaling: LIVEKIT_URL=ws://localhost:7880
       - "7881:7881/tcp" # WebRTC over TCP fallback
-      - "50000-50100:50000-50100/udp" # WebRTC UDP media range for dev
+      - "7882:7882/udp" # single muxed WebRTC UDP media port (see livekit.dev.yaml)
     volumes:
       - ./deploy/livekit.dev.yaml:/etc/livekit.yaml:ro
 
