@@ -276,7 +276,9 @@ export function createApi(opts: ApiOptions = {}) {
     /** Leave a call; the server ends it when the last participant leaves. */
     leaveCall: (callId: string) =>
       req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
-    registerPush: (body: { token: string; platform: 'ios' | 'android' }) =>
+    /** `kind` distinguishes the Expo notification token ('expo', default) from
+     * the VoIP/PushKit (iOS) or FCM-data (Android) call-ringing token ('voip'). */
+    registerPush: (body: { token: string; platform: 'ios' | 'android'; kind?: 'expo' | 'voip' }) =>
       req<{ ok: true }>('/api/push/register', {
         method: 'POST',
         body: JSON.stringify(body),
