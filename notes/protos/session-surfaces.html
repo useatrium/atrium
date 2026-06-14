@@ -58,6 +58,11 @@
   .nm{font-weight:600;color:var(--ink);margin-bottom:1px}.say{color:var(--ink)}
   .resp{color:var(--ink-2);margin-top:9px;padding-left:15px}
   .tg{color:var(--ink-3);text-align:left}.tg:hover{color:var(--ink-2)}.tg .dim{color:var(--ink-4)}
+  .tg.static{cursor:default}.tg.static:hover{color:var(--ink-3)}
+  .tg.err{color:var(--del-fg)}
+  .tout{margin-top:6px;padding:7px 11px;background:var(--fill);border-radius:8px;color:var(--ink-3);font-size:12px;white-space:pre-wrap}
+  .nm .spawn{font-weight:400;color:var(--ink-4);font-size:11.5px;margin-left:8px}
+  .nm .spawn b{color:var(--ink-3);font-weight:600}
   .live-line{display:flex;align-items:center;gap:8px;color:var(--ink-3);margin-top:9px;padding-left:15px}
   .ld{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 2s infinite}
 
@@ -217,6 +222,25 @@
   .ch-scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
   .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
   .ch-c .field .plus{color:var(--ink-4);font-size:17px;flex-shrink:0}
+  .cmsg .mention{background:#eef4ff;color:var(--blue-ink);border-radius:5px;padding:0 5px;font-weight:600}
+  .channel.wide{width:auto;flex:1}
+  /* active-sessions discovery rail (Channel view) */
+  .srail{width:300px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;background:var(--bg)}
+  .sr-h{height:50px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 16px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
+  .sr-h .cnt{font-weight:400;color:var(--ink-4);font-size:12px}
+  .sr-list{flex:1;overflow:auto;padding:8px}
+  .srow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;cursor:pointer;border:1px solid transparent}
+  .srow:hover{background:var(--fill)}
+  .srow.attn{background:#fdfaf2;border-color:#f0e2c2}
+  .sr-d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .sr-d.run{background:var(--green);box-shadow:0 0 0 0 rgba(31,157,87,.5);animation:pulse 2s infinite}
+  .sr-d.attn{background:var(--amber)}.sr-d.done{background:var(--ink-5)}
+  .sr-t{flex:1;min-width:0}.sr-1{color:var(--ink);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sr-2{font-size:11.5px;color:var(--ink-4);margin-top:1px}
+  .sr-b{font-size:10px;font-weight:600;border-radius:999px;padding:1px 8px;flex-shrink:0}
+  .sr-b.attn{background:#fbf0d8;color:var(--amber)}
+  .sr-sec{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:12px 10px 4px}
+  .sr-f{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px;font-size:11.5px;color:var(--ink-4)}.sr-f b{color:var(--ink-3)}
 </style>
 </head>
 <body>
@@ -229,7 +253,8 @@
     </div></div>
   <div class="grp"><span class="lbl">View</span>
     <div class="seg" id="seg-view">
-      <button data-v="channel" class="on">In channel</button>
+      <button data-v="browse" class="on">Channel</button>
+      <button data-v="peek">Split</button>
       <button data-v="focus">Focus</button>
     </div></div>
   <div class="grp"><span class="lbl">Environment</span>
@@ -245,19 +270,43 @@
 <script>
 const SESSION={title:"migrate sessions → driver set",driver:"Mara",cost:0.42,
   turns:[
-    {n:1,who:"Mara",lead:"plan + add column",items:[
-      {k:"steer",who:"Mara",text:"Sessions need more than one driver. Add a driver_ids[] column + migration."},
-      {k:"text",text:"Added driver_ids uuid[] with a backfill; kept driver_id for now."},
+    {n:1,who:"Mara",lead:"add the column",items:[
+      {k:"steer",who:"Mara",spawn:true,text:"migrate sessions → driver set: add a driver_ids[] column with a backfill from driver_id, widen seat grant/take to set semantics, and reflect multiple drivers in the pane. Keep driver_id during the transition."},
+      {k:"reason",sec:9,text:"sessions has a single driver_id uuid. A column (driver_ids uuid[]) keeps the row self-contained vs. a join table — backfill from driver_id, keep it during the transition, drop later. I should find every read/write of driver_id before touching the schema so nothing breaks."},
+      {k:"step",label:"read migrations/002_phase2_sessions.sql",out:"create table sessions (\n  id uuid primary key,\n  driver_id uuid not null,\n  ...\n);"},
+      {k:"step",label:"grep driver_id — 23 hits in 6 files",out:"session-runs.ts (14) · SessionPane.tsx (4) · sessions.test.ts (3) · ..."},
+      {k:"step",label:"read surface/server/src/session-runs.ts:580–680 (seat logic)"},
+      {k:"text",text:"Seat grant/take and requireDriver all assume a single driver_id. I'll land the column + backfill first, then widen those to set semantics in a later step."},
+      {k:"step",label:"edited migrations/003_driver_set.sql +18 −0"},
+      {k:"step",label:"ran pnpm migrate · ok (1 migration applied)"},
+      {k:"text",text:"Added driver_ids uuid[] with a backfill from driver_id; driver_id stays in place for back-compat."},
       {k:"changes"}]},
-    {n:2,who:"Mara",lead:"run the suite",items:[
-      {k:"steer",who:"Mara",text:"Run the whole suite and screenshot the new seat row."},
-      {k:"tool",cmd:"pnpm test",out:"312 passed"},
+    {n:2,who:"Mara",lead:"check the down-migration",items:[
+      {k:"steer",who:"Mara",text:"Check the down-migration too — make sure it reverses cleanly."},
+      {k:"reason",sec:4,text:"Run the down migration in a scratch DB and confirm the column drops without orphaning anything, then re-run the affected tests."},
+      {k:"step",label:"ran pnpm migrate:down · 2 tests failed",err:true,out:"FAIL seatHandoff › grants seat\nFAIL tenancy › scopes cursors\n  expected driver_id to be defined"},
+      {k:"step",label:"git stash && pnpm test seatHandoff tenancy · same 2 fail",out:"both fail on origin/main too"},
+      {k:"text",text:"The down migration drops driver_ids cleanly. Those 2 failures are pre-existing on main — they assert on driver_id directly — and unrelated to this change."}]},
+    {n:3,who:"Mara",lead:"NOT NULL default + widen seats",items:[
+      {k:"steer",who:"Mara",text:"Good. Add a NOT NULL default so the column is never null after backfill, and widen the seat logic to the set."},
+      {k:"step",label:"edited migrations/003_driver_set.sql +4 −1"},
+      {k:"step",label:"edited surface/server/src/session-runs.ts +24 −4 (grantSeat → set)"},
+      {k:"reason",sec:6,text:"grantSeat replaced driver_id; for a set it should append to driver_ids and dedupe. takeSeat/requireDriver now check membership in the set, not equality."},
+      {k:"step",label:"ran pnpm test sessions · 41 passed"},
+      {k:"text",text:"driver_ids is NOT NULL default '{}'; seat grant/take/require now operate on the set. Backfill runs before the constraint, so no row is ever empty."}]},
+    {n:4,who:"Mara",lead:"show drivers in the pane + screenshot",items:[
+      {k:"steer",who:"Mara",text:"Update the session header to show all current drivers, not just one chip — then screenshot it."},
+      {k:"step",label:"edited surface/web/src/sessions/SessionPane.tsx +19 −7"},
+      {k:"step",label:"ran pnpm -C surface/web build · ok"},
+      {k:"step",label:"playwright screenshot --selector .sess-h · saved seat-row.png"},
+      {k:"text",text:"Header now renders a chip per active driver and falls back to “unseated” when the set is empty. Screenshot attached."},
       {k:"artifacts"}]},
-    {n:3,who:"Mara",lead:"open the PR",items:[
+    {n:5,who:"Mara",lead:"open PR + deploy",items:[
       {k:"steer",who:"Mara",text:"Looks good — open a PR and start a staging deploy."},
-      {k:"side"}]},
-    {n:4,who:"agent",lead:"deploy gate",items:[
-      {k:"text",text:"PR #128 opened. The staging deploy is an irreversible action — I need approval before continuing."},
+      {k:"step",label:"ran pnpm test · 312 passed (41.2s)"},
+      {k:"step",label:"opened PR #128 — multi-driver migration"},
+      {k:"text",text:"PR #128 opened. The staging deploy is irreversible — I need approval before continuing."},
+      {k:"side"},
       {k:"live",text:"waiting for approval to deploy → staging"}]},
   ]};
 const CHANGES=[
@@ -276,7 +325,7 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={device:"desktop",view:"channel",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null};
+const S={device:"desktop",view:"browse",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null};
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -343,9 +392,12 @@ function inlineCard(kind){
   return '';
 }
 function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
-  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}</div><div class="say">${esc(it.text)}</div></div>`;
+  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <b>@agent</b></span>':''}</div><div class="say">${esc(it.text)}</div></div>`;
   if(it.k==="text")return `<div class="resp">${esc(it.text)}</div>`;
-  if(it.k==="tool")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} ran <span class="mono">${esc(it.cmd)}</span> · ${esc(it.out)}</button></div>`;
+  if(it.k==="reason")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}</div>`;
+  if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
+    if(!it.out)return `<div class="resp"><span class="tg static">▸ ${lab}</span></div>`;
+    return `<div class="resp"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${o?`<div class="tout mono">${esc(it.out)}</div>`:''}</div>`;}
   if(it.k==="live"){const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
     return `<div class="live-line"><span class="ld"></span>${txt}</div>`;}
   // committed design: reference work products (changes/artifacts) live in the summary strip;
@@ -413,20 +465,37 @@ function drawerHTML(){
       <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
 }
 
-function channelHTML(){return `<div class="channel">
+function channelHTML(wide){return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h"># sessions <span class="cnt">· 6</span></div>
   <div class="ch-b scroll">
-    <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb">kicking off the multi-driver migration — driving a session</div></div>
-    <div class="cmsg"><div class="cn">Mara<span class="tm">9:02</span></div><div class="cb">spinning it up now</div></div>
-    <div class="ch-scard open"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">Mara driving · open here →</div></div>
-    <div class="cmsg"><div class="cn">Alex<span class="tm">9:13</span></div><div class="cb">that staging deploy needs a second pair of eyes before it goes</div></div>
+    <div class="cmsg"><div class="cn">Mara<span class="tm">9:00</span></div><div class="cb">the migration to support more than one driver — let's get an agent on it</div></div>
+    <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb"><span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.</div></div>
+    <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">spawned from Mara's @agent · turn 5 · ${wide?'open →':'open here →'}</div></div>
+    <div class="cmsg"><div class="cn">Alex<span class="tm">9:13</span></div><div class="cb">nice — watching. ping me before that staging deploy goes</div></div>
   </div>
-  <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #sessions"/><button class="gobtn">↑</button></div></div>
+  <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #sessions — type @agent to start a session"/><button class="gobtn">↑</button></div></div>
 </div>`;}
+function sessionsRail(){
+  const row=(badge,bcls,title,sub)=>`<div class="srow ${bcls==='attn'?'attn':''}" data-open-session="1">
+    <div class="sr-d ${bcls}"></div><div class="sr-t"><div class="sr-1">${title}</div><div class="sr-2">${sub}</div></div>
+    ${badge?`<div class="sr-b ${bcls}">${badge}</div>`:''}</div>`;
+  return `<div class="srail">
+    <div class="sr-h">Sessions <span class="cnt">· 2 active</span></div>
+    <div class="sr-list scroll">
+      ${row('needs you','attn','migrate sessions → driver set','Mara · deploy gated · turn 5')}
+      ${row('','run','flaky test triage','Alex · running · turn 2')}
+      <div class="sr-sec">Recent</div>
+      ${row('','done','bump deps to vite 8','done · 14m ago')}
+      ${row('','done','tighten rate-limit window','merged · 1h ago')}
+    </div>
+    <div class="sr-f">＋ New session — <b>@agent</b> in any channel</div>
+  </div>`;
+}
 function frameHTML(){
   if(S.device==='mobile')return `<div class="frame mobile">${sessionLayout()}</div>`;
   const nav='<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>';
-  const chan=S.view==='channel'?channelHTML():'';
+  if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${sessionsRail()}</div>`;
+  const chan=S.view==='peek'?channelHTML(false):'';
   return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}</div>`;
 }
 
@@ -437,7 +506,8 @@ function hint(){const h=document.getElementById('hint');
   h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
     :S.detached?`Detached to ${detachTarget()} — Re-dock to bring it back.`
     :S.device==='mobile'?'Mobile: tap a stat → full-screen surface (no pin/detach).'
-    :S.view==='channel'?'Fully loaded: chat ⇄ agent. Click a stat → peek → ⤢ Pin or ↗ Detach.'
+    :S.view==='browse'?'Channel — sessions are cards in the timeline + the Sessions rail. Click one to open.'
+    :S.view==='peek'?'Split: chat ⇄ agent. Click a stat → peek → ⤢ Pin or ↗ Detach.'
     :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
 
 function wire(){
@@ -456,7 +526,8 @@ function wire(){
   // pin / detach grammar
   // pinning needs room: collapse the channel into focus (restore it on unpin) — never a cramped 3-column
   document.querySelectorAll('.pin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=S.drawer;S.drawer=null;
-    if(S.view==='channel'){S.viewBeforePin='channel';S.view='focus';}render();});
+    if(S.view==='peek'){S.viewBeforePin='peek';S.view='focus';}render();});
+  document.querySelectorAll('[data-open-session]').forEach(b=>b.onclick=()=>{S.view='peek';render();});
   document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;
     if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
   document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;

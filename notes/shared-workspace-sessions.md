@@ -293,6 +293,26 @@ re-rendered stage; `syncSeg()` now reconciles `.on` after every render).
 surface (5th item) vs folded-into-Preview vs header-only vs fleet-dashboard.
 Next proto.
 
+## Realism + spawn + channel-first view (round 7, 2026-06-14)
+
+Three additions to `session-surfaces.html`, calibrated against a real codex
+session on disk (~72 tool calls / 47 reasoning blocks; short status messages
+between tool batches — the work is in the *steps*, not long prose):
+- **Realistic transcript.** ~18 collapsed steps across 5 turns (read / grep /
+  edited / ran), reasoning blocks ("thought for Ns"), an error→diagnose loop (red
+  "2 tests failed" → stash-and-compare → "pre-existing on main"), brief status
+  messages. Demonstrates the point: a calm transcript *absorbs* a realistic
+  firehose because every step collapses to one line.
+- **Spawn = `@agent` in the channel → first session message.** A session is
+  started by typing `@agent <task>` in a channel; that message becomes the
+  session's first steer (rendered with a "started the session · @agent" marker),
+  and the channel shows a spawned-from card. Channel composer hints it.
+- **Channel-first view (3rd `View`: Channel / Split / Focus).** *Channel* = full
+  channel + a right **Sessions rail** (status-badged: running / **needs-you** /
+  recent) — the discovery answer: sessions are cards in the timeline *and* a
+  triage rail (survey's "needs attention" pattern). *Split* = chat ⇄ agent.
+  *Focus* = agent only. Pin from Split collapses the channel into Focus (cap).
+
 ## Annotation/navigation rail UX (round 3, ChatGPT-validated)
 
 ChatGPT Pro ships nearly this exact pattern (Gary's screenshots, 2026-06-13):
