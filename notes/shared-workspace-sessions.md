@@ -279,6 +279,16 @@ changes/artifacts are summarised in the strip, not streamed inline. Verified in 
 real browser: rest → peek → pin (preview beside transcript) → detach → re-dock,
 the approve gate, all env states, and the mobile degradation; zero JS errors.
 
+**Fully-loaded view added** (`View` toggle): *In channel* = the realistic full
+shell — nav · channel chat (messages + `Message #sessions` composer) · the agent
+session (strip + transcript + agent composer), i.e. chat ⇄ agent side-by-side
+with two composers; *Focus* = session only. **Pinning enforces the pane cap:**
+pinning a surface from In-channel collapses the channel into Focus (so the
+transcript keeps ~600px beside the pinned surface, never a crushed 3-column),
+and unpinning restores the channel. Detach from In-channel keeps the channel
+(it leaves the app). Toggle selected-state bug fixed (controls live outside the
+re-rendered stage; `syncSeg()` now reconciles `.on` after every render).
+
 **Still UNDECIDED — meta home** (env/cost/spawn-config/repo binding): Overview
 surface (5th item) vs folded-into-Preview vs header-only vs fleet-dashboard.
 Next proto.
