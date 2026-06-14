@@ -30,7 +30,7 @@
   .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4);max-width:40ch;text-align:right}
 
   .stage{display:flex;justify-content:center;padding:22px}
-  .frame{width:min(1180px,100%);height:752px;background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
+  .frame{width:min(1500px,96vw);height:calc(100vh - 96px);background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
     overflow:hidden;display:flex;box-shadow:0 18px 50px -20px rgba(20,20,40,.3)}
   .nav{width:50px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:11px 0;gap:9px}
   .logo{width:26px;height:26px;border-radius:7px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
@@ -41,8 +41,15 @@
   .sess-h .ti{font-weight:600;font-size:15px;letter-spacing:-.01em;flex:1;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sess-h .crumb{font-size:12.5px;color:var(--ink-3);font-weight:500;padding:4px 9px;border-radius:7px;flex-shrink:0;margin-left:-4px}
   .sess-h .crumb:hover{background:var(--fill);color:var(--ink)}
-  .lv{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);flex-shrink:0}
   .live{width:7px;height:7px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 0 rgba(79,70,229,.5);animation:pulse 2s infinite}
+  /* presence: avatar stack, driver ringed (replaces the busy "You drive · 4 watching" line) */
+  .who{display:flex;align-items:center;flex-shrink:0;cursor:default}
+  .av{width:25px;height:25px;border-radius:50%;display:grid;place-items:center;font-size:10.5px;font-weight:600;color:#fff;background:var(--ink-4);border:2px solid var(--bg);margin-left:-7px}
+  .av:first-child{margin-left:0}
+  .av.seat{background:var(--blue);z-index:2} /* color marks the driver; watchers stay quiet/neutral */
+  .av.more{background:var(--fill);color:var(--ink-3)}
+  /* window chrome (expand/collapse + close) grouped + fenced off from status/actions */
+  .chrome{display:flex;align-items:center;gap:2px;margin-left:5px;padding-left:9px;border-left:1px solid var(--line);flex-shrink:0}
   @keyframes pulse{70%{box-shadow:0 0 0 6px rgba(79,70,229,0)}100%{box-shadow:0 0 0 0 rgba(79,70,229,0)}}
   .envchip{display:flex;align-items:center;gap:5px;font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line-2);color:var(--ink-3);flex-shrink:0}
   .envchip .d{width:6px;height:6px;border-radius:50%}
@@ -55,6 +62,29 @@
   .stopbtn:hover{background:var(--del-bg)}
   .live.off,.ld.off{background:var(--ink-4);animation:none;box-shadow:none}
   .live-line.stopped{color:var(--ink-4)}
+  /* steering area owns the agent's live state + model/thinking + container info */
+  .agbar{position:relative;display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .agstate{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3)}.agstate.off{color:var(--ink-4)}
+  /* live state IS the stop button: shows "Working", reveals "Stop" on hover (one control, not two) */
+  .agrun{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);border:1px solid transparent;border-radius:8px;padding:3px 10px}
+  .agrun .lbl-stop{display:none}
+  .agrun:hover{color:var(--red);background:var(--del-bg);border-color:#ecc9c9}
+  .agrun:hover .lbl-run{display:none}.agrun:hover .lbl-stop{display:inline}
+  .agrun:hover .ld{background:var(--red);border-radius:2px;animation:none;box-shadow:none}
+  .agmodel{font-size:11.5px;color:var(--ink-3);border:1px solid var(--line-2);border-radius:8px;padding:3px 10px}
+  .agmodel:hover{border-color:var(--line-3);color:var(--ink-2)}.agmodel b{color:var(--ink-2);font-weight:600}
+  .aginfo{width:20px;height:20px;border-radius:50%;border:1px solid var(--line-3);color:var(--ink-4);display:grid;place-items:center;font-size:12px;font-style:italic;font-weight:700;font-family:Georgia,"Times New Roman",serif;line-height:1}
+  .aginfo:hover{border-color:var(--ink-4);color:var(--ink-2)}
+  .setup-pop{position:absolute;bottom:100%;left:0;margin-bottom:8px;min-width:226px;background:var(--bg);border:1px solid var(--line-2);border-radius:11px;box-shadow:0 16px 44px -14px rgba(20,20,40,.34);padding:5px;z-index:42}
+  .sp-sec{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:7px 10px 3px}
+  .sp-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12.5px;color:var(--ink-2);padding:6px 10px;border-radius:7px}
+  .sp-row:hover{background:var(--fill)}.sp-row .ck{margin-left:auto;color:var(--blue)}
+  .sp-meta{font-size:12px;color:var(--ink-3);padding:2px 10px 4px}.sp-note{font-size:11px;color:var(--ink-4);padding:6px 10px 3px}
+  /* actionable seat hand-off (shown only when someone wants the seat) */
+  .seatreq{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);background:var(--accent-soft);border:1px solid #d8d6ee;border-radius:9px;padding:6px 11px;margin-bottom:9px}
+  .seatreq b{color:var(--ink);font-weight:600}.seatreq .d2{color:var(--ink-4)}
+  .seatreq .g{margin-left:auto;font-size:11px;font-weight:600;color:#fff;background:var(--blue);border-radius:6px;padding:3px 11px}
+  .seatreq .xd{font-size:12px;color:var(--ink-4)}.seatreq .xd:hover{color:var(--ink-2)}
   /* hover toolbar + context menu + reactions (Slack/Discord-style) */
   .beat,.cmsg{position:relative}
   .msgbar{position:absolute;top:-14px;right:10px;display:flex;gap:1px;background:var(--bg);border:1px solid var(--line-2);border-radius:9px;box-shadow:0 2px 10px rgba(20,20,40,.12);padding:2px;opacity:0;pointer-events:none;transition:opacity .1s;z-index:25}
@@ -65,6 +95,7 @@
   .read .beat:hover,.read .resp:hover,.read .beat.act,.read .resp.act{background:var(--fill);box-shadow:0 0 0 5px var(--fill)}
   .cmsg{transition:background .12s}.cmsg:hover,.cmsg.act{background:var(--fill)}
   .mb{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:13px;color:var(--ink-3)}.mb:hover{background:var(--fill);color:var(--ink)}
+  .ic{width:15px;height:15px;display:block;flex-shrink:0}.ib .ic{width:16px;height:16px}
   .ctx-scrim{position:fixed;inset:0;z-index:40}
   .ctxmenu{position:fixed;z-index:41;min-width:204px;background:var(--bg);border:1px solid var(--line-2);border-radius:11px;box-shadow:0 16px 44px -14px rgba(20,20,40,.34);padding:5px}
   .cm-item{display:block;width:100%;text-align:left;font-size:13px;color:var(--ink-2);padding:7px 11px;border-radius:7px}
@@ -80,12 +111,21 @@
   /* transcript */
   .read{flex:1;min-width:0;overflow:auto}
   .col{max-width:600px;margin:0 auto;padding:22px 24px 90px}
-  .beat{margin-top:28px}.beat:first-child{margin-top:2px}
+  .beat{margin-top:30px}.tblk:first-child .beat{margin-top:2px} /* only the very first turn hugs the top; every other turn gets real air */
   .nm{font-weight:600;color:var(--ink);margin-bottom:1px}.say{color:var(--ink)}
+  .nm .tm{font-weight:400;color:var(--ink-4);font-size:11.5px;margin-left:6px}
   .resp{color:var(--ink-2);margin-top:9px;padding-left:15px}
   .tg{color:var(--ink-3);text-align:left}.tg:hover{color:var(--ink-2)}.tg .dim{color:var(--ink-4)}
   .tg.static{cursor:default}.tg.static:hover{color:var(--ink-3)}
   .tg.err{color:var(--del-fg)}
+  /* edit lines show the file + real coloured +/- counts (makes the agent's actions concrete) */
+  .tg .ef{color:var(--ink-2)}.tg .cadd{color:var(--add-fg);font-weight:500}.tg .cdel{color:var(--del-fg);font-weight:500}
+  /* artifact produced by a step → an inline chip, opens the gallery */
+  .madeline{margin-top:6px;padding-left:15px}
+  .artchip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-2);border-radius:9px;padding:4px 10px 4px 4px;font-size:11.5px;color:var(--ink-2);cursor:pointer}
+  .artchip:hover{border-color:var(--line-3);background:var(--fill)}
+  .artchip .ax{width:24px;height:24px;border-radius:6px;background:var(--fill);display:grid;place-items:center;font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--ink-4)}
+  .artchip .an2{font-weight:500;color:var(--ink)}.artchip .am2{color:var(--ink-4)}
   .tout{margin-top:6px;padding:7px 11px;background:var(--fill);border-radius:8px;color:var(--ink-3);font-size:12px;white-space:pre-wrap}
   .nm .spawn{font-weight:400;color:var(--ink-4);font-size:11.5px;margin-left:8px}
   .nm .spawn b{color:var(--ink-3);font-weight:600}
@@ -252,9 +292,9 @@
   .drawer-h .dh-acts button:hover{border-color:var(--ink-3);color:var(--ink)}
   .drawer-h .dh-acts .pin{color:var(--ink);border-color:var(--ink-3)}
   /* device: web == desktop frame; mobile = narrow phone, drawer goes full-screen, no pin/detach */
-  .frame.mobile{width:392px;border-radius:30px}
+  .frame.mobile{width:392px;height:min(820px,calc(100vh - 96px));border-radius:30px}
   /* mobile header: keep the title; the verbose presence/env text squeezes it out on a phone */
-  .frame.mobile .lv,.frame.mobile .envchip{display:none}
+  .frame.mobile .who,.frame.mobile .envchip{display:none}
   .frame.mobile .drawer{width:100%;max-width:100%}
   .frame.mobile .strip{overflow:auto}
   .frame.mobile .col{padding:18px 18px 80px}
@@ -280,6 +320,8 @@
   .ch-scard:hover{border-color:var(--ink-4)}
   .ch-scard.open{border-color:#c7c9f3;background:var(--accent-soft)}
   .ch-scard .t{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ink)}
+  .ch-scard .scard-ti{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ch-scard .badge{flex-shrink:0}
   .ch-scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
   .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
   .ch-c .field .plus{color:var(--ink-4);font-size:17px;flex-shrink:0}
@@ -323,12 +365,6 @@
       <button data-v="driver" class="on">Driver</button>
       <button data-v="spectator">Spectator</button>
     </div></div>
-  <div class="grp"><span class="lbl">Environment</span>
-    <div class="seg" id="seg-env">
-      <button data-v="warm" class="on">Warm</button>
-      <button data-v="sleeping">Sleeping</button>
-      <button data-v="expired">Expired</button>
-    </div></div>
   <div class="hint" id="hint"></div>
 </div>
 <div class="stage" id="stage"></div>
@@ -343,7 +379,7 @@ const SESSION={title:"migrate sessions → driver set",driver:"Mara",cost:0.42,
       {k:"step",label:"grep driver_id — 23 hits in 6 files",out:"session-runs.ts (14) · SessionPane.tsx (4) · sessions.test.ts (3) · ..."},
       {k:"step",label:"read surface/server/src/session-runs.ts:580–680 (seat logic)"},
       {k:"text",text:"Seat grant/take and requireDriver all assume a single driver_id. I'll land the column + backfill first, then widen those to set semantics in a later step.",notes:[{by:"Sam",text:"could we keep driver_id forever? cheaper than a second migration later",resolved:true}]},
-      {k:"step",label:"edited migrations/003_driver_set.sql +18 −0"},
+      {k:"step",label:"migrations/003_driver_set.sql",add:18,del:0},
       {k:"step",label:"ran pnpm migrate · ok (1 migration applied)"},
       {k:"text",text:"Added driver_ids uuid[] with a backfill from driver_id; driver_id stays in place for back-compat."},
       {k:"changes"}]},
@@ -355,21 +391,21 @@ const SESSION={title:"migrate sessions → driver set",driver:"Mara",cost:0.42,
       {k:"text",text:"The down migration drops driver_ids cleanly. Those 2 failures are pre-existing on main — they assert on driver_id directly — and unrelated to this change."}]},
     {n:3,who:"Mara",lead:"NOT NULL default + widen seats",items:[
       {k:"steer",who:"Mara",text:"Good. Add a NOT NULL default so the column is never null after backfill, and widen the seat logic to the set."},
-      {k:"step",label:"edited migrations/003_driver_set.sql +4 −1"},
-      {k:"step",label:"edited surface/server/src/session-runs.ts +24 −4 (grantSeat → set)"},
+      {k:"step",label:"migrations/003_driver_set.sql",add:4,del:1},
+      {k:"step",label:"surface/server/src/session-runs.ts",add:24,del:4,note:"grantSeat → set"},
       {k:"reason",sec:6,text:"grantSeat replaced driver_id; for a set it should append to driver_ids and dedupe. takeSeat/requireDriver now check membership in the set, not equality."},
       {k:"step",label:"ran pnpm test sessions · 41 passed"},
       {k:"text",text:"driver_ids is NOT NULL default '{}'; seat grant/take/require now operate on the set. Backfill runs before the constraint, so no row is ever empty."}]},
     {n:4,who:"Mara",lead:"show drivers in the pane + screenshot",items:[
       {k:"steer",who:"Mara",text:"Update the session header to show all current drivers, not just one chip — then screenshot it."},
-      {k:"step",label:"edited surface/web/src/sessions/SessionPane.tsx +19 −7"},
+      {k:"step",label:"surface/web/src/sessions/SessionPane.tsx",add:19,del:7},
       {k:"step",label:"ran pnpm -C surface/web build · ok"},
-      {k:"step",label:"playwright screenshot --selector .sess-h · saved seat-row.png"},
+      {k:"step",label:"playwright screenshot --selector .sess-h",art:{name:"seat-row.png",ext:"PNG",meta:"1024×120"}},
       {k:"text",text:"Header now renders a chip per active driver and falls back to “unseated” when the set is empty. Screenshot attached."},
       {k:"artifacts"}]},
     {n:5,who:"Mara",lead:"open PR + deploy",items:[
       {k:"steer",who:"Mara",text:"Looks good — open a PR and start a staging deploy."},
-      {k:"step",label:"ran pnpm test · 312 passed (41.2s)"},
+      {k:"step",label:"ran pnpm test · 312 passed (41.2s)",art:{name:"coverage.html",ext:"HTML",meta:"312 tests"}},
       {k:"step",label:"opened PR #128 — multi-driver migration"},
       {k:"text",text:"PR #128 opened. The staging deploy is irreversible — I need approval before continuing."},
       {k:"side"},
@@ -381,9 +417,9 @@ const CHANGES=[
   {path:"surface/server/src/session-runs.ts",add:24,del:4,diff:[["add","async function grantSeatToSet(id, userId) {"],["add","  // append to driver_ids instead of replacing driver_id"],["add","}"]]},
 ];
 const ARTIFACTS=[
-  {name:"seat-row.png",type:"image",ic:"🖼",meta:"1024×120 · turn 2 · Mara"},
-  {name:"coverage.html",type:"report",ic:"📄",meta:"312 tests · turn 2 · Mara"},
-  {name:"bench-before-after.csv",type:"data",ic:"▦",meta:"24 rows · turn 2 · Mara"},
+  {name:"seat-row.png",type:"image",ic:"🖼",meta:"1024×120 · turn 4 · Mara"},
+  {name:"coverage.html",type:"report",ic:"📄",meta:"312 tests · turn 5 · Mara"},
+  {name:"bench-before-after.csv",type:"data",ic:"▦",meta:"24 rows · turn 3 · Mara"},
 ];
 const AUDIT=[
   {kind:"cmd",ic:"▸",a1:"ran pnpm test",a2:"312 passed · exit 0",by:"Mara",t:"9:11"},
@@ -392,7 +428,20 @@ const AUDIT=[
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},
-  sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null};
+  sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
+  model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam"};
+// presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
+const PEOPLE=[{n:"Mara"},{n:"Sam"},{n:"Priya"},{n:"Alex"},{n:"You"}];
+const TIMES=["9:01","9:06","9:12","9:19","9:24"]; // per-turn timestamps (mirrors the channel's message times)
+// real icons (Lucide, MIT) instead of cryptic unicode glyphs
+const IC={
+  smile:'<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/>',
+  comment:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  reply:'<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
+  more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  panelClose:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
+  panelOpen:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>'};
+const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -404,9 +453,9 @@ function surfaceChanges(){
       · auto-detected repo <b>atrium</b> · branch <span class="mono">feat/driver-set</span>
       <button class="prbtn">Open PR ↗</button></div>
     <div class="changes" style="flex:1">
-      <div class="flist scroll">${CHANGES.map((c,i)=>`<div class="fitem ${S.file===i?'on':''}" data-file="${i}">
+      <div class="flist scroll" data-sk="flist">${CHANGES.map((c,i)=>`<div class="fitem ${S.file===i?'on':''}" data-file="${i}">
         <span class="fp mono">${esc(c.path)}</span><span class="pm"><span class="p">+${c.add}</span> <span class="m">−${c.del}</span></span></div>`).join('')}</div>
-      <div class="diffview scroll">
+      <div class="diffview scroll" data-sk="diff">
         <div class="difffile mono">${esc(CHANGES[S.file].path)}</div>
         ${CHANGES[S.file].diff.map(d=>`<div class="dl ${d[0]} mono"><span class="ln">${d[0]==='add'?'+':d[0]==='del'?'−':' '}</span><span class="tx">${esc(d[1])}</span></div>`).join('')}
       </div></div></div>`;
@@ -460,10 +509,10 @@ function inlineCard(kind){
 }
 // hover toolbar (quick actions) + reaction pill + right-click/⋯ context menu
 function barHTML(surface){const mid=surface==='channel'
-    ?'<button class="mb" data-act="reply" title="Reply in thread">↩</button>'
-    :'<button class="mb" data-act="comment" title="Comment">✎</button>';
-  return `<div class="msgbar"><button class="mb" data-act="react" title="React">☺</button>${mid}<button class="mb" data-act="more" title="More">⋯</button></div>`;}
-function rxn(rid){return S.rxn[rid]?`<div class="rxn" data-rid="${rid}">${S.rxn[rid]} 1</div>`:'';}
+    ?`<button class="mb" data-act="reply" title="Reply in thread">${ic('reply')}</button>`
+    :`<button class="mb" data-act="comment" title="Comment">${ic('comment')}</button>`;
+  return `<div class="msgbar"><button class="mb" data-act="react" title="React">${ic('smile')}</button>${mid}<button class="mb" data-act="more" title="More">${ic('more')}</button></div>`;}
+function rxn(rid){return S.rxn[rid]?`<div class="rxn" data-rid="${rid}">${ic('smile')} 1</div>`:'';}
 // keep the line lit (row highlight + quick-bar) while its context menu is open
 function aCls(rid){return S.menu&&S.menu.rid===rid?' act':'';}
 function menuHTML(){const s=S.menu.surface,it=(a,l,c='')=>`<button class="cm-item ${c}" data-act="${a}">${l}</button>`;
@@ -477,12 +526,17 @@ function noteCtrl(it,id){if(it.notes&&it.notes.length){const res=it.notes.every(
 function noteBox(it,id){if(!(it.notes&&it.notes.length&&S.open['n'+id]))return '';
   return it.notes.map(n=>`<div class="note ${n.resolved?'res':''}"><span class="nn">${n.by}</span>${esc(n.text)}<span class="rz">${n.resolved?'resolved ✓':'Resolve'}</span></div>`).join('');}
 function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
-  if(it.k==="steer")return `<div class="beat${aCls(id)}" data-ctx="item" data-rid="${id}"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div>${barHTML('item')}${rxn(id)}</div>`;
+  if(it.k==="steer")return `<div class="beat${aCls(id)}" data-ctx="item" data-rid="${id}"><div class="nm">${it.who}<span class="tm">${TIMES[turn.n-1]||''}</span>${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div>${barHTML('item')}${rxn(id)}</div>`;
   if(it.k==="text")return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}">${esc(it.text)}${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
   if(it.k==="reason")return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${barHTML('item')}${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}${rxn(id)}</div>`;
-  if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
-    if(!it.out)return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
-    return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${barHTML('item')}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}${rxn(id)}</div>`;}
+  if(it.k==="step"||it.k==="tool"){
+    // edit step: concrete file + coloured +/- counts; click opens that file in Changes
+    if(it.add!==undefined)return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><button class="tg" data-openfile="${esc(it.label)}" title="Open in Changes">· edited <span class="ef mono">${esc(it.label)}</span> <span class="cadd">+${it.add}</span> <span class="cdel">−${it.del}</span>${it.note?` <span class="dim">${esc(it.note)}</span>`:''}</button>${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
+    const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
+    // step that produced an artifact → inline chip that opens the gallery
+    const made=it.art?`<div class="madeline"><span class="artchip" data-open="artifacts"><span class="ax">${it.art.ext||it.art.name.split('.').pop().toUpperCase()}</span><span class="an2">${esc(it.art.name)}</span>${it.art.meta?`<span class="am2">${esc(it.art.meta)}</span>`:''}</span></div>`:'';
+    if(!it.out)return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${barHTML('item')}${made}${noteBox(it,id)}${rxn(id)}</div>`;
+    return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${barHTML('item')}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${made}${noteBox(it,id)}${rxn(id)}</div>`;}
   if(it.k==="live"){
     if(S.stopped)return `<div class="live-line stopped"><span class="ld off"></span>stopped by you · the agent halted mid-run</div>`;
     const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
@@ -492,7 +546,7 @@ function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
   if(it.k==="side")return inlineCard('side');
   return "";
 }
-function transcriptHTML(){return `<div class="read scroll"><div class="col">${SESSION.turns.map(t=>`<div class="tblk" id="t-${t.n}">${t.items.map((it,ti)=>itemHTML(it,t,ti)).join('')}</div>`).join('')}</div></div>`;}
+function transcriptHTML(){return `<div class="read scroll" data-sk="read"><div class="col">${SESSION.turns.map(t=>`<div class="tblk" id="t-${t.n}">${t.items.map((it,ti)=>itemHTML(it,t,ti)).join('')}</div>`).join('')}</div></div>`;}
 
 function tocHTML(){const turns=SESSION.turns;
   const lines=turns.map(t=>`<span class="tl ${t.n===2?'on':''} ${t.items.some(i=>i.k==='live')?'run':''}"></span>`).join('');
@@ -506,6 +560,31 @@ function tocHTML(){const turns=SESSION.turns;
     </div></div></div>`;
 }
 
+// agmodel switches model + thinking; the ⓘ button pops read-only container/env (each its own popover)
+function setupPop(){
+  if(S.setup==='env'){
+    const snap=S.env==='warm'?`warm · port 3000 exposed · $${SESSION.cost.toFixed(2)} so far`
+      :S.env==='sleeping'?'sleeping · resume rebuilds (~30s)':'expired · snapshot GC’d';
+    return `<div class="ctx-scrim" data-setupclose="1"></div><div class="setup-pop">
+      <div class="sp-sec">Container</div><div class="sp-meta">ubuntu-24 · node 20 · pnpm</div>
+      <div class="sp-sec">Environment</div><div class="sp-meta">3 secrets · ${snap}</div>
+      <div class="sp-note">Provisioned & managed by Atrium — read-only.</div></div>`;}
+  const models=['Opus 4.8','Sonnet 4.6','Haiku 4.5'],think=['off','low','medium','high'],cap=s=>s[0].toUpperCase()+s.slice(1);
+  const row=(on,label,attr)=>`<button class="sp-row" ${attr}>${label}${on?'<span class="ck">✓</span>':''}</button>`;
+  return `<div class="ctx-scrim" data-setupclose="1"></div><div class="setup-pop">
+    <div class="sp-sec">Model</div>${models.map(m=>row(S.model===m,m,`data-model="${m}"`)).join('')}
+    <div class="sp-sec">Thinking</div>${think.map(t=>row(S.think===t,cap(t),`data-think="${t}"`)).join('')}</div>`;
+}
+function agbarHTML(){
+  // one control for live state + stop: shows "Working", hovers to "Stop" (mouseover = the affordance + tooltip)
+  const run=S.stopped
+    ? `<span class="agstate off"><span class="ld off"></span>Stopped</span>`
+    : `<button class="agrun" data-stop="1" title="Working — click to stop the agent"><span class="ld"></span><span class="lbl-run">Working</span><span class="lbl-stop">Stop</span></button>`;
+  return `<div class="agbar">${run}
+      <button class="agmodel" data-setup="toggle" title="Model & thinking"><b>${S.model}</b> · thinking ${S.think} ▾</button>
+      <button class="aginfo" data-setup="env" title="Container & environment">i</button>
+      ${S.setup?setupPop():''}</div>`;
+}
 function composerHTML(){
   if(S.env==='expired')return `<div class="comp"><div class="comp-in"><div class="field off"><span class="to">↳ agent</span><input disabled placeholder="environment expired — rebuild to continue"/></div></div></div>`;
   const ph=S.env==='sleeping'?'Message — sending wakes the environment':'Message the agent…';
@@ -517,26 +596,36 @@ function composerHTML(){
   const queue=S.sugg.length?`<div class="queue"><div class="qhead">Suggestions · ${S.sugg.length}</div>
       ${S.sugg.map((s,i)=>`<div class="sugg"><b>${s.by}</b><span class="sq">“${esc(s.q)}”</span><button class="a" data-sgsend="${i}">Send</button><button class="x" data-sgdrop="${i}" title="Dismiss">✕</button></div>`).join('')}</div>`:'';
   const sentNote=S.sent?`<div class="typing">Sent ${S.sent.by}’s suggestion to the agent ✓</div>`:'';
+  // seat hand-off appears only when actionable (someone wants your seat)
+  const seat=S.seatReq?`<div class="seatreq"><b>${S.seatReq}</b> wants the seat <span class="d2">· you're driving</span><button class="g" data-seatgrant="1">Grant</button><button class="xd" data-seatdeny="1" title="Dismiss">✕</button></div>`:'';
   return `<div class="comp"><div class="comp-in">
-    ${queue}${sentNote}
+    ${queue}${sentNote}${seat}${agbarHTML()}
     <div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.sent?'“'+esc(S.sent.q)+'”':ph}"/><button class="gobtn">↑</button></div></div></div>`;
 }
 
 /* ---- header + layouts ---- */
+// avatar stack, driver ringed — replaces the "You drive · 4 watching" sentence + pulse
+function presenceHTML(){
+  const driver=S.role==='driver'?'You':'Mara';
+  const ppl=[...PEOPLE].sort((a,b)=>(a.n===driver?-1:b.n===driver?1:0));
+  const show=ppl.slice(0,4),extra=ppl.length-show.length,init=n=>n==='You'?'Y':n[0];
+  return `<div class="who" title="${driver==='You'?'You drive':'Mara drives'} · 4 watching">`+
+    show.map(p=>`<span class="av ${p.n===driver?'seat':''}">${init(p.n)}</span>`).join('')+
+    (extra>0?`<span class="av more">+${extra}</span>`:'')+`</div>`;
+}
 function headerHTML(){
   const e=S.env;const lbl=e==='warm'?'warm':e==='sleeping'?'sleeping':'expired';
-  // Focus hides the channel — so show which channel this session lives in + a way back.
-  const crumb=(S.view==='focus'&&S.device!=='mobile')?`<button class="crumb" data-back="1">← #eng-platform</button>`:'';
-  const active=e!=='expired'&&!S.stopped;
-  const stop=active?`<button class="stopbtn" data-stop="1" title="Interrupt the agent">■ Stop</button>`:'';
+  // a session is somewhere you navigate, not a modal — leaving = going back to the channel (left, ← not ✕)
+  const crumb=`<button class="crumb" data-back="1" title="Back to the channel">← #eng-platform</button>`;
+  // env is config, not live state: surface it only when it changes what you can do (sleeping/expired)
+  const env=e==='warm'?'':`<span class="envchip ${e}"><span class="d"></span>env ${lbl}</span>`;
   // expand/collapse the channel pane (Slack thread grammar): peek = beside channel, focus = full-width
   const paneTog=(S.device!=='mobile'&&!S.pinned)?(S.view==='peek'
-    ? `<button class="ib" data-pane="focus" title="Expand — hide channel">⤢</button>`
-    : `<button class="ib" data-pane="peek" title="Collapse — show channel">⤡</button>`):'';
+    ? `<button class="ib" data-pane="focus" title="Expand — hide channel">${ic('panelClose')}</button>`
+    : `<button class="ib" data-pane="peek" title="Collapse — show channel">${ic('panelOpen')}</button>`):'';
   return `<div class="sess-h">${crumb}<span class="ti">${esc(SESSION.title)}</span>
-    <span class="lv"><span class="live ${S.stopped?'off':''}"></span>${S.stopped?'stopped':(S.role==='driver'?'You drive':'Mara drives')} · 4 watching</span>
-    <span class="envchip ${e}"><span class="d"></span>env ${lbl}</span>
-    ${paneTog}${stop}<button class="ib" data-closeview="1" title="Close session">✕</button></div>`;
+    ${presenceHTML()}${env}
+    ${paneTog?`<span class="chrome">${paneTog}</span>`:''}</div>`;
 }
 function roBanner(){return S.env==='expired'?`<div class="ro">⚠ Environment expired — this session is record-only. Transcript, changes, and artifacts are preserved; rebuild to keep working.</div>`:'';}
 
@@ -575,13 +664,13 @@ function channelHTML(wide){
   const cmsg=(rid,name,time,body)=>`<div class="cmsg${aCls(rid)}" data-ctx="channel" data-rid="${rid}"><div class="cn">${name}<span class="tm">${time}</span></div><div class="cb">${body}</div>${barHTML('channel')}${rxn(rid)}</div>`;
   return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
-  <div class="ch-b scroll">
+  <div class="ch-b scroll" data-sk="chan">
     <div class="ch-intro"><div class="ii">#</div><div class="it">eng-platform</div>
       <div class="is">Infrastructure, CI/CD, and the shared services the rest of engineering builds on.</div></div>
     <div class="ch-div">Today</div>
     ${cmsg('m1','Mara','9:00',"the migration to support more than one driver — let's get an agent on it")}
     ${cmsg('m2','Mara','9:01','<span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.')}
-    <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">spawned from Mara's @agent · turn 5 · ${wide?'open →':'open here →'}</div></div>
+    <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span><span class="scard-ti">migrate sessions → driver set</span><span class="badge wait">needs you</span></div><div class="s">Mara driving · ±${totals().files} files +${totals().add} −${totals().del} · awaiting deploy approval</div></div>
     ${cmsg('m3','Alex','9:13','nice — watching. ping me before that staging deploy goes')}
   </div>
   <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #eng-platform — @agent to start a session"/><button class="gobtn">↑</button></div></div>
@@ -605,7 +694,8 @@ function sessionsRail(){
 }
 function frameHTML(){
   const cm=S.menu?menuHTML():'';
-  if(S.device==='mobile')return `<div class="frame mobile">${sessionLayout()}${cm}</div>`;
+  // mobile is single-column: the channel when browsing, the session once you've opened one (← goes back)
+  if(S.device==='mobile')return `<div class="frame mobile">${S.view==='browse'?channelHTML(true):sessionLayout()}${cm}</div>`;
   const nav='<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>';
   if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${sessionsRail()}${cm}</div>`;
   const chan=S.view==='peek'?channelHTML(false):'';
@@ -613,7 +703,12 @@ function frameHTML(){
 }
 
 function syncSeg(){['device','view','env','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
-function render(){document.getElementById('stage').innerHTML=frameHTML();wire();hint();syncSeg();
+function render(){
+  // preserve scroll across re-renders — innerHTML replace would otherwise jump every pane to the top
+  const sc={};document.querySelectorAll('[data-sk]').forEach(e=>sc[e.dataset.sk]=e.scrollTop);
+  document.getElementById('stage').innerHTML=frameHTML();
+  document.querySelectorAll('[data-sk]').forEach(e=>{if(sc[e.dataset.sk]!=null)e.scrollTop=sc[e.dataset.sk];});
+  wire();hint();syncSeg();
   try{location.hash=`device=${S.device},view=${S.view},env=${S.env}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
 function hint(){const h=document.getElementById('hint');
   h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
@@ -630,6 +725,8 @@ function wire(){
     render();}));
   document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{S.open[b.dataset.tool]=!S.open[b.dataset.tool];render();});
   document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>{S.file=+b.dataset.file;render();});
+  // an edited file in the transcript opens that file in Changes (drawer, or the pinned slot)
+  document.querySelectorAll('[data-openfile]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const i=CHANGES.findIndex(c=>c.path===b.dataset.openfile);if(i>=0)S.file=i;if(S.pinned)S.pinned='changes';else S.drawer='changes';render();});
   document.querySelectorAll('[data-open]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const s=b.dataset.open;
     if(S.pinned){S.pinned=s;}            /* single swappable pinned slot */
     else{S.drawer=s;}render();});
@@ -651,12 +748,18 @@ function wire(){
   // suggestion queue: Send promotes a teammate's steer to the agent; ✕ dismisses it
   document.querySelectorAll('[data-sgsend]').forEach(b=>b.onclick=()=>{S.sent=S.sugg.splice(+b.dataset.sgsend,1)[0];render();});
   document.querySelectorAll('[data-sgdrop]').forEach(b=>b.onclick=()=>{S.sugg.splice(+b.dataset.sgdrop,1);render();});
-  // expand/collapse channel pane + close session back to the channel timeline
+  // model/thinking popover (container & env are read-only inside it) + seat hand-off
+  document.querySelectorAll('[data-setup]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const v=b.dataset.setup;S.setup=(v==='toggle')?(S.setup==='main'?false:'main'):(S.setup===v?false:v);render();});
+  document.querySelectorAll('[data-setupclose]').forEach(b=>b.onclick=()=>{S.setup=false;render();});
+  document.querySelectorAll('[data-model]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.model=b.dataset.model;render();});
+  document.querySelectorAll('[data-think]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.think=b.dataset.think;render();});
+  document.querySelectorAll('[data-seatgrant]').forEach(b=>b.onclick=()=>{S.seatReq=null;render();});
+  document.querySelectorAll('[data-seatdeny]').forEach(b=>b.onclick=()=>{S.seatReq=null;render();});
+  // expand/collapse channel pane (the ← breadcrumb handles "back to channel" via data-back)
   document.querySelectorAll('[data-pane]').forEach(b=>b.onclick=()=>{S.view=b.dataset.pane;S.drawer=null;render();});
-  document.querySelectorAll('[data-closeview]').forEach(b=>b.onclick=()=>{S.view='browse';S.drawer=null;S.pinned=null;S.detached=null;S.viewBeforePin=null;render();});
   // hover toolbar quick actions
   document.querySelectorAll('.mb').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const it=b.closest('[data-ctx]');if(!it)return;const surface=it.dataset.ctx,rid=it.dataset.rid,act=b.dataset.act;
-    if(act==='react'){if(S.rxn[rid])delete S.rxn[rid];else S.rxn[rid]='☺';render();}
+    if(act==='react'){if(S.rxn[rid])delete S.rxn[rid];else S.rxn[rid]=true;render();}
     else if(act==='comment'){S.open['n'+rid]=!S.open['n'+rid];render();}
     else if(act==='more'){const r=b.getBoundingClientRect();S.menu={surface,rid,x:Math.min(r.left,window.innerWidth-224),y:r.bottom+4};render();}
     else render();});
@@ -665,7 +768,7 @@ function wire(){
     S.menu={surface:el.dataset.ctx,rid:el.dataset.rid,x:Math.min(e.clientX,window.innerWidth-224),y:Math.min(e.clientY,window.innerHeight-270)};render();}));
   // context-menu item actions
   document.querySelectorAll('.cm-item').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const act=b.dataset.act,m=S.menu;
-    if(m&&act==='react')S.rxn[m.rid]='☺';
+    if(m&&act==='react')S.rxn[m.rid]=true;
     else if(m&&act==='comment')S.open['n'+m.rid]=true;
     S.menu=null;render();});
   document.querySelectorAll('[data-cmclose]').forEach(b=>b.onclick=()=>{S.menu=null;render();});
