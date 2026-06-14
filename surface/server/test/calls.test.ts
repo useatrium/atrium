@@ -103,7 +103,9 @@ describe('call routes', () => {
     expect(started.call).toMatchObject({
       channelId,
       initiatorId: alice.id,
-      status: 'active',
+      // A freshly started call stays 'ringing' until a callee accepts, so the
+      // call.ringing frame carries an honest status (flips to 'active' on accept).
+      status: 'ringing',
     });
     expect(started.call.participants.map((p: any) => p.id)).toEqual([alice.id]);
     expect(aliceSocket.received.some((m) => m.type === 'call.ringing')).toBe(false);
@@ -122,6 +124,7 @@ describe('call routes', () => {
     expect(accept.statusCode).toBe(200);
     const accepted = accept.json();
     expect(accepted.token).toBe(`token:call:${started.call.id}:${ben.id}`);
+    expect(accepted.call.status).toBe('active'); // ringing → active on first accept
     expect(accepted.call.participants.map((p: any) => p.id).sort()).toEqual(
       [alice.id, ben.id].sort(),
     );

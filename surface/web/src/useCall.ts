@@ -79,8 +79,15 @@ export function useCall(me: UserRef) {
     detachRoomHandlersRef.current = null;
     const room = roomRef.current;
     roomRef.current = null;
-    if (room && room.state !== 'disconnected') room.disconnect();
-    intentionalDisconnectRef.current = false;
+    // Reset the intentional-disconnect flag only after disconnect settles, so a
+    // late Disconnected event isn't misread as an unexpected drop.
+    if (room && room.state !== 'disconnected') {
+      void room.disconnect().finally(() => {
+        intentionalDisconnectRef.current = false;
+      });
+    } else {
+      intentionalDisconnectRef.current = false;
+    }
   }, []);
 
   const addRemoteAudioTrack = useCallback(
@@ -372,6 +379,11 @@ export function useCall(me: UserRef) {
       await room.localParticipant.setMicrophoneEnabled(!nextMuted, AUDIO_CAPTURE_OPTIONS);
       updateActiveCall((active) => ({ ...active, muted: nextMuted }));
     } catch {
+      // Re-sync the UI to the real mic state — the toggle may not have applied.
+      updateActiveCall((active) => ({
+        ...active,
+        muted: !room.localParticipant.isMicrophoneEnabled,
+      }));
       setNotice("Couldn't update microphone state.");
     }
   }, [updateActiveCall]);
