@@ -57,6 +57,7 @@ import {
 import { useSession, type Session } from './session';
 import { eventCache } from './cacheSqlite';
 import { useTheme } from './theme';
+import { useCall } from './useCall';
 import type { VoiceSendMeta } from './voice';
 
 const PAGE_SIZE = 50;
@@ -72,6 +73,7 @@ interface ChatContextValue {
   me: UserRef;
   queuedChangesCount: number;
   api: Api;
+  calls: ReturnType<typeof useCall>;
   channelsLoaded: boolean;
   channelsError: string | null;
   refreshChannels: () => void;
@@ -208,6 +210,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const loadingMentionUsersRef = useRef(false);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
+  const calls = useCall({ api, me, channels: state.channels });
 
   const cacheMute = useCallback((channelId: string, muted: boolean) => {
     const channels = stateRef.current.channels.map((c) =>
@@ -887,6 +890,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
+      onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
         lastReadSentRef.current[channelId] = Math.max(
           lastReadSentRef.current[channelId] ?? 0,
@@ -1496,6 +1500,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       me,
       queuedChangesCount,
       api,
+      calls,
       channelsLoaded,
       channelsError,
       refreshChannels: loadChannels,
@@ -1545,6 +1550,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       me,
       queuedChangesCount,
       api,
+      calls,
       channelsLoaded,
       channelsError,
       loadChannels,

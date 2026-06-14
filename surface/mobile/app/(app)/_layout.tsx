@@ -1,11 +1,14 @@
 import { useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import { Stack, router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
+import { useVoIPPushToken } from 'expo-callkit-telecom';
 import { useRequiredSession } from '../../src/lib/session';
 import { ChatProvider, useChat } from '../../src/lib/chat';
 import {
   configureNotificationHandler,
   registerForPush,
+  setRegisteredVoipPushToken,
 } from '../../src/lib/notifications';
 import { useTheme } from '../../src/lib/theme';
 
@@ -16,6 +19,7 @@ let handledColdStartTap: string | null = null;
 /** Registers for push and routes notification taps to the right channel. */
 function PushBridge() {
   const { api, state } = useChat();
+  const voip = useVoIPPushToken();
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -49,6 +53,20 @@ function PushBridge() {
 
     return () => sub.remove();
   }, [api]);
+
+  useEffect(() => {
+    if (!voip) {
+      setRegisteredVoipPushToken(null);
+      return;
+    }
+    const platform = voip.type === 'FCM' || Platform.OS === 'android' ? 'android' : 'ios';
+    void api
+      .registerPush({ token: voip.token, platform, kind: 'voip' })
+      .then(() => setRegisteredVoipPushToken(voip.token))
+      .catch((err: unknown) => {
+        console.warn('[push] VoIP registration failed', err);
+      });
+  }, [api, voip]);
 
   return null;
 }

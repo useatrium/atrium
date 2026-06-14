@@ -35,4 +35,12 @@ export const config = {
   livekitUrl: process.env.LIVEKIT_URL ?? '',
   livekitApiKey: process.env.LIVEKIT_API_KEY ?? '',
   livekitApiSecret: process.env.LIVEKIT_API_SECRET ?? '',
+  // VoIP push infra is optional. Leave APNs and/or FCM unset to skip that
+  // platform while preserving foreground WS call ringing.
+  apnsTeamId: process.env.APNS_TEAM_ID ?? '',
+  apnsKeyId: process.env.APNS_KEY_ID ?? '',
+  apnsAuthKeyP8: process.env.APNS_AUTH_KEY_P8 ?? '',
+  apnsBundleId: process.env.APNS_BUNDLE_ID ?? '',
+  fcmProjectId: process.env.FCM_PROJECT_ID ?? '',
+  fcmServiceAccountJson: process.env.FCM_SERVICE_ACCOUNT_JSON ?? '',
 };
