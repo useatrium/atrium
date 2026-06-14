@@ -55,6 +55,18 @@
   .stopbtn:hover{background:var(--del-bg)}
   .live.off,.ld.off{background:var(--ink-4);animation:none;box-shadow:none}
   .live-line.stopped{color:var(--ink-4)}
+  /* hover toolbar + context menu + reactions (Slack/Discord-style) */
+  .beat,.cmsg{position:relative}
+  .msgbar{position:absolute;top:-14px;right:10px;display:flex;gap:1px;background:var(--bg);border:1px solid var(--line-2);border-radius:9px;box-shadow:0 2px 10px rgba(20,20,40,.12);padding:2px;opacity:0;pointer-events:none;transition:opacity .1s;z-index:25}
+  .beat:hover>.msgbar,.resp:hover>.msgbar,.cmsg:hover>.msgbar{opacity:1;pointer-events:auto}
+  .mb{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:13px;color:var(--ink-3)}.mb:hover{background:var(--fill);color:var(--ink)}
+  .ctx-scrim{position:fixed;inset:0;z-index:40}
+  .ctxmenu{position:fixed;z-index:41;min-width:204px;background:var(--bg);border:1px solid var(--line-2);border-radius:11px;box-shadow:0 16px 44px -14px rgba(20,20,40,.34);padding:5px}
+  .cm-item{display:block;width:100%;text-align:left;font-size:13px;color:var(--ink-2);padding:7px 11px;border-radius:7px}
+  .cm-item:hover{background:var(--fill);color:var(--ink)}
+  .cm-item.cm-danger{color:var(--red)}.cm-item.cm-danger:hover{background:var(--del-bg)}
+  .cm-sep{height:1px;background:var(--line);margin:5px 6px}
+  .rxn{display:inline-flex;align-items:center;gap:4px;margin:7px 0 0 15px;font-size:12px;color:var(--ink-2);background:var(--accent-soft);border:1px solid #d8d6ee;border-radius:999px;padding:1px 9px;cursor:pointer}
 
   .body{flex:1;min-height:0;display:flex;position:relative}
   .scroll{overflow:auto}
@@ -366,7 +378,7 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false};
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{}};
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -432,18 +444,29 @@ function inlineCard(kind){
       <span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span></div>`;}
   return '';
 }
+// hover toolbar (quick actions) + reaction pill + right-click/⋯ context menu
+function barHTML(surface){const mid=surface==='channel'
+    ?'<button class="mb" data-act="reply" title="Reply in thread">↩</button>'
+    :'<button class="mb" data-act="comment" title="Comment">✎</button>';
+  return `<div class="msgbar"><button class="mb" data-act="react" title="React">☺</button>${mid}<button class="mb" data-act="more" title="More">⋯</button></div>`;}
+function rxn(rid){return S.rxn[rid]?`<div class="rxn" data-rid="${rid}">${S.rxn[rid]} 1</div>`:'';}
+function menuHTML(){const s=S.menu.surface,it=(a,l,c='')=>`<button class="cm-item ${c}" data-act="${a}">${l}</button>`;
+  const body=s==='channel'
+    ?it('react','React…')+it('reply','Reply in thread')+it('agent','@agent this → new session')+'<div class="cm-sep"></div>'+it('pin','Pin to channel')+it('copy','Copy link')+it('edit','Edit')+it('delete','Delete','cm-danger')
+    :it('comment','Comment')+it('steer',S.role==='spectator'?'Suggest about this':'Steer about this')+it('react','React…')+'<div class="cm-sep"></div>'+it('copy','Copy')+it('link','Copy link to turn');
+  return `<div class="ctx-scrim" data-cmclose="1"></div><div class="ctxmenu" style="left:${S.menu.x}px;top:${S.menu.y}px">${body}</div>`;}
 function noteCtrl(it,id){if(it.notes&&it.notes.length){const res=it.notes.every(n=>n.resolved);
     return `<button class="cdot ${res?'res':''}" data-note="${id}" title="${it.notes.length} comment"><span class="b"></span></button>`;}
-  return `<button class="addc" title="Comment">💬</button>`;}
+  return '';}
 function noteBox(it,id){if(!(it.notes&&it.notes.length&&S.open['n'+id]))return '';
   return it.notes.map(n=>`<div class="note ${n.resolved?'res':''}"><span class="nn">${n.by}</span>${esc(n.text)}<span class="rz">${n.resolved?'resolved ✓':'Resolve'}</span></div>`).join('');}
 function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
-  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div></div>`;
-  if(it.k==="text")return `<div class="resp">${esc(it.text)}${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
-  if(it.k==="reason")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}</div>`;
+  if(it.k==="steer")return `<div class="beat" data-ctx="item" data-rid="${id}"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div>${barHTML('item')}${rxn(id)}</div>`;
+  if(it.k==="text")return `<div class="resp" data-ctx="item" data-rid="${id}">${esc(it.text)}${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
+  if(it.k==="reason")return `<div class="resp" data-ctx="item" data-rid="${id}"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${barHTML('item')}${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}${rxn(id)}</div>`;
   if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
-    if(!it.out)return `<div class="resp"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
-    return `<div class="resp"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}</div>`;}
+    if(!it.out)return `<div class="resp" data-ctx="item" data-rid="${id}"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
+    return `<div class="resp" data-ctx="item" data-rid="${id}"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${barHTML('item')}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}${rxn(id)}</div>`;}
   if(it.k==="live"){
     if(S.stopped)return `<div class="live-line stopped"><span class="ld off"></span>stopped by you · the agent halted mid-run</div>`;
     const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
@@ -527,13 +550,15 @@ function drawerHTML(){
       <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
 }
 
-function channelHTML(wide){return `<div class="channel ${wide?'wide':''}">
+function channelHTML(wide){
+  const cmsg=(rid,name,time,body)=>`<div class="cmsg" data-ctx="channel" data-rid="${rid}"><div class="cn">${name}<span class="tm">${time}</span></div><div class="cb">${body}</div>${barHTML('channel')}${rxn(rid)}</div>`;
+  return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll">
-    <div class="cmsg"><div class="cn">Mara<span class="tm">9:00</span></div><div class="cb">the migration to support more than one driver — let's get an agent on it</div></div>
-    <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb"><span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.</div></div>
+    ${cmsg('m1','Mara','9:00',"the migration to support more than one driver — let's get an agent on it")}
+    ${cmsg('m2','Mara','9:01','<span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.')}
     <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">spawned from Mara's @agent · turn 5 · ${wide?'open →':'open here →'}</div></div>
-    <div class="cmsg"><div class="cn">Alex<span class="tm">9:13</span></div><div class="cb">nice — watching. ping me before that staging deploy goes</div></div>
+    ${cmsg('m3','Alex','9:13','nice — watching. ping me before that staging deploy goes')}
   </div>
   <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #eng-platform — @agent to start a session"/><button class="gobtn">↑</button></div></div>
 </div>`;}
@@ -555,11 +580,12 @@ function sessionsRail(){
   </div>`;
 }
 function frameHTML(){
-  if(S.device==='mobile')return `<div class="frame mobile">${sessionLayout()}</div>`;
+  const cm=S.menu?menuHTML():'';
+  if(S.device==='mobile')return `<div class="frame mobile">${sessionLayout()}${cm}</div>`;
   const nav='<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>';
-  if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${sessionsRail()}</div>`;
+  if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${sessionsRail()}${cm}</div>`;
   const chan=S.view==='peek'?channelHTML(false):'';
-  return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}</div>`;
+  return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}${cm}</div>`;
 }
 
 function syncSeg(){['device','view','env','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
@@ -594,6 +620,22 @@ function wire(){
   document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{S.view='browse';S.pinned=null;S.drawer=null;S.detached=null;render();});
   document.querySelectorAll('[data-note]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const id=b.dataset.note;S.open['n'+id]=!S.open['n'+id];render();});
   document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>{S.stopped=true;render();});
+  // hover toolbar quick actions
+  document.querySelectorAll('.mb').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const it=b.closest('[data-ctx]');if(!it)return;const surface=it.dataset.ctx,rid=it.dataset.rid,act=b.dataset.act;
+    if(act==='react'){if(S.rxn[rid])delete S.rxn[rid];else S.rxn[rid]='👍';render();}
+    else if(act==='comment'){S.open['n'+rid]=!S.open['n'+rid];render();}
+    else if(act==='more'){const r=b.getBoundingClientRect();S.menu={surface,rid,x:Math.min(r.left,window.innerWidth-224),y:r.bottom+4};render();}
+    else render();});
+  // right-click → context menu at cursor
+  document.querySelectorAll('[data-ctx]').forEach(el=>el.addEventListener('contextmenu',(e)=>{e.preventDefault();e.stopPropagation();
+    S.menu={surface:el.dataset.ctx,rid:el.dataset.rid,x:Math.min(e.clientX,window.innerWidth-224),y:Math.min(e.clientY,window.innerHeight-270)};render();}));
+  // context-menu item actions
+  document.querySelectorAll('.cm-item').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const act=b.dataset.act,m=S.menu;
+    if(m&&act==='react')S.rxn[m.rid]='👍';
+    else if(m&&act==='comment')S.open['n'+m.rid]=true;
+    S.menu=null;render();});
+  document.querySelectorAll('[data-cmclose]').forEach(b=>b.onclick=()=>{S.menu=null;render();});
+  document.querySelectorAll('.rxn').forEach(p=>p.onclick=()=>{delete S.rxn[p.dataset.rid];render();});
   document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;
     if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
   document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;
