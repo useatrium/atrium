@@ -258,7 +258,7 @@
   .ch-scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
   .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
   .ch-c .field .plus{color:var(--ink-4);font-size:17px;flex-shrink:0}
-  .cmsg .mention{background:#eef0fe;color:var(--blue-ink);border-radius:5px;padding:0 5px;font-weight:600}
+  .mention{background:#eef0fe;color:var(--blue-ink);border-radius:5px;padding:0 5px;font-weight:600}
   .channel.wide{width:auto;flex:1}
   /* active-sessions discovery rail (Channel view) */
   .srail{width:300px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;background:var(--bg)}
@@ -438,7 +438,7 @@ function noteCtrl(it,id){if(it.notes&&it.notes.length){const res=it.notes.every(
 function noteBox(it,id){if(!(it.notes&&it.notes.length&&S.open['n'+id]))return '';
   return it.notes.map(n=>`<div class="note ${n.resolved?'res':''}"><span class="nn">${n.by}</span>${esc(n.text)}<span class="rz">${n.resolved?'resolved ✓':'Resolve'}</span></div>`).join('');}
 function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
-  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <b>@agent</b></span>':''}</div><div class="say">${esc(it.text)}</div></div>`;
+  if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div></div>`;
   if(it.k==="text")return `<div class="resp">${esc(it.text)}${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
   if(it.k==="reason")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}</div>`;
   if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
