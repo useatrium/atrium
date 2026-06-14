@@ -11,9 +11,10 @@ rtc:
   tcp_port: 7881
   use_external_ip: true
 
-keys:
-  # Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET on the Fastify server.
-  replace-with-livekit-api-key: replace-with-livekit-api-secret
+# Keys are injected via the LIVEKIT_KEYS env var (see docker-compose.prod.yml),
+# sourced from the same LIVEKIT_API_KEY / LIVEKIT_API_SECRET the Fastify server
+# signs tokens with — so signer and verifier can never disagree. Do NOT hardcode
+# keys here.
 
 turn:
   enabled: true

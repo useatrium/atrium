@@ -86,9 +86,17 @@ services:
   # If Caddy also binds 443 on this host, either put LiveKit TURN/TLS on a
   # separate IP/L4 proxy or disable Caddy's 443 binding for this compose stack.
   livekit:
-    image: livekit/livekit-server:latest
+    # Opt-in: `docker compose --profile livekit up`. Off by default because host
+    # networking + embedded TURN/TLS wants 443, which collides with the caddy
+    # profile — run them on separate hosts/IPs, not both in this stack.
+    profiles: ["livekit"]
+    image: livekit/livekit-server:v1.13
     network_mode: host
     restart: unless-stopped
+    environment:
+      # Single source of truth: the same keys the Fastify server signs tokens
+      # with, so signer and verifier can't disagree (format "key: secret").
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-}: ${LIVEKIT_API_SECRET:-}"
     command: ["--config", "/etc/livekit.yaml"]
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro

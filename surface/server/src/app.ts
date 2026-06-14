@@ -1338,13 +1338,18 @@ function rawSession(req: FastifyRequest): string | undefined {
                left_at = NULL`,
           [call.id, user.id],
         );
-        const updated = await client.query<CallRow>(
-          `UPDATE calls SET status = 'active'
-           WHERE id = $1 AND status <> 'ended'
-           RETURNING *`,
-          [call.id],
-        );
-        call = updated.rows[0]!;
+        // Promote to 'active' only when joining an EXISTING call; a freshly
+        // created call stays 'ringing' so the call.ringing frame's embedded
+        // status is honest (it flips to 'active' when a callee accepts).
+        if (!created) {
+          const updated = await client.query<CallRow>(
+            `UPDATE calls SET status = 'active'
+             WHERE id = $1 AND status <> 'ended'
+             RETURNING *`,
+            [call.id],
+          );
+          call = updated.rows[0]!;
+        }
         const wire = await loadCallWire(client, call);
         const token = await calls.mintToken(call.room, user.id, user.displayName);
         return { join: { call: wire, token, url: calls.url }, created, joinedNow };
@@ -1433,7 +1438,10 @@ function rawSession(req: FastifyRequest): string | undefined {
         throw new DomainError(404, 'call_not_found', 'call not found');
       }
       const recipients = await channelRecipientIds(client, call.channel_id);
-      const shouldEnd = call.channel_kind === 'dm' && user.id !== call.initiator_id;
+      // A DM call has exactly two people: either the callee declining or the
+      // caller cancelling ends it (otherwise it would hang in 'ringing' forever
+      // with no GC). Group/public declines just dismiss the ring locally.
+      const shouldEnd = call.channel_kind === 'dm';
       if (shouldEnd) {
         await client.query(
           "UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1",
@@ -1465,12 +1473,17 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
         throw new DomainError(404, 'call_not_found', 'call not found');
       }
-      await client.query(
+      const left = await client.query(
         `UPDATE call_participants
-         SET left_at = COALESCE(left_at, now())
-         WHERE call_id = $1 AND user_id = $2`,
+         SET left_at = now()
+         WHERE call_id = $1 AND user_id = $2 AND left_at IS NULL
+         RETURNING 1`,
         [call.id, user.id],
       );
+      // Not an active participant (never joined / already left): no-op, no signal.
+      if ((left.rowCount ?? 0) === 0) {
+        return { callId: call.id, recipients: [] as string[], ended: false, left: false };
+      }
       const remaining = await client.query<{ count: string }>(
         'SELECT COUNT(*) FROM call_participants WHERE call_id = $1 AND left_at IS NULL',
         [call.id],
@@ -1486,13 +1499,16 @@ function rawSession(req: FastifyRequest): string | undefined {
         callId: call.id,
         recipients: await channelRecipientIds(client, call.channel_id),
         ended,
+        left: true,
       };
     });
-    hub.publishCallToUsers(result.recipients, {
-      type: 'call.participant_left',
-      callId: result.callId,
-      userId: user.id,
-    });
+    if (result.left) {
+      hub.publishCallToUsers(result.recipients, {
+        type: 'call.participant_left',
+        callId: result.callId,
+        userId: user.id,
+      });
+    }
     if (result.ended) {
       hub.publishCallToUsers(result.recipients, { type: 'call.ended', callId: result.callId });
     }
