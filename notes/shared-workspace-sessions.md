@@ -293,6 +293,26 @@ re-rendered stage; `syncSeg()` now reconciles `.on` after every render).
 surface (5th item) vs folded-into-Preview vs header-only vs fleet-dashboard.
 Next proto.
 
+## Merged + consolidated to one proto (round 8, 2026-06-14)
+
+**`session-surfaces.html` is now the single canonical proto** — the collaboration
+layer from `session-min` was merged in, so one file shows everything:
+collaboration (Role toggle → driver suggestion-queue / spectator suggest + Request
+seat, presence "N watching", anchored comments with resolved state) + work
+surfaces + pin/detach + env states + @agent spawn + Channel/Split/Focus views +
+Sessions rail. Controls: **Device · View · You-are · Environment**.
+
+The old **"minimal vs fully-loaded" split is retired** — "minimal" was the
+pre-merge exploration; there is no separate minimal *product*, it's just the
+**Focus view** of the one app (calm reading column that still carries comments +
+suggestions). Public share consolidated to a single proto at the repo root
+(`gbasin/atrium-session-proto` → GitHub Pages). `session-min.html` remains in
+this repo only as the superseded pre-merge reference (rounds 2-4 history).
+
+SJ pass (round 8) confirmed clean across Channel/Split/Focus × Driver/Spectator
+× env states; blue stays disciplined (live + send only). Genuinely-missing
+affordance still flagged: a **Stop/interrupt** control for the running agent.
+
 ## Realism + spawn + channel-first view (round 7, 2026-06-14)
 
 Three additions to `session-surfaces.html`, calibrated against a real codex
