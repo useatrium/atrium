@@ -202,6 +202,20 @@
   .frame.mobile .col{padding:18px 18px 80px}
   .frame.mobile .flist{width:128px}
   .frame.mobile .gallery{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+  /* fully-loaded: channel chat beside the agent session */
+  .channel{width:336px;flex-shrink:0;min-width:0;border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .ch-h{height:50px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 18px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
+  .ch-h .cnt{font-weight:400;color:var(--ink-4);font-size:12px}
+  .ch-b{flex:1;overflow:auto;padding:6px 0;display:flex;flex-direction:column;justify-content:flex-end}
+  .cmsg{padding:6px 18px}
+  .cmsg .cn{font-weight:600;color:var(--ink)}.cmsg .cn .tm{font-weight:400;color:var(--ink-4);font-size:11.5px;margin-left:6px}
+  .cmsg .cb{color:var(--ink-2)}
+  .ch-scard{margin:9px 18px;padding:11px 13px;border:1px solid var(--line-2);border-radius:11px;cursor:pointer}
+  .ch-scard:hover{border-color:var(--ink-4)}
+  .ch-scard .t{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ink)}
+  .ch-scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
+  .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
+  .ch-c .field .plus{color:var(--ink-4);font-size:17px;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -211,6 +225,11 @@
       <button data-v="desktop" class="on">Desktop</button>
       <button data-v="web">Web</button>
       <button data-v="mobile">Mobile</button>
+    </div></div>
+  <div class="grp"><span class="lbl">View</span>
+    <div class="seg" id="seg-view">
+      <button data-v="channel" class="on">In channel</button>
+      <button data-v="focus">Focus</button>
     </div></div>
   <div class="grp"><span class="lbl">Environment</span>
     <div class="seg" id="seg-env">
@@ -256,7 +275,7 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={device:"desktop",env:"warm",file:0,drawer:null,pinned:null,detached:null,open:{},approved:null};
+const S={device:"desktop",view:"channel",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null};
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -393,22 +412,37 @@ function drawerHTML(){
       <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
 }
 
+function channelHTML(){return `<div class="channel">
+  <div class="ch-h"># sessions <span class="cnt">· 6</span></div>
+  <div class="ch-b scroll">
+    <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb">kicking off the multi-driver migration — driving a session</div></div>
+    <div class="cmsg"><div class="cn">Mara<span class="tm">9:02</span></div><div class="cb">spinning it up now</div></div>
+    <div class="ch-scard"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">Mara driving · 3 files · 1 PR · deploy gated</div></div>
+    <div class="cmsg"><div class="cn">Alex<span class="tm">9:13</span></div><div class="cb">that staging deploy needs a second pair of eyes before it goes</div></div>
+  </div>
+  <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #sessions"/><button class="gobtn">↑</button></div></div>
+</div>`;}
 function frameHTML(){
-  return `<div class="frame ${S.device}">${S.device!=='mobile'?'<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>':''}${sessionLayout()}</div>`;
+  if(S.device==='mobile')return `<div class="frame mobile">${sessionLayout()}</div>`;
+  const nav='<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>';
+  const chan=S.view==='channel'?channelHTML():'';
+  return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}</div>`;
 }
 
-function render(){document.getElementById('stage').innerHTML=frameHTML();wire();hint();
-  try{location.hash=`device=${S.device},env=${S.env}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
+function syncSeg(){['device','view','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
+function render(){document.getElementById('stage').innerHTML=frameHTML();wire();hint();syncSeg();
+  try{location.hash=`device=${S.device},view=${S.view},env=${S.env}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
 function hint(){const h=document.getElementById('hint');
   h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
     :S.detached?`Detached to ${detachTarget()} — Re-dock to bring it back.`
     :S.device==='mobile'?'Mobile: tap a stat → full-screen surface (no pin/detach).'
-    :'Click a stat → peek → ⤢ Pin (split) or ↗ Detach ('+detachTarget()+').';}
+    :S.view==='channel'?'Fully loaded: chat ⇄ agent. Click a stat → peek → ⤢ Pin or ↗ Detach.'
+    :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
 
 function wire(){
-  ['device','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+  ['device','view','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
     S[k]=b.dataset.v;
-    if(k==='device'){S.drawer=null;S.pinned=null;S.detached=null;}
+    if(k==='device'||k==='view'){S.drawer=null;S.pinned=null;S.detached=null;}
     render();}));
   document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{S.open[b.dataset.tool]=!S.open[b.dataset.tool];render();});
   document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>{S.file=+b.dataset.file;render();});
@@ -419,9 +453,13 @@ function wire(){
   document.querySelectorAll('.approve').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.approved='yes';render();});
   document.querySelectorAll('.deny').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.approved='no';render();});
   // pin / detach grammar
-  document.querySelectorAll('.pin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=S.drawer;S.drawer=null;render();});
-  document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;render();});
-  document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;render();});
+  // pinning needs room: collapse the channel into focus (restore it on unpin) — never a cramped 3-column
+  document.querySelectorAll('.pin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=S.drawer;S.drawer=null;
+    if(S.view==='channel'){S.viewBeforePin='channel';S.view='focus';}render();});
+  document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;
+    if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
+  document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;
+    if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
   document.querySelectorAll('.redock').forEach(b=>b.onclick=()=>{S.pinned=S.detached;S.detached=null;render();});
 }
 (function(){const h=location.hash.replace(/^#/,'');if(h)h.split(',').forEach(kv=>{const[k,v]=kv.split('=');if(k in S)S[k]=v;});})();
