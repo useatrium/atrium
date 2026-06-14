@@ -236,6 +236,8 @@
   .drawer-h .dh-acts .pin{color:var(--ink);border-color:var(--ink-3)}
   /* device: web == desktop frame; mobile = narrow phone, drawer goes full-screen, no pin/detach */
   .frame.mobile{width:392px;border-radius:30px}
+  /* mobile header: keep the title; the verbose presence/env text squeezes it out on a phone */
+  .frame.mobile .lv,.frame.mobile .envchip{display:none}
   .frame.mobile .drawer{width:100%;max-width:100%}
   .frame.mobile .strip{overflow:auto}
   .frame.mobile .col{padding:18px 18px 80px}
@@ -440,7 +442,7 @@ function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
   if(it.k==="text")return `<div class="resp">${esc(it.text)}${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
   if(it.k==="reason")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}</div>`;
   if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
-    if(!it.out)return `<div class="resp"><span class="tg static">▸ ${lab}</span>${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
+    if(!it.out)return `<div class="resp"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
     return `<div class="resp"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}</div>`;}
   if(it.k==="live"){
     if(S.stopped)return `<div class="live-line stopped"><span class="ld off"></span>stopped by you · the agent halted mid-run</div>`;
