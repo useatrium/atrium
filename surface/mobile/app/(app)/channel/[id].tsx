@@ -6,7 +6,10 @@ import {
   channelLabel,
   emptyTimeline,
   type AttachmentMeta,
+  type CallWire,
+  type Channel,
   type ChatMessage,
+  type UserRef,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
@@ -16,12 +19,27 @@ import { Composer } from '../../../src/components/Composer';
 import { ImageViewer } from '../../../src/components/ImageViewer';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
+import { CallNotice, InCallPanel, IncomingCallBanner } from '../../../src/components/CallUI';
+import { labelForCallChannel } from '../../../src/lib/useCall';
+
+function fallbackUser(id: string): UserRef {
+  return { id, handle: id, displayName: id };
+}
+
+function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
+  return (
+    call.participants.find((u) => u.id === userId) ??
+    channels.find((c) => c.id === call.channelId)?.members?.find((u) => u.id === userId) ??
+    fallbackUser(userId)
+  );
+}
 
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
   const { colors } = useTheme();
   const { state, me } = chat;
+  const { calls } = chat;
   const { getDraft, setDraft } = chat;
 
   useFocusEffect(
@@ -53,6 +71,15 @@ export default function ChannelScreen() {
   const isDm = channel?.kind === 'dm';
   const isGroupLike = channel?.kind === 'private' || channel?.kind === 'gdm';
   const draftKey = id ? `channel:${id}` : '';
+  const incomingCaller = calls.incomingCall
+    ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
+    : null;
+  const incomingChannelName = calls.incomingCall
+    ? labelForCallChannel(calls.incomingCall, state.channels, me.id)
+    : '';
+  const activeChannelName = calls.activeCall
+    ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
+    : '';
 
   useEffect(() => {
     if (!draftKey) return;
@@ -170,22 +197,63 @@ export default function ChannelScreen() {
               )}
             </View>
           ),
-          headerRight: () =>
-            isGroupLike ? (
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Open channel menu"
-                onPress={openHeaderMenu}
+                accessibilityLabel="Start voice call"
+                disabled={!channel || calls.starting || calls.activeCall != null}
+                onPress={() => {
+                  if (id) void calls.startCall(id);
+                }}
                 hitSlop={8}
-                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+                style={{
+                  minWidth: 44,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: !channel || calls.starting || calls.activeCall != null ? 0.45 : 1,
+                }}
               >
-                <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
+                <Ionicons name="call-outline" size={21} color={colors.textSecondary} />
               </Pressable>
-            ) : null,
+              {isGroupLike ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open channel menu"
+                  onPress={openHeaderMenu}
+                  hitSlop={8}
+                  style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
+                </Pressable>
+              ) : null}
+            </View>
+          ),
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={chat.queuedChangesCount} />
+      {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
+      {calls.incomingCall && incomingCaller ? (
+        <IncomingCallBanner
+          call={calls.incomingCall}
+          caller={incomingCaller}
+          channelName={incomingChannelName}
+          answering={calls.answering}
+          onAccept={() => void calls.acceptIncomingCall()}
+          onDecline={() => void calls.declineIncomingCall()}
+        />
+      ) : null}
+      {calls.activeCall ? (
+        <InCallPanel
+          call={calls.activeCall}
+          meId={me.id}
+          channelName={activeChannelName}
+          onToggleMute={() => void calls.toggleMute()}
+          onLeave={() => void calls.leaveActiveCall()}
+        />
+      ) : null}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

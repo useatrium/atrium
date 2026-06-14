@@ -13,7 +13,12 @@
       "bundleIdentifier": "chat.atrium.app",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Attach photos to messages.",
-        "NSCameraUsageDescription": "Take a photo to attach to a message."
+        "NSCameraUsageDescription": "Take a photo to attach to a message.",
+        "NSMicrophoneUsageDescription": "Allow Atrium to record voice messages and calls.",
+        "UIBackgroundModes": [
+          "audio",
+          "voip"
+        ]
       }
     },
     "android": {
@@ -34,6 +39,32 @@
           "microphonePermission": "Allow Atrium to record voice messages.",
           "enableBackgroundPlayback": false,
           "enableBackgroundRecording": false
+        }
+      ],
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          },
+          "ios": {
+            "enableMultitaskingCameraAccess": false
+          }
+        }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "Allow Atrium to use your microphone for voice calls."
+        }
+      ],
+      [
+        "expo-callkit-telecom",
+        {
+          "microphonePermission": "Allow Atrium to use your microphone for voice calls.",
+          "incomingCallTimeout": 45,
+          "outgoingCallTimeout": 60,
+          "fulfillAnswerCallTimeout": 30
         }
       ],
       "expo-secure-store",

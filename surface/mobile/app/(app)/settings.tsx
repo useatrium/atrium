@@ -14,6 +14,7 @@ import { useChat } from '../../src/lib/chat';
 import { useSession } from '../../src/lib/session';
 import {
   getRegisteredPushToken,
+  getRegisteredVoipPushToken,
   unregisterPush,
 } from '../../src/lib/notifications';
 import { buildColors, font, radius, space, useTheme } from '../../src/lib/theme';
@@ -142,7 +143,10 @@ export default function SettingsScreen() {
   const version = Constants.expoConfig?.version ?? '0.1.0';
 
   const logOut = () => {
-    void unregisterPush(api, getRegisteredPushToken()).finally(() => void logout());
+    void Promise.all([
+      unregisterPush(api, getRegisteredPushToken()),
+      unregisterPush(api, getRegisteredVoipPushToken()),
+    ]).finally(() => void logout());
   };
 
   return (
