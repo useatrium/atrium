@@ -129,7 +129,8 @@
   .tl.on{background:var(--ink);opacity:1;width:17px}.tl.run{background:var(--blue);opacity:1}
   .toc-menu{position:absolute;right:100%;top:50%;padding-right:9px;width:230px;opacity:0;pointer-events:none;
     transform:translateY(-50%) translateX(10px);transition:.15s;z-index:40}
-  .toc:hover .toc-menu{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0)}
+  .toc:hover .toc-menu,.toc.open .toc-menu{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0)}
+  .toc.open .toc-lines .tl{opacity:.9}
   .toc-card{background:#fff;border:1px solid var(--line-2);border-radius:11px;box-shadow:0 16px 44px -16px rgba(20,20,40,.3);padding:5px;max-height:360px;overflow:auto}
   .toc-card .tt{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:6px 9px 3px}
   .frow{display:flex;gap:8px;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--ink)}
@@ -257,7 +258,7 @@
   .frame.mobile .drawer{width:100%;max-width:100%}
   .frame.mobile .strip{overflow:auto}
   .frame.mobile .col{padding:18px 18px 80px}
-  .frame.mobile .toc{display:none} /* hover-only handle is dead weight on touch + overlaps the transcript */
+  .frame.mobile .toc-lines{padding:12px 10px} /* contents handle stays on mobile — tap to open (see wire) */
   .frame.mobile .flist{width:128px}
   .frame.mobile .gallery{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   /* fully-loaded: channel chat beside the agent session */
@@ -641,8 +642,10 @@ function wire(){
     if(S.view==='peek'){S.viewBeforePin='peek';S.view='focus';}render();});
   document.querySelectorAll('[data-open-session]').forEach(b=>b.onclick=()=>{S.view='peek';render();});
   document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{S.view='browse';S.pinned=null;S.drawer=null;S.detached=null;render();});
-  // contents menu: jump to a turn
-  document.querySelectorAll('[data-seg]').forEach(b=>b.onclick=()=>{const el=document.getElementById('t-'+b.dataset.seg);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});});
+  // contents handle: tap to open on touch (CSS :hover covers desktop); jump scrolls + closes — no render, so scroll sticks
+  document.querySelectorAll('.toc-lines').forEach(b=>b.onclick=(e)=>{e.stopPropagation();b.closest('.toc').classList.toggle('open');});
+  document.querySelectorAll('[data-seg]').forEach(b=>b.onclick=()=>{const el=document.getElementById('t-'+b.dataset.seg);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});b.closest('.toc')?.classList.remove('open');});
+  if(!window.__tocOutside){window.__tocOutside=true;document.addEventListener('click',(e)=>{document.querySelectorAll('.toc.open').forEach(t=>{if(!t.contains(e.target))t.classList.remove('open');});});}
   document.querySelectorAll('[data-note]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const id=b.dataset.note;S.open['n'+id]=!S.open['n'+id];render();});
   document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>{S.stopped=true;render();});
   // suggestion queue: Send promotes a teammate's steer to the agent; ✕ dismisses it
