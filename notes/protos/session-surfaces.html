@@ -58,7 +58,12 @@
   /* hover toolbar + context menu + reactions (Slack/Discord-style) */
   .beat,.cmsg{position:relative}
   .msgbar{position:absolute;top:-14px;right:10px;display:flex;gap:1px;background:var(--bg);border:1px solid var(--line-2);border-radius:9px;box-shadow:0 2px 10px rgba(20,20,40,.12);padding:2px;opacity:0;pointer-events:none;transition:opacity .1s;z-index:25}
-  .beat:hover>.msgbar,.resp:hover>.msgbar,.cmsg:hover>.msgbar{opacity:1;pointer-events:auto}
+  .beat:hover>.msgbar,.resp:hover>.msgbar,.cmsg:hover>.msgbar,
+  .beat.act>.msgbar,.resp.act>.msgbar,.cmsg.act>.msgbar{opacity:1;pointer-events:auto}
+  /* the line acknowledges the pointer — and stays lit while its menu is open (Slack-style) */
+  .read .beat,.read .resp{border-radius:9px;transition:background .12s,box-shadow .12s}
+  .read .beat:hover,.read .resp:hover,.read .beat.act,.read .resp.act{background:var(--fill);box-shadow:0 0 0 5px var(--fill)}
+  .cmsg{transition:background .12s}.cmsg:hover,.cmsg.act{background:var(--fill)}
   .mb{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:13px;color:var(--ink-3)}.mb:hover{background:var(--fill);color:var(--ink)}
   .ctx-scrim{position:fixed;inset:0;z-index:40}
   .ctxmenu{position:fixed;z-index:41;min-width:204px;background:var(--bg);border:1px solid var(--line-2);border-radius:11px;box-shadow:0 16px 44px -14px rgba(20,20,40,.34);padding:5px}
@@ -223,10 +228,9 @@
   .sugg .x{font-size:12px;color:var(--ink-4);flex-shrink:0}.sugg .x:hover{color:var(--ink-2)}
   /* anchored comments on transcript items */
   .resp{position:relative}
-  .cdot{position:absolute;right:-2px;top:1px;width:18px;height:18px;border-radius:6px;display:grid;place-items:center;font-size:10px;color:var(--ink-4);cursor:pointer}
+  /* comment marker flows inline at the end of its line — a margin pin orphaned in whitespace reads as a glitch */
+  .cdot{display:inline-flex;align-items:center;gap:4px;vertical-align:middle;margin-left:7px;font-size:10.5px;color:var(--ink-4);cursor:pointer}
   .cdot:hover{color:var(--ink-2)}.cdot .b{width:6px;height:6px;border-radius:50%;background:var(--amber)}.cdot.res .b{background:transparent;border:1px solid var(--ink-4)}
-  .addc{position:absolute;right:-2px;top:1px;width:18px;height:18px;border-radius:6px;display:grid;place-items:center;font-size:10px;color:var(--ink-5);opacity:0;transition:.12s}
-  .resp:hover .addc{opacity:1}.addc:hover{color:var(--ink-3)}
   .note{margin:7px 0 2px 15px;padding:8px 11px;background:#fdf9f1;border-radius:9px;color:var(--ink-2);font-size:12.5px}
   .note .nn{font-weight:600;color:var(--ink);margin-right:5px}
   .note.res{opacity:.7;background:var(--fill)}.note .rz{display:inline-block;margin-left:8px;font-size:10.5px;color:var(--ink-4)}.note .rz:hover{color:var(--ink-2)}
@@ -253,13 +257,21 @@
   .frame.mobile .drawer{width:100%;max-width:100%}
   .frame.mobile .strip{overflow:auto}
   .frame.mobile .col{padding:18px 18px 80px}
+  .frame.mobile .toc{display:none} /* hover-only handle is dead weight on touch + overlaps the transcript */
   .frame.mobile .flist{width:128px}
   .frame.mobile .gallery{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   /* fully-loaded: channel chat beside the agent session */
   .channel{width:336px;flex-shrink:0;min-width:0;border-right:1px solid var(--line);display:flex;flex-direction:column}
   .ch-h{height:50px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 18px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
   .ch-h .cnt{font-weight:400;color:var(--ink-4);font-size:12px}
-  .ch-b{flex:1;overflow:auto;padding:6px 0;display:flex;flex-direction:column;justify-content:flex-end}
+  .ch-b{flex:1;overflow:auto;padding:6px 0;display:flex;flex-direction:column;justify-content:flex-start}
+  /* the top of a short channel gets a purpose (Slack "start of channel") instead of a void */
+  .ch-intro{padding:20px 18px 12px}
+  .ch-intro .ii{width:36px;height:36px;border-radius:10px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:16px;margin-bottom:9px}
+  .ch-intro .it{font-weight:600;color:var(--ink);font-size:15px}
+  .ch-intro .is{font-size:12.5px;color:var(--ink-3);margin-top:3px;max-width:46ch}
+  .ch-div{display:flex;align-items:center;gap:10px;padding:8px 18px 4px;color:var(--ink-4);font-size:11px;font-weight:500}
+  .ch-div::before,.ch-div::after{content:"";height:1px;background:var(--line);flex:1}
   .cmsg{padding:6px 18px}
   .cmsg .cn{font-weight:600;color:var(--ink)}.cmsg .cn .tm{font-weight:400;color:var(--ink-4);font-size:11.5px;margin-left:6px}
   .cmsg .cb{color:var(--ink-2)}
@@ -378,7 +390,8 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{}};
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},
+  sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null};
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -450,23 +463,25 @@ function barHTML(surface){const mid=surface==='channel'
     :'<button class="mb" data-act="comment" title="Comment">✎</button>';
   return `<div class="msgbar"><button class="mb" data-act="react" title="React">☺</button>${mid}<button class="mb" data-act="more" title="More">⋯</button></div>`;}
 function rxn(rid){return S.rxn[rid]?`<div class="rxn" data-rid="${rid}">${S.rxn[rid]} 1</div>`:'';}
+// keep the line lit (row highlight + quick-bar) while its context menu is open
+function aCls(rid){return S.menu&&S.menu.rid===rid?' act':'';}
 function menuHTML(){const s=S.menu.surface,it=(a,l,c='')=>`<button class="cm-item ${c}" data-act="${a}">${l}</button>`;
   const body=s==='channel'
     ?it('react','React…')+it('reply','Reply in thread')+it('agent','@agent this → new session')+'<div class="cm-sep"></div>'+it('pin','Pin to channel')+it('copy','Copy link')+it('edit','Edit')+it('delete','Delete','cm-danger')
     :it('comment','Comment')+it('steer',S.role==='spectator'?'Suggest about this':'Steer about this')+it('react','React…')+'<div class="cm-sep"></div>'+it('copy','Copy')+it('link','Copy link to turn');
   return `<div class="ctx-scrim" data-cmclose="1"></div><div class="ctxmenu" style="left:${S.menu.x}px;top:${S.menu.y}px">${body}</div>`;}
 function noteCtrl(it,id){if(it.notes&&it.notes.length){const res=it.notes.every(n=>n.resolved);
-    return `<button class="cdot ${res?'res':''}" data-note="${id}" title="${it.notes.length} comment"><span class="b"></span></button>`;}
+    return `<button class="cdot ${res?'res':''}" data-note="${id}" title="${it.notes.length} comment"><span class="b"></span>${it.notes.length}</button>`;}
   return '';}
 function noteBox(it,id){if(!(it.notes&&it.notes.length&&S.open['n'+id]))return '';
   return it.notes.map(n=>`<div class="note ${n.resolved?'res':''}"><span class="nn">${n.by}</span>${esc(n.text)}<span class="rz">${n.resolved?'resolved ✓':'Resolve'}</span></div>`).join('');}
 function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
-  if(it.k==="steer")return `<div class="beat" data-ctx="item" data-rid="${id}"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div>${barHTML('item')}${rxn(id)}</div>`;
-  if(it.k==="text")return `<div class="resp" data-ctx="item" data-rid="${id}">${esc(it.text)}${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
-  if(it.k==="reason")return `<div class="resp" data-ctx="item" data-rid="${id}"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${barHTML('item')}${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}${rxn(id)}</div>`;
+  if(it.k==="steer")return `<div class="beat${aCls(id)}" data-ctx="item" data-rid="${id}"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <span class="mention">@agent</span></span>':''}</div><div class="say">${esc(it.text)}</div>${barHTML('item')}${rxn(id)}</div>`;
+  if(it.k==="text")return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}">${esc(it.text)}${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
+  if(it.k==="reason")return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${barHTML('item')}${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}${rxn(id)}</div>`;
   if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
-    if(!it.out)return `<div class="resp" data-ctx="item" data-rid="${id}"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
-    return `<div class="resp" data-ctx="item" data-rid="${id}"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${barHTML('item')}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}${rxn(id)}</div>`;}
+    if(!it.out)return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><span class="tg static">· ${lab}</span>${noteCtrl(it,id)}${barHTML('item')}${noteBox(it,id)}${rxn(id)}</div>`;
+    return `<div class="resp${aCls(id)}" data-ctx="item" data-rid="${id}"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${barHTML('item')}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}${rxn(id)}</div>`;}
   if(it.k==="live"){
     if(S.stopped)return `<div class="live-line stopped"><span class="ld off"></span>stopped by you · the agent halted mid-run</div>`;
     const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
@@ -498,11 +513,12 @@ function composerHTML(){
     <div class="field suggest"><span class="to sg">↳ suggest</span><input placeholder="Suggest a steer to Mara…"/><button class="gobtn">↑</button></div>
     <div class="by">Mara has the seat · <button class="seatbtn">Request seat</button></div></div></div>`;
   // driver: spectator suggestions queue (steering proposals) above the agent composer
+  const queue=S.sugg.length?`<div class="queue"><div class="qhead">Suggestions · ${S.sugg.length}</div>
+      ${S.sugg.map((s,i)=>`<div class="sugg"><b>${s.by}</b><span class="sq">“${esc(s.q)}”</span><button class="a" data-sgsend="${i}">Send</button><button class="x" data-sgdrop="${i}" title="Dismiss">✕</button></div>`).join('')}</div>`:'';
+  const sentNote=S.sent?`<div class="typing">Sent ${S.sent.by}’s suggestion to the agent ✓</div>`:'';
   return `<div class="comp"><div class="comp-in">
-    <div class="queue"><div class="qhead">Suggestions · 2</div>
-      <div class="sugg"><b>Sam</b><span class="sq">“add a NOT NULL default before the backfill”</span><button class="a">Send</button><button class="x">✕</button></div>
-      <div class="sugg"><b>Priya</b><span class="sq">“also update the e2e seat fixture”</span><button class="a">Send</button><button class="x">✕</button></div></div>
-    <div class="field steer"><span class="to">↳ agent</span><input placeholder="${ph}"/><button class="gobtn">↑</button></div></div></div>`;
+    ${queue}${sentNote}
+    <div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.sent?'“'+esc(S.sent.q)+'”':ph}"/><button class="gobtn">↑</button></div></div></div>`;
 }
 
 /* ---- header + layouts ---- */
@@ -512,10 +528,14 @@ function headerHTML(){
   const crumb=(S.view==='focus'&&S.device!=='mobile')?`<button class="crumb" data-back="1">← #eng-platform</button>`:'';
   const active=e!=='expired'&&!S.stopped;
   const stop=active?`<button class="stopbtn" data-stop="1" title="Interrupt the agent">■ Stop</button>`:'';
+  // expand/collapse the channel pane (Slack thread grammar): peek = beside channel, focus = full-width
+  const paneTog=(S.device!=='mobile'&&!S.pinned)?(S.view==='peek'
+    ? `<button class="ib" data-pane="focus" title="Expand — hide channel">⤢</button>`
+    : `<button class="ib" data-pane="peek" title="Collapse — show channel">⤡</button>`):'';
   return `<div class="sess-h">${crumb}<span class="ti">${esc(SESSION.title)}</span>
     <span class="lv"><span class="live ${S.stopped?'off':''}"></span>${S.stopped?'stopped':(S.role==='driver'?'You drive':'Mara drives')} · 4 watching</span>
     <span class="envchip ${e}"><span class="d"></span>env ${lbl}</span>
-    ${stop}<button class="ib" title="Close">✕</button></div>`;
+    ${paneTog}${stop}<button class="ib" data-closeview="1" title="Close session">✕</button></div>`;
 }
 function roBanner(){return S.env==='expired'?`<div class="ro">⚠ Environment expired — this session is record-only. Transcript, changes, and artifacts are preserved; rebuild to keep working.</div>`:'';}
 
@@ -551,10 +571,13 @@ function drawerHTML(){
 }
 
 function channelHTML(wide){
-  const cmsg=(rid,name,time,body)=>`<div class="cmsg" data-ctx="channel" data-rid="${rid}"><div class="cn">${name}<span class="tm">${time}</span></div><div class="cb">${body}</div>${barHTML('channel')}${rxn(rid)}</div>`;
+  const cmsg=(rid,name,time,body)=>`<div class="cmsg${aCls(rid)}" data-ctx="channel" data-rid="${rid}"><div class="cn">${name}<span class="tm">${time}</span></div><div class="cb">${body}</div>${barHTML('channel')}${rxn(rid)}</div>`;
   return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll">
+    <div class="ch-intro"><div class="ii">#</div><div class="it">eng-platform</div>
+      <div class="is">Where the platform team plans work and runs agent sessions. Type <span class="mention">@agent</span> in any message to start one.</div></div>
+    <div class="ch-div">Today</div>
     ${cmsg('m1','Mara','9:00',"the migration to support more than one driver — let's get an agent on it")}
     ${cmsg('m2','Mara','9:01','<span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.')}
     <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">spawned from Mara's @agent · turn 5 · ${wide?'open →':'open here →'}</div></div>
@@ -618,11 +641,19 @@ function wire(){
     if(S.view==='peek'){S.viewBeforePin='peek';S.view='focus';}render();});
   document.querySelectorAll('[data-open-session]').forEach(b=>b.onclick=()=>{S.view='peek';render();});
   document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{S.view='browse';S.pinned=null;S.drawer=null;S.detached=null;render();});
+  // contents menu: jump to a turn
+  document.querySelectorAll('[data-seg]').forEach(b=>b.onclick=()=>{const el=document.getElementById('t-'+b.dataset.seg);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});});
   document.querySelectorAll('[data-note]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const id=b.dataset.note;S.open['n'+id]=!S.open['n'+id];render();});
   document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>{S.stopped=true;render();});
+  // suggestion queue: Send promotes a teammate's steer to the agent; ✕ dismisses it
+  document.querySelectorAll('[data-sgsend]').forEach(b=>b.onclick=()=>{S.sent=S.sugg.splice(+b.dataset.sgsend,1)[0];render();});
+  document.querySelectorAll('[data-sgdrop]').forEach(b=>b.onclick=()=>{S.sugg.splice(+b.dataset.sgdrop,1);render();});
+  // expand/collapse channel pane + close session back to the channel timeline
+  document.querySelectorAll('[data-pane]').forEach(b=>b.onclick=()=>{S.view=b.dataset.pane;S.drawer=null;render();});
+  document.querySelectorAll('[data-closeview]').forEach(b=>b.onclick=()=>{S.view='browse';S.drawer=null;S.pinned=null;S.detached=null;S.viewBeforePin=null;render();});
   // hover toolbar quick actions
   document.querySelectorAll('.mb').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const it=b.closest('[data-ctx]');if(!it)return;const surface=it.dataset.ctx,rid=it.dataset.rid,act=b.dataset.act;
-    if(act==='react'){if(S.rxn[rid])delete S.rxn[rid];else S.rxn[rid]='👍';render();}
+    if(act==='react'){if(S.rxn[rid])delete S.rxn[rid];else S.rxn[rid]='☺';render();}
     else if(act==='comment'){S.open['n'+rid]=!S.open['n'+rid];render();}
     else if(act==='more'){const r=b.getBoundingClientRect();S.menu={surface,rid,x:Math.min(r.left,window.innerWidth-224),y:r.bottom+4};render();}
     else render();});
@@ -631,7 +662,7 @@ function wire(){
     S.menu={surface:el.dataset.ctx,rid:el.dataset.rid,x:Math.min(e.clientX,window.innerWidth-224),y:Math.min(e.clientY,window.innerHeight-270)};render();}));
   // context-menu item actions
   document.querySelectorAll('.cm-item').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const act=b.dataset.act,m=S.menu;
-    if(m&&act==='react')S.rxn[m.rid]='👍';
+    if(m&&act==='react')S.rxn[m.rid]='☺';
     else if(m&&act==='comment')S.open['n'+m.rid]=true;
     S.menu=null;render();});
   document.querySelectorAll('[data-cmclose]').forEach(b=>b.onclick=()=>{S.menu=null;render();});
