@@ -212,6 +212,7 @@
   .cmsg .cb{color:var(--ink-2)}
   .ch-scard{margin:9px 18px;padding:11px 13px;border:1px solid var(--line-2);border-radius:11px;cursor:pointer}
   .ch-scard:hover{border-color:var(--ink-4)}
+  .ch-scard.open{border-color:#bcd3f5;background:#f6f9ff;box-shadow:inset 2px 0 0 var(--blue)}
   .ch-scard .t{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ink)}
   .ch-scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
   .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
@@ -417,7 +418,7 @@ function channelHTML(){return `<div class="channel">
   <div class="ch-b scroll">
     <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb">kicking off the multi-driver migration — driving a session</div></div>
     <div class="cmsg"><div class="cn">Mara<span class="tm">9:02</span></div><div class="cb">spinning it up now</div></div>
-    <div class="ch-scard"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">Mara driving · 3 files · 1 PR · deploy gated</div></div>
+    <div class="ch-scard open"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">Mara driving · open here →</div></div>
     <div class="cmsg"><div class="cn">Alex<span class="tm">9:13</span></div><div class="cb">that staging deploy needs a second pair of eyes before it goes</div></div>
   </div>
   <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #sessions"/><button class="gobtn">↑</button></div></div>
