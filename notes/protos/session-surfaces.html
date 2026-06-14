@@ -483,7 +483,7 @@ function composerHTML(){
 function headerHTML(){
   const e=S.env;const lbl=e==='warm'?'warm':e==='sleeping'?'sleeping':'expired';
   // Focus hides the channel — so show which channel this session lives in + a way back.
-  const crumb=(S.view==='focus'&&S.device!=='mobile')?`<button class="crumb" data-back="1">← #sessions</button>`:'';
+  const crumb=(S.view==='focus'&&S.device!=='mobile')?`<button class="crumb" data-back="1">← #eng-platform</button>`:'';
   const active=e!=='expired'&&!S.stopped;
   const stop=active?`<button class="stopbtn" data-stop="1" title="Interrupt the agent">■ Stop</button>`:'';
   return `<div class="sess-h">${crumb}<span class="ti">${esc(SESSION.title)}</span>
@@ -525,14 +525,14 @@ function drawerHTML(){
 }
 
 function channelHTML(wide){return `<div class="channel ${wide?'wide':''}">
-  <div class="ch-h"># sessions <span class="cnt">· 6</span></div>
+  <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll">
     <div class="cmsg"><div class="cn">Mara<span class="tm">9:00</span></div><div class="cb">the migration to support more than one driver — let's get an agent on it</div></div>
     <div class="cmsg"><div class="cn">Mara<span class="tm">9:01</span></div><div class="cb"><span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.</div></div>
     <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span>migrate sessions → driver set</div><div class="s">spawned from Mara's @agent · turn 5 · ${wide?'open →':'open here →'}</div></div>
     <div class="cmsg"><div class="cn">Alex<span class="tm">9:13</span></div><div class="cb">nice — watching. ping me before that staging deploy goes</div></div>
   </div>
-  <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #sessions — type @agent to start a session"/><button class="gobtn">↑</button></div></div>
+  <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #eng-platform — @agent to start a session"/><button class="gobtn">↑</button></div></div>
 </div>`;}
 function sessionsRail(){
   const row=(badge,bcls,title,sub)=>`<div class="srow ${bcls==='attn'?'attn':''}" data-open-session="1">
