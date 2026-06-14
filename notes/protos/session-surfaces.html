@@ -323,6 +323,31 @@
   .ch-scard .scard-ti{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ch-scard .badge{flex-shrink:0}
   .ch-scard .s{margin-top:3px;font-size:12px;color:var(--ink-3)}
+  /* rich session card: status+driver, progress, latest line, artifacts, (threaded) updates */
+  .ch-scard.rich{cursor:default}
+  .ch-scard.rich:hover{border-color:var(--line-2)}.ch-scard.rich.open:hover{border-color:#c7c9f3}
+  .ch-scard .scard-ti{cursor:pointer}
+  .ch-scard .scard-row{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:12px}
+  .ch-scard .scard-row .dim{color:var(--ink-4)}
+  .ch-scard .av{width:20px;height:20px;font-size:9px;margin-left:-6px}
+  .ch-scard .scard-meta{margin-top:6px;font-size:12px;color:var(--ink-3)}.ch-scard .scard-meta b{color:var(--ink-2);font-weight:600}
+  .ch-scard .scard-latest{display:flex;align-items:baseline;gap:6px;margin-top:6px;font-size:12px;color:var(--ink-2)}
+  .ch-scard .scard-latest .dim{color:var(--ink-4)}.ch-scard .scard-latest .tt{color:var(--ink-4);margin-left:auto;flex-shrink:0;white-space:nowrap}
+  .ch-scard .scard-arts{display:flex;gap:7px;margin-top:8px;flex-wrap:wrap}
+  .ch-scard .scard-thread{margin-top:9px;border-top:1px solid var(--line);padding-top:7px}
+  .ch-scard .scard-up{font-size:11.5px;color:var(--ink-3);font-weight:500}.ch-scard .scard-up:hover{color:var(--ink)}
+  .ch-scard .threply{display:flex;align-items:baseline;gap:10px;margin:0 0 7px 2px;font-size:12px;color:var(--ink-2)}
+  .ch-scard .threply .tb{flex:1;min-width:0}.ch-scard .threply .tt{font-size:11px;color:var(--ink-4);flex-shrink:0}
+  .ch-scard .scard-foot{display:flex;margin-top:9px}.ch-scard .scard-open{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--blue)}.ch-scard .scard-open:hover{text-decoration:underline}
+  /* preset reaction (static, in the channel) — same look as a live reaction */
+  .crx{display:inline-flex;align-items:center;gap:4px;margin:7px 0 0 15px;font-size:12px;color:var(--ink-2);background:var(--accent-soft);border:1px solid #d8d6ee;border-radius:999px;padding:1px 9px}
+  /* agent's own channel messages (feed mode) */
+  .amsg .cn{display:flex;align-items:center;gap:6px}
+  .abadge{width:16px;height:16px;border-radius:4px;background:var(--blue);color:#fff;display:inline-grid;place-items:center;font-size:9px;font-weight:700;flex-shrink:0}
+  .prpill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-2);border-radius:8px;padding:3px 9px;font-size:11.5px;color:var(--ink-2);font-weight:500}
+  .chgate{display:flex;align-items:center;gap:9px;margin-top:7px;padding:8px 11px;border:1px solid #efdcb4;border-radius:10px;background:#fdfaf2;font-size:12.5px;color:var(--ink)}
+  .chgate.done{border-color:var(--line-2);background:var(--fill);color:var(--ink-3)}
+  .chgate .gate-t{flex:1}.chgate .gate-t b{font-weight:600}.chgate .aact{flex-shrink:0}
   .ch-c{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px}
   .ch-c .field .plus{color:var(--ink-4);font-size:17px;flex-shrink:0}
   .mention{background:#eef0fe;color:var(--blue-ink);border-radius:5px;padding:0 5px;font-weight:600}
@@ -364,6 +389,12 @@
     <div class="seg" id="seg-role">
       <button data-v="driver" class="on">Driver</button>
       <button data-v="spectator">Spectator</button>
+    </div></div>
+  <div class="grp"><span class="lbl">Agent in channel</span>
+    <div class="seg" id="seg-chmode">
+      <button data-v="thread" class="on">Threaded</button>
+      <button data-v="feed">Feed</button>
+      <button data-v="card">Card only</button>
     </div></div>
   <div class="hint" id="hint"></div>
 </div>
@@ -429,7 +460,7 @@ const AUDIT=[
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},
   sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
-  model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam"};
+  model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",chmode:"thread",threadOpen:false};
 // presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
 const PEOPLE=[{n:"Mara"},{n:"Sam"},{n:"Priya"},{n:"Alex"},{n:"You"}];
 const TIMES=["9:01","9:06","9:12","9:19","9:24"]; // per-turn timestamps (mirrors the channel's message times)
@@ -442,6 +473,23 @@ const IC={
   panelClose:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
   panelOpen:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>'};
 const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
+// channel conversation (realistic team thread) — the session card slots in right after the @agent spawn
+const CHAN=[
+  {id:"m1",who:"Mara",t:"9:00",body:"the migration to support more than one driver — let's finally get an agent on it"},
+  {id:"m2",who:"Mara",t:"9:01",spawn:true,body:'<span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.'},
+  {id:"m3",who:"Sam",t:"9:02",body:"oh nice, I was about to do this by hand. heads up — grantSeat has a sneaky single-driver assumption",react:3},
+  {id:"m4",who:"Priya",t:"9:05",body:"are we keeping driver_id around or dropping it?"},
+  {id:"m5",who:"Mara",t:"9:06",body:"keeping it through the transition, dropping in a follow-up"},
+  {id:"m6",who:"Alex",t:"9:13",body:"nice — watching. ping me before that staging deploy goes",react:2},
+  {id:"m7",who:"Alex",t:"9:25",body:"approved — go for it"},
+];
+// agent milestones posted back to the channel (feed = inline messages, threaded = under the card, card = folded into the card)
+const APOSTS=[
+  {t:"9:03",body:"On it — reading the seat logic first so the backfill lands before the constraint."},
+  {t:"9:08",kind:"art",body:"saved a screenshot of the multi-driver header",art:{name:"seat-row.png",ext:"PNG",meta:"1024×120"}},
+  {t:"9:14",kind:"pr",body:"opened PR #128 — multi-driver migration",meta:"±3 files +61 −12"},
+  {t:"9:24",kind:"approval",body:"ready, but the staging deploy is irreversible — need a go-ahead",mention:"Alex"},
+];
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -660,18 +708,48 @@ function drawerHTML(){
       <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
 }
 
+function artchipHTML(a){return `<span class="artchip" data-open="artifacts"><span class="ax">${a.ext||a.name.split('.').pop().toUpperCase()}</span><span class="an2">${esc(a.name)}</span>${a.meta?`<span class="am2">${esc(a.meta)}</span>`:''}</span>`;}
+function cardAvatars(){const driver="Mara";const ppl=[...PEOPLE].sort((a,b)=>(a.n===driver?-1:b.n===driver?1:0));
+  const show=ppl.slice(0,4),extra=ppl.length-show.length,init=n=>n==="You"?"Y":n[0];
+  return `<span class="who">`+show.map(p=>`<span class="av ${p.n===driver?'seat':''}">${init(p.n)}</span>`).join('')+(extra>0?`<span class="av more">+${extra}</span>`:'')+`</span>`;}
+function chMsg(m){return `<div class="cmsg${aCls(m.id)}" data-ctx="channel" data-rid="${m.id}"><div class="cn">${m.who}<span class="tm">${m.t}</span></div><div class="cb">${m.body}</div>${barHTML('channel')}${m.react?`<span class="crx">${ic('smile')} ${m.react}</span>`:''}${rxn(m.id)}</div>`;}
+function agentMsg(a){
+  let extra='';
+  if(a.art)extra=`<div class="madeline">${artchipHTML(a.art)}</div>`;
+  else if(a.kind==='pr')extra=`<div class="madeline"><span class="prpill">PR #128 · ${a.meta||''}</span></div>`;
+  else if(a.kind==='approval')extra=S.approved==='yes'?`<div class="chgate done">✓ approved by Alex — deploying → staging…</div>`
+      :S.approved==='no'?`<div class="chgate done">denied — agent continued without it</div>`
+      :`<div class="chgate"><span class="gate-t">approve <b>deploy → staging</b>? <span class="mention">@Alex</span></span><span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span></div>`;
+  return `<div class="cmsg amsg" data-ctx="channel" data-rid="ap-${a.t}"><div class="cn"><span class="abadge">A</span>agent<span class="tm">${a.t}</span></div><div class="cb">${esc(a.body)}${extra}</div>${barHTML('channel')}</div>`;}
+function sessionCard(wide){
+  const t=totals(),last=APOSTS[APOSTS.length-1],arts=ARTIFACTS;
+  const thread=S.chmode==='thread'?`<div class="scard-thread">
+      ${S.threadOpen?APOSTS.map(a=>`<div class="threply"><span class="tb">${esc(a.body)}${a.kind==='approval'?' · <span class="mention">@Alex</span>':''}</span><span class="tt">${a.t}</span></div>`).join(''):''}
+      <button class="scard-up" data-thread="1">${S.threadOpen?'▾':'▸'} ${APOSTS.length} updates from the agent</button></div>`:'';
+  return `<div class="ch-scard rich ${wide?'':'open'}">
+    <div class="t"><span class="live"></span><span class="scard-ti" data-open-session="1">migrate sessions → driver set</span><span class="badge wait">needs you</span></div>
+    <div class="scard-row">${cardAvatars()}<span class="dim">Mara driving · 4 watching</span></div>
+    <div class="scard-meta"><b>±${t.files} files</b> +${t.add} −${t.del} · PR #128 · $${SESSION.cost.toFixed(2)}</div>
+    <div class="scard-latest">↳ <span class="dim">latest</span> ${esc(last.body)}<span class="tt"> · ${last.t}</span></div>
+    <div class="scard-arts">${arts.map(artchipHTML).join('')}</div>
+    ${thread}
+    <div class="scard-foot"><button class="scard-open" data-open-session="1">Open session →</button></div></div>`;}
 function channelHTML(wide){
-  const cmsg=(rid,name,time,body)=>`<div class="cmsg${aCls(rid)}" data-ctx="channel" data-rid="${rid}"><div class="cn">${name}<span class="tm">${time}</span></div><div class="cb">${body}</div>${barHTML('channel')}${rxn(rid)}</div>`;
+  const spawn=CHAN.findIndex(m=>m.spawn),head=CHAN.slice(0,spawn+1),tailH=CHAN.slice(spawn+1);
+  let tail;
+  if(S.chmode==='feed'){
+    const merged=[...tailH.map(m=>({t:m.t,h:m})),...APOSTS.map(a=>({t:a.t,a}))].sort((x,y)=>x.t<y.t?-1:x.t>y.t?1:0);
+    tail=merged.map(o=>o.h?chMsg(o.h):agentMsg(o.a)).join('');
+  } else tail=tailH.map(chMsg).join('');
   return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll" data-sk="chan">
     <div class="ch-intro"><div class="ii">#</div><div class="it">eng-platform</div>
       <div class="is">Infrastructure, CI/CD, and the shared services the rest of engineering builds on.</div></div>
     <div class="ch-div">Today</div>
-    ${cmsg('m1','Mara','9:00',"the migration to support more than one driver — let's get an agent on it")}
-    ${cmsg('m2','Mara','9:01','<span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.')}
-    <div class="ch-scard ${wide?'':'open'}" data-open-session="1"><div class="t"><span class="live"></span><span class="scard-ti">migrate sessions → driver set</span><span class="badge wait">needs you</span></div><div class="s">Mara driving · ±${totals().files} files +${totals().add} −${totals().del} · awaiting deploy approval</div></div>
-    ${cmsg('m3','Alex','9:13','nice — watching. ping me before that staging deploy goes')}
+    ${head.map(chMsg).join('')}
+    ${sessionCard(wide)}
+    ${tail}
   </div>
   <div class="ch-c"><div class="field"><span class="plus">+</span><input placeholder="Message #eng-platform — @agent to start a session"/><button class="gobtn">↑</button></div></div>
 </div>`;}
@@ -702,7 +780,7 @@ function frameHTML(){
   return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}${cm}</div>`;
 }
 
-function syncSeg(){['device','view','env','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
+function syncSeg(){['device','view','role','chmode'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
 function render(){
   // preserve scroll across re-renders — innerHTML replace would otherwise jump every pane to the top
   const sc={};document.querySelectorAll('[data-sk]').forEach(e=>sc[e.dataset.sk]=e.scrollTop);
@@ -719,10 +797,11 @@ function hint(){const h=document.getElementById('hint');
     :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
 
 function wire(){
-  ['device','view','env','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+  ['device','view','role','chmode'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
     S[k]=b.dataset.v;
     if(k==='device'||k==='view'){S.drawer=null;S.pinned=null;S.detached=null;}
     render();}));
+  document.querySelectorAll('[data-thread]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.threadOpen=!S.threadOpen;render();});
   document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{S.open[b.dataset.tool]=!S.open[b.dataset.tool];render();});
   document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>{S.file=+b.dataset.file;render();});
   // an edited file in the transcript opens that file in Changes (drawer, or the pinned slot)
