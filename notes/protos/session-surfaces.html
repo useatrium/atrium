@@ -186,6 +186,31 @@
   .field .to{flex-shrink:0;font-size:10.5px;font-weight:600;background:var(--ink);color:#fff;border-radius:6px;padding:3px 7px}
   .field input{flex:1;border:none;outline:none;background:none;color:var(--ink);font:inherit}.field input::placeholder{color:var(--ink-4)}
   .field .gobtn{width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;flex-shrink:0}
+  /* collaboration: suggestion queue (steering) + spectator/seat composer */
+  .field.suggest{border-style:dashed;border-color:#d9c8f0}
+  .field .to.sg{background:#7c46d6}
+  .typing{font-size:11px;color:var(--ink-4);font-style:italic;padding:1px 2px 7px}
+  .comp .by{font-size:11.5px;color:var(--ink-4);margin-top:8px;text-align:right}
+  .comp .by .seatbtn{font-size:11px;font-weight:600;color:var(--blue-ink);border:1px solid #c7d8f3;border-radius:6px;padding:2px 9px;margin-left:4px}
+  .comp .by .seatbtn:hover{background:#eef4ff}
+  .queue{border:1px solid var(--line-2);border-radius:11px;padding:3px;margin-bottom:10px}
+  .qhead{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:6px 9px 4px}
+  .sugg{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-2);padding:5px 9px;border-radius:8px}
+  .sugg:hover{background:var(--fill)}
+  .sugg b{color:var(--ink);font-weight:600;flex-shrink:0}
+  .sugg .sq{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-3)}
+  .sugg .a{font-size:11px;font-weight:600;color:var(--ink);border:1px solid var(--line-2);border-radius:6px;padding:2px 10px;flex-shrink:0}
+  .sugg .a:hover{border-color:var(--ink-3);background:var(--bg)}
+  .sugg .x{font-size:12px;color:var(--ink-4);flex-shrink:0}.sugg .x:hover{color:var(--ink-2)}
+  /* anchored comments on transcript items */
+  .resp{position:relative}
+  .cdot{position:absolute;right:-2px;top:1px;width:18px;height:18px;border-radius:6px;display:grid;place-items:center;font-size:10px;color:var(--ink-4);cursor:pointer}
+  .cdot:hover{color:var(--ink-2)}.cdot .b{width:6px;height:6px;border-radius:50%;background:var(--amber)}.cdot.res .b{background:transparent;border:1px solid var(--ink-4)}
+  .addc{position:absolute;right:-2px;top:1px;width:18px;height:18px;border-radius:6px;display:grid;place-items:center;font-size:10px;color:var(--ink-5);opacity:0;transition:.12s}
+  .resp:hover .addc{opacity:1}.addc:hover{color:var(--ink-3)}
+  .note{margin:7px 0 2px 15px;padding-left:11px;border-left:2px solid #f0e2c2;color:var(--ink-2);font-size:12.5px}
+  .note .nn{font-weight:600;color:var(--ink);margin-right:5px}
+  .note.res{opacity:.55}.note .rz{display:inline-block;margin-left:8px;font-size:10.5px;color:var(--ink-4)}.note .rz:hover{color:var(--ink-2)}
   /* pin/detach grammar */
   .pinpane{width:520px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
   .pin-h{height:42px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 8px 0 14px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
@@ -258,6 +283,11 @@
       <button data-v="peek">Split</button>
       <button data-v="focus">Focus</button>
     </div></div>
+  <div class="grp"><span class="lbl">You are</span>
+    <div class="seg" id="seg-role">
+      <button data-v="driver" class="on">Driver</button>
+      <button data-v="spectator">Spectator</button>
+    </div></div>
   <div class="grp"><span class="lbl">Environment</span>
     <div class="seg" id="seg-env">
       <button data-v="warm" class="on">Warm</button>
@@ -277,7 +307,7 @@ const SESSION={title:"migrate sessions → driver set",driver:"Mara",cost:0.42,
       {k:"step",label:"read migrations/002_phase2_sessions.sql",out:"create table sessions (\n  id uuid primary key,\n  driver_id uuid not null,\n  ...\n);"},
       {k:"step",label:"grep driver_id — 23 hits in 6 files",out:"session-runs.ts (14) · SessionPane.tsx (4) · sessions.test.ts (3) · ..."},
       {k:"step",label:"read surface/server/src/session-runs.ts:580–680 (seat logic)"},
-      {k:"text",text:"Seat grant/take and requireDriver all assume a single driver_id. I'll land the column + backfill first, then widen those to set semantics in a later step."},
+      {k:"text",text:"Seat grant/take and requireDriver all assume a single driver_id. I'll land the column + backfill first, then widen those to set semantics in a later step.",notes:[{by:"Sam",text:"could we keep driver_id forever? cheaper than a second migration later",resolved:true}]},
       {k:"step",label:"edited migrations/003_driver_set.sql +18 −0"},
       {k:"step",label:"ran pnpm migrate · ok (1 migration applied)"},
       {k:"text",text:"Added driver_ids uuid[] with a backfill from driver_id; driver_id stays in place for back-compat."},
@@ -285,7 +315,7 @@ const SESSION={title:"migrate sessions → driver set",driver:"Mara",cost:0.42,
     {n:2,who:"Mara",lead:"check the down-migration",items:[
       {k:"steer",who:"Mara",text:"Check the down-migration too — make sure it reverses cleanly."},
       {k:"reason",sec:4,text:"Run the down migration in a scratch DB and confirm the column drops without orphaning anything, then re-run the affected tests."},
-      {k:"step",label:"ran pnpm migrate:down · 2 tests failed",err:true,out:"FAIL seatHandoff › grants seat\nFAIL tenancy › scopes cursors\n  expected driver_id to be defined"},
+      {k:"step",label:"ran pnpm migrate:down · 2 tests failed",err:true,out:"FAIL seatHandoff › grants seat\nFAIL tenancy › scopes cursors\n  expected driver_id to be defined",notes:[{by:"Alex",text:"those 2 are pre-existing on main — don't let it chase them",resolved:false}]},
       {k:"step",label:"git stash && pnpm test seatHandoff tenancy · same 2 fail",out:"both fail on origin/main too"},
       {k:"text",text:"The down migration drops driver_ids cleanly. Those 2 failures are pre-existing on main — they assert on driver_id directly — and unrelated to this change."}]},
     {n:3,who:"Mara",lead:"NOT NULL default + widen seats",items:[
@@ -326,7 +356,7 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={device:"desktop",view:"browse",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null};
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null};
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -392,13 +422,18 @@ function inlineCard(kind){
       <span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span></div>`;}
   return '';
 }
+function noteCtrl(it,id){if(it.notes&&it.notes.length){const res=it.notes.every(n=>n.resolved);
+    return `<button class="cdot ${res?'res':''}" data-note="${id}" title="${it.notes.length} comment"><span class="b"></span></button>`;}
+  return `<button class="addc" title="Comment">💬</button>`;}
+function noteBox(it,id){if(!(it.notes&&it.notes.length&&S.open['n'+id]))return '';
+  return it.notes.map(n=>`<div class="note ${n.resolved?'res':''}"><span class="nn">${n.by}</span>${esc(n.text)}<span class="rz">${n.resolved?'resolved ✓':'Resolve'}</span></div>`).join('');}
 function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
   if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}${it.spawn?'<span class="spawn">started the session · <b>@agent</b></span>':''}</div><div class="say">${esc(it.text)}</div></div>`;
-  if(it.k==="text")return `<div class="resp">${esc(it.text)}</div>`;
+  if(it.k==="text")return `<div class="resp">${esc(it.text)}${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
   if(it.k==="reason")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} thought for ${it.sec}s</button>${o&&it.text?`<div class="tout mono">${esc(it.text)}</div>`:''}</div>`;
   if(it.k==="step"||it.k==="tool"){const lab=esc(it.label||('ran '+(it.cmd||'')+(it.out?' · '+it.out:'')));
-    if(!it.out)return `<div class="resp"><span class="tg static">▸ ${lab}</span></div>`;
-    return `<div class="resp"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${o?`<div class="tout mono">${esc(it.out)}</div>`:''}</div>`;}
+    if(!it.out)return `<div class="resp"><span class="tg static">▸ ${lab}</span>${noteCtrl(it,id)}${noteBox(it,id)}</div>`;
+    return `<div class="resp"><button class="tg${it.err?' err':''}" data-tool="${id}">${o?'▾':'▸'} ${lab}</button>${noteCtrl(it,id)}${o?`<div class="tout mono">${esc(it.out)}</div>`:''}${noteBox(it,id)}</div>`;}
   if(it.k==="live"){const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
     return `<div class="live-line"><span class="ld"></span>${txt}</div>`;}
   // committed design: reference work products (changes/artifacts) live in the summary strip;
@@ -422,7 +457,17 @@ function tocHTML(){const turns=SESSION.turns;
 
 function composerHTML(){
   if(S.env==='expired')return `<div class="comp"><div class="comp-in"><div class="field off"><span class="to">↳ agent</span><input disabled placeholder="environment expired — rebuild to continue"/></div></div></div>`;
-  return `<div class="comp"><div class="comp-in"><div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.env==='sleeping'?'Message — sending wakes the environment':'Message the agent…'}"/><button class="gobtn">↑</button></div></div></div>`;
+  const ph=S.env==='sleeping'?'Message — sending wakes the environment':'Message the agent…';
+  if(S.role==='spectator')return `<div class="comp"><div class="comp-in">
+    <div class="typing">Sam is composing a suggestion…</div>
+    <div class="field suggest"><span class="to sg">↳ suggest</span><input placeholder="Suggest a steer to Mara…"/><button class="gobtn">↑</button></div>
+    <div class="by">Mara has the seat · <button class="seatbtn">Request seat</button></div></div></div>`;
+  // driver: spectator suggestions queue (steering proposals) above the agent composer
+  return `<div class="comp"><div class="comp-in">
+    <div class="queue"><div class="qhead">Suggestions · 2</div>
+      <div class="sugg"><b>Sam</b><span class="sq">“add a NOT NULL default before the backfill”</span><button class="a">Send</button><button class="x">✕</button></div>
+      <div class="sugg"><b>Priya</b><span class="sq">“also update the e2e seat fixture”</span><button class="a">Send</button><button class="x">✕</button></div></div>
+    <div class="field steer"><span class="to">↳ agent</span><input placeholder="${ph}"/><button class="gobtn">↑</button></div></div></div>`;
 }
 
 /* ---- header + layouts ---- */
@@ -431,7 +476,7 @@ function headerHTML(){
   // Focus hides the channel — so show which channel this session lives in + a way back.
   const crumb=(S.view==='focus'&&S.device!=='mobile')?`<button class="crumb" data-back="1">← #sessions</button>`:'';
   return `<div class="sess-h">${crumb}<span class="ti">${esc(SESSION.title)}</span>
-    <span class="lv"><span class="live"></span>Mara</span>
+    <span class="lv"><span class="live"></span>${S.role==='driver'?'You drive':'Mara drives'} · 4 watching</span>
     <span class="envchip ${e}"><span class="d"></span>env ${lbl}</span>
     <button class="ib sp" title="Close">✕</button></div>`;
 }
@@ -502,7 +547,7 @@ function frameHTML(){
   return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}</div>`;
 }
 
-function syncSeg(){['device','view','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
+function syncSeg(){['device','view','env','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
 function render(){document.getElementById('stage').innerHTML=frameHTML();wire();hint();syncSeg();
   try{location.hash=`device=${S.device},view=${S.view},env=${S.env}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
 function hint(){const h=document.getElementById('hint');
@@ -514,7 +559,7 @@ function hint(){const h=document.getElementById('hint');
     :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
 
 function wire(){
-  ['device','view','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+  ['device','view','env','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
     S[k]=b.dataset.v;
     if(k==='device'||k==='view'){S.drawer=null;S.pinned=null;S.detached=null;}
     render();}));
@@ -532,6 +577,7 @@ function wire(){
     if(S.view==='peek'){S.viewBeforePin='peek';S.view='focus';}render();});
   document.querySelectorAll('[data-open-session]').forEach(b=>b.onclick=()=>{S.view='peek';render();});
   document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{S.view='browse';S.pinned=null;S.drawer=null;S.detached=null;render();});
+  document.querySelectorAll('[data-note]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const id=b.dataset.note;S.open['n'+id]=!S.open['n'+id];render();});
   document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;
     if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
   document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;
