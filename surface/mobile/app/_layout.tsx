@@ -1,4 +1,5 @@
 import '../src/lib/hermesGlobals'; // polyfill global `Event` before livekit-client loads
+import '../src/lib/promiseRejectionFilter'; // drop livekit's benign signalling-event rejections (dev LogBox)
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
