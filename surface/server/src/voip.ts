@@ -1,5 +1,5 @@
 import * as http2 from 'node:http2';
-import { createPrivateKey, sign } from 'node:crypto';
+import { createPrivateKey, randomUUID, sign } from 'node:crypto';
 import type { Db } from './db.js';
 import { prunePushTokens } from './push.js';
 
@@ -92,14 +92,31 @@ function jwtRs256(header: object, claims: object, privateKeyPem: string): string
   return `${signingInput}.${base64url(signature)}`;
 }
 
+/** expo-callkit-telecom's native parser expects this nested shape (not our flat
+ * internal payload). A fresh eventId per push; serverCallId is the stable call id. */
+function toIncomingCallObject(payload: IncomingCallVoipPayload) {
+  return {
+    eventId: randomUUID(),
+    serverCallId: payload.callId,
+    hasVideo: false,
+    caller: { id: payload.callerId, displayName: payload.callerName },
+    metadata: {
+      channelId: payload.channelId,
+      channelName: payload.channelName,
+      room: payload.room,
+    },
+  };
+}
+
 function createApnsSender(config: ApnsConfig): VoipPushSender {
   const authKey = normalizePem(config.authKeyP8);
   let cachedJwt = '';
   let cachedUntil = 0;
+  let session: http2.ClientHttp2Session | null = null;
 
   function providerJwt(): string {
-    const nowSeconds = Math.floor(Date.now() / 1000);
     if (cachedJwt && Date.now() < cachedUntil) return cachedJwt;
+    const nowSeconds = Math.floor(Date.now() / 1000);
     cachedJwt = jwtEs256(
       { alg: 'ES256', kid: config.keyId },
       { iss: config.teamId, iat: nowSeconds },
@@ -109,41 +126,55 @@ function createApnsSender(config: ApnsConfig): VoipPushSender {
     return cachedJwt;
   }
 
+  // Reuse one HTTP/2 session across pushes — APNs multiplexes; a fresh connection
+  // per push adds a TLS handshake each time and can leak streams.
+  function getSession(): http2.ClientHttp2Session {
+    if (!session || session.destroyed || session.closed) {
+      session = http2.connect(APNS_ORIGIN);
+      session.on('error', () => {
+        session = null;
+      });
+    }
+    return session;
+  }
+
   return {
     name: 'apns',
     async send(token, payload) {
       if (token.platform !== 'ios') return { status: 'skipped' };
-      return sendApnsVoip(config, providerJwt(), token.token, payload);
+      return sendApnsVoip(getSession(), config, providerJwt(), token.token, payload);
     },
   };
 }
 
-async function sendApnsVoip(
+function sendApnsVoip(
+  session: http2.ClientHttp2Session,
   config: ApnsConfig,
   jwt: string,
   deviceToken: string,
   payload: IncomingCallVoipPayload,
 ): Promise<VoipSendResult> {
   return new Promise((resolve) => {
-    const client = http2.connect(APNS_ORIGIN);
     const chunks: Buffer[] = [];
     let status = 0;
     let settled = false;
     const settle = (result: VoipSendResult) => {
       if (settled) return;
       settled = true;
-      client.close();
+      clearTimeout(timer);
       resolve(result);
     };
+    // Never let a stalled APNs stream hang the fire-and-forget chain forever.
+    const timer = setTimeout(() => settle({ status: 'failed', error: 'apns_timeout' }), 10_000);
 
-    client.on('error', (err) => settle({ status: 'failed', error: err.message }));
-    const req = client.request({
+    const req = session.request({
       ':method': 'POST',
       ':path': `/3/device/${deviceToken}`,
       authorization: `bearer ${jwt}`,
       'apns-topic': `${config.bundleId}.voip`,
       'apns-push-type': 'voip',
       'apns-priority': '10',
+      'apns-expiration': '0', // VoIP: don't store/redeliver a stale ring
       'content-type': 'application/json',
     });
     req.on('response', (headers) => {
@@ -166,7 +197,7 @@ async function sendApnsVoip(
         settle({ status: 'failed', error: reason || `apns_status_${status}` });
       }
     });
-    req.end(JSON.stringify(payload));
+    req.end(JSON.stringify({ incomingCall: toIncomingCallObject(payload) }));
   });
 }
 
@@ -266,7 +297,12 @@ function createFcmSender(
               message: {
                 token: token.token,
                 android: { priority: 'high' },
-                data: payload,
+                // FCM data values must all be strings; the device parses the
+                // nested incomingCall object from this string.
+                data: {
+                  messageType: 'incomingCall',
+                  incomingCall: JSON.stringify(toIncomingCallObject(payload)),
+                },
               },
             }),
           },
@@ -343,6 +379,23 @@ export async function sendIncomingCallVoipPushes(
   },
 ): Promise<{ attempted: number; pruned: string[]; payload: IncomingCallVoipPayload }> {
   const recipientIds = [...new Set(args.recipientIds)];
+  const room = `call:${args.callId}`;
+  // Guard before the channel-name DB query: no recipients → nothing to resolve.
+  if (recipientIds.length === 0) {
+    return {
+      attempted: 0,
+      pruned: [],
+      payload: {
+        type: 'incoming_call',
+        callId: args.callId,
+        callerId: args.callerId,
+        callerName: args.callerName,
+        channelId: args.channelId,
+        channelName: '',
+        room,
+      },
+    };
+  }
   const payload: IncomingCallVoipPayload = {
     type: 'incoming_call',
     callId: args.callId,
@@ -353,9 +406,8 @@ export async function sendIncomingCallVoipPushes(
       id: args.callerId,
       displayName: args.callerName,
     }),
-    room: `call:${args.callId}`,
+    room,
   };
-  if (recipientIds.length === 0) return { attempted: 0, pruned: [], payload };
 
   const tokens = await pool.query<VoipPushToken>(
     `SELECT token, user_id AS "userId", platform
@@ -365,11 +417,14 @@ export async function sendIncomingCallVoipPushes(
     [recipientIds],
   );
 
-  const pruned: string[] = [];
-  for (const token of tokens.rows) {
-    const result = await sender.send(token, payload);
-    if (result.status === 'dead') pruned.push(token.token);
-  }
+  // Independent per-token sends — run them concurrently.
+  const results = await Promise.all(
+    tokens.rows.map(async (token) => {
+      const result = await sender.send(token, payload);
+      return result.status === 'dead' ? token.token : null;
+    }),
+  );
+  const pruned = results.filter((t): t is string => t !== null);
   await prunePushTokens(pool, pruned);
   return { attempted: tokens.rows.length, pruned, payload };
 }

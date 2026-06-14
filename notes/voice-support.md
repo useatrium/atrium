@@ -187,13 +187,16 @@ Calls already work over the existing seam: REST actions (`startCall`/`acceptCall
 ## Foundation contract (frozen)
 - Migration `026`: `push_tokens.kind` ('expo' | 'voip'). A device registers two tokens — its Expo token (kind 'expo') and its VoIP token (kind 'voip').
 - API: `registerPush({ token, platform, kind })` (`kind` defaults 'expo').
-- **VoIP push payload (server → device, the cross-lane seam):** a data payload
-  ```json
-  { "type": "incoming_call", "callId": "<uuid>", "callerId": "<uuid>",
-    "callerName": "<display name>", "channelId": "<uuid>",
-    "channelName": "<label>", "room": "call:<callId>" }
-  ```
-  The device (expo-callkit-telecom) shows the native incoming-call UI from this; on accept it calls `acceptCall(callId)` → gets `{token,url}` → joins the LiveKit room. Lane B must reconcile these keys with expo-callkit-telecom's expected payload schema and flag any mismatch.
+- **VoIP push payload (server → device).** CORRECTED to `expo-callkit-telecom@0.3.9`'s native parser schema (the mobile lane verified the flat shape was wrong):
+  - **iOS** APNs VoIP dictionary:
+    ```json
+    { "incomingCall": { "eventId": "<uuid>", "serverCallId": "<callId>",
+        "hasVideo": false, "caller": { "id": "<callerId>", "displayName": "<name>" },
+        "metadata": { "channelId": "<uuid>", "channelName": "<label>", "room": "call:<callId>" } } }
+    ```
+  - **Android** FCM data message: `{ "data": { "messageType": "incomingCall", "incomingCall": "<the incomingCall object, JSON-stringified>" } }`
+  - Mapping from our call: `serverCallId=callId`, `caller.id=initiatorId`, `caller.displayName`, `metadata={channelId,channelName,room}`, plus a fresh `eventId` UUID and `hasVideo:false`.
+  The device shows the native incoming-call UI from this; on accept it calls `acceptCall(serverCallId)` → `{token,url}` → joins the LiveKit room. **Server (Lane A) must emit this nested shape, not the flat one.**
 
 ## Lanes (separate worktrees)
 - **Lane A — server VoIP push (`server/**`):** on `call.ringing`, also send a VoIP push (APNs PushKit token-auth for iOS, FCM HTTP v1 data message for Android) to the callee's `kind='voip'` tokens, with the payload above. Extend `/api/push/register` to store `kind`. **Optional infra**: gated behind APNs/FCM env; if unset, skip (WS-only ringing still works when foregrounded). Unit-test push construction (mocked); no real APNs/FCM in tests.
