@@ -37,6 +37,9 @@ export interface VoipConfig {
   apnsKeyId: string;
   apnsAuthKeyP8: string;
   apnsBundleId: string;
+  /** Use the APNs sandbox host — required for dev/debug builds, whose PushKit
+   * tokens are sandbox tokens (production host rejects them as BadDeviceToken). */
+  apnsSandbox: boolean;
   fcmProjectId: string;
   fcmServiceAccountJson: string;
 }
@@ -46,6 +49,7 @@ interface ApnsConfig {
   keyId: string;
   authKeyP8: string;
   bundleId: string;
+  sandbox: boolean;
 }
 
 interface FcmServiceAccount {
@@ -56,6 +60,7 @@ interface FcmServiceAccount {
 }
 
 const APNS_ORIGIN = 'https://api.push.apple.com';
+const APNS_SANDBOX_ORIGIN = 'https://api.sandbox.push.apple.com';
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
@@ -130,7 +135,7 @@ function createApnsSender(config: ApnsConfig): VoipPushSender {
   // per push adds a TLS handshake each time and can leak streams.
   function getSession(): http2.ClientHttp2Session {
     if (!session || session.destroyed || session.closed) {
-      session = http2.connect(APNS_ORIGIN);
+      session = http2.connect(config.sandbox ? APNS_SANDBOX_ORIGIN : APNS_ORIGIN);
       session.on('error', () => {
         session = null;
       });
@@ -349,6 +354,7 @@ export function getVoipSender(config: VoipConfig): VoipPushSender {
           keyId: config.apnsKeyId.trim(),
           authKeyP8: config.apnsAuthKeyP8,
           bundleId: config.apnsBundleId.trim(),
+          sandbox: config.apnsSandbox,
         })
       : null;
   const serviceAccount = config.fcmServiceAccountJson.trim()
