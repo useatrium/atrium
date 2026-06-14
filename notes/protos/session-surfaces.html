@@ -70,7 +70,10 @@
   .card .ch .cm{font-size:11.5px;color:var(--ink-4)}
   .card .ch .go{font-size:11.5px;color:var(--blue);font-weight:600}
   .sideline{display:flex;align-items:center;gap:9px;margin-top:11px;padding-left:15px;font-size:13px;color:var(--ink-2)}
-  .sideline .si{color:var(--ink-3)}
+  .sideline .si{color:var(--ink-3)}.sideline b{color:var(--ink)}
+  .gate{display:flex;align-items:center;gap:10px;margin:12px 0 4px 15px;padding:10px 13px;border:1px solid #efdcb4;border-radius:11px;background:#fdfaf2}
+  .gate .gi{color:var(--amber);font-size:14px;flex-shrink:0}
+  .gate .gate-t{flex:1;color:var(--ink)}.gate .gate-t b{font-weight:600}
   .badge{font-size:10px;font-weight:600;border-radius:5px;padding:1px 6px;border:1px solid var(--line-2);color:var(--ink-3)}
   .badge.ok{color:var(--green);border-color:#cfe9da}.badge.wait{color:var(--amber);border-color:#eee0bf}
 
@@ -101,12 +104,6 @@
   .frow{display:flex;gap:8px;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--ink)}
   .frow:hover{background:var(--fill)}.frow .fn{font-size:10px;color:var(--ink-4);width:16px}.frow .fl{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.frow .fm{font-size:11px;color:var(--ink-4)}
 
-  /* tabs layout */
-  .tabs{display:flex;gap:3px;padding:7px 14px;border-bottom:1px solid var(--line);flex-shrink:0;overflow:auto}
-  .tab{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;color:var(--ink-3);font-size:12.5px;font-weight:500;white-space:nowrap}
-  .tab.on{background:var(--fill);color:var(--ink)}.tab:not(.on):hover{color:var(--ink)}
-  .tab .n{font-size:10px;color:var(--ink-4);background:var(--bg);border:1px solid var(--line-2);border-radius:999px;padding:0 5px}
-  .tab.on .n{background:#fff}
 
   /* changes surface */
   .changes{flex:1;display:flex;min-height:0}
@@ -126,8 +123,8 @@
   .changes-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;row-gap:5px;padding:9px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
   .changes-top b{color:var(--ink)}
   .prbtn{margin-left:auto;flex-shrink:0;font-size:12px;font-weight:600;color:#fff;background:var(--ink);border-radius:8px;padding:5px 12px}
-  .workspace .flist{width:190px}
-  .workspace .changes-top{font-size:12px}
+  .pinpane .flist{width:190px}
+  .pinpane .changes-top{font-size:12px}
 
   /* artifacts surface */
   .gallery{flex:1;overflow:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;align-content:start}
@@ -154,11 +151,6 @@
   .envcard .et{flex:1}.envcard .e1{font-weight:600;color:var(--ink)}.envcard .e2{font-size:12px;color:var(--ink-4);margin-top:2px}
   .wake{font-size:12px;font-weight:600;color:#fff;background:var(--blue);border-radius:8px;padding:6px 13px}
 
-  /* two-pane workspace */
-  .twopane .read{flex:1}
-  .workspace{width:520px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-  .ws-tabs{display:flex;gap:3px;padding:8px 10px;border-bottom:1px solid var(--line);flex-shrink:0}
-  .ws-body{flex:1;display:flex;min-height:0}
 
   /* summary strip */
   .strip{display:flex;align-items:center;gap:7px;padding:8px 18px;border-bottom:1px solid var(--line);flex-shrink:0;overflow:auto}
@@ -187,16 +179,38 @@
   .field .to{flex-shrink:0;font-size:10.5px;font-weight:600;background:var(--ink);color:#fff;border-radius:6px;padding:3px 7px}
   .field input{flex:1;border:none;outline:none;background:none;color:var(--ink);font:inherit}.field input::placeholder{color:var(--ink-4)}
   .field .gobtn{width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;flex-shrink:0}
+  /* pin/detach grammar */
+  .pinpane{width:520px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .pin-h{height:42px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 8px 0 14px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink)}
+  .pin-acts{margin-left:auto;display:flex;gap:2px}
+  .pin-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center;font-size:13px}
+  .pin-acts button:hover{background:var(--fill);color:var(--ink-2)}
+  .pin-body{flex:1;display:flex;min-height:0}
+  .detached{display:flex;align-items:center;gap:8px;padding:8px 18px;background:var(--fill);border-bottom:1px solid var(--line-2);font-size:12.5px;color:var(--ink-3)}
+  .detached b{color:var(--ink)}
+  .dt-acts{margin-left:auto;display:flex;gap:6px}
+  .dt-acts button{font-size:11px;font-weight:600;border-radius:6px;padding:3px 10px;border:1px solid var(--line-2);color:var(--ink-2)}
+  .dt-acts button:hover{border-color:var(--ink-3)}
+  .drawer-h .dh-acts{margin-left:auto;display:flex;gap:5px;margin-right:8px}
+  .drawer-h .dh-acts button{font-size:11.5px;font-weight:600;border-radius:6px;padding:3px 9px;border:1px solid var(--line-2);color:var(--ink-2)}
+  .drawer-h .dh-acts button:hover{border-color:var(--ink-3);color:var(--ink)}
+  .drawer-h .dh-acts .pin{color:var(--ink);border-color:var(--ink-3)}
+  /* device: web == desktop frame; mobile = narrow phone, drawer goes full-screen, no pin/detach */
+  .frame.mobile{width:392px;border-radius:30px}
+  .frame.mobile .drawer{width:100%;max-width:100%}
+  .frame.mobile .strip{overflow:auto}
+  .frame.mobile .col{padding:18px 18px 80px}
+  .frame.mobile .flist{width:128px}
+  .frame.mobile .gallery{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
 </style>
 </head>
 <body>
 <div class="controls">
-  <div class="grp"><span class="lbl">Layout</span>
-    <div class="seg" id="seg-layout">
-      <button data-v="inline" class="on">Inline + expand</button>
-      <button data-v="tabs">Tabbed</button>
-      <button data-v="twopane">Two-pane</button>
-      <button data-v="summary">Summary strip</button>
+  <div class="grp"><span class="lbl">Device</span>
+    <div class="seg" id="seg-device">
+      <button data-v="desktop" class="on">Desktop</button>
+      <button data-v="web">Web</button>
+      <button data-v="mobile">Mobile</button>
     </div></div>
   <div class="grp"><span class="lbl">Environment</span>
     <div class="seg" id="seg-env">
@@ -242,7 +256,7 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={layout:"inline",env:"warm",tab:"transcript",ws:"changes",file:0,drawer:null,open:{},approved:null};
+const S={device:"desktop",env:"warm",file:0,drawer:null,pinned:null,detached:null,open:{},approved:null};
 
 const totals=()=>({files:CHANGES.length,add:CHANGES.reduce((a,c)=>a+c.add,0),del:CHANGES.reduce((a,c)=>a+c.del,0),arts:ARTIFACTS.length});
 
@@ -301,17 +315,22 @@ function inlineCard(kind){
   if(kind==='changes'){const t=totals();return `<div class="card" data-open="changes"><div class="ch">
     <span class="ci">±</span><span class="ct">Changes · ${t.files} files</span><span class="cm"><span style="color:var(--add-fg)">+${t.add}</span> <span style="color:var(--del-fg)">−${t.del}</span> · feat/driver-set</span><span class="go">View ↗</span></div></div>`;}
   if(kind==='artifacts')return `<div class="gallery-inline">${ARTIFACTS.map(a=>`<div class="acard" data-open="artifacts"><div class="thumb"><span class="ext">${a.name.split(".").pop().toUpperCase()}</span></div><div class="an">${esc(a.name)}</div><div class="am">${esc(a.meta)}</div></div>`).join('')}</div>`;
-  if(kind==='side'){const gate=S.approved==='yes'?'<span class="badge ok">deploying</span>':S.approved==='no'?'<span class="badge">denied</span>':'<span class="badge wait">needs approval</span><span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span>';
-    return `<div class="sideline" data-open="audit"><span class="si">⤴</span> Opened <b style="color:var(--ink)">PR #128</b> <span class="badge ok">approved</span> · then <b style="color:var(--ink)">deploy → staging</b> ${gate}</div>`;}
+  if(kind==='side'){
+    if(S.approved==='yes')return `<div class="sideline"><span class="si" style="color:var(--green)">✓</span> Deploy to <b>staging</b> approved — <span style="color:var(--ink-4)">deploying…</span></div>`;
+    if(S.approved==='no')return `<div class="sideline"><span class="si">↓</span> Deploy to <b>staging</b> denied — agent continued without it.</div>`;
+    return `<div class="gate"><span class="gi">⚠</span><span class="gate-t">Approve <b>deploy → staging</b>? <span style="color:var(--ink-4)">irreversible</span></span>
+      <span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span></div>`;}
   return '';
 }
-function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];const inline=S.layout==='inline';
+function itemHTML(it,turn,ti){const id=`${turn.n}-${ti}`,o=S.open[id];
   if(it.k==="steer")return `<div class="beat"><div class="nm">${it.who}</div><div class="say">${esc(it.text)}</div></div>`;
   if(it.k==="text")return `<div class="resp">${esc(it.text)}</div>`;
   if(it.k==="tool")return `<div class="resp"><button class="tg" data-tool="${id}">${o?'▾':'▸'} ran <span class="mono">${esc(it.cmd)}</span> · ${esc(it.out)}</button></div>`;
   if(it.k==="live"){const txt=S.approved==='yes'?'deploying → staging…':S.approved==='no'?'deploy denied — continuing without it':esc(it.text);
     return `<div class="live-line"><span class="ld"></span>${txt}</div>`;}
-  if(it.k==="changes"||it.k==="artifacts"||it.k==="side")return inline?inlineCard(it.k):'';
+  // committed design: reference work products (changes/artifacts) live in the summary strip;
+  // only the gated side-effect — a decision you act on — stays inline in the transcript.
+  if(it.k==="side")return inlineCard('side');
   return "";
 }
 function transcriptHTML(){return `<div class="read scroll"><div class="col">${SESSION.turns.map(t=>`<div class="tblk" id="t-${t.n}">${t.items.map((it,ti)=>itemHTML(it,t,ti)).join('')}</div>`).join('')}</div></div>`;}
@@ -343,30 +362,19 @@ function headerHTML(){
 }
 function roBanner(){return S.env==='expired'?`<div class="ro">⚠ Environment expired — this session is record-only. Transcript, changes, and artifacts are preserved; rebuild to keep working.</div>`:'';}
 
-function layoutInline(){
-  return `<div class="session">${headerHTML()}${roBanner()}
-    <div class="body">${transcriptHTML()}${tocHTML()}${drawerHTML()}</div>${composerHTML()}</div>`;
+const SURF_TITLES={changes:'Changes',artifacts:'Artifacts',audit:'Side-effects',preview:'Preview'};
+function detachTarget(){return S.device==='web'?'a new browser tab':'its own window';}
+function pinPane(){return `<div class="pinpane"><div class="pin-h">${SURF_TITLES[S.pinned]}
+    <span class="pin-acts"><button class="detach" title="Detach to ${detachTarget()}">↗</button><button class="unpin" title="Unpin">✕</button></span></div>
+    <div class="pin-body">${surface(S.pinned)}</div></div>`;}
+function detachedBanner(){return `<div class="detached">↗ <b>${SURF_TITLES[S.detached]}</b> opened in ${detachTarget()}
+    <span class="dt-acts"><button class="focusw">Focus</button><button class="redock">Re-dock</button></span></div>`;}
+// the work area: peek (drawer) → pin (side pane) → detach (left the app). toc handle hides when pinned.
+function workArea(){
+  if(S.pinned)return `${transcriptHTML()}${pinPane()}`;
+  return `${transcriptHTML()}${tocHTML()}${drawerHTML()}`;
 }
-function layoutTabs(){
-  const t=totals();
-  const tab=(id,label,n)=>`<button class="tab ${S.tab===id?'on':''}" data-tab="${id}">${label}${n!=null?`<span class="n">${n}</span>`:''}</button>`;
-  const main=S.tab==='transcript'?transcriptHTML():`<div class="body" style="flex-direction:column">${surface(S.tab)}</div>`;
-  return `<div class="session">${headerHTML()}${roBanner()}
-    <div class="tabs">${tab('transcript','Transcript')}${tab('changes','Changes',t.files)}${tab('artifacts','Artifacts',t.arts)}${tab('audit','Side-effects',3)}${tab('preview','Preview')}</div>
-    <div class="body">${main}${S.tab==='transcript'?tocHTML():''}</div>${composerHTML()}</div>`;
-}
-function layoutTwopane(){
-  const wtab=(id,label)=>`<button class="tab ${S.ws===id?'on':''}" data-ws="${id}">${label}</button>`;
-  return `<div class="session twopane">${headerHTML()}${roBanner()}
-    <div class="body">
-      ${transcriptHTML()}
-      <div class="workspace">
-        <div class="ws-tabs">${wtab('changes','Changes')}${wtab('preview','Preview')}${wtab('artifacts','Artifacts')}${wtab('audit','Side-effects')}</div>
-        <div class="ws-body">${surface(S.ws)}</div>
-      </div>
-    </div>${composerHTML()}</div>`;
-}
-function layoutSummary(){
+function sessionLayout(){
   const t=totals();
   const stat=(open,ic,html)=>`<div class="stat" data-open="${open}"><span class="ic">${ic}</span>${html}</div>`;
   const strip=`<div class="strip">
@@ -375,42 +383,46 @@ function layoutSummary(){
     ${stat('audit','⤴',`<b>1</b> PR · <b>1</b> gated`)}
     ${stat('preview',S.env==='warm'?'●':'○',`preview ${S.env==='warm'?'live':S.env}`)}
   </div>`;
-  return `<div class="session">${headerHTML()}${roBanner()}${strip}
-    <div class="body">${transcriptHTML()}${tocHTML()}${drawerHTML()}</div>${composerHTML()}</div>`;
+  return `<div class="session">${headerHTML()}${roBanner()}${strip}${S.detached?detachedBanner():''}
+    <div class="body">${workArea()}</div>${composerHTML()}</div>`;
 }
 function drawerHTML(){
-  const titles={changes:'Changes',artifacts:'Artifacts',audit:'Side-effects',preview:'Preview'};
+  const acts=S.device==='mobile'?'':`<span class="dh-acts"><button class="pin" title="Pin beside transcript">⤢ Pin</button><button class="detach" title="Detach to ${detachTarget()}">↗</button></span>`;
   return `<div class="scrim ${S.drawer?'open':''}" data-close="1"></div>
-    <div class="drawer ${S.drawer?'open':''}"><div class="drawer-h">${S.drawer?titles[S.drawer]:''}<span class="x" data-close="1">✕</span></div>
+    <div class="drawer ${S.drawer?'open':''}"><div class="drawer-h">${S.drawer?SURF_TITLES[S.drawer]:''}${S.drawer?acts:''}<span class="x" data-close="1">✕</span></div>
       <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
 }
 
 function frameHTML(){
-  const L=S.layout==='tabs'?layoutTabs():S.layout==='twopane'?layoutTwopane():S.layout==='summary'?layoutSummary():layoutInline();
-  return `<div class="frame"><div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>${L}</div>`;
+  return `<div class="frame ${S.device}">${S.device!=='mobile'?'<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>':''}${sessionLayout()}</div>`;
 }
 
 function render(){document.getElementById('stage').innerHTML=frameHTML();wire();hint();
-  try{location.hash=`layout=${S.layout},env=${S.env}`;}catch(e){}}
-function hint(){const h=document.getElementById('hint');const m={
-  inline:'Work products are blocks IN the transcript; click to expand into a drawer.',
-  tabs:'Top tabs switch the whole view between transcript and each surface.',
-  twopane:'Transcript left, a persistent workspace panel right (IDE-like).',
-  summary:'A status strip under the title; click a stat to drill into its surface.'};
-  h.textContent=m[S.layout]+(S.env!=='warm'?` · env ${S.env}: see Preview / composer`:'');}
+  try{location.hash=`device=${S.device},env=${S.env}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
+function hint(){const h=document.getElementById('hint');
+  h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
+    :S.detached?`Detached to ${detachTarget()} — Re-dock to bring it back.`
+    :S.device==='mobile'?'Mobile: tap a stat → full-screen surface (no pin/detach).'
+    :'Click a stat → peek → ⤢ Pin (split) or ↗ Detach ('+detachTarget()+').';}
 
 function wire(){
-  ['layout','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
-    S[k]=b.dataset.v;if(k==='layout'){S.tab='transcript';S.drawer=null;}render();}));
+  ['device','env'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+    S[k]=b.dataset.v;
+    if(k==='device'){S.drawer=null;S.pinned=null;S.detached=null;}
+    render();}));
   document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{S.open[b.dataset.tool]=!S.open[b.dataset.tool];render();});
   document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>{S.file=+b.dataset.file;render();});
-  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();});
-  document.querySelectorAll('[data-ws]').forEach(b=>b.onclick=()=>{S.ws=b.dataset.ws;render();});
-  document.querySelectorAll('[data-open]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();
-    if(S.layout==='tabs'){S.tab=b.dataset.open;}else if(S.layout==='twopane'){S.ws=b.dataset.open;}else{S.drawer=b.dataset.open;}render();});
+  document.querySelectorAll('[data-open]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const s=b.dataset.open;
+    if(S.pinned){S.pinned=s;}            /* single swappable pinned slot */
+    else{S.drawer=s;}render();});
   document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{S.drawer=null;render();});
   document.querySelectorAll('.approve').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.approved='yes';render();});
   document.querySelectorAll('.deny').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.approved='no';render();});
+  // pin / detach grammar
+  document.querySelectorAll('.pin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=S.drawer;S.drawer=null;render();});
+  document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;render();});
+  document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;render();});
+  document.querySelectorAll('.redock').forEach(b=>b.onclick=()=>{S.pinned=S.detached;S.detached=null;render();});
 }
 (function(){const h=location.hash.replace(/^#/,'');if(h)h.split(',').forEach(kv=>{const[k,v]=kv.split('=');if(k in S)S[k]=v;});})();
 render();
