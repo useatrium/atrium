@@ -2,6 +2,8 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
+import { registerGlobals } from '@livekit/react-native';
+import { registerVoIPPush, setRTCAudioSessionConfiguration } from 'expo-callkit-telecom';
 import {
   ApiError,
   createApi,
@@ -16,6 +18,10 @@ import { SessionProvider, useSession } from '../src/lib/session';
 import { ThemeProvider, useTheme } from '../src/lib/theme';
 import { loadStoredPrefs } from '../src/lib/prefsStorage';
 import { eventCache } from '../src/lib/cacheSqlite';
+
+registerGlobals({ autoConfigureAudioSession: false });
+setRTCAudioSessionConfiguration(false);
+registerVoIPPush();
 
 function prefsEqual(a: UserPrefs, b: UserPrefs): boolean {
   return (

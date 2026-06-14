@@ -53,6 +53,7 @@ import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
+import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -77,6 +78,8 @@ export interface AppDeps {
   };
   /** Injectable in tests; false keeps call endpoints explicitly unconfigured. */
   calls?: false | CallTokenService;
+  /** Injectable in tests; defaults to env-selected APNs/FCM/noop transport. */
+  voip?: VoipPushSender;
   /** Injectable fetch for the email transport (tests mock Resend). */
   emailFetch?: typeof fetch;
 }
@@ -100,6 +103,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
   const calls =
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
+  const voip = deps.voip ?? getVoipSender(config);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   await app.register(fastifyCookie);
@@ -1359,10 +1363,20 @@ function rawSession(req: FastifyRequest): string | undefined {
           channelRecipientIds(client, result.join.call.channelId),
         ));
         if (result.created) {
+          const ringRecipients = recipients.filter((id) => id !== user.id);
           hub.publishCallToUsers(
-            recipients.filter((id) => id !== user.id),
+            ringRecipients,
             { type: 'call.ringing', call: result.join.call },
           );
+          void sendIncomingCallVoipPushes(pool, voip, {
+            recipientIds: ringRecipients,
+            callId: result.join.call.id,
+            callerId: user.id,
+            callerName: user.displayName,
+            channelId: result.join.call.channelId,
+          }).catch((err) => {
+            app.log.warn({ err }, 'voip push failed');
+          });
         } else if (result.joinedNow) {
           hub.publishCallToUsers(recipients, {
             type: 'call.participant_joined',
@@ -2188,17 +2202,22 @@ function rawSession(req: FastifyRequest): string | undefined {
   app.post('/api/push/register', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { token?: unknown; platform?: unknown };
+    const body = (req.body ?? {}) as { token?: unknown; platform?: unknown; kind?: unknown };
     const token = typeof body.token === 'string' ? body.token.trim() : '';
     const platform = body.platform === 'android' ? 'android' : 'ios';
+    const kind = body.kind == null ? 'expo' : body.kind;
     if (!token || token.length > 200) {
       return reply.code(400).send({ error: 'bad_request', message: 'token required' });
     }
+    if (kind !== 'expo' && kind !== 'voip') {
+      return reply.code(400).send({ error: 'bad_request', message: 'kind must be expo or voip' });
+    }
     // A device token follows whoever logged in last on that device.
     await pool.query(
-      `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, $3)
-       ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform`,
-      [token, user.id, platform],
+      `INSERT INTO push_tokens (token, user_id, platform, kind) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (token) DO UPDATE
+       SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform, kind = EXCLUDED.kind`,
+      [token, user.id, platform, kind],
     );
     return { ok: true };
   });

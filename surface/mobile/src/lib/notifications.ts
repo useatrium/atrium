@@ -25,10 +25,20 @@ export function configureNotificationHandler(getFocusedChannelId: () => string |
 }
 
 let registeredToken: string | null = null;
+let registeredVoipToken: string | null = null;
 
 /** The token registered this app run — needed to unregister on logout. */
 export function getRegisteredPushToken(): string | null {
   return registeredToken;
+}
+
+/** The VoIP token registered this app run — needed to unregister on logout. */
+export function getRegisteredVoipPushToken(): string | null {
+  return registeredVoipToken;
+}
+
+export function setRegisteredVoipPushToken(token: string | null): void {
+  registeredVoipToken = token;
 }
 
 function easProjectId(): string | null {
