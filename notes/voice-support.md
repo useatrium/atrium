@@ -170,3 +170,35 @@ shared types + reducer (`timeline.ts`), `api.ts` `postMessage.voice`, export wir
 **Lane C — mobile UI (codex):** `mobile/*` — `expo-audio`/`expo-av` record + playback, voice bubble + transcript display, upload via shared api.
 
 Disjoint ownership: foundation owns `timeline.ts`/`api.ts`/migration/`stt/adapter.ts`; A owns server `app.ts`/`events.ts`/`index.ts`/`stt/worker.ts`/compose; B owns `web/src`; C owns `mobile`. No file overlaps.
+
+---
+
+# Phase 3 — mobile calling + native ringing (in progress)
+
+Brings calls to the Expo app: in-app calling via the LiveKit RN SDK, plus **native ringing** (CallKit on iOS / Jetpack Core-Telecom on Android) so a backgrounded/terminated device rings like a real phone. Requires a **custom Expo dev build** (native modules don't run in Expo Go).
+
+## Stack (verified)
+- `@livekit/react-native` + `@livekit/react-native-expo-plugin` + `@livekit/react-native-webrtc` + `@config-plugins/react-native-webrtc`; `registerGlobals()` at app entry; plugins in `app.json`.
+- `expo-callkit-telecom` — CallKit (iOS 15.1+) / Core-Telecom (Android minSdk 26). Owns the native call UI, audio session, and VoIP-push parsing (incl. cold start). Reports the VoIP token type as `APNS_VOIP` (iOS) / `FCM` (Android).
+
+## Signaling reuse
+Calls already work over the existing seam: REST actions (`startCall`/`acceptCall`/`declineCall`/`leaveCall`) + WS fanout (`call.*` frames via the shared `useWs` `onCall`). Mobile reuses all of it. The ONLY new server piece is a **VoIP push** so a backgrounded device wakes to ring.
+
+## Foundation contract (frozen)
+- Migration `026`: `push_tokens.kind` ('expo' | 'voip'). A device registers two tokens — its Expo token (kind 'expo') and its VoIP token (kind 'voip').
+- API: `registerPush({ token, platform, kind })` (`kind` defaults 'expo').
+- **VoIP push payload (server → device, the cross-lane seam):** a data payload
+  ```json
+  { "type": "incoming_call", "callId": "<uuid>", "callerId": "<uuid>",
+    "callerName": "<display name>", "channelId": "<uuid>",
+    "channelName": "<label>", "room": "call:<callId>" }
+  ```
+  The device (expo-callkit-telecom) shows the native incoming-call UI from this; on accept it calls `acceptCall(callId)` → gets `{token,url}` → joins the LiveKit room. Lane B must reconcile these keys with expo-callkit-telecom's expected payload schema and flag any mismatch.
+
+## Lanes (separate worktrees)
+- **Lane A — server VoIP push (`server/**`):** on `call.ringing`, also send a VoIP push (APNs PushKit token-auth for iOS, FCM HTTP v1 data message for Android) to the callee's `kind='voip'` tokens, with the payload above. Extend `/api/push/register` to store `kind`. **Optional infra**: gated behind APNs/FCM env; if unset, skip (WS-only ringing still works when foregrounded). Unit-test push construction (mocked); no real APNs/FCM in tests.
+- **Lane B — mobile (`mobile/**`):** LiveKit RN call client + in-call screen (mute/leave/participants, reuse shared call api + `useWs` onCall), `expo-callkit-telecom` native ringing (register VoIP token, report incoming call on push/WS, accept→join, decline→`declineCall`, end→CallKit end), config plugins + iOS `voip` background mode + mic permission + `registerGlobals()`.
+
+## Verification reality
+- In-app calling + CallKit UI (triggered from a foreground WS `call.ringing`): verifiable via a **dev build on the iOS sim** (`expo run:ios`).
+- **VoIP push wake (backgrounded/terminated): device-only** — needs an APNs VoIP cert/key + a real phone. Deferred to on-device QA; built + gated + reviewed here.
