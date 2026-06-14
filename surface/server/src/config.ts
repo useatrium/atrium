@@ -41,6 +41,9 @@ export const config = {
   apnsKeyId: process.env.APNS_KEY_ID ?? '',
   apnsAuthKeyP8: process.env.APNS_AUTH_KEY_P8 ?? '',
   apnsBundleId: process.env.APNS_BUNDLE_ID ?? '',
+  // Dev/debug builds register APNs *sandbox* tokens — set APNS_SANDBOX=1 to send
+  // via api.sandbox.push.apple.com. Default (unset): production host.
+  apnsSandbox: ['1', 'true'].includes((process.env.APNS_SANDBOX ?? '').toLowerCase()),
   fcmProjectId: process.env.FCM_PROJECT_ID ?? '',
   fcmServiceAccountJson: process.env.FCM_SERVICE_ACCOUNT_JSON ?? '',
 };

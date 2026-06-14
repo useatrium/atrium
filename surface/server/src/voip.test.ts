@@ -173,6 +173,7 @@ describe('VoIP push registration and call fanout', () => {
       apnsKeyId: '',
       apnsAuthKeyP8: '',
       apnsBundleId: '',
+      apnsSandbox: false,
       fcmProjectId: '',
       fcmServiceAccountJson: '',
     });
