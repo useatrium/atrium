@@ -208,6 +208,11 @@ async function pruneTokens(pool: Db, tokens: string[]): Promise<void> {
   }
 }
 
+// === voip additions ===
+export async function prunePushTokens(pool: Db, tokens: string[]): Promise<void> {
+  await pruneTokens(pool, tokens);
+}
+
 export async function checkExpoPushReceipts(
   pool: Db,
   tickets: ExpoReceiptTicket[],
@@ -317,7 +322,7 @@ export async function sendMessagePush(
 
   const reasonByUserId = new Map(targets.map((recipient) => [recipient.userId, recipient.reason]));
   const tokens = await pool.query<{ token: string; user_id: string }>(
-    'SELECT token, user_id FROM push_tokens WHERE user_id = ANY($1::uuid[])',
+    "SELECT token, user_id FROM push_tokens WHERE user_id = ANY($1::uuid[]) AND kind = 'expo'",
     [[...reasonByUserId.keys()]],
   );
   if (tokens.rows.length === 0) return;
@@ -349,7 +354,7 @@ export async function sendQuestionPush(
   if (recipients.size === 0 || hub.isUserPresent(event.channelId, event.actorId)) return;
 
   const tokens = await pool.query<{ token: string }>(
-    'SELECT token FROM push_tokens WHERE user_id = $1',
+    "SELECT token FROM push_tokens WHERE user_id = $1 AND kind = 'expo'",
     [event.actorId],
   );
   if (tokens.rows.length === 0) return;
