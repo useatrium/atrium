@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ApiError, api, type Workspace } from './api';
+import { ApiError, api, type Channel, type Workspace } from './api';
 import {
   DurableOpQueue,
   appReducer,
@@ -28,6 +28,7 @@ import {
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
+  type CallWire,
   emptyTimeline,
   type AttachmentMeta,
   type ChatMessage,
@@ -36,8 +37,9 @@ import {
 } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
+import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { Composer } from './components/Composer';
-import { LockIcon, SearchIcon, XIcon } from './components/icons';
+import { LockIcon, PhoneIcon, SearchIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
@@ -58,6 +60,7 @@ import { channelLabel, dmPartner } from '@atrium/surface-client';
 import { useDialog } from './useDialog';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
+import { useCall } from './useCall';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -68,6 +71,26 @@ type VoiceSendMeta = Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
 type VoiceMsgSendPayload = MsgSendPayload & {
   voice?: Pick<VoiceMeta, 'durationMs' | 'waveform'>;
 };
+
+function fallbackUser(id: string): UserRef {
+  return { id, handle: id, displayName: id };
+}
+
+function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
+  return (
+    call.participants.find((u) => u.id === userId) ??
+    channels
+      .find((c) => c.id === call.channelId)
+      ?.members?.find((u) => u.id === userId) ??
+    fallbackUser(userId)
+  );
+}
+
+function labelForCallChannel(call: CallWire, channels: Channel[], meId: string): string {
+  const channel = channels.find((c) => c.id === call.channelId);
+  if (!channel) return 'Unknown channel';
+  return channel.kind === 'private' ? `#${channel.name}` : channelLabel(channel, meId);
+}
 
 function createQueueLockProvider(): OpQueueLockProvider | undefined {
   if (typeof navigator === 'undefined') return undefined;
@@ -109,6 +132,7 @@ export function Chat({
   const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const calls = useCall(me);
   const stateRef = useRef(state);
   stateRef.current = state;
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
@@ -850,6 +874,7 @@ export function Chat({
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
+      onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
         lastReadSentRef.current[channelId] = Math.max(
           lastReadSentRef.current[channelId] ?? 0,
@@ -1492,6 +1517,15 @@ export function Chat({
   );
 
   const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
+  const incomingCaller = calls.incomingCall
+    ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
+    : null;
+  const incomingChannelName = calls.incomingCall
+    ? labelForCallChannel(calls.incomingCall, state.channels, me.id)
+    : '';
+  const activeCallChannelName = calls.activeCall
+    ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
+    : '';
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -1608,8 +1642,23 @@ export function Chat({
             </div>
           )}
           <button
+            onClick={() => active && void calls.startCall(active.id)}
+            disabled={!active || calls.starting || calls.activeCall != null}
+            title={
+              calls.activeCall
+                ? 'Already in a call'
+                : calls.starting
+                  ? 'Starting call…'
+                  : 'Start voice call'
+            }
+            aria-label="Start voice call"
+            className="ml-auto rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
+          >
+            <PhoneIcon size={15} />
+          </button>
+          <button
             onClick={() => setSwitcherOpen(true)}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+            className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             <SearchIcon size={14} />
             <span>Search</span>
@@ -1635,6 +1684,27 @@ export function Chat({
             </div>
           )}
         </header>
+
+        {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
+        {calls.incomingCall && incomingCaller && (
+          <IncomingCallBanner
+            call={calls.incomingCall}
+            caller={incomingCaller}
+            channelName={incomingChannelName}
+            answering={calls.answering}
+            onAccept={() => void calls.acceptIncomingCall()}
+            onDecline={() => void calls.declineIncomingCall()}
+          />
+        )}
+        {calls.activeCall && (
+          <InCallPanel
+            call={calls.activeCall}
+            meId={me.id}
+            channelName={activeCallChannelName}
+            onToggleMute={() => void calls.toggleMute()}
+            onLeave={() => void calls.leaveActiveCall()}
+          />
+        )}
 
         {queueStatusText && (
           <div

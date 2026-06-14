@@ -30,4 +30,9 @@ export const config = {
   maxUploadBytes: 25 * 1024 * 1024,
   pushRedactContent: process.env.PUSH_REDACT === '1',
   questionRenotifyMinutes: Number(process.env.QUESTION_RENOTIFY_MINUTES ?? 10),
+  // LiveKit calls are optional infra. Leave any of these unset to keep call
+  // endpoints disabled while the rest of the server boots normally.
+  livekitUrl: process.env.LIVEKIT_URL ?? '',
+  livekitApiKey: process.env.LIVEKIT_API_KEY ?? '',
+  livekitApiSecret: process.env.LIVEKIT_API_SECRET ?? '',
 };
