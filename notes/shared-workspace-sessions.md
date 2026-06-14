@@ -206,6 +206,83 @@ for drill-in, **two-pane as an optional "workspace mode"**, inline cards reserve
 for the gated side-effect moment (a decision, not a reference). Awaiting Gary's
 verdict after using the proto.
 
+## Pop-out / multi-pane grammar (round 6, 2026-06-13)
+
+Resolves "can I see preview + transcript at once?" — **two-pane is not a separate
+mode; it's the *pinned* state of a surface.** A four-rung ladder (research-backed:
+Notion/Linear peek, DevTools dock/undock, VS Code split + floating windows,
+split-attention & cognitive-load literature):
+1. **Strip (rest)** — summary chips in the transcript; calm default.
+2. **Peek (overlay)** — click a chip → soft-modal drawer; transient,
+   dismiss-on-blur, one at a time. "Glance and decide."
+3. **Pin (split)** — the drawer's ⤢ docks the surface as a persistent side pane;
+   transcript reflows beside it. **Single swappable slot** (DevTools model): the
+   pinned region hosts ONE surface; pinning another swaps it; stable location
+   (object permanence).
+4. **Detach (window/tab)** — eject to its own window/tab for surfaces that want
+   viewport — **preview first**. Same live model, synced (VS Code), never a copy.
+Reversible & adjacent at every rung; one source of truth / many views; resting
+state is always transcript + strip.
+
+**Pane count (Jobs lens): transcript + exactly ONE swappable pinned pane.** A 2nd
+only via explicit action; never tile 3 — route anything hungrier to detach.
+(Backed by DevTools/Notion single-region model, split-attention cost, Stage
+Manager's 3-4-per-group clutter limit, the ~7-panel overload pole.)
+
+**Platform-conditional (the architecture answer): self-contained single window is
+the default everywhere; multi-window is an opt-in top rung, never forced.**
+- **Mobile** — one thing at a time. Strip → tap → full-screen surface → back.
+  Ceiling = peek; no pin, no detach.
+- **Web** — single tab default; pin = in-app split; detach = native new browser
+  tab (cheap; ideal for preview).
+- **Desktop app** — pin = in-app split; detach = real OS window (always-on-top /
+  second monitor). Richest.
+
+**Remaining threads — all v1 (Gary), slotted by home:**
+- Spawn-time config → a **spawn dialog** (repo/branch/capabilities/harness);
+  feeds repo-detection + side-effect gating.
+- Cost & resources → **env chip** (header) + the Overview/Environment surface;
+  fleet/cross-session view later.
+- Capture scope & versioning → **inside the Artifacts surface** (per-artifact
+  version history) + an ignore-config.
+- Preview security/sharing → **inside the Preview surface** (who can view /
+  expiry / auth); ties to the collab layer.
+- Multi-repo / no-repo → **v2**; no-repo already works (generic artifacts),
+  multi-repo = per-repo Changes streams.
+
+**GUI survey landed (Conductor/opencode/Factory/Devin/Crystal/Terragon/Vibe-
+Kanban/Sculptor/Cursor/Zed/Warp/Amp/v0/bolt/Replit/StackBlitz, 2026-06-13) —
+strongly validates the lean** and adds hazards now baked in:
+- Calm transcript + summary-strip + peek→pin→detach = the synthesis of where the
+  field converged (Amp/opencode inline-calm + Conductor/Terragon resizable pinned
+  pane + Replit canonical-home-then-float detach).
+- **Never hard-toggle chat-vs-diff** (Crystal died on exactly this).
+- **Don't auto-open panes** (Cursor users revolted over the auto-review panel) —
+  surfaces appear on a *meaningful event or user action*, not every turn.
+- **Don't over-expose the sandbox/worktree** (Sculptor removed per-agent
+  containers — "users found the isolation confusing"). Surface branch + PR +
+  compact env status; the filesystem is NOT a primary surface.
+- **Detach must keep the agent's instrumentation** (v0's forced new-tab preview
+  broke console + the agent's own debugging loop — the survey's clearest "this
+  got worse"). A detached preview must keep the port proxied / console piped back,
+  or it's a downgrade. Sketch/Shelley's port-proxy-to-public-URL is the gold std.
+- Multi-session viz converges on a **status-badged sidebar list** (Running /
+  Awaiting-review / Done / Error / Unread) + a "jump to next needing attention" —
+  maps cleanly onto atrium's channel list with unread/attention badges.
+
+**`session-surfaces.html` SIMPLIFIED to the committed design (Jobs pass):** the
+4-layout comparison lab was removed (it was scaffolding for this decision); the
+file is now ONE design — calm transcript + summary strip + peek/pin/detach +
+Device(desktop/web/mobile) + Env(warm/sleeping/expired) toggles. The gated
+side-effect is the single inline decision (a clean amber Approve/Deny card);
+changes/artifacts are summarised in the strip, not streamed inline. Verified in a
+real browser: rest → peek → pin (preview beside transcript) → detach → re-dock,
+the approve gate, all env states, and the mobile degradation; zero JS errors.
+
+**Still UNDECIDED — meta home** (env/cost/spawn-config/repo binding): Overview
+surface (5th item) vs folded-into-Preview vs header-only vs fleet-dashboard.
+Next proto.
+
 ## Annotation/navigation rail UX (round 3, ChatGPT-validated)
 
 ChatGPT Pro ships nearly this exact pattern (Gary's screenshots, 2026-06-13):
