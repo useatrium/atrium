@@ -271,6 +271,7 @@
   .sr-d.attn{background:var(--amber)}.sr-d.done{background:var(--ink-5)}
   .sr-t{flex:1;min-width:0}.sr-1{color:var(--ink);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sr-2{font-size:11.5px;color:var(--ink-4);margin-top:1px}
+  .sr-2 .sr-ch{color:var(--ink-3);font-weight:500}
   .sr-b{font-size:10px;font-weight:600;border-radius:999px;padding:1px 8px;flex-shrink:0}
   .sr-b.attn{background:#fbf0d8;color:var(--amber)}
   .sr-sec{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:12px 10px 4px}
@@ -538,14 +539,15 @@ function sessionsRail(){
   const row=(badge,bcls,title,sub)=>`<div class="srow ${bcls==='attn'?'attn':''}" data-open-session="1">
     <div class="sr-d ${bcls}"></div><div class="sr-t"><div class="sr-1">${title}</div><div class="sr-2">${sub}</div></div>
     ${badge?`<div class="sr-b ${bcls}">${badge}</div>`:''}</div>`;
+  const ch=c=>`<span class="sr-ch">#${c}</span>`;
   return `<div class="srail">
-    <div class="sr-h">Sessions <span class="cnt">· 2 active</span></div>
+    <div class="sr-h">Sessions <span class="cnt">· across your channels</span></div>
     <div class="sr-list scroll">
-      ${row('needs you','attn','migrate sessions → driver set','Mara · deploy gated · turn 5')}
-      ${row('','run','flaky test triage','Alex · running · turn 2')}
+      ${row('needs you','attn','migrate sessions → driver set',ch('eng-platform')+' · now')}
+      ${row('','run','flaky test triage',ch('mobile')+' · 6m')}
       <div class="sr-sec">Recent</div>
-      ${row('','done','bump deps to vite 8','done · 14m ago')}
-      ${row('','done','tighten rate-limit window','merged · 1h ago')}
+      ${row('','done','bump deps to vite 8',ch('eng-platform')+' · 14m')}
+      ${row('','done','tighten rate-limit window',ch('api')+' · 1h')}
     </div>
     <div class="sr-f">＋ New session — <b>@agent</b> in any channel</div>
   </div>`;
