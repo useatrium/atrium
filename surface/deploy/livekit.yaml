@@ -1,0 +1,33 @@
+# Sample production LiveKit config for Atrium voice calls.
+# Copy this file for deployment and replace keys/domains before use.
+
+port: 7880
+
+rtc:
+  # Open this UDP range on the host firewall. Caddy cannot proxy it.
+  port_range_start: 50000
+  port_range_end: 60000
+  # TCP fallback for restricted networks. Expose directly on the host.
+  tcp_port: 7881
+  use_external_ip: true
+
+# Keys are injected via the LIVEKIT_KEYS env var (see docker-compose.prod.yml),
+# sourced from the same LIVEKIT_API_KEY / LIVEKIT_API_SECRET the Fastify server
+# signs tokens with — so signer and verifier can never disagree. Do NOT hardcode
+# keys here.
+
+turn:
+  enabled: true
+  # TURN/UDP. Open 3478/udp on the host.
+  udp_port: 3478
+  # TURN/TLS for restrictive networks. Use 443 when LiveKit owns that port.
+  tls_port: 443
+  domain: turn.example.com
+  cert_file: /etc/livekit/turn.crt
+  key_file: /etc/livekit/turn.key
+  relay_range_start: 50000
+  relay_range_end: 60000
+  ttl_seconds: 300
+
+logging:
+  level: info

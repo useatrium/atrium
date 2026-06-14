@@ -39,6 +39,17 @@ services:
       timeout: 2s
       retries: 30
 
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: atrium-surface-livekit
+    command: ["--config", "/etc/livekit.yaml"]
+    ports:
+      - "7880:7880" # WebSocket signaling: LIVEKIT_URL=ws://localhost:7880
+      - "7881:7881/tcp" # WebRTC over TCP fallback
+      - "7882:7882/udp" # single muxed WebRTC UDP media port (see livekit.dev.yaml)
+    volumes:
+      - ./deploy/livekit.dev.yaml:/etc/livekit.yaml:ro
+
 volumes:
   atrium_pgdata:
   atrium_minio:

@@ -1,5 +1,13 @@
 import type { UserRef, WireEvent } from './events.js';
 
+type CallEvent =
+  | { type: 'call.ringing'; call: object }
+  | { type: 'call.accepted'; callId: string; user: UserRef }
+  | { type: 'call.declined'; callId: string; userId: string }
+  | { type: 'call.participant_joined'; callId: string; user: UserRef }
+  | { type: 'call.participant_left'; callId: string; userId: string }
+  | { type: 'call.ended'; callId: string };
+
 /** Minimal socket surface the hub needs (real ws.WebSocket satisfies this). */
 export interface HubSocket {
   readyState: number;
@@ -113,6 +121,15 @@ export class WsHub {
     const ids = new Set(userIds);
     for (const client of this.clients) {
       if (ids.has(client.user.id)) this.sendTo(client, payload);
+    }
+  }
+
+  // === call additions ===
+  /** Ephemeral call lifecycle relay; frames are not persisted timeline events. */
+  publishCallToUsers(userIds: string[], event: CallEvent): void {
+    const ids = new Set(userIds);
+    for (const client of this.clients) {
+      if (ids.has(client.user.id)) this.sendTo(client, event);
     }
   }
 

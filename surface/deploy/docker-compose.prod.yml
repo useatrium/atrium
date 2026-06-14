@@ -53,6 +53,9 @@ services:
       CENTAUR_BASE_URL: ${CENTAUR_BASE_URL:-http://127.0.0.1:18000}
       CENTAUR_API_KEY: ${CENTAUR_API_KEY:-}
       CENTAUR_HARNESS: ${CENTAUR_HARNESS:-claude-code}
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PUSH_REDACT: ${PUSH_REDACT:-1}
       # Voice message STT defaults to noop. To enable self-hosted whisper.cpp,
@@ -73,6 +76,33 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+  # LiveKit media ports cannot be reverse-proxied by Caddy's HTTP server.
+  # Run the SFU on the host network and open these inbound firewall ports:
+  #   80/tcp and 443/tcp if LiveKit terminates TURN/TLS directly
+  #   7881/tcp for ICE TCP fallback
+  #   3478/udp for TURN/UDP
+  #   50000-60000/udp for SFU media
+  # If Caddy also binds 443 on this host, either put LiveKit TURN/TLS on a
+  # separate IP/L4 proxy or disable Caddy's 443 binding for this compose stack.
+  livekit:
+    # Opt-in: `docker compose --profile livekit up`. Off by default because host
+    # networking + embedded TURN/TLS wants 443, which collides with the caddy
+    # profile — run them on separate hosts/IPs, not both in this stack.
+    profiles: ["livekit"]
+    image: livekit/livekit-server:v1.13
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      # Single source of truth: the same keys the Fastify server signs tokens
+      # with, so signer and verifier can't disagree (format "key: secret").
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-}: ${LIVEKIT_API_SECRET:-}"
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+      # Mount TLS material when LiveKit terminates embedded TURN/TLS itself:
+      # - /etc/letsencrypt/live/turn.example.com/fullchain.pem:/etc/livekit/turn.crt:ro
+      # - /etc/letsencrypt/live/turn.example.com/privkey.pem:/etc/livekit/turn.key:ro
 
   caddy:
     image: caddy:2-alpine

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isCallEvent, type CallEvent } from './calls';
 import { normalizePrefs, type UserPrefs } from './prefs';
 import type { UserRef, WireEvent } from './timeline';
 
@@ -14,6 +15,8 @@ export interface WsCallbacks {
   onChannelLeft?: (channelId: string) => void;
   /** Server-synced user preferences changed (this device or another). */
   onPrefs?: (prefs: UserPrefs) => void;
+  /** Ephemeral `call.*` lifecycle frame (calls); routed off the timeline reducer. */
+  onCall?: (event: CallEvent) => void;
   /** Fires on every (re)connect after the subscribe is sent — refetch catch-up here. */
   onOpen: () => void;
   onStatus: (status: WsStatus) => void;
@@ -183,7 +186,8 @@ export function useWs(
           return;
         }
         handleWsFrameSequence(seqTracker, msg, () => cbRef.current.onOpen());
-        if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
+        if (isCallEvent(msg)) cbRef.current.onCall?.(msg);
+        else if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
         else if (msg.type === 'presence' && msg.channelId)
           cbRef.current.onPresence(msg.channelId, msg.users ?? []);
         else if (msg.type === 'typing' && msg.channelId && msg.user)
