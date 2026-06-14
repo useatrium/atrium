@@ -15,6 +15,7 @@ import { useSession } from '../../src/lib/session';
 import {
   getRegisteredPushToken,
   getRegisteredVoipPushToken,
+  setRegisteredVoipPushToken,
   unregisterPush,
 } from '../../src/lib/notifications';
 import { buildColors, font, radius, space, useTheme } from '../../src/lib/theme';
@@ -146,7 +147,11 @@ export default function SettingsScreen() {
     void Promise.all([
       unregisterPush(api, getRegisteredPushToken()),
       unregisterPush(api, getRegisteredVoipPushToken()),
-    ]).finally(() => void logout());
+    ]).finally(() => {
+      // Clear the cached VoIP token so a stale value isn't reused next session.
+      setRegisteredVoipPushToken(null);
+      void logout();
+    });
   };
 
   return (

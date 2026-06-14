@@ -130,7 +130,14 @@ export function useCall({
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const [answering, setAnswering] = useState(false);
+  const [answering, setAnsweringState] = useState(false);
+  // Ref mirror so listener-captured callbacks see the live value (not a stale
+  // closure) — matches the activeCallRef/incomingCallRef pattern in this hook.
+  const answeringRef = useRef(false);
+  const setAnswering = useCallback((value: boolean) => {
+    answeringRef.current = value;
+    setAnsweringState(value);
+  }, []);
 
   const roomRef = useRef<Room | null>(null);
   const activeCallRef = useRef<ActiveCallState | null>(null);
@@ -175,8 +182,12 @@ export function useCall({
     detachRoomHandlersRef.current = null;
     const room = roomRef.current;
     roomRef.current = null;
-    void AudioSession.stopAudioSession().catch(() => {});
-    restoreAudioSession();
+    // Restore the prior audio session only AFTER deactivation settles, else the
+    // CallKit snapshot restores while AVAudioSession is still in call config
+    // (wrong output route, broken playback afterward).
+    void AudioSession.stopAudioSession()
+      .then(() => restoreAudioSession())
+      .catch(() => restoreAudioSession());
     if (room && room.state !== 'disconnected') {
       void room.disconnect().finally(() => {
         intentionalDisconnectRef.current = false;
@@ -224,8 +235,9 @@ export function useCall({
         detachRoomHandlersRef.current = null;
         roomRef.current = null;
         connectPromiseRef.current = null;
-        void AudioSession.stopAudioSession().catch(() => {});
-        restoreAudioSession();
+        void AudioSession.stopAudioSession()
+          .then(() => restoreAudioSession())
+          .catch(() => restoreAudioSession());
         if (intentionalDisconnectRef.current) return;
         updateActiveCall((current) => ({
           ...current,
@@ -368,7 +380,7 @@ export function useCall({
       callId: string,
       native?: { id: string; requestId?: string },
     ): Promise<void> => {
-      if ((answering && !native?.requestId) || answeredNativeRequestsRef.current.has(native?.requestId ?? '')) {
+      if ((answeringRef.current && !native?.requestId) || answeredNativeRequestsRef.current.has(native?.requestId ?? '')) {
         return;
       }
       if (native?.requestId) answeredNativeRequestsRef.current.add(native.requestId);
@@ -390,7 +402,7 @@ export function useCall({
         setAnswering(false);
       }
     },
-    [api, answering, connectToCall],
+    [api, connectToCall, setAnswering],
   );
 
   const handleCallEvent = useCallback(
@@ -437,13 +449,12 @@ export function useCall({
       }
 
       if (event.type === 'call.participant_left') {
+        let endedByLastLeave = false;
         setActiveCall((current) => {
           if (current?.call.id !== event.callId) return current;
           const participants = removeUser(current.participants, event.userId);
           const remoteCount = participants.filter((p) => p.id !== me.id).length;
-          if (current.call.status === 'active' && remoteCount === 0) {
-            reportNativeEnded(event.callId, 'remoteEnded');
-          }
+          if (current.call.status === 'active' && remoteCount === 0) endedByLastLeave = true;
           return {
             ...current,
             participants,
@@ -452,6 +463,8 @@ export function useCall({
             ),
           };
         });
+        // Side effect outside the (possibly double-invoked) updater.
+        if (endedByLastLeave) reportNativeEnded(event.callId, 'remoteEnded');
         return;
       }
 
