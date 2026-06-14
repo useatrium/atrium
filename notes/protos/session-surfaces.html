@@ -36,6 +36,8 @@
   .session{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
   .sess-h{height:50px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:1px solid var(--line)}
   .sess-h .ti{font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sess-h .crumb{font-size:12.5px;color:var(--ink-3);font-weight:500;padding:4px 9px;border-radius:7px;flex-shrink:0;margin-left:-4px}
+  .sess-h .crumb:hover{background:var(--fill);color:var(--ink)}
   .lv{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);flex-shrink:0}
   .live{width:7px;height:7px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 0 rgba(0,113,227,.5);animation:pulse 2s infinite}
   @keyframes pulse{70%{box-shadow:0 0 0 6px rgba(0,113,227,0)}100%{box-shadow:0 0 0 0 rgba(0,113,227,0)}}
@@ -247,8 +249,7 @@
 <div class="controls">
   <div class="grp"><span class="lbl">Device</span>
     <div class="seg" id="seg-device">
-      <button data-v="desktop" class="on">Desktop</button>
-      <button data-v="web">Web</button>
+      <button data-v="desktop" class="on">Desktop / Web</button>
       <button data-v="mobile">Mobile</button>
     </div></div>
   <div class="grp"><span class="lbl">View</span>
@@ -427,7 +428,9 @@ function composerHTML(){
 /* ---- header + layouts ---- */
 function headerHTML(){
   const e=S.env;const lbl=e==='warm'?'warm':e==='sleeping'?'sleeping':'expired';
-  return `<div class="sess-h"><span class="ti">${esc(SESSION.title)}</span>
+  // Focus hides the channel — so show which channel this session lives in + a way back.
+  const crumb=(S.view==='focus'&&S.device!=='mobile')?`<button class="crumb" data-back="1">← #sessions</button>`:'';
+  return `<div class="sess-h">${crumb}<span class="ti">${esc(SESSION.title)}</span>
     <span class="lv"><span class="live"></span>Mara</span>
     <span class="envchip ${e}"><span class="d"></span>env ${lbl}</span>
     <button class="ib sp" title="Close">✕</button></div>`;
@@ -435,7 +438,7 @@ function headerHTML(){
 function roBanner(){return S.env==='expired'?`<div class="ro">⚠ Environment expired — this session is record-only. Transcript, changes, and artifacts are preserved; rebuild to keep working.</div>`:'';}
 
 const SURF_TITLES={changes:'Changes',artifacts:'Artifacts',audit:'Side-effects',preview:'Preview'};
-function detachTarget(){return S.device==='web'?'a new browser tab':'its own window';}
+function detachTarget(){return 'its own window (a tab on web)';}
 function pinPane(){return `<div class="pinpane"><div class="pin-h">${SURF_TITLES[S.pinned]}
     <span class="pin-acts"><button class="detach" title="Detach to ${detachTarget()}">↗</button><button class="unpin" title="Unpin">✕</button></span></div>
     <div class="pin-body">${surface(S.pinned)}</div></div>`;}
@@ -528,6 +531,7 @@ function wire(){
   document.querySelectorAll('.pin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=S.drawer;S.drawer=null;
     if(S.view==='peek'){S.viewBeforePin='peek';S.view='focus';}render();});
   document.querySelectorAll('[data-open-session]').forEach(b=>b.onclick=()=>{S.view='peek';render();});
+  document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{S.view='browse';S.pinned=null;S.drawer=null;S.detached=null;render();});
   document.querySelectorAll('.detach').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.detached=S.drawer||S.pinned;S.drawer=null;S.pinned=null;
     if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
   document.querySelectorAll('.unpin').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.pinned=null;
