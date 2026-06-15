@@ -38,12 +38,17 @@ class WhisperCppAdapter implements SttAdapter {
         '-f',
         wavPath,
         '-otxt',
+        '-oj',
         '-of',
         outputBase,
       ]);
       const text = await readFile(`${outputBase}.txt`, 'utf8').catch(() => whisper.stdout);
+      const json = await readFile(`${outputBase}.json`, 'utf8').catch(() => '');
+      const parsed = parseWhisperCppJson(json);
       return {
-        text: text.trim(),
+        text: parsed.text || text.trim(),
+        ...(parsed.lang ? { lang: parsed.lang } : {}),
+        ...(parsed.segments ? { segments: parsed.segments } : {}),
         model: `whispercpp:${basename(modelPath)}`,
       };
     } finally {
@@ -59,6 +64,58 @@ export function registerWhisperCppAdapter(): void {
 function safeFilename(filename: string): string {
   const trimmed = basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
   return trimmed || 'audio';
+}
+
+export function parseWhisperCppJson(json: string): Pick<SttResult, 'text' | 'lang' | 'segments'> {
+  if (!json.trim()) return { text: '' };
+  const parsed = JSON.parse(json) as {
+    text?: unknown;
+    language?: unknown;
+    result?: { language?: unknown };
+    params?: { language?: unknown };
+    transcription?: Array<{
+      text?: unknown;
+      timestamps?: { from?: unknown; to?: unknown };
+      offsets?: { from?: unknown; to?: unknown };
+    }>;
+  };
+  const segments = Array.isArray(parsed.transcription)
+    ? parsed.transcription
+        .map((segment) => {
+          const start = secondsFromWhisperTimestamp(segment.timestamps?.from, segment.offsets?.from);
+          const end = secondsFromWhisperTimestamp(segment.timestamps?.to, segment.offsets?.to);
+          const text = typeof segment.text === 'string' ? segment.text.trim() : '';
+          return Number.isFinite(start) && Number.isFinite(end) && text ? { start, end, text } : null;
+        })
+        .filter((segment): segment is { start: number; end: number; text: string } => segment !== null)
+    : undefined;
+  const text =
+    typeof parsed.text === 'string'
+      ? parsed.text.trim()
+      : (segments ?? []).map((segment) => segment.text).join(' ').trim();
+  const lang =
+    typeof parsed.result?.language === 'string'
+      ? parsed.result.language
+      : typeof parsed.language === 'string'
+        ? parsed.language
+        : typeof parsed.params?.language === 'string' && parsed.params.language !== 'auto'
+          ? parsed.params.language
+          : undefined;
+  return {
+    text,
+    ...(lang ? { lang } : {}),
+    ...(segments && segments.length > 0 ? { segments } : {}),
+  };
+}
+
+function secondsFromWhisperTimestamp(timestamp: unknown, offset: unknown): number {
+  if (typeof offset === 'number' && Number.isFinite(offset)) return offset / 1000;
+  if (typeof timestamp !== 'string') return Number.NaN;
+  const match = /^(\d+):(\d+):(\d+)(?:[,.](\d+))?$/.exec(timestamp.trim());
+  if (!match) return Number.NaN;
+  const [, hours, minutes, seconds, fraction = '0'] = match;
+  const millis = Number(fraction.padEnd(3, '0').slice(0, 3));
+  return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds) + millis / 1000;
 }
 
 function runProcess(
