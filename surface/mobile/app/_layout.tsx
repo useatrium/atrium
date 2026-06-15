@@ -20,10 +20,13 @@ import { SessionProvider, useSession } from '../src/lib/session';
 import { ThemeProvider, useTheme } from '../src/lib/theme';
 import { loadStoredPrefs } from '../src/lib/prefsStorage';
 import { eventCache } from '../src/lib/cacheSqlite';
+import { NATIVE_CALL_UI } from '../src/lib/nativeCallUi';
 
 registerGlobals({ autoConfigureAudioSession: false });
-setRTCAudioSessionConfiguration(false);
-registerVoIPPush();
+if (NATIVE_CALL_UI) {
+  setRTCAudioSessionConfiguration(false);
+  registerVoIPPush();
+}
 
 function prefsEqual(a: UserPrefs, b: UserPrefs): boolean {
   return (

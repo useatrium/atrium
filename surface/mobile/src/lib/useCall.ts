@@ -38,6 +38,7 @@ import {
   type Channel,
   type UserRef,
 } from '@atrium/surface-client';
+import { NATIVE_CALL_UI } from './nativeCallUi';
 
 export interface ActiveCallState {
   call: CallWire;
@@ -186,8 +187,12 @@ export function useCall({
     // CallKit snapshot restores while AVAudioSession is still in call config
     // (wrong output route, broken playback afterward).
     void AudioSession.stopAudioSession()
-      .then(() => restoreAudioSession())
-      .catch(() => restoreAudioSession());
+      .then(() => {
+        if (NATIVE_CALL_UI) restoreAudioSession();
+      })
+      .catch(() => {
+        if (NATIVE_CALL_UI) restoreAudioSession();
+      });
     if (room && room.state !== 'disconnected') {
       void room.disconnect().finally(() => {
         intentionalDisconnectRef.current = false;
@@ -201,6 +206,10 @@ export function useCall({
     (callId: string, reason: 'remoteEnded' | 'failed' | 'declinedElsewhere' | 'unanswered') => {
       const nativeId = nativeIdForCall(callId);
       if (!nativeId) return;
+      if (!NATIVE_CALL_UI) {
+        clearNativeMapping(callId);
+        return;
+      }
       void reportCallEnded(nativeId, reason).catch(() => {});
       clearNativeMapping(callId);
     },
@@ -236,8 +245,12 @@ export function useCall({
         roomRef.current = null;
         connectPromiseRef.current = null;
         void AudioSession.stopAudioSession()
-          .then(() => restoreAudioSession())
-          .catch(() => restoreAudioSession());
+          .then(() => {
+            if (NATIVE_CALL_UI) restoreAudioSession();
+          })
+          .catch(() => {
+            if (NATIVE_CALL_UI) restoreAudioSession();
+          });
         if (intentionalDisconnectRef.current) return;
         updateActiveCall((current) => ({
           ...current,
@@ -267,7 +280,7 @@ export function useCall({
       if (!room) return;
       await room.localParticipant.setMicrophoneEnabled(!muted, AUDIO_CAPTURE_OPTIONS);
       updateActiveCall((active) => ({ ...active, muted }));
-      if (nativeCallId) void setNativeMuted(nativeCallId, muted).catch(() => {});
+      if (NATIVE_CALL_UI && nativeCallId) void setNativeMuted(nativeCallId, muted).catch(() => {});
     },
     [updateActiveCall],
   );
@@ -291,7 +304,7 @@ export function useCall({
         callIdByNativeIdRef.current[native.id] = join.call.id;
       }
 
-      prepareAudioSessionForCall(false);
+      if (NATIVE_CALL_UI) prepareAudioSessionForCall(false);
       const room = new Room();
       roomRef.current = room;
       setRoomHandlers(room);
@@ -329,9 +342,9 @@ export function useCall({
             phase: 'connected',
             muted: !room.localParticipant.isMicrophoneEnabled,
           }));
-          if (native?.incomingRequestId) {
+          if (NATIVE_CALL_UI && native?.incomingRequestId) {
             await fulfillIncomingCallConnected(native.incomingRequestId);
-          } else if (native?.outgoing && native.id) {
+          } else if (NATIVE_CALL_UI && native?.outgoing && native.id) {
             await reportOutgoingCallConnected(native.id);
           }
         } catch (err) {
@@ -339,9 +352,9 @@ export function useCall({
           connectPromiseRef.current = null;
           setActiveCall(null);
           setNotice("Couldn't connect to the call.");
-          if (native?.incomingRequestId && native.id) {
+          if (NATIVE_CALL_UI && native?.incomingRequestId && native.id) {
             await failIncomingCallConnected(native.id, native.incomingRequestId).catch(() => {});
-          } else if (native?.id) {
+          } else if (NATIVE_CALL_UI && native?.id) {
             await reportCallEnded(native.id, 'failed').catch(() => {});
           }
           clearNativeMapping(join.call.id);
@@ -360,6 +373,7 @@ export function useCall({
 
   const reportIncomingToNative = useCallback(
     (call: CallWire) => {
+      if (!NATIVE_CALL_UI) return;
       if (call.initiatorId === me.id || nativeIdByCallIdRef.current[call.id]) return;
       const caller = userForCall(call, channelsRef.current, call.initiatorId);
       const channelName = labelForCallChannel(call, channelsRef.current, me.id);
@@ -395,7 +409,7 @@ export function useCall({
         } else {
           setNotice("Couldn't join the call.");
         }
-        if (native?.id && native.requestId) {
+        if (NATIVE_CALL_UI && native?.id && native.requestId) {
           await failIncomingCallConnected(native.id, native.requestId).catch(() => {});
         }
       } finally {
@@ -489,15 +503,17 @@ export function useCall({
         const join = await api.startCall(channelId);
         let nativeCallId: string | undefined;
         const channelName = labelForCallChannel(join.call, channelsRef.current, me.id);
-        try {
-          nativeCallId = await startOutgoingCall(
-            { id: join.call.channelId, displayName: channelName },
-            { hasVideo: false },
-          );
-          nativeIdByCallIdRef.current[join.call.id] = nativeCallId;
-          callIdByNativeIdRef.current[nativeCallId] = join.call.id;
-        } catch (err) {
-          console.warn('[calls] failed to start native outgoing call', err);
+        if (NATIVE_CALL_UI) {
+          try {
+            nativeCallId = await startOutgoingCall(
+              { id: join.call.channelId, displayName: channelName },
+              { hasVideo: false },
+            );
+            nativeIdByCallIdRef.current[join.call.id] = nativeCallId;
+            callIdByNativeIdRef.current[nativeCallId] = join.call.id;
+          } catch (err) {
+            console.warn('[calls] failed to start native outgoing call', err);
+          }
         }
         await connectToCall(
           join,
@@ -520,7 +536,7 @@ export function useCall({
     const call = incomingCallRef.current;
     if (!call || answering) return;
     const nativeId = nativeIdForCall(call.id);
-    if (nativeId) {
+    if (NATIVE_CALL_UI && nativeId) {
       setAnswering(true);
       try {
         await answerCall(nativeId);
@@ -538,7 +554,7 @@ export function useCall({
     if (!call) return;
     setIncomingCall(null);
     const nativeId = nativeIdForCall(call.id);
-    if (nativeId) {
+    if (NATIVE_CALL_UI && nativeId) {
       nativeEndRequestedRef.current.add(nativeId);
       void endCall(nativeId).catch(() => {});
       clearNativeMapping(call.id);
@@ -570,7 +586,7 @@ export function useCall({
     const current = activeCallRef.current;
     if (!current) return;
     const callId = current.call.id;
-    if (current.nativeCallId) {
+    if (NATIVE_CALL_UI && current.nativeCallId) {
       nativeEndRequestedRef.current.add(current.nativeCallId);
       void endCall(current.nativeCallId).catch(() => {});
       clearNativeMapping(callId);
@@ -585,6 +601,7 @@ export function useCall({
   }, [api, clearNativeMapping, clearRoom]);
 
   useEffect(() => {
+    if (!NATIVE_CALL_UI) return;
     const added = addCallSessionAddedListener((event) => rememberNativeSession(event.session));
     const updated = addCallSessionUpdatedListener((event) => rememberNativeSession(event.session));
     const answered = addCallAnsweredListener((event) => {

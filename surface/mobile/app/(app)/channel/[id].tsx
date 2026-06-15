@@ -268,6 +268,7 @@ export default function ChannelScreen() {
           meHandle={state.meHandle}
           highlightId={chat.highlightId}
           fileUrl={chat.fileUrl}
+          api={chat.api}
           fileHeaders={chat.fileHeaders}
           onLoadEarlier={() => chat.loadEarlier(id)}
           onLongPress={setActionsTarget}
