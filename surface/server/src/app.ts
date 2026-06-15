@@ -2209,6 +2209,78 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.code(202).send({ ok: true });
   });
 
+  // A watcher proposes a steer; any member with session access may suggest.
+  app.post('/api/sessions/:id/suggestions', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+    const opId = optionalOpId(body);
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (text.trim().length === 0) {
+      return reply.code(400).send({ error: 'empty_message', message: 'suggestion text is empty' });
+    }
+    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'message_too_large', message: 'suggestion exceeds 8KB' });
+    }
+    let event: WireEvent | null = null;
+    await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.suggestion.create',
+      body: { sessionId: id, text },
+      fn: async (client) => {
+        event = await sessionRuns.createSuggestionInTx(client, id, user.id, text);
+        return { ok: true as const };
+      },
+      onApplied: () => {
+        if (event) hub.publishEvent(event);
+      },
+    });
+    return reply.code(202).send({ ok: true });
+  });
+
+  // Driver-only (enforced in the DAO): send / edit-then-send / dismiss.
+  app.post('/api/sessions/:id/suggestions/:suggestionId/resolve', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id, suggestionId } = req.params as { id: string; suggestionId: string };
+    // Guard the id shape so a non-UUID path param 404s instead of surfacing a
+    // Postgres cast error as a 500 (mirrors getSessionRow).
+    if (!/^[0-9a-f-]{36}$/i.test(suggestionId)) {
+      return reply.code(404).send({ error: 'suggestion_not_found', message: 'suggestion not found' });
+    }
+    const body = (req.body ?? {}) as { action?: unknown; text?: unknown; note?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
+    if (body.action !== 'send' && body.action !== 'dismiss') {
+      return reply.code(400).send({ error: 'bad_request', message: "action must be 'send' or 'dismiss'" });
+    }
+    const action = body.action;
+    // text only applies to send; note only to dismiss.
+    const text = action === 'send' && typeof body.text === 'string' ? body.text : undefined;
+    const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
+    if (text !== undefined && Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
+    }
+    let result: { event: WireEvent; postedSteer: boolean } | null = null;
+    await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.suggestion.resolve',
+      body: { sessionId: id, suggestionId, action, ...(text !== undefined ? { text } : {}), ...(note !== undefined ? { note } : {}) },
+      fn: async (client) => {
+        result = await sessionRuns.resolveSuggestionInTx(client, id, user.id, suggestionId, action, { text, note });
+        return { ok: true as const };
+      },
+      onApplied: () => {
+        if (!result) return;
+        if (result.postedSteer) sessionRuns.afterPostUserMessage(id);
+        hub.publishEvent(result.event);
+      },
+    });
+    return reply.code(202).send({ ok: true });
+  });
+
   app.post('/api/sessions/:id/cancel', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;

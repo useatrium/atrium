@@ -34,6 +34,7 @@ export interface SessionJson {
   driverId: string | null;
   driver: SessionUserJson | null;
   pendingSeatRequests: SessionUserJson[];
+  suggestions: SessionSuggestionJson[];
   pendingQuestion: SessionPendingQuestionJson | null;
   viewerCount: number;
   costUsd: number;
@@ -47,6 +48,22 @@ export interface SessionJson {
 export interface SessionUserJson {
   userId: string;
   displayName: string;
+}
+
+export type SuggestionStatus = 'pending' | 'sent' | 'dismissed';
+
+export interface SessionSuggestionJson {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  status: SuggestionStatus;
+  resolvedBy: string | null;
+  resolvedByName: string | null;
+  sentText: string | null;
+  note: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
 }
 
 export interface SessionPendingQuestionJson {
@@ -128,6 +145,20 @@ interface ChannelRow {
 interface SessionUserRow {
   user_id: string;
   display_name: string;
+}
+
+interface SessionSuggestionRow {
+  id: string;
+  author_id: string;
+  author_name: string;
+  text: string;
+  status: SuggestionStatus;
+  resolved_by: string | null;
+  resolved_by_name: string | null;
+  sent_text: string | null;
+  note: string | null;
+  created_at: string;
+  resolved_at: string | null;
 }
 
 type SessionListStatus = 'running' | 'recent' | 'all';
@@ -670,6 +701,127 @@ export class SessionRuns {
       });
     });
     this.hub.publishEvent(event);
+  }
+
+  // ---- suggestion queue (Phase 2) ------------------------------------------
+
+  /**
+   * A watcher proposes a steer; the driver later sends or dismisses it. Runs in
+   * the caller's transaction (the route wraps it in runMutation for idempotency
+   * + a single commit); the returned event is published in onApplied.
+   */
+  async createSuggestionInTx(
+    client: DbClient,
+    id: string,
+    userId: string,
+    text: string,
+  ): Promise<WireEvent> {
+    const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
+    const row = session.rows[0];
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    // A truly-ended session can't be steered, so a suggestion on it is a dead
+    // letter — refuse it (a completed session is resumable, so it's allowed).
+    if (row.status === 'failed' || row.status === 'cancelled') {
+      throw new DomainError(409, 'session_ended', 'session has ended');
+    }
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO session_suggestions (session_id, author_id, text)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [id, userId, text],
+    );
+    return appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.suggestion_added',
+      actorId: userId,
+      payload: { sessionId: id, suggestionId: inserted.rows[0]!.id, authorId: userId, text },
+    });
+  }
+
+  /**
+   * The driver disposes of a pending suggestion. `send` posts it as a steer
+   * (reusing the steer path) and may carry edited text; `dismiss` records an
+   * optional reason. Resolved rows persist for the session record. Runs in the
+   * caller's transaction; the tailer start + event publish happen post-commit
+   * (in the route's onApplied) keyed off `postedSteer`.
+   */
+  async resolveSuggestionInTx(
+    client: DbClient,
+    id: string,
+    driverUserId: string,
+    suggestionId: string,
+    action: 'send' | 'dismiss',
+    opts: { text?: string; note?: string } = {},
+  ): Promise<{ event: WireEvent; postedSteer: boolean }> {
+    const row = await this.requireDriverInTx(client, id, driverUserId);
+    const res = await client.query<{ status: SuggestionStatus; text: string }>(
+      'SELECT status, text FROM session_suggestions WHERE id = $1 AND session_id = $2 FOR UPDATE',
+      [suggestionId, id],
+    );
+    const sug = res.rows[0];
+    if (!sug) {
+      throw new DomainError(404, 'suggestion_not_found', 'suggestion not found');
+    }
+    if (sug.status !== 'pending') {
+      throw new DomainError(409, 'suggestion_resolved', 'suggestion already resolved');
+    }
+
+    if (action === 'send') {
+      // Mirror the steer path: cancel the idle-release so the freshly-steered
+      // session isn't torn down underneath the turn it's about to run.
+      this.cancelScheduledRelease(id);
+      const sendText = (opts.text ?? '').trim() || sug.text;
+      const edited = sendText !== sug.text;
+      await this.postUserMessageOnce(row, driverUserId, sendText, true, client);
+      await client.query(
+        `UPDATE session_suggestions
+         SET status = 'sent', resolved_by = $1, sent_text = $2, resolved_at = now()
+         WHERE id = $3`,
+        [driverUserId, edited ? sendText : null, suggestionId],
+      );
+      const event = await appendEvent(client, {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: row.thread_root_event_id,
+        type: 'session.suggestion_resolved',
+        actorId: driverUserId,
+        payload: {
+          sessionId: id,
+          suggestionId,
+          status: 'sent',
+          resolvedBy: driverUserId,
+          ...(edited ? { sentText: sendText } : {}),
+        },
+      });
+      return { event, postedSteer: true };
+    }
+
+    const note = (opts.note ?? '').trim();
+    await client.query(
+      `UPDATE session_suggestions
+       SET status = 'dismissed', resolved_by = $1, note = $2, resolved_at = now()
+       WHERE id = $3`,
+      [driverUserId, note || null, suggestionId],
+    );
+    const event = await appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.suggestion_resolved',
+      actorId: driverUserId,
+      payload: {
+        sessionId: id,
+        suggestionId,
+        status: 'dismissed',
+        resolvedBy: driverUserId,
+        ...(note ? { note } : {}),
+      },
+    });
+    return { event, postedSteer: false };
   }
 
   async resumeActiveSessions(): Promise<void> {
@@ -1313,7 +1465,7 @@ export class SessionRuns {
   }
 
   private async toJsonWithSeatInfo(row: SessionRow): Promise<SessionJson> {
-    const [driver, requests, viewers] = await Promise.all([
+    const [driver, requests, viewers, suggestions] = await Promise.all([
       row.driver_id
         ? this.pool.query<SessionUserRow>(
             'SELECT id AS user_id, display_name FROM users WHERE id = $1',
@@ -1334,12 +1486,25 @@ export class SessionRuns {
          WHERE session_id = $1 AND user_id <> $2`,
         [row.id, row.spawned_by],
       ),
+      this.pool.query<SessionSuggestionRow>(
+        `SELECT s.id, s.author_id, a.display_name AS author_name, s.text, s.status,
+                s.resolved_by, r.display_name AS resolved_by_name,
+                s.sent_text, s.note,
+                s.created_at, s.resolved_at
+         FROM session_suggestions s
+         JOIN users a ON a.id = s.author_id
+         LEFT JOIN users r ON r.id = s.resolved_by
+         WHERE s.session_id = $1
+         ORDER BY s.created_at ASC`,
+        [row.id],
+      ),
     ]);
     return toJson(row, {
       driver: driver.rows[0] ? toSessionUserJson(driver.rows[0]) : null,
       pendingSeatRequests: requests.rows.map(toSessionUserJson),
       // node-pg returns count() as a string; coerce so JSON carries a number.
       viewerCount: Number(viewers.rows[0]?.viewer_count ?? 0),
+      suggestions: suggestions.rows.map(toSessionSuggestionJson),
     });
   }
 
@@ -1409,6 +1574,7 @@ function toJson(
     driver?: SessionUserJson | null;
     pendingSeatRequests?: SessionUserJson[];
     viewerCount?: number;
+    suggestions?: SessionSuggestionJson[];
   } = {},
 ): SessionJson {
   return {
@@ -1423,6 +1589,7 @@ function toJson(
     driverId: row.driver_id,
     driver: seatInfo.driver ?? null,
     pendingSeatRequests: seatInfo.pendingSeatRequests ?? [],
+    suggestions: seatInfo.suggestions ?? [],
     pendingQuestion: parsePendingQuestion(row.pending_question),
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
@@ -1452,6 +1619,22 @@ function toListItem(row: SessionListRow): SessionListItem {
 
 function toSessionUserJson(row: SessionUserRow): SessionUserJson {
   return { userId: row.user_id, displayName: row.display_name };
+}
+
+function toSessionSuggestionJson(row: SessionSuggestionRow): SessionSuggestionJson {
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    text: row.text,
+    status: row.status,
+    resolvedBy: row.resolved_by,
+    resolvedByName: row.resolved_by_name,
+    sentText: row.sent_text,
+    note: row.note,
+    createdAt: new Date(row.created_at).toISOString(),
+    resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+  };
 }
 
 function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null {

@@ -586,6 +586,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           spawnerName: me.displayName,
           driverId: null,
           pendingSeatRequests: [],
+          suggestions: [],
           seatEvents: [],
           costUsd: 0,
           resultText: null,

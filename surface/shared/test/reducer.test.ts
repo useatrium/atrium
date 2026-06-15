@@ -819,6 +819,7 @@ describe('unified sync application', () => {
       spawnedBy: alice.id,
       driverId: alice.id,
       pendingSeatRequests: [],
+      suggestions: [],
       pendingQuestion: null,
       seatEvents: [],
       costUsd: 0,

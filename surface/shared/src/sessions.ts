@@ -75,6 +75,31 @@ export interface SessionQuestionEvent {
   reason?: QuestionResolutionReason;
 }
 
+export type SuggestionStatus = 'pending' | 'sent' | 'dismissed';
+
+/**
+ * A spectator-proposed steer (Phase 2 collaboration). The driver sends it,
+ * edits-then-sends it, or dismisses it; resolved rows persist for retro value.
+ */
+export interface SessionSuggestion {
+  /** Suggestion row id (uuid) — stable dedupe key across WS + catch-up. */
+  id: string;
+  /** The spectator who proposed it. */
+  authorId: string;
+  authorName?: string;
+  text: string;
+  status: SuggestionStatus;
+  /** Driver who resolved it (present once sent/dismissed). */
+  resolvedBy?: string;
+  resolvedByName?: string;
+  /** The actually-sent text when edited-then-sent (differs from `text`). */
+  sentText?: string;
+  /** Optional "why" on dismiss — never required. */
+  note?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 /** Session JSON as served by POST/GET /api/sessions. */
 export interface SessionWire {
   id: string;
@@ -89,6 +114,8 @@ export interface SessionWire {
   /** Driver display info (Phase 3 server; may be absent on older payloads). */
   driver?: SessionSeatUser | null;
   pendingSeatRequests?: SessionSeatUser[];
+  /** Suggestion queue, oldest-first (Phase 2; absent on older payloads). */
+  suggestions?: SessionSuggestion[];
   pendingQuestion?: SessionPendingQuestion | null;
   costUsd: number | string | null;
   resultText: string | null;
@@ -129,6 +156,8 @@ export interface Session {
   driverName?: string;
   /** Open seat requests, oldest-first (deduped by userId). */
   pendingSeatRequests: SessionSeatUser[];
+  /** Suggestion queue folded from session.suggestion_* events, oldest-first. */
+  suggestions: SessionSuggestion[];
   pendingQuestion?: SessionPendingQuestion | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
@@ -223,6 +252,7 @@ export function sessionFromWire(w: SessionWire): Session {
     driverId: w.driverId ?? w.driver?.userId ?? null,
     driverName: w.driver?.displayName,
     pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
+    suggestions: [...(w.suggestions ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
     questionEvents: [],
     seatEvents: [],
@@ -255,6 +285,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     driverName: live.driverName ?? resp.driverName,
     pendingSeatRequests:
       live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
+    suggestions: live.suggestions.length > 0 ? live.suggestions : resp.suggestions,
     pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
     questionEvents:
       (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
@@ -288,6 +319,7 @@ export function applySessionEvent(
       spawnedBy: typeof p.by === 'string' ? p.by : (ev.actorId ?? ''),
       driverId: null,
       pendingSeatRequests: [],
+      suggestions: [],
       pendingQuestion: null,
       questionEvents: [],
       seatEvents: [],
@@ -419,6 +451,52 @@ export function applySessionEvent(
         seatEvents,
       },
     };
+  }
+
+  if (ev.type === 'session.suggestion_added') {
+    const suggestionId = typeof p.suggestionId === 'string' ? p.suggestionId : null;
+    const text = typeof p.text === 'string' ? p.text : null;
+    if (!suggestionId || text === null) return sessions;
+    if (prev.suggestions.some((s) => s.id === suggestionId)) return sessions; // WS + catch-up overlap
+    const authorId = typeof p.authorId === 'string' ? p.authorId : (ev.actorId ?? '');
+    const suggestion: SessionSuggestion = {
+      id: suggestionId,
+      authorId,
+      text,
+      status: 'pending',
+      createdAt: ev.createdAt,
+    };
+    if (ev.author && ev.author.id === authorId && ev.author.displayName) {
+      suggestion.authorName = ev.author.displayName;
+    }
+    return {
+      ...sessions,
+      [sessionId]: { ...prev, suggestions: [...prev.suggestions, suggestion] },
+    };
+  }
+
+  if (ev.type === 'session.suggestion_resolved') {
+    const suggestionId = typeof p.suggestionId === 'string' ? p.suggestionId : null;
+    const status = p.status === 'sent' || p.status === 'dismissed' ? p.status : null;
+    if (!suggestionId || !status) return sessions;
+    const idx = prev.suggestions.findIndex((s) => s.id === suggestionId);
+    if (idx < 0) return sessions; // resolve for a suggestion we never folded — GET will carry it
+    const existing = prev.suggestions[idx]!;
+    const resolvedBy = typeof p.resolvedBy === 'string' ? p.resolvedBy : ev.actorId ?? undefined;
+    const resolved: SessionSuggestion = {
+      ...existing,
+      status,
+      resolvedAt: ev.createdAt,
+      ...(resolvedBy ? { resolvedBy } : {}),
+      ...(ev.author && ev.author.id === resolvedBy && ev.author.displayName
+        ? { resolvedByName: ev.author.displayName }
+        : {}),
+      ...(typeof p.sentText === 'string' ? { sentText: p.sentText } : {}),
+      ...(typeof p.note === 'string' && p.note ? { note: p.note } : {}),
+    };
+    const suggestions = [...prev.suggestions];
+    suggestions[idx] = resolved;
+    return { ...sessions, [sessionId]: { ...prev, suggestions } };
   }
 
   return sessions;

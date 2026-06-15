@@ -1828,6 +1828,236 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('suggestion: a watcher proposes; only the driver may send it, posting a steer', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice'); // driver
+    const bob = await loginUser(app, 'bob', 'Bob'); // spectator
+    const id = await insertRunningSession(alice.userId);
+
+    const create = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions`,
+      headers: { cookie: bob.cookie },
+      payload: { text: 'run the tests' },
+    });
+    expect(create.statusCode).toBe(202);
+
+    const added = await pool.query(
+      "SELECT actor_id, payload FROM events WHERE type = 'session.suggestion_added'",
+    );
+    expect(added.rows).toHaveLength(1);
+    expect(added.rows[0].actor_id).toBe(bob.userId);
+    const suggestionId = added.rows[0].payload.suggestionId as string;
+    expect(added.rows[0].payload).toMatchObject({
+      sessionId: id,
+      authorId: bob.userId,
+      text: 'run the tests',
+    });
+
+    // GET hydrates the queue with the author display name.
+    const got = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}`,
+      headers: { cookie: alice.cookie },
+    });
+    expect(got.json().session.suggestions).toEqual([
+      expect.objectContaining({
+        id: suggestionId,
+        authorId: bob.userId,
+        authorName: 'Bob',
+        text: 'run the tests',
+        status: 'pending',
+      }),
+    ]);
+
+    // A non-driver may not resolve.
+    const bobResolve = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions/${suggestionId}/resolve`,
+      headers: { cookie: bob.cookie },
+      payload: { action: 'send' },
+    });
+    expect(bobResolve.statusCode).toBe(403);
+
+    // The driver sends an edited version → steer posted + row recorded + event.
+    const send = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions/${suggestionId}/resolve`,
+      headers: { cookie: alice.cookie },
+      payload: { action: 'send', text: 'run the tests -v' },
+    });
+    expect(send.statusCode).toBe(202);
+
+    const row = await pool.query(
+      'SELECT status, resolved_by, sent_text FROM session_suggestions WHERE id = $1',
+      [suggestionId],
+    );
+    expect(row.rows[0]).toMatchObject({
+      status: 'sent',
+      resolved_by: alice.userId,
+      sent_text: 'run the tests -v',
+    });
+
+    const resolved = await pool.query(
+      "SELECT actor_id, payload FROM events WHERE type = 'session.suggestion_resolved'",
+    );
+    expect(resolved.rows).toHaveLength(1);
+    expect(resolved.rows[0].actor_id).toBe(alice.userId);
+    expect(resolved.rows[0].payload).toMatchObject({
+      sessionId: id,
+      suggestionId,
+      status: 'sent',
+      sentText: 'run the tests -v',
+    });
+
+    // Resolving an already-resolved suggestion is a conflict.
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions/${suggestionId}/resolve`,
+      headers: { cookie: alice.cookie },
+      payload: { action: 'dismiss' },
+    });
+    expect(again.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('suggestion: driver dismiss records the disposition + optional note and persists', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertRunningSession(alice.userId);
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions`,
+      headers: { cookie: bob.cookie },
+      payload: { text: 'maybe try X' },
+    });
+    const added = await pool.query(
+      "SELECT payload FROM events WHERE type = 'session.suggestion_added'",
+    );
+    const suggestionId = added.rows[0].payload.suggestionId as string;
+
+    const dismiss = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions/${suggestionId}/resolve`,
+      headers: { cookie: alice.cookie },
+      payload: { action: 'dismiss', note: 'not now' },
+    });
+    expect(dismiss.statusCode).toBe(202);
+
+    // Dismissed rows persist (retro value), with the reason recorded.
+    const row = await pool.query(
+      'SELECT status, resolved_by, note FROM session_suggestions WHERE id = $1',
+      [suggestionId],
+    );
+    expect(row.rows[0]).toMatchObject({
+      status: 'dismissed',
+      resolved_by: alice.userId,
+      note: 'not now',
+    });
+
+    const got = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}`,
+      headers: { cookie: alice.cookie },
+    });
+    expect(got.json().session.suggestions).toEqual([
+      expect.objectContaining({ id: suggestionId, status: 'dismissed', note: 'not now' }),
+    ]);
+    await app.close();
+  });
+
+  it('suggestion: empty text is rejected', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const id = await insertRunningSession(alice.userId);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions`,
+      headers: { cookie: alice.cookie },
+      payload: { text: '   ' },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('suggestion: createSuggestion is idempotent by opId', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const id = await insertRunningSession(alice.userId);
+    const opId = randomUUID();
+    const post = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/sessions/${id}/suggestions`,
+        headers: { cookie: alice.cookie },
+        payload: { text: 'dedupe me', opId },
+      });
+    expect((await post()).statusCode).toBe(202);
+    expect((await post()).statusCode).toBe(202);
+    const rows = await pool.query('SELECT id FROM session_suggestions WHERE session_id = $1', [id]);
+    expect(rows.rows).toHaveLength(1);
+    const events = await pool.query(
+      "SELECT id FROM events WHERE type = 'session.suggestion_added'",
+    );
+    expect(events.rows).toHaveLength(1);
+    await app.close();
+  });
+
+  it('suggestion: resolve with a non-UUID suggestionId 404s instead of 500', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const id = await insertRunningSession(alice.userId);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions/not-a-uuid/resolve`,
+      headers: { cookie: alice.cookie },
+      payload: { action: 'send' },
+    });
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('suggestion: rejected on a truly-ended (failed/cancelled) session', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const id = await insertSessionRow({ title: 'dead', status: 'failed' });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions`,
+      headers: { cookie: alice.cookie },
+      payload: { text: 'too late' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('session_ended');
+    await app.close();
+  });
+
   it('concurrent seat mutations produce exactly one winner and one seat_changed event', async () => {
     const app = await buildApp({
       pool,

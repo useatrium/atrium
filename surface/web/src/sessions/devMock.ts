@@ -98,6 +98,7 @@ const SAM: UserRef = { id: 'mock-sam', handle: 'sam', displayName: 'Sam' };
 const SAM_REQUEST_DELAY_MS = 4_000; // task contains "seat" → Sam asks for it
 const SAM_HOLD_MS = 8_000; // after a grant, Sam "watches" → take 409s
 const SAM_GRANT_BACK_MS = 2_500; // Sam grants a pending request back
+const SAM_SUGGEST_DELAY_MS = 3_000; // task contains "suggest" → Sam proposes one
 
 function emitSeatRequested(run: MockRun, by: UserRef): void {
   const pending = (run.wire.pendingSeatRequests ??= []);
@@ -126,6 +127,36 @@ function emitSeatChanged(
     from,
     to: to.id,
     reason,
+  });
+}
+
+let suggestionSeq = 0;
+
+function emitSuggestionAdded(run: MockRun, author: UserRef, text: string): string {
+  const suggestionId = `mock-sug-${++suggestionSeq}`;
+  (run.suggestions ??= new Map()).set(suggestionId, text);
+  emitWire('session.suggestion_added', run.wire.channelId, run.wire.threadRootEventId, author, {
+    sessionId: run.wire.id,
+    suggestionId,
+    authorId: author.id,
+    text,
+  });
+  return suggestionId;
+}
+
+function emitSuggestionResolved(
+  run: MockRun,
+  actor: UserRef,
+  suggestionId: string,
+  status: 'sent' | 'dismissed',
+  extra: Record<string, unknown> = {},
+): void {
+  emitWire('session.suggestion_resolved', run.wire.channelId, run.wire.threadRootEventId, actor, {
+    sessionId: run.wire.id,
+    suggestionId,
+    status,
+    resolvedBy: actor.id,
+    ...extra,
   });
 }
 
@@ -285,6 +316,8 @@ interface MockRun {
   timer: ReturnType<typeof setInterval> | null;
   /** While in the future, the sim driver "is watching" → seat/take 409s. */
   seatHeldUntil?: number;
+  /** Pending suggestion text by id, so a `send` can replay the real words. */
+  suggestions?: Map<string, string>;
 }
 
 const runs = new Map<string, MockRun>();
@@ -421,6 +454,13 @@ export interface SessionsMockApi {
   requestSeat(id: string): Promise<void>;
   grantSeat(id: string, userId: string): Promise<void>;
   takeSeat(id: string): Promise<void>;
+  createSuggestion(id: string, text: string): Promise<void>;
+  resolveSuggestion(
+    id: string,
+    suggestionId: string,
+    action: 'send' | 'dismiss',
+    opts: { text?: string; note?: string },
+  ): Promise<void>;
   openStream(
     sessionId: string,
     afterEventId: number,
@@ -474,6 +514,14 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
         // Seat sim: a "seat" task gets Sam asking for the driver seat shortly in.
         if (/seat/i.test(body.task)) {
           setTimeout(() => emitSeatRequested(run, SAM), SAM_REQUEST_DELAY_MS);
+        }
+        // Suggestion sim: a "suggest" task gets Sam proposing a steer the local
+        // driver can Send / Edit / Dismiss from the strip.
+        if (/suggest/i.test(body.task)) {
+          setTimeout(
+            () => emitSuggestionAdded(run, SAM, 'Try running the tests before editing more.'),
+            SAM_SUGGEST_DELAY_MS,
+          );
         }
         return { session: { ...run.wire } };
       },
@@ -577,6 +625,32 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
           throw new ApiError(409, 'seat_held', 'current driver is watching');
         }
         emitSeatChanged(run, me, 'taken', me);
+      },
+
+      async createSuggestion(id, text) {
+        const me = await mockMe();
+        emitSuggestionAdded(getRun(id), me, text);
+      },
+
+      async resolveSuggestion(id, suggestionId, action, opts) {
+        const me = await mockMe();
+        const run = getRun(id);
+        if (action === 'dismiss') {
+          emitSuggestionResolved(run, me, suggestionId, 'dismissed', opts.note ? { note: opts.note } : {});
+          run.suggestions?.delete(suggestionId);
+          return;
+        }
+        const edited = (opts.text ?? '').trim();
+        const sent = edited || run.suggestions?.get(suggestionId) || '(suggested message)';
+        emitSuggestionResolved(run, me, suggestionId, 'sent', edited ? { sentText: edited } : {});
+        run.suggestions?.delete(suggestionId);
+        // The accepted suggestion lands in the transcript as the driver's steer.
+        run.script.push(...synthTurn(maxEventId(run) + 1, `mock-${id}`, sent));
+        if (run.framesPerTick === 0) {
+          run.framesPerTick = 2;
+          run.tickMs = 80;
+        }
+        ensureRunning(run);
       },
 
       openStream(sessionId, afterEventId, cb) {

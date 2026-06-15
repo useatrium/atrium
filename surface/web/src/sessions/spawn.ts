@@ -43,6 +43,7 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
     spawnerName: me.displayName,
     driverId: null,
     pendingSeatRequests: [],
+    suggestions: [],
     seatEvents: [],
     costUsd: 0,
     resultText: null,
