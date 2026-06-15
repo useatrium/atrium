@@ -15,7 +15,9 @@
     --accent-soft:#eef0fe;
   }
   *{box-sizing:border-box}html,body{margin:0;height:100%}
-  body{background:#ebe9f1;color:var(--ink-2);font:14px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  /* flex column: controls take their natural (possibly wrapped) height, the stage flexes to fill the rest —
+     so a wrapping control bar shrinks the mock instead of clipping its bottom off-screen */
+  body{background:#ebe9f1;color:var(--ink-2);font:14px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
   button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}.hidden{display:none!important}
 
@@ -37,8 +39,8 @@
   .simpbtn:hover{border-color:var(--ink-3);background:var(--fill)}
   .simpbtn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 
-  .stage{display:flex;justify-content:center;padding:22px}
-  .frame{width:min(1500px,96vw);height:calc(100vh - 96px);background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
+  .stage{flex:1;min-height:0;display:flex;justify-content:center;align-items:flex-start;padding:22px}
+  .frame{width:min(1500px,96vw);height:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
     overflow:hidden;display:flex;box-shadow:0 18px 50px -20px rgba(20,20,40,.3)}
   .nav{width:50px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:11px 0;gap:9px}
   .logo{width:26px;height:26px;border-radius:7px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
@@ -300,7 +302,7 @@
   .drawer-h .dh-acts button:hover{border-color:var(--ink-3);color:var(--ink)}
   .drawer-h .dh-acts .pin{color:var(--ink);border-color:var(--ink-3)}
   /* device: web == desktop frame; mobile = narrow phone, drawer goes full-screen, no pin/detach */
-  .frame.mobile{width:392px;height:min(820px,calc(100vh - 96px));border-radius:30px}
+  .frame.mobile{width:392px;height:min(820px,100%);border-radius:30px}
   /* mobile header: keep the title; the verbose presence/env text squeezes it out on a phone */
   .frame.mobile .who,.frame.mobile .envchip{display:none}
   .frame.mobile .drawer{width:100%;max-width:100%}
@@ -902,7 +904,7 @@ function render(){
 function hint(){const h=document.getElementById('hint');
   h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
     :S.detached?`Detached to ${detachTarget()} — Re-dock to bring it back.`
-    :S.device==='mobile'?'Mobile: tap a stat → full-screen surface (no pin/detach).'
+    :S.device==='mobile'?'Mobile: open a session from the channel card; the “Work” chip opens work products full-screen (no pin/detach).'
     :S.view==='browse'?'Channel — a session is a card in the timeline; click to open. ◎ (left rail) = sessions across channels. Bring layers back via “Strip” ↑.'
     :S.view==='activity'?'Sessions across your channels (the rail, promoted to ◎). Click one to open it; # returns to the channel.'
     :S.view==='peek'?'Split: chat ⇄ agent. Work products via the “Work” chip / bookmarks → tabbed drawer.'
