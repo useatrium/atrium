@@ -344,7 +344,25 @@ function ensureRunning(run: MockRun): void {
 /** Unknown ids (permalinks into sessions from "before") → completed B replay. */
 function synthesizeCompletedRun(id: string): MockRun {
   const me = cachedMe ?? { id: 'mock-user', handle: 'mock', displayName: 'Mock User' };
-  const frames = JSON.parse(JSON.stringify(B)) as CentaurEventFrame[];
+  const body = JSON.parse(JSON.stringify(B)) as CentaurEventFrame[];
+  // Open replays with their prompt as the first steer (so the transcript shows
+  // the call-and-response + turn rail), matching the real flow.
+  const firstId = body[0]?.event_id ?? 1000;
+  const frames: CentaurEventFrame[] = [
+    {
+      event: 'amp_raw_event',
+      event_id: Math.max(1, firstId - 1),
+      data: {
+        type: 'item.completed',
+        item: {
+          id: 'steer-spawn',
+          type: 'userMessage',
+          content: [{ type: 'text', text: 'Investigate the toolchain roundtrip and report the result.' }],
+        },
+      },
+    } as CentaurEventFrame,
+    ...body,
+  ];
   const run: MockRun = {
     wire: {
       id,
