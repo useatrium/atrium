@@ -379,7 +379,9 @@ export function SessionPane({
               <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
             ))}
             {item.type === 'text' ? (
-              <TextBlock item={item} />
+              <div className="pl-3.5">
+                <TextBlock item={item} />
+              </div>
             ) : item.type === 'user_message' ? (
               <div data-testid="user-steer" className="pt-2 pb-0.5">
                 <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
@@ -388,21 +390,25 @@ export function SessionPane({
                 </div>
               </div>
             ) : item.type === 'question' ? (
-              <QuestionTranscriptCard
-                item={item}
-                events={questionEventsByQuestion.get(item.questionId) ?? []}
-              />
+              <div className="pl-3.5">
+                <QuestionTranscriptCard
+                  item={item}
+                  events={questionEventsByQuestion.get(item.questionId) ?? []}
+                />
+              </div>
             ) : (
-              <ToolCard
-                item={item}
-                expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                onToggle={() =>
-                  setToolOpen((prev) => ({
-                    ...prev,
-                    [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                  }))
-                }
-              />
+              <div className="pl-3.5">
+                <ToolCard
+                  item={item}
+                  expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
+                  onToggle={() =>
+                    setToolOpen((prev) => ({
+                      ...prev,
+                      [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
+                    }))
+                  }
+                />
+              </div>
             )}
           </Fragment>
         ))}
