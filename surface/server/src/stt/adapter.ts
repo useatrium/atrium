@@ -16,7 +16,7 @@ export interface SttInput {
 export interface SttResult {
   text: string;
   lang?: string;
-  segments?: unknown[];
+  segments?: Array<{ start: number; end: number; text: string }>;
   /** Identifier of the model/provider that produced this result. */
   model: string;
 }

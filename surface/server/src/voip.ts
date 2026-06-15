@@ -44,12 +44,18 @@ export interface VoipConfig {
   fcmServiceAccountJson: string;
 }
 
-interface ApnsConfig {
+export interface ApnsConfig {
   teamId: string;
   keyId: string;
   authKeyP8: string;
   bundleId: string;
   sandbox: boolean;
+}
+
+export interface ApnsVoipRequest {
+  path: string;
+  headers: Record<string, string>;
+  body: string;
 }
 
 interface FcmServiceAccount {
@@ -99,9 +105,9 @@ function jwtRs256(header: object, claims: object, privateKeyPem: string): string
 
 /** expo-callkit-telecom's native parser expects this nested shape (not our flat
  * internal payload). A fresh eventId per push; serverCallId is the stable call id. */
-function toIncomingCallObject(payload: IncomingCallVoipPayload) {
+function toIncomingCallObject(payload: IncomingCallVoipPayload, eventId: string = randomUUID()) {
   return {
-    eventId: randomUUID(),
+    eventId,
     serverCallId: payload.callId,
     hasVideo: false,
     caller: { id: payload.callerId, displayName: payload.callerName },
@@ -113,22 +119,53 @@ function toIncomingCallObject(payload: IncomingCallVoipPayload) {
   };
 }
 
+export function buildApnsVoipRequest(
+  config: ApnsConfig,
+  deviceToken: string,
+  payload: IncomingCallVoipPayload,
+  options: { nowSeconds: number; eventId: string; jwt?: string },
+): ApnsVoipRequest {
+  const path = `/3/device/${deviceToken}`;
+  const jwt =
+    options.jwt ??
+    jwtEs256(
+      { alg: 'ES256', kid: config.keyId },
+      { iss: config.teamId, iat: options.nowSeconds },
+      normalizePem(config.authKeyP8),
+    );
+  return {
+    path,
+    headers: {
+      ':method': 'POST',
+      ':path': path,
+      authorization: `bearer ${jwt}`,
+      'apns-topic': `${config.bundleId}.voip`,
+      'apns-push-type': 'voip',
+      'apns-priority': '10',
+      'apns-expiration': '0',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ incomingCall: toIncomingCallObject(payload, options.eventId) }),
+  };
+}
+
 function createApnsSender(config: ApnsConfig): VoipPushSender {
   const authKey = normalizePem(config.authKeyP8);
   let cachedJwt = '';
+  let cachedJwtIat = 0;
   let cachedUntil = 0;
   let session: http2.ClientHttp2Session | null = null;
 
-  function providerJwt(): string {
-    if (cachedJwt && Date.now() < cachedUntil) return cachedJwt;
-    const nowSeconds = Math.floor(Date.now() / 1000);
+  function providerJwt(): { jwt: string; iat: number } {
+    if (cachedJwt && Date.now() < cachedUntil) return { jwt: cachedJwt, iat: cachedJwtIat };
+    cachedJwtIat = Math.floor(Date.now() / 1000);
     cachedJwt = jwtEs256(
       { alg: 'ES256', kid: config.keyId },
-      { iss: config.teamId, iat: nowSeconds },
+      { iss: config.teamId, iat: cachedJwtIat },
       authKey,
     );
     cachedUntil = Date.now() + 50 * 60 * 1000;
-    return cachedJwt;
+    return { jwt: cachedJwt, iat: cachedJwtIat };
   }
 
   // Reuse one HTTP/2 session across pushes — APNs multiplexes; a fresh connection
@@ -147,7 +184,8 @@ function createApnsSender(config: ApnsConfig): VoipPushSender {
     name: 'apns',
     async send(token, payload) {
       if (token.platform !== 'ios') return { status: 'skipped' };
-      return sendApnsVoip(getSession(), config, providerJwt(), token.token, payload);
+      const jwt = providerJwt();
+      return sendApnsVoip(getSession(), config, token.token, payload, jwt.iat, jwt.jwt);
     },
   };
 }
@@ -155,9 +193,10 @@ function createApnsSender(config: ApnsConfig): VoipPushSender {
 function sendApnsVoip(
   session: http2.ClientHttp2Session,
   config: ApnsConfig,
-  jwt: string,
   deviceToken: string,
   payload: IncomingCallVoipPayload,
+  nowSeconds: number,
+  jwt: string,
 ): Promise<VoipSendResult> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
@@ -172,16 +211,12 @@ function sendApnsVoip(
     // Never let a stalled APNs stream hang the fire-and-forget chain forever.
     const timer = setTimeout(() => settle({ status: 'failed', error: 'apns_timeout' }), 10_000);
 
-    const req = session.request({
-      ':method': 'POST',
-      ':path': `/3/device/${deviceToken}`,
-      authorization: `bearer ${jwt}`,
-      'apns-topic': `${config.bundleId}.voip`,
-      'apns-push-type': 'voip',
-      'apns-priority': '10',
-      'apns-expiration': '0', // VoIP: don't store/redeliver a stale ring
-      'content-type': 'application/json',
+    const request = buildApnsVoipRequest(config, deviceToken, payload, {
+      nowSeconds,
+      eventId: randomUUID(),
+      jwt,
     });
+    const req = session.request(request.headers);
     req.on('response', (headers) => {
       status = Number(headers[':status'] ?? 0);
     });
@@ -202,7 +237,7 @@ function sendApnsVoip(
         settle({ status: 'failed', error: reason || `apns_status_${status}` });
       }
     });
-    req.end(JSON.stringify({ incomingCall: toIncomingCallObject(payload) }));
+    req.end(request.body);
   });
 }
 
