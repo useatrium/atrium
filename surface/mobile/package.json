@@ -18,6 +18,7 @@
     "expo-clipboard": "~56.0.3",
     "expo-constants": "~56.0.16",
     "expo-crypto": "~56.0.4",
+    "expo-dev-client": "~56.0.20",
     "expo-device": "~56.0.4",
     "expo-document-picker": "~56.0.4",
     "expo-file-system": "~56.0.7",
