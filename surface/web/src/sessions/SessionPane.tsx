@@ -33,6 +33,7 @@ import {
   type SeatAuditEntry,
   type QuestionPrompt,
   type Session,
+  type SessionSuggestion,
   type SessionQuestionAnswerSummary,
   type SessionQuestionEvent,
   type SessionStatus,
@@ -171,6 +172,20 @@ export function SessionPane({
     setLocalSteerError(null);
     onClearFailedSteer();
     onSteer(session.id, text).catch(() => setLocalSteerError(text));
+  };
+
+  // Suggestion queue (Phase 2). Spectators compose suggestions; the driver
+  // sends / edits-then-sends / dismisses them. Resolved rows persist; only
+  // pending ones are actionable, and the queue is visible to everyone so the
+  // room can see what's been proposed.
+  const pendingSuggestions = useMemo(
+    () => (session.suggestions ?? []).filter((s) => s.status === 'pending'),
+    [session.suggestions],
+  );
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  const sendSuggestion = (text: string) => {
+    setSuggestError(null);
+    sessionsApi.createSuggestion(session.id, text).catch(() => setSuggestError(text));
   };
 
   // Cancel is destructive and possibly shared — two-step inline confirm.
@@ -465,7 +480,15 @@ export function SessionPane({
         </div>
       ) : (
         <>
-          {steerError && (
+          {pendingSuggestions.length > 0 && (
+            <SuggestionStrip
+              sessionId={session.id}
+              suggestions={pendingSuggestions}
+              isDriver={isDriver}
+              nameFor={nameFor}
+            />
+          )}
+          {isDriver && steerError && (
             <div
               role="alert"
               data-testid="steer-error"
@@ -491,13 +514,36 @@ export function SessionPane({
               </button>
             </div>
           )}
+          {!isDriver && suggestError && (
+            <div
+              role="alert"
+              data-testid="suggestion-error"
+              className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
+            >
+              <span className="min-w-0 flex-1 truncate text-danger-text">
+                Suggestion didn't send: "{suggestError}"
+              </span>
+              <button
+                onClick={() => sendSuggestion(suggestError)}
+                className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => setSuggestError(null)}
+                className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           <Composer
             placeholder={
-              isDriver ? 'You have the seat — message this session' : 'Message this session'
+              isDriver
+                ? 'You have the seat — message this session'
+                : `Suggest a message — ${driverName} decides`
             }
-            onSend={sendSteer}
-            disabled={!isDriver}
-            disabledHint={`spectating — ${driverName} has the seat`}
+            onSend={isDriver ? sendSteer : sendSuggestion}
             footer={
               isDriver ? undefined : (
                 <span data-testid="seat-footer" className="flex items-center gap-2">
@@ -770,6 +816,169 @@ function TurnRail({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- suggestion queue -------------------------------------------------------
+
+/**
+ * The suggestion queue: one quiet grouped object above the composer. Visible to
+ * everyone (the queue teaches good steers); only the driver gets the Send /
+ * Edit / Dismiss actions. Send is an outline button — blue stays scarce.
+ */
+function SuggestionStrip({
+  sessionId,
+  suggestions,
+  isDriver,
+  nameFor,
+}: {
+  sessionId: string;
+  suggestions: SessionSuggestion[];
+  isDriver: boolean;
+  nameFor: (id: string | null) => string;
+}) {
+  return (
+    <div
+      data-testid="suggestion-strip"
+      className="shrink-0 border-t border-edge bg-surface-raised/40 px-3 py-2"
+    >
+      <div className="mb-1.5 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
+        Suggestions · {suggestions.length}
+      </div>
+      <div className="space-y-2">
+        {suggestions.map((s) => (
+          <SuggestionRow
+            key={s.id}
+            sessionId={sessionId}
+            suggestion={s}
+            isDriver={isDriver}
+            authorName={s.authorName ?? nameFor(s.authorId)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SuggestionRow({
+  sessionId,
+  suggestion,
+  isDriver,
+  authorName,
+}: {
+  sessionId: string;
+  suggestion: SessionSuggestion;
+  isDriver: boolean;
+  authorName: string;
+}) {
+  const [mode, setMode] = useState<'idle' | 'editing' | 'dismissing'>('idle');
+  const [draft, setDraft] = useState(suggestion.text);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // On success the row leaves the pending queue (folded out) and unmounts, so
+  // only the failure path needs to restore interactivity.
+  const resolve = (action: 'send' | 'dismiss', opts: { text?: string; note?: string } = {}) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    sessionsApi.resolveSuggestion(sessionId, suggestion.id, action, opts).catch(() => {
+      setBusy(false);
+      setError(action === 'send' ? "Couldn't send — try again." : "Couldn't dismiss — try again.");
+    });
+  };
+
+  const outlineBtn =
+    'rounded border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-body hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-50';
+  const quietBtn =
+    'rounded px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body';
+
+  return (
+    <div data-testid="suggestion-row" className="text-xs">
+      <div className="leading-relaxed">
+        <span className="font-semibold text-fg">{authorName}</span>{' '}
+        {mode !== 'editing' && (
+          <span className="whitespace-pre-wrap break-words text-fg-body">{suggestion.text}</span>
+        )}
+      </div>
+
+      {mode === 'editing' ? (
+        <div className="mt-1 space-y-1">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={2}
+            aria-label="Edit suggestion"
+            className="w-full resize-none rounded-md border border-edge-strong bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-edge-focus"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              disabled={busy || draft.trim().length === 0}
+              onClick={() => resolve('send', { text: draft })}
+              className={outlineBtn}
+            >
+              Send edited
+            </button>
+            <button
+              onClick={() => {
+                setMode('idle');
+                setDraft(suggestion.text);
+              }}
+              className={quietBtn}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : mode === 'dismissing' ? (
+        <div className="mt-1 space-y-1">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="why? (optional)"
+            aria-label="Dismiss reason"
+            className="w-full rounded-md border border-edge-strong bg-surface px-2 py-1 text-2xs text-fg outline-none focus:border-edge-focus"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={() => resolve('dismiss', note.trim() ? { note: note.trim() } : {})}
+              className={outlineBtn}
+            >
+              Dismiss
+            </button>
+            <button
+              onClick={() => {
+                setMode('idle');
+                setNote('');
+              }}
+              className={quietBtn}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : isDriver ? (
+        <div className="mt-0.5 flex items-center gap-2">
+          <button disabled={busy} onClick={() => resolve('send')} className={outlineBtn}>
+            Send
+          </button>
+          <button onClick={() => setMode('editing')} className={quietBtn}>
+            Edit
+          </button>
+          <button onClick={() => setMode('dismissing')} className={quietBtn}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {error && (
+        <div role="alert" className="mt-0.5 text-2xs text-danger-text">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

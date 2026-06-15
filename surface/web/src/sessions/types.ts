@@ -13,6 +13,8 @@ export type {
   QuestionResolutionReason,
   SessionQuestionAnswerSummary,
   SessionQuestionEvent,
+  SessionSuggestion,
+  SuggestionStatus,
   SessionWire,
   SessionListItem,
   Session,

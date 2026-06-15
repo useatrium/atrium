@@ -536,6 +536,7 @@ export function Chat({
           spawnerName: me.displayName,
           driverId: null,
           pendingSeatRequests: [],
+          suggestions: [],
           seatEvents: [],
           costUsd: 0,
           resultText: null,

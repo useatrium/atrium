@@ -31,6 +31,7 @@ function bSession(overrides: Partial<Session> = {}): Session {
     spawnerName: me.displayName,
     driverId: null,
     pendingSeatRequests: [],
+    suggestions: [],
     seatEvents: [],
     costUsd: 0,
     resultText: null,
@@ -203,8 +204,10 @@ describe('driver seat', () => {
     rerender(paneFor(s));
 
     expect(screen.getByTestId('driver-chip').textContent).toBe('driver: Bob');
-    const boxAfter = screen.getByPlaceholderText(/spectating — Bob has the seat/);
-    expect((boxAfter as HTMLTextAreaElement).disabled).toBe(true);
+    // As a spectator the composer becomes a suggest box (still enabled — you can
+    // always propose), not a dead "you can't type" field.
+    const boxAfter = screen.getByPlaceholderText(/Suggest a message — Bob decides/);
+    expect((boxAfter as HTMLTextAreaElement).disabled).toBe(false);
   });
 
   it('(b) seat_requested shows the grant banner to the driver only; grant posts the right body', async () => {
@@ -250,9 +253,10 @@ describe('driver seat', () => {
     });
     render(<SessionPane session={session} me={me} watchers={[alice, me]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
 
-    // Pure spectator: no cancel, composer disabled.
+    // Pure spectator: no cancel, no take (driver present), and the composer is
+    // a suggest box rather than a steer composer.
     expect(screen.queryByText('Cancel')).toBeNull();
-    expect((screen.getByPlaceholderText(/spectating/) as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByPlaceholderText(/Suggest a message — Alice decides/) as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.queryByText('Take seat')).toBeNull();
 
     fireEvent.click(screen.getByText('Request seat'));
@@ -348,5 +352,149 @@ describe('driver seat', () => {
     // The grant also cleared Bob's pending request.
     expect(s.sessions['s-b']!.pendingSeatRequests).toEqual([]);
     expect(screen.queryByTestId('seat-request-banner')).toBeNull();
+  });
+});
+
+// ---- suggestion queue (Phase 2) ---------------------------------------------
+
+describe('suggestion queue', () => {
+  // Bob (a spectator) proposes a steer; the event folds onto the session entity.
+  function withSuggestion(s: AppState, id: string, text: string, author: UserRef): AppState {
+    return appReducer(s, {
+      type: 'server-event',
+      event: seatWire(
+        Number(id.replace(/\D/g, '')) + 200,
+        'session.suggestion_added',
+        { sessionId: 's-b', suggestionId: id, authorId: author.id, text },
+        author,
+      ),
+    });
+  }
+
+  it('folds suggestion_added onto the queue and renders it on the driver strip', () => {
+    const s = withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob); // me drives
+    expect(s.sessions['s-b']!.suggestions).toEqual([
+      expect.objectContaining({
+        id: 'sug-1',
+        authorId: bob.id,
+        authorName: 'Bob',
+        text: 'run the tests',
+        status: 'pending',
+      }),
+    ]);
+    render(paneFor(s, me));
+    const strip = screen.getByTestId('suggestion-strip');
+    expect(within(strip).getByText('Bob')).toBeTruthy();
+    expect(within(strip).getByText('run the tests')).toBeTruthy();
+  });
+
+  it('suggestion_resolved (sent) records the disposition and clears the pending strip', () => {
+    let s = withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob);
+    s = appReducer(s, {
+      type: 'server-event',
+      event: seatWire(
+        300,
+        'session.suggestion_resolved',
+        { sessionId: 's-b', suggestionId: 'sug-1', status: 'sent', resolvedBy: me.id },
+        me,
+      ),
+    });
+    const sug = s.sessions['s-b']!.suggestions[0]!;
+    expect(sug.status).toBe('sent');
+    expect(sug.resolvedBy).toBe(me.id);
+    render(paneFor(s, me));
+    // Resolved rows persist on the entity but leave the actionable strip.
+    expect(screen.queryByTestId('suggestion-strip')).toBeNull();
+  });
+
+  it('driver strip: Send posts resolve {action:send}', async () => {
+    const fetchMock = stub202();
+    render(paneFor(withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob), me));
+    fireEvent.click(
+      within(screen.getByTestId('suggestion-strip')).getByRole('button', { name: 'Send' }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/sessions/s-b/suggestions/sug-1/resolve');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({ action: 'send' });
+  });
+
+  it('driver strip: Edit-then-send posts the edited text', async () => {
+    const fetchMock = stub202();
+    render(paneFor(withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob), me));
+    const strip = screen.getByTestId('suggestion-strip');
+    fireEvent.click(within(strip).getByRole('button', { name: 'Edit' }));
+    fireEvent.change(within(strip).getByLabelText('Edit suggestion'), {
+      target: { value: 'run tests -v' },
+    });
+    fireEvent.click(within(strip).getByRole('button', { name: 'Send edited' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({
+      action: 'send',
+      text: 'run tests -v',
+    });
+  });
+
+  it('driver strip: Dismiss posts {action:dismiss} with an optional note', async () => {
+    const fetchMock = stub202();
+    render(paneFor(withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob), me));
+    const strip = screen.getByTestId('suggestion-strip');
+    fireEvent.click(within(strip).getByRole('button', { name: 'Dismiss' }));
+    fireEvent.change(within(strip).getByLabelText('Dismiss reason'), {
+      target: { value: 'not now' },
+    });
+    fireEvent.click(within(strip).getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({
+      action: 'dismiss',
+      note: 'not now',
+    });
+  });
+
+  it('spectator: suggest box posts createSuggestion; the queue is read-only', async () => {
+    const fetchMock = stub202();
+    const session = bSession({
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      driverId: alice.id,
+      driverName: alice.displayName,
+      suggestions: [
+        {
+          id: 'sug-9',
+          authorId: bob.id,
+          authorName: 'Bob',
+          text: 'check the logs',
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[alice, me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    // The queue is visible to the spectator but carries no actions.
+    const strip = screen.getByTestId('suggestion-strip');
+    expect(within(strip).getByText('check the logs')).toBeTruthy();
+    expect(within(strip).queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(within(strip).queryByRole('button', { name: 'Dismiss' })).toBeNull();
+
+    // The composer is an enabled suggest box that posts createSuggestion.
+    const box = screen.getByPlaceholderText(/Suggest a message — Alice decides/) as HTMLTextAreaElement;
+    expect(box.disabled).toBe(false);
+    fireEvent.change(box, { target: { value: 'try the staging env' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/sessions/s-b/suggestions');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({ text: 'try the staging env' });
   });
 });

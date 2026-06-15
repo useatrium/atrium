@@ -2209,6 +2209,41 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.code(202).send({ ok: true });
   });
 
+  // A watcher proposes a steer; any member with session access may suggest.
+  app.post('/api/sessions/:id/suggestions', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { text?: string };
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (text.trim().length === 0) {
+      return reply.code(400).send({ error: 'empty_message', message: 'suggestion text is empty' });
+    }
+    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'message_too_large', message: 'suggestion exceeds 8KB' });
+    }
+    await sessionRuns.createSuggestion(id, user.id, text);
+    return reply.code(202).send({ ok: true });
+  });
+
+  // Driver-only (enforced in the DAO): send / edit-then-send / dismiss.
+  app.post('/api/sessions/:id/suggestions/:suggestionId/resolve', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id, suggestionId } = req.params as { id: string; suggestionId: string };
+    const body = (req.body ?? {}) as { action?: unknown; text?: unknown; note?: unknown };
+    if (body.action !== 'send' && body.action !== 'dismiss') {
+      return reply.code(400).send({ error: 'bad_request', message: "action must be 'send' or 'dismiss'" });
+    }
+    const text = typeof body.text === 'string' ? body.text : undefined;
+    const note = typeof body.note === 'string' ? body.note : undefined;
+    if (text !== undefined && Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
+    }
+    await sessionRuns.resolveSuggestion(id, user.id, suggestionId, body.action, { text, note });
+    return reply.code(202).send({ ok: true });
+  });
+
   app.post('/api/sessions/:id/cancel', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;

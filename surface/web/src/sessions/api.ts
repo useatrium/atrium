@@ -173,6 +173,31 @@ export const sessionsApi = {
     return reqAccepted(`/api/sessions/${id}/seat/take`, { method: 'POST', body: '{}' });
   },
 
+  // ---- suggestion queue (Phase 2) ----
+
+  /** A watcher proposes a steer the driver later sends or dismisses. */
+  createSuggestion(id: string, text: string): Promise<void> {
+    if (sessionsMock) return sessionsMock.createSuggestion(id, text);
+    return reqAccepted(`/api/sessions/${id}/suggestions`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  },
+
+  /** Driver-only. `send` may carry edited text; `dismiss` an optional reason. */
+  resolveSuggestion(
+    id: string,
+    suggestionId: string,
+    action: 'send' | 'dismiss',
+    opts: { text?: string; note?: string } = {},
+  ): Promise<void> {
+    if (sessionsMock) return sessionsMock.resolveSuggestion(id, suggestionId, action, opts);
+    return reqAccepted(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ action, ...opts }),
+    });
+  },
+
   /** Cookie-authed SSE of Centaur frames, resumable via after_event_id. */
   openStream(
     sessionId: string,
