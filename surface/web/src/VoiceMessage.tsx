@@ -122,12 +122,28 @@ export function VoiceMessage({ voice }: { voice: VoiceMeta }) {
           {formatTime(currentTime)} / {formatTime(duration)}
         </span>
       </div>
-      <Transcript transcript={voice.transcript} />
+      <Transcript transcript={voice.transcript} fileId={voice.fileId} />
     </div>
   );
 }
 
-function Transcript({ transcript }: { transcript: VoiceMeta['transcript'] }) {
+function Transcript({
+  transcript,
+  fileId,
+}: {
+  transcript: VoiceMeta['transcript'];
+  fileId: string;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (transcript.status !== 'failed') {
+      setRetrying(false);
+      setRetryError(null);
+    }
+  }, [transcript.status]);
+
   if (transcript.status === 'pending') {
     return (
       <div className="mt-1.5 flex items-center gap-2 text-xs text-fg-muted" aria-live="polite">
@@ -137,11 +153,40 @@ function Transcript({ transcript }: { transcript: VoiceMeta['transcript'] }) {
     );
   }
   if (transcript.status === 'failed') {
-    return <div className="mt-1.5 text-xs text-fg-muted">Transcription failed</div>;
+    const retry = async () => {
+      if (retrying) return;
+      setRetrying(true);
+      setRetryError(null);
+      try {
+        await api.retryTranscript(fileId);
+      } catch {
+        setRetrying(false);
+        setRetryError("Couldn't retry transcription.");
+      }
+    };
+
+    return (
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-muted">
+        <span>Transcription failed</span>
+        <button
+          type="button"
+          onClick={() => void retry()}
+          disabled={retrying}
+          className="rounded-md border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-default disabled:border-edge disabled:text-fg-faint"
+        >
+          {retrying ? 'Retrying…' : 'Retry'}
+        </button>
+        {retryError && <span className="text-2xs text-danger-text">{retryError}</span>}
+      </div>
+    );
   }
   const text = transcript.text?.trim() ?? '';
   if (!text) return <div className="mt-1.5 text-xs text-fg-muted">No speech detected</div>;
-  return <div className="mt-1.5 select-text whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{text}</div>;
+  return (
+    <div className="mt-1.5 select-text whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
+      {text}
+    </div>
+  );
 }
 
 function formatTime(seconds: number): string {

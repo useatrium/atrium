@@ -132,7 +132,7 @@ export function Chat({
   const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const calls = useCall(me);
+  const calls = useCall(me, state.channels);
   const stateRef = useRef(state);
   stateRef.current = state;
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
