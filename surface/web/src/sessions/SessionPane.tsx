@@ -374,6 +374,13 @@ export function SessionPane({
             ))}
             {item.type === 'text' ? (
               <TextBlock item={item} />
+            ) : item.type === 'user_message' ? (
+              <div
+                data-testid="user-steer"
+                className="whitespace-pre-wrap border-l-2 border-edge pl-3 text-sm text-fg"
+              >
+                {item.text}
+              </div>
             ) : item.type === 'question' ? (
               <QuestionTranscriptCard
                 item={item}

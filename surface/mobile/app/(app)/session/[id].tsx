@@ -710,6 +710,12 @@ export default function SessionScreen() {
               <View key={item.id}>
                 {item.type === 'text' ? (
                   <TextBlock item={item} />
+                ) : item.type === 'user_message' ? (
+                  <View
+                    style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: font.sm }}>{item.text}</Text>
+                  </View>
                 ) : item.type === 'question' ? (
                   <MobileQuestionTranscriptCard
                     item={item}

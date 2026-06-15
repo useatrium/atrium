@@ -48,7 +48,14 @@ export interface QuestionItem {
   sourceEventIds: number[];
 }
 
-export type SessionItem = TextItem | ToolCallItem | QuestionItem;
+export interface UserMessageItem {
+  type: "user_message";
+  id: string;
+  text: string;
+  sourceEventIds: number[];
+}
+
+export type SessionItem = TextItem | ToolCallItem | QuestionItem | UserMessageItem;
 
 export interface SessionState {
   status: ExecutionStatus | "idle";
@@ -393,6 +400,15 @@ function reduceCodexItemCompleted(state: SessionState, eventId: number, event: C
     return;
   }
 
+  if (event.item.type === "userMessage") {
+    const raw = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
+    const text = stripInjectedContext(raw);
+    if (text) {
+      upsertUserMessage(state, eventId, event.item.id, text);
+    }
+    return;
+  }
+
   if (event.item.type === "commandExecution") {
     upsertCodexCommandExecution(state, eventId, event.item);
     completeCodexCommandExecution(state, eventId, event.item);
@@ -510,6 +526,33 @@ function completeCodexCommandExecution(state: SessionState, eventId: number, ite
   tool.sourceEventIds.push(eventId);
 }
 
+function upsertUserMessage(
+  state: SessionState,
+  eventId: number,
+  itemId: string | undefined,
+  text: string,
+): UserMessageItem {
+  const id = itemId ?? `user:${eventId}`;
+  const existing = state.items.find((candidate) =>
+    candidate.type === "user_message" && candidate.id === id,
+  ) as UserMessageItem | undefined;
+
+  if (existing) {
+    existing.text = text;
+    pushSourceEventId(existing, eventId);
+    return existing;
+  }
+
+  const created: UserMessageItem = {
+    type: "user_message",
+    id,
+    text,
+    sourceEventIds: [eventId],
+  };
+  state.items.push(created);
+  return created;
+}
+
 function findCodexToolCall(state: SessionState, itemId: string | undefined): ToolCallItem | undefined {
   if (itemId) {
     const id = `tool:codex:${itemId}`;
@@ -533,6 +576,10 @@ function codexItemId(event: {
 
 function codexContentText(item: CodexItem): string {
   return item.content?.filter((content) => content.type === "text").map((content) => content.text).join("") ?? "";
+}
+
+function stripInjectedContext(raw: string): string {
+  return raw.split("\n# Session Context", 1)[0]?.trim() ?? "";
 }
 
 function codexCommandInput(item: CodexItem): JsonObject {
