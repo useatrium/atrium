@@ -2368,7 +2368,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       const handleMessage = (user: UserRef, raw: Buffer) => {
         if (!client) return;
         const c = client;
-        let msg: { type?: string; channelIds?: unknown; channelId?: unknown };
+        let msg: { type?: string; channelIds?: unknown; channelId?: unknown; sessionId?: unknown };
         try {
           msg = JSON.parse(raw.toString());
         } catch {
@@ -2404,9 +2404,13 @@ function rawSession(req: FastifyRequest): string | undefined {
               .catch(() => {});
           }
         } else if (msg.type === 'typing') {
-          // Focus is already access-checked; require it so nobody can signal
-          // into a DM they aren't reading.
-          if (typeof msg.channelId === 'string' && c.focusedChannelId === msg.channelId) {
+          // Session typing fans out over the `session:<id>` subscription
+          // (relaySessionTyping re-checks the sender is watching it); otherwise
+          // it's channel typing, gated on focus (access-checked) so nobody can
+          // signal into a DM they aren't reading.
+          if (typeof msg.sessionId === 'string') {
+            hub.relaySessionTyping(c, msg.sessionId);
+          } else if (typeof msg.channelId === 'string' && c.focusedChannelId === msg.channelId) {
             hub.relayTyping(c, msg.channelId);
           }
         } else if (msg.type === 'ping') {

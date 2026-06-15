@@ -355,6 +355,36 @@ describe('driver seat', () => {
   });
 });
 
+// ---- session typing (Phase 2) -----------------------------------------------
+
+describe('session typing', () => {
+  it('renders a "composing…" line from the typers prop', () => {
+    const { rerender } = render(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        typers={[bob]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    expect(screen.getByText('Bob is composing…')).toBeTruthy();
+
+    rerender(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        typers={[bob, alice]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    expect(screen.getByText('Bob and Alice are composing…')).toBeTruthy();
+  });
+});
+
 // ---- suggestion queue (Phase 2) ---------------------------------------------
 
 describe('suggestion queue', () => {

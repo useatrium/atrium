@@ -10,6 +10,8 @@ export interface WsCallbacks {
   onPresence: (channelId: string, users: UserRef[]) => void;
   /** Someone else viewing `channelId` is typing (ephemeral, no expiry signal). */
   onTyping?: (channelId: string, user: UserRef) => void;
+  /** Someone else watching session `sessionId` is composing (ephemeral). */
+  onSessionTyping?: (sessionId: string, user: UserRef) => void;
   onRead?: (channelId: string, lastReadEventId: number) => void;
   onMuted?: (channelId: string, muted: boolean) => void;
   onChannelLeft?: (channelId: string) => void;
@@ -25,6 +27,8 @@ export interface WsCallbacks {
 export interface WsHandle {
   /** Best-effort typing signal; throttle at the call site. */
   sendTyping: (channelId: string) => void;
+  /** Best-effort session-scoped typing signal; throttle at the call site. */
+  sendSessionTyping: (sessionId: string) => void;
 }
 
 export interface WsOptions {
@@ -173,6 +177,7 @@ export function useWs(
           type?: string;
           event?: WireEvent;
           channelId?: string;
+          sessionId?: string;
           lastReadEventId?: number;
           muted?: boolean;
           users?: UserRef[];
@@ -190,6 +195,8 @@ export function useWs(
         else if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
         else if (msg.type === 'presence' && msg.channelId)
           cbRef.current.onPresence(msg.channelId, msg.users ?? []);
+        else if (msg.type === 'typing' && msg.sessionId && msg.user)
+          cbRef.current.onSessionTyping?.(msg.sessionId, msg.user);
         else if (msg.type === 'typing' && msg.channelId && msg.user)
           cbRef.current.onTyping?.(msg.channelId, msg.user);
         else if (
@@ -292,6 +299,12 @@ export function useWs(
       const ws = socketRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'typing', channelId }));
+      }
+    },
+    sendSessionTyping: (sessionId: string) => {
+      const ws = socketRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'typing', sessionId }));
       }
     },
   };

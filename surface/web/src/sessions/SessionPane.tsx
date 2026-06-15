@@ -47,6 +47,8 @@ export function SessionPane({
   session,
   me,
   watchers,
+  typers = [],
+  onComposerTyping,
   onClose,
   onAnswerQuestion,
   onSteer = async () => {},
@@ -60,6 +62,10 @@ export function SessionPane({
   me: UserRef;
   /** Presence list for `session:<id>` — everyone with this pane open. */
   watchers: UserRef[];
+  /** Others currently composing a steer/suggestion here (excludes me). */
+  typers?: UserRef[];
+  /** Throttle at the call site; fired while the composer has text. */
+  onComposerTyping?: () => void;
   onClose: () => void;
   onAnswerQuestion: (
     sessionId: string,
@@ -537,6 +543,7 @@ export function SessionPane({
               </button>
             </div>
           )}
+          <SessionTypingLine typers={typers} />
           <Composer
             placeholder={
               isDriver
@@ -544,6 +551,7 @@ export function SessionPane({
                 : `Suggest a message — ${driverName} decides`
             }
             onSend={isDriver ? sendSteer : sendSuggestion}
+            onTyping={onComposerTyping}
             footer={
               isDriver ? undefined : (
                 <span data-testid="seat-footer" className="flex items-center gap-2">
@@ -816,6 +824,24 @@ function TurnRail({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** "X is composing…" line above the session composer (calm, ephemeral). */
+function SessionTypingLine({ typers }: { typers: UserRef[] }) {
+  const names = typers.map((u) => u.displayName);
+  const label =
+    names.length === 0
+      ? ''
+      : names.length === 1
+        ? `${names[0]} is composing…`
+        : names.length === 2
+          ? `${names[0]} and ${names[1]} are composing…`
+          : 'Several people are composing…';
+  return (
+    <div aria-live="polite" className="h-4 shrink-0 px-4 text-3xs leading-4 text-fg-muted">
+      {label}
     </div>
   );
 }
