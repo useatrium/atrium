@@ -19,6 +19,7 @@ import {
   type Session,
 } from '../src/sessions/types';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import type { CentaurEventFrame } from '@atrium/centaur-client';
 
 afterEach(cleanup);
 
@@ -540,5 +541,76 @@ describe('terminal session pane', () => {
     // completed is idle/resumable — no read-only notice, result still shown
     expect(screen.queryByText(/Session ended/)).toBeNull();
     expect(screen.getByText('shipped')).toBeTruthy();
+  });
+});
+
+describe('session transcript rendering', () => {
+  const running: Session = {
+    id: 's-run',
+    workspaceId: 'ws-1',
+    channelId: 'ch-1',
+    threadRootEventId: null,
+    title: 'live task',
+    status: 'running',
+    harness: 'codex',
+    spawnedBy: 'u-alice',
+    spawnerName: 'Alice',
+    driverId: 'u-alice',
+    driverName: 'Alice',
+    pendingSeatRequests: [],
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+    lastEventId: 0,
+    permalink: '/s/s-run',
+  };
+
+  const frames: CentaurEventFrame[] = [
+    {
+      event: 'execution_state',
+      event_id: 1,
+      data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e' },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 2,
+      data: {
+        type: 'item.completed',
+        item: { id: 'steer-1', type: 'userMessage', content: [{ type: 'text', text: 'fix the flaky parser test' }] },
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 3,
+      data: { type: 'item.completed', item: { id: 'a1', type: 'agentMessage', text: 'On it — reproducing now.' } },
+    },
+  ] as CentaurEventFrame[];
+
+  it('renders a folded steer as an attributed call-and-response', async () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    render(
+      <SessionPane
+        session={running}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    const src = FakeEventSource.last();
+    src.open();
+    src.emitAll(frames);
+
+    // the steer renders attributed to the spawner: bold name + the words
+    await waitFor(() => {
+      const steer = screen.getByTestId('user-steer');
+      expect(steer.textContent).toContain('Alice');
+      expect(steer.textContent).toContain('fix the flaky parser test');
+    });
+    // the agent's reply renders as plain text beneath it
+    expect(screen.getByText('On it — reproducing now.')).toBeTruthy();
   });
 });
