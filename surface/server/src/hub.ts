@@ -87,6 +87,21 @@ export class WsHub {
     }
   }
 
+  /**
+   * Ephemeral typing relay to everyone else watching a session pane. Session
+   * presence is subscription-based, so we fan out over `session:<id>` (not
+   * focus); the sender must be watching it too.
+   */
+  relaySessionTyping(from: HubClient, sessionId: string): void {
+    const key = `session:${sessionId}`;
+    if (!from.channels.has(key)) return;
+    for (const client of this.clients) {
+      if (client !== from && client.channels.has(key)) {
+        this.sendTo(client, { type: 'typing', sessionId, user: from.user });
+      }
+    }
+  }
+
   /** Replace a client's subscription set; emit presence for changed channels. */
   subscribe(client: HubClient, channelIds: string[]): void {
     const next = new Set(channelIds);

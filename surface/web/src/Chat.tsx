@@ -841,12 +841,40 @@ export function Chat({
     },
     [me.id],
   );
+  // Session-pane typing, keyed by sessionId → userId (a steer or a suggestion in
+  // progress). Fans out over the `session:<id>` subscription, not the channel.
+  const [sessionTyping, setSessionTyping] = useState<
+    Record<string, Record<string, { user: UserRef; until: number }>>
+  >({});
+  const onSessionTyping = useCallback(
+    (sessionId: string, user: UserRef) => {
+      if (user.id === me.id) return;
+      setSessionTyping((prev) => ({
+        ...prev,
+        [sessionId]: {
+          ...(prev[sessionId] ?? {}),
+          [user.id]: { user, until: Date.now() + 4000 },
+        },
+      }));
+    },
+    [me.id],
+  );
   useEffect(() => {
     const t = setInterval(() => {
+      const now = Date.now();
       setTyping((prev) => {
-        const now = Date.now();
         const live = Object.entries(prev).filter(([, v]) => v.until > now);
         return live.length === Object.keys(prev).length ? prev : Object.fromEntries(live);
+      });
+      setSessionTyping((prev) => {
+        let changed = false;
+        const next: Record<string, Record<string, { user: UserRef; until: number }>> = {};
+        for (const [sid, typers] of Object.entries(prev)) {
+          const live = Object.entries(typers).filter(([, v]) => v.until > now);
+          if (live.length !== Object.keys(typers).length) changed = true;
+          if (live.length > 0) next[sid] = Object.fromEntries(live);
+        }
+        return changed ? next : prev;
       });
     }, 1000);
     return () => clearInterval(t);
@@ -875,6 +903,7 @@ export function Chat({
       },
       onPresence: (channelId, users) => dispatch({ type: 'presence', channelId, users }),
       onTyping,
+      onSessionTyping,
       onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
         lastReadSentRef.current[channelId] = Math.max(
@@ -903,6 +932,13 @@ export function Chat({
     if (now - lastTypingSentRef.current < 2500) return;
     lastTypingSentRef.current = now;
     ws.sendTyping(channelId);
+  };
+  const lastSessionTypingSentRef = useRef<Record<string, number>>({});
+  const notifySessionTyping = (sessionId: string) => {
+    const now = Date.now();
+    if (now - (lastSessionTypingSentRef.current[sessionId] ?? 0) < 2500) return;
+    lastSessionTypingSentRef.current[sessionId] = now;
+    ws.sendSessionTyping(sessionId);
   };
 
   // Desktop notifications: mentions of me, and my agent sessions finishing.
@@ -1776,6 +1812,8 @@ export function Chat({
           session={paneSession}
           me={me}
           watchers={paneWatchers}
+          typers={Object.values(sessionTyping[paneSession.id] ?? {}).map((t) => t.user)}
+          onComposerTyping={() => notifySessionTyping(paneSession.id)}
           onClose={() => dispatch({ type: 'close-session' })}
           onAnswerQuestion={answerSessionQuestion}
           onSteer={steerSession}

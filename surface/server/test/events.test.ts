@@ -187,6 +187,40 @@ describe('fanout ordering', () => {
     expect(s3.received.filter((m) => m.type === 'typing')).toHaveLength(0);
   });
 
+  it('relays session typing only to other clients watching the session', () => {
+    const hub = new WsHub();
+    const s1 = fakeSocket();
+    const s2 = fakeSocket();
+    const s3 = fakeSocket();
+    const alice = hub.addClient(s1, { id: 'u1', handle: 'alice', displayName: 'Alice' });
+    const bob = hub.addClient(s2, { id: 'u2', handle: 'bob', displayName: 'Bob' });
+    const carol = hub.addClient(s3, { id: 'u3', handle: 'carol', displayName: 'Carol' });
+    // alice + bob have the session pane open; carol does not.
+    hub.subscribe(alice, ['session:s1']);
+    hub.subscribe(bob, ['session:s1']);
+
+    hub.relaySessionTyping(bob, 's1');
+    const typed = s1.received.filter((m) => m.type === 'typing');
+    expect(typed).toHaveLength(1);
+    expect(typed[0].sessionId).toBe('s1');
+    expect(typed[0].user.handle).toBe('bob');
+    // The sender doesn't hear itself; a non-watcher doesn't hear it.
+    expect(s2.received.filter((m) => m.type === 'typing')).toHaveLength(0);
+    expect(s3.received.filter((m) => m.type === 'typing')).toHaveLength(0);
+  });
+
+  it('drops session typing from a sender not watching the session', () => {
+    const hub = new WsHub();
+    const s1 = fakeSocket();
+    const s2 = fakeSocket();
+    const alice = hub.addClient(s1, { id: 'u1', handle: 'alice', displayName: 'Alice' });
+    const mallory = hub.addClient(s2, { id: 'u2', handle: 'mallory', displayName: 'Mallory' });
+    hub.subscribe(alice, ['session:s1']);
+    // mallory is not subscribed to session:s1 → the relay is a no-op.
+    hub.relaySessionTyping(mallory, 's1');
+    expect(s1.received.filter((m) => m.type === 'typing')).toHaveLength(0);
+  });
+
   it('sends arbitrary payloads only to the requested users', () => {
     const hub = new WsHub();
     const s1 = fakeSocket();
