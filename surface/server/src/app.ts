@@ -22,6 +22,7 @@ import {
   getOrCreateDm,
   leaveChannelTx,
   listChannelMembers,
+  appendVoiceTranscribedEventTx,
   listChannelMessages,
   listChannelsFor,
   listThreadMessages,
@@ -1675,6 +1676,46 @@ function rawSession(req: FastifyRequest): string | undefined {
       app.log.warn({ err }, 'push fanout failed'),
     );
     return reply.code(201).send({ event });
+  });
+
+  // Re-run STT for a voice message whose transcript landed in `failed`. Resets
+  // the queue row (attempts back to 0 so the worker re-claims it), broadcasts a
+  // `pending` transcript so every client flips back to a loading state, then
+  // nudges the in-process worker. The eventual done/failed arrives over the WS.
+  app.post('/api/voice/:fileId/retranscribe', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { fileId } = req.params as { fileId: string };
+    const tr = await pool.query<{ channel_id: string | null; event_id: number; status: string }>(
+      'SELECT channel_id, event_id, status FROM transcripts WHERE file_id = $1',
+      [fileId],
+    );
+    const row = tr.rows[0];
+    // Collapse "not found" and "no access" into one response so a transcript's
+    // existence can't be probed by a non-member.
+    if (!row || !row.channel_id || !(await canAccessChannel(pool, user.id, row.channel_id))) {
+      return reply.code(404).send({ error: 'not_found', message: 'transcript not found' });
+    }
+    if (row.status !== 'failed') {
+      return reply
+        .code(409)
+        .send({ error: 'not_retryable', message: 'transcript is not in a failed state' });
+    }
+    const event = await withTx(pool, async (client) => {
+      await client.query(
+        `UPDATE transcripts
+         SET status = 'pending', attempts = 0, error = NULL, updated_at = now()
+         WHERE file_id = $1`,
+        [fileId],
+      );
+      return appendVoiceTranscribedEventTx(client, {
+        targetEventId: row.event_id,
+        transcript: { status: 'pending' },
+      });
+    });
+    hub.publishEvent(event);
+    deps.stt?.enqueue();
+    return reply.code(202).send({ event });
   });
 
   app.patch('/api/messages/:id', async (req, reply) => {

@@ -192,6 +192,13 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    /** Re-run speech-to-text for a voice message whose transcript `failed`.
+     * The server resets the job to `pending` and broadcasts a `voice.transcribed`
+     * `pending` event; the eventual `done`/`failed` arrives over the socket. */
+    retryTranscript: (fileId: string) =>
+      req<{ event: WireEvent }>(`/api/voice/${encodeURIComponent(fileId)}/retranscribe`, {
+        method: 'POST',
+      }),
     createAgentSession: (body: {
       channelId: string;
       task: string;

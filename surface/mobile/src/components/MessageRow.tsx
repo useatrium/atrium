@@ -6,6 +6,7 @@ import {
   formatTime,
   formatBytes,
   type AttachmentMeta,
+  type Api,
   type ChatMessage,
   type MessageReaction,
   type Session,
@@ -29,6 +30,7 @@ export interface MessageRowProps {
   /** Hide the reply-count pill (inside a thread screen). */
   inThread?: boolean;
   fileUrl: (id: string) => string;
+  api: Api;
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
@@ -364,6 +366,7 @@ export const MessageRow = memo(function MessageRow({
   session,
   inThread,
   fileUrl,
+  api,
   fileHeaders,
   onLongPress,
   onOpenThread,
@@ -427,7 +430,7 @@ export const MessageRow = memo(function MessageRow({
     <>
       {m.text ? <MessageText text={m.text} meHandle={meHandle} muted={pending} /> : null}
       {m.voice ? (
-        <VoiceMessage voice={m.voice} fileUrl={fileUrl} fileHeaders={fileHeaders} />
+        <VoiceMessage voice={m.voice} api={api} fileUrl={fileUrl} fileHeaders={fileHeaders} />
       ) : (
         <Attachments
           message={m}

@@ -512,7 +512,7 @@ export async function appendVoiceTranscribedEventTx(
   client: DbClient,
   args: {
     targetEventId: number;
-    transcript: { status: 'done' | 'failed'; text?: string; lang?: string };
+    transcript: { status: 'pending' | 'processing' | 'done' | 'failed'; text?: string; lang?: string };
   },
 ): Promise<WireEvent> {
   const target = await client.query<{

@@ -9,7 +9,7 @@ import {
   type RemoteTrackPublication,
 } from 'livekit-client';
 import type { CallEvent, CallJoin, CallWire, UserRef } from '@atrium/surface-client';
-import { ApiError, api } from './api';
+import { ApiError, api, type Channel } from './api';
 
 export interface RemoteAudioTrackRef {
   key: string;
@@ -32,30 +32,121 @@ const AUDIO_CAPTURE_OPTIONS = {
   autoGainControl: true,
 };
 
-function userFromIdentity(identity: string): UserRef {
+function fallbackUser(identity: string): UserRef {
   return { id: identity, handle: identity, displayName: identity };
 }
 
+function isFallbackUser(user: UserRef): boolean {
+  return user.handle === user.id && user.displayName === user.id;
+}
+
+function mergeUser(existing: UserRef, next: UserRef): UserRef {
+  if (isFallbackUser(next) && !isFallbackUser(existing)) return existing;
+  if (
+    existing.handle === next.handle &&
+    existing.displayName === next.displayName &&
+    existing.id === next.id
+  ) {
+    return existing;
+  }
+  return next;
+}
+
 function upsertUser(users: UserRef[], user: UserRef): UserRef[] {
-  if (users.some((u) => u.id === user.id)) return users;
-  return [...users, user];
+  const index = users.findIndex((u) => u.id === user.id);
+  if (index === -1) return [...users, user];
+  const existing = users[index];
+  if (!existing) return users;
+  const next = mergeUser(existing, user);
+  if (next === existing) return users;
+  return users.map((u, i) => (i === index ? next : u));
+}
+
+function dedupeUsers(users: UserRef[]): UserRef[] {
+  return users.reduce<UserRef[]>((acc, user) => upsertUser(acc, user), []);
+}
+
+function userFromIdentity(
+  identity: string,
+  call: CallWire,
+  me: UserRef,
+  channels: Channel[],
+  knownUsers: UserRef[] = [],
+): UserRef {
+  if (identity === me.id) return me;
+  const channelMember = channels
+    .find((channel) => channel.id === call.channelId)
+    ?.members?.find((u) => u.id === identity);
+  const callParticipant = call.participants.find((u) => u.id === identity);
+  const knownUser = knownUsers.find((u) => u.id === identity);
+  const candidates = [channelMember, callParticipant, knownUser].filter(
+    (user): user is UserRef => user != null,
+  );
+  return (
+    candidates.find((user) => !isFallbackUser(user)) ??
+    candidates[0] ??
+    fallbackUser(identity)
+  );
+}
+
+function enrichParticipants(
+  users: UserRef[],
+  call: CallWire,
+  me: UserRef,
+  channels: Channel[],
+): UserRef[] {
+  return dedupeUsers(users.map((user) => userFromIdentity(user.id, call, me, channels, users)));
+}
+
+function participantsFor(call: CallWire, me: UserRef, channels: Channel[]): UserRef[] {
+  const participants = call.participants.some((u) => u.id === me.id)
+    ? call.participants
+    : [me, ...call.participants];
+  return enrichParticipants(participants, call, me, channels);
+}
+
+function upsertIdentityParticipant(
+  current: ActiveCallState,
+  identity: string,
+  me: UserRef,
+  channels: Channel[],
+): UserRef[] {
+  return upsertUser(
+    current.participants,
+    userFromIdentity(identity, current.call, me, channels, current.participants),
+  );
+}
+
+function upsertIdentityParticipants(
+  current: ActiveCallState,
+  identities: string[],
+  me: UserRef,
+  channels: Channel[],
+): UserRef[] {
+  return identities.reduce(
+    (participants, identity) =>
+      upsertUser(participants, userFromIdentity(identity, current.call, me, channels, participants)),
+    current.participants,
+  );
 }
 
 function removeUser(users: UserRef[], userId: string): UserRef[] {
   return users.filter((u) => u.id !== userId);
 }
 
-function participantsFor(call: CallWire, me: UserRef): UserRef[] {
-  return call.participants.some((u) => u.id === me.id)
-    ? call.participants
-    : [me, ...call.participants];
-}
-
 function callUnavailable(err: unknown): boolean {
   return err instanceof ApiError && err.status === 503 && err.code === 'calls_unconfigured';
 }
 
-export function useCall(me: UserRef) {
+export function useCall(me: UserRef, channels: Channel[]) {
+  const channelsRef = useRef(channels);
+
+  channelsRef.current = channels;
+
+  function currentChannels(): Channel[] {
+    return channelsRef.current;
+  }
+
   const [incomingCall, setIncomingCall] = useState<CallWire | null>(null);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -68,6 +159,22 @@ export function useCall(me: UserRef) {
   const intentionalDisconnectRef = useRef(false);
 
   activeCallRef.current = activeCall;
+
+  useEffect(() => {
+    setActiveCall((current) =>
+      current
+        ? {
+            ...current,
+            participants: enrichParticipants(
+              current.participants,
+              current.call,
+              me,
+              channels,
+            ),
+          }
+        : current,
+    );
+  }, [channels, me]);
 
   const updateActiveCall = useCallback((fn: (current: ActiveCallState) => ActiveCallState) => {
     setActiveCall((current) => (current ? fn(current) : current));
@@ -120,7 +227,12 @@ export function useCall(me: UserRef) {
       const onParticipantConnected = (participant: RemoteParticipant) => {
         updateActiveCall((current) => ({
           ...current,
-          participants: upsertUser(current.participants, userFromIdentity(participant.identity)),
+          participants: upsertIdentityParticipant(
+            current,
+            participant.identity,
+            me,
+            currentChannels(),
+          ),
         }));
       };
       const onParticipantDisconnected = (participant: RemoteParticipant) => {
@@ -146,9 +258,11 @@ export function useCall(me: UserRef) {
         participant: RemoteParticipant,
       ) => removeRemoteAudioTrack(publication, participant);
       const onActiveSpeakersChanged = (speakers: Participant[]) => {
+        const speakerIds = speakers.map((speaker) => speaker.identity);
         updateActiveCall((current) => ({
           ...current,
-          activeSpeakerIds: new Set(speakers.map((speaker) => speaker.identity)),
+          participants: upsertIdentityParticipants(current, speakerIds, me, currentChannels()),
+          activeSpeakerIds: new Set(speakerIds),
         }));
       };
       const onDisconnected = () => {
@@ -181,7 +295,7 @@ export function useCall(me: UserRef) {
         room.off(RoomEvent.Disconnected, onDisconnected);
       };
     },
-    [addRemoteAudioTrack, removeRemoteAudioTrack, updateActiveCall],
+    [addRemoteAudioTrack, me, removeRemoteAudioTrack, updateActiveCall],
   );
 
   const connectToCall = useCallback(
@@ -203,7 +317,7 @@ export function useCall(me: UserRef) {
       setActiveCall({
         call: join.call,
         phase: 'connecting',
-        participants: participantsFor(join.call, me),
+        participants: participantsFor(join.call, me, currentChannels()),
         remoteAudioTracks: [],
         activeSpeakerIds: new Set(),
         muted: false,
@@ -217,7 +331,12 @@ export function useCall(me: UserRef) {
           for (const participant of room.remoteParticipants.values()) {
             updateActiveCall((active) => ({
               ...active,
-              participants: upsertUser(active.participants, userFromIdentity(participant.identity)),
+              participants: upsertIdentityParticipant(
+                active,
+                participant.identity,
+                me,
+                currentChannels(),
+              ),
             }));
             for (const publication of participant.trackPublications.values()) {
               const track = publication.track;
@@ -260,7 +379,7 @@ export function useCall(me: UserRef) {
             ? {
                 ...current,
                 call: event.call,
-                participants: participantsFor(event.call, me),
+                participants: participantsFor(event.call, me, currentChannels()),
               }
             : current,
         );
