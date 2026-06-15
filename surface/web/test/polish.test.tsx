@@ -487,7 +487,7 @@ describe('terminal session pane', () => {
       channelId: 'ch-1',
       threadRootEventId: null,
       title: 'finished task',
-      status: 'completed',
+      status: 'failed',
       harness: 'claude-code',
       spawnedBy: 'u-alice',
       spawnerName: 'Alice',
@@ -510,5 +510,35 @@ describe('terminal session pane', () => {
     expect(screen.queryByText('Cancel')).toBeNull();
     // Transcript replay hasn't finished → loading, not a false "No transcript."
     expect(screen.getByText('Loading transcript…')).toBeTruthy();
+  });
+
+  it('a completed session is resumable, not read-only', () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    const completed: Session = {
+      id: 's-completed',
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      title: 'completed task',
+      status: 'completed',
+      harness: 'claude-code',
+      spawnedBy: 'u-alice',
+      spawnerName: 'Alice',
+      driverId: 'u-alice',
+      driverName: 'Alice',
+      pendingSeatRequests: [],
+      seatEvents: [],
+      costUsd: 0.5,
+      resultText: 'shipped',
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      completedAt: new Date().toISOString(),
+      lastEventId: 9,
+      permalink: '/s/s-completed',
+    };
+    render(<SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    // completed is idle/resumable — no read-only notice, result still shown
+    expect(screen.queryByText(/Session ended/)).toBeNull();
+    expect(screen.getByText('shipped')).toBeTruthy();
   });
 });

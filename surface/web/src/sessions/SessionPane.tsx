@@ -80,6 +80,9 @@ export function SessionPane({
       ? normalizeExecutionStatus(stream.status)
       : session.status;
   const displayTerminal = isTerminalSessionStatus(displayStatus);
+  // A completed session is idle/resumable (a steer regresses completed→queued),
+  // NOT ended — only failed/cancelled are truly read-only.
+  const isEnded = displayStatus === 'failed' || displayStatus === 'cancelled';
   const now = useNow(!displayTerminal);
   const stalled = !displayTerminal && stream.status === 'idle' && isStalledSessionStatus(session, now);
   const costUsd = Math.max(session.costUsd, stream.costUsd);
@@ -405,7 +408,7 @@ export function SessionPane({
         ))}
       </div>
 
-      {displayTerminal ? (
+      {isEnded ? (
         <div className="shrink-0 border-t border-edge px-4 py-2.5 text-2xs text-fg-muted">
           Session ended — transcript is read-only.
         </div>
