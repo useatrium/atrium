@@ -160,6 +160,39 @@ function emitSuggestionResolved(
   });
 }
 
+let proposalSeq = 0;
+
+function emitAnswerProposed(
+  run: MockRun,
+  author: UserRef,
+  questionId: string,
+  answers: Record<string, { answers: string[] }>,
+): string {
+  const proposalId = `mock-prop-${++proposalSeq}`;
+  emitWire('session.answer_proposed', run.wire.channelId, run.wire.threadRootEventId, author, {
+    sessionId: run.wire.id,
+    proposalId,
+    questionId,
+    authorId: author.id,
+    answers,
+  });
+  return proposalId;
+}
+
+function emitAnswerProposalResolved(
+  run: MockRun,
+  actor: UserRef,
+  proposalId: string,
+  status: 'submitted' | 'dismissed',
+): void {
+  emitWire('session.answer_proposal_resolved', run.wire.channelId, run.wire.threadRootEventId, actor, {
+    sessionId: run.wire.id,
+    proposalId,
+    status,
+    resolvedBy: actor.id,
+  });
+}
+
 // ---- fixture scripts --------------------------------------------------------
 
 /** C_longstream replayed 3x: re-numbered event ids, fresh uuids per replay. */
@@ -461,6 +494,17 @@ export interface SessionsMockApi {
     action: 'send' | 'dismiss',
     opts: { text?: string; note?: string },
   ): Promise<void>;
+  proposeAnswer(
+    id: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ): Promise<void>;
+  resolveAnswerProposal(
+    id: string,
+    proposalId: string,
+    action: 'submit' | 'dismiss',
+    opts: { note?: string },
+  ): Promise<void>;
   openStream(
     sessionId: string,
     afterEventId: number,
@@ -651,6 +695,19 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
           run.tickMs = 80;
         }
         ensureRunning(run);
+      },
+
+      async proposeAnswer(id, questionId, answers) {
+        const me = await mockMe();
+        emitAnswerProposed(getRun(id), me, questionId, answers);
+      },
+
+      async resolveAnswerProposal(id, proposalId, action) {
+        const me = await mockMe();
+        const run = getRun(id);
+        emitAnswerProposalResolved(run, me, proposalId, action === 'submit' ? 'submitted' : 'dismissed');
+        // Submitting answers the question; clear the pending prompt.
+        if (action === 'submit') run.wire.pendingQuestion = null;
       },
 
       openStream(sessionId, afterEventId, cb) {

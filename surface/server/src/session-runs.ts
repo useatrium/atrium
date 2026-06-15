@@ -35,6 +35,7 @@ export interface SessionJson {
   driver: SessionUserJson | null;
   pendingSeatRequests: SessionUserJson[];
   suggestions: SessionSuggestionJson[];
+  answerProposals: SessionAnswerProposalJson[];
   pendingQuestion: SessionPendingQuestionJson | null;
   viewerCount: number;
   costUsd: number;
@@ -61,6 +62,22 @@ export interface SessionSuggestionJson {
   resolvedBy: string | null;
   resolvedByName: string | null;
   sentText: string | null;
+  note: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export type AnswerProposalStatus = 'pending' | 'submitted' | 'dismissed';
+
+export interface SessionAnswerProposalJson {
+  id: string;
+  questionId: string;
+  authorId: string;
+  authorName: string;
+  answers: QuestionAnswerBody;
+  status: AnswerProposalStatus;
+  resolvedBy: string | null;
+  resolvedByName: string | null;
   note: string | null;
   createdAt: string;
   resolvedAt: string | null;
@@ -156,6 +173,20 @@ interface SessionSuggestionRow {
   resolved_by: string | null;
   resolved_by_name: string | null;
   sent_text: string | null;
+  note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+interface SessionAnswerProposalRow {
+  id: string;
+  question_id: string;
+  author_id: string;
+  author_name: string;
+  answers: QuestionAnswerBody;
+  status: AnswerProposalStatus;
+  resolved_by: string | null;
+  resolved_by_name: string | null;
   note: string | null;
   created_at: string;
   resolved_at: string | null;
@@ -824,6 +855,133 @@ export class SessionRuns {
     return { event, postedSteer: false };
   }
 
+  // ---- HITL answer proposals (Phase 2) -------------------------------------
+
+  /**
+   * A watcher proposes an answer to the pending question; the driver later
+   * submits or dismisses it. Runs in the route's transaction.
+   */
+  async createAnswerProposalInTx(
+    client: DbClient,
+    id: string,
+    userId: string,
+    questionId: string,
+    answers: QuestionAnswerBody,
+  ): Promise<WireEvent> {
+    const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
+    const row = session.rows[0];
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    const pending = parsePendingQuestion(row.pending_question);
+    if (!pending || pending.questionId !== questionId) {
+      throw new DomainError(409, 'question_not_pending', 'question is not pending');
+    }
+    // The driver answers directly; only watchers propose.
+    if (row.driver_id === userId) {
+      throw new DomainError(409, 'driver_answers_directly', 'the driver answers directly');
+    }
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO session_answer_proposals (session_id, question_id, author_id, answers)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [id, questionId, userId, JSON.stringify(answers)],
+    );
+    return appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.answer_proposed',
+      actorId: userId,
+      payload: { sessionId: id, proposalId: inserted.rows[0]!.id, questionId, authorId: userId, answers },
+    });
+  }
+
+  /**
+   * The driver disposes of a pending answer proposal. `submit` answers the
+   * question with the proposal's answers (driver-attributed, reusing the answer
+   * path); `dismiss` records an optional reason. Both events publish post-commit.
+   */
+  async resolveAnswerProposalInTx(
+    client: DbClient,
+    id: string,
+    driver: UserRef,
+    proposalId: string,
+    action: 'submit' | 'dismiss',
+    opts: { note?: string } = {},
+  ): Promise<{ events: WireEvent[]; postedAnswer: boolean }> {
+    const row = await this.requireDriverInTx(client, id, driver.id);
+    const res = await client.query<{ question_id: string; answers: QuestionAnswerBody; status: AnswerProposalStatus }>(
+      'SELECT question_id, answers, status FROM session_answer_proposals WHERE id = $1 AND session_id = $2 FOR UPDATE',
+      [proposalId, id],
+    );
+    const proposal = res.rows[0];
+    if (!proposal) {
+      throw new DomainError(404, 'proposal_not_found', 'proposal not found');
+    }
+    if (proposal.status !== 'pending') {
+      throw new DomainError(409, 'proposal_resolved', 'proposal already resolved');
+    }
+
+    if (action === 'submit') {
+      // Answer the question as the driver (validates still-pending + running +
+      // posts to Centaur), then record the disposition.
+      const answerEvent = await this.answerQuestionInTx(
+        client,
+        id,
+        driver,
+        proposal.question_id,
+        proposal.answers,
+      );
+      await client.query(
+        `UPDATE session_answer_proposals
+         SET status = 'submitted', resolved_by = $1, resolved_at = now()
+         WHERE id = $2`,
+        [driver.id, proposalId],
+      );
+      const resolvedEvent = await appendEvent(client, {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: row.thread_root_event_id,
+        type: 'session.answer_proposal_resolved',
+        actorId: driver.id,
+        payload: {
+          sessionId: id,
+          proposalId,
+          questionId: proposal.question_id,
+          status: 'submitted',
+          resolvedBy: driver.id,
+        },
+      });
+      const events = answerEvent ? [answerEvent, resolvedEvent] : [resolvedEvent];
+      return { events, postedAnswer: true };
+    }
+
+    const note = (opts.note ?? '').trim();
+    await client.query(
+      `UPDATE session_answer_proposals
+       SET status = 'dismissed', resolved_by = $1, note = $2, resolved_at = now()
+       WHERE id = $3`,
+      [driver.id, note || null, proposalId],
+    );
+    const event = await appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.answer_proposal_resolved',
+      actorId: driver.id,
+      payload: {
+        sessionId: id,
+        proposalId,
+        questionId: proposal.question_id,
+        status: 'dismissed',
+        resolvedBy: driver.id,
+        ...(note ? { note } : {}),
+      },
+    });
+    return { events: [event], postedAnswer: false };
+  }
+
   async resumeActiveSessions(): Promise<void> {
     if (!this.autoResume) return;
     const terminal = await this.pool.query<Pick<SessionRow, 'id'>>(
@@ -1465,7 +1623,7 @@ export class SessionRuns {
   }
 
   private async toJsonWithSeatInfo(row: SessionRow): Promise<SessionJson> {
-    const [driver, requests, viewers, suggestions] = await Promise.all([
+    const [driver, requests, viewers, suggestions, proposals] = await Promise.all([
       row.driver_id
         ? this.pool.query<SessionUserRow>(
             'SELECT id AS user_id, display_name FROM users WHERE id = $1',
@@ -1498,6 +1656,20 @@ export class SessionRuns {
          ORDER BY s.created_at ASC`,
         [row.id],
       ),
+      // Pending proposals only — they're moot once the question resolves; the
+      // disposition record for resolved ones lives in the event log.
+      this.pool.query<SessionAnswerProposalRow>(
+        `SELECT p.id, p.question_id, p.author_id, a.display_name AS author_name,
+                p.answers, p.status,
+                p.resolved_by, r.display_name AS resolved_by_name,
+                p.note, p.created_at, p.resolved_at
+         FROM session_answer_proposals p
+         JOIN users a ON a.id = p.author_id
+         LEFT JOIN users r ON r.id = p.resolved_by
+         WHERE p.session_id = $1 AND p.status = 'pending'
+         ORDER BY p.created_at ASC`,
+        [row.id],
+      ),
     ]);
     return toJson(row, {
       driver: driver.rows[0] ? toSessionUserJson(driver.rows[0]) : null,
@@ -1505,6 +1677,7 @@ export class SessionRuns {
       // node-pg returns count() as a string; coerce so JSON carries a number.
       viewerCount: Number(viewers.rows[0]?.viewer_count ?? 0),
       suggestions: suggestions.rows.map(toSessionSuggestionJson),
+      answerProposals: proposals.rows.map(toSessionAnswerProposalJson),
     });
   }
 
@@ -1575,6 +1748,7 @@ function toJson(
     pendingSeatRequests?: SessionUserJson[];
     viewerCount?: number;
     suggestions?: SessionSuggestionJson[];
+    answerProposals?: SessionAnswerProposalJson[];
   } = {},
 ): SessionJson {
   return {
@@ -1590,6 +1764,7 @@ function toJson(
     driver: seatInfo.driver ?? null,
     pendingSeatRequests: seatInfo.pendingSeatRequests ?? [],
     suggestions: seatInfo.suggestions ?? [],
+    answerProposals: seatInfo.answerProposals ?? [],
     pendingQuestion: parsePendingQuestion(row.pending_question),
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
@@ -1631,6 +1806,22 @@ function toSessionSuggestionJson(row: SessionSuggestionRow): SessionSuggestionJs
     resolvedBy: row.resolved_by,
     resolvedByName: row.resolved_by_name,
     sentText: row.sent_text,
+    note: row.note,
+    createdAt: new Date(row.created_at).toISOString(),
+    resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+  };
+}
+
+function toSessionAnswerProposalJson(row: SessionAnswerProposalRow): SessionAnswerProposalJson {
+  return {
+    id: row.id,
+    questionId: row.question_id,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    answers: row.answers,
+    status: row.status,
+    resolvedBy: row.resolved_by,
+    resolvedByName: row.resolved_by_name,
     note: row.note,
     createdAt: new Date(row.created_at).toISOString(),
     resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,

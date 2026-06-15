@@ -32,6 +32,7 @@ function bSession(overrides: Partial<Session> = {}): Session {
     driverId: null,
     pendingSeatRequests: [],
     suggestions: [],
+    answerProposals: [],
     seatEvents: [],
     costUsd: 0,
     resultText: null,
@@ -352,6 +353,157 @@ describe('driver seat', () => {
     // The grant also cleared Bob's pending request.
     expect(s.sessions['s-b']!.pendingSeatRequests).toEqual([]);
     expect(screen.queryByTestId('seat-request-banner')).toBeNull();
+  });
+});
+
+// ---- HITL answer proposals (Phase 2) ----------------------------------------
+
+describe('answer proposals', () => {
+  const question = {
+    questionId: 'q1',
+    questions: [
+      {
+        id: 'choice',
+        header: 'Decision',
+        question: 'Which path?',
+        options: [
+          { label: 'Fast', description: 'ship it' },
+          { label: 'Careful', description: 'go slow' },
+        ],
+      },
+    ],
+  };
+
+  it('folds answer_proposed / answer_proposal_resolved onto the entity', () => {
+    let s = spawnedState(); // me drives s-b
+    s = appReducer(s, {
+      type: 'server-event',
+      event: seatWire(
+        400,
+        'session.answer_proposed',
+        {
+          sessionId: 's-b',
+          proposalId: 'prop-1',
+          questionId: 'q1',
+          authorId: bob.id,
+          answers: { choice: { answers: ['Fast'] } },
+        },
+        bob,
+      ),
+    });
+    expect(s.sessions['s-b']!.answerProposals).toEqual([
+      expect.objectContaining({
+        id: 'prop-1',
+        questionId: 'q1',
+        authorId: bob.id,
+        authorName: 'Bob',
+        status: 'pending',
+      }),
+    ]);
+    s = appReducer(s, {
+      type: 'server-event',
+      event: seatWire(
+        401,
+        'session.answer_proposal_resolved',
+        { sessionId: 's-b', proposalId: 'prop-1', status: 'submitted', resolvedBy: me.id },
+        me,
+      ),
+    });
+    expect(s.sessions['s-b']!.answerProposals[0]!.status).toBe('submitted');
+  });
+
+  it('spectator: the answer form is enabled and Propose posts proposeAnswer', async () => {
+    const fetchMock = stub202();
+    const session = bSession({
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      driverId: alice.id,
+      driverName: alice.displayName,
+      pendingQuestion: question,
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[alice, me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText('Fast'));
+    fireEvent.click(screen.getByRole('button', { name: 'Propose answer' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/sessions/s-b/question-proposals');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      questionId: 'q1',
+      answers: { choice: { answers: ['Fast'] } },
+    });
+  });
+
+  it('driver: the proposals strip Submit posts resolve {action:submit}', async () => {
+    const fetchMock = stub202();
+    const session = bSession({
+      pendingQuestion: question,
+      answerProposals: [
+        {
+          id: 'prop-1',
+          questionId: 'q1',
+          authorId: bob.id,
+          authorName: 'Bob',
+          answers: { choice: { answers: ['Fast'] } },
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    const strip = screen.getByTestId('answer-proposals');
+    expect(within(strip).getByText('Bob')).toBeTruthy();
+    expect(within(strip).getByText(/Fast/)).toBeTruthy();
+    fireEvent.click(within(strip).getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/sessions/s-b/question-proposals/prop-1/resolve');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({ action: 'submit' });
+  });
+
+  it('driver: the proposals strip Dismiss posts resolve {action:dismiss}', async () => {
+    const fetchMock = stub202();
+    const session = bSession({
+      pendingQuestion: question,
+      answerProposals: [
+        {
+          id: 'prop-1',
+          questionId: 'q1',
+          authorId: bob.id,
+          authorName: 'Bob',
+          answers: { choice: { answers: ['Fast'] } },
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    const strip = screen.getByTestId('answer-proposals');
+    fireEvent.click(within(strip).getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({ action: 'dismiss' });
   });
 });
 

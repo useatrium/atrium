@@ -199,6 +199,37 @@ export const sessionsApi = {
     });
   },
 
+  // ---- HITL answer proposals (Phase 2) ----
+
+  /** A watcher proposes an answer to the pending question. */
+  proposeAnswer(
+    id: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+    opId?: string,
+  ): Promise<void> {
+    if (sessionsMock) return sessionsMock.proposeAnswer(id, questionId, answers);
+    return reqAccepted(`/api/sessions/${id}/question-proposals`, {
+      method: 'POST',
+      body: JSON.stringify({ questionId, answers, ...(opId ? { opId } : {}) }),
+    });
+  },
+
+  /** Driver-only. `submit` answers the question; `dismiss` takes an optional reason. */
+  resolveAnswerProposal(
+    id: string,
+    proposalId: string,
+    action: 'submit' | 'dismiss',
+    opts: { note?: string } = {},
+    opId?: string,
+  ): Promise<void> {
+    if (sessionsMock) return sessionsMock.resolveAnswerProposal(id, proposalId, action, opts);
+    return reqAccepted(`/api/sessions/${id}/question-proposals/${proposalId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ action, ...opts, ...(opId ? { opId } : {}) }),
+    });
+  },
+
   /** Cookie-authed SSE of Centaur frames, resumable via after_event_id. */
   openStream(
     sessionId: string,

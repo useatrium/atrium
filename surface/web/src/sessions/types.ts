@@ -15,6 +15,8 @@ export type {
   SessionQuestionEvent,
   SessionSuggestion,
   SuggestionStatus,
+  SessionAnswerProposal,
+  AnswerProposalStatus,
   SessionWire,
   SessionListItem,
   Session,

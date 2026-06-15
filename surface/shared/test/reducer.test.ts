@@ -820,6 +820,7 @@ describe('unified sync application', () => {
       driverId: alice.id,
       pendingSeatRequests: [],
       suggestions: [],
+      answerProposals: [],
       pendingQuestion: null,
       seatEvents: [],
       costUsd: 0,

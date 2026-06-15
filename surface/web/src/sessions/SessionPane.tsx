@@ -34,6 +34,7 @@ import {
   type QuestionPrompt,
   type Session,
   type SessionSuggestion,
+  type SessionAnswerProposal,
   type SessionQuestionAnswerSummary,
   type SessionQuestionEvent,
   type SessionStatus,
@@ -193,6 +194,15 @@ export function SessionPane({
     setSuggestError(null);
     sessionsApi.createSuggestion(session.id, text, randomId()).catch(() => setSuggestError(text));
   };
+
+  // Pending HITL answer proposals for the live question (driver decides).
+  const questionProposals = useMemo(
+    () =>
+      (session.answerProposals ?? []).filter(
+        (p) => p.status === 'pending' && p.questionId === pendingQuestion?.questionId,
+      ),
+    [session.answerProposals, pendingQuestion],
+  );
 
   // Cancel is destructive and possibly shared — two-step inline confirm.
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
@@ -371,8 +381,7 @@ export function SessionPane({
           pending={pendingQuestion}
           isDriver={isDriver}
           driverName={driverName}
-          seatRequested={seatRequested}
-          requestSeat={requestSeat}
+          proposals={questionProposals}
           onAnswerQuestion={onAnswerQuestion}
         />
       )}
@@ -601,16 +610,15 @@ function QuestionBanner({
   pending,
   isDriver,
   driverName,
-  seatRequested,
-  requestSeat,
+  proposals,
   onAnswerQuestion,
 }: {
   sessionId: string;
   pending: { questionId: string; questions: QuestionPrompt[] };
   isDriver: boolean;
   driverName: string;
-  seatRequested: boolean;
-  requestSeat: () => void;
+  /** Pending answer proposals for this question (driver decides). */
+  proposals: SessionAnswerProposal[];
   onAnswerQuestion: (
     sessionId: string,
     questionId: string,
@@ -622,11 +630,13 @@ function QuestionBanner({
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [cleared, setCleared] = useState<string | null>(null);
+  const [proposed, setProposed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setValues({});
     setSubmitting(false);
     setCleared(null);
+    setProposed(false);
     setError(null);
   }, [pending.questionId]);
   if (cleared === pending.questionId) return null;
@@ -636,16 +646,25 @@ function QuestionBanner({
     setValues((prev) => ({ ...prev, [id]: value }));
   };
   const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
+  // The driver answers directly; a spectator proposes an answer the driver decides.
   const submit = () => {
     if (!complete || submitting) return;
     const answers: Record<string, { answers: string[] }> = {};
     for (const q of pending.questions) answers[q.id] = { answers: [values[q.id]!.trim()] };
     setSubmitting(true);
     setError(null);
-    onAnswerQuestion(sessionId, pending.questionId, answers)
-      .then(() => setCleared(pending.questionId))
-      .catch(() => setError("Answer didn't send. Try again."))
-      .finally(() => setSubmitting(false));
+    if (isDriver) {
+      onAnswerQuestion(sessionId, pending.questionId, answers)
+        .then(() => setCleared(pending.questionId))
+        .catch(() => setError("Answer didn't send. Try again."))
+        .finally(() => setSubmitting(false));
+    } else {
+      sessionsApi
+        .proposeAnswer(sessionId, pending.questionId, answers, randomId())
+        .then(() => setProposed(true))
+        .catch(() => setError("Proposal didn't send. Try again."))
+        .finally(() => setSubmitting(false));
+    }
   };
 
   return (
@@ -675,7 +694,7 @@ function QuestionBanner({
           const inputId = `${bannerId}-answer-${questionIndex}`;
           const groupName = `${bannerId}-options-${questionIndex}`;
           return (
-            <fieldset key={q.id} className="space-y-1" disabled={!isDriver || submitting}>
+            <fieldset key={q.id} className="space-y-1" disabled={submitting}>
               <legend className="flex items-center gap-2">
                 <span className="rounded bg-surface-overlay px-1.5 py-px text-3xs font-semibold text-fg-secondary">
                   {q.header}
@@ -701,14 +720,14 @@ function QuestionBanner({
                           selected
                             ? 'border-warning bg-warning/15 text-warning-text-strong'
                             : 'border-edge-strong bg-surface-raised/70 text-fg-body hover:border-edge-hover'
-                        } ${!isDriver || submitting ? 'cursor-not-allowed opacity-60' : ''}`}
+                        } ${submitting ? 'cursor-not-allowed opacity-60' : ''}`}
                       >
                         <input
                           type="radio"
                           name={groupName}
                           value={option.label}
                           checked={selected}
-                          disabled={!isDriver || submitting}
+                          disabled={submitting}
                           onChange={() => setAnswer(q.id, option.label)}
                           aria-describedby={`${promptId} ${optionDescId}`}
                           className="sr-only"
@@ -732,7 +751,7 @@ function QuestionBanner({
                   <input
                     id={inputId}
                     type={q.isSecret ? 'password' : 'text'}
-                    disabled={!isDriver || submitting}
+                    disabled={submitting}
                     value={values[q.id] ?? ''}
                     onChange={(e) => setAnswer(q.id, e.target.value)}
                     aria-describedby={promptId}
@@ -753,6 +772,26 @@ function QuestionBanner({
           {error}
         </div>
       )}
+
+      {isDriver && proposals.length > 0 && (
+        <div
+          data-testid="answer-proposals"
+          className="mt-2 space-y-2 border-t border-warning-border/30 pt-2"
+        >
+          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
+            Proposed answers · {proposals.length}
+          </div>
+          {proposals.map((p) => (
+            <AnswerProposalRow
+              key={p.id}
+              sessionId={sessionId}
+              proposal={p}
+              questions={pending.questions}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="mt-2 flex items-center justify-between gap-2">
         {isDriver ? (
           <button
@@ -762,17 +801,79 @@ function QuestionBanner({
           >
             {submitting ? 'Answering…' : 'Submit answer'}
           </button>
-        ) : seatRequested ? (
-          <span className="text-2xs text-fg-muted">seat requested</span>
+        ) : proposed ? (
+          <span className="text-2xs text-fg-muted">proposal sent — {driverName} decides</span>
         ) : (
           <button
-            onClick={requestSeat}
-            className="rounded border border-accent-border-muted/60 px-2 py-0.5 text-2xs font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
+            onClick={submit}
+            disabled={!complete || submitting}
+            className="rounded border border-accent-border-muted/60 px-2 py-0.5 text-2xs font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Request seat
+            {submitting ? 'Proposing…' : 'Propose answer'}
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function AnswerProposalRow({
+  sessionId,
+  proposal,
+  questions,
+}: {
+  sessionId: string;
+  proposal: SessionAnswerProposal;
+  questions: QuestionPrompt[];
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const resolve = (action: 'submit' | 'dismiss') => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    sessionsApi
+      .resolveAnswerProposal(sessionId, proposal.id, action, {}, randomId())
+      .catch(() =>
+        setError(action === 'submit' ? "Couldn't submit — try again." : "Couldn't dismiss — try again."),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div data-testid="answer-proposal-row" className="text-xs">
+      <div className="leading-relaxed">
+        <span className="font-semibold text-fg">{proposal.authorName ?? proposal.authorId}</span>{' '}
+        <span className="text-fg-muted">proposes</span>
+      </div>
+      <div className="mt-0.5 space-y-0.5">
+        {questions.map((q) => (
+          <div key={q.id} className="break-words text-fg-body">
+            <span className="text-fg-muted">{q.header}: </span>
+            {(proposal.answers[q.id]?.answers ?? []).join(', ') || '—'}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <button
+          disabled={busy}
+          onClick={() => resolve('submit')}
+          className="rounded border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-body hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Submit
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => resolve('dismiss')}
+          className="rounded px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Dismiss
+        </button>
+      </div>
+      {error && (
+        <div role="alert" className="mt-0.5 text-2xs text-danger-text">
+          {error}
+        </div>
+      )}
     </div>
   );
 }
