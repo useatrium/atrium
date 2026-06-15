@@ -613,4 +613,24 @@ describe('session transcript rendering', () => {
     // the agent's reply renders as plain text beneath it
     expect(screen.getByText('On it — reproducing now.')).toBeTruthy();
   });
+
+  it('shows a turn card (not the read-only result block) on a completed session', () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    const completed: Session = { ...running, status: 'completed', resultText: 'shipped the fix' };
+    render(
+      <SessionPane
+        session={completed}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    const card = screen.getByTestId('turn-card');
+    expect(card.textContent).toContain('Turn complete');
+    expect(card.textContent).toContain('shipped the fix');
+    // the read-only result block is reserved for failed/cancelled sessions
+    expect(screen.queryByTestId('session-result')).toBeNull();
+  });
 });

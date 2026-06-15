@@ -347,7 +347,7 @@ export function SessionPane({
         />
       )}
 
-      {displayTerminal && resultText && (
+      {isEnded && resultText && (
         <div
           data-testid="session-result"
           className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2"
@@ -409,6 +409,29 @@ export function SessionPane({
         {seatLinesAt(stream.items.length).map((e) => (
           <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
         ))}
+        {displayStatus === 'completed' && (resultText || costUsd > 0) && (
+          <div
+            data-testid="turn-card"
+            className="mt-3 rounded-lg border border-edge bg-surface-raised/40 px-3.5 py-3"
+          >
+            <div className="flex items-center gap-2 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
+              <span>Turn complete</span>
+              {(costUsd > 0 || stream.models.length > 0) && (
+                <span className="ml-auto flex items-center gap-1.5 font-normal normal-case tracking-normal text-fg-faint">
+                  {costUsd > 0 && <span className="tabular-nums">{formatCost(costUsd)}</span>}
+                  {costUsd > 0 && stream.models.length > 0 && <span>·</span>}
+                  {stream.models.length > 0 && <span>{stream.models.join(', ')}</span>}
+                </span>
+              )}
+            </div>
+            {resultText && (
+              <div className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
+                {resultText}
+              </div>
+            )}
+            <div className="mt-2 text-2xs text-fg-muted">What next? Steer the agent below.</div>
+          </div>
+        )}
       </div>
 
       {isEnded ? (

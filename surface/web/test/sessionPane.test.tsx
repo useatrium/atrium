@@ -86,8 +86,8 @@ describe('session pane folds the B_tooltest stream', () => {
     // status chip reached completed (from the terminal execution_state)
     expect(screen.getByText('completed')).toBeTruthy();
 
-    // pinned summary block carries the terminal result_text
-    const summary = screen.getByTestId('session-result');
+    // completed session: the turn card carries the terminal result_text
+    const summary = screen.getByTestId('turn-card');
     expect(within(summary).getByText(/TOOLCHAIN_OK: atrium-roundtrip-ok/)).toBeTruthy();
   });
 
