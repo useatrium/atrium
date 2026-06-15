@@ -20,7 +20,7 @@ import { ApiError } from '../api';
 import { Composer } from '../components/Composer';
 import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
 import type { UserRef } from '@atrium/surface-client';
-import { formatTime } from '@atrium/surface-client';
+import { formatTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, sessionElapsedMs, useNow } from './SessionCard';
 import {
@@ -185,7 +185,7 @@ export function SessionPane({
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const sendSuggestion = (text: string) => {
     setSuggestError(null);
-    sessionsApi.createSuggestion(session.id, text).catch(() => setSuggestError(text));
+    sessionsApi.createSuggestion(session.id, text, randomId()).catch(() => setSuggestError(text));
   };
 
   // Cancel is destructive and possibly shared — two-step inline confirm.
@@ -878,16 +878,26 @@ function SuggestionRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // On success the row leaves the pending queue (folded out) and unmounts, so
-  // only the failure path needs to restore interactivity.
+  // Switch sub-modes and drop any prior resolve error — it no longer describes
+  // the visible state.
+  const switchMode = (next: 'idle' | 'editing' | 'dismissing') => {
+    setMode(next);
+    setError(null);
+  };
+
+  // On success the row leaves the pending queue and unmounts; reset `busy`
+  // either way (via finally) so a dropped/missed resolve event can't strand the
+  // row disabled with no way to retry.
   const resolve = (action: 'send' | 'dismiss', opts: { text?: string; note?: string } = {}) => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    sessionsApi.resolveSuggestion(sessionId, suggestion.id, action, opts).catch(() => {
-      setBusy(false);
-      setError(action === 'send' ? "Couldn't send — try again." : "Couldn't dismiss — try again.");
-    });
+    sessionsApi
+      .resolveSuggestion(sessionId, suggestion.id, action, opts, randomId())
+      .catch(() =>
+        setError(action === 'send' ? "Couldn't send — try again." : "Couldn't dismiss — try again."),
+      )
+      .finally(() => setBusy(false));
   };
 
   const outlineBtn =
@@ -923,7 +933,7 @@ function SuggestionRow({
             </button>
             <button
               onClick={() => {
-                setMode('idle');
+                switchMode('idle');
                 setDraft(suggestion.text);
               }}
               className={quietBtn}
@@ -951,7 +961,7 @@ function SuggestionRow({
             </button>
             <button
               onClick={() => {
-                setMode('idle');
+                switchMode('idle');
                 setNote('');
               }}
               className={quietBtn}
@@ -965,10 +975,10 @@ function SuggestionRow({
           <button disabled={busy} onClick={() => resolve('send')} className={outlineBtn}>
             Send
           </button>
-          <button onClick={() => setMode('editing')} className={quietBtn}>
+          <button onClick={() => switchMode('editing')} className={quietBtn}>
             Edit
           </button>
-          <button onClick={() => setMode('dismissing')} className={quietBtn}>
+          <button onClick={() => switchMode('dismissing')} className={quietBtn}>
             Dismiss
           </button>
         </div>

@@ -10,8 +10,9 @@ CREATE TABLE session_suggestions (
   status       text        NOT NULL DEFAULT 'pending'
                  CHECK (status IN ('pending', 'sent', 'dismissed')),
   -- The driver who resolved it; the actually-sent text when edited-then-sent;
-  -- an optional "why" on dismiss (never required).
-  resolved_by  uuid        REFERENCES users(id),
+  -- an optional "why" on dismiss (never required). resolved_by is SET NULL on
+  -- user delete so the disposition record (retro value) outlives the resolver.
+  resolved_by  uuid        REFERENCES users(id) ON DELETE SET NULL,
   sent_text    text,
   note         text,
   created_at   timestamptz NOT NULL DEFAULT now(),

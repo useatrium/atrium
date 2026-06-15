@@ -705,95 +705,85 @@ export class SessionRuns {
 
   // ---- suggestion queue (Phase 2) ------------------------------------------
 
-  /** A watcher proposes a steer; the driver later sends or dismisses it. */
-  async createSuggestion(id: string, userId: string, text: string): Promise<void> {
-    const event = await withTx(this.pool, async (client) => {
-      const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
-      const row = session.rows[0];
-      if (!row) {
-        throw new DomainError(404, 'session_not_found', 'session not found');
-      }
-      const inserted = await client.query<{ id: string }>(
-        `INSERT INTO session_suggestions (session_id, author_id, text)
-         VALUES ($1, $2, $3)
-         RETURNING id`,
-        [id, userId, text],
-      );
-      return appendEvent(client, {
-        workspaceId: row.workspace_id,
-        channelId: row.channel_id,
-        threadRootEventId: row.thread_root_event_id,
-        type: 'session.suggestion_added',
-        actorId: userId,
-        payload: { sessionId: id, suggestionId: inserted.rows[0]!.id, authorId: userId, text },
-      });
+  /**
+   * A watcher proposes a steer; the driver later sends or dismisses it. Runs in
+   * the caller's transaction (the route wraps it in runMutation for idempotency
+   * + a single commit); the returned event is published in onApplied.
+   */
+  async createSuggestionInTx(
+    client: DbClient,
+    id: string,
+    userId: string,
+    text: string,
+  ): Promise<WireEvent> {
+    const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
+    const row = session.rows[0];
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    // A truly-ended session can't be steered, so a suggestion on it is a dead
+    // letter — refuse it (a completed session is resumable, so it's allowed).
+    if (row.status === 'failed' || row.status === 'cancelled') {
+      throw new DomainError(409, 'session_ended', 'session has ended');
+    }
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO session_suggestions (session_id, author_id, text)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [id, userId, text],
+    );
+    return appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.suggestion_added',
+      actorId: userId,
+      payload: { sessionId: id, suggestionId: inserted.rows[0]!.id, authorId: userId, text },
     });
-    this.hub.publishEvent(event);
   }
 
   /**
    * The driver disposes of a pending suggestion. `send` posts it as a steer
    * (reusing the steer path) and may carry edited text; `dismiss` records an
-   * optional reason. Resolved rows persist for the session record.
+   * optional reason. Resolved rows persist for the session record. Runs in the
+   * caller's transaction; the tailer start + event publish happen post-commit
+   * (in the route's onApplied) keyed off `postedSteer`.
    */
-  async resolveSuggestion(
+  async resolveSuggestionInTx(
+    client: DbClient,
     id: string,
     driverUserId: string,
     suggestionId: string,
     action: 'send' | 'dismiss',
     opts: { text?: string; note?: string } = {},
-  ): Promise<void> {
-    if (action === 'send') this.cancelScheduledRelease(id);
-    let postedSteer = false;
-    const event = await withTx(this.pool, async (client) => {
-      const row = await this.requireDriverInTx(client, id, driverUserId);
-      const res = await client.query<SessionSuggestionRow>(
-        'SELECT * FROM session_suggestions WHERE id = $1 AND session_id = $2 FOR UPDATE',
-        [suggestionId, id],
-      );
-      const sug = res.rows[0];
-      if (!sug) {
-        throw new DomainError(404, 'suggestion_not_found', 'suggestion not found');
-      }
-      if (sug.status !== 'pending') {
-        throw new DomainError(409, 'suggestion_resolved', 'suggestion already resolved');
-      }
+  ): Promise<{ event: WireEvent; postedSteer: boolean }> {
+    const row = await this.requireDriverInTx(client, id, driverUserId);
+    const res = await client.query<{ status: SuggestionStatus; text: string }>(
+      'SELECT status, text FROM session_suggestions WHERE id = $1 AND session_id = $2 FOR UPDATE',
+      [suggestionId, id],
+    );
+    const sug = res.rows[0];
+    if (!sug) {
+      throw new DomainError(404, 'suggestion_not_found', 'suggestion not found');
+    }
+    if (sug.status !== 'pending') {
+      throw new DomainError(409, 'suggestion_resolved', 'suggestion already resolved');
+    }
 
-      if (action === 'send') {
-        const sendText = (opts.text ?? '').trim() || sug.text;
-        const edited = sendText !== sug.text;
-        await this.postUserMessageOnce(row, driverUserId, sendText, true, client);
-        postedSteer = true;
-        await client.query(
-          `UPDATE session_suggestions
-           SET status = 'sent', resolved_by = $1, sent_text = $2, resolved_at = now()
-           WHERE id = $3`,
-          [driverUserId, edited ? sendText : null, suggestionId],
-        );
-        return appendEvent(client, {
-          workspaceId: row.workspace_id,
-          channelId: row.channel_id,
-          threadRootEventId: row.thread_root_event_id,
-          type: 'session.suggestion_resolved',
-          actorId: driverUserId,
-          payload: {
-            sessionId: id,
-            suggestionId,
-            status: 'sent',
-            resolvedBy: driverUserId,
-            ...(edited ? { sentText: sendText } : {}),
-          },
-        });
-      }
-
-      const note = (opts.note ?? '').trim();
+    if (action === 'send') {
+      // Mirror the steer path: cancel the idle-release so the freshly-steered
+      // session isn't torn down underneath the turn it's about to run.
+      this.cancelScheduledRelease(id);
+      const sendText = (opts.text ?? '').trim() || sug.text;
+      const edited = sendText !== sug.text;
+      await this.postUserMessageOnce(row, driverUserId, sendText, true, client);
       await client.query(
         `UPDATE session_suggestions
-         SET status = 'dismissed', resolved_by = $1, note = $2, resolved_at = now()
+         SET status = 'sent', resolved_by = $1, sent_text = $2, resolved_at = now()
          WHERE id = $3`,
-        [driverUserId, note || null, suggestionId],
+        [driverUserId, edited ? sendText : null, suggestionId],
       );
-      return appendEvent(client, {
+      const event = await appendEvent(client, {
         workspaceId: row.workspace_id,
         channelId: row.channel_id,
         threadRootEventId: row.thread_root_event_id,
@@ -802,14 +792,36 @@ export class SessionRuns {
         payload: {
           sessionId: id,
           suggestionId,
-          status: 'dismissed',
+          status: 'sent',
           resolvedBy: driverUserId,
-          ...(note ? { note } : {}),
+          ...(edited ? { sentText: sendText } : {}),
         },
       });
+      return { event, postedSteer: true };
+    }
+
+    const note = (opts.note ?? '').trim();
+    await client.query(
+      `UPDATE session_suggestions
+       SET status = 'dismissed', resolved_by = $1, note = $2, resolved_at = now()
+       WHERE id = $3`,
+      [driverUserId, note || null, suggestionId],
+    );
+    const event = await appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.suggestion_resolved',
+      actorId: driverUserId,
+      payload: {
+        sessionId: id,
+        suggestionId,
+        status: 'dismissed',
+        resolvedBy: driverUserId,
+        ...(note ? { note } : {}),
+      },
     });
-    if (postedSteer) this.afterPostUserMessage(id);
-    this.hub.publishEvent(event);
+    return { event, postedSteer: false };
   }
 
   async resumeActiveSessions(): Promise<void> {

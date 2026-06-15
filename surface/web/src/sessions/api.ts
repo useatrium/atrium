@@ -176,11 +176,11 @@ export const sessionsApi = {
   // ---- suggestion queue (Phase 2) ----
 
   /** A watcher proposes a steer the driver later sends or dismisses. */
-  createSuggestion(id: string, text: string): Promise<void> {
+  createSuggestion(id: string, text: string, opId?: string): Promise<void> {
     if (sessionsMock) return sessionsMock.createSuggestion(id, text);
     return reqAccepted(`/api/sessions/${id}/suggestions`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(opId ? { opId } : {}) }),
     });
   },
 
@@ -190,11 +190,12 @@ export const sessionsApi = {
     suggestionId: string,
     action: 'send' | 'dismiss',
     opts: { text?: string; note?: string } = {},
+    opId?: string,
   ): Promise<void> {
     if (sessionsMock) return sessionsMock.resolveSuggestion(id, suggestionId, action, opts);
     return reqAccepted(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, ...opts }),
+      body: JSON.stringify({ action, ...opts, ...(opId ? { opId } : {}) }),
     });
   },
 

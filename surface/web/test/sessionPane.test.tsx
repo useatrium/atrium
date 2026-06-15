@@ -417,7 +417,7 @@ describe('suggestion queue', () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('/api/sessions/s-b/suggestions/sug-1/resolve');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toEqual({ action: 'send' });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ action: 'send' });
   });
 
   it('driver strip: Edit-then-send posts the edited text', async () => {
@@ -430,7 +430,7 @@ describe('suggestion queue', () => {
     });
     fireEvent.click(within(strip).getByRole('button', { name: 'Send edited' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({
       action: 'send',
       text: 'run tests -v',
     });
@@ -446,7 +446,7 @@ describe('suggestion queue', () => {
     });
     fireEvent.click(within(strip).getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({
       action: 'dismiss',
       note: 'not now',
     });
@@ -495,6 +495,6 @@ describe('suggestion queue', () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('/api/sessions/s-b/suggestions');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toEqual({ text: 'try the staging env' });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ text: 'try the staging env' });
   });
 });
