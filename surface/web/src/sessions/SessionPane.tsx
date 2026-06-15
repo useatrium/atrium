@@ -14,6 +14,7 @@ import {
   type QuestionItem,
   type TextItem,
   type ToolCallItem,
+  type UserMessageItem,
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { Composer } from '../components/Composer';
@@ -117,6 +118,14 @@ export function SessionPane({
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
   const steerAuthor = nameFor(session.spawnedBy);
+  // Turn navigation skeleton: index the steers (the user's turns), not agent replies.
+  const turns = useMemo(
+    () =>
+      stream.items
+        .filter((it): it is UserMessageItem => it.type === 'user_message')
+        .map((it) => ({ id: it.id, text: it.text })),
+    [stream.items],
+  );
 
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
@@ -361,7 +370,8 @@ export function SessionPane({
         </div>
       )}
 
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-2">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
         {stream.items.length === 0 && (
           <div className="flex h-full items-center justify-center text-xs text-fg-muted">
             {!displayTerminal ? (
@@ -383,7 +393,7 @@ export function SessionPane({
                 <TextBlock item={item} />
               </div>
             ) : item.type === 'user_message' ? (
-              <div data-testid="user-steer" className="pt-2 pb-0.5">
+              <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
                 <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
                 <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
                   {item.text}
@@ -438,6 +448,15 @@ export function SessionPane({
             <div className="mt-2 text-2xs text-fg-muted">What next? Steer the agent below.</div>
           </div>
         )}
+        </div>
+        <TurnRail
+          turns={turns}
+          onJump={(id) =>
+            scrollRef.current
+              ?.querySelector(`[data-turn="${id}"]`)
+              ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+          }
+        />
       </div>
 
       {isEnded ? (
@@ -717,6 +736,42 @@ function seatLineLabel(e: SeatAuditEntry, nameFor: (id: string | null) => string
 function hhmm(iso: string): string {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** ChatGPT-style turn spine: ticks at the right edge, hover → floating turn list. */
+function TurnRail({
+  turns,
+  onJump,
+}: {
+  turns: { id: string; text: string }[];
+  onJump: (id: string) => void;
+}) {
+  if (turns.length === 0) return null;
+  const shown = turns.slice(-14); // cap to the most recent turns
+  return (
+    <div data-testid="turn-rail" className="group absolute right-1.5 top-1/2 z-10 -translate-y-1/2">
+      <div className="flex flex-col items-end gap-1.5 py-1 transition-opacity group-hover:opacity-0">
+        {shown.map((t) => (
+          <span key={t.id} className="block h-0.5 w-4 rounded-full bg-fg-faint" />
+        ))}
+      </div>
+      <div className="absolute right-0 top-1/2 hidden -translate-y-1/2 group-hover:block">
+        <div className="max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-edge bg-surface-raised py-1 shadow-lg">
+          {shown.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onJump(t.id)}
+              className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-body hover:bg-surface-overlay"
+              title={t.text}
+            >
+              {t.text}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SeatAuditLine({

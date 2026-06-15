@@ -2,7 +2,7 @@
 // Audit-driven polish: message formatting, loading-vs-empty gating, permalink
 // failure state, status non-regression, terminal pane read-only.
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appReducer, initialAppState, mentionsHandle, type AppState } from '@atrium/surface-client';
@@ -632,5 +632,35 @@ describe('session transcript rendering', () => {
     expect(card.textContent).toContain('shipped the fix');
     // the read-only result block is reserved for failed/cancelled sessions
     expect(screen.queryByTestId('session-result')).toBeNull();
+  });
+
+  it('builds a turn rail with one navigable entry per steer', async () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    render(
+      <SessionPane
+        session={running}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    const src = FakeEventSource.last();
+    src.open();
+    src.emitAll([
+      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e' } },
+      { event: 'amp_raw_event', event_id: 2, data: { type: 'item.completed', item: { id: 's1', type: 'userMessage', content: [{ type: 'text', text: 'first turn ask' }] } } },
+      { event: 'amp_raw_event', event_id: 3, data: { type: 'item.completed', item: { id: 'a1', type: 'agentMessage', text: 'working' } } },
+      { event: 'amp_raw_event', event_id: 4, data: { type: 'item.completed', item: { id: 's2', type: 'userMessage', content: [{ type: 'text', text: 'second turn ask' }] } } },
+    ] as CentaurEventFrame[]);
+
+    await waitFor(() => {
+      const rail = screen.getByTestId('turn-rail');
+      // one navigable entry per steer (agent turns are not indexed)
+      expect(within(rail).getAllByRole('button')).toHaveLength(2);
+      expect(rail.textContent).toContain('first turn ask');
+      expect(rail.textContent).toContain('second turn ask');
+    });
   });
 });
