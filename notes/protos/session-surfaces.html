@@ -343,9 +343,7 @@
   .ch-scard .scard-foot{display:flex;margin-top:9px}.ch-scard .scard-open{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--blue)}.ch-scard .scard-open:hover{text-decoration:underline}
   /* preset reaction (static, in the channel) — same look as a live reaction */
   .crx{display:inline-flex;align-items:center;gap:4px;margin:7px 0 0 15px;font-size:12px;color:var(--ink-2);background:var(--accent-soft);border:1px solid #d8d6ee;border-radius:999px;padding:1px 9px}
-  /* agent's own channel messages (feed mode) */
-  .amsg .cn{display:flex;align-items:center;gap:6px}
-  .abadge{width:16px;height:16px;border-radius:4px;background:var(--blue);color:#fff;display:inline-grid;place-items:center;font-size:9px;font-weight:700;flex-shrink:0}
+  /* PR pill used in the agent-update thread */
   .prpill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-2);border-radius:8px;padding:3px 9px;font-size:11.5px;color:var(--ink-2);font-weight:500}
   .chgate{display:flex;align-items:center;gap:9px;margin-top:7px;padding:8px 11px;border:1px solid #efdcb4;border-radius:10px;background:#fdfaf2;font-size:12.5px;color:var(--ink)}
   .chgate.done{border-color:var(--line-2);background:var(--fill);color:var(--ink-3)}
@@ -391,12 +389,6 @@
     <div class="seg" id="seg-role">
       <button data-v="driver" class="on">Driver</button>
       <button data-v="spectator">Spectator</button>
-    </div></div>
-  <div class="grp"><span class="lbl">Agent in channel</span>
-    <div class="seg" id="seg-chmode">
-      <button data-v="thread" class="on">Threaded</button>
-      <button data-v="feed">Feed</button>
-      <button data-v="card">Card only</button>
     </div></div>
   <div class="hint" id="hint"></div>
 </div>
@@ -462,7 +454,7 @@ const AUDIT=[
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},
   sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
-  model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",chmode:"thread",threadOpen:false};
+  model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",threadOpen:false};
 // presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
 const PEOPLE=[{n:"Mara"},{n:"Sam"},{n:"Priya"},{n:"Alex"},{n:"You"}];
 const TIMES=["9:01","9:06","9:12","9:19","9:24"]; // per-turn timestamps (mirrors the channel's message times)
@@ -480,10 +472,10 @@ const CHAN=[
   {id:"m1",who:"Mara",t:"9:00",body:"the migration to support more than one driver — let's finally get an agent on it"},
   {id:"m2",who:"Mara",t:"9:01",spawn:true,body:'<span class="mention">@agent</span> migrate sessions → driver set: add a driver_ids[] column with a backfill, widen seat grant/take to set semantics, and show all drivers in the pane. Keep driver_id during the transition.'},
   {id:"m3",who:"Sam",t:"9:02",body:"oh nice, I was about to do this by hand. heads up — grantSeat has a sneaky single-driver assumption",react:3},
-  {id:"m4",who:"Priya",t:"9:05",body:"are we keeping driver_id around or dropping it?"},
-  {id:"m5",who:"Mara",t:"9:06",body:"keeping it through the transition, dropping in a follow-up"},
+  {id:"m4",who:"Priya",t:"9:05",body:"do we ever drop driver_id, or keep both columns for good?"},
+  {id:"m5",who:"Mara",t:"9:06",body:"drop it in a follow-up, once everything reads driver_ids"},
   {id:"m6",who:"Alex",t:"9:13",body:"nice — watching. ping me before that staging deploy goes",react:2},
-  {id:"m7",who:"Alex",t:"9:25",body:"approved — go for it"},
+  {id:"m7",who:"Alex",t:"9:25",body:"approved — go for it",afterApprove:true},
 ];
 // agent milestones posted back to the channel (feed = inline messages, threaded = under the card, card = folded into the card)
 const APOSTS=[
@@ -719,31 +711,27 @@ function cardAvatars(){const driver="Mara";const ppl=[...PEOPLE].sort((a,b)=>(a.
   const show=ppl.slice(0,4),extra=ppl.length-show.length,init=n=>n==="You"?"Y":n[0];
   return `<span class="who">`+show.map(p=>`<span class="av ${p.n===driver?'seat':''}">${init(p.n)}</span>`).join('')+(extra>0?`<span class="av more">+${extra}</span>`:'')+`</span>`;}
 function chMsg(m){return `<div class="cmsg${aCls(m.id)}" data-ctx="channel" data-rid="${m.id}"><div class="cn">${m.who}<span class="tm">${m.t}</span></div><div class="cb">${m.body}</div>${barHTML('channel')}${m.react?`<span class="crx">${ic('smile')} ${m.react}</span>`:''}${rxn(m.id)}</div>`;}
-// one approval gate (drives the deploy state) reused wherever the agent is blocked — card, thread, or feed
+// the approval gate (drives the deploy state) — actionable in the card, or in the thread when expanded
 function chGate(){return S.approved==='yes'?`<div class="chgate done">✓ approved by Alex — deploying → staging…</div>`
   :S.approved==='no'?`<div class="chgate done">denied — agent continued without it</div>`
   :`<div class="chgate"><span class="gate-t">approve <b>deploy → staging</b>? <span class="mention">@Alex</span></span><span class="aact"><button class="approve">Approve</button><button class="deny">Deny</button></span></div>`;}
-// a milestone renders the same everywhere: artifact → chip, PR → pill, approval → gate
+// a milestone renders consistently: artifact → chip, PR → pill, approval → gate
 function agentExtra(a){
   if(a.art)return `<div class="madeline">${artchipHTML(a.art)}</div>`;
   if(a.kind==='pr')return `<div class="madeline"><span class="prpill">PR #128 · ${a.meta||''}</span></div>`;
   if(a.kind==='approval')return chGate();
   return '';}
-function agentMsg(a){
-  return `<div class="cmsg amsg" data-ctx="channel" data-rid="ap-${a.t}"><div class="cn"><span class="abadge">A</span>agent<span class="tm">${a.t}</span></div><div class="cb">${esc(a.body)}${agentExtra(a)}</div>${barHTML('channel')}</div>`;}
 function statusBadge(){return S.approved==='yes'?`<span class="badge ok">deploying</span>`:S.approved==='no'?'':`<span class="badge wait">needs you</span>`;}
 function sessionCard(wide){
-  const t=totals(),last=APOSTS[APOSTS.length-1],slim=S.chmode==='feed';
-  // Feed mode: the timeline carries the play-by-play, so the card is a slim status anchor (no latest/artifacts/thread)
-  const expanded=S.chmode==='thread'&&S.threadOpen;
-  // the agent's current ask appears exactly once per mode: here when collapsed/card, in the thread when expanded, in the feed otherwise
-  const latest=(slim||expanded)?'':(last.kind==='approval'
+  const t=totals(),last=APOSTS[APOSTS.length-1],open=S.threadOpen;
+  // the agent's current ask shows once: in the card when collapsed, in the thread when expanded
+  const latest=open?'':(last.kind==='approval'
     ? chGate()
     : `<div class="scard-latest">↳ <span class="dim">latest</span> ${esc(last.body)}<span class="tt"> · ${last.t}</span></div>`);
-  const arts=(slim||expanded)?'':`<div class="scard-arts">${ARTIFACTS.map(artchipHTML).join('')}</div>`;
-  const thread=S.chmode==='thread'?`<div class="scard-thread">
-      ${S.threadOpen?APOSTS.map(a=>`<div class="threply"><div class="trow"><span class="tb">${esc(a.body)}</span><span class="tt">${a.t}</span></div>${agentExtra(a)}</div>`).join(''):''}
-      <button class="scard-up" data-thread="1">${S.threadOpen?'▾':'▸'} ${APOSTS.length} updates from the agent</button></div>`:'';
+  const arts=open?'':`<div class="scard-arts">${ARTIFACTS.map(artchipHTML).join('')}</div>`;
+  const thread=`<div class="scard-thread">
+      ${open?APOSTS.map(a=>`<div class="threply"><div class="trow"><span class="tb">${esc(a.body)}</span><span class="tt">${a.t}</span></div>${agentExtra(a)}</div>`).join(''):''}
+      <button class="scard-up" data-thread="1">${open?'▾':'▸'} ${APOSTS.length} updates from the agent</button></div>`;
   return `<div class="ch-scard rich ${wide?'':'open'}">
     <div class="t"><span class="live"></span><span class="scard-ti" data-open-session="1">migrate sessions → driver set</span>${statusBadge()}</div>
     <div class="scard-row">${cardAvatars()}<span class="dim">Mara driving · 4 watching</span></div>
@@ -751,12 +739,9 @@ function sessionCard(wide){
     ${latest}${arts}${thread}
     <div class="scard-foot"><button class="scard-open" data-open-session="1">Open session →</button></div></div>`;}
 function channelHTML(wide){
-  const spawn=CHAN.findIndex(m=>m.spawn),head=CHAN.slice(0,spawn+1),tailH=CHAN.slice(spawn+1);
-  let tail;
-  if(S.chmode==='feed'){
-    const merged=[...tailH.map(m=>({t:m.t,h:m})),...APOSTS.map(a=>({t:a.t,a}))].sort((x,y)=>x.t<y.t?-1:x.t>y.t?1:0);
-    tail=merged.map(o=>o.h?chMsg(o.h):agentMsg(o.a)).join('');
-  } else tail=tailH.map(chMsg).join('');
+  // 'approved — go for it' is a consequence of approving: it only appears once the deploy is approved
+  const spawn=CHAN.findIndex(m=>m.spawn),head=CHAN.slice(0,spawn+1),
+    tail=CHAN.slice(spawn+1).filter(m=>!m.afterApprove||S.approved==='yes').map(chMsg).join('');
   return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll" data-sk="chan">
@@ -798,7 +783,7 @@ function frameHTML(){
   return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}${cm}</div>`;
 }
 
-function syncSeg(){['device','view','role','chmode'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
+function syncSeg(){['device','view','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
 function render(){
   // preserve scroll across re-renders — innerHTML replace would otherwise jump every pane to the top
   const sc={};document.querySelectorAll('[data-sk]').forEach(e=>sc[e.dataset.sk]=e.scrollTop);
@@ -815,7 +800,7 @@ function hint(){const h=document.getElementById('hint');
     :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
 
 function wire(){
-  ['device','view','role','chmode'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+  ['device','view','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
     S[k]=b.dataset.v;
     if(k==='device'||k==='view'){S.drawer=null;S.pinned=null;S.detached=null;}
     render();}));
