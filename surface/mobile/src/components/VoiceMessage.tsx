@@ -1,13 +1,14 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import type { VoiceMeta } from '@atrium/surface-client';
+import type { Api, VoiceMeta } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { formatVoiceDuration } from '../lib/voice';
 
 interface VoiceMessageProps {
   voice: VoiceMeta;
+  api: Api;
   fileUrl: (id: string) => string;
   fileHeaders?: Record<string, string>;
 }
@@ -17,8 +18,10 @@ const DEFAULT_BARS = [
   0.36, 0.7, 0.42, 0.58, 0.26, 0.5, 0.38, 0.64, 0.44, 0.72, 0.34, 0.54,
 ];
 
-export function VoiceMessage({ voice, fileUrl, fileHeaders }: VoiceMessageProps) {
+export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageProps) {
   const { colors } = useTheme();
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState(false);
   const source = useMemo(
     () => ({ uri: fileUrl(voice.fileId), headers: fileHeaders }),
     [fileHeaders, fileUrl, voice.fileId],
@@ -40,6 +43,13 @@ export function VoiceMessage({ voice, fileUrl, fileHeaders }: VoiceMessageProps)
     if (status.didJustFinish) player.seekTo(0);
   }, [player, status.didJustFinish]);
 
+  useEffect(() => {
+    if (voice.transcript.status !== 'failed') {
+      setRetrying(false);
+      setRetryError(false);
+    }
+  }, [voice.transcript.status]);
+
   const toggle = () => {
     if (status.playing) {
       player.pause();
@@ -47,6 +57,18 @@ export function VoiceMessage({ voice, fileUrl, fileHeaders }: VoiceMessageProps)
     }
     if (durationMs > 0 && progress >= 0.98) player.seekTo(0);
     player.play();
+  };
+
+  const retryTranscript = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    setRetryError(false);
+    try {
+      await api.retryTranscript(voice.fileId);
+    } catch {
+      setRetryError(true);
+      setRetrying(false);
+    }
   };
 
   return (
@@ -136,7 +158,27 @@ export function VoiceMessage({ voice, fileUrl, fileHeaders }: VoiceMessageProps)
           Transcribing…
         </Text>
       ) : voice.transcript.status === 'failed' ? (
-        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>Transcription failed</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+            {retrying ? 'Retrying…' : 'Transcription failed'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry transcription"
+            accessibilityState={{ disabled: retrying }}
+            disabled={retrying}
+            onPress={() => void retryTranscript()}
+            hitSlop={8}
+            style={{ minHeight: 28, justifyContent: 'center', opacity: retrying ? 0.6 : 1 }}
+          >
+            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
+              Retry
+            </Text>
+          </Pressable>
+          {retryError ? (
+            <Text style={{ color: colors.danger, fontSize: font.xs }}>Failed</Text>
+          ) : null}
+        </View>
       ) : voice.transcript.text?.trim() ? (
         <Text style={{ color: colors.textSecondary, fontSize: font.sm, lineHeight: 19 }}>
           {voice.transcript.text}

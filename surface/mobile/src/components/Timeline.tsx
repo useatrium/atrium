@@ -7,6 +7,7 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import {
   buildTimelineItems,
   type AttachmentMeta,
+  type Api,
   type ChatMessage,
   type Session,
   type TimelineItem,
@@ -26,6 +27,7 @@ export interface TimelineProps {
   inThread?: boolean;
   emptyLabel?: string;
   fileUrl: (id: string) => string;
+  api: Api;
   fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
   onLongPress: (m: ChatMessage) => void;
@@ -48,6 +50,7 @@ export function Timeline({
   inThread,
   emptyLabel,
   fileUrl,
+  api,
   fileHeaders,
   onLoadEarlier,
   onLongPress,
@@ -110,6 +113,7 @@ export function Timeline({
           session={m.sessionId ? sessions[m.sessionId] : undefined}
           inThread={inThread}
           fileUrl={fileUrl}
+          api={api}
           fileHeaders={fileHeaders}
           onLongPress={onLongPress}
           onOpenThread={onOpenThread}
@@ -128,6 +132,7 @@ export function Timeline({
       sessions,
       inThread,
       fileUrl,
+      api,
       fileHeaders,
       onLongPress,
       onOpenThread,

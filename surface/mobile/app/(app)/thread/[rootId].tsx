@@ -105,6 +105,7 @@ export default function ThreadScreen() {
             inThread
             emptyLabel="No replies yet."
             fileUrl={chat.fileUrl}
+            api={chat.api}
             fileHeaders={chat.fileHeaders}
             onLoadEarlier={() => Promise.resolve()}
             onLongPress={setActionsTarget}
