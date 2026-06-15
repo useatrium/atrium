@@ -114,6 +114,9 @@ export function SessionPane({
     return userId;
   };
   const driverName = nameFor(driverId);
+  // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
+  // per-steer seat-aware attribution arrives with the session record in Phase 2).
+  const steerAuthor = nameFor(session.spawnedBy);
 
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
@@ -378,11 +381,11 @@ export function SessionPane({
             {item.type === 'text' ? (
               <TextBlock item={item} />
             ) : item.type === 'user_message' ? (
-              <div
-                data-testid="user-steer"
-                className="whitespace-pre-wrap border-l-2 border-edge pl-3 text-sm text-fg"
-              >
-                {item.text}
+              <div data-testid="user-steer" className="pt-2 pb-0.5">
+                <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
+                <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
+                  {item.text}
+                </div>
               </div>
             ) : item.type === 'question' ? (
               <QuestionTranscriptCard

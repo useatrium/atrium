@@ -207,8 +207,23 @@ function stressScript(): CentaurEventFrame[] {
 }
 
 function pickScript(task: string): CentaurEventFrame[] {
-  if (/stress/i.test(task)) return stressScript();
-  return /long/i.test(task) ? longstream3() : JSON.parse(JSON.stringify(B));
+  const body: CentaurEventFrame[] = /stress/i.test(task)
+    ? stressScript()
+    : /long/i.test(task)
+      ? longstream3()
+      : JSON.parse(JSON.stringify(B));
+  // The spawn task is the session's first steer — emit it as a userMessage so
+  // the transcript opens with the attributed prompt (matches the real flow).
+  const firstId = body[0]?.event_id ?? 1000;
+  const steer: CentaurEventFrame = {
+    event: 'amp_raw_event',
+    event_id: Math.max(1, firstId - 1),
+    data: {
+      type: 'item.completed',
+      item: { id: 'steer-spawn', type: 'userMessage', content: [{ type: 'text', text: task }] },
+    },
+  } as CentaurEventFrame;
+  return [steer, ...body];
 }
 
 /** A small synthetic follow-up turn acknowledging a pane-composer message. */
