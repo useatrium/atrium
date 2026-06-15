@@ -378,6 +378,30 @@
   .sr-b.attn{background:#fbf0d8;color:var(--amber)}
   .sr-sec{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:12px 10px 4px}
   .sr-f{flex-shrink:0;border-top:1px solid var(--line);padding:11px 14px;font-size:11.5px;color:var(--ink-4)}.sr-f b{color:var(--ink-3)}
+
+  /* nav rail — clickable destinations + attention dot */
+  .nav .nv{position:relative;cursor:pointer}
+  .nvdot{position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:var(--amber);border:1.5px solid var(--bg)}
+  /* ◎ = Sessions/Activity destination (the rail, promoted to a full view) */
+  .activity{flex:1;overflow:auto;padding:22px}
+  .act-col{max-width:560px;margin:0 auto}
+  .act-sec{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:14px 6px 5px}
+  .arow2{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:11px 12px;border-radius:10px;border:1px solid var(--line);margin-bottom:6px;background:var(--bg)}
+  .arow2:hover{background:var(--fill)} .arow2.attn{background:#fdfaf2;border-color:#f0e2c2}
+  .arow2 .sr-t{flex:1;min-width:0} .arow2 .sr-1,.arow2 .sr-2{display:block} .arow2 .sr-2{margin-top:1px}
+  /* work-product access: a quiet header chip (→ tabbed drawer) OR a bookmarks bar */
+  .workchip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:var(--ink-3);border:1px solid var(--line-2);border-radius:8px;padding:3px 9px}
+  .workchip:hover{border-color:var(--line-3);color:var(--ink);background:var(--fill)} .workchip .ic{width:14px;height:14px}
+  .bookmarks{display:flex;align-items:center;gap:3px;padding:6px 14px;border-bottom:1px solid var(--line);flex-shrink:0;overflow:auto}
+  .bmk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);padding:4px 9px;border-radius:7px;white-space:nowrap}
+  .bmk:hover{background:var(--fill);color:var(--ink)} .bmk .bg{color:var(--ink-4);font-size:12px}.bmk b{color:var(--ink-2);font-weight:600}
+  /* tabbed drawer — one destination for all four work surfaces */
+  .drawer-tabs{display:flex;gap:2px}
+  .dtab{font-size:12.5px;font-weight:500;color:var(--ink-4);padding:5px 10px;border-radius:7px}
+  .dtab:hover{color:var(--ink-2);background:var(--fill)}.dtab.on{color:var(--ink);background:var(--fill)}
+  /* minimal cockpit: live/stop + a gear for model/thinking */
+  .aggear{width:24px;height:24px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;font-size:13px}
+  .aggear:hover{background:var(--fill);color:var(--ink-2)}
 </style>
 </head>
 <body>
@@ -407,6 +431,11 @@
     <label class="chk"><input type="checkbox" data-hide="cockpit"><span>Steering cockpit</span></label>
     <label class="chk"><input type="checkbox" data-hide="social"><span>Reactions &amp; menus</span></label>
   </div>
+  <div class="grp"><span class="lbl">Work access</span>
+    <div class="seg" id="seg-workaccess">
+      <button data-v="drawer" class="on">Header → drawer</button>
+      <button data-v="bookmarks">Bookmarks bar</button>
+    </div></div>
   <div class="hint" id="hint"></div>
 </div>
 <div class="stage" id="stage"></div>
@@ -471,7 +500,7 @@ const AUDIT=[
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 // default = the Steve Jobs / Slack-simple view: structural chrome stripped, social layer (reactions/threads) kept.
 // flip any checkbox in the "Strip" control to bring a layer back; "Slack mode" toggles the whole set.
-const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},hide:{rail:true,carddetail:true,strip:true,toc:true,cockpit:true},
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},workaccess:"drawer",hide:{rail:true,carddetail:true,strip:true,cockpit:true},
   sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
   model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",threadOpen:false};
 // presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
@@ -484,7 +513,8 @@ const IC={
   reply:'<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
   more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
   panelClose:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
-  panelOpen:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>'};
+  panelOpen:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+  layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>'};
 const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
 // channel conversation (realistic team thread) — the session card slots in right after the @agent spawn
 const CHAN=[
@@ -616,13 +646,9 @@ function transcriptHTML(){return `<div class="read scroll" data-sk="read"><div c
 function tocHTML(){const turns=SESSION.turns;
   const lines=turns.map(t=>`<span class="tl ${t.n===2?'on':''} ${t.items.some(i=>i.k==='live')?'run':''}"></span>`).join('');
   const rows=turns.map(t=>`<div class="frow" data-seg="${t.n}"><span class="fn">T${t.n}</span><span class="fl">${esc(t.lead)}</span></div>`).join('');
+  // contents = turn navigation only; work products (Changes/Artifacts/…) now have their own home (header chip / bookmarks)
   return `<div class="toc"><div class="toc-lines">${lines}</div>
-    <div class="toc-menu"><div class="toc-card"><div class="tt">Turns</div>${rows}
-      <div class="tt" style="margin-top:4px">Jump to</div>
-      <div class="frow" data-open="changes"><span class="fn">±</span><span class="fl">Changes</span><span class="fm">${totals().files}</span></div>
-      <div class="frow" data-open="artifacts"><span class="fn">▦</span><span class="fl">Artifacts</span><span class="fm">${ARTIFACTS.length}</span></div>
-      <div class="frow" data-open="audit"><span class="fn">⤴</span><span class="fl">Side-effects</span><span class="fm">3</span></div>
-    </div></div></div>`;
+    <div class="toc-menu"><div class="toc-card"><div class="tt">Turns</div>${rows}</div></div></div>`;
 }
 
 // agmodel switches model + thinking; the ⓘ button pops read-only container/env (each its own popover)
@@ -650,6 +676,15 @@ function agbarHTML(){
       <button class="aginfo" data-setup="env" title="Container & environment">i</button>
       ${S.setup?setupPop():''}</div>`;
 }
+// minimal steering: the live state IS the stop button; a gear holds model/thinking. Suggestions/seat surface as their own banners only when real.
+function miniCockpitHTML(){
+  const run=S.stopped
+    ? `<span class="agstate off"><span class="ld off"></span>Stopped</span>`
+    : `<button class="agrun" data-stop="1" title="Working — click to stop the agent"><span class="ld"></span><span class="lbl-run">Working</span><span class="lbl-stop">Stop</span></button>`;
+  return `<div class="agbar">${run}
+      <button class="aggear" data-setup="toggle" title="Model & thinking">⚙</button>
+      ${S.setup?setupPop():''}</div>`;
+}
 function composerHTML(){
   if(S.env==='expired')return `<div class="comp"><div class="comp-in"><div class="field off"><span class="to">↳ agent</span><input disabled placeholder="environment expired — rebuild to continue"/></div></div></div>`;
   const ph=S.env==='sleeping'?'Message — sending wakes the environment':'Message the agent…';
@@ -663,9 +698,9 @@ function composerHTML(){
   const sentNote=S.sent?`<div class="typing">Sent ${S.sent.by}’s suggestion to the agent ✓</div>`:'';
   // seat hand-off appears only when actionable (someone wants your seat)
   const seat=S.seatReq?`<div class="seatreq"><b>${S.seatReq}</b> wants the seat <span class="d2">· you're driving</span><button class="g" data-seatgrant="1">Grant</button><button class="xd" data-seatdeny="1" title="Dismiss">✕</button></div>`:'';
-  const cock=S.hide.cockpit;
+  // suggestions + seat hand-off always surface when real; the steering bar is minimal (Stop+gear) or full
   return `<div class="comp"><div class="comp-in">
-    ${cock?'':queue}${sentNote}${cock?'':seat}${cock?'':agbarHTML()}
+    ${queue}${sentNote}${seat}${S.hide.cockpit?miniCockpitHTML():agbarHTML()}
     <div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.sent?'“'+esc(S.sent.q)+'”':ph}"/><button class="gobtn">↑</button></div></div></div>`;
 }
 
@@ -689,9 +724,12 @@ function headerHTML(){
   const paneTog=(S.device!=='mobile'&&!S.pinned)?(S.view==='peek'
     ? `<button class="ib" data-pane="focus" title="Expand — hide channel">${ic('panelClose')}</button>`
     : `<button class="ib" data-pane="peek" title="Collapse — show channel">${ic('panelOpen')}</button>`):'';
+  // work products: when the strip is stripped and access = drawer, a quiet header chip opens the tabbed drawer
+  const workBtn=(S.hide.strip&&S.workaccess==='drawer'&&!S.pinned)?`<button class="workchip" data-open="changes" title="Work products — changes, artifacts, side-effects, preview">${ic('layers')} Work</button>`:'';
+  const chrome=[workBtn,paneTog].filter(Boolean).join('');
   return `<div class="sess-h">${crumb}<span class="ti">${esc(SESSION.title)}</span>
     ${presenceHTML()}${env}
-    ${paneTog?`<span class="chrome">${paneTog}</span>`:''}</div>`;
+    ${chrome?`<span class="chrome">${chrome}</span>`:''}</div>`;
 }
 function roBanner(){return S.env==='expired'?`<div class="ro">⚠ Environment expired — this session is record-only. Transcript, changes, and artifacts are preserved; rebuild to keep working.</div>`:'';}
 
@@ -716,13 +754,20 @@ function sessionLayout(){
     ${stat('audit','⤴',`<b>1</b> PR · ${S.approved==='yes'?'<b>1</b> deployed':S.approved==='no'?'<b>1</b> skipped':'<b>1</b> gated'}`)}
     ${stat('preview',S.env==='warm'?'●':'○',`preview ${S.env==='warm'?'live':S.env}`)}
   </div>`;
-  return `<div class="session">${headerHTML()}${roBanner()}${S.hide.strip?'':strip}${S.detached?detachedBanner():''}
+  // bookmarks-bar variant of work-product access (the alternative to the header chip)
+  const bmk=(open,gl,label)=>`<button class="bmk" data-open="${open}"><span class="bg">${gl}</span>${label}</button>`;
+  const bookmarks=`<div class="bookmarks">${bmk('changes','±',`Changes <b>${t.files}</b>`)}${bmk('artifacts','▦',`Artifacts <b>${t.arts}</b>`)}${bmk('audit','⤴',`Side-effects <b>1</b>`)}${bmk('preview',S.env==='warm'?'●':'○','Preview')}</div>`;
+  // strip stripped → either the bookmarks bar (access=bookmarks) or nothing here (access=drawer puts a chip in the header)
+  const workbar=S.hide.strip?(S.workaccess==='bookmarks'?bookmarks:''):strip;
+  return `<div class="session">${headerHTML()}${roBanner()}${workbar}${S.detached?detachedBanner():''}
     <div class="body">${workArea()}</div>${composerHTML()}</div>`;
 }
 function drawerHTML(){
   const acts=S.device==='mobile'?'':`<span class="dh-acts"><button class="pin" title="Pin beside transcript">⤢ Pin</button><button class="detach" title="Detach to ${detachTarget()}">↗</button></span>`;
+  // one destination, four tabs — Changes / Artifacts / Side-effects / Preview
+  const tabs=S.drawer?`<div class="drawer-tabs">${['changes','artifacts','audit','preview'].map(t=>`<button class="dtab ${S.drawer===t?'on':''}" data-open="${t}">${SURF_TITLES[t]}</button>`).join('')}</div>`:'';
   return `<div class="scrim ${S.drawer?'open':''}" data-close="1"></div>
-    <div class="drawer ${S.drawer?'open':''}"><div class="drawer-h">${S.drawer?SURF_TITLES[S.drawer]:''}${S.drawer?acts:''}<span class="x" data-close="1">✕</span></div>
+    <div class="drawer ${S.drawer?'open':''}"><div class="drawer-h">${tabs}${S.drawer?acts:''}<span class="x" data-close="1">✕</span></div>
       <div class="drawer-b">${S.drawer?surface(S.drawer):''}</div></div>`;
 }
 
@@ -802,18 +847,47 @@ function sessionsRail(){
     <div class="sr-f">＋ New session — <b>@agent</b> in any channel</div>
   </div>`;
 }
+// nav rail: # = channels, ◎ = Sessions/Activity destination (with an attention dot when a session needs you)
+function navHTML(){
+  const needs=S.approved!=='yes'&&S.approved!=='no'; // a running session is waiting on you
+  const inChannels=S.view!=='activity';
+  return `<div class="nav"><div class="logo">A</div>
+    <button class="nv ${inChannels?'on':''}" data-nav="browse" title="Channels">#</button>
+    <button class="nv ${S.view==='activity'?'on':''}" data-nav="activity" title="Sessions — across your channels">◎${needs?'<span class="nvdot"></span>':''}</button>
+    <div class="nv" title="Search">✦</div></div>`;
+}
+// ◎ destination: the sessions rail promoted to a full view (Slack "Threads/Activity" pattern)
+function activityHTML(){
+  const row=(badge,bcls,title,sub)=>`<button class="arow2 ${bcls==='attn'?'attn':''}" data-open-session="1">
+    <span class="sr-d ${bcls}"></span><span class="sr-t"><span class="sr-1">${title}</span><span class="sr-2">${sub}</span></span>
+    ${badge?`<span class="sr-b ${bcls}">${badge}</span>`:''}</button>`;
+  const ch=c=>`<span class="sr-ch">#${c}</span>`;
+  const needs=S.approved!=='yes'&&S.approved!=='no';
+  const mine=needs?`<div class="act-sec">Needs you</div>${row('needs you','attn','migrate sessions → driver set',ch('eng-platform')+' · now')}`
+    :`<div class="act-sec">Active</div>${row(S.approved==='yes'?'deploying':'','run','migrate sessions → driver set',ch('eng-platform')+' · now')}`;
+  return `<div class="session"><div class="sess-h"><span class="ti">Sessions</span><span class="crumb" style="margin-left:2px;pointer-events:none">· across your channels</span></div>
+    <div class="activity scroll" data-sk="act"><div class="act-col">
+      ${mine}
+      ${needs?'<div class="act-sec">Active</div>':''}
+      ${row('','run','flaky test triage',ch('mobile')+' · 6m')}
+      <div class="act-sec">Recent</div>
+      ${row('','done','bump deps to vite 8',ch('eng-platform')+' · 14m')}
+      ${row('','done','tighten rate-limit window',ch('api')+' · 1h')}
+    </div></div></div>`;
+}
 function frameHTML(){
   const cm=S.menu?menuHTML():'';
-  // mobile is single-column: the channel when browsing, the session once you've opened one (← goes back)
-  if(S.device==='mobile')return `<div class="frame mobile">${S.view==='browse'?channelHTML(true):sessionLayout()}${cm}</div>`;
-  const nav='<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>';
+  // mobile is single-column: channel when browsing, the sessions list at ◎, else the session (← goes back)
+  if(S.device==='mobile')return `<div class="frame mobile">${S.view==='browse'?channelHTML(true):S.view==='activity'?activityHTML():sessionLayout()}${cm}</div>`;
+  const nav=navHTML();
+  if(S.view==='activity')return `<div class="frame ${S.device}">${nav}${activityHTML()}${cm}</div>`;
   if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${S.hide.rail?'':sessionsRail()}${cm}</div>`;
   const chan=S.view==='peek'?channelHTML(false):'';
   return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}${cm}</div>`;
 }
 
-const SLACK_KEYS=['rail','carddetail','strip','toc','cockpit']; // what Slack/Discord wouldn't put on screen
-function syncSeg(){['device','view','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));
+const SLACK_KEYS=['rail','carddetail','strip','cockpit']; // the resolved resting view (tick-rail/contents kept)
+function syncSeg(){['device','view','role','workaccess'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));
   document.querySelectorAll('[data-hide]').forEach(b=>b.checked=!!S.hide[b.dataset.hide]);
   const sm=document.getElementById('slackmode');if(sm)sm.classList.toggle('on',SLACK_KEYS.every(k=>S.hide[k]));}
 function render(){
@@ -824,20 +898,23 @@ function render(){
   wire();hint();syncSeg();
   // always emit hide= (even empty) so an explicitly-cleared set round-trips instead of falling back to the default
   const hideStr=Object.keys(S.hide).filter(k=>S.hide[k]).join('|');
-  try{location.hash=`device=${S.device},view=${S.view},env=${S.env},hide=${hideStr}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
+  try{location.hash=`device=${S.device},view=${S.view},env=${S.env},workaccess=${S.workaccess},hide=${hideStr}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
 function hint(){const h=document.getElementById('hint');
   h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
     :S.detached?`Detached to ${detachTarget()} — Re-dock to bring it back.`
     :S.device==='mobile'?'Mobile: tap a stat → full-screen surface (no pin/detach).'
-    :S.view==='browse'?'Channel — a running session is a card in the timeline. Click it to open. Bring layers back via “Strip” ↑.'
-    :S.view==='peek'?'Split: chat ⇄ agent. Click a stat → peek → ⤢ Pin or ↗ Detach.'
-    :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
+    :S.view==='browse'?'Channel — a session is a card in the timeline; click to open. ◎ (left rail) = sessions across channels. Bring layers back via “Strip” ↑.'
+    :S.view==='activity'?'Sessions across your channels (the rail, promoted to ◎). Click one to open it; # returns to the channel.'
+    :S.view==='peek'?'Split: chat ⇄ agent. Work products via the “Work” chip / bookmarks → tabbed drawer.'
+    :'Focus: just the agent. Work products via the “Work” chip / bookmarks → tabbed drawer.';}
 
 function wire(){
-  ['device','view','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
+  ['device','view','role','workaccess'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.onclick=()=>{
     S[k]=b.dataset.v;
     if(k==='device'||k==='view'){S.drawer=null;S.pinned=null;S.detached=null;}
     render();}));
+  // nav rail destinations (# channels ⇄ ◎ sessions/activity)
+  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{S.view=b.dataset.nav;S.drawer=null;S.pinned=null;S.detached=null;render();});
   // simplify toggles: each strips one layer; "Slack mode" flips the structural set at once
   document.querySelectorAll('[data-hide]').forEach(b=>b.onchange=()=>{S.hide[b.dataset.hide]=b.checked;render();});
   const slk=document.getElementById('slackmode');
