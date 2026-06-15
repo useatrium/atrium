@@ -27,7 +27,15 @@
   .seg button{padding:4px 11px;border-radius:6px;color:var(--ink-3);font-size:12px;font-weight:500;white-space:nowrap}
   .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
   .seg button:not(.on):hover{color:var(--ink)}
-  .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4);max-width:40ch;text-align:right}
+  .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4);max-width:34ch;text-align:right}
+  /* simplify toggles — strip layers to find the Slack/Discord-simple core */
+  .grp.simp{gap:8px;flex-wrap:wrap}
+  .chk{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-3);cursor:pointer;user-select:none}
+  .chk input{accent-color:var(--blue);width:13px;height:13px;margin:0;cursor:pointer}
+  .chk:hover{color:var(--ink-2)} .chk input:checked+span{color:var(--ink);text-decoration:line-through;text-decoration-color:var(--ink-4)}
+  .simpbtn{font-size:11px;font-weight:600;border:1px solid var(--line-2);border-radius:7px;padding:3px 9px;color:var(--ink-2)}
+  .simpbtn:hover{border-color:var(--ink-3);background:var(--fill)}
+  .simpbtn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 
   .stage{display:flex;justify-content:center;padding:22px}
   .frame{width:min(1500px,96vw);height:calc(100vh - 96px);background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
@@ -390,6 +398,15 @@
       <button data-v="driver" class="on">Driver</button>
       <button data-v="spectator">Spectator</button>
     </div></div>
+  <div class="grp simp"><span class="lbl">Strip</span>
+    <button class="simpbtn" id="slackmode" title="Hide everything Slack/Discord wouldn't show">Slack mode</button>
+    <label class="chk"><input type="checkbox" data-hide="rail"><span>Sessions rail</span></label>
+    <label class="chk"><input type="checkbox" data-hide="carddetail"><span>Card detail</span></label>
+    <label class="chk"><input type="checkbox" data-hide="strip"><span>Summary strip</span></label>
+    <label class="chk"><input type="checkbox" data-hide="toc"><span>Contents rail</span></label>
+    <label class="chk"><input type="checkbox" data-hide="cockpit"><span>Steering cockpit</span></label>
+    <label class="chk"><input type="checkbox" data-hide="social"><span>Reactions &amp; menus</span></label>
+  </div>
   <div class="hint" id="hint"></div>
 </div>
 <div class="stage" id="stage"></div>
@@ -452,7 +469,9 @@ const AUDIT=[
   {kind:"deploy",ic:"⚠",a1:"deploy → staging",a2:"irreversible · blocked, awaiting Mara's approval",by:"Mara",t:"—",blocked:true},
 ];
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},
+// default = the Steve Jobs / Slack-simple view: structural chrome stripped, social layer (reactions/threads) kept.
+// flip any checkbox in the "Strip" control to bring a layer back; "Slack mode" toggles the whole set.
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},hide:{rail:true,carddetail:true,strip:true,toc:true,cockpit:true},
   sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
   model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",threadOpen:false};
 // presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
@@ -554,11 +573,11 @@ function inlineCard(kind){
   return '';
 }
 // hover toolbar (quick actions) + reaction pill + right-click/⋯ context menu
-function barHTML(surface){const mid=surface==='channel'
+function barHTML(surface){if(S.hide.social)return '';const mid=surface==='channel'
     ?`<button class="mb" data-act="reply" title="Reply in thread">${ic('reply')}</button>`
     :`<button class="mb" data-act="comment" title="Comment">${ic('comment')}</button>`;
   return `<div class="msgbar"><button class="mb" data-act="react" title="React">${ic('smile')}</button>${mid}<button class="mb" data-act="more" title="More">${ic('more')}</button></div>`;}
-function rxn(rid){return S.rxn[rid]?`<div class="rxn" data-rid="${rid}">${ic('smile')} 1</div>`:'';}
+function rxn(rid){if(S.hide.social)return '';return S.rxn[rid]?`<div class="rxn" data-rid="${rid}">${ic('smile')} 1</div>`:'';}
 // keep the line lit (row highlight + quick-bar) while its context menu is open
 function aCls(rid){return S.menu&&S.menu.rid===rid?' act':'';}
 function menuHTML(){const s=S.menu.surface,it=(a,l,c='')=>`<button class="cm-item ${c}" data-act="${a}">${l}</button>`;
@@ -644,8 +663,9 @@ function composerHTML(){
   const sentNote=S.sent?`<div class="typing">Sent ${S.sent.by}’s suggestion to the agent ✓</div>`:'';
   // seat hand-off appears only when actionable (someone wants your seat)
   const seat=S.seatReq?`<div class="seatreq"><b>${S.seatReq}</b> wants the seat <span class="d2">· you're driving</span><button class="g" data-seatgrant="1">Grant</button><button class="xd" data-seatdeny="1" title="Dismiss">✕</button></div>`:'';
+  const cock=S.hide.cockpit;
   return `<div class="comp"><div class="comp-in">
-    ${queue}${sentNote}${seat}${agbarHTML()}
+    ${cock?'':queue}${sentNote}${cock?'':seat}${cock?'':agbarHTML()}
     <div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.sent?'“'+esc(S.sent.q)+'”':ph}"/><button class="gobtn">↑</button></div></div></div>`;
 }
 
@@ -685,7 +705,7 @@ function detachedBanner(){return `<div class="detached">↗ <b>${SURF_TITLES[S.d
 // the work area: peek (drawer) → pin (side pane) → detach (left the app). toc handle hides when pinned.
 function workArea(){
   if(S.pinned)return `${transcriptHTML()}${pinPane()}`;
-  return `${transcriptHTML()}${tocHTML()}${drawerHTML()}`;
+  return `${transcriptHTML()}${S.hide.toc?'':tocHTML()}${drawerHTML()}`;
 }
 function sessionLayout(){
   const t=totals();
@@ -696,7 +716,7 @@ function sessionLayout(){
     ${stat('audit','⤴',`<b>1</b> PR · ${S.approved==='yes'?'<b>1</b> deployed':S.approved==='no'?'<b>1</b> skipped':'<b>1</b> gated'}`)}
     ${stat('preview',S.env==='warm'?'●':'○',`preview ${S.env==='warm'?'live':S.env}`)}
   </div>`;
-  return `<div class="session">${headerHTML()}${roBanner()}${strip}${S.detached?detachedBanner():''}
+  return `<div class="session">${headerHTML()}${roBanner()}${S.hide.strip?'':strip}${S.detached?detachedBanner():''}
     <div class="body">${workArea()}</div>${composerHTML()}</div>`;
 }
 function drawerHTML(){
@@ -710,7 +730,7 @@ function artchipHTML(a){return `<span class="artchip" data-open="artifacts"><spa
 function cardAvatars(){const driver="Mara";const ppl=[...PEOPLE].sort((a,b)=>(a.n===driver?-1:b.n===driver?1:0));
   const show=ppl.slice(0,4),extra=ppl.length-show.length,init=n=>n==="You"?"Y":n[0];
   return `<span class="who">`+show.map(p=>`<span class="av ${p.n===driver?'seat':''}">${init(p.n)}</span>`).join('')+(extra>0?`<span class="av more">+${extra}</span>`:'')+`</span>`;}
-function chMsg(m){return `<div class="cmsg${aCls(m.id)}" data-ctx="channel" data-rid="${m.id}"><div class="cn">${m.who}<span class="tm">${m.t}</span></div><div class="cb">${m.body}</div>${barHTML('channel')}${m.react?`<span class="crx">${ic('smile')} ${m.react}</span>`:''}${rxn(m.id)}</div>`;}
+function chMsg(m){return `<div class="cmsg${aCls(m.id)}" data-ctx="channel" data-rid="${m.id}"><div class="cn">${m.who}<span class="tm">${m.t}</span></div><div class="cb">${m.body}</div>${barHTML('channel')}${m.react&&!S.hide.social?`<span class="crx">${ic('smile')} ${m.react}</span>`:''}${rxn(m.id)}</div>`;}
 // the approval gate (drives the deploy state) — actionable in the card, or in the thread when expanded
 function chGate(){return S.approved==='yes'?`<div class="chgate done">✓ approved by Alex — deploying → staging…</div>`
   :S.approved==='no'?`<div class="chgate done">denied — agent continued without it</div>`
@@ -724,6 +744,15 @@ function agentExtra(a){
 function statusBadge(){return S.approved==='yes'?`<span class="badge ok">deploying</span>`:S.approved==='no'?'':`<span class="badge wait">needs you</span>`;}
 function sessionCard(wide){
   const t=totals(),last=APOSTS[APOSTS.length-1],open=S.threadOpen;
+  // Slim card (Slack-style): title + status + the single line that needs you. Files/PR/cost/avatars/artifacts/updates all live inside the session.
+  if(S.hide.carddetail){
+    const latest=last.kind==='approval'?chGate()
+      :`<div class="scard-latest">↳ <span class="dim">latest</span> ${esc(last.body)}<span class="tt"> · ${last.t}</span></div>`;
+    return `<div class="ch-scard rich ${wide?'':'open'}">
+      <div class="t"><span class="live"></span><span class="scard-ti" data-open-session="1">migrate sessions → driver set</span>${statusBadge()}</div>
+      ${latest}
+      <div class="scard-foot"><button class="scard-open" data-open-session="1">Open session →</button></div></div>`;
+  }
   // the agent's current ask shows once: in the card when collapsed, in the thread when expanded
   const latest=open?'':(last.kind==='approval'
     ? chGate()
@@ -778,24 +807,29 @@ function frameHTML(){
   // mobile is single-column: the channel when browsing, the session once you've opened one (← goes back)
   if(S.device==='mobile')return `<div class="frame mobile">${S.view==='browse'?channelHTML(true):sessionLayout()}${cm}</div>`;
   const nav='<div class="nav"><div class="logo">A</div><div class="nv on">#</div><div class="nv">◎</div><div class="nv">✦</div></div>';
-  if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${sessionsRail()}${cm}</div>`;
+  if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${S.hide.rail?'':sessionsRail()}${cm}</div>`;
   const chan=S.view==='peek'?channelHTML(false):'';
   return `<div class="frame ${S.device}">${nav}${chan}${sessionLayout()}${cm}</div>`;
 }
 
-function syncSeg(){['device','view','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));}
+const SLACK_KEYS=['rail','carddetail','strip','toc','cockpit']; // what Slack/Discord wouldn't put on screen
+function syncSeg(){['device','view','role'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));
+  document.querySelectorAll('[data-hide]').forEach(b=>b.checked=!!S.hide[b.dataset.hide]);
+  const sm=document.getElementById('slackmode');if(sm)sm.classList.toggle('on',SLACK_KEYS.every(k=>S.hide[k]));}
 function render(){
   // preserve scroll across re-renders — innerHTML replace would otherwise jump every pane to the top
   const sc={};document.querySelectorAll('[data-sk]').forEach(e=>sc[e.dataset.sk]=e.scrollTop);
   document.getElementById('stage').innerHTML=frameHTML();
   document.querySelectorAll('[data-sk]').forEach(e=>{if(sc[e.dataset.sk]!=null)e.scrollTop=sc[e.dataset.sk];});
   wire();hint();syncSeg();
-  try{location.hash=`device=${S.device},view=${S.view},env=${S.env}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
+  // always emit hide= (even empty) so an explicitly-cleared set round-trips instead of falling back to the default
+  const hideStr=Object.keys(S.hide).filter(k=>S.hide[k]).join('|');
+  try{location.hash=`device=${S.device},view=${S.view},env=${S.env},hide=${hideStr}${S.pinned?',pinned='+S.pinned:''}${S.detached?',detached='+S.detached:''}`;}catch(e){}}
 function hint(){const h=document.getElementById('hint');
   h.textContent=S.pinned?'Pinned beside the transcript — ↗ detaches, ✕ unpins, click a stat to swap.'
     :S.detached?`Detached to ${detachTarget()} — Re-dock to bring it back.`
     :S.device==='mobile'?'Mobile: tap a stat → full-screen surface (no pin/detach).'
-    :S.view==='browse'?'Channel — sessions are cards in the timeline + the Sessions rail. Click one to open.'
+    :S.view==='browse'?'Channel — a running session is a card in the timeline. Click it to open. Bring layers back via “Strip” ↑.'
     :S.view==='peek'?'Split: chat ⇄ agent. Click a stat → peek → ⤢ Pin or ↗ Detach.'
     :'Focus: just the agent. Click a stat → peek → ⤢ Pin (split) or ↗ Detach.';}
 
@@ -804,6 +838,10 @@ function wire(){
     S[k]=b.dataset.v;
     if(k==='device'||k==='view'){S.drawer=null;S.pinned=null;S.detached=null;}
     render();}));
+  // simplify toggles: each strips one layer; "Slack mode" flips the structural set at once
+  document.querySelectorAll('[data-hide]').forEach(b=>b.onchange=()=>{S.hide[b.dataset.hide]=b.checked;render();});
+  const slk=document.getElementById('slackmode');
+  if(slk)slk.onclick=()=>{const allOn=SLACK_KEYS.every(k=>S.hide[k]);SLACK_KEYS.forEach(k=>S.hide[k]=!allOn);render();};
   document.querySelectorAll('[data-thread]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.threadOpen=!S.threadOpen;render();});
   document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{S.open[b.dataset.tool]=!S.open[b.dataset.tool];render();});
   document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>{S.file=+b.dataset.file;render();});
@@ -845,8 +883,8 @@ function wire(){
     else if(act==='comment'){S.open['n'+rid]=!S.open['n'+rid];render();}
     else if(act==='more'){const r=b.getBoundingClientRect();S.menu={surface,rid,x:Math.min(r.left,window.innerWidth-224),y:r.bottom+4};render();}
     else render();});
-  // right-click → context menu at cursor
-  document.querySelectorAll('[data-ctx]').forEach(el=>el.addEventListener('contextmenu',(e)=>{e.preventDefault();e.stopPropagation();
+  // right-click → context menu at cursor (part of the social layer; off when Reactions & menus are stripped)
+  if(!S.hide.social)document.querySelectorAll('[data-ctx]').forEach(el=>el.addEventListener('contextmenu',(e)=>{e.preventDefault();e.stopPropagation();
     S.menu={surface:el.dataset.ctx,rid:el.dataset.rid,x:Math.min(e.clientX,window.innerWidth-224),y:Math.min(e.clientY,window.innerHeight-270)};render();}));
   // context-menu item actions
   document.querySelectorAll('.cm-item').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const act=b.dataset.act,m=S.menu;
@@ -861,7 +899,9 @@ function wire(){
     if(S.viewBeforePin){S.view=S.viewBeforePin;S.viewBeforePin=null;}render();});
   document.querySelectorAll('.redock').forEach(b=>b.onclick=()=>{S.pinned=S.detached;S.detached=null;render();});
 }
-(function(){const h=location.hash.replace(/^#/,'');if(h)h.split(',').forEach(kv=>{const[k,v]=kv.split('=');if(k in S)S[k]=v;});})();
+(function(){const h=location.hash.replace(/^#/,'');if(h)h.split(',').forEach(kv=>{const[k,v]=kv.split('=');
+  if(k==='hide'){S.hide={};(v||'').split('|').forEach(x=>{if(x)S.hide[x]=true;});}
+  else if(k in S)S[k]=v;});})();
 render();
 </script>
 </body>
