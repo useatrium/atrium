@@ -774,6 +774,7 @@ export class SessionRuns {
         lastEventId = Math.max(lastEventId, frame.event_id);
         pendingLastEventId = lastEventId;
         frameCountSinceFlush += 1;
+        await this.mirrorFrame(id, frame);
         await this.foldFrame(id, frame);
         if (frameCountSinceFlush >= 25 || Date.now() - lastFlushAt >= 2000) {
           await this.persistLastEventId(id, pendingLastEventId);
@@ -787,6 +788,15 @@ export class SessionRuns {
         await this.updateStatus(id, 'failed').catch(() => {});
       }
     }
+  }
+
+  private async mirrorFrame(id: string, frame: CentaurEventFrame): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (session_id, centaur_event_id) DO NOTHING`,
+      [id, frame.event_id, frame.event, JSON.stringify(frame)],
+    );
   }
 
   private async foldFrame(id: string, frame: CentaurEventFrame): Promise<void> {

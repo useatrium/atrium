@@ -488,6 +488,93 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('mirrors streamed frames verbatim, including ignored and duplicate frames', async () => {
+    const frames = [
+      {
+        event: 'usage_observed',
+        event_id: 10,
+        data: { type: 'usage_observed', cost_usd: 1.25 },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 11,
+        data: {
+          type: 'codex.item.agentMessage.delta',
+          item_id: 'item-1',
+          delta: 'raw transcript fragment',
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 11,
+        data: {
+          type: 'codex.item.agentMessage.delta',
+          item_id: 'item-1',
+          delta: 'raw transcript fragment',
+        },
+      },
+      {
+        event: 'execution_state',
+        event_id: 12,
+        data: {
+          type: 'execution.state',
+          status: 'completed',
+          thread_key: 'thread',
+          execution_id: 'exe_fake',
+          result_text: 'mirror complete',
+        },
+      },
+    ];
+    fake.setFrames(frames);
+    const id = await insertSessionRow({ title: 'mirror stream', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const session = await pool.query(
+        'SELECT status, result_text, last_event_id, cost_usd FROM sessions WHERE id = $1',
+        [id],
+      );
+      expect(session.rows[0]).toMatchObject({
+        status: 'completed',
+        result_text: 'mirror complete',
+      });
+      expect(Number(session.rows[0].last_event_id)).toBe(12);
+      expect(Number(session.rows[0].cost_usd)).toBe(1.25);
+
+      const mirrored = await pool.query(
+        `SELECT session_id, centaur_event_id, event_kind, frame, created_at
+         FROM session_events
+         WHERE session_id = $1
+         ORDER BY centaur_event_id`,
+        [id],
+      );
+      expect(mirrored.rowCount).toBe(3);
+      expect(mirrored.rows.map((row) => Number(row.centaur_event_id))).toEqual([10, 11, 12]);
+      expect(mirrored.rows.map((row) => row.event_kind)).toEqual([
+        'usage_observed',
+        'amp_raw_event',
+        'execution_state',
+      ]);
+      expect(mirrored.rows.map((row) => row.frame)).toEqual([frames[0], frames[1], frames[3]]);
+      expect(mirrored.rows.every((row) => row.session_id === id && row.created_at instanceof Date)).toBe(true);
+
+      const completed = await pool.query('SELECT payload FROM events WHERE type = $1', [
+        'session.completed',
+      ]);
+      expect(completed.rowCount).toBe(1);
+      expect(completed.rows[0].payload).toMatchObject({
+        sessionId: id,
+        status: 'completed',
+        resultExcerpt: 'mirror complete',
+      });
+    });
+    await app.close();
+  });
+
   it('boot resume tails a running session to completion', async () => {
     const inserted = await pool.query<{ id: string }>(
       `INSERT INTO sessions (
