@@ -421,6 +421,25 @@
   .nd-item .nd-dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--amber)}
   /* customize disclosure — the experiment toggles fold away by default so the bar stays calm */
   .custarea{display:contents}
+  /* slim channel card: attaches under the @agent message — no repeated title, whole card opens it */
+  .ch-scard.slim{margin-top:4px;cursor:pointer}
+  .ch-scard.slim:hover{border-color:var(--ink-4)}
+  .ch-scard.slim .t{gap:7px;font-weight:500}
+  .ch-scard.slim .slim-st{font-size:12px;color:var(--ink-4);font-weight:500}
+  .ch-scard.slim .scard-latest{margin-top:7px}
+  .ch-scard.slim .chgate{margin-top:8px}
+  /* slim start-of-channel marker (replaces the bulky intro card) */
+  .ch-start{padding:16px 18px 6px;font-size:12px;color:var(--ink-4)}
+  .ch-start b{color:var(--ink-2);font-weight:600}
+  /* steering tray: suggestions + seat hand-off fold into one collapsible line above the composer */
+  .traybar{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12.5px;color:var(--ink-2);border:1px solid var(--line-2);border-radius:10px;padding:8px 12px;margin-bottom:10px}
+  .traybar:hover{border-color:var(--line-3);background:var(--fill)}
+  .traybar .tray-ar{margin-left:auto;color:var(--ink-4);font-size:11px}
+  .traybar.in{margin:0;border:none;border-bottom:1px solid var(--line);border-radius:0;background:var(--fill);color:var(--ink-3);font-weight:600}
+  .traybar.in .tray-ar{margin-left:0;order:-1}
+  .tray{border:1px solid var(--line-2);border-radius:10px;margin-bottom:10px;overflow:hidden}
+  .tray-body{padding:4px}
+  .tray-body .seatreq{margin:4px 5px 5px}
 </style>
 </head>
 <body>
@@ -522,7 +541,7 @@ const AUDIT=[
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 // default = the Steve Jobs / Slack-simple view: structural chrome stripped, social layer (reactions/threads) kept.
 // flip any checkbox in the "Strip" control to bring a layer back; "Slack mode" toggles the whole set.
-const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},workaccess:"drawer",customize:false,navOpen:false,hide:{rail:true,carddetail:true,strip:true,cockpit:true},
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},workaccess:"drawer",customize:false,navOpen:false,trayOpen:false,hide:{rail:true,carddetail:true,strip:true,cockpit:true},
   sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
   model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",threadOpen:false};
 // presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
@@ -715,15 +734,20 @@ function composerHTML(){
     <div class="typing">Sam is composing a suggestion…</div>
     <div class="field suggest"><span class="to sg">↳ suggest</span><input placeholder="Suggest a steer to Mara…"/><button class="gobtn">↑</button></div>
     <div class="by">Mara has the seat · <button class="seatbtn">Request seat</button></div></div></div>`;
-  // driver: spectator suggestions queue (steering proposals) above the agent composer
-  const queue=S.sugg.length?`<div class="queue"><div class="qhead">Suggestions · ${S.sugg.length}</div>
-      ${S.sugg.map((s,i)=>`<div class="sugg"><b>${s.by}</b><span class="sq">“${esc(s.q)}”</span><button class="a" data-sgsend="${i}">Send</button><button class="x" data-sgdrop="${i}" title="Dismiss">✕</button></div>`).join('')}</div>`:'';
   const sentNote=S.sent?`<div class="typing">Sent ${S.sent.by}’s suggestion to the agent ✓</div>`:'';
-  // seat hand-off appears only when actionable (someone wants your seat)
-  const seat=S.seatReq?`<div class="seatreq"><b>${S.seatReq}</b> wants the seat <span class="d2">· you're driving</span><button class="g" data-seatgrant="1">Grant</button><button class="xd" data-seatdeny="1" title="Dismiss">✕</button></div>`:'';
-  // suggestions + seat hand-off always surface when real; the steering bar is minimal (Stop+gear) or full
+  // suggestions + seat hand-off fold into ONE collapsible line so the composer stays a composer (expand for the detail)
+  const hasSugg=S.sugg.length,hasSeat=!!S.seatReq,parts=[];
+  if(hasSugg)parts.push(`${S.sugg.length} suggestion${S.sugg.length>1?'s':''}`);
+  if(hasSeat)parts.push(`${S.seatReq} wants the seat`);
+  const sumTxt=parts.join(' · ');
+  const queueRows=S.sugg.map((s,i)=>`<div class="sugg"><b>${s.by}</b><span class="sq">“${esc(s.q)}”</span><button class="a" data-sgsend="${i}">Send</button><button class="x" data-sgdrop="${i}" title="Dismiss">✕</button></div>`).join('');
+  const seatRow=hasSeat?`<div class="seatreq"><b>${S.seatReq}</b> wants the seat <span class="d2">· you're driving</span><button class="g" data-seatgrant="1">Grant</button><button class="xd" data-seatdeny="1" title="Dismiss">✕</button></div>`:'';
+  const tray=(hasSugg||hasSeat)?(S.trayOpen
+      ? `<div class="tray"><button class="traybar in" data-tray="1"><span class="tray-ar">▾</span>${sumTxt}</button><div class="tray-body">${queueRows}${seatRow}</div></div>`
+      : `<button class="traybar" data-tray="1">${sumTxt}<span class="tray-ar">▸</span></button>`):'';
+  // the steering bar is minimal (Stop + gear) or full, per the cockpit toggle
   return `<div class="comp"><div class="comp-in">
-    ${queue}${sentNote}${seat}${S.hide.cockpit?miniCockpitHTML():agbarHTML()}
+    ${tray}${sentNote}${S.hide.cockpit?miniCockpitHTML():agbarHTML()}
     <div class="field steer"><span class="to">↳ agent</span><input placeholder="${S.sent?'“'+esc(S.sent.q)+'”':ph}"/><button class="gobtn">↑</button></div></div></div>`;
 }
 
@@ -814,12 +838,14 @@ function sessionCard(wide){
   const t=totals(),last=APOSTS[APOSTS.length-1],open=S.threadOpen;
   // Slim card (Slack-style): title + status + the single line that needs you. Files/PR/cost/avatars/artifacts/updates all live inside the session.
   if(S.hide.carddetail){
-    const latest=last.kind==='approval'?chGate()
+    // attaches under the @agent message that named it: no repeated title, no redundant badge (the gate is the ask),
+    // whole card opens the session (no separate "Open session" doorway). live dot + a quiet status carry liveness.
+    const st=S.approved==='yes'?'deploying':'running';
+    const body=last.kind==='approval'?chGate()
       :`<div class="scard-latest">↳ <span class="dim">latest</span> ${esc(last.body)}<span class="tt"> · ${last.t}</span></div>`;
-    return `<div class="ch-scard rich ${wide?'':'open'}">
-      <div class="t"><span class="live"></span><span class="scard-ti" data-open-session="1">migrate sessions → driver set</span>${statusBadge()}</div>
-      ${latest}
-      <div class="scard-foot"><button class="scard-open" data-open-session="1">Open session →</button></div></div>`;
+    return `<div class="ch-scard slim ${wide?'':'open'}" data-open-session="1">
+      <div class="t"><span class="live"></span><span class="slim-st">${st}</span></div>
+      ${body}</div>`;
   }
   // the agent's current ask shows once: in the card when collapsed, in the thread when expanded
   const latest=open?'':(last.kind==='approval'
@@ -842,8 +868,7 @@ function channelHTML(wide){
   return `<div class="channel ${wide?'wide':''}">
   <div class="ch-h">${S.device==='mobile'?`<button class="ib ham" data-navopen="1" title="Menu">${ic('menu')}</button>`:''}# eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll" data-sk="chan">
-    <div class="ch-intro"><div class="ii">#</div><div class="it">eng-platform</div>
-      <div class="is">Infrastructure, CI/CD, and the shared services the rest of engineering builds on.</div></div>
+    <div class="ch-start">Beginning of <b>#eng-platform</b> · infrastructure, CI/CD &amp; shared services</div>
     <div class="ch-div">Today</div>
     ${head.map(chMsg).join('')}
     ${sessionCard(wide)}
@@ -961,6 +986,8 @@ function wire(){
   document.querySelectorAll('[data-navgo]').forEach(b=>b.onclick=()=>{S.view=b.dataset.navgo;S.navOpen=false;S.drawer=null;S.pinned=null;S.detached=null;render();});
   // customize disclosure: fold the experiment toggles away by default
   const cz=document.getElementById('customize');if(cz)cz.onclick=()=>{S.customize=!S.customize;render();};
+  // steering tray: collapse/expand the suggestions + seat line
+  document.querySelectorAll('[data-tray]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.trayOpen=!S.trayOpen;render();});
   // swipe-from-left opens the nav drawer; swipe left closes it (relative to the phone frame, real touch only)
   if(S.device==='mobile'){const fr=document.querySelector('.frame.mobile');
     if(fr){let x0=null;
