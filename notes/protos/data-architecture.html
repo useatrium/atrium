@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sessions — Final Data Design</title>
+<style>
+  :root{
+    --ink:#16181c; --muted:#6b7280; --faint:#9aa1ab; --line:#e8e8e6;
+    --bg:#fcfcfb; --card:#ffffff; --code:#0f1115; --accent:#2563eb;
+    --green:#15803d; --amber:#b45309;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans);
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:840px;margin:0 auto;padding:0 26px}
+  code{font-family:var(--mono);font-size:.85em;background:#f1f1ef;padding:1px 5px;border-radius:4px}
+  h1{font-size:2.2rem;letter-spacing:-.02em;margin:0 0 12px}
+  h2{font-size:1.4rem;letter-spacing:-.01em;margin:0 0 6px}
+  .kicker{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin:0 0 10px}
+
+  header.top{position:sticky;top:0;z-index:9;background:rgba(252,252,251,.88);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .top .wrap{display:flex;gap:20px;align-items:center;height:52px}
+  .brand{font-weight:650}.brand .d{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:7px;vertical-align:middle}
+  .top nav{display:flex;gap:16px;margin-left:auto;font-size:.85rem}
+  .top nav a{color:var(--muted);text-decoration:none}.top nav a:hover{color:var(--ink)}
+
+  .hero{padding:60px 0 30px}
+  .hero p.lede{font-size:1.18rem;color:#374151;margin:0;max-width:660px}
+
+  section{padding:38px 0;border-top:1px solid var(--line)}
+
+  /* goals */
+  .goals{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
+  @media(max-width:680px){.goals{grid-template-columns:1fr}}
+  .goal{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px 16px}
+  .goal b{display:block;margin-bottom:3px}
+  .goal span{color:var(--muted);font-size:.9rem}
+
+  /* pipeline */
+  .pipe{margin-top:26px;position:relative;padding-left:46px}
+  .pipe::before{content:"";position:absolute;left:15px;top:14px;bottom:14px;width:2px;background:var(--line)}
+  .step{position:relative;margin:0 0 26px}
+  .step .num{position:absolute;left:-46px;top:0;width:32px;height:32px;border-radius:50%;
+    background:var(--card);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:.9rem;color:var(--ink);z-index:1}
+  .step .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 17px}
+  .step h3{margin:0 0 4px;font-size:1.06rem;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .step h3 .where{font-family:var(--mono);font-size:.72rem;color:var(--faint);font-weight:400}
+  .step p{margin:0;color:#3b4351;font-size:.92rem}
+  .flowtag{display:inline-block;font-family:var(--mono);font-size:.72rem;color:var(--accent);
+    background:#eef3fe;border:1px solid #d6e2fd;border-radius:999px;padding:1px 9px;margin:9px 6px 0 0}
+  .flowtag.b{color:var(--green);background:#edfaf1;border-color:#c7eed3}
+  .flowtag.a{color:var(--amber);background:#fdf4ea;border-color:#f3ddbf}
+  .step .pop{margin-top:10px;font-size:.84rem;color:var(--muted);border-left:2px solid var(--line);padding-left:11px}
+
+  /* three homes */
+  .homes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+  @media(max-width:680px){.homes{grid-template-columns:1fr}}
+  .home{border:1px solid var(--line);border-radius:12px;padding:15px 16px;background:var(--card);border-top:3px solid var(--accent)}
+  .home:nth-child(2){border-top-color:var(--amber)}
+  .home:nth-child(3){border-top-color:var(--green)}
+  .home h4{margin:0 0 3px;font-size:.98rem}
+  .home .store{font-family:var(--mono);font-size:.76rem;color:var(--muted);display:block;margin:4px 0 7px}
+  .home p{margin:0;color:var(--muted);font-size:.85rem}
+
+  /* formats */
+  .fmt{margin-top:16px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
+  .fmt .cap{padding:13px 16px 12px}
+  .fmt .cap b{font-size:.98rem}
+  .fmt .cap span{display:block;color:var(--muted);font-size:.85rem;margin-top:2px}
+  .fmt .cap .live{font-family:var(--mono);font-size:.66rem;color:var(--green);background:#edfaf1;border:1px solid #c7eed3;border-radius:999px;padding:1px 7px;margin-left:6px;white-space:nowrap}
+  pre{margin:0;background:var(--code);color:#e7eaf0;padding:14px 16px;overflow-x:auto;
+    font-family:var(--mono);font-size:.78rem;line-height:1.55}
+  pre .c{color:#6b7280}
+  pre .hl{color:#fcd34d}
+
+  .takeaway{background:#eef3fe;border:1px solid #d6e2fd;border-radius:11px;padding:12px 15px;margin-top:14px;font-size:.9rem}
+  .takeaway.a{background:#fdf4ea;border-color:#f3ddbf}
+  .prov{font-size:.82rem;color:var(--faint);padding:24px 0 60px;border-top:1px solid var(--line)}
+  .prov code{background:none;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <span class="brand"><span class="d"></span>Sessions · Final Data Design</span>
+  <nav><a href="#goals">Goals</a><a href="#flow">Flow</a><a href="#homes">Homes</a><a href="#formats">Formats</a></nav>
+</div></div></header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <p class="kicker">target design · 2026-06-15</p>
+    <h1>The session data design</h1>
+    <p class="lede">An agent runs in a sandbox; everything it does flows out as one ordered event stream, atrium keeps a permanent copy, and the UI is rebuilt from that copy. This is the end-state — what we're building toward.</p>
+  </div>
+
+  <!-- GOALS -->
+  <section id="goals">
+    <p class="kicker">What it has to achieve</p>
+    <h2>Five goals</h2>
+    <div class="goals">
+      <div class="goal"><b>Durable forever</b><span>Survives Centaur's retention — a finished session is fully replayable years later.</span></div>
+      <div class="goal"><b>Full fidelity</b><span>Conversation, diffs, generated files, and the raw model-level rollout — nothing silently dropped.</span></div>
+      <div class="goal"><b>One capture path</b><span>Files and logs ride the same event stream as everything else. No second pipeline to keep in sync.</span></div>
+      <div class="goal"><b>Drift-proof</b><span>Frames stored opaque, so a harness changing its format never corrupts the archive.</span></div>
+      <div class="goal"><b>Joinable record</b><span>Transcript + human layer (steers, suggestions, seat history) stitched by session + a monotonic event id.</span></div>
+    </div>
+  </section>
+
+  <!-- FLOW -->
+  <section id="flow">
+    <p class="kicker">The flow, end to end</p>
+    <h2>From keystroke to screen</h2>
+
+    <div class="pipe">
+
+      <div class="step"><div class="num">1</div><div class="card">
+        <h3>Agent works in a sandbox <span class="where">codex / claude · container</span></h3>
+        <p>It writes messages, runs tools, edits files, generates files, and — separately — appends to its own rich rollout log on disk.</p>
+      </div></div>
+
+      <div class="step"><div class="num">2</div><div class="card">
+        <h3>Two things leave the sandbox</h3>
+        <p>Everything the agent <i>narrates</i> goes out as a live event stream. A small sidecar captures what the stream can't carry — generated file bytes and the rollout — uploads them, and emits a <i>reference</i> back into the same stream.</p>
+        <span class="flowtag">stream: messages · tools · diffs · usage</span>
+        <span class="flowtag a">sidecar: file blobs · rollout segments → object store</span>
+        <div class="pop">Why a sidecar: a binary written by a shell command (an image, a build output) never appears in the stream as bytes — only the command does. The sidecar is the only way to capture real work-product.</div>
+      </div></div>
+
+      <div class="step"><div class="num">3</div><div class="card">
+        <h3>Centaur records the stream <span class="where">event log · Postgres</span></h3>
+        <p>Every frame is appended with a monotonic <code>event_id</code>. This is the live source of truth — but it can be <b>redacted on a retention timer</b>, which is exactly why we don't stop here.</p>
+      </div></div>
+
+      <div class="step"><div class="num">4</div><div class="card">
+        <h3>Atrium mirrors everything <span class="where">the key move · session_events</span></h3>
+        <p>A tailer reads the stream and copies <b>every frame, verbatim and opaque</b>, into atrium's own table — kept forever, de-duplicated by event id. The mirror, not Centaur, becomes the durable source of truth.</p>
+        <span class="flowtag b">all frames → session_events (jsonb, indefinite)</span>
+        <div class="pop">Because the sidecar's blobs are referenced <i>inside</i> frames, mirroring the stream automatically captures the artifacts and rollout too — one path, not three.</div>
+      </div></div>
+
+      <div class="step"><div class="num">5</div><div class="card">
+        <h3>It lands in three durable homes</h3>
+        <p>The mirror fans out by data type: the transcript stays in <code>session_events</code>, the large blobs live in the object store, and the human/collaboration layer is recorded in atrium's existing append-only event log.</p>
+        <span class="flowtag b">transcript</span><span class="flowtag a">blobs</span><span class="flowtag">collab events</span>
+      </div></div>
+
+      <div class="step"><div class="num">6</div><div class="card">
+        <h3>The client rebuilds the view <span class="where">web · mobile</span></h3>
+        <p>The UI folds the frames back into a transcript and merges the collab layer. Live extras with no store — the env chip, running cost — are <b>synthesized</b> from the frames themselves.</p>
+      </div></div>
+
+    </div>
+  </section>
+
+  <!-- HOMES -->
+  <section id="homes">
+    <p class="kicker">Source of truth</p>
+    <h2>Three kinds of data, three homes</h2>
+    <p style="color:var(--muted);max-width:640px;margin:.2rem 0 0">There is no single source of truth — and that's deliberate. Each kind of data lives where it belongs.</p>
+    <div class="homes">
+      <div class="home">
+        <h4>Conversation</h4>
+        <span class="store">session_events · Postgres</span>
+        <p>The transcript — messages, tool calls, diffs, reasoning, usage. The mirror is its permanent home.</p>
+      </div>
+      <div class="home">
+        <h4>Work-product &amp; forensics</h4>
+        <span class="store">object store · content-addressed</span>
+        <p>Generated file bytes + the rich model-level rollout, as immutable blobs, referenced from the transcript.</p>
+      </div>
+      <div class="home">
+        <h4>Collaboration</h4>
+        <span class="store">events · Postgres (append-only)</span>
+        <p>Steers, suggestions, seat handoffs, threads — the human layer, joined to the transcript by session + event id.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FORMATS -->
+  <section id="formats">
+    <p class="kicker">The formats</p>
+    <h2>What the data looks like</h2>
+    <p style="color:var(--muted);max-width:640px;margin:.2rem 0 0">Four shapes carry the whole design. The diff is verbatim from a live <code>gpt-5.5</code> session.</p>
+
+    <div class="fmt">
+      <div class="cap"><b>1 · A frame — the unit of the transcript</b><span class="live">captured live</span>
+        <span>One row in the stream / mirror. A file edit carries its full diff — so the Changes view is free, no extra capture.</span></div>
+      <pre>{
+  "event_id": 50231,                  <span class="c">// monotonic, orders + dedupes</span>
+  "type": "item.completed",
+  "item": {
+    "type": "fileChange",
+    "changes": [{
+      "kind": { "type": "update" },
+      "path": "calc.py",
+      "diff": "<span class="hl">@@ -2 +2,5 @@\n     return a + b\n+\n+def subtract(a, b):\n+    return a - b\n</span>"
+    }]
+  }
+}</pre>
+    </div>
+
+    <div class="fmt">
+      <div class="cap"><b>2 · The mirror row — how we keep it forever</b>
+        <span>Every frame kept verbatim (raw <i>and</i> canonical), deduped per session — drift-proof. Replay reads the self-contained <code>item.completed</code> snapshots; the streaming <code>.delta</code> frames are live-only, kept but ignored on replay.</span></div>
+      <pre>session_events (
+  session_id        uuid,
+  centaur_event_id  bigint,        <span class="c">// the frame's event_id</span>
+  event_kind        text,
+  frame             jsonb,         <span class="c">// the WHOLE frame, verbatim</span>
+  UNIQUE (session_id, centaur_event_id)
+)</pre>
+    </div>
+
+    <div class="fmt">
+      <div class="cap"><b>3 · Ref-frames — how files &amp; rollout enter the stream</b>
+        <span>The sidecar uploads the bytes to the object store and drops a lightweight reference into the same stream — so the mirror captures it like any other frame.</span></div>
+      <pre>{ "type": "artifact.captured",
+  "path": "/tmp/chart.png", "kind": "image/png",
+  "sha256": "9f2c…", "size": 8421, "blobRef": "s3://…/9f2c…" }
+
+{ "type": "rollout.segment",
+  "seq": 7, "blobRef": "s3://…/rollout/exe_…/0007.jsonl" }</pre>
+    </div>
+
+    <div class="fmt">
+      <div class="cap"><b>4 · A collab event — the human layer</b>
+        <span>Steers, suggestions, seat changes live in atrium's append-only event log, anchored to the transcript by the same event id.</span></div>
+      <pre>{ "type": "session.suggestion_added",
+  "session_id": "…", "anchor_event_id": 50231,
+  "by": "mara", "text": "try the smaller image first",
+  "disposition": null }                <span class="c">// driver decides; kept either way</span></pre>
+    </div>
+
+    <div class="takeaway"><b>The whole design in one line:</b> one ordered stream of frames (with blob references) → mirrored verbatim into <code>session_events</code> → fanned into transcript / blobs / collab → rebuilt by the client.</div>
+    <div class="takeaway a"><b>The one upstream change:</b> the sandbox sidecar (steps 2 &amp; 3). Everything else — the mirror, the diffs, the steers, the UI — needs nothing new from Centaur.</div>
+  </section>
+
+  <p class="prov">
+    Target design, verified against Centaur source and two live <code>gpt-5.5</code> codex sessions (2026-06-15).
+    Full plan: <code>notes/shared-workspace-sessions.md</code> → "Round 9". Static page, no live data.
+  </p>
+
+</div>
+</body>
+</html>

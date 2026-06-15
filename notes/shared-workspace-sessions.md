@@ -437,3 +437,190 @@ Next's unshipped Ace prototype.
   visible noise).
 - When focus mode lands, does peek lose any affordances (e.g. drawer) to stay
   simple?
+
+## Round 9 — MVP convergence + mirror stress-test (2026-06-15)
+
+Decision: **build the full proto as the MVP** (Gary). Scope = full slice incl.
+**Focus mode**, **all four work surfaces** (Changes/diff · Artifacts · side-effect
+gate · env chip), **web + mobile parity**, and the **durable mirror**. Real-app
+state today ≈ 30% built (seat model, HITL questions, streaming, `session:<id>`
+presence, the `session.steer` SEND path all exist; calm visual language, steer
+*visibility*, suggestions, surfaces, focus route, mobile detail do NOT). Next
+migration is **027** (voice took 024–026). Correction to earlier gap-map: the
+`session.steer` server handler EXISTS (`opQueue.ts:870` → `steerSession`,
+driver-only `session-runs.ts:441`, posts to Centaur `:489/:510`); the real
+control-loop blocker is steer *visibility* — `reducer.ts:137-141` folds only
+agentMessage/commandExecution, so steers never render.
+
+### Centaur research + stress-test (verified vs source AND live data)
+
+Centaur source: `~/Code/centaur`. It runs in a local **kind** cluster
+(`centaur-control-plane`); Postgres pod `centaur-centaur-postgres-0`, db `ai_v2`
+user `tempo`; API at `127.0.0.1:18000` (dev key = `LOCAL_DEV_API_KEY` in the
+`centaur-api` pod env). Sandbox harness default = **codex**, config
+`harness/codex/config.toml` already `model="gpt-5.5"`, reasoning/verbosity `low`.
+
+- **Event log = Postgres** `agent_execution_events` (BIGSERIAL `event_id`,
+  globally monotonic, append-only). Ingested from the sandbox harness **stdout**
+  (NDJSON), NOT from the harness's local rollout files (`agent.py:1142`).
+  `amp_raw_event` is a **misnomer** — verbatim stream payload from *whichever*
+  harness (codex/claude/amp), key-sorted only (`runtime_control.py:3235-3251`).
+  Centaur ALSO writes Centaur-defined `*_observed` canonical rows
+  (`assistant_text_observed` etc.) — but **not for every thread** (a real codex
+  thread had zero). ⇒ mirror must keep ALL frames; the UI renders from raw
+  (atrium's reducer already does) using canonical/`usage_observed` for cost.
+- **Retention = redaction, not loss.** Hourly sweep (`retention.py`),
+  **disabled by default**, overwrites `event_json` in place with a
+  `retention.redacted` stub. Safe under defaults; only risk = short TTL + atrium
+  offline >1h. Mirror eagerly + keep indefinitely.
+- **Tailer (atrium `session-runs.ts:760-784`)** is server-side (NOT per-viewer)
+  and starts at spawn — good — but it advances `last_event_id` over EVERY frame
+  while `foldFrame` persists only 4 kinds. ⇒ the mirror needs **its own
+  watermark + upsert-before-advance** so a crash can't skip un-mirrored frames.
+- **No env/sandbox API**: only coarse `active/released` via `GET /agent/status`;
+  cost lives only in `usage_observed` frames. Env chip = synthesize.
+
+**Live-session POCs (real gpt-5.5-low codex runs, then released):**
+- **Changes/diff — CONFIRMED, NO Centaur change.** A real edit produced
+  `item.completed`/`fileChange`/`changes[].{path,kind,diff}` with FULL content
+  (add) and a real unified-diff hunk (update: `@@ -2 +2,5 @@ … +def subtract…`).
+  Paths are absolute sandbox paths (`/home/agent/workspace/…`) → strip on display.
+- **git metadata is CONDITIONAL on a git-repo workspace.** `turn.done` carried
+  only a `result` summary (no repo/branch/commit) because the workspace wasn't a
+  git repo ⇒ spawn-time repo binding is what unlocks branch/commit/PR context.
+- **Artifacts — CONFIRMED NEEDS a Centaur change.** A shell-written binary
+  (`/tmp/poc_image.jpg` via pillow) produced a `commandExecution` frame (command
+  text + ls) but **NO `fileChange` and ZERO image bytes** anywhere in the stream.
+- **Steers ARE in the stream** as `item.completed`/`userMessage` with full text
+  ⇒ the steer-fold fix is purely client-side.
+
+### Data-layer design (ratified)
+
+Three data classes, three homes — S3 is right for only one:
+1. **Frames → Postgres** `session_events(session_id, centaur_event_id, event_kind,
+   frame jsonb, created_at)`, `UNIQUE(session_id, centaur_event_id)`, fed by the
+   existing tailer (hook in `runTailer`, sees all frames — NOT in `foldFrame`),
+   own watermark, upsert-before-advance, eager from spawn, retained indefinitely.
+   Store **opaque** (raw + canonical both) → drift-proof; render from raw.
+2. **Rollout JSONL → object store**, immutable append-only segments
+   (byte-offset watermark; `…/{exec}/{seq}.jsonl`; never mutate).
+3. **Artifacts → object store (minio)** content-addressed by sha256 +
+   `session_artifacts` ledger row per (session, turn, path, version); ignore-config
+   (node_modules/.git/build caches).
+
+**The ONE Centaur change (combined workstream): a sandbox sidecar/wrapper that
+captures continuously (NOT at teardown — pods die unexpectedly) by emitting two
+new frame kinds** — `artifact.captured {path,kind,blobRef,sha256,size}` and
+`rollout.segment {seq,blobRef}` — uploading blobs to object store and letting
+atrium's mirror tailer capture the refs through the SAME single path. This
+unblocks rollout-forensics AND the Artifacts gallery together. Everything else
+(transcript mirror, Changes/diff, steers, suggestions, turn cards) needs NO
+Centaur change.
+
+**Artifact detection mechanism (Gary, 2026-06-15): CONFIGURABLE scope, a
+spectrum** — must catch arbitrary-location writes like `/tmp`, not just a
+workspace `outputs/` dir. Mechanism MUST NOT be a per-turn rootfs walk
+(huge/slow/noisy).
+- **Floor (ship first): a configurable allow-list of output dirs**, default e.g.
+  `{workspace, /tmp, $HOME/outputs, /var/tmp}`, user-extensible at spawn.
+  Snapshot-diff each listed dir (manifest path→sha, upload deltas). Predictable,
+  low secret-risk (you chose the dirs), and covers `/tmp` because it's on the list.
+- **Ceiling (nothing missed): overlayfs upper-layer diff** — the container's
+  writable upperdir *is* every file changed anywhere vs the base image (base
+  auto-excluded, no walk/watches; `docker diff` semantics; our sandbox is a
+  containerd/overlayfs k8s pod). Or **fanotify whole-mount** for per-write
+  continuity (inotify can't do whole-FS).
+- Both use **manifest-everything → materialize-selectively**. Capture policy =
+  manifest every changed path (cheap, nothing missed), then upload *bytes* only
+  when `{type ∈ allow-list} ∧ {path ∉ deny-list} ∧ {not secret-flagged} ∧
+  {size < cap}`. The axis is **artifact-vs-junk, NOT binary-vs-text** — naive
+  "skip binaries" is WRONG (the motivating `/tmp` jpg + most real artifacts —
+  images/pdf/data/archives — are binary). Three distinct filters:
+  - **Type allow-list** (what to materialize): INCLUDES output-binaries
+    (png/jpg/svg/pdf/csv/xlsx/json/parquet, code, docs); EXCLUDES junk-binaries
+    (`.o/.pyc/.so/.class/.whl/.a`).
+  - **Path/name deny-list** (skip junk any type): `node_modules/ .git/ dist/
+    build/`, package caches, `*.lock`.
+  - **Secret detector** (its OWN mechanism, not type — secrets are "text"):
+    name/path deny (`.env .netrc *.pem id_rsa .aws/ .ssh/ credentials*`) PLUS a
+    content entropy/key-regex scan before upload.
+- Git-assist still applies to the workspace-repo subset (branch/commit context).
+  Non-materialized + manifest rows stay fetchable on-demand while the sandbox is
+  warm. (Fleshes out round-5's open "what counts as an artifact" scope.)
+
+### Phased build plan (front-load the mirror)
+
+- **Phase 0 — Mirror & durability (backend, first).** Migration 027
+  `session_events` + tailer mirror hook (own watermark, upsert-before-advance,
+  eager-from-spawn); resume-from-mirror-watermark on boot. Invisible but de-risks
+  the data layer earliest (Gary's call).
+- **Phase 1 — Calm transcript + visible control loop (web).** Visual language on
+  SessionPane (monochrome, no bubbles, collapsible tool/reasoning, blue=live+send);
+  steer-fold + attributed rendering; turn cards at idle (fix `displayTerminal`
+  treating completed as ended); turn spine/rail.
+- **Phase 2 — Collaboration.** Suggestion queue (table+op+spectator box+driver
+  strip), spectator-proposed HITL answers, session-scoped typing indicator,
+  session-record overlay.
+- **Phase 3 — Layout grammar + Focus mode.** `/s/:id` route, Channel/Split/Focus
+  views + Sessions rail, peek→pin→detach, `@agent` spawn + spawn dialog (repo/
+  branch/harness — also unlocks git metadata + the side-effect gate).
+- **Phase 4 — Work surfaces.** Changes/diff (from frames, no Centaur change) →
+  side-effect gate → env chip (synthesized) → Artifacts (rides the sandbox-capture
+  Centaur change). The combined Centaur capture workstream runs parallel here.
+- **Phase 5 — Attention + anchored comments.**
+- **Mobile parity** — fast-follow lane behind each web phase (session detail is a
+  stub today; degradation rules: no edge spine→Turns▾ sheet, full-screen surfaces,
+  peek is the ceiling).
+
+Execution: author seam contract per phase (migration + shared op/event types),
+fan out codex lanes, review diffs firsthand + merge. Coordinate with the parallel
+session's fleet (master in a worktree).
+
+### Design review (round 2) — holes found + resolved (Gary, 2026-06-15)
+
+Empirical re-check on real frames (**1721 total** across dev sessions): deltas
+are only **~7%** (113), `*_observed` canonical **~41%** (705), rest = raw
+completed items + lifecycle. So the earlier "drop deltas = 10–50× win" was WRONG.
+
+1. **Delta/snapshot — mirror EVERYTHING verbatim in Phase 0; compact later.**
+   Centaur publishes a self-contained snapshot per item (VERIFIED: agentMessage
+   completed carries full `text`; commandExecution completed carries full
+   `aggregatedOutput`; fileChange the full diff) ⇒ deltas are pure live transport;
+   the CLIENT replay reads completed items + ignores deltas (a read-time choice,
+   no computation). BUT dropping deltas at ingest saves only ~7%, frames are tiny
+   (~309 B avg), and dropping-at-ingest is irreversible + races redaction. ⇒
+   Phase 0 mirrors all frames verbatim; compaction (prune deltas + redundant
+   canonical content, KEEP usage/cost) is a deferred background job if scale
+   justifies it. Edge: item that never completes (crash mid-stream) → snapshot the
+   accumulated deltas at the terminal `execution_state`.
+2. **Oversized payloads — keep in Postgres (TOAST) + high-threshold spill valve.**
+   Postgres TOASTs >2 KB values transparently; only pathological completed items
+   (huge build log in `aggregatedOutput`, giant diff) spill to object store
+   (>~256 KB–1 MB) via the same blob-ref mechanism. A threshold knob, not new
+   machinery. (#1's snapshot read-model makes big rows rarer too.)
+3. **Privileged watchers/tailers = accepted key infra.** atrium is the living
+   backbone orchestrating containers+agents; its tailers/sidecar are first-class
+   infra. Least-privilege where free; the stance is settled, not a risk.
+4. **Sidecar→record injection — small, precedented Centaur change.** Centaur
+   already has sandbox-token auth (steer/cancel/claim, `agent.py:707+`) + a sandbox
+   upload path (`/agent/attachments/upload`); `append_execution_event` exists
+   internally (`runtime_control.py`). Change = a sandbox-token **emit-event** route
+   appending `artifact.captured` / `rollout.segment` → real ordered `event_id` →
+   atrium's mirror captures it on the ONE path. **Invariant: upload-then-emit**
+   (failure → orphan blob only, GC'd by hash-with-no-referencing-frame; never a
+   dangling ref; idempotent by sha+path+turn). Bytes channel OPEN: 4a sidecar→
+   Centaur attachments (atrium copies for durability, smallest sandbox surface) vs
+   4b sidecar→atrium object store direct (injected scoped token, no double-copy,
+   better for big blobs).
+5. **Secrets — org-private stores bound it.** atrium stores are org-private ⇒ a
+   missed secret is internal hygiene, not external leak. Encrypt blobs at rest;
+   skip obvious secret files (`.env`/keys) from the gallery view; no hard boundary.
+6. **Cross-harness diffs — Centaur has a canonical `file_change` for amp/claude
+   (`normalize.py:268`) AND codex (`:596`).** So the Changes surface likely gets
+   cross-harness file-change events; whether the canonical carries a full unified
+   diff per harness (Claude `Edit` = old/new strings) is confirmed when we build
+   it, else we synthesize the diff ourselves. OPEN (low).
+
+**Remaining open — none block Phase 0:** 4a-vs-4b bytes channel · spill threshold
+value · Claude diff completeness · backfill of pre-mirror sessions + tailer lag
+monitoring (fast-follows after the forward mirror).
