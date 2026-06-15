@@ -2077,6 +2077,15 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { session: await sessionRuns.getSessionForUser(id, user.id) };
   });
 
+  // The durable session record (transcript + human-side overlay) for agents +
+  // async humans. Channel-access gated like every other session sub-resource.
+  app.get('/api/sessions/:id/record', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { record: await sessionRuns.getSessionRecord(id) };
+  });
+
   app.get('/api/sessions/:id/stream', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
