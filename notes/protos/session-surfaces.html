@@ -40,7 +40,7 @@
   .simpbtn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 
   .stage{flex:1;min-height:0;display:flex;justify-content:center;align-items:flex-start;padding:22px}
-  .frame{width:min(1500px,96vw);height:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
+  .frame{position:relative;width:min(1500px,96vw);height:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:14px;
     overflow:hidden;display:flex;box-shadow:0 18px 50px -20px rgba(20,20,40,.3)}
   .nav{width:50px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:11px 0;gap:9px}
   .logo{width:26px;height:26px;border-radius:7px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
@@ -404,6 +404,23 @@
   /* minimal cockpit: live/stop + a gear for model/thinking */
   .aggear{width:24px;height:24px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;font-size:13px}
   .aggear:hover{background:var(--fill);color:var(--ink-2)}
+  /* mobile nav drawer — swipe-from-left (Slack/Discord): workspace + channels + Sessions */
+  .ham{flex-shrink:0}
+  .navscrim{position:absolute;inset:0;background:rgba(20,20,30,.32);opacity:0;pointer-events:none;transition:.2s;z-index:55}
+  .navscrim.open{opacity:1;pointer-events:auto}
+  .navdrawer{position:absolute;top:0;left:0;bottom:0;width:80%;max-width:300px;background:#fff;border-right:1px solid var(--line-2);
+    transform:translateX(-101%);transition:transform .24s cubic-bezier(.2,.8,.2,1);z-index:56;display:flex;flex-direction:column;box-shadow:24px 0 50px -24px rgba(20,20,40,.4)}
+  .navdrawer.open{transform:none}
+  .nd-head{display:flex;align-items:center;gap:10px;padding:16px 16px 12px;font-weight:600;color:var(--ink);font-size:15px;border-bottom:1px solid var(--line)}
+  .nd-head .logo{width:28px;height:28px;border-radius:8px}
+  .nd-list{flex:1;overflow:auto;padding:6px 8px}
+  .nd-sec{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:12px 8px 4px}
+  .nd-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-size:14px;color:var(--ink-2)}
+  .nd-item:hover{background:var(--fill)} .nd-item.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
+  .nd-item .nd-i{color:var(--ink-4);width:15px;text-align:center;flex-shrink:0} .nd-item.on .nd-i{color:var(--blue)}
+  .nd-item .nd-dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--amber)}
+  /* customize disclosure — the experiment toggles fold away by default so the bar stays calm */
+  .custarea{display:contents}
 </style>
 </head>
 <body>
@@ -424,20 +441,23 @@
       <button data-v="driver" class="on">Driver</button>
       <button data-v="spectator">Spectator</button>
     </div></div>
-  <div class="grp simp"><span class="lbl">Strip</span>
-    <button class="simpbtn" id="slackmode" title="Hide everything Slack/Discord wouldn't show">Slack mode</button>
-    <label class="chk"><input type="checkbox" data-hide="rail"><span>Sessions rail</span></label>
-    <label class="chk"><input type="checkbox" data-hide="carddetail"><span>Card detail</span></label>
-    <label class="chk"><input type="checkbox" data-hide="strip"><span>Summary strip</span></label>
-    <label class="chk"><input type="checkbox" data-hide="toc"><span>Contents rail</span></label>
-    <label class="chk"><input type="checkbox" data-hide="cockpit"><span>Steering cockpit</span></label>
-    <label class="chk"><input type="checkbox" data-hide="social"><span>Reactions &amp; menus</span></label>
+  <div class="grp"><button class="simpbtn" id="customize" title="Show/hide the experiment toggles">Customize ▾</button></div>
+  <div class="custarea hidden" id="custarea">
+    <div class="grp simp"><span class="lbl">Strip</span>
+      <button class="simpbtn" id="slackmode" title="Hide everything Slack/Discord wouldn't show">Slack mode</button>
+      <label class="chk"><input type="checkbox" data-hide="rail"><span>Sessions rail</span></label>
+      <label class="chk"><input type="checkbox" data-hide="carddetail"><span>Card detail</span></label>
+      <label class="chk"><input type="checkbox" data-hide="strip"><span>Summary strip</span></label>
+      <label class="chk"><input type="checkbox" data-hide="toc"><span>Contents rail</span></label>
+      <label class="chk"><input type="checkbox" data-hide="cockpit"><span>Steering cockpit</span></label>
+      <label class="chk"><input type="checkbox" data-hide="social"><span>Reactions &amp; menus</span></label>
+    </div>
+    <div class="grp"><span class="lbl">Work access</span>
+      <div class="seg" id="seg-workaccess">
+        <button data-v="drawer" class="on">Header → drawer</button>
+        <button data-v="bookmarks">Bookmarks bar</button>
+      </div></div>
   </div>
-  <div class="grp"><span class="lbl">Work access</span>
-    <div class="seg" id="seg-workaccess">
-      <button data-v="drawer" class="on">Header → drawer</button>
-      <button data-v="bookmarks">Bookmarks bar</button>
-    </div></div>
   <div class="hint" id="hint"></div>
 </div>
 <div class="stage" id="stage"></div>
@@ -502,7 +522,7 @@ const AUDIT=[
 const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 // default = the Steve Jobs / Slack-simple view: structural chrome stripped, social layer (reactions/threads) kept.
 // flip any checkbox in the "Strip" control to bring a layer back; "Slack mode" toggles the whole set.
-const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},workaccess:"drawer",hide:{rail:true,carddetail:true,strip:true,cockpit:true},
+const S={device:"desktop",view:"browse",role:"driver",env:"warm",file:0,drawer:null,pinned:null,detached:null,viewBeforePin:null,open:{},approved:null,stopped:false,menu:null,rxn:{},workaccess:"drawer",customize:false,navOpen:false,hide:{rail:true,carddetail:true,strip:true,cockpit:true},
   sugg:[{by:"Sam",q:"add a NOT NULL default before the backfill"},{by:"Priya",q:"also update the e2e seat fixture"}],sent:null,
   model:"Opus 4.8",think:"high",setup:false,seatReq:"Sam",threadOpen:false};
 // presence: driver gets the brand color in the avatar stack; watchers are neutral/ambient
@@ -516,7 +536,8 @@ const IC={
   more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
   panelClose:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
   panelOpen:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
-  layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>'};
+  layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  menu:'<line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/>'};
 const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
 // channel conversation (realistic team thread) — the session card slots in right after the @agent spawn
 const CHAN=[
@@ -819,7 +840,7 @@ function channelHTML(wide){
   const spawn=CHAN.findIndex(m=>m.spawn),head=CHAN.slice(0,spawn+1),
     tail=CHAN.slice(spawn+1).filter(m=>!m.afterApprove||S.approved==='yes').map(chMsg).join('');
   return `<div class="channel ${wide?'wide':''}">
-  <div class="ch-h"># eng-platform <span class="cnt">· 24</span></div>
+  <div class="ch-h">${S.device==='mobile'?`<button class="ib ham" data-navopen="1" title="Menu">${ic('menu')}</button>`:''}# eng-platform <span class="cnt">· 24</span></div>
   <div class="ch-b scroll" data-sk="chan">
     <div class="ch-intro"><div class="ii">#</div><div class="it">eng-platform</div>
       <div class="is">Infrastructure, CI/CD, and the shared services the rest of engineering builds on.</div></div>
@@ -867,7 +888,7 @@ function activityHTML(){
   const needs=S.approved!=='yes'&&S.approved!=='no';
   const mine=needs?`<div class="act-sec">Needs you</div>${row('needs you','attn','migrate sessions → driver set',ch('eng-platform')+' · now')}`
     :`<div class="act-sec">Active</div>${row(S.approved==='yes'?'deploying':'','run','migrate sessions → driver set',ch('eng-platform')+' · now')}`;
-  return `<div class="session"><div class="sess-h"><span class="ti">Sessions</span><span class="crumb" style="margin-left:2px;pointer-events:none">· across your channels</span></div>
+  return `<div class="session"><div class="sess-h">${S.device==='mobile'?`<button class="ib ham" data-navopen="1" title="Menu">${ic('menu')}</button>`:''}<span class="ti">Sessions</span><span class="crumb" style="margin-left:2px;pointer-events:none">· across your channels</span></div>
     <div class="activity scroll" data-sk="act"><div class="act-col">
       ${mine}
       ${needs?'<div class="act-sec">Active</div>':''}
@@ -877,10 +898,25 @@ function activityHTML(){
       ${row('','done','tighten rate-limit window',ch('api')+' · 1h')}
     </div></div></div>`;
 }
+// mobile nav: a swipe-from-left drawer (Slack/Discord) — workspace + channel list + the ◎ Sessions destination
+function mobileNavHTML(){
+  const needs=S.approved!=='yes'&&S.approved!=='no';
+  const chan=(name,on)=>`<button class="nd-item ${on?'on':''}" data-navgo="browse"><span class="nd-i">#</span>${name}</button>`;
+  return `<div class="navscrim ${S.navOpen?'open':''}" data-navclose="1"></div>
+    <div class="navdrawer ${S.navOpen?'open':''}">
+      <div class="nd-head"><span class="logo" style="background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:600;font-size:13px">A</span>Atrium</div>
+      <div class="nd-list scroll">
+        <div class="nd-sec">Channels</div>
+        ${chan('eng-platform',S.view!=='activity')}${chan('mobile',false)}${chan('api',false)}${chan('design',false)}
+        <div class="nd-sec">Workspace</div>
+        <button class="nd-item ${S.view==='activity'?'on':''}" data-navgo="activity"><span class="nd-i">◎</span>Sessions${needs?'<span class="nd-dot"></span>':''}</button>
+        <button class="nd-item" data-navclose="1"><span class="nd-i">✦</span>Search</button>
+      </div></div>`;
+}
 function frameHTML(){
   const cm=S.menu?menuHTML():'';
-  // mobile is single-column: channel when browsing, the sessions list at ◎, else the session (← goes back)
-  if(S.device==='mobile')return `<div class="frame mobile">${S.view==='browse'?channelHTML(true):S.view==='activity'?activityHTML():sessionLayout()}${cm}</div>`;
+  // mobile is single-column: channel when browsing, the sessions list at ◎, else the session (← goes back); ☰ / swipe-from-left opens nav
+  if(S.device==='mobile')return `<div class="frame mobile">${S.view==='browse'?channelHTML(true):S.view==='activity'?activityHTML():sessionLayout()}${mobileNavHTML()}${cm}</div>`;
   const nav=navHTML();
   if(S.view==='activity')return `<div class="frame ${S.device}">${nav}${activityHTML()}${cm}</div>`;
   if(S.view==='browse')return `<div class="frame ${S.device}">${nav}${channelHTML(true)}${S.hide.rail?'':sessionsRail()}${cm}</div>`;
@@ -891,7 +927,9 @@ function frameHTML(){
 const SLACK_KEYS=['rail','carddetail','strip','cockpit']; // the resolved resting view (tick-rail/contents kept)
 function syncSeg(){['device','view','role','workaccess'].forEach(k=>document.querySelectorAll(`#seg-${k} button`).forEach(b=>b.classList.toggle('on',b.dataset.v===S[k])));
   document.querySelectorAll('[data-hide]').forEach(b=>b.checked=!!S.hide[b.dataset.hide]);
-  const sm=document.getElementById('slackmode');if(sm)sm.classList.toggle('on',SLACK_KEYS.every(k=>S.hide[k]));}
+  const sm=document.getElementById('slackmode');if(sm)sm.classList.toggle('on',SLACK_KEYS.every(k=>S.hide[k]));
+  const ca=document.getElementById('custarea');if(ca)ca.classList.toggle('hidden',!S.customize);
+  const cz=document.getElementById('customize');if(cz){cz.classList.toggle('on',S.customize);cz.textContent='Customize '+(S.customize?'▴':'▾');}}
 function render(){
   // preserve scroll across re-renders — innerHTML replace would otherwise jump every pane to the top
   const sc={};document.querySelectorAll('[data-sk]').forEach(e=>sc[e.dataset.sk]=e.scrollTop);
@@ -917,6 +955,18 @@ function wire(){
     render();}));
   // nav rail destinations (# channels ⇄ ◎ sessions/activity)
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{S.view=b.dataset.nav;S.drawer=null;S.pinned=null;S.detached=null;render();});
+  // mobile nav drawer: ☰ opens, scrim/Search closes, a channel/Sessions item navigates + closes
+  document.querySelectorAll('[data-navopen]').forEach(b=>b.onclick=(e)=>{e.stopPropagation();S.navOpen=true;render();});
+  document.querySelectorAll('[data-navclose]').forEach(b=>b.onclick=()=>{S.navOpen=false;render();});
+  document.querySelectorAll('[data-navgo]').forEach(b=>b.onclick=()=>{S.view=b.dataset.navgo;S.navOpen=false;S.drawer=null;S.pinned=null;S.detached=null;render();});
+  // customize disclosure: fold the experiment toggles away by default
+  const cz=document.getElementById('customize');if(cz)cz.onclick=()=>{S.customize=!S.customize;render();};
+  // swipe-from-left opens the nav drawer; swipe left closes it (relative to the phone frame, real touch only)
+  if(S.device==='mobile'){const fr=document.querySelector('.frame.mobile');
+    if(fr){let x0=null;
+      fr.addEventListener('touchstart',e=>{x0=e.touches[0].clientX-fr.getBoundingClientRect().left;},{passive:true});
+      fr.addEventListener('touchend',e=>{if(x0==null)return;const dx=(e.changedTouches[0].clientX-fr.getBoundingClientRect().left)-x0;
+        if(!S.navOpen&&x0<40&&dx>45){S.navOpen=true;render();}else if(S.navOpen&&dx<-45){S.navOpen=false;render();}x0=null;},{passive:true});}}
   // simplify toggles: each strips one layer; "Slack mode" flips the structural set at once
   document.querySelectorAll('[data-hide]').forEach(b=>b.onchange=()=>{S.hide[b.dataset.hide]=b.checked;render();});
   const slk=document.getElementById('slackmode');
