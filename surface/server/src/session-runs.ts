@@ -3,9 +3,12 @@ import type { ServerResponse } from 'node:http';
 import {
   CentaurApiError,
   CentaurClient,
+  initialSessionState,
   isTerminalExecutionStatus,
+  reduceSession,
   type CentaurEventFrame,
   type QuestionPrompt,
+  type SessionItem,
 } from '@atrium/centaur-client';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
@@ -88,6 +91,48 @@ export interface SessionPendingQuestionJson {
   turnId: string;
   questions: QuestionPrompt[];
   eventId: number;
+}
+
+export interface SessionSeatHistoryEntry {
+  eventId: number;
+  from: string | null;
+  to: string;
+  reason: string;
+  at: string;
+}
+
+export interface SessionQuestionAnswerJson {
+  id: string;
+  header: string;
+  answers: string[];
+  count: number;
+}
+
+export interface SessionQuestionHistoryEntry {
+  eventId: number;
+  questionId: string;
+  kind: 'requested' | 'answered' | 'resolved';
+  actorId: string | null;
+  at: string;
+  questions: QuestionPrompt[] | null;
+  answers: SessionQuestionAnswerJson[] | null;
+  reason: string | null;
+}
+
+/**
+ * The durable session record (for agents + async humans): the mirrored
+ * transcript plus the human-side overlay — attributed steers (in the
+ * transcript), suggestion dispositions with rationale, answer proposals, seat
+ * handoffs, and question answers. `answerProposals` is the FULL list (all
+ * statuses); `session.answerProposals` is only the live pending subset.
+ */
+export interface SessionRecordJson {
+  session: SessionJson;
+  transcript: SessionItem[];
+  answerProposals: SessionAnswerProposalJson[];
+  seatHistory: SessionSeatHistoryEntry[];
+  questionHistory: SessionQuestionHistoryEntry[];
+  participants: SessionUserJson[];
 }
 
 export interface QuestionAnswerBody {
@@ -190,6 +235,14 @@ interface SessionAnswerProposalRow {
   note: string | null;
   created_at: string;
   resolved_at: string | null;
+}
+
+interface SessionLifecycleEventRow {
+  id: number;
+  type: string;
+  actor_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
 }
 
 type SessionListStatus = 'running' | 'recent' | 'all';
@@ -341,6 +394,96 @@ export class SessionRuns {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
     return this.toJsonWithSeatInfo(row);
+  }
+
+  /**
+   * The durable session record: the mirrored transcript + the human-side
+   * overlay (suggestion dispositions, answer proposals, seat handoffs, question
+   * answers) assembled from the durable tables. Channel access is gated by the
+   * route. The transcript is replayed from the `session_events` mirror, so it
+   * survives Centaur retention.
+   */
+  async getSessionRecord(id: string): Promise<SessionRecordJson> {
+    const row = await this.getSessionRow(id);
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    const [session, transcript, proposals, sessionEvents] = await Promise.all([
+      this.toJsonWithSeatInfo(row),
+      this.readMirroredTranscript(id),
+      this.pool.query<SessionAnswerProposalRow>(
+        `SELECT p.id, p.question_id, p.author_id, a.display_name AS author_name,
+                p.answers, p.status, p.resolved_by, r.display_name AS resolved_by_name,
+                p.note, p.created_at, p.resolved_at
+         FROM session_answer_proposals p
+         JOIN users a ON a.id = p.author_id
+         LEFT JOIN users r ON r.id = p.resolved_by
+         WHERE p.session_id = $1
+         ORDER BY p.created_at ASC`,
+        [id],
+      ),
+      this.pool.query<SessionLifecycleEventRow>(
+        `SELECT id, type, actor_id, payload, created_at
+         FROM events
+         WHERE type LIKE 'session.%' AND payload->>'sessionId' = $1
+         ORDER BY id ASC`,
+        [id],
+      ),
+    ]);
+    const answerProposals = proposals.rows.map(toSessionAnswerProposalJson);
+    const seatHistory = buildSeatHistory(sessionEvents.rows);
+    const questionHistory = buildQuestionHistory(sessionEvents.rows);
+    const participants = await this.resolveParticipants(
+      row,
+      session.suggestions,
+      answerProposals,
+      seatHistory,
+      questionHistory,
+    );
+    return { session, transcript, answerProposals, seatHistory, questionHistory, participants };
+  }
+
+  private async readMirroredTranscript(id: string): Promise<SessionItem[]> {
+    const res = await this.pool.query<{ frame: CentaurEventFrame }>(
+      'SELECT frame FROM session_events WHERE session_id = $1 ORDER BY centaur_event_id ASC',
+      [id],
+    );
+    let state = initialSessionState();
+    for (const r of res.rows) state = reduceSession(state, r.frame);
+    return state.items;
+  }
+
+  private async resolveParticipants(
+    row: SessionRow,
+    suggestions: SessionSuggestionJson[],
+    proposals: SessionAnswerProposalJson[],
+    seatHistory: SessionSeatHistoryEntry[],
+    questionHistory: SessionQuestionHistoryEntry[],
+  ): Promise<SessionUserJson[]> {
+    const ids = new Set<string>();
+    ids.add(row.spawned_by);
+    if (row.driver_id) ids.add(row.driver_id);
+    for (const s of suggestions) {
+      ids.add(s.authorId);
+      if (s.resolvedBy) ids.add(s.resolvedBy);
+    }
+    for (const p of proposals) {
+      ids.add(p.authorId);
+      if (p.resolvedBy) ids.add(p.resolvedBy);
+    }
+    for (const e of seatHistory) {
+      if (e.from) ids.add(e.from);
+      ids.add(e.to);
+    }
+    for (const e of questionHistory) {
+      if (e.actorId) ids.add(e.actorId);
+    }
+    if (ids.size === 0) return [];
+    const res = await this.pool.query<SessionUserRow>(
+      'SELECT id AS user_id, display_name FROM users WHERE id = ANY($1::uuid[])',
+      [[...ids]],
+    );
+    return res.rows.map(toSessionUserJson);
   }
 
   async listSessionsForUser(args: {
@@ -1826,6 +1969,44 @@ function toSessionAnswerProposalJson(row: SessionAnswerProposalRow): SessionAnsw
     createdAt: new Date(row.created_at).toISOString(),
     resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
   };
+}
+
+function buildSeatHistory(rows: SessionLifecycleEventRow[]): SessionSeatHistoryEntry[] {
+  return rows
+    .filter((r) => r.type === 'session.seat_changed')
+    .map((r) => ({
+      eventId: r.id,
+      from: typeof r.payload.from === 'string' ? r.payload.from : null,
+      to: typeof r.payload.to === 'string' ? r.payload.to : '',
+      reason: typeof r.payload.reason === 'string' ? r.payload.reason : 'granted',
+      at: new Date(r.created_at).toISOString(),
+    }));
+}
+
+const QUESTION_EVENT_KINDS: Record<string, SessionQuestionHistoryEntry['kind']> = {
+  'session.question_requested': 'requested',
+  'session.question_answered': 'answered',
+  'session.question_resolved': 'resolved',
+};
+
+function buildQuestionHistory(rows: SessionLifecycleEventRow[]): SessionQuestionHistoryEntry[] {
+  const out: SessionQuestionHistoryEntry[] = [];
+  for (const r of rows) {
+    const kind = QUESTION_EVENT_KINDS[r.type];
+    if (!kind) continue;
+    const p = r.payload;
+    out.push({
+      eventId: r.id,
+      questionId: typeof p.questionId === 'string' ? p.questionId : '',
+      kind,
+      actorId: r.actor_id,
+      at: new Date(r.created_at).toISOString(),
+      questions: Array.isArray(p.questions) ? (p.questions as QuestionPrompt[]) : null,
+      answers: Array.isArray(p.answers) ? (p.answers as SessionQuestionAnswerJson[]) : null,
+      reason: typeof p.reason === 'string' ? p.reason : null,
+    });
+  }
+  return out;
 }
 
 function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null {

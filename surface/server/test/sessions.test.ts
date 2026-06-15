@@ -2235,6 +2235,117 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('GET /api/sessions/:id/record aggregates transcript + overlay (suggestions, proposals, seat, questions)', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app); // fx.userId drives
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertSessionRow({ title: 'record me', status: 'running' });
+
+    // Mirror a tiny transcript: a steer + an agent reply.
+    await pool.query(
+      `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
+       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 10, 'amp_raw_event', $3)`,
+      [
+        id,
+        JSON.stringify({
+          event: 'amp_raw_event',
+          event_id: 5,
+          data: { type: 'item.completed', item: { type: 'userMessage', id: 'u1', text: 'do the thing' } },
+        }),
+        JSON.stringify({
+          event: 'amp_raw_event',
+          event_id: 10,
+          data: { type: 'item.completed', item: { type: 'agentMessage', id: 'm1', text: 'done' } },
+        }),
+      ],
+    );
+
+    // A suggestion proposed by Bob, dismissed by the driver (persists).
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions`,
+      headers: { cookie: bob.cookie },
+      payload: { text: 'try X' },
+    });
+    const sug = await pool.query("SELECT payload FROM events WHERE type = 'session.suggestion_added'");
+    const suggestionId = sug.rows[0].payload.suggestionId as string;
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions/${suggestionId}/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'dismiss', note: 'not now' },
+    });
+
+    // A proposed answer, submitted by the driver (answers the question).
+    await setPendingQuestion(id);
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals`,
+      headers: { cookie: bob.cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    const prop = await pool.query("SELECT payload FROM events WHERE type = 'session.answer_proposed'");
+    const proposalId = prop.rows[0].payload.proposalId as string;
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/${proposalId}/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'submit' },
+    });
+
+    // A seat handoff (granted to Bob).
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/seat/request`,
+      headers: { cookie: bob.cookie },
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/seat/grant`,
+      headers: { cookie: driverCookie },
+      payload: { userId: bob.userId },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/record`,
+      headers: { cookie: driverCookie },
+    });
+    expect(res.statusCode).toBe(200);
+    const record = res.json().record;
+
+    // Transcript replayed from the mirror.
+    expect(record.session.id).toBe(id);
+    expect(record.transcript.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(record.transcript)).toContain('do the thing');
+
+    // Overlay: the dismissed suggestion (all statuses) with its rationale.
+    expect(record.session.suggestions).toEqual([
+      expect.objectContaining({ id: suggestionId, status: 'dismissed', note: 'not now', authorName: 'Bob' }),
+    ]);
+
+    // The submitted proposal appears (full list, not just pending).
+    expect(record.answerProposals).toEqual([
+      expect.objectContaining({ id: proposalId, status: 'submitted', authorName: 'Bob' }),
+    ]);
+
+    // Seat + question history.
+    expect(record.seatHistory).toEqual([
+      expect.objectContaining({ to: bob.userId, reason: 'granted' }),
+    ]);
+    expect(record.questionHistory.some((e: { kind: string }) => e.kind === 'answered')).toBe(true);
+
+    // Participants resolve every referenced id to a display name.
+    const participantIds = record.participants.map((p: { userId: string }) => p.userId);
+    expect(participantIds).toContain(bob.userId);
+    expect(participantIds).toContain(fx.userId);
+    await app.close();
+  });
+
   it('concurrent seat mutations produce exactly one winner and one seat_changed event', async () => {
     const app = await buildApp({
       pool,
