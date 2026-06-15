@@ -2281,6 +2281,69 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.code(202).send({ ok: true });
   });
 
+  // A watcher proposes an answer to the pending question (any member; the DAO
+  // refuses the driver, who answers directly).
+  app.post('/api/sessions/:id/question-proposals', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
+    if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'questionId and answers are required' });
+    }
+    const questionId = body.questionId;
+    const answers = body.answers;
+    let event: WireEvent | null = null;
+    await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.answer.propose',
+      body: { sessionId: id, questionId, answers },
+      fn: async (client) => {
+        event = await sessionRuns.createAnswerProposalInTx(client, id, user.id, questionId, answers);
+        return { ok: true as const };
+      },
+      onApplied: () => {
+        if (event) hub.publishEvent(event);
+      },
+    });
+    return reply.code(202).send({ ok: true });
+  });
+
+  // Driver-only (enforced in the DAO): submit (answers the question) / dismiss.
+  app.post('/api/sessions/:id/question-proposals/:proposalId/resolve', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    if (!/^[0-9a-f-]{36}$/i.test(proposalId)) {
+      return reply.code(404).send({ error: 'proposal_not_found', message: 'proposal not found' });
+    }
+    const body = (req.body ?? {}) as { action?: unknown; note?: unknown; opId?: unknown };
+    const opId = optionalOpId(body);
+    if (body.action !== 'submit' && body.action !== 'dismiss') {
+      return reply.code(400).send({ error: 'bad_request', message: "action must be 'submit' or 'dismiss'" });
+    }
+    const action = body.action;
+    const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
+    let result: { events: WireEvent[]; postedAnswer: boolean } | null = null;
+    await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.answer.resolve',
+      body: { sessionId: id, proposalId, action, ...(note !== undefined ? { note } : {}) },
+      fn: async (client) => {
+        result = await sessionRuns.resolveAnswerProposalInTx(client, id, user, proposalId, action, { note });
+        return { ok: true as const };
+      },
+      onApplied: () => {
+        if (!result) return;
+        for (const event of result.events) hub.publishEvent(event);
+      },
+    });
+    return reply.code(202).send({ ok: true });
+  });
+
   app.post('/api/sessions/:id/cancel', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;

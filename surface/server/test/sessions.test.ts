@@ -2058,6 +2058,183 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('answer proposal: a watcher proposes; the driver submits it (answers the question)', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app); // fx.userId is the driver
+    const bob = await loginUser(app, 'bob', 'Bob'); // spectator
+    const id = await insertSessionRow({ title: 'propose me', status: 'running' });
+    await setPendingQuestion(id);
+
+    const propose = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals`,
+      headers: { cookie: bob.cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    expect(propose.statusCode).toBe(202);
+
+    const proposed = await pool.query(
+      "SELECT actor_id, payload FROM events WHERE type = 'session.answer_proposed'",
+    );
+    expect(proposed.rows).toHaveLength(1);
+    expect(proposed.rows[0].actor_id).toBe(bob.userId);
+    const proposalId = proposed.rows[0].payload.proposalId as string;
+    expect(proposed.rows[0].payload).toMatchObject({
+      sessionId: id,
+      questionId: 'q-main',
+      authorId: bob.userId,
+    });
+
+    // GET hydrates the pending proposal with the author display name.
+    const got = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}`,
+      headers: { cookie: driverCookie },
+    });
+    expect(got.json().session.answerProposals).toEqual([
+      expect.objectContaining({
+        id: proposalId,
+        questionId: 'q-main',
+        authorId: bob.userId,
+        authorName: 'Bob',
+        status: 'pending',
+      }),
+    ]);
+
+    // A non-driver may not resolve.
+    const bobResolve = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/${proposalId}/resolve`,
+      headers: { cookie: bob.cookie },
+      payload: { action: 'submit' },
+    });
+    expect(bobResolve.statusCode).toBe(403);
+
+    // The driver submits → the question is answered (Centaur called, driver-attributed,
+    // pending cleared) and the proposal is recorded.
+    const submit = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/${proposalId}/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'submit' },
+    });
+    expect(submit.statusCode).toBe(202);
+
+    expect(fake.answers).toHaveLength(1);
+    expect(fake.answers[0]!.body).toEqual({
+      question_id: 'q-main',
+      answers: { choice: { answers: ['Fast'] } },
+    });
+    const sessRow = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    expect(sessRow.rows[0].pending_question).toBeNull();
+    const propRow = await pool.query(
+      'SELECT status, resolved_by FROM session_answer_proposals WHERE id = $1',
+      [proposalId],
+    );
+    expect(propRow.rows[0]).toMatchObject({ status: 'submitted', resolved_by: fx.userId });
+    const answered = await pool.query(
+      "SELECT actor_id FROM events WHERE type = 'session.question_answered'",
+    );
+    expect(answered.rows).toHaveLength(1);
+    expect(answered.rows[0].actor_id).toBe(fx.userId);
+    const resolved = await pool.query(
+      "SELECT payload FROM events WHERE type = 'session.answer_proposal_resolved'",
+    );
+    expect(resolved.rows).toHaveLength(1);
+    expect(resolved.rows[0].payload).toMatchObject({ proposalId, status: 'submitted' });
+
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/${proposalId}/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'dismiss' },
+    });
+    expect(again.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('answer proposal: the driver cannot propose (answers directly)', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'x', status: 'running' });
+    await setPendingQuestion(id);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals`,
+      headers: { cookie: driverCookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('driver_answers_directly');
+    await app.close();
+  });
+
+  it('answer proposal: driver dismiss records the disposition + note, leaves the question pending', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertSessionRow({ title: 'x', status: 'running' });
+    await setPendingQuestion(id);
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals`,
+      headers: { cookie: bob.cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    const proposed = await pool.query(
+      "SELECT payload FROM events WHERE type = 'session.answer_proposed'",
+    );
+    const proposalId = proposed.rows[0].payload.proposalId as string;
+
+    const dismiss = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/${proposalId}/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'dismiss', note: 'wrong option' },
+    });
+    expect(dismiss.statusCode).toBe(202);
+    const row = await pool.query(
+      'SELECT status, resolved_by, note FROM session_answer_proposals WHERE id = $1',
+      [proposalId],
+    );
+    expect(row.rows[0]).toMatchObject({ status: 'dismissed', resolved_by: fx.userId, note: 'wrong option' });
+    // Dismiss doesn't answer the question — it stays pending and Centaur is untouched.
+    const sess = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    expect(sess.rows[0].pending_question).not.toBeNull();
+    expect(fake.answers).toHaveLength(0);
+    await app.close();
+  });
+
+  it('answer proposal: resolve with a non-UUID proposalId 404s', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'x', status: 'running' });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/not-a-uuid/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'submit' },
+    });
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
   it('concurrent seat mutations produce exactly one winner and one seat_changed event', async () => {
     const app = await buildApp({
       pool,

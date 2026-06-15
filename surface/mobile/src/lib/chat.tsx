@@ -587,6 +587,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           driverId: null,
           pendingSeatRequests: [],
           suggestions: [],
+          answerProposals: [],
           seatEvents: [],
           costUsd: 0,
           resultText: null,

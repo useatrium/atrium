@@ -100,6 +100,32 @@ export interface SessionSuggestion {
   resolvedAt?: string;
 }
 
+export type AnswerProposalStatus = 'pending' | 'submitted' | 'dismissed';
+
+/**
+ * A spectator-proposed answer to a pending HITL question (Phase 2). The driver
+ * one-click submits it (driver-attributed) or dismisses it; rows persist.
+ */
+export interface SessionAnswerProposal {
+  /** Proposal row id (uuid) — stable dedupe key across WS + catch-up. */
+  id: string;
+  /** The pending question this answers (`QuestionPrompt`-set id). */
+  questionId: string;
+  /** The spectator who proposed it. */
+  authorId: string;
+  authorName?: string;
+  /** Same shape the answer route takes: { [questionId]: { answers } }. */
+  answers: Record<string, { answers: string[] }>;
+  status: AnswerProposalStatus;
+  /** Driver who resolved it (present once submitted/dismissed). */
+  resolvedBy?: string;
+  resolvedByName?: string;
+  /** Optional "why" on dismiss — never required. */
+  note?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 /** Session JSON as served by POST/GET /api/sessions. */
 export interface SessionWire {
   id: string;
@@ -116,6 +142,8 @@ export interface SessionWire {
   pendingSeatRequests?: SessionSeatUser[];
   /** Suggestion queue, oldest-first (Phase 2; absent on older payloads). */
   suggestions?: SessionSuggestion[];
+  /** Pending HITL answer proposals (Phase 2; absent on older payloads). */
+  answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
   costUsd: number | string | null;
   resultText: string | null;
@@ -158,6 +186,8 @@ export interface Session {
   pendingSeatRequests: SessionSeatUser[];
   /** Suggestion queue folded from session.suggestion_* events, oldest-first. */
   suggestions: SessionSuggestion[];
+  /** HITL answer proposals folded from session.answer_proposal_* events. */
+  answerProposals: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
@@ -253,6 +283,7 @@ export function sessionFromWire(w: SessionWire): Session {
     driverName: w.driver?.displayName,
     pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
     suggestions: [...(w.suggestions ?? [])],
+    answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
     questionEvents: [],
     seatEvents: [],
@@ -286,6 +317,8 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     pendingSeatRequests:
       live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
     suggestions: live.suggestions.length > 0 ? live.suggestions : resp.suggestions,
+    answerProposals:
+      live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
     pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
     questionEvents:
       (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
@@ -320,6 +353,7 @@ export function applySessionEvent(
       driverId: null,
       pendingSeatRequests: [],
       suggestions: [],
+      answerProposals: [],
       pendingQuestion: null,
       questionEvents: [],
       seatEvents: [],
@@ -499,7 +533,67 @@ export function applySessionEvent(
     return { ...sessions, [sessionId]: { ...prev, suggestions } };
   }
 
+  if (ev.type === 'session.answer_proposed') {
+    const proposalId = typeof p.proposalId === 'string' ? p.proposalId : null;
+    const questionId = typeof p.questionId === 'string' ? p.questionId : null;
+    const answers = parseProposalAnswers(p.answers);
+    if (!proposalId || !questionId || !answers) return sessions;
+    if (prev.answerProposals.some((pr) => pr.id === proposalId)) return sessions; // WS + catch-up overlap
+    const authorId = typeof p.authorId === 'string' ? p.authorId : (ev.actorId ?? '');
+    const proposal: SessionAnswerProposal = {
+      id: proposalId,
+      questionId,
+      authorId,
+      answers,
+      status: 'pending',
+      createdAt: ev.createdAt,
+    };
+    if (ev.author && ev.author.id === authorId && ev.author.displayName) {
+      proposal.authorName = ev.author.displayName;
+    }
+    return {
+      ...sessions,
+      [sessionId]: { ...prev, answerProposals: [...prev.answerProposals, proposal] },
+    };
+  }
+
+  if (ev.type === 'session.answer_proposal_resolved') {
+    const proposalId = typeof p.proposalId === 'string' ? p.proposalId : null;
+    const status = p.status === 'submitted' || p.status === 'dismissed' ? p.status : null;
+    if (!proposalId || !status) return sessions;
+    const idx = prev.answerProposals.findIndex((pr) => pr.id === proposalId);
+    if (idx < 0) return sessions;
+    const existing = prev.answerProposals[idx]!;
+    const resolvedBy = typeof p.resolvedBy === 'string' ? p.resolvedBy : ev.actorId ?? undefined;
+    const resolved: SessionAnswerProposal = {
+      ...existing,
+      status,
+      resolvedAt: ev.createdAt,
+      ...(resolvedBy ? { resolvedBy } : {}),
+      ...(ev.author && ev.author.id === resolvedBy && ev.author.displayName
+        ? { resolvedByName: ev.author.displayName }
+        : {}),
+      ...(typeof p.note === 'string' && p.note ? { note: p.note } : {}),
+    };
+    const answerProposals = [...prev.answerProposals];
+    answerProposals[idx] = resolved;
+    return { ...sessions, [sessionId]: { ...prev, answerProposals } };
+  }
+
   return sessions;
+}
+
+/** Validate a proposal's answer map: { [questionId]: { answers: string[] } }. */
+function parseProposalAnswers(value: unknown): Record<string, { answers: string[] }> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out: Record<string, { answers: string[] }> = {};
+  for (const [qid, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const answers = (entry as Record<string, unknown>).answers;
+    if (!Array.isArray(answers) || !answers.every((a) => typeof a === 'string')) return null;
+    out[qid] = { answers: answers as string[] };
+  }
+  return out;
 }
 
 function questionEventFromPayload(

@@ -537,6 +537,7 @@ export function Chat({
           driverId: null,
           pendingSeatRequests: [],
           suggestions: [],
+          answerProposals: [],
           seatEvents: [],
           costUsd: 0,
           resultText: null,

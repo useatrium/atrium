@@ -44,6 +44,7 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
     driverId: null,
     pendingSeatRequests: [],
     suggestions: [],
+    answerProposals: [],
     seatEvents: [],
     costUsd: 0,
     resultText: null,
