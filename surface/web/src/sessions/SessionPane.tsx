@@ -10,6 +10,8 @@ import {
   type CSSProperties,
 } from 'react';
 import {
+  changedPaths,
+  collectFileChanges,
   isTerminalExecutionStatus,
   type QuestionItem,
   type TextItem,
@@ -17,6 +19,7 @@ import {
   type UserMessageItem,
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
+import { ChangesSurface } from './ChangesSurface';
 import { Composer } from '../components/Composer';
 import {
   ArrowUpIcon,
@@ -96,6 +99,11 @@ export function SessionPane({
   onToggleFocus?: () => void;
 }) {
   const { stream, connected } = useSessionStream(session.id);
+
+  // Changes work-surface (Phase 4): derived from the folded transcript items.
+  const fileChanges = useMemo(() => collectFileChanges(stream.items), [stream.items]);
+  const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
+  const [changesOpen, setChangesOpen] = useState(false);
 
   const terminal = isTerminalSessionStatus(session.status);
   const displayStatus: SessionStatus = terminal
@@ -453,7 +461,23 @@ export function SessionPane({
         </div>
       )}
 
+      {changedFileCount > 0 && (
+        <button
+          data-testid="changes-strip"
+          onClick={() => setChangesOpen((v) => !v)}
+          aria-expanded={changesOpen}
+          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+        >
+          <span className="font-semibold uppercase tracking-wider text-fg-muted">Changes</span>
+          <span className="tabular-nums">· {changedFileCount}</span>
+          <span className="ml-auto text-fg-tertiary">{changesOpen ? 'Hide' : 'View'}</span>
+        </button>
+      )}
+
       <div className="relative flex min-h-0 flex-1 flex-col">
+        {changesOpen && changedFileCount > 0 && (
+          <ChangesSurface changes={fileChanges} onClose={() => setChangesOpen(false)} />
+        )}
         <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
         {stream.items.length === 0 && (
           <div className="flex h-full items-center justify-center text-xs text-fg-muted">
