@@ -21,8 +21,7 @@ import {
   type UserMessageItem,
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
-import { ChangesSurface } from './ChangesSurface';
-import { SideEffectsSurface } from './SideEffectsSurface';
+import { WorkDrawer, type WorkTab } from './WorkDrawer';
 import { Composer } from '../components/Composer';
 import {
   ArrowUpIcon,
@@ -110,10 +109,47 @@ export function SessionPane({
     [stream.items, stream.fileChanges],
   );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
-  const [changesOpen, setChangesOpen] = useState(false);
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
-  const [sideEffectsOpen, setSideEffectsOpen] = useState(false);
+  const sideEffectsDanger = useMemo(
+    () => sideEffects.some((effect) => effect.risk === 'danger'),
+    [sideEffects],
+  );
+
+  // Work drawer (Phase 4): one tabbed surface over Changes + Side-effects, with
+  // a peek→pin ladder. `workTab` null = closed; `workPinned` docks it beside the
+  // transcript. Pinning gives the transcript room by collapsing to focus (the
+  // ratified pane-cap rule); we restore split on unpin only if pin caused it.
+  const [workTab, setWorkTab] = useState<WorkTab | null>(null);
+  const [workPinned, setWorkPinned] = useState(false);
+  const workAutoFocusedRef = useRef(false);
+  const restoreSplitIfAuto = () => {
+    if (workAutoFocusedRef.current && onToggleFocus) {
+      workAutoFocusedRef.current = false;
+      onToggleFocus();
+    }
+  };
+  const closeWork = () => {
+    setWorkTab(null);
+    setWorkPinned(false);
+    restoreSplitIfAuto();
+  };
+  const onStrip = (tab: WorkTab) => {
+    if (workTab === tab && !workPinned) closeWork();
+    else setWorkTab(tab);
+  };
+  const togglePin = () => {
+    if (workPinned) {
+      setWorkPinned(false);
+      restoreSplitIfAuto();
+    } else {
+      setWorkPinned(true);
+      if (layout === 'split' && onToggleFocus) {
+        workAutoFocusedRef.current = true;
+        onToggleFocus();
+      }
+    }
+  };
 
   const terminal = isTerminalSessionStatus(session.status);
   const displayStatus: SessionStatus = terminal
@@ -474,44 +510,49 @@ export function SessionPane({
       {changedFileCount > 0 && (
         <button
           data-testid="changes-strip"
-          onClick={() => {
-            setChangesOpen((v) => !v);
-            setSideEffectsOpen(false); // single swappable surface slot
-          }}
-          aria-expanded={changesOpen}
+          onClick={() => onStrip('changes')}
+          aria-expanded={workTab === 'changes'}
           className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
         >
           <span className="font-semibold uppercase tracking-wider text-fg-muted">Changes</span>
           <span className="tabular-nums">· {changedFileCount}</span>
-          <span className="ml-auto text-fg-tertiary">{changesOpen ? 'Hide' : 'View'}</span>
+          <span className="ml-auto text-fg-tertiary">
+            {workTab === 'changes' ? 'Hide' : 'View'}
+          </span>
         </button>
       )}
       {sideEffectsN > 0 && (
         <button
           data-testid="sideeffects-strip"
-          onClick={() => {
-            setSideEffectsOpen((v) => !v);
-            setChangesOpen(false); // single swappable surface slot
-          }}
-          aria-expanded={sideEffectsOpen}
+          onClick={() => onStrip('sideEffects')}
+          aria-expanded={workTab === 'sideEffects'}
           className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
         >
           <span className="font-semibold uppercase tracking-wider text-fg-muted">Side-effects</span>
-          <span
-            className={`tabular-nums ${sideEffects.some((effect) => effect.risk === 'danger') ? 'text-danger-text' : ''}`}
-          >
+          <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>
             · {sideEffectsN}
           </span>
-          <span className="ml-auto text-fg-tertiary">{sideEffectsOpen ? 'Hide' : 'View'}</span>
+          <span className="ml-auto text-fg-tertiary">
+            {workTab === 'sideEffects' ? 'Hide' : 'View'}
+          </span>
         </button>
       )}
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        {changesOpen && changedFileCount > 0 && (
-          <ChangesSurface changes={fileChanges} onClose={() => setChangesOpen(false)} />
-        )}
-        {sideEffectsOpen && sideEffectsN > 0 && (
-          <SideEffectsSurface effects={sideEffects} onClose={() => setSideEffectsOpen(false)} />
+      <div className={`flex min-h-0 flex-1 ${workTab && workPinned ? 'flex-row' : 'flex-col'}`}>
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {workTab && !workPinned && (
+          <WorkDrawer
+            changes={fileChanges}
+            changedFileCount={changedFileCount}
+            effects={sideEffects}
+            sideEffectCount={sideEffectsN}
+            hasDanger={sideEffectsDanger}
+            tab={workTab}
+            onTab={setWorkTab}
+            pinned={false}
+            onTogglePin={togglePin}
+            onClose={closeWork}
+          />
         )}
         <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
         {stream.items.length === 0 && (
@@ -599,6 +640,23 @@ export function SessionPane({
               ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
           }
         />
+        </div>
+        {workTab && workPinned && (
+          <div className="flex min-h-0 w-[min(440px,46%)] shrink-0 flex-col border-l border-edge">
+            <WorkDrawer
+              changes={fileChanges}
+              changedFileCount={changedFileCount}
+              effects={sideEffects}
+              sideEffectCount={sideEffectsN}
+              hasDanger={sideEffectsDanger}
+              tab={workTab}
+              onTab={setWorkTab}
+              pinned
+              onTogglePin={togglePin}
+              onClose={closeWork}
+            />
+          </div>
+        )}
       </div>
 
       {isEnded ? (
