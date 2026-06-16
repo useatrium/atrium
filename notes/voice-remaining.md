@@ -32,7 +32,7 @@ Device/APNs setup: `notes/voice-device-runbook.md`. Last updated 2026-06-16.
 - [x] Minor review nits (#29): dropped the redundant server `prunePushTokens` wrapper; hoisted the call UI to an app-level `GlobalCallUI` (shows on any screen); documented that `startOutgoingCall`'s `channelId` handle is intentional.
 - [x] `expo-audio` bumped `56.0.11` → `56.0.12` (#29).
 
-_(#3 GlobalCallUI's cross-screen visual is typecheck-clean but not yet sim-QA'd.)_
+_(#3 GlobalCallUI sim-QA'd 2026-06-16: the call strip persists correctly on the channel list / any screen.)_
 
 ## Recommended priority if shipping to production
 1. **Real whisper STT in the deploy image** (otherwise transcription is empty).
