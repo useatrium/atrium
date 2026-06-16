@@ -56,10 +56,6 @@ const AUDIO_CAPTURE_OPTIONS = {
   autoGainControl: true,
 };
 
-function userFromIdentity(identity: string): UserRef {
-  return { id: identity, handle: identity, displayName: identity };
-}
-
 function fallbackUser(id: string): UserRef {
   return { id, handle: id, displayName: id };
 }
@@ -221,7 +217,10 @@ export function useCall({
       const onParticipantConnected = (participant: RemoteParticipant) => {
         updateActiveCall((current) => ({
           ...current,
-          participants: upsertUser(current.participants, userFromIdentity(participant.identity)),
+          participants: upsertUser(
+            current.participants,
+            userForCall(current.call, channelsRef.current, participant.identity),
+          ),
         }));
       };
       const onParticipantDisconnected = (participant: RemoteParticipant) => {
@@ -328,7 +327,10 @@ export function useCall({
           for (const participant of room.remoteParticipants.values()) {
             updateActiveCall((active) => ({
               ...active,
-              participants: upsertUser(active.participants, userFromIdentity(participant.identity)),
+              participants: upsertUser(
+                active.participants,
+                userForCall(active.call, channelsRef.current, participant.identity),
+              ),
             }));
             for (const publication of participant.trackPublications.values()) {
               const track = publication.track;
