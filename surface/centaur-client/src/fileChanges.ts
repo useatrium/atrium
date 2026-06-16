@@ -6,22 +6,9 @@
 // are dropped by the reducer today.
 
 import type { JsonObject } from "./types.js";
-import type { SessionItem, ToolCallItem } from "./reducer.js";
+import type { FileChange, FileChangeKind, SessionItem, SessionState, ToolCallItem } from "./reducer.js";
 
-export type FileChangeKind = "add" | "update" | "delete";
-
-export interface FileChange {
-  /** Stable id (the source tool-call id) for dedup + React keys. */
-  id: string;
-  /** Display path — the absolute sandbox/workspace prefix is stripped. */
-  path: string;
-  kind: FileChangeKind;
-  /** Unified-style diff text synthesized from the tool input. */
-  diff: string;
-  /** The tool that made the edit (Edit / Write / …). */
-  toolName: string;
-  sourceEventIds: number[];
-}
+export type { FileChange, FileChangeKind } from "./reducer.js";
 
 // Claude Code's Edit + the Anthropic text-editor tool (whose str_replace command
 // uses old_str/new_str, not old_string/new_string).
@@ -112,12 +99,9 @@ export function fileChangeFromToolCall(item: ToolCallItem): FileChange | null {
   };
 }
 
-/**
- * Collect every file change a session made, newest-edit-per-path winning order
- * but keeping each edit (a file edited twice yields two entries — the surface
- * groups by path for display). Pure over the reduced transcript items.
- */
-export function collectFileChanges(items: SessionItem[]): FileChange[] {
+/** Claude/amp edits, derived from the transcript tool_call items (paths already
+ * stripped to display form). */
+export function fileChangesFromItems(items: SessionItem[]): FileChange[] {
   const out: FileChange[] = [];
   for (const item of items) {
     if (item.type !== "tool_call") continue;
@@ -125,6 +109,17 @@ export function collectFileChanges(items: SessionItem[]): FileChange[] {
     if (change) out.push(change);
   }
   return out;
+}
+
+/**
+ * Every file change a session made, in edit order — Claude/amp edits derived
+ * from the transcript items plus codex `fileChange` edits the reducer captured
+ * (whose absolute paths are stripped here for parity). The surface groups by
+ * path; a file edited twice yields two entries.
+ */
+export function collectFileChanges(state: SessionState): FileChange[] {
+  const codex = state.fileChanges.map((c) => ({ ...c, path: displayPath(c.path) }));
+  return [...fileChangesFromItems(state.items), ...codex];
 }
 
 /** Distinct file paths touched — drives the "Changes·N" strip count. */

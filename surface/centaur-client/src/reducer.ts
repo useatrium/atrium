@@ -57,9 +57,25 @@ export interface UserMessageItem {
 
 export type SessionItem = TextItem | ToolCallItem | QuestionItem | UserMessageItem;
 
+export type FileChangeKind = "add" | "update" | "delete";
+
+/** A file edit a session made — the unit of the Changes work-surface. Sourced
+ * from Claude/amp edit tool_calls (derived) and codex `fileChange` frames (here).
+ * `path` may be absolute; the surface strips the sandbox prefix for display. */
+export interface FileChange {
+  id: string;
+  path: string;
+  kind: FileChangeKind;
+  diff: string;
+  toolName: string;
+  sourceEventIds: number[];
+}
+
 export interface SessionState {
   status: ExecutionStatus | "idle";
   items: SessionItem[];
+  /** Codex `fileChange` edits (claude/amp edits are derived from items instead). */
+  fileChanges: FileChange[];
   resultText: string;
   models: string[];
   costUsd: number;
@@ -75,6 +91,7 @@ export function initialSessionState(): SessionState {
   return {
     status: "idle",
     items: [],
+    fileChanges: [],
     resultText: "",
     models: [],
     costUsd: 0,
@@ -87,6 +104,7 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
   const next: SessionState = {
     ...state,
     items: state.items.map((item) => ({ ...item, sourceEventIds: [...item.sourceEventIds] })),
+    fileChanges: [...state.fileChanges],
     models: [...state.models],
     lastEventId: Math.max(state.lastEventId, frame.event_id),
   };
@@ -412,7 +430,50 @@ function reduceCodexItemCompleted(state: SessionState, eventId: number, event: C
   if (event.item.type === "commandExecution") {
     upsertCodexCommandExecution(state, eventId, event.item);
     completeCodexCommandExecution(state, eventId, event.item);
+    return;
   }
+
+  if (event.item.type === "fileChange") {
+    captureCodexFileChange(state, eventId, event.item);
+  }
+}
+
+const CODEX_KIND: Record<string, FileChangeKind> = {
+  add: "add",
+  create: "add",
+  added: "add",
+  update: "update",
+  modify: "update",
+  modified: "update",
+  edit: "update",
+  delete: "delete",
+  deleted: "delete",
+  remove: "delete",
+};
+
+/** Fold a codex `fileChange` item.completed — `changes[].{path,kind,diff}` —
+ * into state.fileChanges. Defensive: tolerates a single change on the item and
+ * unknown kind strings. */
+function captureCodexFileChange(state: SessionState, eventId: number, item: CodexItem): void {
+  const changesField = (item as { changes?: unknown }).changes;
+  const raw: unknown[] = Array.isArray(changesField) ? changesField : [item];
+  raw.forEach((entry, idx) => {
+    if (!entry || typeof entry !== "object") return;
+    const e = entry as Record<string, unknown>;
+    const path = typeof e["path"] === "string" ? e["path"] : null;
+    if (!path) return;
+    const id = `${item.id ?? `fc:${eventId}`}:${idx}`;
+    if (state.fileChanges.some((c) => c.id === id)) return;
+    const kindRaw = typeof e["kind"] === "string" ? e["kind"].toLowerCase() : "";
+    state.fileChanges.push({
+      id,
+      path,
+      kind: CODEX_KIND[kindRaw] ?? "update",
+      diff: typeof e["diff"] === "string" ? e["diff"] : "",
+      toolName: "fileChange",
+      sourceEventIds: [eventId],
+    });
+  });
 }
 
 function appendCodexStreamingText(
