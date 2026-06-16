@@ -34,16 +34,16 @@ APNS_TEAM_ID=<team id>
 APNS_KEY_ID=<key id>
 APNS_AUTH_KEY_P8=<contents of the .p8, raw or base64>
 APNS_BUNDLE_ID=chat.atrium.app
-# For a dev/TestFlight-style build, route to the APNs sandbox host:
-APNS_SANDBOX=1        # -> api.sandbox.push.apple.com ; unset/0 -> api.push.apple.com (prod/App Store)
+# Host must match the build's aps-environment (see note below). EAS internal/ad-hoc
+# builds, TestFlight, and App Store are all PRODUCTION -> leave APNS_SANDBOX unset/0.
+APNS_SANDBOX=0        # 0/unset -> api.push.apple.com (prod) ; 1 -> api.sandbox.push.apple.com (only a TRUE development-signed build)
 ```
 Unset → the sender stays `noop` (foreground WS ringing still works). See
 `surface/server/src/voip.ts` (`getVoipSender`) and `surface/server/src/config.ts`.
 
-**Environment is the #1 gotcha:** a development/EAS-dev/TestFlight build's token is
-a **sandbox** token → must hit `api.sandbox.push.apple.com` (`APNS_SANDBOX=1`). An
-App Store build is **production**. Wrong host → APNs returns `BadDeviceToken` and
-the device never rings. The `.p8` itself works for both — only the host differs.
+**Environment is the #1 gotcha (the runbook had this WRONG — corrected after a real device test 2026-06-16):** the host must match the build's `aps-environment` entitlement, which is set by the *provisioning profile*, not by the "development" label. An **EAS build with `distribution: internal`** (the `development` and `preview` profiles) is signed with an **ad-hoc** profile → `aps-environment: production` → a **production** push token → use the **production** host (`APNS_SANDBOX` unset/0). TestFlight and App Store are production too. Only a *true* development-signed build (e.g. local `expo run:ios` with a development profile) yields a **sandbox** token (`APNS_SANDBOX=1`). Wrong host → APNs returns `BadDeviceToken` and the device never rings. The `.p8` works for both environments — only the host differs.
+
+**Second gotcha — a defective `.p8`:** if the key authenticates on sandbox but production returns **`403 BadEnvironmentKeyInToken`** for *any* token (even a dummy) and it won't clear after ~an hour, the key itself is bad — **regenerate it** (Apple Developer → Keys → new APNs key). This is not propagation; waiting won't fix it. (Hit on 2026-06-16: the first key was dead on production for 4h; a fresh key worked instantly and the device rang.)
 
 ## 3. Build a device dev-client (native modules don't run in Expo Go)
 The config is already in `app.json` (validated via `expo prebuild`): `UIBackgroundModes: [audio, voip]`, `NSMicrophoneUsageDescription`, `aps-environment` entitlement, and the LiveKit / react-native-webrtc / expo-callkit-telecom plugins.
@@ -78,7 +78,7 @@ Either way the app must be signed with a team whose App ID has Push + the VoIP e
 4. Foreground sanity: with the app open, the call also rings (WS `call.ringing` → in-app/CallKit) — this already works.
 
 ## 6. Troubleshooting
-- **No ring, app killed:** almost always APNs environment (see §2). Check the server log for the APNs `:status` and `reason` (`BadDeviceToken` = wrong sandbox/prod host or wrong bundle; `TopicDisallowed` = topic must be `<bundle>.voip`; `ExpiredProviderToken` = JWT clock skew / wrong Key/Team ID).
+- **No ring, app killed:** almost always APNs environment (see §2). Check the server log for the APNs `:status` and `reason` (`BadDeviceToken` = wrong sandbox/prod host or wrong bundle — remember EAS internal builds are **production**; `BadEnvironmentKeyInToken` (403) = the `.p8` isn't provisioned for the production environment, i.e. a defective key → regenerate it; `TopicDisallowed` = topic must be `<bundle>.voip`; `ExpiredProviderToken` = JWT clock skew / wrong Key/Team ID).
 - **Rings in foreground but not when killed:** the WS path works but the VoIP push isn't landing — env or token registration (§2/§4).
 - **`Forbidden`/auth errors:** Key ID / Team ID / `.p8` mismatch, or the key was revoked.
 - The request itself (JWT ES256, headers, path, payload) is covered by `surface/server/src/voip-apns.test.ts` — green means the construction is correct.
