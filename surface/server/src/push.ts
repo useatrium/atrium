@@ -202,15 +202,10 @@ function firstQuestionText(payload: Record<string, unknown>): string {
   return 'Open Atrium to respond.';
 }
 
-async function pruneTokens(pool: Db, tokens: string[]): Promise<void> {
+export async function pruneTokens(pool: Db, tokens: string[]): Promise<void> {
   if (tokens.length > 0) {
     await pool.query('DELETE FROM push_tokens WHERE token = ANY($1::text[])', [tokens]);
   }
-}
-
-// === voip additions ===
-export async function prunePushTokens(pool: Db, tokens: string[]): Promise<void> {
-  await pruneTokens(pool, tokens);
 }
 
 export async function checkExpoPushReceipts(

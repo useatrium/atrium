@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Stack, router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { useVoIPPushToken } from 'expo-callkit-telecom';
@@ -12,6 +12,7 @@ import {
 } from '../../src/lib/notifications';
 import { useTheme } from '../../src/lib/theme';
 import { NATIVE_CALL_UI } from '../../src/lib/nativeCallUi';
+import { GlobalCallUI } from '../../src/components/GlobalCallUI';
 
 // The tap that cold-started the app fires before any listener exists; track
 // what we've already routed so remounts don't re-navigate.
@@ -83,15 +84,17 @@ export default function AppLayout() {
   return (
     <ChatProvider session={session}>
       <PushBridge />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: colors.text,
-          headerTitleStyle: { color: colors.text, fontWeight: '700' },
-          headerShadowVisible: false,
-          contentStyle: { backgroundColor: colors.bg },
-        }}
-      >
+      <View style={{ flex: 1 }}>
+        <GlobalCallUI />
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: colors.bg },
+            headerTintColor: colors.text,
+            headerTitleStyle: { color: colors.text, fontWeight: '700' },
+            headerShadowVisible: false,
+            contentStyle: { backgroundColor: colors.bg },
+          }}
+        >
         <Stack.Screen name="index" options={{ title: 'Atrium' }} />
         <Stack.Screen name="channel/[id]" options={{ title: '' }} />
         <Stack.Screen name="session/[id]" options={{ title: '' }} />
@@ -109,7 +112,8 @@ export default function AppLayout() {
           options={{ title: 'New channel', presentation: 'modal' }}
         />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
-      </Stack>
+        </Stack>
+      </View>
     </ChatProvider>
   );
 }

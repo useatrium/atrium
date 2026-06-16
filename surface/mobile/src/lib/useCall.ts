@@ -507,6 +507,9 @@ export function useCall({
         const channelName = labelForCallChannel(join.call, channelsRef.current, me.id);
         if (NATIVE_CALL_UI) {
           try {
+            // The CallKit handle is the channelId (not the per-call id) on purpose:
+            // it groups a conversation's calls in the native recents and makes a
+            // "call back" target the channel, mirroring how DMs/channels resolve.
             nativeCallId = await startOutgoingCall(
               { id: join.call.channelId, displayName: channelName },
               { hasVideo: false },

@@ -6,10 +6,7 @@ import {
   channelLabel,
   emptyTimeline,
   type AttachmentMeta,
-  type CallWire,
-  type Channel,
   type ChatMessage,
-  type UserRef,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
@@ -19,20 +16,6 @@ import { Composer } from '../../../src/components/Composer';
 import { ImageViewer } from '../../../src/components/ImageViewer';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
-import { CallNotice, InCallPanel, IncomingCallBanner } from '../../../src/components/CallUI';
-import { labelForCallChannel } from '../../../src/lib/useCall';
-
-function fallbackUser(id: string): UserRef {
-  return { id, handle: id, displayName: id };
-}
-
-function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
-  return (
-    call.participants.find((u) => u.id === userId) ??
-    channels.find((c) => c.id === call.channelId)?.members?.find((u) => u.id === userId) ??
-    fallbackUser(userId)
-  );
-}
 
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -71,15 +54,6 @@ export default function ChannelScreen() {
   const isDm = channel?.kind === 'dm';
   const isGroupLike = channel?.kind === 'private' || channel?.kind === 'gdm';
   const draftKey = id ? `channel:${id}` : '';
-  const incomingCaller = calls.incomingCall
-    ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
-    : null;
-  const incomingChannelName = calls.incomingCall
-    ? labelForCallChannel(calls.incomingCall, state.channels, me.id)
-    : '';
-  const activeChannelName = calls.activeCall
-    ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
-    : '';
 
   useEffect(() => {
     if (!draftKey) return;
@@ -234,26 +208,6 @@ export default function ChannelScreen() {
         }}
       />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={chat.queuedChangesCount} />
-      {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
-      {calls.incomingCall && incomingCaller ? (
-        <IncomingCallBanner
-          call={calls.incomingCall}
-          caller={incomingCaller}
-          channelName={incomingChannelName}
-          answering={calls.answering}
-          onAccept={() => void calls.acceptIncomingCall()}
-          onDecline={() => void calls.declineIncomingCall()}
-        />
-      ) : null}
-      {calls.activeCall ? (
-        <InCallPanel
-          call={calls.activeCall}
-          meId={me.id}
-          channelName={activeChannelName}
-          onToggleMute={() => void calls.toggleMute()}
-          onLeave={() => void calls.leaveActiveCall()}
-        />
-      ) : null}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
