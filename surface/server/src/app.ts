@@ -289,6 +289,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     return response;
   }
 
+  function isQuestionNotPendingError(err: unknown): boolean {
+    return err instanceof DomainError && err.code === 'question_not_pending';
+  }
+
   async function syncStateSnapshot(client: DbClient, userId: string) {
     const readRows = await client.query<{ channel_id: string; last_read_event_id: number }>(
       `SELECT rc.channel_id, rc.last_read_event_id
@@ -2174,25 +2178,32 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     if (opId) {
       let event: WireEvent | null = null;
-      await runMutation({
-        userId: user.id,
-        opId,
-        opType: 'session.answer',
-        body: { sessionId: id, questionId: body.questionId, answers: body.answers },
-        fn: async (client) => {
-          event = await sessionRuns.answerQuestionInTx(
-            client,
-            id,
-            user,
-            body.questionId as string,
-            body.answers as Record<string, { answers: string[] }>,
-          );
-          return { ok: true as const };
-        },
-        onApplied: () => {
-          if (event) hub.publishEvent(event);
-        },
-      });
+      try {
+        await runMutation({
+          userId: user.id,
+          opId,
+          opType: 'session.answer',
+          body: { sessionId: id, questionId: body.questionId, answers: body.answers },
+          fn: async (client) => {
+            event = await sessionRuns.answerQuestionInTx(
+              client,
+              id,
+              user,
+              body.questionId as string,
+              body.answers as Record<string, { answers: string[] }>,
+            );
+            return { ok: true as const };
+          },
+          onApplied: () => {
+            if (event) hub.publishEvent(event);
+          },
+        });
+      } catch (err) {
+        if (isQuestionNotPendingError(err)) {
+          await sessionRuns.clearStalePendingQuestion(id, body.questionId);
+        }
+        throw err;
+      }
     } else {
       await sessionRuns.answerQuestion(id, user, body.questionId, body.answers);
     }
@@ -2345,20 +2356,27 @@ function rawSession(req: FastifyRequest): string | undefined {
     const action = body.action;
     const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
     let result: { events: WireEvent[]; postedAnswer: boolean } | null = null;
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.answer.resolve',
-      body: { sessionId: id, proposalId, action, ...(note !== undefined ? { note } : {}) },
-      fn: async (client) => {
-        result = await sessionRuns.resolveAnswerProposalInTx(client, id, user, proposalId, action, { note });
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        if (!result) return;
-        for (const event of result.events) hub.publishEvent(event);
-      },
-    });
+    try {
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.answer.resolve',
+        body: { sessionId: id, proposalId, action, ...(note !== undefined ? { note } : {}) },
+        fn: async (client) => {
+          result = await sessionRuns.resolveAnswerProposalInTx(client, id, user, proposalId, action, { note });
+          return { ok: true as const };
+        },
+        onApplied: () => {
+          if (!result) return;
+          for (const event of result.events) hub.publishEvent(event);
+        },
+      });
+    } catch (err) {
+      if (action === 'submit' && isQuestionNotPendingError(err)) {
+        await sessionRuns.clearStalePendingQuestionForProposal(id, proposalId);
+      }
+      throw err;
+    }
     return reply.code(202).send({ ok: true });
   });
 

@@ -694,7 +694,14 @@ export class SessionRuns {
       throw new DomainError(409, 'execution_not_running', 'session has no running execution');
     }
 
-    await this.postQuestionAnswer(row, user.id, questionId, answers);
+    try {
+      await this.postQuestionAnswer(row, user.id, questionId, answers);
+    } catch (err) {
+      if (isCentaurCode(err, 'QUESTION_NOT_PENDING')) {
+        throw new DomainError(409, 'question_not_pending', 'question is not pending');
+      }
+      throw err;
+    }
 
     const updated = await client.query<SessionRow>(
       'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
@@ -797,6 +804,19 @@ export class SessionRuns {
       questionId,
       answers,
     );
+  }
+
+  async clearStalePendingQuestion(id: string, questionId: string): Promise<void> {
+    await this.clearPendingQuestion(id, questionId, 'empty');
+  }
+
+  async clearStalePendingQuestionForProposal(id: string, proposalId: string): Promise<void> {
+    const proposal = await this.pool.query<{ question_id: string }>(
+      'SELECT question_id FROM session_answer_proposals WHERE id = $1 AND session_id = $2',
+      [proposalId, id],
+    );
+    const questionId = proposal.rows[0]?.question_id;
+    if (questionId) await this.clearPendingQuestion(id, questionId, 'empty');
   }
 
   async cancelSession(id: string, userId: string): Promise<void> {

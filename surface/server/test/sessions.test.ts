@@ -1167,6 +1167,48 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('clears a locally pending question when an idempotent answer op races a stale Centaur question', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'lapsed answer op', status: 'running' });
+    await setPendingQuestion(id);
+    fake.rejectNextAnswerQuestionNotPending();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/answer`,
+      headers: { cookie: driverCookie },
+      payload: {
+        questionId: 'q-main',
+        answers: { choice: { answers: ['Fast'] } },
+        opId: randomUUID(),
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('question_not_pending');
+    const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    expect(row.rows[0].pending_question).toBeNull();
+    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
+      'session.question_resolved',
+    ]);
+    expect(resolved.rowCount).toBe(1);
+    expect(resolved.rows[0].payload).toMatchObject({
+      sessionId: id,
+      questionId: 'q-main',
+      reason: 'empty',
+    });
+    const answered = await pool.query('SELECT id FROM events WHERE type = $1', [
+      'session.question_answered',
+    ]);
+    expect(answered.rowCount).toBe(0);
+    await app.close();
+  });
+
   it('question_resolved(cancelled) clears pending state and emits a follow-up event', async () => {
     fake.setFrames([questionRequestedFrame(1), questionResolvedFrame('cancelled', 2)]);
     const id = await insertSessionRow({ title: 'cancelled question', status: 'running' });
@@ -2313,6 +2355,61 @@ describe('Phase 2 sessions', () => {
       payload: { action: 'dismiss' },
     });
     expect(again.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('answer proposal submit clears a locally pending question when Centaur reports it is stale', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const driverCookie = await loginCookie(app);
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertSessionRow({ title: 'stale proposal', status: 'running' });
+    await setPendingQuestion(id);
+
+    const propose = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals`,
+      headers: { cookie: bob.cookie },
+      payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
+    });
+    expect(propose.statusCode).toBe(202);
+    const proposed = await pool.query(
+      "SELECT payload FROM events WHERE type = 'session.answer_proposed'",
+    );
+    const proposalId = proposed.rows[0].payload.proposalId as string;
+    fake.rejectNextAnswerQuestionNotPending();
+
+    const submit = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/question-proposals/${proposalId}/resolve`,
+      headers: { cookie: driverCookie },
+      payload: { action: 'submit' },
+    });
+
+    expect(submit.statusCode).toBe(409);
+    expect(submit.json().error).toBe('question_not_pending');
+    const sessRow = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    expect(sessRow.rows[0].pending_question).toBeNull();
+    const propRow = await pool.query('SELECT status FROM session_answer_proposals WHERE id = $1', [
+      proposalId,
+    ]);
+    expect(propRow.rows[0].status).toBe('pending');
+    const questionResolved = await pool.query(
+      "SELECT payload FROM events WHERE type = 'session.question_resolved'",
+    );
+    expect(questionResolved.rows).toHaveLength(1);
+    expect(questionResolved.rows[0].payload).toMatchObject({
+      sessionId: id,
+      questionId: 'q-main',
+      reason: 'empty',
+    });
+    const answerEvents = await pool.query(
+      "SELECT id FROM events WHERE type IN ('session.question_answered', 'session.answer_proposal_resolved')",
+    );
+    expect(answerEvents.rows).toHaveLength(0);
     await app.close();
   });
 
