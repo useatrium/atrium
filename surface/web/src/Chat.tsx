@@ -39,7 +39,7 @@ import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { Composer } from './components/Composer';
-import { LockIcon, PhoneIcon, SearchIcon, XIcon } from './components/icons';
+import { LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
@@ -49,6 +49,7 @@ import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { SessionsRail } from './sessions/SessionsRail';
+import { SpawnDialog, type SpawnConfig } from './sessions/SpawnDialog';
 import { ViewToggle, type SessionView } from './sessions/ViewToggle';
 import {
   PENDING_SESSION_PREFIX,
@@ -695,6 +696,8 @@ export function Chat({
   // Layout-grammar focus flag (see the derived `view` below). Kept up here so the
   // permalink effect can set it; the invariant is `focused` ⇒ a session is open.
   const [focused, setFocused] = useState(false);
+  // Configured-spawn dialog (the @agent composer grammar is the quick path).
+  const [spawnOpen, setSpawnOpen] = useState(false);
 
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
@@ -1141,6 +1144,7 @@ export function Chat({
     channelId: string,
     task: string,
     threadRootEventId?: number,
+    opts?: { harness?: string; repo?: string; branch?: string },
   ) => {
     const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
     const payload: SessionSpawnPayload = {
@@ -1148,7 +1152,9 @@ export function Chat({
       task,
       clientSpawnId,
       threadRootEventId,
-      harness: 'claude-code',
+      harness: opts?.harness?.trim() || 'claude-code',
+      ...(opts?.repo?.trim() ? { repo: opts.repo.trim() } : {}),
+      ...(opts?.branch?.trim() ? { branch: opts.branch.trim() } : {}),
       createdAt: new Date().toISOString(),
     };
     const pending = pendingSpawnFromPayload(payload);
@@ -1165,6 +1171,19 @@ export function Chat({
     }).catch(() => {
       dispatch({ type: 'session-spawn-failed', channelId, tempId: clientSpawnId });
       showErrorToast("Couldn't queue the agent session.");
+    });
+  };
+
+  // From the spawn dialog: a configured spawn into the active channel, then open
+  // the new session as a peek.
+  const startConfiguredSession = (config: SpawnConfig) => {
+    const channelId = stateRef.current.activeChannelId;
+    if (!channelId) return;
+    setSpawnOpen(false);
+    spawnQueuedSession(channelId, config.task, undefined, {
+      harness: config.harness,
+      ...(config.repo ? { repo: config.repo } : {}),
+      ...(config.branch ? { branch: config.branch } : {}),
     });
   };
 
@@ -1713,11 +1732,17 @@ export function Chat({
               )}
             </div>
           )}
-          {state.openSessionId && (
-            <div className="ml-auto">
-              <ViewToggle view={view} hasSession onSetView={setView} />
-            </div>
-          )}
+          <button
+            onClick={() => setSpawnOpen(true)}
+            disabled={!active}
+            title="Start an agent session"
+            aria-label="Start an agent session"
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
+          >
+            <PlusIcon size={14} />
+            <span className="hidden sm:inline">Session</span>
+          </button>
+          {state.openSessionId && <ViewToggle view={view} hasSession onSetView={setView} />}
           <button
             onClick={() => active && void calls.startCall(active.id)}
             disabled={!active || calls.starting || calls.activeCall != null}
@@ -1729,7 +1754,7 @@ export function Chat({
                   : 'Start voice call'
             }
             aria-label="Start voice call"
-            className={`${state.openSessionId ? '' : 'ml-auto '}rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint`}
+            className="rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
           >
             <PhoneIcon size={15} />
           </button>
@@ -1952,6 +1977,18 @@ export function Chat({
             void jumpToMessage(event);
           }}
           onClose={() => setSwitcherOpen(false)}
+        />
+      )}
+
+      {spawnOpen && active && (
+        <SpawnDialog
+          channelName={
+            active.kind === 'dm' || active.kind === 'gdm'
+              ? channelLabel(active, me.id)
+              : `${active.kind === 'private' ? '' : '#'}${active.name}`
+          }
+          onCancel={() => setSpawnOpen(false)}
+          onSpawn={startConfiguredSession}
         />
       )}
     </div>

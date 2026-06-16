@@ -30,7 +30,7 @@ import {
 import type { UserRef } from '@atrium/surface-client';
 import { formatTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
-import { StatusChip, sessionElapsedMs, useNow } from './SessionCard';
+import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
 import {
   formatCost,
   formatElapsed,
@@ -330,6 +330,14 @@ export function SessionPane({
               <>
                 <span className="text-fg-faint">·</span>
                 <span className="tabular-nums">{formatCost(costUsd)}</span>
+              </>
+            )}
+            {session.repo && (
+              <>
+                <span className="text-fg-faint">·</span>
+                <span className="truncate" title={repoBranchTitle(session.repo, session.branch)}>
+                  {repoBranchLabel(session.repo, session.branch)}
+                </span>
               </>
             )}
             <span className="text-fg-faint">·</span>
