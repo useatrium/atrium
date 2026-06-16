@@ -3,10 +3,12 @@ import type { ServerResponse } from 'node:http';
 import {
   CentaurApiError,
   CentaurClient,
+  collectFileChanges,
   initialSessionState,
   isTerminalExecutionStatus,
   reduceSession,
   type CentaurEventFrame,
+  type FileChange,
   type QuestionPrompt,
   type SessionItem,
 } from '@atrium/centaur-client';
@@ -131,6 +133,8 @@ export interface SessionQuestionHistoryEntry {
 export interface SessionRecordJson {
   session: SessionJson;
   transcript: SessionItem[];
+  /** Work products: the file edits the session made (Phase 4 Changes surface). */
+  changes: FileChange[];
   answerProposals: SessionAnswerProposalJson[];
   seatHistory: SessionSeatHistoryEntry[];
   questionHistory: SessionQuestionHistoryEntry[];
@@ -423,9 +427,9 @@ export class SessionRuns {
     if (!row) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
-    const [session, transcript, proposals, sessionEvents] = await Promise.all([
+    const [session, mirrored, proposals, sessionEvents] = await Promise.all([
       this.toJsonWithSeatInfo(row),
-      this.readMirroredTranscript(id),
+      this.readMirroredState(id),
       this.pool.query<SessionAnswerProposalRow>(
         `SELECT p.id, p.question_id, p.author_id, a.display_name AS author_name,
                 p.answers, p.status, p.resolved_by, r.display_name AS resolved_by_name,
@@ -455,17 +459,27 @@ export class SessionRuns {
       seatHistory,
       questionHistory,
     );
-    return { session, transcript, answerProposals, seatHistory, questionHistory, participants };
+    return {
+      session,
+      transcript: mirrored.items,
+      changes: collectFileChanges(mirrored),
+      answerProposals,
+      seatHistory,
+      questionHistory,
+      participants,
+    };
   }
 
-  private async readMirroredTranscript(id: string): Promise<SessionItem[]> {
+  /** Replay the durable mirror into a reduced session state (transcript items +
+   * derived work products). Survives Centaur retention. */
+  private async readMirroredState(id: string): Promise<ReturnType<typeof initialSessionState>> {
     const res = await this.pool.query<{ frame: CentaurEventFrame }>(
       'SELECT frame FROM session_events WHERE session_id = $1 ORDER BY centaur_event_id ASC',
       [id],
     );
     let state = initialSessionState();
     for (const r of res.rows) state = reduceSession(state, r.frame);
-    return state.items;
+    return state;
   }
 
   private async resolveParticipants(
