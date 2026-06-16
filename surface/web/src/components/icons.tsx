@@ -263,6 +263,27 @@ export function ShrinkIcon(props: IconProps) {
   );
 }
 
+/** Pin — dock a drawer as a side pane beside the transcript. */
+export function PanelRightIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M15 3v18" />
+    </Icon>
+  );
+}
+
+/** Unpin — collapse the docked side pane back to an overlay. */
+export function PanelRightCloseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M15 3v18" />
+      <path d="m8 9 3 3-3 3" />
+    </Icon>
+  );
+}
+
 /** Detach — open in a new browser tab. */
 export function ExternalLinkIcon(props: IconProps) {
   return (

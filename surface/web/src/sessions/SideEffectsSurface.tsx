@@ -16,9 +16,13 @@ function labelFor(category: SideEffectCategory): string {
 export function SideEffectsSurface({
   effects,
   onClose,
+  embedded = false,
 }: {
   effects: SideEffect[];
   onClose: () => void;
+  /** Render body-only (no own header/overlay) — the WorkDrawer supplies the
+   * chrome and counts. Standalone (false) keeps its dialog header + close. */
+  embedded?: boolean;
 }) {
   const groups = useMemo(() => {
     const byCategory = new Map<SideEffectCategory, SideEffect[]>();
@@ -32,28 +36,9 @@ export function SideEffectsSurface({
     );
   }, [effects]);
 
-  return (
-    <div
-      data-testid="sideeffects-surface"
-      role="dialog"
-      aria-label="Side-effects"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
-      className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
-    >
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
-        <h3 className="text-xs font-semibold text-fg">
-          Side-effects <span className="tabular-nums text-fg-muted">· {effects.length}</span>
-        </h3>
-        <button
-          onClick={onClose}
-          aria-label="Close side-effects"
-          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-        >
-          <XIcon size={15} />
-        </button>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {groups.map(([category, list]) => (
+  const body = (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      {groups.map(([category, list]) => (
           <section key={category} className="border-b border-edge last:border-b-0">
             <div className="flex items-center gap-2 bg-surface-raised/40 px-3 py-1.5">
               <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
@@ -75,7 +60,32 @@ export function SideEffectsSurface({
             ))}
           </section>
         ))}
-      </div>
+    </div>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <div
+      data-testid="sideeffects-surface"
+      role="dialog"
+      aria-label="Side-effects"
+      onKeyDown={(e) => e.key === 'Escape' && onClose()}
+      className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
+    >
+      <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
+        <h3 className="text-xs font-semibold text-fg">
+          Side-effects <span className="tabular-nums text-fg-muted">· {effects.length}</span>
+        </h3>
+        <button
+          onClick={onClose}
+          aria-label="Close side-effects"
+          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+        >
+          <XIcon size={15} />
+        </button>
+      </header>
+      {body}
     </div>
   );
 }

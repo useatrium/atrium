@@ -64,9 +64,13 @@ function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
 export function ChangesSurface({
   changes,
   onClose,
+  embedded = false,
 }: {
   changes: FileChange[];
   onClose: () => void;
+  /** Render body-only (no own header/overlay) — the WorkDrawer supplies the
+   * chrome and counts. Standalone (false) keeps its dialog header + close. */
+  embedded?: boolean;
 }) {
   // Group by display path, preserving first-seen order.
   const groups = useMemo(() => {
@@ -78,6 +82,16 @@ export function ChangesSurface({
     }
     return [...byPath.entries()];
   }, [changes]);
+
+  const body = (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      {groups.map(([path, fileChanges]) => (
+        <FileRow key={path} path={path} changes={fileChanges} />
+      ))}
+    </div>
+  );
+
+  if (embedded) return body;
 
   return (
     <div
@@ -99,11 +113,7 @@ export function ChangesSurface({
           <XIcon size={15} />
         </button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {groups.map(([path, fileChanges]) => (
-          <FileRow key={path} path={path} changes={fileChanges} />
-        ))}
-      </div>
+      {body}
     </div>
   );
 }

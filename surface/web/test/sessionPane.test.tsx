@@ -739,3 +739,53 @@ describe('suggestion queue', () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ text: 'try the staging env' });
   });
 });
+
+describe('work drawer (Phase 4 consolidation)', () => {
+  it('the side-effects strip opens the unified work drawer on that tab and toggles closed', async () => {
+    await renderPaneWithB();
+    // The echo Bash op is classified as a side-effect → the strip appears.
+    const strip = screen.getByTestId('sideeffects-strip');
+    expect(within(strip).getByText('Side-effects')).toBeTruthy();
+    // Drawer closed until the strip is clicked.
+    expect(screen.queryByTestId('work-drawer')).toBeNull();
+
+    fireEvent.click(strip);
+    const drawer = screen.getByTestId('work-drawer');
+    // Opened on the Side-effects tab — the classified command shows in the body.
+    expect(within(drawer).getByText(/echo atrium-roundtrip-ok/)).toBeTruthy();
+    expect(within(drawer).getByRole('tab', { name: /Side-effects/ }).getAttribute('aria-selected')).toBe('true');
+
+    // Clicking the same strip again toggles the drawer closed.
+    fireEvent.click(strip);
+    expect(screen.queryByTestId('work-drawer')).toBeNull();
+  });
+
+  it('pinning a split pane collapses to focus; unpinning restores it', async () => {
+    const onToggleFocus = vi.fn();
+    render(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        layout="split"
+        onToggleFocus={onToggleFocus}
+      />,
+    );
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(B);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    fireEvent.click(screen.getByTestId('sideeffects-strip'));
+    // Pin → the pane asks the parent to collapse to focus (pane-cap rule).
+    fireEvent.click(screen.getByRole('button', { name: 'Pin work drawer' }));
+    expect(onToggleFocus).toHaveBeenCalledTimes(1);
+    // Unpin → the auto-collapse is reversed.
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin work drawer' }));
+    expect(onToggleFocus).toHaveBeenCalledTimes(2);
+  });
+});
