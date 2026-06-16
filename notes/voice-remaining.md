@@ -27,10 +27,12 @@ Device/APNs setup: `notes/voice-device-runbook.md`. Last updated 2026-06-16.
 - [ ] **Production deploy of calls + VoIP push.** Everything to date is dev/LAN. Prod needs LiveKit prod config (host networking, embedded TURN, ports) + APNs prod env (`APNS_TEAM_ID=GS83M3FS29`, `APNS_KEY_ID=C5NS4JB9Y4`, `APNS_AUTH_KEY_P8`, `APNS_BUNDLE_ID=chat.atrium.app`, production host). Steps in `notes/voice-device-runbook.md`.
 - [ ] (Hygiene) Revoke the old defective APNs key `AJ4R2XQJCG` in the Apple Developer portal — replaced by `C5NS4JB9Y4`; unused but still exists Apple-side.
 
-### Polish / minor
-- [ ] **Mobile late-joiner names show UUIDs.** Web was fixed in #13 (`useCall(me, channels)` resolves identities to real names); the mobile `useCall` still uses `userFromIdentity` (id-as-name) for `ParticipantConnected`.
-- [ ] Minor review nits: server `prunePushTokens` wrapper; mobile incoming-banner per-screen render; `startOutgoingCall` uses `channelId` as the native handle.
-- [ ] `expo-audio` pinned `56.0.11` (vs SDK's `56.0.12`) — min-release-age artifact.
+### Polish / minor — all cleared
+- [x] **Mobile late-joiner names** resolve to real names (#28) — mirror of the web #13 fix via `userForCall`.
+- [x] Minor review nits (#29): dropped the redundant server `prunePushTokens` wrapper; hoisted the call UI to an app-level `GlobalCallUI` (shows on any screen); documented that `startOutgoingCall`'s `channelId` handle is intentional.
+- [x] `expo-audio` bumped `56.0.11` → `56.0.12` (#29).
+
+_(#3 GlobalCallUI's cross-screen visual is typecheck-clean but not yet sim-QA'd.)_
 
 ## Recommended priority if shipping to production
 1. **Real whisper STT in the deploy image** (otherwise transcription is empty).
