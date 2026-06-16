@@ -379,7 +379,11 @@ export function applySessionEvent(
       permalink: `/s/${sessionId}`,
     };
     const spawnerName = base.spawnerName ?? ev.author?.displayName;
-    return { ...sessions, [sessionId]: { ...base, spawnerName } };
+    // Fold spawn metadata from the event too — when `prev` was an optimistic
+    // entry built before the payload was known, keep whichever side has it.
+    const repo = base.repo ?? (typeof p.repo === 'string' ? p.repo : null);
+    const branch = base.branch ?? (typeof p.branch === 'string' ? p.branch : null);
+    return { ...sessions, [sessionId]: { ...base, spawnerName, repo, branch } };
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore

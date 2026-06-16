@@ -535,6 +535,8 @@ export function Chat({
           title: payload.task.slice(0, 80),
           status: 'spawning',
           harness: payload.harness ?? 'claude-code',
+          repo: payload.repo ?? null,
+          branch: payload.branch ?? null,
           spawnedBy: me.id,
           spawnerName: me.displayName,
           driverId: null,
@@ -1174,13 +1176,13 @@ export function Chat({
     });
   };
 
-  // From the spawn dialog: a configured spawn into the active channel, then open
-  // the new session as a peek.
+  // From the spawn dialog: a configured spawn into the channel the dialog is
+  // showing (bind to render-time `active`, not the ref, so display and target
+  // can't diverge), then open the new session as a peek.
   const startConfiguredSession = (config: SpawnConfig) => {
-    const channelId = stateRef.current.activeChannelId;
-    if (!channelId) return;
+    if (!active) return;
     setSpawnOpen(false);
-    spawnQueuedSession(channelId, config.task, undefined, {
+    spawnQueuedSession(active.id, config.task, undefined, {
       harness: config.harness,
       ...(config.repo ? { repo: config.repo } : {}),
       ...(config.branch ? { branch: config.branch } : {}),

@@ -343,6 +343,7 @@ export class SessionRuns {
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch,
          title, status, spawned_by, driver_id, client_spawn_id
        )
+       -- driver_id starts as the spawner ($9 used for both spawned_by + driver_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10)
        ${conflictClause}
        RETURNING *`,
