@@ -48,6 +48,8 @@ import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
+import { SessionsRail } from './sessions/SessionsRail';
+import { ViewToggle, type SessionView } from './sessions/ViewToggle';
 import {
   PENDING_SESSION_PREFIX,
   isPendingSessionId,
@@ -690,10 +692,15 @@ export function Chat({
     };
   }, [applyQueuedOp, onApiError, opQueue]);
 
+  // Layout-grammar focus flag (see the derived `view` below). Kept up here so the
+  // permalink effect can set it; the invariant is `focused` ⇒ a session is open.
+  const [focused, setFocused] = useState(false);
+
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
     if (!initialSessionId) return;
     dispatch({ type: 'open-session', sessionId: initialSessionId });
+    setFocused(true); // permalinks land in Focus
     sessionsApi
       .get(initialSessionId)
       .then(({ session }) => {
@@ -1076,9 +1083,28 @@ export function Chat({
       .then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }));
   };
 
-  // ---- session pane ----
+  // ---- session pane + layout grammar (channel / split / focus) ----
+  // `focused` (declared above) is the only extra bit of layout state; the view
+  // is derived. A permalink (/s/:id) lands in Focus; a card click opens a peek.
+  const view: SessionView = state.openSessionId ? (focused ? 'focus' : 'split') : 'channel';
+
+  // Closing the pane (X, Esc, channel switch, not-found) always resets focus so
+  // the next open starts as a peek.
+  useEffect(() => {
+    if (!state.openSessionId) setFocused(false);
+  }, [state.openSessionId]);
+
+  const setView = useCallback(
+    (next: SessionView) => {
+      if (next === 'channel') dispatch({ type: 'close-session' });
+      else if (stateRef.current.openSessionId) setFocused(next === 'focus');
+    },
+    [],
+  );
+
   const openSession = (sessionId: string) => {
     if (isPendingSessionId(sessionId)) return;
+    setFocused(false); // a fresh open is a peek, even when arriving from another focused session
     dispatch({ type: 'open-session', sessionId });
     sessionsApi
       .get(sessionId)
@@ -1089,6 +1115,13 @@ export function Chat({
   };
 
   const paneSession = state.openSessionId ? state.sessions[state.openSessionId] ?? null : null;
+  // The Sessions rail (channel view's right slot) appears only once the channel
+  // has at least one session — progressive disclosure, not chrome by default.
+  const hasChannelSessions = useMemo(
+    () =>
+      active != null && Object.values(state.sessions).some((s) => s.channelId === active.id),
+    [active, state.sessions],
+  );
   // Watching presence for the open pane (drives seat take-vs-request UX).
   const paneWatchers = paneSession
     ? state.presence[`session:${paneSession.id}`] ?? NO_WATCHERS
@@ -1583,6 +1616,7 @@ export function Chat({
           onLogout={onLogout}
         />
 
+      {view !== 'focus' && (
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge px-4">
           <h1 className="flex items-center gap-1.5 text-sm font-bold text-fg">
@@ -1679,6 +1713,11 @@ export function Chat({
               )}
             </div>
           )}
+          {state.openSessionId && (
+            <div className="ml-auto">
+              <ViewToggle view={view} hasSession onSetView={setView} />
+            </div>
+          )}
           <button
             onClick={() => active && void calls.startCall(active.id)}
             disabled={!active || calls.starting || calls.activeCall != null}
@@ -1690,7 +1729,7 @@ export function Chat({
                   : 'Start voice call'
             }
             aria-label="Start voice call"
-            className="ml-auto rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
+            className={`${state.openSessionId ? '' : 'ml-auto '}rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint`}
           >
             <PhoneIcon size={15} />
           </button>
@@ -1806,12 +1845,15 @@ export function Chat({
           </>
         )}
       </main>
+      )}
 
       {paneSession ? (
         <SessionPane
           key={paneSession.id} // full reset (stream, seat anchors, tool state) per session
           session={paneSession}
           me={me}
+          layout={focused ? 'focus' : 'split'}
+          onToggleFocus={() => setFocused((f) => !f)}
           watchers={paneWatchers}
           typers={Object.values(sessionTyping[paneSession.id] ?? {}).map((t) => t.user)}
           onComposerTyping={() => notifySessionTyping(paneSession.id)}
@@ -1825,7 +1867,11 @@ export function Chat({
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
         />
       ) : state.openSessionId ? (
-        <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+        <aside
+          className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
+            focused ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
+          }`}
+        >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
             <h2 className="text-sm font-semibold text-fg">Session</h2>
             <button
@@ -1856,32 +1902,38 @@ export function Chat({
             </div>
           )}
         </aside>
+      ) : openThreadRoot && active ? (
+        <ThreadPanel
+          root={openThreadRoot}
+          replies={threadReplies}
+          loaded={threadLoaded}
+          sessions={state.sessions}
+          spectators={spectators}
+          meId={me.id}
+          meHandle={me.handle}
+          onClose={() => dispatch({ type: 'close-thread' })}
+          onSend={(text, attachments, attachmentRefs, voice) =>
+            send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
+          }
+          queueUpload={queueUpload}
+          onOpenSession={openSession}
+          onRetry={retry}
+          onEdit={editMessage}
+          onDelete={removeMessage}
+          onReact={reactToMessage}
+          draftKey={threadDraftKey}
+          initialDraft={drafts[threadDraftKey] ?? ''}
+          onDraftChange={saveDraft}
+          onDraftPersisted={enqueueDraft}
+          onDraftTouched={markDraftTouched}
+        />
       ) : (
-        openThreadRoot &&
-        active && (
-          <ThreadPanel
-            root={openThreadRoot}
-            replies={threadReplies}
-            loaded={threadLoaded}
+        active &&
+        hasChannelSessions && (
+          <SessionsRail
+            channelId={active.id}
             sessions={state.sessions}
-            spectators={spectators}
-            meId={me.id}
-            meHandle={me.handle}
-            onClose={() => dispatch({ type: 'close-thread' })}
-            onSend={(text, attachments, attachmentRefs, voice) =>
-              send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
-            }
-            queueUpload={queueUpload}
             onOpenSession={openSession}
-            onRetry={retry}
-            onEdit={editMessage}
-            onDelete={removeMessage}
-            onReact={reactToMessage}
-            draftKey={threadDraftKey}
-            initialDraft={drafts[threadDraftKey] ?? ''}
-            onDraftChange={saveDraft}
-            onDraftPersisted={enqueueDraft}
-            onDraftTouched={markDraftTouched}
           />
         )
       )}

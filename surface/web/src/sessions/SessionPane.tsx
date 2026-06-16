@@ -18,7 +18,15 @@ import {
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { Composer } from '../components/Composer';
-import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ExpandIcon,
+  ExternalLinkIcon,
+  ShrinkIcon,
+  XIcon,
+} from '../components/icons';
 import type { UserRef } from '@atrium/surface-client';
 import { formatTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
@@ -26,6 +34,7 @@ import { StatusChip, sessionElapsedMs, useNow } from './SessionCard';
 import {
   formatCost,
   formatElapsed,
+  isPendingSessionId,
   isStalledSessionStatus,
   isTerminalSessionStatus,
   normalizeExecutionStatus,
@@ -58,6 +67,8 @@ export function SessionPane({
   onCancelSession = async () => {},
   failedCancel = false,
   onClearFailedCancel = () => {},
+  layout = 'split',
+  onToggleFocus,
 }: {
   session: Session;
   me: UserRef;
@@ -79,6 +90,10 @@ export function SessionPane({
   onCancelSession?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
+  /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
+  layout?: 'split' | 'focus';
+  /** Toggle between split and focus; omit to hide the expand control. */
+  onToggleFocus?: () => void;
 }) {
   const { stream, connected } = useSessionStream(session.id);
 
@@ -278,8 +293,15 @@ export function SessionPane({
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
+  const focused = layout === 'focus';
+  const canDetach = !isPendingSessionId(session.id);
+
   return (
-    <aside className="flex w-[min(520px,42vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+    <aside
+      className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
+        focused ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
+      }`}
+    >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3">
         <StatusChip status={displayStatus} stalled={stalled} />
         <div className="min-w-0 flex-1">
@@ -338,6 +360,29 @@ export function SessionPane({
               : displayCancelAsk === 'failed'
                 ? 'Cancel failed — retry'
                 : 'Cancel'}
+          </button>
+        )}
+        {canDetach && (
+          <a
+            href={`/s/${session.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open in a new tab"
+            aria-label="Open session in a new tab"
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+          >
+            <ExternalLinkIcon size={15} />
+          </a>
+        )}
+        {onToggleFocus && (
+          <button
+            onClick={onToggleFocus}
+            title={focused ? 'Collapse to split view' : 'Expand to focus view'}
+            aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
+            aria-pressed={focused}
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+          >
+            {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
           </button>
         )}
         <button

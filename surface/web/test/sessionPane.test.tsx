@@ -507,6 +507,65 @@ describe('answer proposals', () => {
   });
 });
 
+// ---- focus / detach controls (Phase 3) --------------------------------------
+
+describe('focus + detach controls', () => {
+  it('expand toggles focus; detach links to the permalink in a new tab', () => {
+    const onToggleFocus = vi.fn();
+    const { rerender } = render(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        layout="split"
+        onToggleFocus={onToggleFocus}
+      />,
+    );
+
+    // Detach is a new-tab link to /s/:id.
+    const detach = screen.getByRole('link', { name: /open session in a new tab/i });
+    expect(detach.getAttribute('href')).toBe('/s/s-b');
+    expect(detach.getAttribute('target')).toBe('_blank');
+
+    // Split → the control offers Expand.
+    const expand = screen.getByRole('button', { name: /expand to focus/i });
+    expect(expand.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(expand);
+    expect(onToggleFocus).toHaveBeenCalledTimes(1);
+
+    // Focus → it offers Collapse and reports pressed.
+    rerender(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        layout="focus"
+        onToggleFocus={onToggleFocus}
+      />,
+    );
+    const collapse = screen.getByRole('button', { name: /collapse to split/i });
+    expect(collapse.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('hides the expand control when no handler is given, and detach when pending', () => {
+    render(
+      <SessionPane
+        session={bSession({ id: 'pending:tmp-1', permalink: '' })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /expand to focus/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /open session in a new tab/i })).toBeNull();
+  });
+});
+
 // ---- session typing (Phase 2) -----------------------------------------------
 
 describe('session typing', () => {
