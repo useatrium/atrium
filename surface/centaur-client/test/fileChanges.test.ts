@@ -4,6 +4,7 @@ import {
   collectFileChanges,
   displayPath,
   fileChangeFromToolCall,
+  fileChangesFromItems,
 } from "../src/fileChanges.js";
 import { initialSessionState, reduceSession, type SessionItem, type ToolCallItem } from "../src/reducer.js";
 import type { CentaurEventFrame } from "../src/types.js";
@@ -107,13 +108,84 @@ describe("collectFileChanges over a reduced stream (real frame path)", () => {
     } as unknown as CentaurEventFrame;
 
     const state = reduceSession(initialSessionState(), frame);
-    const changes = collectFileChanges(state.items);
+    const changes = collectFileChanges(state);
     expect(changes).toHaveLength(1);
     expect(changes[0]).toMatchObject({ path: "src/x.ts", kind: "update", toolName: "Edit" });
   });
+
+  it("captures codex fileChange frames (changes[].{path,kind,diff}) and strips paths", () => {
+    const frame: CentaurEventFrame = {
+      event: "amp_raw_event",
+      event_id: 5,
+      data: {
+        type: "item.completed",
+        item: {
+          id: "fc-1",
+          type: "fileChange",
+          changes: [
+            { path: "/home/agent/workspace/a.ts", kind: "update", diff: "@@\n-x\n+y" },
+            { path: "/home/agent/workspace/new.txt", kind: "add", diff: "hello\nworld" },
+          ],
+        },
+      },
+    } as unknown as CentaurEventFrame;
+
+    const state = reduceSession(initialSessionState(), frame);
+    expect(state.fileChanges).toHaveLength(2);
+    const changes = collectFileChanges(state);
+    expect(changes.map((c) => ({ path: c.path, kind: c.kind }))).toEqual([
+      { path: "a.ts", kind: "update" },
+      { path: "new.txt", kind: "add" },
+    ]);
+    // Codex `add` diff (raw content, no prefix) is normalized to +/green; the
+    // update hunk is left as-is.
+    expect(changes[1]!.diff).toBe("+ hello\n+ world");
+    expect(changes[0]!.diff).toBe("@@\n-x\n+y");
+    // Re-applying the same frame does not duplicate (id-stable) and does NOT
+    // mutate the prior state's array.
+    const before = state.fileChanges;
+    const again = reduceSession(state, frame);
+    expect(state.fileChanges).toBe(before); // prior state untouched
+    expect(state.fileChanges).toHaveLength(2);
+    expect(again.fileChanges).not.toBe(before); // fresh array
+    expect(again.fileChanges).toHaveLength(2); // still deduped
+  });
+
+  it("ignores a fileChange item with no changes[] array", () => {
+    const frame: CentaurEventFrame = {
+      event: "amp_raw_event",
+      event_id: 7,
+      data: { type: "item.completed", item: { id: "fc-x", type: "fileChange" } },
+    } as unknown as CentaurEventFrame;
+    expect(reduceSession(initialSessionState(), frame).fileChanges).toHaveLength(0);
+  });
+
+  it("merges codex + claude edits in collectFileChanges", () => {
+    let state = initialSessionState();
+    state = reduceSession(state, {
+      event: "amp_raw_event",
+      event_id: 1,
+      data: {
+        type: "assistant",
+        uuid: "u1",
+        message: {
+          id: "m1",
+          content: [
+            { type: "tool_use", id: "t1", name: "Edit", input: { file_path: "claude.ts", old_string: "a", new_string: "b" } },
+          ],
+        },
+      },
+    } as unknown as CentaurEventFrame);
+    state = reduceSession(state, {
+      event: "amp_raw_event",
+      event_id: 2,
+      data: { type: "item.completed", item: { id: "fc-1", type: "fileChange", changes: [{ path: "codex.ts", kind: "add", diff: "+x" }] } },
+    } as unknown as CentaurEventFrame);
+    expect(changedPaths(collectFileChanges(state))).toEqual(["claude.ts", "codex.ts"]);
+  });
 });
 
-describe("collectFileChanges", () => {
+describe("fileChangesFromItems", () => {
   it("collects edits across the transcript and counts distinct paths", () => {
     const items: SessionItem[] = [
       { type: "text", id: "x", text: "hi", sourceEventIds: [1] },
@@ -122,7 +194,7 @@ describe("collectFileChanges", () => {
       tool("Write", { file_path: "a.ts", content: "x" }, "t3"),
       tool("Write", { file_path: "b.ts", content: "y" }, "t4"),
     ];
-    const changes = collectFileChanges(items);
+    const changes = fileChangesFromItems(items);
     expect(changes.map((c) => c.id)).toEqual(["t1", "t3", "t4"]);
     expect(changedPaths(changes)).toEqual(["a.ts", "b.ts"]);
   });

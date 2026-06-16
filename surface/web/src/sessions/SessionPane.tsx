@@ -100,8 +100,12 @@ export function SessionPane({
 }) {
   const { stream, connected } = useSessionStream(session.id);
 
-  // Changes work-surface (Phase 4): derived from the folded transcript items.
-  const fileChanges = useMemo(() => collectFileChanges(stream.items), [stream.items]);
+  // Changes work-surface (Phase 4): Claude/amp edits from the transcript items +
+  // codex fileChange edits the reducer captured.
+  const fileChanges = useMemo(
+    () => collectFileChanges(stream),
+    [stream.items, stream.fileChanges],
+  );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const [changesOpen, setChangesOpen] = useState(false);
 
