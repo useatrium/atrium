@@ -1243,14 +1243,18 @@ export class SessionRuns {
 
   private async startSession(id: string, task: string | null): Promise<void> {
     try {
-      let row = await this.getSessionRow(id);
+      let row = await this.getStartableSessionRow(id);
       if (!row) return;
       let generation = row.assignment_generation;
       if (generation == null) {
         const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
         generation = spawned.assignment_generation;
         row = spawned.row;
+        if (TERMINAL_STATUSES.has(row.status)) return;
       }
+      row = await this.getStartableSessionRow(id);
+      if (!row) return;
+      generation = row.assignment_generation ?? generation;
       if (task != null) {
         await this.centaur.postMessage(
           row.centaur_thread_key,
@@ -1260,17 +1264,32 @@ export class SessionRuns {
           { messageId: `msg-${id}-initial` },
         );
       }
+      row = await this.getStartableSessionRow(id);
+      if (!row) return;
+      generation = row.assignment_generation ?? generation;
       const executeId = await this.reserveExecuteId(id);
       const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, {
         executeId,
         inputLines: task == null ? [] : [userInputLine(task)],
       });
-      await this.updateExecution(id, exec.execution_id, generation);
+      const updated = await this.updateExecution(id, exec.execution_id, generation);
+      if (!updated) {
+        await this.centaur.release(row.centaur_thread_key, `rel-${id}`, true).catch((err) => {
+          console.warn('session release after cancelled start failed', { id, err });
+        });
+        return;
+      }
       this.startTailer(id);
     } catch (err) {
       console.error('session start failed', { id, err });
       await this.updateStatus(id, 'failed').catch(() => {});
     }
+  }
+
+  private async getStartableSessionRow(id: string): Promise<SessionRow | null> {
+    const row = await this.getSessionRow(id);
+    if (!row || TERMINAL_STATUSES.has(row.status)) return null;
+    return row;
   }
 
   private startTailer(id: string): void {
@@ -1650,7 +1669,7 @@ export class SessionRuns {
     id: string,
     executionId: string | null,
     generation: number,
-  ): Promise<SessionRow> {
+  ): Promise<SessionRow | null> {
     const res = await this.pool.query<SessionRow>(
       `UPDATE sessions
        SET current_execution_id = COALESCE($1, current_execution_id),
@@ -1658,10 +1677,11 @@ export class SessionRuns {
            centaur_execute_id = CASE WHEN $1::text IS NULL THEN centaur_execute_id ELSE NULL END,
            centaur_message_id = CASE WHEN $1::text IS NULL THEN centaur_message_id ELSE NULL END
        WHERE id = $3
+         AND status NOT IN ('completed', 'failed', 'cancelled')
        RETURNING *`,
       [executionId, generation, id],
     );
-    return res.rows[0]!;
+    return res.rows[0] ?? null;
   }
 
   private async spawnAssignment(

@@ -24,6 +24,7 @@ class FakeCentaur {
   private frames: any[] = [];
   private readonly idempotency = new Map<string, { payload: string; response: object }>();
   private readonly threadGenerations = new Map<string, number>();
+  private pauseExecuteGate: { promise: Promise<void>; release: () => void } | null = null;
   readonly requests: RecordedRequest[] = [];
   readonly answers: RecordedRequest[] = [];
   readonly acceptedExecutions: string[] = [];
@@ -162,6 +163,7 @@ class FakeCentaur {
         this.recordLegacy('POST', '/agent/execute', legacyBody, url.searchParams);
         const replay = this.replayIdempotent(res, 'execute', threadKey, executeId, legacyBody);
         if (replay) return;
+        await this.waitForExecuteGate();
         const executionId = `exe_fake_${this.acceptedExecutions.length + 1}`;
         const response = { execution_id: executionId };
         this.acceptedExecutions.push(executionId);
@@ -203,6 +205,7 @@ class FakeCentaur {
     if (req.method === 'POST' && url.pathname === '/agent/execute') {
       const replay = this.replayIdempotent(res, 'execute', body.thread_key, body.execute_id, body);
       if (replay) return;
+      await this.waitForExecuteGate();
       const executionId = `exe_fake_${this.acceptedExecutions.length + 1}`;
       const response = { execution_id: executionId };
       this.acceptedExecutions.push(executionId);
@@ -244,6 +247,25 @@ class FakeCentaur {
 
   rejectNextAnswerQuestionNotPending(): void {
     this.answerNotPendingCount += 1;
+  }
+
+  pauseNextExecute(): void {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.pauseExecuteGate = { promise, release };
+  }
+
+  releasePausedExecute(): void {
+    this.pauseExecuteGate?.release();
+  }
+
+  private async waitForExecuteGate(): Promise<void> {
+    const gate = this.pauseExecuteGate;
+    if (!gate) return;
+    await gate.promise;
+    if (this.pauseExecuteGate === gate) this.pauseExecuteGate = null;
   }
 
   private recordLegacy(method: string, path: string, body: any, query: URLSearchParams): void {
@@ -517,6 +539,51 @@ describe('Phase 2 sessions', () => {
       expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
       expect(fake.requests.some((r) => r.path === '/agent/message')).toBe(true);
       expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    await app.close();
+  });
+
+  it('does not attach an execution when cancel wins the async session-start race', async () => {
+    fake.pauseNextExecute();
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const spawned = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'cancel before execute settles' },
+    });
+    const sessionId = spawned.json().session.id;
+
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/cancel`,
+      headers: { cookie },
+      payload: { opId: randomUUID() },
+    });
+    expect(cancelled.statusCode).toBe(202);
+
+    fake.releasePausedExecute();
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        'SELECT status, current_execution_id FROM sessions WHERE id = $1',
+        [sessionId],
+      );
+      expect(row.rows[0]).toMatchObject({
+        status: 'cancelled',
+        current_execution_id: null,
+      });
+      expect(fake.acceptedExecutions).toHaveLength(1);
+      expect(fake.requests.filter((r) => r.path.endsWith('/cancel'))).toHaveLength(2);
     });
     await app.close();
   });
