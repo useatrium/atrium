@@ -58,7 +58,6 @@ describe('SessionsRail', () => {
       <SessionsRail
         channelId="ch-1"
         sessions={asMap(needs, active, done, other)}
-        openSessionId={null}
         onOpenSession={() => {}}
       />,
     );
@@ -77,7 +76,7 @@ describe('SessionsRail', () => {
 
   it('shows an empty state when the channel has no sessions', () => {
     render(
-      <SessionsRail channelId="ch-1" sessions={{}} openSessionId={null} onOpenSession={() => {}} />,
+      <SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />,
     );
     expect(screen.getByText('No sessions yet')).toBeTruthy();
     expect(screen.queryByText('Active')).toBeNull();
@@ -86,28 +85,8 @@ describe('SessionsRail', () => {
   it('opens a card as a peek', () => {
     const onOpen = vi.fn();
     const s = session({ title: 'open me' });
-    render(
-      <SessionsRail
-        channelId="ch-1"
-        sessions={asMap(s)}
-        openSessionId={null}
-        onOpenSession={onOpen}
-      />,
-    );
+    render(<SessionsRail channelId="ch-1" sessions={asMap(s)} onOpenSession={onOpen} />);
     fireEvent.click(screen.getByText('open me'));
     expect(onOpen).toHaveBeenCalledWith(s.id);
-  });
-
-  it('marks the open session card', () => {
-    const s = session({ title: 'current' });
-    const { container } = render(
-      <SessionsRail
-        channelId="ch-1"
-        sessions={asMap(s)}
-        openSessionId={s.id}
-        onOpenSession={() => {}}
-      />,
-    );
-    expect(container.querySelector('.ring-edge-strong')).toBeTruthy();
   });
 });

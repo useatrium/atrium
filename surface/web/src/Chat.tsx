@@ -692,10 +692,15 @@ export function Chat({
     };
   }, [applyQueuedOp, onApiError, opQueue]);
 
+  // Layout-grammar focus flag (see the derived `view` below). Kept up here so the
+  // permalink effect can set it; the invariant is `focused` ⇒ a session is open.
+  const [focused, setFocused] = useState(false);
+
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
     if (!initialSessionId) return;
     dispatch({ type: 'open-session', sessionId: initialSessionId });
+    setFocused(true); // permalinks land in Focus
     sessionsApi
       .get(initialSessionId)
       .then(({ session }) => {
@@ -1079,9 +1084,8 @@ export function Chat({
   };
 
   // ---- session pane + layout grammar (channel / split / focus) ----
-  // `focused` is the only extra bit of layout state; the view is derived. A
-  // permalink (/s/:id) lands in Focus; a card click opens as a Split peek.
-  const [focused, setFocused] = useState(!!initialSessionId);
+  // `focused` (declared above) is the only extra bit of layout state; the view
+  // is derived. A permalink (/s/:id) lands in Focus; a card click opens a peek.
   const view: SessionView = state.openSessionId ? (focused ? 'focus' : 'split') : 'channel';
 
   // Closing the pane (X, Esc, channel switch, not-found) always resets focus so
@@ -1929,7 +1933,6 @@ export function Chat({
           <SessionsRail
             channelId={active.id}
             sessions={state.sessions}
-            openSessionId={state.openSessionId}
             onOpenSession={openSession}
           />
         )
