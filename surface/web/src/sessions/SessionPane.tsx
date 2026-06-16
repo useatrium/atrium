@@ -13,6 +13,7 @@ import {
   changedPaths,
   collectFileChanges,
   collectSideEffects,
+  fileChangeFromToolCall,
   isTerminalExecutionStatus,
   sideEffectCount,
   type QuestionItem,
@@ -22,6 +23,7 @@ import {
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
+import { InlineFileChange } from './fileChangeView';
 import { Composer } from '../components/Composer';
 import {
   ArrowUpIcon,
@@ -591,7 +593,7 @@ export function SessionPane({
               </div>
             ) : (
               <div className="pl-3.5">
-                <ToolCard
+                <TranscriptTool
                   item={item}
                   expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
                   onToggle={() =>
@@ -1508,6 +1510,27 @@ function firstInputLine(item: ToolCallItem): string {
   if (typeof command === 'string' && command) return command.split('\n')[0] ?? '';
   const keys = Object.keys(item.input);
   return keys.length === 0 ? '' : JSON.stringify(item.input).slice(0, 120);
+}
+
+/** A transcript tool call: file edits (Edit/Write/MultiEdit/NotebookEdit) render
+ * as an inline diff card — the actual change where it happened, not raw JSON —
+ * and everything else as the generic tool card. Codex edits arrive as state, not
+ * positioned items, so they stay drawer-only. */
+function TranscriptTool({
+  item,
+  expanded,
+  onToggle,
+}: {
+  item: ToolCallItem;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const fileChange = fileChangeFromToolCall(item);
+  if (fileChange) {
+    const status = item.result === undefined ? 'running' : item.result.is_error ? 'error' : 'done';
+    return <InlineFileChange change={fileChange} status={status} />;
+  }
+  return <ToolCard item={item} expanded={expanded} onToggle={onToggle} />;
 }
 
 const ToolCard = memo(

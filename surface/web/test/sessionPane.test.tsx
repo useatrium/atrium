@@ -789,3 +789,57 @@ describe('work drawer (Phase 4 consolidation)', () => {
     expect(onToggleFocus).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('inline file changes (Phase 4)', () => {
+  const editFrames = [
+    { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_x' } },
+    {
+      event: 'amp_raw_event',
+      event_id: 2,
+      data: {
+        type: 'assistant',
+        uuid: 'a1',
+        message: {
+          id: 'am1',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'edit-1',
+              name: 'Edit',
+              input: {
+                file_path: '/home/agent/workspace/src/app.ts',
+                old_string: 'const a = 1;',
+                new_string: 'const a = 2;',
+              },
+            },
+          ],
+        },
+      },
+    },
+    { event: 'execution_state', event_id: 3, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_x' } },
+  ] as unknown as CentaurEventFrame[];
+
+  it('renders a file edit as an inline diff card, not a raw tool card', async () => {
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(editFrames);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    // The edit shows as an inline diff card (not the generic raw-JSON tool card).
+    const card = screen.getByTestId('inline-file-change');
+    expect(within(card).getByText('src/app.ts')).toBeTruthy();
+    expect(within(card).getByText('edited')).toBeTruthy();
+    expect(screen.queryByTestId('tool-card')).toBeNull();
+
+    // The same edit feeds the Changes strip (one file).
+    expect(within(screen.getByTestId('changes-strip')).getByText('· 1')).toBeTruthy();
+
+    // Collapsed by default; expanding reveals the coloured diff.
+    expect(within(card).queryByText('+ const a = 2;')).toBeNull();
+    fireEvent.click(within(card).getByRole('button'));
+    expect(within(card).getByText('+ const a = 2;')).toBeTruthy();
+  });
+});
