@@ -1,3 +1,4 @@
+export * from "./artifacts.js";
 export * from "./client.js";
 export * from "./fileChanges.js";
 export * from "./reducer.js";

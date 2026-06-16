@@ -270,12 +270,41 @@ function stressScript(): CentaurEventFrame[] {
   return frames;
 }
 
+/** A few `artifact.captured` frames so the default mock run shows the Artifacts
+ * gallery without the (real) Centaur capture sidecar. No bytes are served in the
+ * mock, so image tiles fall back to their type label. */
+function mockArtifacts(baseId: number): CentaurEventFrame[] {
+  const make = (
+    n: number,
+    artifact_id: string,
+    path: string,
+    mime: string,
+    size_bytes: number,
+    ref: string | null,
+  ): CentaurEventFrame =>
+    ({
+      event: 'artifact.captured',
+      event_id: baseId + n,
+      data: { type: 'artifact.captured', artifact_id, path, kind: 'created', mime, size_bytes, sha256: artifact_id, ref },
+    }) as CentaurEventFrame;
+  return [
+    make(1, 'art-chart', '/tmp/chart.png', 'image/png', 48_210, 'blob-chart'),
+    make(2, 'art-report', '/home/agent/workspace/out/report.csv', 'text/csv', 3_120, 'blob-report'),
+    make(3, 'art-big', '/home/agent/outputs/render.pdf', 'application/pdf', 9_400_000, null),
+  ];
+}
+
 function pickScript(task: string): CentaurEventFrame[] {
+  const isDefault = !/stress/i.test(task) && !/long/i.test(task);
   const body: CentaurEventFrame[] = /stress/i.test(task)
     ? stressScript()
     : /long/i.test(task)
       ? longstream3()
       : JSON.parse(JSON.stringify(B));
+  if (isDefault) {
+    const maxId = body.reduce((m, f) => Math.max(m, f.event_id), 0);
+    body.push(...mockArtifacts(maxId + 10));
+  }
   // The spawn task is the session's first steer — emit it as a userMessage so
   // the transcript opens with the attributed prompt (matches the real flow).
   const firstId = body[0]?.event_id ?? 1000;

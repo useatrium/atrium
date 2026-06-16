@@ -3,7 +3,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { FileChange, SideEffect } from '@atrium/centaur-client';
+import type { Artifact, FileChange, SideEffect } from '@atrium/centaur-client';
 import { WorkDrawer, type WorkTab } from '../src/sessions/WorkDrawer';
 
 function fc(over: Partial<FileChange>): FileChange {
@@ -11,6 +11,9 @@ function fc(over: Partial<FileChange>): FileChange {
 }
 function se(over: Partial<SideEffect>): SideEffect {
   return { id: 's1', command: 'npm install', category: 'package', risk: 'caution', toolName: 'Bash', sourceEventIds: [2], ...over };
+}
+function art(over: Partial<Artifact>): Artifact {
+  return { id: 'a1', path: '/tmp/out.png', kind: 'created', mime: 'image/png', size: 2048, sha256: 'x', ref: 'b1', sourceEventIds: [3], ...over };
 }
 
 function renderDrawer(over: Partial<Parameters<typeof WorkDrawer>[0]> = {}) {
@@ -20,6 +23,9 @@ function renderDrawer(over: Partial<Parameters<typeof WorkDrawer>[0]> = {}) {
     effects: [se({})],
     sideEffectCount: 1,
     hasDanger: false,
+    artifacts: [] as Artifact[],
+    artifactCount: 0,
+    sessionId: 's-1',
     tab: 'changes' as WorkTab,
     onTab: vi.fn(),
     pinned: false,
@@ -65,6 +71,9 @@ describe('WorkDrawer', () => {
         effects={[se({ command: 'curl https://example.com', category: 'network' })]}
         sideEffectCount={1}
         hasDanger={false}
+        artifacts={[]}
+        artifactCount={0}
+        sessionId="s-1"
         tab="sideEffects"
         onTab={() => {}}
         pinned={false}
@@ -83,6 +92,9 @@ describe('WorkDrawer', () => {
         effects={[se({ command: 'curl https://example.com', category: 'network' })]}
         sideEffectCount={1}
         hasDanger={false}
+        artifacts={[]}
+        artifactCount={0}
+        sessionId="s-1"
         tab="changes"
         onTab={() => {}}
         pinned={false}
@@ -98,6 +110,22 @@ describe('WorkDrawer', () => {
     renderDrawer({ changes: [], changedFileCount: 0, tab: 'changes' });
     // tab=changes but no changes → renders the side-effects body.
     expect(screen.getByText('npm install')).toBeTruthy();
+  });
+
+  it('shows an Artifacts tab + gallery when artifacts exist', () => {
+    const props = renderDrawer({
+      artifacts: [art({ id: 'a1', path: '/tmp/chart.png' })],
+      artifactCount: 1,
+      tab: 'artifacts',
+    });
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getByRole('tab', { name: /Artifacts/ })).toBeTruthy();
+    // Artifacts tab active → the gallery tile shows the filename.
+    expect(screen.getByTestId('artifact-tile')).toBeTruthy();
+    expect(screen.getByText('chart.png')).toBeTruthy();
+    // Clicking the Changes tab switches.
+    fireEvent.click(screen.getByRole('tab', { name: /Changes/ }));
+    expect(props.onTab).toHaveBeenCalledWith('changes');
   });
 
   it('pin toggle is aria-pressed by state and calls onTogglePin', () => {

@@ -8,6 +8,7 @@ import type {
   AmpToolEvent,
   AnthropicTextBlock,
   AnthropicToolUseBlock,
+  ArtifactCaptured,
   CentaurEventFrame,
   ExecutionStatus,
   JsonObject,
@@ -71,11 +72,30 @@ export interface FileChange {
   sourceEventIds: number[];
 }
 
+export type ArtifactKind = "created" | "modified" | "deleted";
+
+/** A work-product file the sandbox capture sidecar surfaced — the unit of the
+ * Artifacts work-surface. `ref` keys the bytes in Centaur staging (null =
+ * manifest-only); atrium offloads them to its own store + serves. `path` may be
+ * absolute; the surface strips the sandbox prefix for display. */
+export interface Artifact {
+  id: string;
+  path: string;
+  kind: ArtifactKind;
+  mime: string;
+  size: number;
+  sha256: string;
+  ref: string | null;
+  sourceEventIds: number[];
+}
+
 export interface SessionState {
   status: ExecutionStatus | "idle";
   items: SessionItem[];
   /** Codex `fileChange` edits (claude/amp edits are derived from items instead). */
   fileChanges: FileChange[];
+  /** Captured work-product files (Artifacts surface), from artifact.captured frames. */
+  artifacts: Artifact[];
   resultText: string;
   models: string[];
   costUsd: number;
@@ -92,6 +112,7 @@ export function initialSessionState(): SessionState {
     status: "idle",
     items: [],
     fileChanges: [],
+    artifacts: [],
     resultText: "",
     models: [],
     costUsd: 0,
@@ -105,6 +126,7 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     ...state,
     items: state.items.map((item) => ({ ...item, sourceEventIds: [...item.sourceEventIds] })),
     fileChanges: [...state.fileChanges],
+    artifacts: [...state.artifacts],
     models: [...state.models],
     lastEventId: Math.max(state.lastEventId, frame.event_id),
   };
@@ -134,6 +156,11 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
   if (frame.event === "question_resolved") {
     next.pendingQuestion = null;
     resolveQuestionItem(next, frame.event_id, frame.data.question_id, frame.data.reason);
+    return next;
+  }
+
+  if (frame.event === "artifact.captured") {
+    reduceArtifactCaptured(next, frame.event_id, frame.data);
     return next;
   }
 
@@ -473,6 +500,24 @@ function captureCodexFileChange(state: SessionState, eventId: number, item: Code
       toolName: "fileChange",
       sourceEventIds: [eventId],
     });
+  });
+}
+
+/** Fold an `artifact.captured` frame into state.artifacts. Dedup by stable
+ * artifact_id (content-hash; reconnect replays the same ids), mirroring the
+ * fileChange dedup — a re-captured identical file is one entry, distinct content
+ * (new id) is a new version. */
+function reduceArtifactCaptured(state: SessionState, eventId: number, event: ArtifactCaptured): void {
+  if (state.artifacts.some((a) => a.id === event.artifact_id)) return;
+  state.artifacts.push({
+    id: event.artifact_id,
+    path: event.path,
+    kind: event.kind,
+    mime: event.mime,
+    size: event.size_bytes,
+    sha256: event.sha256,
+    ref: event.ref ?? null,
+    sourceEventIds: [eventId],
   });
 }
 
