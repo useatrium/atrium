@@ -124,7 +124,7 @@ describe("collectFileChanges over a reduced stream (real frame path)", () => {
           type: "fileChange",
           changes: [
             { path: "/home/agent/workspace/a.ts", kind: "update", diff: "@@\n-x\n+y" },
-            { path: "/home/agent/workspace/new.bin", kind: "add", diff: "+bytes" },
+            { path: "/home/agent/workspace/new.txt", kind: "add", diff: "hello\nworld" },
           ],
         },
       },
@@ -135,11 +135,29 @@ describe("collectFileChanges over a reduced stream (real frame path)", () => {
     const changes = collectFileChanges(state);
     expect(changes.map((c) => ({ path: c.path, kind: c.kind }))).toEqual([
       { path: "a.ts", kind: "update" },
-      { path: "new.bin", kind: "add" },
+      { path: "new.txt", kind: "add" },
     ]);
-    // Re-applying the same frame does not duplicate (id-stable).
+    // Codex `add` diff (raw content, no prefix) is normalized to +/green; the
+    // update hunk is left as-is.
+    expect(changes[1]!.diff).toBe("+ hello\n+ world");
+    expect(changes[0]!.diff).toBe("@@\n-x\n+y");
+    // Re-applying the same frame does not duplicate (id-stable) and does NOT
+    // mutate the prior state's array.
+    const before = state.fileChanges;
     const again = reduceSession(state, frame);
-    expect(again.fileChanges).toHaveLength(2);
+    expect(state.fileChanges).toBe(before); // prior state untouched
+    expect(state.fileChanges).toHaveLength(2);
+    expect(again.fileChanges).not.toBe(before); // fresh array
+    expect(again.fileChanges).toHaveLength(2); // still deduped
+  });
+
+  it("ignores a fileChange item with no changes[] array", () => {
+    const frame: CentaurEventFrame = {
+      event: "amp_raw_event",
+      event_id: 7,
+      data: { type: "item.completed", item: { id: "fc-x", type: "fileChange" } },
+    } as unknown as CentaurEventFrame;
+    expect(reduceSession(initialSessionState(), frame).fileChanges).toHaveLength(0);
   });
 
   it("merges codex + claude edits in collectFileChanges", () => {

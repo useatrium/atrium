@@ -118,7 +118,17 @@ export function fileChangesFromItems(items: SessionItem[]): FileChange[] {
  * path; a file edited twice yields two entries.
  */
 export function collectFileChanges(state: SessionState): FileChange[] {
-  const codex = state.fileChanges.map((c) => ({ ...c, path: displayPath(c.path) }));
+  const codex = state.fileChanges.map((c) => ({
+    ...c,
+    path: displayPath(c.path),
+    // A codex `add` diff is raw file content (full text, no +/- prefix) — prefix
+    // every line so the surface counts/colours it like a Claude Write. `update`/
+    // `delete` carry real unified hunks (-/+ lines), so leave those untouched.
+    diff:
+      c.kind === "add" && c.diff
+        ? c.diff.split("\n").map((l) => `+ ${l}`).join("\n")
+        : c.diff,
+  }));
   return [...fileChangesFromItems(state.items), ...codex];
 }
 

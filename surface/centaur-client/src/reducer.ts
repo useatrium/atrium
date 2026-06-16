@@ -456,8 +456,8 @@ const CODEX_KIND: Record<string, FileChangeKind> = {
  * unknown kind strings. */
 function captureCodexFileChange(state: SessionState, eventId: number, item: CodexItem): void {
   const changesField = (item as { changes?: unknown }).changes;
-  const raw: unknown[] = Array.isArray(changesField) ? changesField : [item];
-  raw.forEach((entry, idx) => {
+  if (!Array.isArray(changesField)) return; // verified shape is always changes[]
+  changesField.forEach((entry, idx) => {
     if (!entry || typeof entry !== "object") return;
     const e = entry as Record<string, unknown>;
     const path = typeof e["path"] === "string" ? e["path"] : null;
