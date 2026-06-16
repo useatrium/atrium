@@ -4,6 +4,7 @@ import {
   CentaurApiError,
   CentaurClient,
   collectFileChanges,
+  collectSideEffects,
   initialSessionState,
   isTerminalExecutionStatus,
   reduceSession,
@@ -11,6 +12,7 @@ import {
   type FileChange,
   type QuestionPrompt,
   type SessionItem,
+  type SideEffect,
 } from '@atrium/centaur-client';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
@@ -135,6 +137,9 @@ export interface SessionRecordJson {
   transcript: SessionItem[];
   /** Work products: the file edits the session made (Phase 4 Changes surface). */
   changes: FileChange[];
+  /** Work products: the shell ops the session ran, classified by category +
+   * risk (Phase 4 Side-effects surface). */
+  sideEffects: SideEffect[];
   answerProposals: SessionAnswerProposalJson[];
   seatHistory: SessionSeatHistoryEntry[];
   questionHistory: SessionQuestionHistoryEntry[];
@@ -463,6 +468,7 @@ export class SessionRuns {
       session,
       transcript: mirrored.items,
       changes: collectFileChanges(mirrored),
+      sideEffects: collectSideEffects(mirrored.items),
       answerProposals,
       seatHistory,
       questionHistory,
