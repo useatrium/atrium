@@ -1,8 +1,8 @@
 # First-Class Voice for Atrium — Design & Plan
 
-Status: **active build** (Phase 0 in progress)
+Status: **shipped** — voice messages + STT, web + mobile calls, and native device ringing (VoIP push wake) all delivered & verified end-to-end. **Remaining work** (real whisper STT in the deploy image, production deploy, E2EE, live captions, Android/FCM, polish) is tracked in **`notes/voice-remaining.md`**.
 Owner: voice workstream
-Last updated: 2026-06-13
+Last updated: 2026-06-16
 
 ## Goal
 

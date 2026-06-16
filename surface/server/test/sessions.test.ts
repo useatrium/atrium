@@ -2389,7 +2389,8 @@ describe('Phase 2 sessions', () => {
     // Mirror a tiny transcript: a steer + a file edit + a shell op + an agent reply.
     await pool.query(
       `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
-       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 7, 'amp_raw_event', $4), ($1, 8, 'amp_raw_event', $5), ($1, 10, 'amp_raw_event', $3)`,
+       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 7, 'amp_raw_event', $4), ($1, 8, 'amp_raw_event', $5),
+              ($1, 9, 'artifact.captured', $6), ($1, 10, 'amp_raw_event', $3)`,
       [
         id,
         JSON.stringify({
@@ -2442,6 +2443,20 @@ describe('Phase 2 sessions', () => {
                 },
               ],
             },
+          },
+        }),
+        JSON.stringify({
+          event: 'artifact.captured',
+          event_id: 9,
+          data: {
+            type: 'artifact.captured',
+            artifact_id: 'art-1',
+            path: '/home/agent/workspace/out/chart.png',
+            kind: 'created',
+            mime: 'image/png',
+            size_bytes: 4096,
+            sha256: 'art-1-full',
+            ref: 'blob-art-1',
           },
         }),
       ],
@@ -2514,6 +2529,11 @@ describe('Phase 2 sessions', () => {
     // Work products: the shell op is classified into record.sideEffects.
     expect(record.sideEffects).toEqual([
       expect.objectContaining({ command: 'npm install lodash', category: 'package', risk: 'caution', toolName: 'Bash' }),
+    ]);
+
+    // Work products: the captured file is surfaced in record.artifacts (path stripped).
+    expect(record.artifacts).toEqual([
+      expect.objectContaining({ id: 'art-1', path: 'out/chart.png', kind: 'created', mime: 'image/png', ref: 'blob-art-1' }),
     ]);
 
     // Overlay: the dismissed suggestion (all statuses) with its rationale.

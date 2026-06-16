@@ -3,11 +3,13 @@ import type { ServerResponse } from 'node:http';
 import {
   CentaurApiError,
   CentaurClient,
+  collectArtifacts,
   collectFileChanges,
   collectSideEffects,
   initialSessionState,
   isTerminalExecutionStatus,
   reduceSession,
+  type Artifact,
   type CentaurEventFrame,
   type FileChange,
   type QuestionPrompt,
@@ -140,6 +142,9 @@ export interface SessionRecordJson {
   /** Work products: the shell ops the session ran, classified by category +
    * risk (Phase 4 Side-effects surface). */
   sideEffects: SideEffect[];
+  /** Work products: the files the capture sidecar surfaced (Phase 4 Artifacts
+   * surface). Metadata only — bytes are served from atrium's store on demand. */
+  artifacts: Artifact[];
   answerProposals: SessionAnswerProposalJson[];
   seatHistory: SessionSeatHistoryEntry[];
   questionHistory: SessionQuestionHistoryEntry[];
@@ -469,6 +474,7 @@ export class SessionRuns {
       transcript: mirrored.items,
       changes: collectFileChanges(mirrored),
       sideEffects: collectSideEffects(mirrored.items),
+      artifacts: collectArtifacts(mirrored),
       answerProposals,
       seatHistory,
       questionHistory,
