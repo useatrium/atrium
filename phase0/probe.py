@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Phase-0 seam probes against a local Centaur deployment.
 
-Drives the durable control-plane API directly (no Slack):
-  spawn -> message -> execute -> tail SSE events -> verify.
+Drives the api-rs session control-plane directly (no Slack):
+  create session -> append message -> execute input line -> tail SSE events -> verify.
 
 Tests:
   A pong        streaming basics + infra TTFT (execute -> first event/delta)
@@ -27,12 +27,14 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from urllib.parse import quote
 from pathlib import Path
 
 NS = os.environ.get("CENTAUR_NAMESPACE", "centaur")
 RELEASE = os.environ.get("CENTAUR_RELEASE", "centaur")
 LOCAL_PORT = int(os.environ.get("PROBE_PORT", "18000"))
 BASE = f"http://127.0.0.1:{LOCAL_PORT}"
+API_RS_DEPLOYMENT = os.environ.get("CENTAUR_API_RS_DEPLOYMENT", f"{RELEASE}-centaur-api-rs")
 ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
 SECRETS_ENV = ROOT.parent / ".centaur-local" / "secrets.env"
@@ -62,14 +64,14 @@ def start_port_forward():
     _pf_proc = subprocess.Popen(
         [
             "kubectl", "port-forward", "-n", NS,
-            f"deploy/{RELEASE}-centaur-api", f"{LOCAL_PORT}:8000",
+            f"deploy/{API_RS_DEPLOYMENT}", f"{LOCAL_PORT}:8080",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     for _ in range(60):
         try:
-            api_get("/health", timeout=2)
+            api_get("/healthz", timeout=2)
             return
         except Exception:
             time.sleep(1)
@@ -89,7 +91,7 @@ def stop_port_forward():
 
 def ensure_forward_alive():
     try:
-        api_get("/health", timeout=2)
+        api_get("/healthz", timeout=2)
     except Exception:
         start_port_forward()
 
@@ -116,6 +118,10 @@ def api_post(path, body, timeout=60):
     return _req("POST", path, body, timeout)
 
 
+def session_path(thread_key, suffix=""):
+    return f"/api/session/{quote(thread_key, safe='')}{suffix}"
+
+
 # ---------- SSE tailing ----------
 
 def extract_event_id(sse_id_line, data):
@@ -134,7 +140,7 @@ def tail_events(thread_key, execution_id, after_event_id=0, max_events=None,
                 overall_timeout=600, read_timeout=300):
     """Yield (event_name, data, event_id, t_recv) frames until terminal/limits."""
     qs = f"?execution_id={execution_id}&after_event_id={after_event_id}"
-    url = f"{BASE}/agent/threads/{thread_key}/events{qs}"
+    url = f"{BASE}{session_path(thread_key, '/events')}{qs}"
     req = urllib.request.Request(url, headers={"x-api-key": API_KEY})
     start = time.monotonic()
     count = 0
@@ -156,10 +162,7 @@ def tail_events(thread_key, execution_id, after_event_id=0, max_events=None,
             elif line == "":
                 if event_name or data_lines:
                     raw = "\n".join(data_lines)
-                    try:
-                        data = json.loads(raw) if raw else {}
-                    except json.JSONDecodeError:
-                        data = {"_raw": raw}
+                    event_name, data = normalize_sse_event(event_name or "message", raw)
                     eid = extract_event_id(sse_id, data)
                     yield (event_name or "message", data, eid, time.monotonic())
                     count += 1
@@ -172,34 +175,84 @@ def tail_events(thread_key, execution_id, after_event_id=0, max_events=None,
                 event_name, data_lines, sse_id = None, [], None
 
 
+def normalize_sse_event(event_name, raw):
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        data = raw
+
+    if event_name == "session.output.line":
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                data = {"type": "result", "text": data}
+        return "amp_raw_event", data
+
+    if event_name == "session.execution_started":
+        payload = data if isinstance(data, dict) else {}
+        return "execution_state", {
+            **payload,
+            "type": "execution.state",
+            "status": "running",
+        }
+
+    if event_name in ("session.execution_completed", "session.execution_failed", "session.execution_cancelled"):
+        payload = data if isinstance(data, dict) else {}
+        status = {
+            "session.execution_completed": "completed",
+            "session.execution_failed": "failed",
+            "session.execution_cancelled": "cancelled",
+        }[event_name]
+        return "execution_state", {
+            **payload,
+            "type": "execution.state",
+            "status": status,
+        }
+
+    return event_name, data if isinstance(data, dict) else {"_raw": data}
+
+
 def is_terminal_state(ev, data):
     return ev == "execution_state" and data.get("status") in (
         "completed", "failed", "failed_permanent", "cancelled",
     )
 
 
+def terminal_state(frames):
+    for ev, data, _, _ in reversed(frames):
+        if is_terminal_state(ev, data):
+            return data
+    return {}
+
+
 # ---------- turn driver ----------
 
-def run_turn(thread_key, text, harness="claude-code"):
-    spawn = api_post("/agent/spawn", {"thread_key": thread_key, "harness": harness},
-                     timeout=180)
-    gen = spawn["assignment_generation"]
-    api_post("/agent/message", {
-        "thread_key": thread_key,
-        "assignment_generation": gen,
-        "role": "user",
-        "parts": [{"type": "text", "text": text}],
-        "user_id": "probe",
-        "metadata": {"user_name": "probe", "platform": "dev"},
+def user_input_line(text):
+    return json.dumps({
+        "type": "user",
+        "message": {"content": [{"type": "text", "text": text}]},
+    })
+
+
+def run_turn(thread_key, text, harness="codex"):
+    session = api_post(session_path(thread_key), {
+        "harness_type": harness,
+        "metadata": {"source": "atrium-probe", "platform": "dev"},
+    }, timeout=180)
+    api_post(session_path(thread_key, "/messages"), {
+        "messages": [{
+            "role": "user",
+            "parts": [{"type": "text", "text": text}],
+            "metadata": {"user_id": "probe", "user_name": "probe", "platform": "dev"},
+        }],
     })
     t_execute = time.monotonic()
-    ex = api_post("/agent/execute", {
-        "thread_key": thread_key,
-        "assignment_generation": gen,
-        "harness": harness,
-        "delivery": {"platform": "dev"},
+    ex = api_post(session_path(thread_key, "/execute"), {
+        "input_lines": [user_input_line(text)],
+        "metadata": {"source": "atrium-probe", "platform": "dev"},
     })
-    return spawn, ex["execution_id"], t_execute
+    return session, ex["execution_id"], t_execute
 
 
 def dump_frames(name, frames):
@@ -231,7 +284,7 @@ def record(test, check, ok, detail=""):
 # ---------- tests ----------
 
 def test_a_pong():
-    tk = f"probe-a-{int(time.time())}"
+    tk = f"probe:a:{int(time.time())}"
     _, exec_id, t_exec = run_turn(tk, "Reply with exactly PONG and nothing else.")
     frames, t_first, t_first_text = [], None, None
     for ev, data, eid, t in tail_events(tk, exec_id, overall_timeout=900,
@@ -243,7 +296,7 @@ def test_a_pong():
         if t_first_text is None and ("text_delta" in blob or "agentMessage" in blob):
             t_first_text = t
     dump_frames("A_pong", frames)
-    state = api_get(f"/agent/executions/{exec_id}")
+    state = terminal_state(frames)
     record("A", "execution completed", state.get("status") == "completed",
            f"status={state.get('status')}")
     record("A", "result contains PONG", "PONG" in (state.get("result_text") or ""),
@@ -260,7 +313,7 @@ def test_a_pong():
 
 
 def test_b_tooltest():
-    tk = f"probe-b-{int(time.time())}"
+    tk = f"probe:b:{int(time.time())}"
     _, exec_id, t_exec = run_turn(
         tk, "TOOLTEST - run the Bash command the model requests, then report its output.")
     frames = list(tail_events(tk, exec_id, overall_timeout=900, read_timeout=900))
@@ -269,7 +322,7 @@ def test_b_tooltest():
     record("B", "tool_use visible in event stream", "tool_use" in blob)
     record("B", "tool_result visible in event stream", "tool_result" in blob)
     record("B", "tool output roundtripped", "atrium-roundtrip-ok" in blob)
-    state = api_get(f"/agent/executions/{exec_id}")
+    state = terminal_state(frames)
     record("B", "execution completed", state.get("status") == "completed",
            f"status={state.get('status')}")
     record("B", "TOOLCHAIN_OK in result", "TOOLCHAIN_OK" in (state.get("result_text") or ""))
@@ -278,7 +331,7 @@ def test_b_tooltest():
 
 
 def test_c_reconnect():
-    tk = f"probe-c-{int(time.time())}"
+    tk = f"probe:c:{int(time.time())}"
     _, exec_id, _ = run_turn(tk, "LONGSTREAM please")
     first = []
     for frame in tail_events(tk, exec_id, max_events=30, overall_timeout=900,
@@ -326,7 +379,7 @@ def test_c_reconnect():
 
 
 def test_d_apikill():
-    tk = f"probe-d-{int(time.time())}"
+    tk = f"probe:d:{int(time.time())}"
     _, exec_id, _ = run_turn(tk, "SLOWSTREAM please")
     seen = []
     try:
@@ -340,27 +393,25 @@ def test_d_apikill():
     last_id = max((eid for _, _, eid, _ in seen if eid is not None), default=0)
     subprocess.run(
         ["kubectl", "delete", "pod", "-n", NS, "-l",
-         "app.kubernetes.io/component=api", "--wait=false"],
+         "app.kubernetes.io/component=api-rs", "--wait=false"],
         check=False, capture_output=True,
     )
     time.sleep(5)
     subprocess.run(
         ["kubectl", "wait", "-n", NS, "--for=condition=ready", "pod",
-         "-l", "app.kubernetes.io/component=api", "--timeout=300s"],
+         "-l", "app.kubernetes.io/component=api-rs", "--timeout=300s"],
         check=False, capture_output=True,
     )
     start_port_forward()
-    deadline = time.monotonic() + 600
     status = None
-    while time.monotonic() < deadline:
-        try:
-            state = api_get(f"/agent/executions/{exec_id}")
-            status = state.get("status")
-            if status in ("completed", "failed", "failed_permanent", "cancelled"):
+    try:
+        for ev, data, _, _ in tail_events(tk, exec_id, after_event_id=last_id,
+                                          overall_timeout=900, read_timeout=900):
+            if is_terminal_state(ev, data):
+                status = data.get("status")
                 break
-        except Exception:
-            ensure_forward_alive()
-        time.sleep(5)
+    except Exception:
+        ensure_forward_alive()
     record("D", "execution reached terminal state after API kill",
            status is not None, f"status={status}")
     replay = list(tail_events(tk, exec_id, after_event_id=0, overall_timeout=900,

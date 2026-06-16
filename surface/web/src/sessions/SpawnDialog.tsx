@@ -7,8 +7,8 @@ import { useState, type FormEvent, type KeyboardEvent } from 'react';
 import { XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
-  { value: 'claude-code', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
+  { value: 'claude-code', label: 'Claude Code' },
 ];
 
 export interface SpawnConfig {

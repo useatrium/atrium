@@ -14,40 +14,53 @@ function captureFetch(captured: { url?: string; body?: unknown }) {
 }
 
 describe("CentaurClient endpoint paths", () => {
-  it("threads idempotency keys through spawn, message, and execute bodies", async () => {
+  it("maps spawn, message, and execute calls onto api-rs session endpoints", async () => {
     const bodies: unknown[] = [];
+    const urls: string[] = [];
     const client = new CentaurClient({
       baseUrl: "http://centaur.test:8000",
       apiKey: "k",
-      fetchImpl: (async (_url: URL | RequestInfo, init?: RequestInit) => {
+      fetchImpl: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        urls.push(String(url));
         bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
-        return new Response(JSON.stringify({ assignment_generation: 1, execution_id: "exe_1" }), {
+        return new Response(JSON.stringify({ thread_key: "thread:1", execution_id: "exe_1" }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       }) as typeof fetch,
     });
 
-    await client.spawn("thread-1", "claude-code", { spawnId: "spawn-1" });
-    await client.postMessage("thread-1", 1, [{ type: "text", text: "hi" }], {}, { messageId: "msg-1" });
-    await client.execute("thread-1", 1, "claude-code", { executeId: "exec-1" });
+    await client.spawn("thread:1", "codex", { spawnId: "spawn-1" });
+    await client.postMessage("thread:1", 1, [{ type: "text", text: "hi" }], {}, { messageId: "msg-1" });
+    await client.execute("thread:1", 1, "codex", {
+      executeId: "exec-1",
+      inputLines: ['{"type":"user"}'],
+    });
 
+    expect(urls).toEqual([
+      "http://centaur.test:8000/api/session/thread%3A1",
+      "http://centaur.test:8000/api/session/thread%3A1/messages",
+      "http://centaur.test:8000/api/session/thread%3A1/execute",
+    ]);
     expect(bodies).toEqual([
-      { thread_key: "thread-1", harness: "claude-code", spawn_id: "spawn-1" },
       {
-        thread_key: "thread-1",
-        assignment_generation: 1,
-        role: "user",
-        parts: [{ type: "text", text: "hi" }],
-        metadata: {},
-        message_id: "msg-1",
+        harness_type: "codex",
+        metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
       },
       {
-        thread_key: "thread-1",
-        assignment_generation: 1,
-        harness: "claude-code",
-        delivery: { platform: "dev" },
-        execute_id: "exec-1",
+        messages: [
+          {
+            client_message_id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hi" }],
+            metadata: {},
+          },
+        ],
+      },
+      {
+        idempotency_key: "exec-1",
+        metadata: { source: "atrium", harness: "codex" },
+        input_lines: ['{"type":"user"}'],
       },
     ]);
   });
@@ -64,42 +77,61 @@ describe("CentaurClient endpoint paths", () => {
         })) as typeof fetch,
     });
 
-    await expect(client.execute("thread-1", 1, "claude-code")).rejects.toMatchObject({
+    await expect(client.execute("thread:1", 1, "codex")).rejects.toMatchObject({
       status: 409,
       code: "ASSIGNMENT_GENERATION_STALE",
     });
-    await expect(client.execute("thread-1", 1, "claude-code")).rejects.toBeInstanceOf(CentaurApiError);
+    await expect(client.execute("thread:1", 1, "codex")).rejects.toBeInstanceOf(CentaurApiError);
   });
 
-  it("release posts to /agent/threads/{thread_key}/release (regression: was /agent/release)", async () => {
+  it("maps cancelling release calls onto the api-rs session cancel endpoint", async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
       baseUrl: "http://centaur.test:8000",
       apiKey: "k",
       fetchImpl: captureFetch(captured),
     });
-    await client.release("probe x/1", "rel-1", true);
-    expect(captured.url).toBe(
-      "http://centaur.test:8000/agent/threads/probe%20x%2F1/release",
-    );
+    await expect(client.release("probe:x/1", "rel-1", false)).resolves.toMatchObject({
+      ok: true,
+      cancel_inflight: false,
+    });
+    expect(captured.url).toBeUndefined();
+
+    await expect(client.release("probe:x/1", "rel-1", true)).resolves.toMatchObject({
+      ok: true,
+      cancel_inflight: true,
+    });
+    expect(captured.url).toBe("http://centaur.test:8000/api/session/probe%3Ax%2F1/cancel");
     expect(captured.body).toEqual({ release_id: "rel-1", cancel_inflight: true });
   });
 
-  it("answerQuestion posts to /agent/executions/{execution_id}/answer", async () => {
-    const captured: { url?: string; body?: unknown } = {};
+  it("rejects cancelling release calls when api-rs reports a stop failure", async () => {
     const client = new CentaurClient({
       baseUrl: "http://centaur.test:8000",
       apiKey: "k",
-      fetchImpl: captureFetch(captured),
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ ok: false, stop_error: "delete failed" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
     });
-    await client.answerQuestion("exe/1", "q-1", { choice: { answers: ["A"] } });
-    expect(captured.url).toBe(
-      "http://centaur.test:8000/agent/executions/exe%2F1/answer",
+
+    await expect(client.release("thread:1", "rel-1", true)).rejects.toThrow(
+      "Centaur session cancel failed: delete failed",
     );
-    expect(captured.body).toEqual({
-      question_id: "q-1",
-      answers: { choice: { answers: ["A"] } },
+  });
+
+  it("rejects question answers until api-rs exposes an answer route", async () => {
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: captureFetch({}),
     });
+    await expect(
+      client.answerQuestion("exe/1", "q-1", { choice: { answers: ["A"] } }),
+    ).rejects.toThrow(
+      "api-rs does not expose interactive question answers yet",
+    );
   });
 });
 

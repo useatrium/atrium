@@ -102,6 +102,38 @@ export class ChaosCentaur {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body });
+    const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(messages|execute|events|cancel))?$/.exec(url.pathname);
+    if (sessionMatch) {
+      const threadKey = decodeURIComponent(sessionMatch[1]!);
+      const action = sessionMatch[2] ?? '';
+      if (req.method === 'POST' && action === '') {
+        this.requests.push({
+          method: 'POST',
+          path: '/agent/spawn',
+          body: { thread_key: threadKey, harness: body.harness_type },
+        });
+        return sendJson(res, { thread_key: threadKey, assignment_generation: 1 });
+      }
+      if (req.method === 'POST' && action === 'messages') {
+        this.requests.push({ method: 'POST', path: '/agent/message', body });
+        return sendJson(res, {});
+      }
+      if (req.method === 'POST' && action === 'execute') {
+        this.executions += 1;
+        this.requests.push({ method: 'POST', path: '/agent/execute', body });
+        return sendJson(res, { execution_id: `exe_chaos_${this.executions}` });
+      }
+      if (req.method === 'GET' && action === 'events') {
+        this.requests.push({ method: 'GET', path: `/agent/threads/${threadKey}/events`, body: {} });
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end();
+        return;
+      }
+      if (req.method === 'POST' && action === 'cancel') {
+        this.requests.push({ method: 'POST', path: `/api/session/${threadKey}/cancel`, body });
+        return sendJson(res, { ok: true, cancelled: true, execution_id: `exe_chaos_${this.executions}` });
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/agent/spawn') {
       return sendJson(res, { thread_key: body.thread_key, assignment_generation: 1 });
     }

@@ -360,7 +360,7 @@ export function applySessionEvent(
       threadRootEventId: ev.threadRootEventId,
       title: typeof p.title === 'string' ? p.title : '(agent task)',
       status: 'spawning',
-      harness: typeof p.harness === 'string' ? p.harness : 'claude-code',
+      harness: typeof p.harness === 'string' ? p.harness : 'codex',
       repo: typeof p.repo === 'string' ? p.repo : null,
       branch: typeof p.branch === 'string' ? p.branch : null,
       spawnedBy: typeof p.by === 'string' ? p.by : (ev.actorId ?? ''),

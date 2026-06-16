@@ -360,7 +360,7 @@ export class SessionRuns {
         channel.workspace_id,
         args.channelId,
         args.threadRootEventId,
-        `surface-${randomUUID()}`,
+        `surface:${randomUUID()}`,
         harness,
         repo,
         branch,
@@ -626,7 +626,7 @@ export class SessionRuns {
     }
 
     try {
-      await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+      await this.postQuestionAnswer(row, user.id, questionId, answers);
     } catch (err) {
       if (isCentaurCode(err, 'QUESTION_NOT_PENDING')) {
         await this.clearPendingQuestion(id, questionId, 'empty');
@@ -688,7 +688,7 @@ export class SessionRuns {
       throw new DomainError(409, 'execution_not_running', 'session has no running execution');
     }
 
-    await this.centaur.answerQuestion(row.current_execution_id, questionId, answers);
+    await this.postQuestionAnswer(row, user.id, questionId, answers);
 
     const updated = await client.query<SessionRow>(
       'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
@@ -764,7 +764,10 @@ export class SessionRuns {
     // only for boot resume (startSession), which posts no message.
     await client.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
     const executeId = await this.reserveExecuteId(row.id, client);
-    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
+    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, {
+      executeId,
+      inputLines: [userInputLine(text)],
+    });
     await client.query(
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
@@ -773,6 +776,27 @@ export class SessionRuns {
            centaur_message_id = NULL
        WHERE id = $2`,
       [exec.execution_id, row.id],
+    );
+  }
+
+  private async postQuestionAnswer(
+    row: SessionRow,
+    userId: string,
+    questionId: string,
+    answers: QuestionAnswerBody,
+  ): Promise<void> {
+    await this.centaur.postMessage(
+      row.centaur_thread_key,
+      row.assignment_generation ?? 1,
+      [{ type: 'text', text: formatQuestionAnswerText(questionId, answers) }],
+      {
+        user_id: userId,
+        question_id: questionId,
+        execution_id: row.current_execution_id ?? '',
+        answer_kind: 'question_answer',
+        answers,
+      },
+      { messageId: `answer-${row.id}-${questionId}` },
     );
   }
 
@@ -1218,7 +1242,10 @@ export class SessionRuns {
         );
       }
       const executeId = await this.reserveExecuteId(id);
-      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, { executeId });
+      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, {
+        executeId,
+        inputLines: task == null ? [] : [userInputLine(task)],
+      });
       await this.updateExecution(id, exec.execution_id, generation);
       this.startTailer(id);
     } catch (err) {
@@ -1626,8 +1653,7 @@ export class SessionRuns {
   ): Promise<{ row: SessionRow; assignment_generation: number }> {
     const spawnId = await this.reserveSpawnId(id, client);
     const spawned = await this.centaur.spawn(threadKey, harness, { spawnId });
-    const generation = spawned.assignment_generation;
-    if (generation == null) throw new Error('centaur spawn missing assignment_generation');
+    const generation = spawned.assignment_generation ?? 1;
     const row = await this.persistSpawnedAssignment(id, generation, client);
     return { row, assignment_generation: generation };
   }
@@ -1913,6 +1939,24 @@ function normalizeStatus(status: string): SessionStatus {
   if (status === 'queued' || status === 'running') return status;
   if (status === 'failed' || status === 'failed_permanent') return 'failed';
   return 'running';
+}
+
+function userInputLine(text: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      content: [{ type: 'text', text }],
+    },
+  });
+}
+
+function formatQuestionAnswerText(questionId: string, answers: QuestionAnswerBody): string {
+  const lines = [`Answer to question ${questionId}:`];
+  for (const [id, value] of Object.entries(answers)) {
+    const answerValues = Array.isArray(value.answers) ? value.answers : [];
+    lines.push(`${id}: ${answerValues.join(', ')}`);
+  }
+  return lines.join('\n');
 }
 
 function isCentaurCode(err: unknown, code: string): boolean {

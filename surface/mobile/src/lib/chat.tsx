@@ -581,7 +581,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           threadRootEventId: payload.threadRootEventId ?? null,
           title: payload.task.slice(0, 80),
           status: 'spawning',
-          harness: payload.harness ?? 'claude-code',
+          harness: payload.harness ?? 'codex',
           spawnedBy: me.id,
           spawnerName: me.displayName,
           driverId: null,
@@ -1065,7 +1065,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         task,
         clientSpawnId: tempId,
         threadRootEventId,
-        harness: 'claude-code',
+        harness: 'codex',
         createdAt: now,
       };
       const pending = pendingSpawnFromPayload(payload);

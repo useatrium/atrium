@@ -1,4 +1,4 @@
-import type { CentaurEventFrame, JsonObject } from "./types.js";
+import type { CentaurEventFrame, JsonObject, JsonValue } from "./types.js";
 import { isTerminalExecutionStatus } from "./types.js";
 
 export interface TailEventsOptions {
@@ -14,7 +14,7 @@ export interface TailEventsOptions {
 
 interface ParsedSseFrame {
   event: string;
-  data: JsonObject;
+  data: JsonValue;
   id?: string;
 }
 
@@ -67,7 +67,7 @@ async function* openEventStream(
   options: TailEventsOptions,
 ): AsyncGenerator<CentaurEventFrame> {
   const url = new URL(
-    `/agent/threads/${encodeURIComponent(threadKey)}/events`,
+    `/api/session/${encodeURIComponent(threadKey)}/events`,
     withTrailingSlash(options.baseUrl),
   );
   if (options.executionId) {
@@ -158,12 +158,13 @@ function parseSseFrame(raw: string): ParsedSseFrame | null {
   return {
     event,
     id,
-    data: JSON.parse(dataLines.join("\n")) as JsonObject,
+    data: parseJsonOrString(dataLines.join("\n")),
   };
 }
 
 function normalizeSseFrame(frame: ParsedSseFrame): CentaurEventFrame | null {
-  const dataEventId = frame.data.event_id;
+  const data = isJsonObject(frame.data) ? frame.data : {};
+  const dataEventId = data.event_id;
   const eventId = typeof dataEventId === "number"
     ? dataEventId
     : typeof dataEventId === "string" && /^\d+$/.test(dataEventId)
@@ -178,11 +179,135 @@ function normalizeSseFrame(frame: ParsedSseFrame): CentaurEventFrame | null {
     return null;
   }
 
+  if (frame.event === "session.output.line") {
+    return normalizeOutputLine(frame.data, eventId);
+  }
+
+  if (frame.event === "session.execution_started") {
+    return {
+      event: "execution_state",
+      event_id: eventId,
+      data: {
+        type: "execution.state",
+        status: "running",
+        thread_key: stringField(data, "thread_key"),
+        execution_id: stringField(data, "execution_id"),
+        ...data,
+      },
+    };
+  }
+
+  if (frame.event === "session.execution_completed") {
+    return terminalExecutionState(eventId, data, "completed");
+  }
+
+  if (frame.event === "session.execution_failed") {
+    return terminalExecutionState(eventId, data, "failed");
+  }
+
+  if (frame.event === "session.execution_cancelled") {
+    return terminalExecutionState(eventId, data, "cancelled");
+  }
+
+  if (isLegacyCentaurEvent(frame.event) && isJsonObject(frame.data)) {
+    return {
+      event: frame.event,
+      event_id: eventId,
+      data: frame.data,
+    } as CentaurEventFrame;
+  }
+
   return {
-    event: frame.event,
+    event: "system_event_observed",
     event_id: eventId,
-    data: frame.data,
-  } as CentaurEventFrame;
+    data: {
+      type: "obs.system",
+      engine: "api-rs",
+      harness: "api-rs",
+      thread_key: stringField(data, "thread_key"),
+      execution_id: stringField(data, "execution_id"),
+      subtype: frame.event,
+      payload: frame.data,
+    },
+  };
+}
+
+function normalizeOutputLine(data: JsonValue, eventId: number): CentaurEventFrame {
+  const parsed = typeof data === "string" ? parseJsonOrString(data) : data;
+  if (isJsonObject(parsed)) {
+    const type = parsed.type;
+    if (type === "question_requested") {
+      return { event: "question_requested", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
+    }
+    if (type === "question_resolved") {
+      return { event: "question_resolved", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
+    }
+    if (type === "artifact.captured") {
+      return { event: "artifact.captured", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
+    }
+    return { event: "amp_raw_event", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
+  }
+
+  return {
+    event: "amp_raw_event",
+    event_id: eventId,
+    data: { type: "result", text: String(parsed) },
+  };
+}
+
+function terminalExecutionState(
+  eventId: number,
+  data: JsonObject,
+  status: "completed" | "failed" | "cancelled",
+): CentaurEventFrame {
+  return {
+    event: "execution_state",
+    event_id: eventId,
+    data: {
+      type: "execution.state",
+      status,
+      thread_key: stringField(data, "thread_key"),
+      execution_id: stringField(data, "execution_id"),
+      ...(typeof data.result_text === "string" ? { result_text: data.result_text } : {}),
+      ...(typeof data.error === "string" ? { terminal_reason: data.error } : {}),
+      ...data,
+    },
+  };
+}
+
+function parseJsonOrString(raw: string): JsonValue {
+  try {
+    return JSON.parse(raw) as JsonValue;
+  } catch {
+    return raw;
+  }
+}
+
+function isJsonObject(value: JsonValue): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringField(data: JsonObject, key: string): string {
+  const value = data[key];
+  return typeof value === "string" ? value : "";
+}
+
+function isLegacyCentaurEvent(event: string): boolean {
+  return [
+    "execution_state",
+    "execution_started",
+    "amp_raw_event",
+    "system_event_observed",
+    "assistant_text_observed",
+    "assistant_tool_use_observed",
+    "tool_result_observed",
+    "usage_observed",
+    "result_observed",
+    "execution_summary",
+    "question_requested",
+    "question_resolved",
+    "artifact.captured",
+  ].includes(event);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

@@ -1,6 +1,12 @@
-# Atrium Phase-0 overrides, layered after contrib/chart/values.dev.yaml.
-# Env-mode secrets (no 1Password), no Slack, claude-code harness pointed at
-# the in-cluster Anthropic mock.
+# Atrium local overrides, layered after contrib/chart/values.dev.yaml.
+# Env-mode secrets (no 1Password), no Slack, api-rs sessions, Codex harness.
+
+api:
+  enabled: false
+
+apiRs:
+  enabled: true
+  sandboxWarmPoolSize: 0
 
 secretManager:
   backend: env
@@ -15,18 +21,21 @@ ironProxy:
 slackbot:
   enabled: false
 
+slackbotv2:
+  enabled: false
+
+discordbot:
+  enabled: false
+
 # Broker requires a writable (1Password) backend; not used in Phase 0.
 tokenBroker:
   enabled: false
 
 sandbox:
+  harnessEngine: codex
   extraEnv:
-    # https through iron-proxy (CONNECT + MITM) — the designed egress path.
-    # Mock serves a cert signed by the firewall CA (see JOURNAL 2026-06-10).
-    ANTHROPIC_BASE_URL: "https://centaur-llm-mock.centaur.svc.cluster.local"
     DISABLE_TELEMETRY: "1"
     DISABLE_ERROR_REPORTING: "1"
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
   resources:
     requests:
       cpu: 250m

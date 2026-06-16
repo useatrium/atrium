@@ -77,6 +77,89 @@ class FakeCentaur {
     const body = await readJson(req);
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body, query: url.searchParams });
 
+    const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(messages|execute|events|cancel))?$/.exec(url.pathname);
+    if (sessionMatch) {
+      const threadKey = decodeURIComponent(sessionMatch[1]!);
+      const action = sessionMatch[2] ?? '';
+      if (req.method === 'POST' && action === '') {
+        const metadata = isRecord(body.metadata) ? body.metadata : {};
+        const spawnId = typeof metadata.spawn_id === 'string' ? metadata.spawn_id : undefined;
+        const legacyBody = { thread_key: threadKey, harness: body.harness_type, spawn_id: spawnId };
+        this.recordLegacy('POST', '/agent/spawn', legacyBody, url.searchParams);
+        const replay = this.replayIdempotent(res, 'spawn', threadKey, spawnId, legacyBody);
+        if (replay) return;
+        const generation = (this.threadGenerations.get(threadKey) ?? 0) + 1;
+        this.threadGenerations.set(threadKey, generation);
+        const response = { thread_key: threadKey, assignment_generation: generation };
+        this.rememberIdempotent('spawn', threadKey, spawnId, legacyBody, response);
+        return sendJson(res, response);
+      }
+      if (req.method === 'POST' && action === 'messages') {
+        const message = Array.isArray(body.messages) && isRecord(body.messages[0]) ? body.messages[0] : {};
+        const metadata = isRecord(message.metadata) ? message.metadata : {};
+        const messageId = typeof message.client_message_id === 'string' ? message.client_message_id : undefined;
+        const legacyBody = {
+          thread_key: threadKey,
+          assignment_generation: this.threadGenerations.get(threadKey) ?? 1,
+          role: message.role,
+          parts: message.parts,
+          metadata,
+          ...(typeof metadata.user_id === 'string' ? { user_id: metadata.user_id } : {}),
+          ...(messageId ? { message_id: messageId } : {}),
+        };
+        this.recordLegacy('POST', '/agent/message', legacyBody, url.searchParams);
+        if (this.staleMessages.delete(threadKey)) {
+          return sendJson(res, { code: 'ASSIGNMENT_GENERATION_STALE' }, 409);
+        }
+        if (typeof metadata.question_id === 'string') {
+          this.answers.push({
+            method: 'POST',
+            path: `/agent/executions/${metadata.execution_id || 'exe_fake'}/answer`,
+            body: {
+              question_id: metadata.question_id,
+              answers: metadata.answers,
+            },
+            query: url.searchParams,
+          });
+          if (this.answerNotPendingCount > 0) {
+            this.answerNotPendingCount -= 1;
+            return sendJson(res, { code: 'QUESTION_NOT_PENDING' }, 409);
+          }
+        }
+        const replay = this.replayIdempotent(res, 'message', threadKey, messageId, legacyBody);
+        if (replay) return;
+        this.rememberIdempotent('message', threadKey, messageId, legacyBody, {});
+        if (messageId) this.acceptedMessages.push(messageId);
+        return sendJson(res, {});
+      }
+      if (req.method === 'POST' && action === 'execute') {
+        const metadata = isRecord(body.metadata) ? body.metadata : {};
+        const executeId = typeof body.idempotency_key === 'string' ? body.idempotency_key : undefined;
+        const legacyBody = {
+          thread_key: threadKey,
+          assignment_generation: this.threadGenerations.get(threadKey) ?? 1,
+          harness: metadata.harness,
+          delivery: { platform: 'dev' },
+          ...(executeId ? { execute_id: executeId } : {}),
+        };
+        this.recordLegacy('POST', '/agent/execute', legacyBody, url.searchParams);
+        const replay = this.replayIdempotent(res, 'execute', threadKey, executeId, legacyBody);
+        if (replay) return;
+        const executionId = `exe_fake_${this.acceptedExecutions.length + 1}`;
+        const response = { execution_id: executionId };
+        this.acceptedExecutions.push(executionId);
+        this.rememberIdempotent('execute', threadKey, executeId, legacyBody, response);
+        return sendJson(res, response);
+      }
+      if (req.method === 'POST' && action === 'cancel') {
+        return sendJson(res, { ok: true, cancelled: true, execution_id: 'exe_fake' });
+      }
+      if (req.method === 'GET' && action === 'events') {
+        this.recordLegacy('GET', `/agent/threads/${threadKey}/events`, {}, url.searchParams);
+        return this.writeEventStream(res, url);
+      }
+    }
+
     if (req.method === 'POST' && url.pathname === '/agent/spawn') {
       const replay = this.replayIdempotent(res, 'spawn', body.thread_key, body.spawn_id, body);
       if (replay) return;
@@ -121,27 +204,7 @@ class FakeCentaur {
       return sendJson(res, {});
     }
     if (req.method === 'GET' && /\/agent\/threads\/[^/]+\/events/.test(url.pathname)) {
-      const after = Number(url.searchParams.get('after_event_id') ?? 0);
-      this.streamAfterIds.push(after);
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
-      const maxEventId = Math.max(0, ...this.frames.map((f) => Number(f.event_id) || 0));
-      const effectiveAfter = this.streamResetBeyondHistory && after > maxEventId ? 0 : after;
-      let index = 0;
-      res.on('close', () => {
-        this.streamClosedCount += 1;
-      });
-      for (const frame of this.frames.filter((f) => f.event_id > effectiveAfter)) {
-        if (this.streamWriteCommentBeforeSecondFrame && index === 1) {
-          res.write(': keep-alive\n\n');
-        }
-        res.write(`id: ${frame.event_id}\n`);
-        res.write(`event: ${frame.event}\n`);
-        res.write(`data: ${JSON.stringify(frame.data)}\n\n`);
-        index += 1;
-      }
-      if (this.streamHangOpen) return;
-      res.end();
-      return;
+      return this.writeEventStream(res, url);
     }
 
     res.writeHead(404);
@@ -164,6 +227,33 @@ class FakeCentaur {
 
   rejectNextAnswerQuestionNotPending(): void {
     this.answerNotPendingCount += 1;
+  }
+
+  private recordLegacy(method: string, path: string, body: any, query: URLSearchParams): void {
+    this.requests.push({ method, path, body, query });
+  }
+
+  private writeEventStream(res: ServerResponse, url: URL): void {
+    const after = Number(url.searchParams.get('after_event_id') ?? 0);
+    this.streamAfterIds.push(after);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const maxEventId = Math.max(0, ...this.frames.map((f) => Number(f.event_id) || 0));
+    const effectiveAfter = this.streamResetBeyondHistory && after > maxEventId ? 0 : after;
+    let index = 0;
+    res.on('close', () => {
+      this.streamClosedCount += 1;
+    });
+    for (const frame of this.frames.filter((f) => f.event_id > effectiveAfter)) {
+      if (this.streamWriteCommentBeforeSecondFrame && index === 1) {
+        res.write(': keep-alive\n\n');
+      }
+      res.write(`id: ${frame.event_id}\n`);
+      res.write(`event: ${frame.event}\n`);
+      res.write(`data: ${JSON.stringify(frame.data)}\n\n`);
+      index += 1;
+    }
+    if (this.streamHangOpen) return;
+    res.end();
   }
 
   private replayIdempotent(
@@ -197,6 +287,10 @@ class FakeCentaur {
       response,
     });
   }
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 let pool: pg.Pool;
@@ -1137,12 +1231,10 @@ describe('Phase 2 sessions', () => {
       await app.ready();
 
       await waitFor(async () => {
-        const release = fake.requests.find((r) => r.path.endsWith('/release'));
-        expect(release?.body).toMatchObject({ cancel_inflight: false });
-        expect(release?.body.release_id).toContain(`rel-${id}-`);
         const row = await pool.query('SELECT assignment_generation FROM sessions WHERE id = $1', [id]);
         expect(row.rows[0].assignment_generation).toBeNull();
       });
+      expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
       await app.close();
     });
 
@@ -1437,7 +1529,7 @@ describe('Phase 2 sessions', () => {
       'SELECT assignment_generation, current_execution_id FROM sessions WHERE id = $1',
       [id],
     );
-    expect(row.rows[0].assignment_generation).toBe(2);
+    expect(row.rows[0].assignment_generation).toBe(1);
     expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
     await app.close();
   });
@@ -1724,7 +1816,7 @@ describe('Phase 2 sessions', () => {
     ]);
   });
 
-  it('cancel calls release with cancel_inflight and marks the session cancelled', async () => {
+  it('cancel marks the local session cancelled after calling Centaur session cancel', async () => {
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
@@ -1749,8 +1841,8 @@ describe('Phase 2 sessions', () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(202);
-    const release = fake.requests.find((r) => r.path.endsWith('/release'));
-    expect(release?.body).toMatchObject({ release_id: `rel-${id}`, cancel_inflight: true });
+    expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
+    expect(fake.requests.some((r) => r.path === '/api/session/thread-cancel/cancel')).toBe(true);
     const row = await pool.query('SELECT status, pending_question FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].status).toBe('cancelled');
     expect(row.rows[0].pending_question).toBeNull();
@@ -2520,8 +2612,8 @@ describe('Phase 2 sessions', () => {
       headers: { cookie: bob.cookie },
     });
     expect(driverCancel.statusCode).toBe(202);
-    const release = fake.requests.find((r) => r.path.endsWith('/release'));
-    expect(release?.body).toMatchObject({ release_id: `rel-${id}`, cancel_inflight: true });
+    expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
+    expect(fake.requests.some((r) => r.path.endsWith('/cancel'))).toBe(true);
     await app.close();
   });
 });

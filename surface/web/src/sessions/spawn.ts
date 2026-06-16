@@ -38,7 +38,7 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
     threadRootEventId: threadRootEventId ?? null,
     title: task.slice(0, 80),
     status: 'spawning',
-    harness: 'claude-code',
+    harness: 'codex',
     spawnedBy: me.id,
     spawnerName: me.displayName,
     driverId: null,
@@ -73,7 +73,7 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
     task,
     clientSpawnId: tempId,
     threadRootEventId,
-    harness: 'claude-code',
+    harness: 'codex',
     createdAt: now,
   });
 }

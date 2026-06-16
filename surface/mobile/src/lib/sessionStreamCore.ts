@@ -6,6 +6,7 @@ import {
   type CentaurEventFrame,
   type ExecutionStatus,
   type JsonObject,
+  type JsonValue,
   type SessionState,
 } from '@atrium/centaur-client';
 import type { SessionStatus } from '@atrium/surface-client';
@@ -42,8 +43,9 @@ export function normalizeExecutionStatus(status: ExecutionStatus): SessionStatus
 export function frameFromParsedSse(parsed: {
   event: string;
   id?: string;
-  data: JsonObject;
+  data: JsonValue;
 }): CentaurEventFrame | null {
+  if (!isJsonObject(parsed.data)) return null;
   const dataEventId = parsed.data.event_id;
   const eventId =
     typeof dataEventId === 'number'
@@ -56,6 +58,10 @@ export function frameFromParsedSse(parsed: {
 
   if (eventId === undefined) return null;
   return { event: parsed.event, event_id: eventId, data: parsed.data } as CentaurEventFrame;
+}
+
+function isJsonObject(value: JsonValue): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function foldSessionFrame(state: SessionState, frame: CentaurEventFrame): SessionState {

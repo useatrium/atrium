@@ -50,6 +50,10 @@ export interface PostMessageOptions {
 
 export interface ExecuteOptions {
   executeId?: string;
+  inputLines?: string[];
+  metadata?: JsonObject;
+  idleTimeoutMs?: number;
+  maxDurationMs?: number;
 }
 
 export class CentaurApiError extends Error {
@@ -103,11 +107,22 @@ export class CentaurClient {
 
   spawn(threadKey: string, harness: string, opts: SpawnOptions = {}): Promise<SpawnResponse> {
     const body: JsonObject = {
-      thread_key: threadKey,
-      harness,
+      harness_type: toApiRsHarness(harness),
+      metadata: {
+        source: "atrium",
+        harness,
+        ...(opts.spawnId ? { spawn_id: opts.spawnId } : {}),
+      },
     };
-    if (opts.spawnId) body.spawn_id = opts.spawnId;
-    return this.request("POST", "/agent/spawn", body);
+    return this.request<Record<string, JsonValue | undefined>>(
+      "POST",
+      `/api/session/${encodeURIComponent(threadKey)}`,
+      body,
+    ).then((session) => ({
+      ...session,
+      thread_key: typeof session.thread_key === "string" ? session.thread_key : threadKey,
+      assignment_generation: 1,
+    }));
   }
 
   postMessage(
@@ -118,44 +133,68 @@ export class CentaurClient {
     opts: PostMessageOptions = {},
   ): Promise<PostMessageResponse> {
     const body: JsonObject = {
-      thread_key: threadKey,
-      assignment_generation: generation,
-      role: "user",
-      parts,
-      metadata: meta,
+      messages: [
+        {
+          ...(opts.messageId ? { client_message_id: opts.messageId } : {}),
+          role: "user",
+          parts,
+          metadata: meta,
+        },
+      ],
     };
-    if (typeof meta.user_id === "string") {
-      body.user_id = meta.user_id;
-    }
-    if (typeof meta.message_id === "string") {
-      body.message_id = meta.message_id;
-    }
-    if (opts.messageId) {
-      body.message_id = opts.messageId;
-    }
-    return this.request("POST", "/agent/message", body);
+    void generation;
+    return this.request(
+      "POST",
+      `/api/session/${encodeURIComponent(threadKey)}/messages`,
+      body,
+    );
   }
 
   execute(threadKey: string, generation: number, harness: string, opts: ExecuteOptions = {}): Promise<ExecuteResponse> {
     const body: JsonObject = {
-      thread_key: threadKey,
-      assignment_generation: generation,
-      harness,
-      delivery: { platform: "dev" },
+      idempotency_key: opts.executeId,
+      metadata: {
+        source: "atrium",
+        harness,
+        ...(opts.metadata ?? {}),
+      },
+      input_lines: opts.inputLines ?? [],
     };
-    if (opts.executeId) body.execute_id = opts.executeId;
-    return this.request("POST", "/agent/execute", body);
+    if (opts.idleTimeoutMs !== undefined) body.idle_timeout_ms = opts.idleTimeoutMs;
+    if (opts.maxDurationMs !== undefined) body.max_duration_ms = opts.maxDurationMs;
+    void generation;
+    return this.request(
+      "POST",
+      `/api/session/${encodeURIComponent(threadKey)}/execute`,
+      body,
+    );
   }
 
   release(threadKey: string, releaseId: string, cancelInflight = false): Promise<ReleaseResponse> {
-    return this.request("POST", `/agent/threads/${encodeURIComponent(threadKey)}/release`, {
-      release_id: releaseId,
-      cancel_inflight: cancelInflight,
+    if (!cancelInflight) {
+      void threadKey;
+      void releaseId;
+      return Promise.resolve({ ok: true, cancel_inflight: false });
+    }
+    return this.request<ReleaseResponse>(
+      "POST",
+      `/api/session/${encodeURIComponent(threadKey)}/cancel`,
+      { release_id: releaseId, cancel_inflight: true },
+    ).then((response) => {
+      if (response.ok === false) {
+        const error =
+          typeof response.stop_error === "string"
+            ? response.stop_error
+            : "unknown cancel failure";
+        throw new Error(`Centaur session cancel failed: ${error}`);
+      }
+      return { ...response, cancel_inflight: true };
     });
   }
 
   getExecution(executionId: string): Promise<ExecutionResponse> {
-    return this.request("GET", `/agent/executions/${encodeURIComponent(executionId)}`);
+    void executionId;
+    return Promise.reject(new Error("api-rs does not expose execution lookup yet"));
   }
 
   answerQuestion(
@@ -163,10 +202,10 @@ export class CentaurClient {
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ): Promise<Record<string, JsonValue | undefined>> {
-    return this.request("POST", `/agent/executions/${encodeURIComponent(executionId)}/answer`, {
-      question_id: questionId,
-      answers: answers as JsonObject,
-    });
+    void executionId;
+    void questionId;
+    void answers;
+    return Promise.reject(new Error("api-rs does not expose interactive question answers yet"));
   }
 
   tailEvents(
@@ -211,6 +250,12 @@ export class CentaurClient {
 
     return (await response.json()) as T;
   }
+}
+
+function toApiRsHarness(harness: string): string {
+  const normalized = harness.trim().toLowerCase();
+  if (normalized === "claude-code" || normalized === "claude_code") return "claudecode";
+  return normalized || "codex";
 }
 
 function withTrailingSlash(url: string): string {
