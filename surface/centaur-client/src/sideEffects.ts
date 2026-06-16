@@ -65,18 +65,31 @@ function categoryFor(command: string): SideEffectCategory {
   return CATEGORY_ORDER.find((category) => checks[category](command)) ?? "shell";
 }
 
+/** `rm` is danger only with BOTH recursive AND force, in any flag form
+ * (combined `-rf`, split `-r -f`, or long `--recursive --force`). */
+function isRmRf(command: string): boolean {
+  if (!/\brm\b/i.test(command)) return false;
+  const recursive = /(?:^|\s)-[a-z]*r|--recursive\b/i.test(command);
+  const force = /(?:^|\s)-[a-z]*f|--force\b/i.test(command);
+  return recursive && force;
+}
+
+// Heuristic, not a security control. Known gaps left unflagged to avoid noise:
+// plain `> file` truncation and obscure destructive tools.
 function isDanger(command: string): boolean {
   return (
-    /\brm\s+-[^\n;&|]*\b(?:rf|fr)\b/i.test(command) ||
-    /\bsudo\s/i.test(command) ||
+    isRmRf(command) ||
+    /\bsudo\s/i.test(command) || // any elevation = attention (intentional)
     commandStartsWith(command, "dd") ||
     /\bmkfs\b/i.test(command) ||
+    commandStartsWith(command, "(shred|truncate)") ||
+    /(^|[;&|]\s*)find\b[^\n;&|]*-delete\b/i.test(command) ||
     /:\(\)\{/.test(command) ||
-    /\bchmod\s+(?:-[^\s]*r[^\s]*\s+)?777\b/i.test(command) ||
-    /\bgit\s+push\b[^\n;&|]*(?:--force|-f)\b/i.test(command) ||
+    /\bchmod\s+(?:-[^\s]*r[^\s]*\s+)?0?777\b/i.test(command) ||
+    /\bgit\s+push\b[^\n;&|]*(?:--force(?!-with-lease)|-f)\b/i.test(command) ||
     />\s*\/dev\/sd/i.test(command) ||
     /\bmv\b[^\n;&|]*\s\/\s*(?:$|[;&|])/i.test(command) ||
-    /\b(curl|wget)\b[^\n;&]*\|\s*(?:sh|bash|zsh|dash)\b/i.test(command) ||
+    /\b(curl|wget)\b[^\n;&]*\|\s*(?:sh|bash|zsh|dash|python3?|node|perl|ruby)\b/i.test(command) ||
     /\bnpm\s+publish\b/i.test(command) ||
     /\bkubectl\s+delete\b/i.test(command) ||
     /\bdrop\s+(table|database)\b/i.test(command)

