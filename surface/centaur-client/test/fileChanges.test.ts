@@ -58,6 +58,22 @@ describe("fileChangeFromToolCall", () => {
     expect(fc!.diff).toBe("- a\n+ b\n- c\n+ d");
   });
 
+  it("reads the text-editor tool's old_str/new_str (not old_string)", () => {
+    const fc = fileChangeFromToolCall(
+      tool("str_replace_based_edit_tool", { path: "src/a.ts", old_str: "x", new_str: "y" }),
+    );
+    expect(fc).toMatchObject({ path: "src/a.ts", kind: "update" });
+    expect(fc!.diff).toBe("- x\n+ y");
+  });
+
+  it("does not emit a ghost line for a trailing newline in old/new strings", () => {
+    const fc = fileChangeFromToolCall(
+      tool("Edit", { file_path: "a.ts", old_string: "foo\n", new_string: "bar\n" }),
+    );
+    // "foo\n".split("\n") would be ["foo",""] — the trailing empty must be dropped.
+    expect(fc!.diff).toBe("- foo\n+ bar");
+  });
+
   it("ignores non-edit tools and edits without a path", () => {
     expect(fileChangeFromToolCall(tool("Bash", { command: "ls" }))).toBeNull();
     expect(fileChangeFromToolCall(tool("Edit", { old_string: "a", new_string: "b" }))).toBeNull();

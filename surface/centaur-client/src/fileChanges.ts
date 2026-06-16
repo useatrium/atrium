@@ -23,7 +23,9 @@ export interface FileChange {
   sourceEventIds: number[];
 }
 
-const EDIT_TOOLS = new Set(["Edit", "str_replace", "str_replace_editor"]);
+// Claude Code's Edit + the Anthropic text-editor tool (whose str_replace command
+// uses old_str/new_str, not old_string/new_string).
+const EDIT_TOOLS = new Set(["Edit", "str_replace_editor", "str_replace_based_edit_tool"]);
 const WRITE_TOOLS = new Set(["Write", "create_file"]);
 const MULTI_EDIT_TOOLS = new Set(["MultiEdit"]);
 const NOTEBOOK_TOOLS = new Set(["NotebookEdit"]);
@@ -39,12 +41,20 @@ function str(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/** Split into lines, dropping a single trailing empty from a terminal newline
+ * (old_string/content frequently end with "\n", which would emit a ghost line). */
+function splitLines(text: string): string[] {
+  const parts = text.split("\n");
+  if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+  return parts;
+}
+
 /** Old lines render as removals, new lines as additions. Claude's Edit already
  * passes the minimal changed region, so no LCS is needed for a readable hunk. */
 function synthDiff(oldText: string | null, newText: string | null): string {
   const lines: string[] = [];
-  if (oldText) for (const l of oldText.split("\n")) lines.push(`- ${l}`);
-  if (newText) for (const l of newText.split("\n")) lines.push(`+ ${l}`);
+  if (oldText) for (const l of splitLines(oldText)) lines.push(`- ${l}`);
+  if (newText) for (const l of splitLines(newText)) lines.push(`+ ${l}`);
   return lines.join("\n");
 }
 
@@ -68,7 +78,9 @@ export function fileChangeFromToolCall(item: ToolCallItem): FileChange | null {
 
   if (EDIT_TOOLS.has(item.name)) {
     kind = "update";
-    diff = synthDiff(str(item.input["old_string"]), str(item.input["new_string"]));
+    const oldText = str(item.input["old_string"]) ?? str(item.input["old_str"]);
+    const newText = str(item.input["new_string"]) ?? str(item.input["new_str"]);
+    diff = synthDiff(oldText, newText);
   } else if (WRITE_TOOLS.has(item.name)) {
     kind = "add";
     diff = synthDiff(null, str(item.input["content"]) ?? str(item.input["file_text"]));

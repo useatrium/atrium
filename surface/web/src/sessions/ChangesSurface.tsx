@@ -82,6 +82,9 @@ export function ChangesSurface({
   return (
     <div
       data-testid="changes-surface"
+      role="dialog"
+      aria-label="Changes"
+      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
