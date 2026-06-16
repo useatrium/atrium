@@ -7,6 +7,8 @@ api:
 apiRs:
   enabled: true
   sandboxWarmPoolSize: 0
+  ironProxy:
+    mode: disabled
 
 secretManager:
   backend: env
