@@ -787,22 +787,15 @@ export class SessionRuns {
 
   private async postQuestionAnswer(
     row: SessionRow,
-    userId: string,
+    _userId: string,
     questionId: string,
     answers: QuestionAnswerBody,
   ): Promise<void> {
-    await this.centaur.postMessage(
+    await this.centaur.answerQuestion(
       row.centaur_thread_key,
-      row.assignment_generation ?? 1,
-      [{ type: 'text', text: formatQuestionAnswerText(questionId, answers) }],
-      {
-        user_id: userId,
-        question_id: questionId,
-        execution_id: row.current_execution_id ?? '',
-        answer_kind: 'question_answer',
-        answers,
-      },
-      { messageId: `answer-${row.id}-${questionId}` },
+      row.current_execution_id ?? '',
+      questionId,
+      answers,
     );
   }
 
@@ -1954,15 +1947,6 @@ function userInputLine(text: string): string {
       content: [{ type: 'text', text }],
     },
   });
-}
-
-function formatQuestionAnswerText(questionId: string, answers: QuestionAnswerBody): string {
-  const lines = [`Answer to question ${questionId}:`];
-  for (const [id, value] of Object.entries(answers)) {
-    const answerValues = Array.isArray(value.answers) ? value.answers : [];
-    lines.push(`${id}: ${answerValues.join(', ')}`);
-  }
-  return lines.join('\n');
 }
 
 function isCentaurCode(err: unknown, code: string): boolean {

@@ -198,14 +198,15 @@ export class CentaurClient {
   }
 
   answerQuestion(
+    threadKey: string,
     executionId: string,
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ): Promise<Record<string, JsonValue | undefined>> {
-    void executionId;
-    void questionId;
-    void answers;
-    return Promise.reject(new Error("api-rs does not expose interactive question answers yet"));
+    return this.request("POST", `/api/session/${encodeURIComponent(threadKey)}/executions/${encodeURIComponent(executionId)}/answer`, {
+      question_id: questionId,
+      answers: answers as JsonObject,
+    });
   }
 
   tailEvents(

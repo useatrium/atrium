@@ -77,6 +77,23 @@ class FakeCentaur {
     const body = await readJson(req);
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body, query: url.searchParams });
 
+    const answerMatch = /^\/api\/session\/([^/]+)\/executions\/([^/]+)\/answer$/.exec(url.pathname);
+    if (req.method === 'POST' && answerMatch) {
+      const threadKey = decodeURIComponent(answerMatch[1]!);
+      const executionId = decodeURIComponent(answerMatch[2]!);
+      this.answers.push({
+        method: 'POST',
+        path: `/api/session/${threadKey}/executions/${executionId}/answer`,
+        body,
+        query: url.searchParams,
+      });
+      if (this.answerNotPendingCount > 0) {
+        this.answerNotPendingCount -= 1;
+        return sendJson(res, { code: 'QUESTION_NOT_PENDING' }, 409);
+      }
+      return sendJson(res, { ok: true, execution_id: executionId, thread_key: threadKey, status: 'answered' });
+    }
+
     const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(messages|execute|events|cancel))?$/.exec(url.pathname);
     if (sessionMatch) {
       const threadKey = decodeURIComponent(sessionMatch[1]!);
@@ -1041,7 +1058,8 @@ describe('Phase 2 sessions', () => {
     });
     expect(ok.statusCode).toBe(202);
     expect(fake.answers).toHaveLength(1);
-    expect(fake.answers[0]!.path).toBe('/agent/executions/exe_fake/answer');
+    expect(fake.answers[0]!.path).toContain('/api/session/thread-');
+    expect(fake.answers[0]!.path).toContain('/executions/exe_fake/answer');
     expect(fake.answers[0]!.body).toEqual({
       question_id: 'q-main',
       answers: { choice: { answers: ['Fast'] } },

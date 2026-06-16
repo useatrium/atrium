@@ -102,6 +102,13 @@ export class ChaosCentaur {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body });
+    const answerMatch = /^\/api\/session\/([^/]+)\/executions\/([^/]+)\/answer$/.exec(url.pathname);
+    if (req.method === 'POST' && answerMatch) {
+      const threadKey = decodeURIComponent(answerMatch[1]!);
+      const executionId = decodeURIComponent(answerMatch[2]!);
+      this.answers.push(body);
+      return sendJson(res, { ok: true, execution_id: executionId, thread_key: threadKey, status: 'answered' });
+    }
     const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(messages|execute|events|cancel))?$/.exec(url.pathname);
     if (sessionMatch) {
       const threadKey = decodeURIComponent(sessionMatch[1]!);

@@ -121,17 +121,23 @@ describe("CentaurClient endpoint paths", () => {
     );
   });
 
-  it("rejects question answers until api-rs exposes an answer route", async () => {
+  it("maps question answers onto the api-rs execution answer endpoint", async () => {
+    const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
       baseUrl: "http://centaur.test:8000",
       apiKey: "k",
-      fetchImpl: captureFetch({}),
+      fetchImpl: captureFetch(captured),
     });
     await expect(
-      client.answerQuestion("exe/1", "q-1", { choice: { answers: ["A"] } }),
-    ).rejects.toThrow(
-      "api-rs does not expose interactive question answers yet",
+      client.answerQuestion("thread:1", "exe/1", "q-1", { choice: { answers: ["A"] } }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(captured.url).toBe(
+      "http://centaur.test:8000/api/session/thread%3A1/executions/exe%2F1/answer",
     );
+    expect(captured.body).toEqual({
+      question_id: "q-1",
+      answers: { choice: { answers: ["A"] } },
+    });
   });
 });
 
