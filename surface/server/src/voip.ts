@@ -1,7 +1,7 @@
 import * as http2 from 'node:http2';
 import { createPrivateKey, randomUUID, sign } from 'node:crypto';
 import type { Db } from './db.js';
-import { prunePushTokens } from './push.js';
+import { pruneTokens } from './push.js';
 
 export type VoipPlatform = 'ios' | 'android';
 
@@ -466,7 +466,7 @@ export async function sendIncomingCallVoipPushes(
     }),
   );
   const pruned = results.filter((t): t is string => t !== null);
-  await prunePushTokens(pool, pruned);
+  await pruneTokens(pool, pruned);
   return { attempted: tokens.rows.length, pruned, payload };
 }
 
