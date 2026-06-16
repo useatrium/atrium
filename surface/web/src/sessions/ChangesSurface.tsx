@@ -3,24 +3,17 @@
 // "Changes·N" strip; dismissible. Grouped by path, newest edit per file on top.
 
 import { useMemo, useState } from 'react';
-import type { FileChange, FileChangeKind } from '@atrium/centaur-client';
+import type { FileChange } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { DiffView, KIND_BADGE, KIND_LABEL, diffStats } from './fileChangeView';
 
-const KIND_BADGE: Record<FileChangeKind, string> = {
-  add: 'bg-success/15 text-success-text',
-  update: 'bg-info/15 text-info-text',
-  delete: 'bg-danger/15 text-danger-text',
-};
-const KIND_LABEL: Record<FileChangeKind, string> = { add: 'added', update: 'edited', delete: 'deleted' };
-
-/** One file's row: path + kind badge + a collapsible diff. */
+/** One file's row: path + kind badge + a collapsible diff (every edit to the file). */
 function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
   const [open, setOpen] = useState(false);
   // Newest edit wins the displayed kind; the diff shows every edit to the file.
   const kind = changes[changes.length - 1]!.kind;
   const diff = changes.map((c) => c.diff).filter(Boolean).join('\n');
-  const adds = diff.split('\n').filter((l) => l.startsWith('+')).length;
-  const dels = diff.split('\n').filter((l) => l.startsWith('-')).length;
+  const { adds, dels } = diffStats(diff);
 
   return (
     <div className="border-b border-edge last:border-b-0">
@@ -39,24 +32,7 @@ function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
         {adds > 0 && <span className="shrink-0 text-2xs tabular-nums text-success-text">+{adds}</span>}
         {dels > 0 && <span className="shrink-0 text-2xs tabular-nums text-danger-text">−{dels}</span>}
       </button>
-      {open && diff && (
-        <pre className="max-h-72 overflow-auto bg-surface px-3 py-2 font-mono text-2xs leading-relaxed">
-          {diff.split('\n').map((line, i) => (
-            <div
-              key={i}
-              className={
-                line.startsWith('+')
-                  ? 'text-success-text'
-                  : line.startsWith('-')
-                    ? 'text-danger-text'
-                    : 'text-fg-muted'
-              }
-            >
-              {line || ' '}
-            </div>
-          ))}
-        </pre>
-      )}
+      {open && diff && <DiffView diff={diff} />}
     </div>
   );
 }
