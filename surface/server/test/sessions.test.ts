@@ -2294,10 +2294,10 @@ describe('Phase 2 sessions', () => {
     const bob = await loginUser(app, 'bob', 'Bob');
     const id = await insertSessionRow({ title: 'record me', status: 'running' });
 
-    // Mirror a tiny transcript: a steer + an agent reply.
+    // Mirror a tiny transcript: a steer + a file edit + an agent reply.
     await pool.query(
       `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
-       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 10, 'amp_raw_event', $3)`,
+       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 7, 'amp_raw_event', $4), ($1, 10, 'amp_raw_event', $3)`,
       [
         id,
         JSON.stringify({
@@ -2309,6 +2309,29 @@ describe('Phase 2 sessions', () => {
           event: 'amp_raw_event',
           event_id: 10,
           data: { type: 'item.completed', item: { type: 'agentMessage', id: 'm1', text: 'done' } },
+        }),
+        JSON.stringify({
+          event: 'amp_raw_event',
+          event_id: 7,
+          data: {
+            type: 'assistant',
+            uuid: 'a1',
+            message: {
+              id: 'am1',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'edit-1',
+                  name: 'Edit',
+                  input: {
+                    file_path: '/home/agent/workspace/src/app.ts',
+                    old_string: 'const a = 1;',
+                    new_string: 'const a = 2;',
+                  },
+                },
+              ],
+            },
+          },
         }),
       ],
     );
@@ -2371,6 +2394,11 @@ describe('Phase 2 sessions', () => {
     expect(record.session.id).toBe(id);
     expect(record.transcript.length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(record.transcript)).toContain('do the thing');
+
+    // Work products: the file edit is derived into record.changes.
+    expect(record.changes).toEqual([
+      expect.objectContaining({ path: 'src/app.ts', kind: 'update', toolName: 'Edit' }),
+    ]);
 
     // Overlay: the dismissed suggestion (all statuses) with its rationale.
     expect(record.session.suggestions).toEqual([
