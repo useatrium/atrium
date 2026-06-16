@@ -410,6 +410,55 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('POST /api/sessions persists repo/branch and echoes them on the wire + spawned event', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'build it', repo: '  acme/app  ', branch: ' dev ' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const session = res.json().session;
+    // Trimmed on the wire.
+    expect(session).toMatchObject({ repo: 'acme/app', branch: 'dev' });
+
+    const row = await pool.query('SELECT repo, branch FROM sessions WHERE id = $1', [session.id]);
+    expect(row.rows[0]).toEqual({ repo: 'acme/app', branch: 'dev' });
+
+    const events = await pool.query('SELECT payload FROM events WHERE type = $1', [
+      'session.spawned',
+    ]);
+    expect(events.rows[0].payload).toMatchObject({ repo: 'acme/app', branch: 'dev' });
+    await app.close();
+  });
+
+  it('POST /api/sessions defaults repo/branch to null when omitted', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'no repo' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().session).toMatchObject({ repo: null, branch: null });
+    await app.close();
+  });
+
   it('dedupes duplicate POST /api/sessions by clientSpawnId', async () => {
     const app = await buildApp({
       pool,

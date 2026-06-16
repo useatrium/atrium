@@ -109,6 +109,9 @@ export interface SessionSpawnPayload {
   clientSpawnId: string;
   threadRootEventId?: number;
   harness?: string;
+  /** Spawn-dialog git metadata (optional). */
+  repo?: string;
+  branch?: string;
   createdAt?: string;
 }
 
@@ -844,6 +847,8 @@ export function createDefaultOpRegistry(): OpRegistry {
           threadRootEventId: payload.threadRootEventId,
           task: payload.task,
           harness: payload.harness,
+          repo: payload.repo,
+          branch: payload.branch,
           clientSpawnId: payload.clientSpawnId,
           opId: op.opId,
         }),

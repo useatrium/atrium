@@ -33,6 +33,8 @@ export interface SessionJson {
   title: string;
   status: SessionStatus;
   harness: string;
+  repo: string | null;
+  branch: string | null;
   spawnedBy: string;
   driverId: string | null;
   driver: SessionUserJson | null;
@@ -179,6 +181,8 @@ interface SessionRow {
   thread_root_event_id: number | null;
   centaur_thread_key: string;
   harness: string;
+  repo: string | null;
+  branch: string | null;
   title: string;
   status: SessionStatus;
   spawned_by: string;
@@ -290,6 +294,8 @@ export class SessionRuns {
     threadRootEventId: number | null;
     task: string;
     harness?: string;
+    repo?: string | null;
+    branch?: string | null;
     /** Client's optimistic id, echoed on session.spawned so a spawn whose
      * POST response was lost still reconciles instead of duplicating. */
     clientSpawnId?: string;
@@ -307,6 +313,8 @@ export class SessionRuns {
       threadRootEventId: number | null;
       task: string;
       harness?: string;
+      repo?: string | null;
+      branch?: string | null;
       clientSpawnId?: string;
       user: UserRef;
     },
@@ -318,6 +326,8 @@ export class SessionRuns {
 
     const title = args.task.trim().slice(0, 80);
     const harness = args.harness ?? this.harness;
+    const repo = normalizeGitMeta(args.repo);
+    const branch = normalizeGitMeta(args.branch);
     const channel = await getChannel(client, args.channelId);
     if (!channel) {
       throw new DomainError(404, 'channel_not_found', 'channel not found');
@@ -330,10 +340,11 @@ export class SessionRuns {
       : '';
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
-         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, title,
-         status, spawned_by, driver_id, client_spawn_id
+         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch,
+         title, status, spawned_by, driver_id, client_spawn_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, 'spawning', $7, $7, $8)
+       -- driver_id starts as the spawner ($9 used for both spawned_by + driver_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10)
        ${conflictClause}
        RETURNING *`,
       [
@@ -342,6 +353,8 @@ export class SessionRuns {
         args.threadRootEventId,
         `surface-${randomUUID()}`,
         harness,
+        repo,
+        branch,
         title,
         args.user.id,
         args.clientSpawnId ?? null,
@@ -364,6 +377,8 @@ export class SessionRuns {
         title: row.title,
         harness: row.harness,
         by: args.user.id,
+        ...(row.repo ? { repo: row.repo } : {}),
+        ...(row.branch ? { branch: row.branch } : {}),
         ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
       },
     });
@@ -1884,6 +1899,13 @@ function isCentaurCode(err: unknown, code: string): boolean {
   return err instanceof CentaurApiError && err.code === code;
 }
 
+/** Trim + cap optional git metadata; empty becomes null. */
+function normalizeGitMeta(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().slice(0, 200);
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function toJson(
   row: SessionRow,
   seatInfo: {
@@ -1902,6 +1924,8 @@ function toJson(
     title: row.title,
     status: row.status,
     harness: row.harness,
+    repo: row.repo,
+    branch: row.branch,
     spawnedBy: row.spawned_by,
     driverId: row.driver_id,
     driver: seatInfo.driver ?? null,

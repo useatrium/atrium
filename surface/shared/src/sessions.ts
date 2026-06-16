@@ -135,6 +135,9 @@ export interface SessionWire {
   title: string;
   status: SessionStatus;
   harness: string;
+  /** Spawn-dialog git metadata (optional; absent on older payloads). */
+  repo?: string | null;
+  branch?: string | null;
   spawnedBy: string;
   driverId: string | null;
   /** Driver display info (Phase 3 server; may be absent on older payloads). */
@@ -176,6 +179,9 @@ export interface Session {
   title: string;
   status: SessionStatus;
   harness: string;
+  /** Spawn-dialog git metadata, captured at spawn time (optional). */
+  repo?: string | null;
+  branch?: string | null;
   spawnedBy: string;
   /** Display name of the spawner when known (from WS author / me). */
   spawnerName?: string;
@@ -278,6 +284,8 @@ export function sessionFromWire(w: SessionWire): Session {
     title: w.title,
     status: asSessionStatus(w.status) ?? 'spawning',
     harness: w.harness,
+    repo: w.repo ?? null,
+    branch: w.branch ?? null,
     spawnedBy: w.spawnedBy,
     driverId: w.driverId ?? w.driver?.userId ?? null,
     driverName: w.driver?.displayName,
@@ -305,6 +313,10 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
   if (!live) return resp;
   return {
     ...resp,
+    // Immutable spawn metadata: keep whichever side has it (an old server may
+    // not echo repo/branch).
+    repo: resp.repo ?? live.repo ?? null,
+    branch: resp.branch ?? live.branch ?? null,
     status: statusRank(live.status) >= statusRank(resp.status) ? live.status : resp.status,
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
@@ -349,6 +361,8 @@ export function applySessionEvent(
       title: typeof p.title === 'string' ? p.title : '(agent task)',
       status: 'spawning',
       harness: typeof p.harness === 'string' ? p.harness : 'claude-code',
+      repo: typeof p.repo === 'string' ? p.repo : null,
+      branch: typeof p.branch === 'string' ? p.branch : null,
       spawnedBy: typeof p.by === 'string' ? p.by : (ev.actorId ?? ''),
       driverId: null,
       pendingSeatRequests: [],
@@ -365,7 +379,11 @@ export function applySessionEvent(
       permalink: `/s/${sessionId}`,
     };
     const spawnerName = base.spawnerName ?? ev.author?.displayName;
-    return { ...sessions, [sessionId]: { ...base, spawnerName } };
+    // Fold spawn metadata from the event too — when `prev` was an optimistic
+    // entry built before the payload was known, keep whichever side has it.
+    const repo = base.repo ?? (typeof p.repo === 'string' ? p.repo : null);
+    const branch = base.branch ?? (typeof p.branch === 'string' ? p.branch : null);
+    return { ...sessions, [sessionId]: { ...base, spawnerName, repo, branch } };
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore

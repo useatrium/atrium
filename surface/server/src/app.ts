@@ -1994,10 +1994,15 @@ function rawSession(req: FastifyRequest): string | undefined {
       threadRootEventId?: number;
       task?: string;
       harness?: string;
+      repo?: string;
+      branch?: string;
       opId?: unknown;
     };
     const opId = optionalOpId(body);
     const task = typeof body.task === 'string' ? body.task : '';
+    const repo = typeof body.repo === 'string' && body.repo.trim() ? body.repo.trim() : undefined;
+    const branch =
+      typeof body.branch === 'string' && body.branch.trim() ? body.branch.trim() : undefined;
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
     }
@@ -2028,6 +2033,8 @@ function rawSession(req: FastifyRequest): string | undefined {
         threadRootEventId,
         task,
         harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+        repo,
+        branch,
         clientSpawnId,
       },
       fn: async (client) => {
@@ -2037,6 +2044,8 @@ function rawSession(req: FastifyRequest): string | undefined {
           task,
           harness:
             typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+          repo,
+          branch,
           clientSpawnId,
           user,
         });

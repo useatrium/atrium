@@ -10,6 +10,14 @@ import {
   type SessionStatus,
 } from './types';
 
+/** Compact "repo@branch" label for the metadata line (branch optional). */
+export function repoBranchLabel(repo: string, branch?: string | null): string {
+  return branch ? `${repo}@${branch}` : repo;
+}
+export function repoBranchTitle(repo: string, branch?: string | null): string {
+  return branch ? `${repo} · branch ${branch}` : repo;
+}
+
 /** 1s ticker for live elapsed displays; idle when `active` is false. */
 export function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -140,6 +148,14 @@ export function SessionCard({
         )}
         <span className="text-fg-faint">·</span>
         <span>{session.harness}</span>
+        {session.repo && (
+          <>
+            <span className="text-fg-faint">·</span>
+            <span className="truncate" title={repoBranchTitle(session.repo, session.branch)}>
+              {repoBranchLabel(session.repo, session.branch)}
+            </span>
+          </>
+        )}
         <span className="text-fg-faint">·</span>
         {stalled ? (
           <span className="tabular-nums">started {formatTime(session.createdAt)}</span>

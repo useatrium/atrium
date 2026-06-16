@@ -203,6 +203,9 @@ export function createApi(opts: ApiOptions = {}) {
       channelId: string;
       task: string;
       harness?: string;
+      /** Spawn-dialog git metadata (optional). */
+      repo?: string;
+      branch?: string;
       threadRootEventId?: number;
       /** Optimistic id echoed on session.spawned for lost-response reconcile. */
       clientSpawnId?: string;

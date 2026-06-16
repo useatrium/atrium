@@ -230,6 +230,15 @@ export function ArrowUpIcon(props: IconProps) {
   );
 }
 
+export function PlusIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </Icon>
+  );
+}
+
 /** Expand a pane to full-width focus. */
 export function ExpandIcon(props: IconProps) {
   return (
