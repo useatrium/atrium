@@ -1,15 +1,16 @@
 // Work drawer (Phase 4) — one tabbed surface consolidating the session's work
-// products (Changes · Side-effects) behind a single peek→pin ladder. Opened from
-// the summary strips; tabs switch without closing. Peek = overlay over the
-// transcript; pinned = a persistent side pane the transcript reflows beside
-// (single swappable slot — the DevTools dock model).
+// products (Changes · Side-effects · Artifacts) behind a single peek→pin ladder.
+// Opened from the summary strips; tabs switch without closing. Peek = overlay
+// over the transcript; pinned = a persistent side pane the transcript reflows
+// beside (single swappable slot — the DevTools dock model).
 
-import type { FileChange, SideEffect } from '@atrium/centaur-client';
+import type { Artifact, FileChange, SideEffect } from '@atrium/centaur-client';
 import { PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
+import { ArtifactsSurface } from './ArtifactsSurface';
 import { ChangesSurface } from './ChangesSurface';
 import { SideEffectsSurface } from './SideEffectsSurface';
 
-export type WorkTab = 'changes' | 'sideEffects';
+export type WorkTab = 'changes' | 'sideEffects' | 'artifacts';
 
 function Tab({
   active,
@@ -49,6 +50,9 @@ export function WorkDrawer({
   effects,
   sideEffectCount,
   hasDanger,
+  artifacts,
+  artifactCount,
+  sessionId,
   tab,
   onTab,
   pinned,
@@ -61,6 +65,9 @@ export function WorkDrawer({
   effects: SideEffect[];
   sideEffectCount: number;
   hasDanger: boolean;
+  artifacts: Artifact[];
+  artifactCount: number;
+  sessionId: string;
   tab: WorkTab;
   onTab: (tab: WorkTab) => void;
   pinned: boolean;
@@ -69,13 +76,16 @@ export function WorkDrawer({
   canPin?: boolean;
   onClose: () => void;
 }) {
-  // Defensive: if the active tab's surface emptied out, fall back to the other.
-  const active: WorkTab =
-    tab === 'changes' && changedFileCount === 0 && sideEffectCount > 0
-      ? 'sideEffects'
-      : tab === 'sideEffects' && sideEffectCount === 0 && changedFileCount > 0
-        ? 'changes'
-        : tab;
+  // Only non-empty surfaces get a tab; if the active tab emptied out (or never
+  // had content), fall back to the first available one.
+  const available = (
+    [
+      { key: 'changes' as const, label: 'Changes', count: changedFileCount },
+      { key: 'sideEffects' as const, label: 'Side-effects', count: sideEffectCount, danger: hasDanger },
+      { key: 'artifacts' as const, label: 'Artifacts', count: artifactCount },
+    ] satisfies { key: WorkTab; label: string; count: number; danger?: boolean }[]
+  ).filter((t) => t.count > 0);
+  const active: WorkTab = available.some((t) => t.key === tab) ? tab : available[0]?.key ?? tab;
 
   return (
     <div
@@ -91,23 +101,16 @@ export function WorkDrawer({
     >
       <header className="flex h-10 shrink-0 items-center border-b border-edge pr-2">
         <div role="tablist" aria-label="Work surfaces" className="flex min-w-0 flex-1 items-center px-1">
-          {changedFileCount > 0 && (
+          {available.map((t) => (
             <Tab
-              active={active === 'changes'}
-              onClick={() => onTab('changes')}
-              label="Changes"
-              count={changedFileCount}
+              key={t.key}
+              active={active === t.key}
+              onClick={() => onTab(t.key)}
+              label={t.label}
+              count={t.count}
+              danger={t.danger}
             />
-          )}
-          {sideEffectCount > 0 && (
-            <Tab
-              active={active === 'sideEffects'}
-              onClick={() => onTab('sideEffects')}
-              label="Side-effects"
-              count={sideEffectCount}
-              danger={hasDanger}
-            />
-          )}
+          ))}
         </div>
         {canPin && (
           <button
@@ -134,8 +137,10 @@ export function WorkDrawer({
       </header>
       {active === 'changes' ? (
         <ChangesSurface changes={changes} onClose={onClose} embedded />
-      ) : (
+      ) : active === 'sideEffects' ? (
         <SideEffectsSurface effects={effects} onClose={onClose} embedded />
+      ) : (
+        <ArtifactsSurface artifacts={artifacts} sessionId={sessionId} onClose={onClose} embedded />
       )}
     </div>
   );

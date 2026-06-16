@@ -843,3 +843,46 @@ describe('inline file changes (Phase 4)', () => {
     expect(within(card).getByText('+ const a = 2;')).toBeTruthy();
   });
 });
+
+describe('artifacts surface (Phase 4)', () => {
+  const artifactFrames = [
+    { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' } },
+    {
+      event: 'artifact.captured',
+      event_id: 2,
+      data: {
+        type: 'artifact.captured',
+        artifact_id: 'art-1',
+        path: '/tmp/chart.png',
+        kind: 'created',
+        mime: 'image/png',
+        size_bytes: 48210,
+        sha256: 'art-1',
+        ref: 'blob-1',
+      },
+    },
+    { event: 'execution_state', event_id: 3, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_a' } },
+  ] as unknown as CentaurEventFrame[];
+
+  it('the artifacts strip opens the work drawer on the Artifacts tab gallery', async () => {
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(artifactFrames);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    const strip = screen.getByTestId('artifacts-strip');
+    expect(within(strip).getByText('Artifacts')).toBeTruthy();
+    expect(within(strip).getByText('· 1')).toBeTruthy();
+    expect(screen.queryByTestId('work-drawer')).toBeNull();
+
+    fireEvent.click(strip);
+    const drawer = screen.getByTestId('work-drawer');
+    expect(within(drawer).getByRole('tab', { name: /Artifacts/ }).getAttribute('aria-selected')).toBe('true');
+    // The gallery tile serves bytes via the session artifact route.
+    const img = within(drawer).getByRole('img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/art-1');
+  });
+});

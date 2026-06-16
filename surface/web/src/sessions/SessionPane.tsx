@@ -10,7 +10,9 @@ import {
   type CSSProperties,
 } from 'react';
 import {
+  artifactCount,
   changedPaths,
+  collectArtifacts,
   collectFileChanges,
   collectSideEffects,
   fileChangeFromToolCall,
@@ -117,6 +119,8 @@ export function SessionPane({
     () => sideEffects.some((effect) => effect.risk === 'danger'),
     [sideEffects],
   );
+  const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
+  const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
 
   // Work drawer (Phase 4): one tabbed surface over Changes + Side-effects, with
   // a peek→pin ladder. `workTab` null = closed; `workPinned` docks it beside the
@@ -539,6 +543,20 @@ export function SessionPane({
           </span>
         </button>
       )}
+      {artifactsN > 0 && (
+        <button
+          data-testid="artifacts-strip"
+          onClick={() => onStrip('artifacts')}
+          aria-expanded={workTab === 'artifacts'}
+          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+        >
+          <span className="font-semibold uppercase tracking-wider text-fg-muted">Artifacts</span>
+          <span className="tabular-nums">· {artifactsN}</span>
+          <span className="ml-auto text-fg-tertiary">
+            {workTab === 'artifacts' ? 'Hide' : 'View'}
+          </span>
+        </button>
+      )}
 
       <div className={`flex min-h-0 flex-1 ${workTab && workPinned ? 'flex-row' : 'flex-col'}`}>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -549,6 +567,9 @@ export function SessionPane({
             effects={sideEffects}
             sideEffectCount={sideEffectsN}
             hasDanger={sideEffectsDanger}
+            artifacts={artifacts}
+            artifactCount={artifactsN}
+            sessionId={session.id}
             tab={workTab}
             onTab={setWorkTab}
             pinned={false}
@@ -651,6 +672,9 @@ export function SessionPane({
               effects={sideEffects}
               sideEffectCount={sideEffectsN}
               hasDanger={sideEffectsDanger}
+              artifacts={artifacts}
+              artifactCount={artifactsN}
+              sessionId={session.id}
               tab={workTab}
               onTab={setWorkTab}
               pinned

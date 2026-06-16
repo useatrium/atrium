@@ -268,6 +268,21 @@ export interface QuestionResolved {
   reason: "answered" | "cancelled" | "empty";
 }
 
+/** A file the sandbox capture sidecar surfaced as a work-product artifact. The
+ * bytes (if any) live in Centaur staging keyed by `ref`; atrium offloads them to
+ * its own object store and serves them. `ref: null` = manifest-only (the file was
+ * too large or filtered as junk — metadata captured, bytes not staged). */
+export interface ArtifactCaptured {
+  type: "artifact.captured";
+  artifact_id: string;
+  path: string;
+  kind: "created" | "modified" | "deleted";
+  mime: string;
+  size_bytes: number;
+  sha256: string;
+  ref: string | null;
+}
+
 export type ProjectionEvent =
   | AssistantTextObserved
   | AssistantToolUseObserved
@@ -290,7 +305,8 @@ export type CentaurEventFrame =
   | { event: "result_observed"; event_id: number; data: ResultObserved }
   | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved }
   | { event: "question_requested"; event_id: number; data: QuestionRequested }
-  | { event: "question_resolved"; event_id: number; data: QuestionResolved };
+  | { event: "question_resolved"; event_id: number; data: QuestionResolved }
+  | { event: "artifact.captured"; event_id: number; data: ArtifactCaptured };
 
 export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
   return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";
