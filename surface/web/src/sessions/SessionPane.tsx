@@ -12,7 +12,9 @@ import {
 import {
   changedPaths,
   collectFileChanges,
+  collectSideEffects,
   isTerminalExecutionStatus,
+  sideEffectCount,
   type QuestionItem,
   type TextItem,
   type ToolCallItem,
@@ -20,6 +22,7 @@ import {
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { ChangesSurface } from './ChangesSurface';
+import { SideEffectsSurface } from './SideEffectsSurface';
 import { Composer } from '../components/Composer';
 import {
   ArrowUpIcon,
@@ -108,6 +111,9 @@ export function SessionPane({
   );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const [changesOpen, setChangesOpen] = useState(false);
+  const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
+  const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
+  const [sideEffectsOpen, setSideEffectsOpen] = useState(false);
 
   const terminal = isTerminalSessionStatus(session.status);
   const displayStatus: SessionStatus = terminal
@@ -468,7 +474,10 @@ export function SessionPane({
       {changedFileCount > 0 && (
         <button
           data-testid="changes-strip"
-          onClick={() => setChangesOpen((v) => !v)}
+          onClick={() => {
+            setChangesOpen((v) => !v);
+            setSideEffectsOpen(false); // single swappable surface slot
+          }}
           aria-expanded={changesOpen}
           className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
         >
@@ -477,10 +486,32 @@ export function SessionPane({
           <span className="ml-auto text-fg-tertiary">{changesOpen ? 'Hide' : 'View'}</span>
         </button>
       )}
+      {sideEffectsN > 0 && (
+        <button
+          data-testid="sideeffects-strip"
+          onClick={() => {
+            setSideEffectsOpen((v) => !v);
+            setChangesOpen(false); // single swappable surface slot
+          }}
+          aria-expanded={sideEffectsOpen}
+          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+        >
+          <span className="font-semibold uppercase tracking-wider text-fg-muted">Side-effects</span>
+          <span
+            className={`tabular-nums ${sideEffects.some((effect) => effect.risk === 'danger') ? 'text-danger-text' : ''}`}
+          >
+            · {sideEffectsN}
+          </span>
+          <span className="ml-auto text-fg-tertiary">{sideEffectsOpen ? 'Hide' : 'View'}</span>
+        </button>
+      )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">
         {changesOpen && changedFileCount > 0 && (
           <ChangesSurface changes={fileChanges} onClose={() => setChangesOpen(false)} />
+        )}
+        {sideEffectsOpen && sideEffectsN > 0 && (
+          <SideEffectsSurface effects={sideEffects} onClose={() => setSideEffectsOpen(false)} />
         )}
         <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
         {stream.items.length === 0 && (
