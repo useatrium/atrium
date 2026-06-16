@@ -2294,10 +2294,10 @@ describe('Phase 2 sessions', () => {
     const bob = await loginUser(app, 'bob', 'Bob');
     const id = await insertSessionRow({ title: 'record me', status: 'running' });
 
-    // Mirror a tiny transcript: a steer + a file edit + an agent reply.
+    // Mirror a tiny transcript: a steer + a file edit + a shell op + an agent reply.
     await pool.query(
       `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
-       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 7, 'amp_raw_event', $4), ($1, 10, 'amp_raw_event', $3)`,
+       VALUES ($1, 5, 'amp_raw_event', $2), ($1, 7, 'amp_raw_event', $4), ($1, 8, 'amp_raw_event', $5), ($1, 10, 'amp_raw_event', $3)`,
       [
         id,
         JSON.stringify({
@@ -2328,6 +2328,25 @@ describe('Phase 2 sessions', () => {
                     old_string: 'const a = 1;',
                     new_string: 'const a = 2;',
                   },
+                },
+              ],
+            },
+          },
+        }),
+        JSON.stringify({
+          event: 'amp_raw_event',
+          event_id: 8,
+          data: {
+            type: 'assistant',
+            uuid: 'a2',
+            message: {
+              id: 'am2',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'bash-1',
+                  name: 'Bash',
+                  input: { command: 'npm install lodash' },
                 },
               ],
             },
@@ -2398,6 +2417,11 @@ describe('Phase 2 sessions', () => {
     // Work products: the file edit is derived into record.changes.
     expect(record.changes).toEqual([
       expect.objectContaining({ path: 'src/app.ts', kind: 'update', toolName: 'Edit' }),
+    ]);
+
+    // Work products: the shell op is classified into record.sideEffects.
+    expect(record.sideEffects).toEqual([
+      expect.objectContaining({ command: 'npm install lodash', category: 'package', risk: 'caution', toolName: 'Bash' }),
     ]);
 
     // Overlay: the dismissed suggestion (all statuses) with its rationale.
