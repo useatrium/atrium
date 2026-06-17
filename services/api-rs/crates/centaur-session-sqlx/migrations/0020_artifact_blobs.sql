@@ -9,8 +9,10 @@ create table if not exists artifact_blobs (
     primary key (execution_id, ref)
 );
 
+-- Dedupe on the full content hash (not the 16-char display id) so the
+-- cross-restart idempotency backstop has no chance of a prefix collision.
 create unique index if not exists session_events_artifact_capture_dedupe_idx
-    on session_events (execution_id, ((payload->>'artifact_id')))
+    on session_events (execution_id, ((payload->>'sha256')))
     where event_type = 'artifact.captured'
       and execution_id is not null
-      and payload ? 'artifact_id';
+      and payload ? 'sha256';

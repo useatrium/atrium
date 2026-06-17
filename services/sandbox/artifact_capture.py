@@ -175,6 +175,13 @@ class ArtifactCapture:
         digest, data = hash_and_maybe_read(path, decision.stage_bytes)
         if digest in self.sent_sha256:
             return
+        # The sample scan only saw the first 64 KiB; re-scan the full staged
+        # bytes so a secret deeper in the file can't be exfiltrated.
+        if data is not None and any(
+            pattern.search(data) for pattern in SECRET_CONTENT_PATTERNS
+        ):
+            logging.info("artifact capture skipping suspected secret in %s", path)
+            return
 
         execution_id = self.execution_id()
         if not execution_id:
@@ -251,11 +258,15 @@ def walk_candidate_files(dirs: Iterable[Path]) -> Iterable[Path]:
                 dirname
                 for dirname in dirnames
                 if not path_denied(current_path / dirname)
+                and not (current_path / dirname).is_symlink()
             ]
             if path_denied(current_path):
                 continue
             for filename in filenames:
                 path = current_path / filename
+                # Never follow symlinks out of the allow-listed roots.
+                if path.is_symlink():
+                    continue
                 if not path_denied(path):
                     yield path
 
@@ -373,10 +384,10 @@ def main() -> int:
     if not env_bool("ARTIFACT_CAPTURE_ENABLED", True):
         return 0
     api_url = os.environ.get("CENTAUR_API_URL", "").strip()
-    api_key = os.environ.get("CENTAUR_API_KEY", "").strip()
+    api_key = os.environ.get("ARTIFACT_CAPTURE_API_KEY", "").strip()
     if not api_url or not api_key:
         logging.info(
-            "artifact capture disabled: missing CENTAUR_API_URL or CENTAUR_API_KEY"
+            "artifact capture disabled: missing CENTAUR_API_URL or ARTIFACT_CAPTURE_API_KEY"
         )
         return 0
 

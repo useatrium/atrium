@@ -421,12 +421,12 @@ case "${ARTIFACT_CAPTURE_ENABLED:-1}" in
     0|false|False|FALSE|no|No|NO|off|Off|OFF)
         ;;
     *)
-        if [ -n "${CENTAUR_API_URL:-}" ] && [ -n "${CENTAUR_API_KEY:-}" ]; then
+        if [ -n "${CENTAUR_API_URL:-}" ] && [ -n "${ARTIFACT_CAPTURE_API_KEY:-}" ]; then
             mkdir -p "$HOME_DIR/outputs"
             export ARTIFACT_CAPTURE_DIRS="${ARTIFACT_CAPTURE_DIRS:-$WORKSPACE_DIR:/tmp:$HOME_DIR/outputs:/var/tmp}"
             artifact-capture > /tmp/artifact-capture.log 2>&1 &
         else
-            echo "artifact capture disabled: missing CENTAUR_API_URL or CENTAUR_API_KEY" >&2
+            echo "artifact capture disabled: missing CENTAUR_API_URL or ARTIFACT_CAPTURE_API_KEY" >&2
         fi
         ;;
 esac

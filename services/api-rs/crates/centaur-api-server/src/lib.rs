@@ -303,6 +303,38 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn artifact_upload_rejects_sha256_mismatch() {
+        let Some((store, app, thread_key, execution_id)) = artifact_test_app().await else {
+            return;
+        };
+        set_artifact_test_key();
+        let body = b"hello artifact".to_vec();
+        // Valid 64-hex digest that does NOT match the uploaded bytes.
+        let wrong_sha256 = sha256_hex(b"different content");
+        let response = app
+            .oneshot(artifact_upload_request(
+                &execution_id,
+                thread_key.as_str(),
+                "test-artifact-key",
+                &wrong_sha256,
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let events = store
+            .list_events_after(&thread_key, 0, Some(&execution_id), 100)
+            .await
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "artifact.captured")
+        );
+    }
+
     async fn artifact_test_app() -> Option<(PgSessionStore, axum::Router, ThreadKey, String)> {
         let Ok(url) = std::env::var("SESSION_RUNTIME_TEST_DATABASE_URL") else {
             eprintln!("skipping: SESSION_RUNTIME_TEST_DATABASE_URL not set");

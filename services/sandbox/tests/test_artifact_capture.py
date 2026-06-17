@@ -77,6 +77,45 @@ def test_sha_dedup_skips_same_content(tmp_path, monkeypatch):
     assert [Path(artifact.path).name for artifact in sent] == ["first.txt"]
 
 
+def test_symlinked_files_are_skipped(tmp_path, monkeypatch):
+    monkeypatch.setenv("CENTAUR_EXECUTION_ID", "exe-test")
+    real = tmp_path / "real.txt"
+    real.write_text("hello")
+    link = tmp_path / "link.txt"
+    link.symlink_to(real)
+    sent = []
+    capture = artifact_capture.ArtifactCapture(
+        api_url="http://api",
+        api_key="key",
+        dirs=[str(tmp_path)],
+        sender=lambda artifact, _execution_id, _thread_key: sent.append(artifact),
+    )
+
+    capture.scan_once()
+
+    assert [Path(artifact.path).name for artifact in sent] == ["real.txt"]
+
+
+def test_secret_deeper_than_sample_window_is_skipped(tmp_path, monkeypatch):
+    monkeypatch.setenv("CENTAUR_EXECUTION_ID", "exe-test")
+    path = tmp_path / "report.txt"
+    # Pad past the 64 KiB sample window so the secret is only visible to the
+    # full-payload rescan, not the classify-time sample scan.
+    padding = b"a" * (artifact_capture.SECRET_SCAN_BYTES + 1024)
+    path.write_bytes(padding + b"\nOPENAI_API_KEY=sk-deadbeefdeadbeefdeadbeef\n")
+    sent = []
+    capture = artifact_capture.ArtifactCapture(
+        api_url="http://api",
+        api_key="key",
+        dirs=[str(tmp_path)],
+        sender=lambda artifact, _execution_id, _thread_key: sent.append(artifact),
+    )
+
+    capture.scan_once()
+
+    assert sent == []
+
+
 def test_secret_names_and_content_are_never_surfaced(tmp_path, monkeypatch):
     monkeypatch.setenv("CENTAUR_EXECUTION_ID", "exe-test")
     env_file = tmp_path / ".env"

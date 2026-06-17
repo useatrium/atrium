@@ -98,7 +98,7 @@ pub fn build_router_with_session_and_workflow_runtime(
         .route("/agent/threads/{thread_key}/events", get(stream_events))
         .route(
             "/agent/executions/{execution_id}/artifacts",
-            post(capture_artifact).layer(DefaultBodyLimit::disable()),
+            post(capture_artifact).layer(DefaultBodyLimit::max(MAX_ARTIFACT_UPLOAD_BYTES)),
         )
         .route(
             "/agent/executions/{execution_id}/artifacts/{artifact_ref}",
@@ -319,6 +319,12 @@ async fn stream_events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
+/// Hard ceiling on a single artifact upload body. The sandbox-side worker
+/// soft-caps staged bytes far below this (1 MiB by default, manifest-only above
+/// that); this server-side limit bounds memory and Postgres growth regardless
+/// of what a buggy or hostile client sends.
+const MAX_ARTIFACT_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
+
 async fn capture_artifact(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -366,6 +372,16 @@ async fn get_artifact(
     if let Ok(value) = HeaderValue::from_str(&blob.sha256) {
         headers.insert("x-artifact-sha256", value);
     }
+    // Artifact bytes and their mime are sandbox-controlled, so never let a
+    // browser sniff or render them inline (e.g. a planted text/html artifact).
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment"),
+    );
     Ok(response)
 }
 
@@ -435,12 +451,20 @@ async fn parse_artifact_multipart(
             "artifact sha256 must be a 64-character hex digest".to_owned(),
         ));
     }
-    if let Some(data) = parts.data.as_ref()
-        && data.len() as i64 != size_bytes
-    {
-        return Err(ApiError::BadRequest(
-            "artifact bytes length does not match size_bytes".to_owned(),
-        ));
+    if let Some(data) = parts.data.as_ref() {
+        if data.len() as i64 != size_bytes {
+            return Err(ApiError::BadRequest(
+                "artifact bytes length does not match size_bytes".to_owned(),
+            ));
+        }
+        // Verify the content hash rather than trusting the client's claim, so
+        // `ref`/`x-artifact-sha256` and the dedupe key are integrity-backed.
+        let computed = hex::encode(Sha256::digest(data));
+        if computed != sha256 {
+            return Err(ApiError::BadRequest(
+                "artifact sha256 does not match uploaded bytes".to_owned(),
+            ));
+        }
     }
 
     Ok(ArtifactCaptureInput {
@@ -504,22 +528,16 @@ fn presented_api_key(headers: &HeaderMap) -> Option<String> {
 }
 
 fn configured_artifact_api_keys() -> Vec<String> {
-    [
-        "ARTIFACT_CAPTURE_API_KEY",
-        "CENTAUR_API_KEY",
-        "SLACKBOT_API_KEY",
-        "DISCORDBOT_API_KEY",
-    ]
-    .into_iter()
-    .filter_map(|name| env::var(name).ok())
-    .map(|value| value.trim().to_owned())
-    .filter(|value| !value.is_empty())
-    .fold(Vec::<String>::new(), |mut keys, key| {
-        if !keys.iter().any(|existing| existing == &key) {
-            keys.push(key);
-        }
-        keys
-    })
+    // Dedicated, narrowly-scoped credential ONLY. Deliberately does not accept
+    // the broad control-plane key (CENTAUR_API_KEY) or bot keys: a leaked
+    // artifact key must not reach other control-plane routes, and sandboxes are
+    // handed this key — never a control-plane key.
+    env::var("ARTIFACT_CAPTURE_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .collect()
 }
 
 fn enforce_sandbox_thread_scope(

@@ -883,7 +883,9 @@ impl SandboxArgs {
                 .to_owned(),
         )];
         if let Some(api_key) = artifact_capture_api_key_from_env() {
-            envs.push(("CENTAUR_API_KEY".to_owned(), api_key));
+            // Hand the sandbox the dedicated artifact key under its own name,
+            // never the control-plane CENTAUR_API_KEY.
+            envs.push(("ARTIFACT_CAPTURE_API_KEY".to_owned(), api_key));
         }
 
         // Single source of truth: propagate this control plane's harness auth
@@ -1711,14 +1713,10 @@ fn default_workflow_host_path() -> String {
 }
 
 fn artifact_capture_api_key_from_env() -> Option<String> {
-    [
-        "ARTIFACT_CAPTURE_API_KEY",
-        "CENTAUR_API_KEY",
-        "SLACKBOT_API_KEY",
-        "DISCORDBOT_API_KEY",
-    ]
-    .into_iter()
-    .find_map(|name| clean_optional_value(env::var(name).ok().as_deref()))
+    // Only the dedicated key enables capture. We never fall back to the
+    // control-plane CENTAUR_API_KEY or bot keys, so the sandbox cannot be
+    // handed a broadly-privileged credential.
+    clean_optional_value(env::var("ARTIFACT_CAPTURE_API_KEY").ok().as_deref())
 }
 
 fn harness_fragment_engine_name(engine: &HarnessType) -> &'static str {
