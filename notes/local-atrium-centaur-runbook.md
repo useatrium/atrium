@@ -28,9 +28,33 @@ git push --force-with-lease fork gb/api-rs-hitl-relay
 
 Independent Centaur features should branch directly from `origin/main`.
 
+### Deploy line vs. upstream branches
+
+The `gb/*` branches above are *upstream-shaped*: one feature each, destined for
+PRs to paradigm. Atrium runs a single combined image, so the **build source is a
+dedicated integration branch on the fork**, not any one feature branch:
+
+- `fork/atrium/integration` = `origin/main` + every in-flight Centaur feature
+  (cancel + HITL relay + artifact capture, plus any fork-only config), merged.
+
+It is rebuildable, never the source of truth, and never PR'd upstream. The fork's
+`ATRIUM_FORK.md` is the authority on the branch model and intent labels; rebuild
+the line with `./atrium-integration.sh` (driven by `atrium-integration.manifest`,
+`git rerere` replays prior conflict resolutions). When a feature lands upstream,
+drop it from the manifest; when all do, delete the branch and track `origin/main`.
+
+**Build local Centaur from this branch** so the deploy carries every feature:
+
+```sh
+cd ~/Code/centaur
+git fetch fork && git checkout atrium/integration
+```
+
 ## Build And Deploy Centaur Locally
 
 The local Atrium deployment expects Centaur at `http://host.docker.internal:18000`.
+Artifact capture additionally requires `ARTIFACT_CAPTURE_API_KEY` (a dedicated key,
+not the control-plane `CENTAUR_API_KEY`) and `CENTAUR_API_URL` in the deploy values.
 
 ```sh
 cd ~/Code/centaur
