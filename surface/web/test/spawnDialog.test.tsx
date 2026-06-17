@@ -45,7 +45,7 @@ describe('SpawnDialog', () => {
       target: { value: 'do a thing' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
-    expect(onSpawn).toHaveBeenCalledWith({ task: 'do a thing', harness: 'claude-code' });
+    expect(onSpawn).toHaveBeenCalledWith({ task: 'do a thing', harness: 'codex' });
   });
 
   it('cancels via the Cancel button', () => {
