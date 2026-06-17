@@ -7,9 +7,12 @@ This is the local Mac workflow for running Atrium against a local Centaur
 
 Use upstream Centaur as the source of truth:
 
-- `origin/main`: upstream `paradigmxyz/centaur`
-- `fork/main`: mirror only; keep it synced for hygiene, but do not base work on it
+- `origin/main`: upstream `paradigmxyz/centaur` — the source of truth
+- `fork/atrium/integration`: the fork's default branch and Atrium's deploy line (see "Deploy line vs. upstream branches" below)
 - `fork/gb/*`: feature branches pushed to Gary's fork for upstream PRs
+
+The fork has no `main`; we base work on upstream `origin/main` directly, so a fork
+mirror would only go stale. Deleted on purpose.
 
 For stacked Centaur work, rebase from the bottom up:
 
