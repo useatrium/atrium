@@ -4987,6 +4987,27 @@ mod adoption_tests {
         Some(store)
     }
 
+    /// Acquire the serial test lock AND reset the executions table, so each
+    /// adoption test's `adopt_orphaned_executions` only ever sees the orphan it
+    /// created — never leftovers from a prior test, a prior process, or another
+    /// crate's test binary sharing this database. Without this, the global
+    /// orphan sweep accumulates foreign executions and the open-count asserts
+    /// flake under full-suite runs.
+    async fn lock_clean_slate() -> tokio::sync::MutexGuard<'static, ()> {
+        let guard = TEST_LOCK.lock().await;
+        if let Ok(url) = std::env::var("SESSION_RUNTIME_TEST_DATABASE_URL") {
+            let pool = sqlx::PgPool::connect(&url)
+                .await
+                .expect("connect to reset test executions");
+            sqlx::query("truncate table session_executions cascade")
+                .execute(&pool)
+                .await
+                .expect("reset session_executions");
+            pool.close().await;
+        }
+        guard
+    }
+
     async fn orphaned_execution(
         store: &PgSessionStore,
         thread_key: &ThreadKey,
@@ -5054,7 +5075,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:adopt-logs-{}", uuid::Uuid::new_v4())).unwrap();
         orphaned_execution(&store, &thread_key, Some("sbx-mock"), true).await;
@@ -5095,7 +5116,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:adopt-live-{}", uuid::Uuid::new_v4())).unwrap();
         orphaned_execution(&store, &thread_key, Some("sbx-mock"), true).await;
@@ -5130,7 +5151,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:adopt-gone-{}", uuid::Uuid::new_v4())).unwrap();
         orphaned_execution(&store, &thread_key, Some("sbx-mock"), true).await;
@@ -5162,7 +5183,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:adopt-queued-{}", uuid::Uuid::new_v4())).unwrap();
         orphaned_execution(&store, &thread_key, Some("sbx-mock"), false).await;
@@ -5190,7 +5211,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:cancel-setup-{}", uuid::Uuid::new_v4())).unwrap();
         store
@@ -5266,7 +5287,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:cancel-active-{}", uuid::Uuid::new_v4())).unwrap();
         let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-cancel"), true).await;
@@ -5300,7 +5321,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:answer-question-{}", uuid::Uuid::new_v4())).unwrap();
         let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-answer"), true).await;
@@ -5365,7 +5386,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key = ThreadKey::parse(format!(
             "test:answer-question-race-{}",
             uuid::Uuid::new_v4()
@@ -5483,7 +5504,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:answer-stale-{}", uuid::Uuid::new_v4())).unwrap();
         let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-stale"), true).await;
@@ -5519,7 +5540,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:cancel-idle-{}", uuid::Uuid::new_v4())).unwrap();
         store
@@ -5549,7 +5570,7 @@ mod adoption_tests {
         let Some(store) = test_store().await else {
             return;
         };
-        let _serial = TEST_LOCK.lock().await;
+        let _serial = lock_clean_slate().await;
         let thread_key =
             ThreadKey::parse(format!("test:cancel-stop-fail-{}", uuid::Uuid::new_v4())).unwrap();
         let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-sticky"), true).await;
