@@ -4,6 +4,8 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
 import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { basename } from 'node:path';
+import { Readable } from 'node:stream';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -55,6 +57,7 @@ import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
+import { CentaurApiError } from '@atrium/centaur-client';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -93,6 +96,13 @@ const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.
 
 function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string }).code === '23505';
+}
+
+/** Strip quotes/control chars so a sandbox-controlled artifact path can't inject
+ * into the Content-Disposition header. Conservative: keeps a safe ASCII subset. */
+function sanitizeFilename(name: string): string {
+  const cleaned = name.replace(/[^\w.\- ]+/g, '_').trim();
+  return cleaned.length > 0 ? cleaned.slice(0, 255) : 'artifact';
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -2097,6 +2107,51 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     return { record: await sessionRuns.getSessionRecord(id) };
+  });
+
+  // Serve a captured artifact's bytes (A3b Phase 1) by proxying from Centaur
+  // staging — unblocks the Artifacts gallery, which <img src>'s this URL.
+  // Channel-access gated like every session sub-resource (404, never leaking a
+  // foreign session's existence). The capture sidecar's mime is sandbox-
+  // controlled, so we force nosniff + inline-only-for-images / attachment-
+  // otherwise (defense in depth against stored XSS, even though Centaur sets
+  // these too). Phase 1 keys the byte fetch by the session's current execution;
+  // S3 offload is a future Phase 2.
+  app.get('/api/sessions/:id/artifacts/:artifactId', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id, artifactId } = req.params as { id: string; artifactId: string };
+    let stream: Awaited<ReturnType<typeof sessionRuns.getArtifactBytes>>;
+    try {
+      stream = await sessionRuns.getArtifactBytes(id, artifactId);
+    } catch (err) {
+      if (err instanceof CentaurApiError) {
+        // The ref is unknown to Centaur (evicted from staging / never staged):
+        // 410 Gone so the gallery's <img onError> falls back to the type label.
+        if (err.status === 404) {
+          return reply
+            .code(410)
+            .send({ error: 'artifact_gone', message: 'artifact bytes are no longer available' });
+        }
+        return reply
+          .code(502)
+          .send({ error: 'artifact_upstream_error', message: 'failed to fetch artifact from Centaur' });
+      }
+      throw err;
+    }
+    const { artifact, bytes } = stream;
+    const mime = artifact.mime || 'application/octet-stream';
+    const inline = mime.startsWith('image/');
+    const filename = basename(artifact.path) || 'artifact';
+    reply.header('Content-Type', mime);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename="${sanitizeFilename(filename)}"`,
+    );
+    if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
+    if (!bytes.body) return reply.send(Buffer.alloc(0));
+    return reply.send(Readable.fromWeb(bytes.body));
   });
 
   app.get('/api/sessions/:id/stream', async (req, reply) => {

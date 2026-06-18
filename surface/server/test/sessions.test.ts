@@ -30,6 +30,10 @@ class FakeCentaur {
   readonly acceptedExecutions: string[] = [];
   readonly acceptedMessages: string[] = [];
   readonly streamAfterIds: number[] = [];
+  readonly artifactRequests: RecordedRequest[] = [];
+  /** Maps `${executionId}/${ref}` → bytes Centaur staging serves. Unknown keys 404. */
+  readonly artifactBytes = new Map<string, { body: Uint8Array; contentType: string }>();
+  artifactApiKeys: (string | null)[] = [];
   staleMessages = new Set<string>();
   streamHangOpen = false;
   streamResetBeyondHistory = false;
@@ -77,6 +81,31 @@ class FakeCentaur {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body, query: url.searchParams });
+
+    const artifactMatch = /^\/agent\/executions\/([^/]+)\/artifacts\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'GET' && artifactMatch) {
+      const executionId = decodeURIComponent(artifactMatch[1]!);
+      const ref = decodeURIComponent(artifactMatch[2]!);
+      this.artifactRequests.push({
+        method: 'GET',
+        path: `/agent/executions/${executionId}/artifacts/${ref}`,
+        body,
+        query: url.searchParams,
+      });
+      this.artifactApiKeys.push(req.headers['x-api-key'] ? String(req.headers['x-api-key']) : null);
+      const staged = this.artifactBytes.get(`${executionId}/${ref}`);
+      if (!staged) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'artifact_not_found' }));
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': staged.contentType,
+        'content-length': String(staged.body.byteLength),
+      });
+      res.end(Buffer.from(staged.body));
+      return;
+    }
 
     const answerMatch = /^\/api\/session\/([^/]+)\/executions\/([^/]+)\/answer$/.exec(url.pathname);
     if (req.method === 'POST' && answerMatch) {
@@ -471,6 +500,34 @@ async function setPendingQuestion(id: string): Promise<void> {
         questions: questionRequestedFrame().data.questions,
       }),
       id,
+    ],
+  );
+}
+
+async function mirrorArtifactFrame(
+  sessionId: string,
+  args: { eventId: number; artifactId: string; path: string; mime: string; ref: string | null; sizeBytes?: number },
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
+     VALUES ($1, $2, 'artifact.captured', $3)`,
+    [
+      sessionId,
+      args.eventId,
+      JSON.stringify({
+        event: 'artifact.captured',
+        event_id: args.eventId,
+        data: {
+          type: 'artifact.captured',
+          artifact_id: args.artifactId,
+          path: args.path,
+          kind: 'created',
+          mime: args.mime,
+          size_bytes: args.sizeBytes ?? 1024,
+          sha256: `${args.artifactId}-sha`,
+          ref: args.ref,
+        },
+      }),
     ],
   );
 }
@@ -2738,6 +2795,215 @@ describe('Phase 2 sessions', () => {
     const participantIds = record.participants.map((p: { userId: string }) => p.userId);
     expect(participantIds).toContain(bob.userId);
     expect(participantIds).toContain(fx.userId);
+    await app.close();
+  });
+
+  it('GET /api/sessions/:id/artifacts/:artifactId proxies bytes from Centaur staging', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    // current_execution_id = 'exe_fake' (insertSessionRow default) keys the fetch.
+    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-img',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      ref: 'blob-img',
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    fake.artifactBytes.set('exe_fake/blob-img', { body: png, contentType: 'image/png' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-img`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    // Images render inline; the filename is the path basename.
+    expect(res.headers['content-disposition']).toBe('inline; filename="chart.png"');
+    expect(Buffer.from(res.rawPayload)).toEqual(Buffer.from(png));
+    // The proxy fetched the right (execution, ref) with the artifact-capture key.
+    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
+      '/agent/executions/exe_fake/artifacts/blob-img',
+    ]);
+    expect(fake.artifactApiKeys).toEqual(['artifact-key']);
+    await app.close();
+  });
+
+  it('serves non-image artifacts as an attachment', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'session-key', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-csv',
+      path: '/home/agent/workspace/out/report.csv',
+      mime: 'text/csv',
+      ref: 'blob-csv',
+    });
+    fake.artifactBytes.set('exe_fake/blob-csv', {
+      body: new TextEncoder().encode('a,b\n1,2\n'),
+      contentType: 'text/csv',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-csv`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-disposition']).toBe('attachment; filename="report.csv"');
+    // No artifact-capture key configured → falls back to the session api key.
+    expect(fake.artifactApiKeys).toEqual(['session-key']);
+    await app.close();
+  });
+
+  it('returns 404 for an unknown artifact id', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-real',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      ref: 'blob-img',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-missing`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe('artifact_not_found');
+    // Never reached Centaur for an unknown artifact.
+    expect(fake.artifactRequests).toEqual([]);
+    await app.close();
+  });
+
+  it('returns 404 for a manifest-only artifact (ref null, no bytes staged)', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-big',
+      path: '/home/agent/workspace/out/huge.bin',
+      mime: 'application/octet-stream',
+      ref: null,
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-big`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe('artifact_not_captured');
+    expect(fake.artifactRequests).toEqual([]);
+    await app.close();
+  });
+
+  it('maps a Centaur 404 (evicted ref) to 410 Gone', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-evicted',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      ref: 'blob-gone',
+    });
+    // No bytes staged under exe_fake/blob-gone → FakeCentaur 404s.
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-evicted`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(410);
+    expect(res.json().error).toBe('artifact_gone');
+    await app.close();
+  });
+
+  it('a non-member gets 404 for a DM session artifact (existence not leaked)', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const cara = await loginUser(app, 'cara', 'Cara');
+    const { channel } = await getOrCreateDm(pool, {
+      workspaceId: fx.workspaceId,
+      userIdA: alice.userId,
+      userIdB: bob.userId,
+    });
+    const id = await insertSessionRow({
+      channelId: channel.id,
+      title: 'dm artifacts',
+      status: 'running',
+      spawnedBy: alice.userId,
+    });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-dm',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      ref: 'blob-img',
+    });
+    fake.artifactBytes.set('exe_fake/blob-img', {
+      body: new Uint8Array([1, 2, 3]),
+      contentType: 'image/png',
+    });
+
+    const member = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-dm`,
+      headers: { cookie: alice.cookie },
+    });
+    expect(member.statusCode).toBe(200);
+
+    const outsider = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-dm`,
+      headers: { cookie: cara.cookie },
+    });
+    // 404, not 403 — a guessed session id in a DM must not leak existence,
+    // and must never reach Centaur.
+    expect(outsider.statusCode).toBe(404);
+    expect(outsider.json().error).toBe('session_not_found');
     await app.close();
   });
 

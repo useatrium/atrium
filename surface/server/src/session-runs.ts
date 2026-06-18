@@ -10,6 +10,7 @@ import {
   isTerminalExecutionStatus,
   reduceSession,
   type Artifact,
+  type ArtifactBytes,
   type CentaurEventFrame,
   type FileChange,
   type QuestionPrompt,
@@ -157,6 +158,14 @@ export interface QuestionAnswerBody {
   };
 }
 
+/** The bytes of a captured artifact plus the metadata the serve route needs to
+ * set response headers (mime, path → filename). `bytes` is the proxied Centaur
+ * stream; the route pipes it to the client. */
+export interface SessionArtifactStream {
+  artifact: Artifact;
+  bytes: ArtifactBytes;
+}
+
 export interface SessionListItem {
   id: string;
   channelId: string;
@@ -175,6 +184,9 @@ export interface SessionRunsOptions {
   centaur?: CentaurClient;
   baseUrl?: string;
   apiKey?: string;
+  /** Auth key for Centaur's artifact-byte endpoint (distinct from `apiKey`).
+   * Falls back to `apiKey` when unset. */
+  artifactCaptureApiKey?: string;
   harness?: string;
   autoResume?: boolean;
   questionRenotifyMinutes?: number;
@@ -277,6 +289,7 @@ const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000
 
 export class SessionRuns {
   private readonly centaur: CentaurClient;
+  private readonly artifactCaptureApiKey: string;
   private readonly harness: string;
   private readonly autoResume: boolean;
   private readonly questionRenotifyMinutes: number;
@@ -296,6 +309,16 @@ export class SessionRuns {
         baseUrl: options.baseUrl ?? config.centaurBaseUrl,
         apiKey: options.apiKey ?? config.centaurApiKey,
       });
+    // The artifact-byte endpoint authenticates with its own key; fall back to
+    // the session-API key when unset (treating '' as unset, since config env
+    // defaults are empty strings). Last resort is '' which Centaur will reject.
+    this.artifactCaptureApiKey =
+      firstNonEmpty(
+        options.artifactCaptureApiKey,
+        config.artifactCaptureApiKey,
+        options.apiKey,
+        config.centaurApiKey,
+      ) ?? '';
     this.harness = options.harness ?? config.centaurHarness;
     this.autoResume = options.autoResume ?? true;
     this.questionRenotifyMinutes =
@@ -480,6 +503,44 @@ export class SessionRuns {
       questionHistory,
       participants,
     };
+  }
+
+  /**
+   * Resolve a captured artifact's bytes for serving (A3b Phase 1). Channel
+   * access is gated by the route (like {@link getSessionRecord}); this looks the
+   * artifact up in the durable mirror, then proxies the bytes from Centaur
+   * staging. Phase 1 keys the byte fetch by the session's `current_execution_id`
+   * — see the route for the multi-execution caveat. S3 offload is a future
+   * Phase 2 optimization.
+   *
+   * Throws a 404 DomainError when the artifact is unknown or has no staged bytes
+   * (`ref === null`, manifest-only), and a 502 when Centaur has no record of the
+   * execution. CentaurApiError (e.g. an evicted ref → 404 from Centaur) bubbles
+   * up to the route, which maps it to 410/502.
+   */
+  async getArtifactBytes(sessionId: string, artifactId: string): Promise<SessionArtifactStream> {
+    const row = await this.getSessionRow(sessionId);
+    if (!row) {
+      throw new DomainError(404, 'session_not_found', 'session not found');
+    }
+    const mirrored = await this.readMirroredState(sessionId);
+    const artifact = collectArtifacts(mirrored).find((a) => a.id === artifactId);
+    if (!artifact) {
+      throw new DomainError(404, 'artifact_not_found', 'artifact not found');
+    }
+    if (artifact.ref == null) {
+      // Manifest-only: metadata captured, bytes never staged (too large/junk).
+      throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
+    }
+    if (!row.current_execution_id) {
+      // Phase 1 keys the byte fetch by the session's execution; with none we
+      // can't address Centaur staging.
+      throw new DomainError(502, 'artifact_unavailable', 'session has no execution to serve artifacts from');
+    }
+    const bytes = await this.centaur.getArtifactBytes(row.current_execution_id, artifact.ref, {
+      apiKey: this.artifactCaptureApiKey,
+    });
+    return { artifact, bytes };
   }
 
   /** Replay the durable mirror into a reduced session state (transcript items +
@@ -1991,6 +2052,14 @@ function userInputLine(text: string): string {
 
 function isCentaurCode(err: unknown, code: string): boolean {
   return err instanceof CentaurApiError && err.code === code;
+}
+
+/** First defined, non-empty string in the list (config env defaults are ''). */
+function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
 }
 
 /** Trim + cap optional git metadata; empty becomes null. */

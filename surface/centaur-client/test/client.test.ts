@@ -121,6 +121,69 @@ describe("CentaurClient endpoint paths", () => {
     );
   });
 
+  it("fetches artifact bytes from the execution artifact endpoint with the supplied api key", async () => {
+    const captured: { url?: string; method?: string; apiKey?: string } = {};
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "session-key",
+      fetchImpl: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        captured.url = String(url);
+        captured.method = init?.method;
+        captured.apiKey = new Headers(init?.headers).get("x-api-key") ?? undefined;
+        return new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { "content-type": "image/png", "content-length": "3" },
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await client.getArtifactBytes("exe/1", "blob ref/2", { apiKey: "artifact-key" });
+
+    expect(captured.method).toBe("GET");
+    expect(captured.url).toBe(
+      "http://centaur.test:8000/agent/executions/exe%2F1/artifacts/blob%20ref%2F2",
+    );
+    // The artifact endpoint uses the artifact-capture key, not the session key.
+    expect(captured.apiKey).toBe("artifact-key");
+    expect(result.contentType).toBe("image/png");
+    expect(result.contentLength).toBe(3);
+    expect(result.body).not.toBeNull();
+  });
+
+  it("defaults the artifact api key to the client api key when none is supplied", async () => {
+    const captured: { apiKey?: string } = {};
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "session-key",
+      fetchImpl: (async (_url: URL | RequestInfo, init?: RequestInit) => {
+        captured.apiKey = new Headers(init?.headers).get("x-api-key") ?? undefined;
+        return new Response(new Uint8Array([]), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await client.getArtifactBytes("exe_1", "blob-1");
+    expect(captured.apiKey).toBe("session-key");
+  });
+
+  it("throws a typed CentaurApiError when the artifact ref is missing", async () => {
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ error: "artifact_not_found" }), {
+          status: 404,
+          statusText: "Not Found",
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+
+    await expect(client.getArtifactBytes("exe_1", "gone")).rejects.toMatchObject({
+      status: 404,
+      code: "artifact_not_found",
+    });
+    await expect(client.getArtifactBytes("exe_1", "gone")).rejects.toBeInstanceOf(CentaurApiError);
+  });
+
   it("maps question answers onto the api-rs execution answer endpoint", async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
