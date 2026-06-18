@@ -60,17 +60,22 @@ artifact from `exe_old` fetched while current is `exe_fake`). **Live multi-turn
 verify deferred to D1** (needs the surface server + a cluster redeploy so the
 deployed api-rs emits `execution_id`).
 
-### B1 — S3 offload (durable storage)
-Centaur Postgres staging is ephemeral (retention/redaction) → artifacts evict →
-410. Move bytes to Atrium's S3.
-- **Scope:** `session_artifacts` table (id, session_id, execution_id,
-  centaur_ref, s3_key, mime, size, sha256, captured_at, offloaded_at) · offload
-  worker (fetch from Centaur → `s3.ts` `uploadStream` → record `s3_key`) · serve
-  route prefers S3 (presigned redirect) then falls back to Centaur proxy.
-- **Effort:** M–L. **Depends on A2.**
-- **Decisions:** periodic worker vs. on-completion (recommend periodic);
-  single-worker lock; Centaur staging GC after offload (blocked on a Centaur
-  retention API — defer).
+### B1 — S3 offload (durable storage) ✅ DONE (2026-06-18, Atrium `master` `dde26e6`)
+Periodic worker + presigned 302 + `session_artifacts` table (the chosen shape).
+- migration `031_session_artifacts.sql` (offload state; partial-index queue).
+- mirror path records each `artifact.captured` into the table.
+- worker `artifact-offload.ts` (off by default; `ARTIFACT_OFFLOAD_ENABLED=1`):
+  claims a batch `FOR UPDATE SKIP LOCKED`, fetches from Centaur → `s3.uploadObject`
+  (MinIO in dev) → stamps `s3_key`; single in-flight, unref'd interval.
+- serve route: 302 presigned redirect once offloaded, else proxy from Centaur.
+- 218 server + 51 client tests green; reviewed (access gate, presign, worker
+  locking/failure).
+- **Prod-hardening follow-ups (not blocking dev):** the offload batch holds a tx
+  across the Centaur fetch + S3 upload (claim-then-release with a `claimed_at`
+  column would avoid the long tx); evicted refs have no terminal mark (re-selected
+  each tick — cheap). Centaur staging GC after offload still deferred (needs a
+  Centaur retention API).
+- **Live verify** (enable the worker, confirm offload → 302) pending with D1.
 
 ### D1 — Live-verify the Atrium serve route
 Centaur's byte endpoint is live-verified; the Atrium route → Centaur link is
