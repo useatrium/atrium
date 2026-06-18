@@ -8,6 +8,7 @@ import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
 import { deleteObject } from './s3.js';
+import { startArtifactOffloadWorker, type ArtifactOffloadWorker } from './artifact-offload.js';
 import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
 
@@ -44,8 +45,17 @@ async function main() {
   filePrune.unref?.();
   const app = await buildApp({ pool, hub, stt: sttWorker });
 
+  // Single-instance background offload of captured artifact bytes into S3
+  // (B1). Off by default; enable with ARTIFACT_OFFLOAD_ENABLED=1 once the
+  // artifact-capture key + object store are configured.
+  let artifactOffload: ArtifactOffloadWorker | null = null;
+  if (config.artifactOffloadEnabled) {
+    artifactOffload = startArtifactOffloadWorker({ sessionRuns: app.sessionRuns });
+  }
+
   const shutdown = async () => {
     sttWorker.stop();
+    artifactOffload?.stop();
     clearInterval(heartbeat);
     clearInterval(idempotencyPrune);
     clearInterval(filePrune);

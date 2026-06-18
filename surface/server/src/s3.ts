@@ -60,6 +60,24 @@ export async function deleteObject(key: string): Promise<void> {
   await client.send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
 }
 
+/** Upload object bytes (used by the artifact offload worker to push Centaur
+ * staging bytes into atrium's store). The body is a Buffer/Uint8Array so the
+ * SDK can set Content-Length without buffering a stream itself. */
+export async function uploadObject(
+  key: string,
+  body: Buffer | Uint8Array,
+  contentType: string,
+): Promise<void> {
+  await client.send(
+    new PutObjectCommand({
+      Bucket: config.s3Bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
+}
+
 // === voice additions ===
 export async function downloadObject(key: string, destinationPath: string): Promise<void> {
   const { createWriteStream } = await import('node:fs');

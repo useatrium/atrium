@@ -541,6 +541,58 @@ async function mirrorArtifactFrame(
   );
 }
 
+/** Stage a session_artifacts row (the offload worker's input). Mirrors what the
+ * mirror path writes on an artifact.captured frame. */
+async function insertSessionArtifactRow(args: {
+  sessionId: string;
+  artifactId: string;
+  executionId?: string | null;
+  centaurRef: string | null;
+  path: string;
+  mime: string;
+  sizeBytes?: number;
+  s3Key?: string | null;
+  offloadedAt?: string | null;
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO session_artifacts
+       (id, session_id, execution_id, centaur_ref, s3_key, path, mime, size_bytes, sha256, offloaded_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      args.artifactId,
+      args.sessionId,
+      args.executionId ?? 'exe_fake',
+      args.centaurRef,
+      args.s3Key ?? null,
+      args.path,
+      args.mime,
+      args.sizeBytes ?? 1024,
+      `${args.artifactId}-sha`,
+      args.offloadedAt ?? null,
+    ],
+  );
+}
+
+/** In-memory S3 stand-in for the artifact offload/serve paths. Records uploads
+ * and mints a recognizable presigned URL (the route 302s to it). */
+function fakeArtifactStorage() {
+  const objects = new Map<string, { body: Buffer; contentType: string }>();
+  const presignCalls: { key: string; filename: string; inline: boolean }[] = [];
+  return {
+    objects,
+    presignCalls,
+    storage: {
+      uploadObject: async (key: string, body: Buffer | Uint8Array, contentType: string) => {
+        objects.set(key, { body: Buffer.from(body), contentType });
+      },
+      presignGet: async (key: string, filename: string, inline: boolean) => {
+        presignCalls.push({ key, filename, inline });
+        return `https://storage.local/get/${encodeURIComponent(key)}?inline=${inline ? 1 : 0}`;
+      },
+    },
+  };
+}
+
 async function registerToken(userId: string, token: string): Promise<void> {
   await pool.query(
     `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`,
@@ -3004,6 +3056,217 @@ describe('Phase 2 sessions', () => {
     });
     expect(res.statusCode).toBe(410);
     expect(res.json().error).toBe('artifact_gone');
+    await app.close();
+  });
+
+  // ---- B1: S3 offload ------------------------------------------------------
+
+  it('the offload worker copies a staged artifact from Centaur into S3 and stamps the row', async () => {
+    const s3 = fakeArtifactStorage();
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        artifactStorage: s3.storage,
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const id = await insertSessionRow({ title: 'offload', status: 'running' });
+    // A staged artifact (centaur_ref set, not yet offloaded) + bytes in Centaur.
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-1',
+      executionId: 'exe_fake',
+      centaurRef: 'blob-1',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    fake.artifactBytes.set('exe_fake/blob-1', { body: png, contentType: 'image/png' });
+
+    const result = await app.sessionRuns.offloadArtifactBatch();
+
+    expect(result).toEqual({ offloaded: 1, evicted: 0, failed: 0 });
+    // Fetched the (execution, ref) bytes with the artifact-capture key.
+    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
+      '/agent/executions/exe_fake/artifacts/blob-1',
+    ]);
+    expect(fake.artifactApiKeys).toEqual(['artifact-key']);
+    // Uploaded the bytes to the deterministic key with the reported mime.
+    const uploaded = s3.objects.get(`artifacts/${id}/art-1`);
+    expect(uploaded).toBeDefined();
+    expect(Buffer.from(uploaded!.body)).toEqual(Buffer.from(png));
+    expect(uploaded!.contentType).toBe('image/png');
+    // The row is stamped offloaded with the s3_key.
+    const row = await pool.query<{ s3_key: string | null; offloaded_at: Date | null }>(
+      'SELECT s3_key, offloaded_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
+      [id, 'art-1'],
+    );
+    expect(row.rows[0]!.s3_key).toBe(`artifacts/${id}/art-1`);
+    expect(row.rows[0]!.offloaded_at).not.toBeNull();
+    await app.close();
+  });
+
+  it('the offload worker skips manifest-only + already-offloaded rows, and survives an evicted ref', async () => {
+    const s3 = fakeArtifactStorage();
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        artifactStorage: s3.storage,
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const id = await insertSessionRow({ title: 'offload edge', status: 'running' });
+    // Manifest-only (no ref): never offloaded, never fetched.
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-manifest',
+      centaurRef: null,
+      path: '/home/agent/workspace/out/huge.bin',
+      mime: 'application/octet-stream',
+    });
+    // Already offloaded: skipped (offloaded_at set).
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-done',
+      centaurRef: 'blob-done',
+      path: '/home/agent/workspace/out/done.png',
+      mime: 'image/png',
+      s3Key: `artifacts/${id}/art-done`,
+      offloadedAt: new Date().toISOString(),
+    });
+    // Staged but evicted from Centaur (FakeCentaur 404s an unknown ref).
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-evicted',
+      centaurRef: 'blob-evicted',
+      path: '/home/agent/workspace/out/gone.png',
+      mime: 'image/png',
+    });
+
+    const result = await app.sessionRuns.offloadArtifactBatch();
+
+    // Only the evicted row was eligible; it counts as evicted, not failed, and
+    // is left un-offloaded (no s3_key) — not hot-looping, just skipped.
+    expect(result).toEqual({ offloaded: 0, evicted: 1, failed: 0 });
+    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
+      '/agent/executions/exe_fake/artifacts/blob-evicted',
+    ]);
+    expect(s3.objects.size).toBe(0);
+    const evicted = await pool.query<{ s3_key: string | null; offloaded_at: Date | null }>(
+      'SELECT s3_key, offloaded_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
+      [id, 'art-evicted'],
+    );
+    expect(evicted.rows[0]!.s3_key).toBeNull();
+    expect(evicted.rows[0]!.offloaded_at).toBeNull();
+    await app.close();
+  });
+
+  it('serve route 302-redirects to a presigned S3 URL once an artifact is offloaded (no Centaur fetch)', async () => {
+    const s3 = fakeArtifactStorage();
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        artifactStorage: s3.storage,
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'serve offloaded', status: 'running' });
+    // Metadata in the mirror (for path/mime) + an offloaded session_artifacts row.
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-img',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      ref: 'blob-img',
+    });
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-img',
+      centaurRef: 'blob-img',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      s3Key: `artifacts/${id}/art-img`,
+      offloadedAt: new Date().toISOString(),
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-img`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(
+      `https://storage.local/get/${encodeURIComponent(`artifacts/${id}/art-img`)}?inline=1`,
+    );
+    // Presigned with the path basename + inline (image). Never hit Centaur.
+    expect(s3.presignCalls).toEqual([
+      { key: `artifacts/${id}/art-img`, filename: 'chart.png', inline: true },
+    ]);
+    expect(fake.artifactRequests).toEqual([]);
+    await app.close();
+  });
+
+  it('serve route still proxies from Centaur when the artifact is not yet offloaded', async () => {
+    const s3 = fakeArtifactStorage();
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        artifactStorage: s3.storage,
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertSessionRow({ title: 'serve staged', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-img',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+      ref: 'blob-img',
+    });
+    // A session_artifacts row exists but is NOT offloaded (no s3_key).
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-img',
+      centaurRef: 'blob-img',
+      path: '/home/agent/workspace/out/chart.png',
+      mime: 'image/png',
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    fake.artifactBytes.set('exe_fake/blob-img', { body: png, contentType: 'image/png' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-img`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(Buffer.from(res.rawPayload)).toEqual(Buffer.from(png));
+    // Proxied from Centaur; no presign/redirect.
+    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
+      '/agent/executions/exe_fake/artifacts/blob-img',
+    ]);
+    expect(s3.presignCalls).toEqual([]);
     await app.close();
   });
 

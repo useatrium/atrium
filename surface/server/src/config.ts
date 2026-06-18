@@ -26,6 +26,12 @@ export const config = {
   // sandbox-token key, distinct from CENTAUR_API_KEY. Unset falls back to
   // centaurApiKey (works only if Centaur accepts the session key there).
   artifactCaptureApiKey: process.env.ARTIFACT_CAPTURE_API_KEY ?? '',
+  // Background offload of captured artifact bytes from Centaur staging into
+  // atrium's S3 (durable). Disabled by default ('0') so a server without the
+  // artifact-capture key / object store doesn't hot-loop; flip to '1' to run.
+  artifactOffloadEnabled: (process.env.ARTIFACT_OFFLOAD_ENABLED ?? '0') === '1',
+  artifactOffloadIntervalMs: Number(process.env.ARTIFACT_OFFLOAD_INTERVAL_MS ?? 30_000),
+  artifactOffloadBatchSize: Number(process.env.ARTIFACT_OFFLOAD_BATCH_SIZE ?? 10),
   // File uploads (MinIO in dev; any S3-compatible store in deployment).
   s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
   s3Bucket: process.env.S3_BUCKET ?? 'atrium-files',

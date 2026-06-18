@@ -63,6 +63,12 @@ declare module 'fastify' {
   interface FastifyRequest {
     user: UserRef | null;
   }
+  interface FastifyInstance {
+    /** The session runtime, exposed so startup can drive the artifact offload
+     * worker (B1: S3 offload) off the same instance that owns the Centaur
+     * client + offload config. */
+    sessionRuns: SessionRuns;
+  }
 }
 
 export interface AppDeps {
@@ -2109,21 +2115,23 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { record: await sessionRuns.getSessionRecord(id) };
   });
 
-  // Serve a captured artifact's bytes (A3b Phase 1) by proxying from Centaur
-  // staging — unblocks the Artifacts gallery, which <img src>'s this URL.
-  // Channel-access gated like every session sub-resource (404, never leaking a
-  // foreign session's existence). The capture sidecar's mime is sandbox-
-  // controlled, so we force nosniff + inline-only-for-images / attachment-
-  // otherwise (defense in depth against stored XSS, even though Centaur sets
-  // these too). Phase 1 keys the byte fetch by the session's current execution;
-  // S3 offload is a future Phase 2.
+  // Serve a captured artifact's bytes — unblocks the Artifacts gallery, which
+  // <img src>'s this URL. Channel-access gated like every session sub-resource
+  // (404, never leaking a foreign session's existence). Two delivery paths
+  // (B1: S3 offload): once the background worker has copied the bytes into
+  // atrium's durable store, we 302-redirect to a short-lived presigned S3 URL;
+  // until then we proxy the bytes from Centaur staging. The capture sidecar's
+  // mime is sandbox-controlled, so the proxy path forces nosniff +
+  // inline-only-for-images / attachment-otherwise (defense in depth against
+  // stored XSS, even though Centaur sets these too); the S3 path bakes the same
+  // inline/attachment choice into the presigned Content-Disposition.
   app.get('/api/sessions/:id/artifacts/:artifactId', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id, artifactId } = req.params as { id: string; artifactId: string };
-    let stream: Awaited<ReturnType<typeof sessionRuns.getArtifactBytes>>;
+    let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
     try {
-      stream = await sessionRuns.getArtifactBytes(id, artifactId);
+      plan = await sessionRuns.getArtifactServePlan(id, artifactId);
     } catch (err) {
       if (err instanceof CentaurApiError) {
         // The ref is unknown to Centaur (evicted from staging / never staged):
@@ -2139,7 +2147,13 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       throw err;
     }
-    const { artifact, bytes } = stream;
+    if (plan.kind === 'redirect') {
+      // Durable bytes in atrium's store: short-lived presigned redirect (the
+      // presign carries the inline/attachment Content-Disposition). Matches the
+      // file-serve route's 302-to-S3 pattern.
+      return reply.redirect(plan.url, 302);
+    }
+    const { artifact, bytes } = plan;
     const mime = artifact.mime || 'application/octet-stream';
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
@@ -2612,6 +2626,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     clearReceiptTimers();
     await sessionRuns.close();
   });
+
+  app.decorate('sessionRuns', sessionRuns);
 
   return app;
 }

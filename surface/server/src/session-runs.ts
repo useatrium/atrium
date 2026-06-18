@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
+import { basename } from 'node:path';
 import {
   CentaurApiError,
   CentaurClient,
@@ -20,6 +21,7 @@ import {
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
 import {
   appendEvent,
   canAccessChannel,
@@ -166,6 +168,23 @@ export interface SessionArtifactStream {
   bytes: ArtifactBytes;
 }
 
+/**
+ * How the serve route should deliver a captured artifact (B1: S3 offload):
+ * - `redirect`: bytes are durably in atrium's S3 → presigned 302.
+ * - `proxy`: not yet offloaded but still staged in Centaur → proxy the stream.
+ * The 404 cases (unknown / manifest-only) throw a DomainError instead.
+ */
+export type ArtifactServePlan =
+  | { kind: 'redirect'; url: string }
+  | ({ kind: 'proxy' } & SessionArtifactStream);
+
+/** Outcome of one offload batch, for logging/observability. */
+export interface ArtifactOffloadResult {
+  offloaded: number;
+  evicted: number;
+  failed: number;
+}
+
 export interface SessionListItem {
   id: string;
   channelId: string;
@@ -180,6 +199,13 @@ export interface SessionListItem {
   completedAt: string | null;
 }
 
+/** The S3 surface the artifact offload + serve paths need. Injectable in tests
+ * (the real impl is s3.ts; defaults to it). */
+export interface ArtifactStorage {
+  uploadObject: typeof s3UploadObject;
+  presignGet: typeof s3PresignGet;
+}
+
 export interface SessionRunsOptions {
   centaur?: CentaurClient;
   baseUrl?: string;
@@ -187,6 +213,8 @@ export interface SessionRunsOptions {
   /** Auth key for Centaur's artifact-byte endpoint (distinct from `apiKey`).
    * Falls back to `apiKey` when unset. */
   artifactCaptureApiKey?: string;
+  /** Object store for artifact offload/serve. Defaults to the real s3.ts. */
+  artifactStorage?: ArtifactStorage;
   harness?: string;
   autoResume?: boolean;
   questionRenotifyMinutes?: number;
@@ -228,6 +256,19 @@ interface SessionRow {
   cost_usd: string | number;
   created_at: Date;
   completed_at: Date | null;
+}
+
+interface SessionArtifactRow {
+  id: string;
+  session_id: string;
+  execution_id: string | null;
+  centaur_ref: string | null;
+  s3_key: string | null;
+  path: string;
+  mime: string;
+  size_bytes: string | number;
+  sha256: string;
+  offloaded_at: Date | null;
 }
 
 interface ChannelRow {
@@ -290,6 +331,7 @@ const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000
 export class SessionRuns {
   private readonly centaur: CentaurClient;
   private readonly artifactCaptureApiKey: string;
+  private readonly artifactStorage: ArtifactStorage;
   private readonly harness: string;
   private readonly autoResume: boolean;
   private readonly questionRenotifyMinutes: number;
@@ -319,6 +361,8 @@ export class SessionRuns {
         options.apiKey,
         config.centaurApiKey,
       ) ?? '';
+    this.artifactStorage =
+      options.artifactStorage ?? { uploadObject: s3UploadObject, presignGet: s3PresignGet };
     this.harness = options.harness ?? config.centaurHarness;
     this.autoResume = options.autoResume ?? true;
     this.questionRenotifyMinutes =
@@ -506,19 +550,19 @@ export class SessionRuns {
   }
 
   /**
-   * Resolve a captured artifact's bytes for serving (A3b Phase 1). Channel
-   * access is gated by the route (like {@link getSessionRecord}); this looks the
-   * artifact up in the durable mirror, then proxies the bytes from Centaur
-   * staging. Phase 1 keys the byte fetch by the session's `current_execution_id`
-   * — see the route for the multi-execution caveat. S3 offload is a future
-   * Phase 2 optimization.
+   * Decide how to serve a captured artifact (B1: S3 offload). Channel access is
+   * gated by the route (like {@link getSessionRecord}). The artifact metadata
+   * comes from the durable mirror ({@link collectArtifacts}); the offload state
+   * lives in `session_artifacts`:
+   *  - offloaded (s3_key set) → a presigned S3 redirect (durable, no Centaur hit);
+   *  - still staged (ref set, not yet offloaded) → proxy the bytes from Centaur.
    *
    * Throws a 404 DomainError when the artifact is unknown or has no staged bytes
    * (`ref === null`, manifest-only), and a 502 when Centaur has no record of the
    * execution. CentaurApiError (e.g. an evicted ref → 404 from Centaur) bubbles
    * up to the route, which maps it to 410/502.
    */
-  async getArtifactBytes(sessionId: string, artifactId: string): Promise<SessionArtifactStream> {
+  async getArtifactServePlan(sessionId: string, artifactId: string): Promise<ArtifactServePlan> {
     const row = await this.getSessionRow(sessionId);
     if (!row) {
       throw new DomainError(404, 'session_not_found', 'session not found');
@@ -532,10 +576,25 @@ export class SessionRuns {
       // Manifest-only: metadata captured, bytes never staged (too large/junk).
       throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
     }
-    // Fetch from the execution that captured the artifact (on the event since
-    // Centaur added execution_id); fall back to the session's current execution
-    // for artifacts captured before that, which only resolve while the session
-    // hasn't moved to a newer execution.
+    // Already offloaded to atrium's store? Serve a presigned redirect — the
+    // bytes are durable there, so this works even after Centaur evicts the ref.
+    const offloaded = await this.pool.query<{ s3_key: string }>(
+      `SELECT s3_key FROM session_artifacts
+       WHERE session_id = $1 AND id = $2 AND s3_key IS NOT NULL`,
+      [sessionId, artifactId],
+    );
+    const s3Key = offloaded.rows[0]?.s3_key;
+    if (s3Key) {
+      const filename = basename(artifact.path) || 'artifact';
+      const inline = (artifact.mime || '').startsWith('image/');
+      const url = await this.artifactStorage.presignGet(s3Key, filename, inline);
+      return { kind: 'redirect', url };
+    }
+    // Not yet offloaded: proxy from Centaur staging. Fetch from the execution
+    // that captured the artifact (on the event since Centaur added
+    // execution_id); fall back to the session's current execution for artifacts
+    // captured before that, which only resolve while the session hasn't moved
+    // to a newer execution.
     const executionId = artifact.executionId ?? row.current_execution_id;
     if (!executionId) {
       throw new DomainError(502, 'artifact_unavailable', 'session has no execution to serve artifacts from');
@@ -543,7 +602,100 @@ export class SessionRuns {
     const bytes = await this.centaur.getArtifactBytes(executionId, artifact.ref, {
       apiKey: this.artifactCaptureApiKey,
     });
-    return { artifact, bytes };
+    return { kind: 'proxy', artifact, bytes };
+  }
+
+  /**
+   * Offload one batch of staged artifacts (B1: S3 offload) from Centaur staging
+   * into atrium's durable store. Runs on an interval (see artifact-offload.ts).
+   *
+   * Each row is locked `FOR UPDATE SKIP LOCKED` so concurrent runs (or a second
+   * instance) never double-fetch the same artifact, and a slow upload doesn't
+   * block the rest of the batch. The lock is held for the whole row (fetch +
+   * upload + update) inside a transaction; that's deliberate so a crash mid-
+   * upload rolls back and the row stays in the queue.
+   *
+   * Failure handling is per-row and resilient: a Centaur 404 (ref evicted before
+   * we offloaded) is terminal — we leave the row un-offloaded but log + count it
+   * (its `centaur_ref` stays set, so it would retry; eviction is permanent in
+   * practice, but the queue index keeps it cheap and a future retention API
+   * could re-stage). Any other error is logged and counted; the batch continues.
+   */
+  async offloadArtifactBatch(limit = config.artifactOffloadBatchSize): Promise<ArtifactOffloadResult> {
+    const result: ArtifactOffloadResult = { offloaded: 0, evicted: 0, failed: 0 };
+    // The whole batch runs in one transaction so the FOR UPDATE SKIP LOCKED row
+    // locks are held across each fetch+upload+update — a concurrent run (or a
+    // second instance) skips locked rows instead of double-offloading, and a
+    // crash mid-batch rolls back so the rows stay queued. Batch size is small,
+    // so the transaction stays short despite the network hops.
+    await withTx(this.pool, async (client) => {
+      const claimed = await client.query<SessionArtifactRow>(
+        `SELECT id, session_id, execution_id, centaur_ref, s3_key, path, mime,
+                size_bytes, sha256, offloaded_at
+         FROM session_artifacts
+         WHERE offloaded_at IS NULL AND centaur_ref IS NOT NULL
+         ORDER BY captured_at ASC
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED`,
+        [limit],
+      );
+      for (const artifact of claimed.rows) {
+        try {
+          const outcome = await this.offloadOneArtifact(client, artifact);
+          if (outcome === 'offloaded') result.offloaded += 1;
+          else result.evicted += 1;
+        } catch (err) {
+          // One bad artifact must not stop the batch. The row's UPDATE never
+          // ran, so it stays queued for the next interval.
+          result.failed += 1;
+          console.warn('artifact offload failed', {
+            sessionId: artifact.session_id,
+            artifactId: artifact.id,
+            err,
+          });
+        }
+      }
+    });
+    return result;
+  }
+
+  /** Offload a single staged artifact: fetch bytes from Centaur, upload to S3,
+   * stamp `s3_key` + `offloaded_at` (in the batch transaction). Returns 'evicted'
+   * when Centaur 404s the ref (no bytes to copy); throws on any other failure so
+   * the caller counts it and leaves the row queued. */
+  private async offloadOneArtifact(
+    client: DbClient,
+    artifact: SessionArtifactRow,
+  ): Promise<'offloaded' | 'evicted'> {
+    if (!artifact.execution_id || !artifact.centaur_ref) return 'evicted';
+    let bytes: ArtifactBytes;
+    try {
+      bytes = await this.centaur.getArtifactBytes(artifact.execution_id, artifact.centaur_ref, {
+        apiKey: this.artifactCaptureApiKey,
+      });
+    } catch (err) {
+      if (err instanceof CentaurApiError && err.status === 404) {
+        // Ref evicted from staging before we offloaded. Nothing to copy; log +
+        // skip rather than hot-loop. Eviction is permanent in practice.
+        console.warn('artifact offload skipped: ref evicted from Centaur staging', {
+          sessionId: artifact.session_id,
+          artifactId: artifact.id,
+        });
+        return 'evicted';
+      }
+      throw err;
+    }
+    const body = bytes.body ? Buffer.from(await new Response(bytes.body).arrayBuffer()) : Buffer.alloc(0);
+    const contentType = bytes.contentType || artifact.mime || 'application/octet-stream';
+    const s3Key = artifactS3Key(artifact.session_id, artifact.id);
+    await this.artifactStorage.uploadObject(s3Key, body, contentType);
+    await client.query(
+      `UPDATE session_artifacts
+       SET s3_key = $1, offloaded_at = now()
+       WHERE session_id = $2 AND id = $3`,
+      [s3Key, artifact.session_id, artifact.id],
+    );
+    return 'offloaded';
   }
 
   /** Replay the durable mirror into a reduced session state (transcript items +
@@ -1414,6 +1566,37 @@ export class SessionRuns {
        ON CONFLICT (session_id, centaur_event_id) DO NOTHING`,
       [id, frame.event_id, frame.event, JSON.stringify(frame)],
     );
+    if (frame.event === 'artifact.captured') {
+      await this.recordArtifact(id, frame.data);
+    }
+  }
+
+  /** Stage an `artifact.captured` frame into session_artifacts so the offload
+   * worker can durably copy its bytes into atrium's store. Keyed by (session,
+   * artifact_id); artifacts are immutable by content hash so a replayed capture
+   * is a no-op (DO NOTHING). Manifest-only artifacts (ref null) still get a row
+   * for the durable record but are never offloaded (the queue index filters
+   * them). */
+  private async recordArtifact(
+    id: string,
+    data: Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'],
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO session_artifacts
+         (id, session_id, execution_id, centaur_ref, path, mime, size_bytes, sha256)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (session_id, id) DO NOTHING`,
+      [
+        data.artifact_id,
+        id,
+        data.execution_id ?? null,
+        data.ref ?? null,
+        data.path,
+        data.mime,
+        data.size_bytes,
+        data.sha256,
+      ],
+    );
   }
 
   private async foldFrame(id: string, frame: CentaurEventFrame): Promise<void> {
@@ -2055,6 +2238,12 @@ function userInputLine(text: string): string {
 
 function isCentaurCode(err: unknown, code: string): boolean {
   return err instanceof CentaurApiError && err.code === code;
+}
+
+/** S3 key for an offloaded artifact's bytes. Content-hash id keeps it stable +
+ * collision-free; the session prefix scopes it for lifecycle/debugging. */
+function artifactS3Key(sessionId: string, artifactId: string): string {
+  return `artifacts/${sessionId}/${artifactId}`;
 }
 
 /** First defined, non-empty string in the list (config env defaults are ''). */
