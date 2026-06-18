@@ -50,13 +50,15 @@ key on the legacy `centaur.ai/managed: "true"` label (api-rs sandboxes are
 - **Effort:** S.
 </details>
 
-### A2 — Per-artifact `execution_id` on the wire
-Serve route falls back to the session's `current_execution_id`, so artifacts
-from an earlier turn of a multi-turn session 410.
-- **Fix:** Centaur adds `"execution_id"` to the `artifact.captured` payload
-  (~1 line in `capture_artifact`, no migration); Atrium reducer keeps
-  `executionId` on `Artifact`; serve route uses it.
-- **Effort:** S–M. Do before B1.
+### A2 — Per-artifact `execution_id` on the wire ✅ DONE (2026-06-18)
+Centaur adds `"execution_id"` to the `artifact.captured` payload
+(`gb/api-rs-artifact-capture` `060eb59`, integrated); Atrium reducer keeps
+`executionId` on `Artifact` and the serve route fetches from it, falling back to
+`current_execution_id` for pre-`execution_id` events (Atrium `master` `ea9fc49`).
+Unit-verified both repos (reducer capture + a cross-execution serve test:
+artifact from `exe_old` fetched while current is `exe_fake`). **Live multi-turn
+verify deferred to D1** (needs the surface server + a cluster redeploy so the
+deployed api-rs emits `execution_id`).
 
 ### B1 — S3 offload (durable storage)
 Centaur Postgres staging is ephemeral (retention/redaction) → artifacts evict →
