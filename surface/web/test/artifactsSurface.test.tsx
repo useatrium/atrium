@@ -15,6 +15,7 @@ function art(over: Partial<Artifact>): Artifact {
     size: 48_210,
     sha256: 'x',
     ref: 'b1',
+    executionId: null,
     sourceEventIds: [3],
     ...over,
   };

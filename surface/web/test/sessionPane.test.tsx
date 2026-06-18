@@ -842,6 +842,48 @@ describe('inline file changes (Phase 4)', () => {
     fireEvent.click(within(card).getByRole('button'));
     expect(within(card).getByText('+ const a = 2;')).toBeTruthy();
   });
+
+  const codexEditFrames = [
+    { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_c' } },
+    { event: 'amp_raw_event', event_id: 2, data: { type: 'item.completed', item: { id: 'cm1', type: 'agentMessage', text: 'editing the config' } } },
+    {
+      event: 'amp_raw_event',
+      event_id: 3,
+      data: {
+        type: 'item.completed',
+        item: {
+          id: 'cfc1',
+          type: 'fileChange',
+          changes: [{ path: '/home/agent/workspace/src/config.ts', kind: 'update', diff: '@@\n-const x = 1;\n+const x = 2;' }],
+        },
+      },
+    },
+    { event: 'execution_state', event_id: 4, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_c' } },
+  ] as unknown as CentaurEventFrame[];
+
+  it('renders a codex fileChange inline in the transcript (previously drawer-only)', async () => {
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(codexEditFrames);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    // Codex edits live in stream.fileChanges (not items); they now render inline
+    // as the same diff card Claude/amp edits use, anchored after the message.
+    const card = screen.getByTestId('inline-file-change');
+    expect(within(card).getByText('src/config.ts')).toBeTruthy();
+    expect(within(card).getByText('edited')).toBeTruthy();
+    expect(screen.getByText('editing the config')).toBeTruthy();
+    // Still feeds the Changes strip (one file) — inline + drawer, one source.
+    expect(within(screen.getByTestId('changes-strip')).getByText('· 1')).toBeTruthy();
+
+    // Collapsed by default; expand reveals the codex hunk verbatim.
+    expect(within(card).queryByText('+const x = 2;')).toBeNull();
+    fireEvent.click(within(card).getByRole('button'));
+    expect(within(card).getByText('+const x = 2;')).toBeTruthy();
+  });
 });
 
 describe('artifacts surface (Phase 4)', () => {

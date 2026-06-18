@@ -13,7 +13,7 @@ function se(over: Partial<SideEffect>): SideEffect {
   return { id: 's1', command: 'npm install', category: 'package', risk: 'caution', toolName: 'Bash', sourceEventIds: [2], ...over };
 }
 function art(over: Partial<Artifact>): Artifact {
-  return { id: 'a1', path: '/tmp/out.png', kind: 'created', mime: 'image/png', size: 2048, sha256: 'x', ref: 'b1', sourceEventIds: [3], ...over };
+  return { id: 'a1', path: '/tmp/out.png', kind: 'created', mime: 'image/png', size: 2048, sha256: 'x', ref: 'b1', executionId: null, sourceEventIds: [3], ...over };
 }
 
 function renderDrawer(over: Partial<Parameters<typeof WorkDrawer>[0]> = {}) {

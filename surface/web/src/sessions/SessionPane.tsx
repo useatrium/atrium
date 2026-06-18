@@ -12,6 +12,7 @@ import {
 import {
   artifactCount,
   changedPaths,
+  codexInlineFileChanges,
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
@@ -323,6 +324,17 @@ export function SessionPane({
       (e) => Math.min(seatAnchors.get(e.id) ?? Number.MAX_SAFE_INTEGER, stream.items.length) === i,
     );
 
+  // Codex file edits render inline as diff cards (parity with Claude/amp edits,
+  // which are already transcript tool_call items). They live in stream.fileChanges
+  // rather than stream.items, so anchor each to the point in the transcript where
+  // it happened and splice it in at render time — same interleave-by-index shape
+  // as the seat-audit lines above.
+  const inlineCodexChanges = useMemo(
+    () => codexInlineFileChanges(stream),
+    [stream.items, stream.fileChanges],
+  );
+  const codexChangesAt = (i: number) => inlineCodexChanges.filter((a) => a.index === i);
+
   // Manual expand/collapse overrides; default = open while running. When the
   // result arrives the card auto-collapses only if the view is pinned to the
   // bottom — if the user scrolled up to read it, it stays open under them.
@@ -594,6 +606,11 @@ export function SessionPane({
             {seatLinesAt(i).map((e) => (
               <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
             ))}
+            {codexChangesAt(i).map((a) => (
+              <div key={a.change.id} className="pl-3.5">
+                <InlineFileChange change={a.change} />
+              </div>
+            ))}
             {item.type === 'text' ? (
               <div className="pl-3.5">
                 <TextBlock item={item} />
@@ -630,6 +647,11 @@ export function SessionPane({
         ))}
         {seatLinesAt(stream.items.length).map((e) => (
           <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
+        ))}
+        {codexChangesAt(stream.items.length).map((a) => (
+          <div key={a.change.id} className="pl-3.5">
+            <InlineFileChange change={a.change} />
+          </div>
         ))}
         {displayStatus === 'completed' && (resultText || costUsd > 0) && (
           <div

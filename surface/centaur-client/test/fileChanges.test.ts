@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changedPaths,
+  codexInlineFileChanges,
   collectFileChanges,
   displayPath,
   fileChangeFromToolCall,
@@ -8,6 +9,15 @@ import {
 } from "../src/fileChanges.js";
 import { initialSessionState, reduceSession, type SessionItem, type ToolCallItem } from "../src/reducer.js";
 import type { CentaurEventFrame } from "../src/types.js";
+
+/** A codex `item.completed` frame at `eventId`. */
+function codexFrame(eventId: number, item: Record<string, unknown>): CentaurEventFrame {
+  return {
+    event: "amp_raw_event",
+    event_id: eventId,
+    data: { type: "item.completed", item },
+  } as unknown as CentaurEventFrame;
+}
 
 function tool(name: string, input: Record<string, unknown>, id = "t-1"): ToolCallItem {
   return { type: "tool_call", id, name, input: input as never, sourceEventIds: [1] };
@@ -197,5 +207,74 @@ describe("fileChangesFromItems", () => {
     const changes = fileChangesFromItems(items);
     expect(changes.map((c) => c.id)).toEqual(["t1", "t3", "t4"]);
     expect(changedPaths(changes)).toEqual(["a.ts", "b.ts"]);
+  });
+});
+
+describe("codexInlineFileChanges (inline transcript placement)", () => {
+  it("anchors each codex edit after the items that preceded it (by event id)", () => {
+    // Built directly so the placement math is tested in isolation (the reducer
+    // merges consecutive codex messages into one item, which the reduce-path is
+    // exercised for in the web sessionPane test). Two messages at ev1 / ev5; an
+    // edit at ev3 lands between them, an edit at ev7 after both.
+    const state = initialSessionState();
+    state.items = [
+      { type: "text", id: "m1", text: "starting", sourceEventIds: [1] },
+      { type: "text", id: "m2", text: "done", sourceEventIds: [5] },
+    ];
+    state.fileChanges = [
+      { id: "fc-1", path: "/home/agent/workspace/a.ts", kind: "update", diff: "@@\n-x\n+y", toolName: "fileChange", sourceEventIds: [3] },
+      { id: "fc-2", path: "/home/agent/workspace/b.ts", kind: "delete", diff: "@@\n-gone", toolName: "fileChange", sourceEventIds: [7] },
+    ];
+
+    const anchored = codexInlineFileChanges(state);
+    expect(anchored.map((a) => ({ path: a.change.path, index: a.index }))).toEqual([
+      { path: "a.ts", index: 1 }, // after m1 (ev1), before m2 (ev5)
+      { path: "b.ts", index: 2 }, // after both messages
+    ]);
+  });
+
+  it("normalizes paths + add diffs identically to the drawer (collectFileChanges), and excludes claude edits", () => {
+    let state = initialSessionState();
+    // A Claude Edit tool_use (becomes a transcript item, NOT a codex fileChange).
+    state = reduceSession(state, {
+      event: "amp_raw_event",
+      event_id: 1,
+      data: {
+        type: "assistant",
+        uuid: "u1",
+        message: {
+          id: "m1",
+          content: [
+            { type: "tool_use", id: "t1", name: "Edit", input: { file_path: "claude.ts", old_string: "a", new_string: "b" } },
+          ],
+        },
+      },
+    } as unknown as CentaurEventFrame);
+    // A codex add whose diff is raw file content (no +/- prefix).
+    state = reduceSession(state, codexFrame(2, {
+      id: "fc-1", type: "fileChange",
+      changes: [{ path: "/home/agent/workspace/new.txt", kind: "add", diff: "hello\nworld" }],
+    }));
+
+    const anchored = codexInlineFileChanges(state);
+    // Only the codex change — the Claude edit renders inline via its tool_call item.
+    expect(anchored).toHaveLength(1);
+    expect(anchored[0]!.change).toMatchObject({ path: "new.txt", kind: "add" });
+    // Same normalization the drawer applies (path stripped, add → +/green).
+    const fromDrawer = collectFileChanges(state).find((c) => c.path === "new.txt")!;
+    expect(anchored[0]!.change.diff).toBe("+ hello\n+ world");
+    expect(anchored[0]!.change.diff).toBe(fromDrawer.diff);
+  });
+
+  it("anchors a codex edit that precedes all transcript items at index 0", () => {
+    let state = initialSessionState();
+    state = reduceSession(state, codexFrame(2, {
+      id: "fc-1", type: "fileChange",
+      changes: [{ path: "/home/agent/workspace/early.ts", kind: "update", diff: "@@\n-x\n+y" }],
+    }));
+    state = reduceSession(state, codexFrame(5, { id: "m1", type: "agentMessage", text: "after the edit" }));
+    const anchored = codexInlineFileChanges(state);
+    expect(anchored).toEqual([expect.objectContaining({ index: 0 })]);
+    expect(anchored[0]!.change.path).toBe("early.ts");
   });
 });

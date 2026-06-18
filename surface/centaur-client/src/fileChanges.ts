@@ -2,13 +2,21 @@
 // the already-folded transcript items — "Changes/diff is free from frames". This
 // covers the Claude/amp edit tools (Edit / Write / MultiEdit / NotebookEdit),
 // which arrive as tool_call items with a known input schema. Codex `fileChange`
-// items (changes[].{path,kind,diff}) are a separate source handled later; they
-// are dropped by the reducer today.
+// items (changes[].{path,kind,diff}) are a separate source the reducer captures
+// into state.fileChanges; collectFileChanges merges both for the drawer, and
+// codexInlineFileChanges anchors them for inline transcript rendering.
 
 import type { JsonObject } from "./types.js";
 import type { FileChange, FileChangeKind, SessionItem, SessionState, ToolCallItem } from "./reducer.js";
 
 export type { FileChange, FileChangeKind } from "./reducer.js";
+
+/** Earliest event a transcript item / change was sourced from — its position in
+ * the stream. Items are pushed in event order, so across items this is
+ * non-decreasing; used to anchor codex edits inline at the point they happened. */
+function startEventId(sourceEventIds: number[]): number {
+  return sourceEventIds.length ? Math.min(...sourceEventIds) : 0;
+}
 
 // Claude Code's Edit + the Anthropic text-editor tool (whose str_replace command
 // uses old_str/new_str, not old_string/new_string).
@@ -112,24 +120,61 @@ export function fileChangesFromItems(items: SessionItem[]): FileChange[] {
 }
 
 /**
+ * Normalize a captured codex `fileChange` for display: strip the sandbox path
+ * prefix, and for an `add` (whose diff is raw file content with no +/- prefix)
+ * prefix every line so it counts/colours like a Claude Write. `update`/`delete`
+ * carry real unified hunks (-/+ lines), so those are left untouched. Shared by
+ * the Changes drawer ({@link collectFileChanges}) and the inline transcript
+ * cards ({@link codexInlineFileChanges}) so the two views never drift.
+ */
+export function normalizeCodexFileChange(change: FileChange): FileChange {
+  return {
+    ...change,
+    path: displayPath(change.path),
+    diff:
+      change.kind === "add" && change.diff
+        ? change.diff.split("\n").map((l) => `+ ${l}`).join("\n")
+        : change.diff,
+  };
+}
+
+/**
  * Every file change a session made, in edit order — Claude/amp edits derived
  * from the transcript items plus codex `fileChange` edits the reducer captured
  * (whose absolute paths are stripped here for parity). The surface groups by
  * path; a file edited twice yields two entries.
  */
 export function collectFileChanges(state: SessionState): FileChange[] {
-  const codex = state.fileChanges.map((c) => ({
-    ...c,
-    path: displayPath(c.path),
-    // A codex `add` diff is raw file content (full text, no +/- prefix) — prefix
-    // every line so the surface counts/colours it like a Claude Write. `update`/
-    // `delete` carry real unified hunks (-/+ lines), so leave those untouched.
-    diff:
-      c.kind === "add" && c.diff
-        ? c.diff.split("\n").map((l) => `+ ${l}`).join("\n")
-        : c.diff,
-  }));
-  return [...fileChangesFromItems(state.items), ...codex];
+  return [...fileChangesFromItems(state.items), ...state.fileChanges.map(normalizeCodexFileChange)];
+}
+
+/** A codex file change positioned for inline rendering in the transcript.
+ * `index` is the insertion point in `state.items`: render the card *before*
+ * `items[index]` (so `index === items.length` puts it after the whole
+ * transcript), mirroring how the web layer interleaves seat-audit lines. */
+export interface AnchoredFileChange {
+  change: FileChange;
+  index: number;
+}
+
+/**
+ * The session's codex `fileChange` edits, normalized and anchored for inline
+ * placement in the transcript. Claude/amp edits are already transcript
+ * `tool_call` items (they render inline via the item loop), so they are NOT
+ * included here — only codex changes, which the reducer keeps out of `items`.
+ *
+ * Each change's `index` is the number of items created at/before the change's
+ * own event, i.e. the card lands right where the edit happened in the stream.
+ * Anchoring is derived purely from event ids, so it is stable across a reload
+ * (unlike the seat-line arrival anchoring, which is a mount-time approximation).
+ */
+export function codexInlineFileChanges(state: SessionState): AnchoredFileChange[] {
+  const itemStarts = state.items.map((it) => startEventId(it.sourceEventIds));
+  return state.fileChanges.map((change) => {
+    const at = startEventId(change.sourceEventIds);
+    const index = itemStarts.filter((start) => start <= at).length;
+    return { change: normalizeCodexFileChange(change), index };
+  });
 }
 
 /** Distinct file paths touched — drives the "Changes·N" strip count. */
