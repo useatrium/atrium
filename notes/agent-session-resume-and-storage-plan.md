@@ -401,8 +401,16 @@ Steps:
 
 ## Open Questions
 
-- Does Codex app-server `thread/resume` require SQLite state, JSONL transcripts,
-  or both?
+- ~~Does Codex app-server `thread/resume` require SQLite state, JSONL transcripts,
+  or both?~~ **RESOLVED (POC 2026-06-18, codex-cli 0.140.0):** only the rollout
+  JSONL (`$CODEX_HOME/sessions/.../rollout-<id>.jsonl`) is required. A fresh
+  `CODEX_HOME` with the JSONL copied (no `state_5.sqlite`/other sqlite) resumes
+  and recalls prior context; with no JSONL, `thread/resume` hard-errors `no
+  rollout found for thread id (code -32600)` — confirming resume is
+  local-transcript-based, not server-side, on the same app-server path the
+  Centaur harness-server uses. Implication: fresh-container Codex resume requires
+  BOTH injecting `CODEX_CONTINUE_THREAD_ID` AND restoring the per-session harness
+  home (the JSONL); the id alone is insufficient. (Claude path still unverified.)
 - Does Claude CLI resume require only the main JSONL transcript for basic
   conversation, or do checkpoints/tasks/subagent state matter for our default UX?
 - How stable is Claude's project-key mapping if the container checkout path
