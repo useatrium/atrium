@@ -275,6 +275,9 @@ export interface QuestionResolved {
 export interface ArtifactCaptured {
   type: "artifact.captured";
   artifact_id: string;
+  /** Execution that captured this artifact. Optional for backward compat with
+   * events emitted before Centaur added it. */
+  execution_id?: string;
   path: string;
   kind: "created" | "modified" | "deleted";
   mime: string;

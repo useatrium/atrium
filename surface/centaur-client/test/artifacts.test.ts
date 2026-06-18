@@ -34,6 +34,15 @@ describe("artifact.captured reducer", () => {
     expect(state.artifacts[1]).toMatchObject({ id: "a2", ref: null, size: 9_000_000 });
   });
 
+  it("captures execution_id (and null when the event omits it)", () => {
+    const state = reduceAll([
+      artifactFrame(5, { artifact_id: "a1", execution_id: "exe_abc" }),
+      artifactFrame(6, { artifact_id: "a2" }), // pre-execution_id event
+    ]);
+    expect(state.artifacts[0]).toMatchObject({ id: "a1", executionId: "exe_abc" });
+    expect(state.artifacts[1]).toMatchObject({ id: "a2", executionId: null });
+  });
+
   it("dedups by stable artifact_id across reconnect replays", () => {
     const state = reduceAll([
       artifactFrame(5, { artifact_id: "a1" }),

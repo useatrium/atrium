@@ -86,6 +86,9 @@ export interface Artifact {
   size: number;
   sha256: string;
   ref: string | null;
+  /** Execution that captured this artifact, used to fetch its bytes from the
+   * right Centaur execution. Null for events emitted before Centaur added it. */
+  executionId: string | null;
   sourceEventIds: number[];
 }
 
@@ -517,6 +520,7 @@ function reduceArtifactCaptured(state: SessionState, eventId: number, event: Art
     size: event.size_bytes,
     sha256: event.sha256,
     ref: event.ref ?? null,
+    executionId: event.execution_id ?? null,
     sourceEventIds: [eventId],
   });
 }

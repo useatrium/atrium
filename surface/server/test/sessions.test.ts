@@ -506,7 +506,15 @@ async function setPendingQuestion(id: string): Promise<void> {
 
 async function mirrorArtifactFrame(
   sessionId: string,
-  args: { eventId: number; artifactId: string; path: string; mime: string; ref: string | null; sizeBytes?: number },
+  args: {
+    eventId: number;
+    artifactId: string;
+    path: string;
+    mime: string;
+    ref: string | null;
+    sizeBytes?: number;
+    executionId?: string;
+  },
 ): Promise<void> {
   await pool.query(
     `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
@@ -520,6 +528,7 @@ async function mirrorArtifactFrame(
         data: {
           type: 'artifact.captured',
           artifact_id: args.artifactId,
+          ...(args.executionId ? { execution_id: args.executionId } : {}),
           path: args.path,
           kind: 'created',
           mime: args.mime,
@@ -2839,6 +2848,48 @@ describe('Phase 2 sessions', () => {
       '/agent/executions/exe_fake/artifacts/blob-img',
     ]);
     expect(fake.artifactApiKeys).toEqual(['artifact-key']);
+    await app.close();
+  });
+
+  it('fetches an artifact from the execution that captured it, not the session current one', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    // Session's current execution is the default 'exe_fake'; the artifact was
+    // captured in an earlier execution 'exe_old'. Bytes are staged only under
+    // exe_old — if the route used current_execution_id it would 410.
+    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
+    await mirrorArtifactFrame(id, {
+      eventId: 9,
+      artifactId: 'art-old',
+      path: '/home/agent/workspace/out/old.png',
+      mime: 'image/png',
+      ref: 'blob-old',
+      executionId: 'exe_old',
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    fake.artifactBytes.set('exe_old/blob-old', { body: png, contentType: 'image/png' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/artifacts/art-old`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(Buffer.from(res.rawPayload)).toEqual(Buffer.from(png));
+    // Fetched from exe_old (the capturing execution), not the current exe_fake.
+    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
+      '/agent/executions/exe_old/artifacts/blob-old',
+    ]);
     await app.close();
   });
 

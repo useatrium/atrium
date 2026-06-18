@@ -532,12 +532,15 @@ export class SessionRuns {
       // Manifest-only: metadata captured, bytes never staged (too large/junk).
       throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
     }
-    if (!row.current_execution_id) {
-      // Phase 1 keys the byte fetch by the session's execution; with none we
-      // can't address Centaur staging.
+    // Fetch from the execution that captured the artifact (on the event since
+    // Centaur added execution_id); fall back to the session's current execution
+    // for artifacts captured before that, which only resolve while the session
+    // hasn't moved to a newer execution.
+    const executionId = artifact.executionId ?? row.current_execution_id;
+    if (!executionId) {
       throw new DomainError(502, 'artifact_unavailable', 'session has no execution to serve artifacts from');
     }
-    const bytes = await this.centaur.getArtifactBytes(row.current_execution_id, artifact.ref, {
+    const bytes = await this.centaur.getArtifactBytes(executionId, artifact.ref, {
       apiKey: this.artifactCaptureApiKey,
     });
     return { artifact, bytes };
