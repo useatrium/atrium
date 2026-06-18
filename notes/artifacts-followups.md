@@ -21,7 +21,19 @@ test-green. This tracks what's left.
 
 ## Open follow-ups
 
-### A1 — Proper sandbox→api-rs egress NetworkPolicy
+### A1 — Proper sandbox→api-rs egress NetworkPolicy ✅ DONE (2026-06-18)
+Chart template `sandbox-egress-api-rs.yaml` (gated on `apiRs.ironProxy.mode ==
+disabled`, `managed-by:api-rs → api-rs:port`) on `gb/api-rs-artifact-capture`
+(`c5d94d6`), integrated. Migration renumbered to `1000_artifact_blobs`; `ai_v2`
+reconciled; new api-rs image deployed + re-migrated clean (`20=readonly_only`,
+`21=etl`, `1000=artifact_blobs`). Chart policy applied live, manual band-aid
+retired, smoke test re-passed through it (15× 200, 0 timeouts, artifact stored).
+`infra/sandbox-egress-api-rs.yaml` is now redundant (kept as a reference). D1's
+Centaur side re-verified here; the Atrium-route live check still needs the
+surface server up.
+
+<details><summary>original scope</summary>
+
 Replace the manual `infra/sandbox-egress-api-rs.yaml` band-aid. With iron-proxy
 disabled (local), no per-sandbox egress policy is created and the static ones
 key on the legacy `centaur.ai/managed: "true"` label (api-rs sandboxes are
@@ -36,6 +48,7 @@ key on the legacy `centaur.ai/managed: "true"` label (api-rs sandboxes are
 - **Verify:** redeploy + re-run the live smoke test *without* the manual
   manifest. (Folds in D1.)
 - **Effort:** S.
+</details>
 
 ### A2 — Per-artifact `execution_id` on the wire
 Serve route falls back to the session's `current_execution_id`, so artifacts
