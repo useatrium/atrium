@@ -53,30 +53,45 @@ parity-first.
 **Current state.** Channels are chat surfaces backed by Postgres. STT exists from
 the voice work. No markdown-doc/editor surface yet; no file projection.
 
-**The real fork — how do agents search it?** Three options:
+**The model (resolving "is this separate from chat history?").** No — it *is* the
+existing chat history, not a parallel store. The notebook is a normal Atrium
+channel (your "chief of staff" channel): you type, record audio, edit markdown in
+the same surface as every channel, and **Postgres stays canonical**. What's new
+is a **materialized projection** — Atrium continuously renders that channel's
+messages + transcripts into a markdown file tree in a per-workspace
+`atrium-memory/` git repo:
 
-- **(A) Git-backed markdown repo per user**, mounted into sandboxes. The app is a
-  git-backed markdown editor; agents `grep`/`git log`/edit naturally; Postgres
-  holds a full-text mirror for the app's own search. Free versioning, diffs,
-  conflict resolution, multi-device sync. **Recommended.**
-- **(B) Plain markdown file tree** on a mounted artifact volume; Postgres holds
-  metadata + FTS. Simpler, but you hand-roll history/conflict handling.
-- **(C) Stays in Postgres**; expose an Atrium search MCP/tool to agents. This is
-  exactly the "custom tools/prompts bloat" you want to avoid; only justified for
-  cross-session/structured queries the file tree can't express.
+```text
+atrium-memory/
+  channels/chief-of-staff/2026-06.md
+  channels/<name>/<month>.md
+  sessions/<id>.md
+  index.jsonl
+```
 
-**MVP cut.** Notebook = a `braindump/` markdown tree (git-backed, option A).
-Audio message → blob in S3 + transcript text inline (the transcript is what's
-greppable). Basic markdown editor with live preview. App search = Postgres FTS;
-agent search = the mounted repo + ripgrep. No custom retrieval tool on day one.
+…mounted **read-only** into agent sandboxes. You interact with chat (canonical);
+agents `grep`/`rg`/`git log` the mirror (ergonomic, zero custom tools); git gives
+the mirror versioning + multi-device sync for free. The git repo is *how the
+projection is stored and mounted*, not a second source of truth. (This reconciles
+the earlier "git-backed repo" idea with "Postgres canonical" — git is the
+transport for the projection, Postgres is the truth.)
 
-**Main trap.** Bidirectional sync: app edits vs agent edits vs concurrent device.
-Git makes this tractable (3-way merge, last-writer-wins on conflict with history
-preserved) — which is the main argument for option A over B.
+**MVP cut.** Read-only projection. App search = Postgres FTS (already exists —
+migration `005_search_fts.sql`). Agent search = the mounted mirror + ripgrep.
+Audio message → blob in S3 + transcript inline (the transcript is what's
+greppable). Basic markdown editor with live preview. No custom retrieval tool.
 
-**Non-obvious improvement.** The "brain" repo doubles as agent memory: point your
-agents' memory/context at the same repo, so notes you take *become* agent context
-with no extra plumbing. One artifact, two readers.
+**Main trap.** Read-only sidesteps the sync problem; read-*write* (agents editing
+notes that sync back to Postgres) reintroduces a real bidirectional-conflict
+problem. For MVP, agent contributions arrive as **messages or artifacts** that
+re-materialize into the mirror — never direct edits to canonical state. Defer
+read-write until the conflict model is worth building.
+
+**Non-obvious improvement.** The same `atrium-memory/` mirror doubles as agent
+memory: point agents' memory/context at it, so notes you take *become* agent
+context with no extra plumbing. Codex independently proposed the same
+`atrium-memory/` tree plus per-day/week **"distillations"** (generated summaries,
+clearly derived from event IDs and reversible) — a strong fast-follow.
 
 ## 3. Artifact detection / backup / preview / markdown editing
 
@@ -138,20 +153,27 @@ repo is on disk, deps cached. Centaur's costs, in order of pain:
 
 **MVP cut.** One cloud box. The honest fork is the isolation model:
 
-- **k3s + fat warm pool + per-repo warm overlays** — keeps the whole Centaur
-  investment (harness adapters, event stream, HITL, pause/resume); just tune
-  warmth way up. Single-user, so a big idle pool is cheap.
-- **Process/Docker backend (no k8s)** — a new Centaur backend that runs the
-  harness as a process (or plain container) on the trusted box. Closest to tmux
-  latency; loses k8s isolation (fine for single-user/trusted) but is real new
-  work.
-- **Point Atrium at the existing M1** as the runtime — least work, validates the
-  whole product, but it's "local server" not "cloud daily driver."
+| Dimension | k3s + fat warm pool **(recommended)** | Process/Docker backend | Point at the M1 |
+|---|---|---|---|
+| Spawn latency | near-instant on warm-pool hit; cold = full provision. Per-(repo,branch) leases close most of the tmux gap | best — closest to tmux (no pod sched / PVC attach) | like agentboard locally + a surface→M1 network hop |
+| Isolation | strong: pod/namespace, network policy, per-pod iron-proxy | process/container only; fine on a trusted single-user box | your existing local trust model |
+| **BYO-subs coupling (#6, must-have)** | **keeps it** — iron-proxy + token-broker are k8s sidecar/Deployment-shaped today | **RISK** — brokered credential injection is k8s-shaped; non-k8s forces a re-wire | inherits whatever runs on the M1 |
+| New engineering | low: tune existing Centaur (bigger pool, per-repo overlays, leases) | high: a new non-k8s execution backend under Centaur | lowest: point centaur-client at Centaur-on-M1 |
+| Ops burden | moderate: run single-node k3s | simplest: a daemon + docker | none beyond today |
+| Failure mode | warm-pool exhaustion, image pull, PVC attach; single-node SPOF | noisy-neighbor, no net-policy isolation, blast radius on the box | M1 SPOF, home network, not portable |
+| Future (multiplayer) | scales to multi-node/multi-tenant naturally | rebuild needed for multi-tenant | validation only; migrate later |
 
-**Main trap.** Single box = SPOF + noisy-neighbor + warm-pool exhaustion under
-burst. Acceptable for one user; document the failure mode. The deeper question is
-whether you need k8s *isolation* at all for a single-user trusted box, or whether
-process/container isolation matches tmux latency at a fraction of the ceremony.
+**Recommendation: k3s on a US box.** The decider is **#6** — BYO subscriptions
+ride the per-pod iron-proxy + token-broker, which are k8s-shaped *today*. A
+process backend would force you to re-wire credential injection, spending your
+novelty budget exactly where you can least afford it. Warm per-(repo,branch)
+**leases** get most of tmux's speed without dropping k8s. Use **point-at-the-M1**
+as a zero-cost bring-up this week to validate end-to-end, then graduate to the box.
+
+**Main trap.** Warm pods alone do *not* match tmux — the real latency is auth +
+clone + checkout + dependency install + build-cache misses + volume attach (codex
+flagged this hard). Warm the *whole* lease (checkout + deps + caches), not just
+the pod. Single box is also SPOF + noisy-neighbor under burst; document it.
 
 **Non-obvious improvement.** Decouple "spawn agent" from "provision sandbox."
 Maintain a small warm pool *per hot repo/branch* so the interactive spawn is a
@@ -172,8 +194,16 @@ gray/tolerated; **Claude** = explicitly prohibited + server-side enforced.
 
 - **Codex** → your ChatGPT sub via the broker, captured as a *separate* Atrium
   login lineage (never reuse the laptop's `~/.codex/auth.json`).
-- **Claude** → either compliant API key, or a "BYO terminal" pane (below). Do not
-  route a Claude sub through a shared multi-tenant broker.
+- **Claude** → **do it like agentboard.** agentboard already runs `claude` as a
+  local CLI process with *your own* logged-in subscription — that's "ordinary
+  individual usage" on a machine you control, the same risk you accept today. The
+  prohibition + server-side enforcement target **multi-tenant hosted MITM**
+  (routing many users' subs through a shared broker), not you running your own
+  CLI. So: a **BYO-terminal / local-bridge pane** (run `claude` with your auth in
+  a PTY session you own — not the iron-proxy broker) is functionally identical to
+  agentboard and fine for single-player. One caveat: a hosted sandbox is slightly
+  more exposed than your laptop, and the calculus changes the day Atrium serves
+  other people's Claude subs — keep a compliant API-key path for that future.
 - **Gemini** → Gemini CLI with your Google login (free tier is OAuth); verify ToS
   for headless use; API-key fallback.
 
@@ -282,16 +312,79 @@ permanent, redacted archive that `cass` syncs into.
 - **Self-hosting an SFU for video on day one** — use managed (LiveKit/Daily) until
   scale justifies otherwise.
 
-## Open decisions (being asked interactively)
+## Open decisions
 
-1. **Runtime isolation model for the single box** (#5): k3s + fat warm pool vs
-   process/Docker backend vs point-at-the-M1.
-2. **Notebook storage model** (#2): git-backed repo (A) vs plain file tree (B) vs
-   Postgres + search tool (C).
-3. **Claude-on-subscription stance** (#6): API key vs BYO-terminal pane vs defer.
-4. **Day-1 milestone**: which capabilities actually unblock switching off
-   agentboard.
+1. **Runtime model** (#5): recommendation = **k3s on a US box** (decider: BYO-subs
+   couples to the k8s iron-proxy sidecar); M1 as a zero-cost bring-up step.
+   _User wanted the comparison table before deciding → provided above; awaiting pick._
+2. **Notebook model** (#2): resolved to **chat-canonical + read-only git mirror
+   projection**. Open sub-decision: keep agents **read-only** (recommended MVP) vs
+   later **read-write**.
+3. **Claude-on-subscription** (#6): **like agentboard** — BYO-terminal / local
+   bridge with your own auth (user's lean). API key kept as the multi-tenant-future
+   path.
+4. **Day-1 scope**: user marked **all four** bundles must-have (fast spawn + BYO,
+   notebook + artifacts, mobile + web, archival + watcher) → everything is in
+   scope, so the real lever is **sequencing** (proposed below), not cutting.
 
-## Codex (xhigh) feedback
+### Proposed sequence (since all four are must-have)
 
-_Pending — running in parallel; will be folded in when it returns._
+1. **Bring-up:** point Atrium at the M1; validate spawn → transcript → artifacts
+   end-to-end with no new infra.
+2. **Runtime:** stand up the k3s US box with a fat warm pool + per-(repo,branch)
+   leases. Wire BYO **Codex** via iron-proxy/broker; **Claude/Gemini** via the
+   BYO-terminal pane.
+3. **Notebook + artifacts:** chief-of-staff channel, audio→STT, markdown editor,
+   `atrium-memory/` read-only mirror; artifact capture→S3 + gallery preview/edit.
+4. **Archival + watcher:** raw `session_events` + external-jsonl blobs to S3,
+   redaction-as-projection, normalized search; ship the watcher CLI (sink into
+   `cass`).
+5. **Mobile:** EAS push + lockscreen voice capture; thin client over the sync
+   stream. Video/guests = fast-follow after the above.
+
+## Codex (xhigh) feedback — folded in
+
+Codex (gpt-5.5, xhigh) verified against the live repo + this machine. Where it
+sharpened the plan, it's already integrated above; the high-signal deltas:
+
+- **Verified on this machine:** both `~/.claude/projects/.../*.jsonl` and
+  `~/.codex/sessions/.../*.jsonl` exist. The **GUI desktop apps keep separate
+  stores** (Claude Desktop → `IndexedDB/...leveldb`, ChatGPT/Codex → app DBs), and
+  Anthropic docs say desktop/web/VS-Code history is separate from CLI. ⇒ "watch
+  the CLI dirs" and "ingest desktop apps" are **separate bets**; CLI is MVP,
+  GUI-app scraping is premature. Also: treat the **Codex jsonl schema as private**
+  (Claude's is documented; Codex's isn't) — parse defensively.
+- **Notebook:** keep Postgres canonical, materialize a read-only `atrium-memory/`
+  tree (`channels/<name>/<month>.md`, `sessions/<id>.md`, `index.jsonl`); giving
+  agents raw Postgres is "powerful but wrong as default" (couples them to schema +
+  perms + prod data). Add reversible **distillations**. → adopted in §2.
+- **Spin-up:** "warm pods alone do not match tmux" — model the lease by
+  **repo + branch + dependency hash**, show cold/warm/restored in the UI. → §5.
+- **Subs:** "productizing MITM credential injection is a bad foundation"; per-user
+  scoping isn't the hard part — **ToS, enforcement, revocation, credential blast
+  radius** are. Model a per-user **harness matrix**: `API` / `local subscription
+  bridge` / `unsupported`. → §6.
+- **Harness swapping:** Centaur *accepting a harness string ≠ Atrium support* —
+  the surface reducer is Codex + Claude/Amp-shaped today (verified in
+  `centaur-client`). Define a **canonical normalized event contract** (text / tool
+  call / tool result / file change / artifact / usage / question / status), store
+  raw forever, normalize for UI+search, and gate new harnesses with **conformance
+  fixtures** (replay real JSONL/SSE into the reducer). → strengthens §7's tiers.
+- **Archival:** **redaction must be a projection layer, not destructive mutation**
+  (full-fidelity archives contain secrets); content-hash idempotency in the
+  watcher. → §8.
+- **Artifacts trap:** current code still *proxies* artifact bytes from Centaur
+  staging in places (`getArtifactBytes` → `/agent/executions/.../artifacts/...`,
+  evictable) — that is **not an archive**. Offload to Atrium S3 on capture; add a
+  "promote artifact → durable channel item." → §3.
+- **Bad/premature (codex's list):** custom Atrium doc/todo format; native desktop
+  rewrite; desktop-app log scraping as MVP; multi-cloud k8s; full call recording;
+  **Claude-subscription MITM as a product.**
+- **Missing pieces codex stressed:** auth roles (owner/member/guest/**agent**/
+  service-account); secrets vault with `.env` denial + transcript-redaction
+  overlays; per-session file/network/repo policy with **first-class approval
+  logs**; notification priority (`agent needs answer` > `finished` > `artifact
+  ready` > digest); observability (warm-pool hit rate, spawn-latency phases,
+  tailer lag, dropped/replayed events, offload failures, cost/duration); data
+  export bundles; **Postgres FTS is enough for MVP — add vector search only after
+  lexical covers all raw + normalized data.**
