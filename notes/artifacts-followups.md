@@ -70,10 +70,19 @@ Periodic worker + presigned 302 + `session_artifacts` table (the chosen shape).
 - serve route: 302 presigned redirect once offloaded, else proxy from Centaur.
 - 218 server + 51 client tests green; reviewed (access gate, presign, worker
   locking/failure).
-- **Prod-hardening follow-ups (not blocking dev):** the offload batch holds a tx
-  across the Centaur fetch + S3 upload (claim-then-release with a `claimed_at`
-  column would avoid the long tx); evicted refs have no terminal mark (re-selected
-  each tick — cheap). Centaur staging GC after offload still deferred (needs a
+- **Prod-hardening — long tx + evicted terminal mark ✅ DONE (2026-06-18,
+  `gb/artifacts-offload-lease`):** the offload batch no longer holds a tx across
+  the Centaur fetch + S3 upload. Migration `032_artifact_offload_lease.sql` adds
+  `claimed_at` (lease) + `evicted_at` (terminal). `offloadArtifactBatch` now does
+  claim-then-release: a short tx stamps `claimed_at` on a `FOR UPDATE SKIP LOCKED`
+  batch and commits (releasing locks), then the fetch+upload run outside any tx,
+  with a short per-row tx to stamp the result. A stale claim (worker crashed
+  mid-upload) is reclaimable after the lease (`ARTIFACT_OFFLOAD_CLAIM_LEASE_MS`,
+  default 5 min). A Centaur 404 stamps `evicted_at` (terminal) so the row drops
+  out of the queue instead of re-claiming every lease. Queue index rebuilt to
+  exclude `evicted_at IS NOT NULL`. 219 server tests green (added a lease test +
+  extended the evicted-ref test); typecheck clean.
+- **Prod-hardening — Centaur staging GC after offload:** still deferred (needs a
   Centaur retention API).
 - **Live verify** (enable the worker, confirm offload → 302) pending with D1.
 

@@ -609,65 +609,82 @@ export class SessionRuns {
    * Offload one batch of staged artifacts (B1: S3 offload) from Centaur staging
    * into atrium's durable store. Runs on an interval (see artifact-offload.ts).
    *
-   * Each row is locked `FOR UPDATE SKIP LOCKED` so concurrent runs (or a second
-   * instance) never double-fetch the same artifact, and a slow upload doesn't
-   * block the rest of the batch. The lock is held for the whole row (fetch +
-   * upload + update) inside a transaction; that's deliberate so a crash mid-
-   * upload rolls back and the row stays in the queue.
+   * Claim-then-release (the lease): a batch is claimed in one SHORT transaction
+   * — `FOR UPDATE SKIP LOCKED` selects up-to-`limit` un-offloaded rows whose
+   * lease is free (never claimed, or claimed longer ago than the lease window)
+   * and stamps `claimed_at = now()` on them. The transaction commits and the row
+   * locks release immediately; the slow Centaur fetch + S3 upload then run
+   * OUTSIDE any transaction, one short tx per row to stamp the result. This is
+   * the key difference from the original single-transaction design, which held
+   * the row locks open across every network hop in the batch.
    *
-   * Failure handling is per-row and resilient: a Centaur 404 (ref evicted before
-   * we offloaded) is terminal — we leave the row un-offloaded but log + count it
-   * (its `centaur_ref` stays set, so it would retry; eviction is permanent in
-   * practice, but the queue index keeps it cheap and a future retention API
-   * could re-stage). Any other error is logged and counted; the batch continues.
+   * Concurrency: `SKIP LOCKED` stops two workers grabbing the same row in the
+   * same instant; the lease stops a second worker re-claiming a row whose first
+   * claimant is still uploading. A worker that crashes mid-upload leaves a stale
+   * `claimed_at`; once it ages past the lease the row is reclaimable again.
+   *
+   * Per-row outcomes: success stamps `s3_key`/`offloaded_at` (terminal); a
+   * Centaur 404 (ref evicted from staging before we offloaded) stamps
+   * `evicted_at` (terminal — drops out of the queue rather than re-claiming
+   * every lease); any other error is logged + counted and leaves the lease in
+   * place so the row is retried after it expires. One bad row never stops the
+   * batch.
    */
   async offloadArtifactBatch(limit = config.artifactOffloadBatchSize): Promise<ArtifactOffloadResult> {
     const result: ArtifactOffloadResult = { offloaded: 0, evicted: 0, failed: 0 };
-    // The whole batch runs in one transaction so the FOR UPDATE SKIP LOCKED row
-    // locks are held across each fetch+upload+update — a concurrent run (or a
-    // second instance) skips locked rows instead of double-offloading, and a
-    // crash mid-batch rolls back so the rows stay queued. Batch size is small,
-    // so the transaction stays short despite the network hops.
-    await withTx(this.pool, async (client) => {
-      const claimed = await client.query<SessionArtifactRow>(
-        `SELECT id, session_id, execution_id, centaur_ref, s3_key, path, mime,
-                size_bytes, sha256, offloaded_at
-         FROM session_artifacts
-         WHERE offloaded_at IS NULL AND centaur_ref IS NOT NULL
-         ORDER BY captured_at ASC
-         LIMIT $1
-         FOR UPDATE SKIP LOCKED`,
-        [limit],
-      );
-      for (const artifact of claimed.rows) {
-        try {
-          const outcome = await this.offloadOneArtifact(client, artifact);
-          if (outcome === 'offloaded') result.offloaded += 1;
-          else result.evicted += 1;
-        } catch (err) {
-          // One bad artifact must not stop the batch. The row's UPDATE never
-          // ran, so it stays queued for the next interval.
-          result.failed += 1;
-          console.warn('artifact offload failed', {
-            sessionId: artifact.session_id,
-            artifactId: artifact.id,
-            err,
-          });
-        }
+    const leaseSeconds = Math.max(1, Math.round(config.artifactOffloadClaimLeaseMs / 1000));
+    // Claim phase — one short transaction. The composite-key subquery takes the
+    // row locks (SKIP LOCKED) and the outer UPDATE stamps the lease on exactly
+    // those rows, then commits and releases the locks.
+    const claimed = await withTx(this.pool, (client) =>
+      client.query<SessionArtifactRow>(
+        `UPDATE session_artifacts SET claimed_at = now()
+         WHERE (session_id, id) IN (
+           SELECT session_id, id FROM session_artifacts
+           WHERE offloaded_at IS NULL AND evicted_at IS NULL AND centaur_ref IS NOT NULL
+             AND (claimed_at IS NULL OR claimed_at < now() - ($1::int * interval '1 second'))
+           ORDER BY captured_at ASC
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED
+         )
+         RETURNING id, session_id, execution_id, centaur_ref, s3_key, path, mime,
+                   size_bytes, sha256, offloaded_at`,
+        [leaseSeconds, limit],
+      ),
+    );
+    // Work phase — outside any transaction. A per-row failure leaves the lease
+    // in place (reclaimed after it expires) and never blocks the rest.
+    for (const artifact of claimed.rows) {
+      try {
+        const outcome = await this.offloadOneArtifact(artifact);
+        if (outcome === 'offloaded') result.offloaded += 1;
+        else result.evicted += 1;
+      } catch (err) {
+        result.failed += 1;
+        console.warn('artifact offload failed', {
+          sessionId: artifact.session_id,
+          artifactId: artifact.id,
+          err,
+        });
       }
-    });
+    }
     return result;
   }
 
-  /** Offload a single staged artifact: fetch bytes from Centaur, upload to S3,
-   * stamp `s3_key` + `offloaded_at` (in the batch transaction). Returns 'evicted'
-   * when Centaur 404s the ref (no bytes to copy); throws on any other failure so
-   * the caller counts it and leaves the row queued. */
+  /** Offload a single claimed artifact: fetch bytes from Centaur, upload to S3,
+   * then stamp `s3_key` + `offloaded_at` in a short transaction (well after the
+   * slow hops). Returns 'evicted' (stamping `evicted_at`, terminal) when Centaur
+   * 404s the ref; throws on any other failure so the caller counts it and leaves
+   * the lease in place to retry after it expires. */
   private async offloadOneArtifact(
-    client: DbClient,
     artifact: SessionArtifactRow,
   ): Promise<'offloaded' | 'evicted'> {
-    if (!artifact.execution_id || !artifact.centaur_ref) return 'evicted';
+    if (!artifact.execution_id || !artifact.centaur_ref) {
+      // The queue excludes null refs, so this shouldn't be claimed — but if a
+      // stray row is, mark it terminal so it doesn't sit leased forever.
+      await this.markArtifactEvicted(artifact);
+      return 'evicted';
+    }
     let bytes: ArtifactBytes;
     try {
       bytes = await this.centaur.getArtifactBytes(artifact.execution_id, artifact.centaur_ref, {
@@ -675,12 +692,13 @@ export class SessionRuns {
       });
     } catch (err) {
       if (err instanceof CentaurApiError && err.status === 404) {
-        // Ref evicted from staging before we offloaded. Nothing to copy; log +
-        // skip rather than hot-loop. Eviction is permanent in practice.
+        // Ref evicted from staging before we offloaded — the bytes are gone for
+        // good. Mark terminal (evicted_at) so the row leaves the queue.
         console.warn('artifact offload skipped: ref evicted from Centaur staging', {
           sessionId: artifact.session_id,
           artifactId: artifact.id,
         });
+        await this.markArtifactEvicted(artifact);
         return 'evicted';
       }
       throw err;
@@ -689,13 +707,26 @@ export class SessionRuns {
     const contentType = bytes.contentType || artifact.mime || 'application/octet-stream';
     const s3Key = artifactS3Key(artifact.session_id, artifact.id);
     await this.artifactStorage.uploadObject(s3Key, body, contentType);
-    await client.query(
+    // Single auto-committed statement — short, well after the network hops.
+    // Clearing claimed_at is tidy; offloaded_at already makes the row terminal.
+    await this.pool.query(
       `UPDATE session_artifacts
-       SET s3_key = $1, offloaded_at = now()
+       SET s3_key = $1, offloaded_at = now(), claimed_at = NULL
        WHERE session_id = $2 AND id = $3`,
       [s3Key, artifact.session_id, artifact.id],
     );
     return 'offloaded';
+  }
+
+  /** Mark an artifact terminally evicted: its Centaur ref is gone, so it can
+   * never offload. Drops it out of the queue (the index excludes evicted_at). */
+  private async markArtifactEvicted(artifact: SessionArtifactRow): Promise<void> {
+    await this.pool.query(
+      `UPDATE session_artifacts
+       SET evicted_at = now(), claimed_at = NULL
+       WHERE session_id = $1 AND id = $2`,
+      [artifact.session_id, artifact.id],
+    );
   }
 
   /** Replay the durable mirror into a reduced session state (transcript items +

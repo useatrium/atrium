@@ -32,6 +32,11 @@ export const config = {
   artifactOffloadEnabled: (process.env.ARTIFACT_OFFLOAD_ENABLED ?? '0') === '1',
   artifactOffloadIntervalMs: Number(process.env.ARTIFACT_OFFLOAD_INTERVAL_MS ?? 30_000),
   artifactOffloadBatchSize: Number(process.env.ARTIFACT_OFFLOAD_BATCH_SIZE ?? 10),
+  // The claim lease: how long a claimed-but-not-yet-offloaded artifact stays off
+  // the queue before another worker may reclaim it. Must comfortably cover one
+  // row's Centaur fetch + S3 upload; a worker that crashes mid-upload reclaims
+  // the row after this window. Default 5 min.
+  artifactOffloadClaimLeaseMs: Number(process.env.ARTIFACT_OFFLOAD_CLAIM_LEASE_MS ?? 300_000),
   // File uploads (MinIO in dev; any S3-compatible store in deployment).
   s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
   s3Bucket: process.env.S3_BUCKET ?? 'atrium-files',

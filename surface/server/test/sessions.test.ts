@@ -553,11 +553,13 @@ async function insertSessionArtifactRow(args: {
   sizeBytes?: number;
   s3Key?: string | null;
   offloadedAt?: string | null;
+  claimedAt?: string | null;
+  evictedAt?: string | null;
 }): Promise<void> {
   await pool.query(
     `INSERT INTO session_artifacts
-       (id, session_id, execution_id, centaur_ref, s3_key, path, mime, size_bytes, sha256, offloaded_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (id, session_id, execution_id, centaur_ref, s3_key, path, mime, size_bytes, sha256, offloaded_at, claimed_at, evicted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       args.artifactId,
       args.sessionId,
@@ -569,6 +571,8 @@ async function insertSessionArtifactRow(args: {
       args.sizeBytes ?? 1024,
       `${args.artifactId}-sha`,
       args.offloadedAt ?? null,
+      args.claimedAt ?? null,
+      args.evictedAt ?? null,
     ],
   );
 }
@@ -3154,18 +3158,86 @@ describe('Phase 2 sessions', () => {
     const result = await app.sessionRuns.offloadArtifactBatch();
 
     // Only the evicted row was eligible; it counts as evicted, not failed, and
-    // is left un-offloaded (no s3_key) — not hot-looping, just skipped.
+    // is left un-offloaded (no s3_key) but stamped terminal (evicted_at).
     expect(result).toEqual({ offloaded: 0, evicted: 1, failed: 0 });
     expect(fake.artifactRequests.map((r) => r.path)).toEqual([
       '/agent/executions/exe_fake/artifacts/blob-evicted',
     ]);
     expect(s3.objects.size).toBe(0);
-    const evicted = await pool.query<{ s3_key: string | null; offloaded_at: Date | null }>(
-      'SELECT s3_key, offloaded_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
+    const evicted = await pool.query<{
+      s3_key: string | null;
+      offloaded_at: Date | null;
+      evicted_at: Date | null;
+      claimed_at: Date | null;
+    }>(
+      'SELECT s3_key, offloaded_at, evicted_at, claimed_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
       [id, 'art-evicted'],
     );
     expect(evicted.rows[0]!.s3_key).toBeNull();
     expect(evicted.rows[0]!.offloaded_at).toBeNull();
+    // Terminal mark set, lease cleared.
+    expect(evicted.rows[0]!.evicted_at).not.toBeNull();
+    expect(evicted.rows[0]!.claimed_at).toBeNull();
+
+    // A terminally-evicted row drops out of the queue: a second batch finds
+    // nothing eligible (no re-claim every lease) and makes no Centaur request.
+    fake.artifactRequests.length = 0;
+    const rerun = await app.sessionRuns.offloadArtifactBatch();
+    expect(rerun).toEqual({ offloaded: 0, evicted: 0, failed: 0 });
+    expect(fake.artifactRequests).toEqual([]);
+    await app.close();
+  });
+
+  it('the offload worker honors the claim lease: skips an active claim, reclaims a stale one', async () => {
+    const s3 = fakeArtifactStorage();
+    const app = await buildApp({
+      pool,
+      sessionRuns: {
+        baseUrl: fake.url,
+        apiKey: 'session-key',
+        artifactCaptureApiKey: 'artifact-key',
+        artifactStorage: s3.storage,
+        autoResume: false,
+      },
+    });
+    await app.ready();
+    const id = await insertSessionRow({ title: 'offload lease', status: 'running' });
+    // A staged row already claimed "just now" (another worker is mid-upload):
+    // its lease is active, so this batch must not re-claim it.
+    await insertSessionArtifactRow({
+      sessionId: id,
+      artifactId: 'art-leased',
+      executionId: 'exe_fake',
+      centaurRef: 'blob-leased',
+      path: '/home/agent/workspace/out/leased.png',
+      mime: 'image/png',
+      claimedAt: new Date().toISOString(),
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    fake.artifactBytes.set('exe_fake/blob-leased', { body: png, contentType: 'image/png' });
+
+    const skipped = await app.sessionRuns.offloadArtifactBatch();
+    expect(skipped).toEqual({ offloaded: 0, evicted: 0, failed: 0 });
+    expect(fake.artifactRequests).toEqual([]); // never fetched — lease active
+    expect(s3.objects.size).toBe(0);
+
+    // Simulate the claimant crashing mid-upload: backdate the lease past its
+    // window (default 5 min). The row becomes reclaimable and offloads.
+    await pool.query(
+      "UPDATE session_artifacts SET claimed_at = now() - interval '1 hour' WHERE session_id = $1 AND id = $2",
+      [id, 'art-leased'],
+    );
+    const reclaimed = await app.sessionRuns.offloadArtifactBatch();
+    expect(reclaimed).toEqual({ offloaded: 1, evicted: 0, failed: 0 });
+    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
+      '/agent/executions/exe_fake/artifacts/blob-leased',
+    ]);
+    const row = await pool.query<{ s3_key: string | null; claimed_at: Date | null }>(
+      'SELECT s3_key, claimed_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
+      [id, 'art-leased'],
+    );
+    expect(row.rows[0]!.s3_key).toBe(`artifacts/${id}/art-leased`);
+    expect(row.rows[0]!.claimed_at).toBeNull(); // lease cleared on success
     await app.close();
   });
 
