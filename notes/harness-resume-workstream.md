@@ -43,12 +43,33 @@ establish a codeword, then `codex exec resume <id>` under varying home contents.
 
 Conclusion: restoring one JSONL file per session is enough for Codex. Light.
 
-### Claude resume — NOT RUN
+### Claude resume (2026-06-18, Claude Code 2.1.181) — DONE (CLI behavior)
 
-Greenfield: `crates/harness-server/src/claude.rs` has no resume logic (Codex-only
-today). Need to verify `claude --resume <id>` minimum file set (main transcript
-vs. also tasks/file-history/subagent sidecars) and project-key stability when the
-container checkout path changes. See plan §"Claude POC".
+Method: real `~/.claude` (auth lives in macOS keychain `Claude Code-credentials`
++ a logged-in account marker in the config dir — a bare fresh `CLAUDE_CONFIG_DIR`
+is "Not logged in"), isolated via a unique `/tmp` cwd so the session gets its own
+project-key. `claude -p --session-id <uuid>` to establish, `claude -p --resume
+<uuid>` to recall, moving files aside between turns.
+
+- Same dir, everything present → recalls. (baseline)
+- Transcript moved aside (sidecars remain) → `No conversation found with session
+  ID`, non-zero exit. ⇒ local-transcript-based, NOT server-side.
+- Transcript present, `session-env/<id>` sidecar removed → recalls. ⇒ the main
+  project transcript JSONL is sufficient; the session-env sidecar is not needed
+  for conversation continuity.
+
+Conclusion: like Codex, only the main transcript JSONL is needed. TWO Claude
+specifics that make its home heavier than Codex's:
+1. **Path-keyed.** Transcript lives at `~/.claude/projects/<sanitized-cwd>/<id>.jsonl`
+   — the project key is derived from cwd. Restoring the home is not enough; the
+   cwd must match (or place the JSONL under the matching project-key dir). Codex
+   indexes by thread-id (fs scan, cwd-agnostic on explicit-id resume).
+2. **Auth/account state.** Restore must include the logged-in account marker, not
+   just the JSONL (containers inject creds, so this is a restore-completeness note).
+
+Still greenfield in Centaur: `crates/harness-server/src/claude.rs` has no resume
+logic (Codex-only today) — the CLI supports `--resume`, but the harness path must
+be implemented (analogous to codex.rs's thread/resume branch).
 
 ### Centaur/Atrium sleep + fresh-container resume — NOT RUN
 
@@ -72,13 +93,17 @@ confirm continuous conversation.
       generation so the regression guard stays meaningful); update/replace the
       test that currently forbids it.
 - [ ] **Claude harness resume.** Implement resume in `harness-server` claude path
-      + run the Claude POC for the minimum file set.
+      (greenfield). POC done: only the main transcript JSONL is needed, BUT it is
+      path-keyed by cwd — restore must land it under the matching project-key dir
+      (or pin the cwd), plus carry the logged-in account state.
 - [ ] **Retention.** Per-session harness-home retention window; prune after the
       exact-resume window unless explicitly retained.
 
 ## Open questions (remaining)
 
-- Claude `--resume` minimum file set + project-key stability across checkout paths.
+- Claude project-key stability: the transcript path is derived from cwd, so the
+  container checkout path must be stable/remapped across rebuilds (POC confirmed
+  this matters; the min-file-set question itself is resolved — JSONL only).
 - Does app-server `thread/resume` care about `cwd` matching (we passed the same
   cwd in the POC; explicit-id lookup ignored cwd filtering, but the agent operates
   in `cwd`)?
