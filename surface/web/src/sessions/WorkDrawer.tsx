@@ -1,16 +1,35 @@
 // Work drawer (Phase 4) — one tabbed surface consolidating the session's work
-// products (Changes · Side-effects · Artifacts) behind a single peek→pin ladder.
-// Opened from the summary strips; tabs switch without closing. Peek = overlay
-// over the transcript; pinned = a persistent side pane the transcript reflows
-// beside (single swappable slot — the DevTools dock model).
+// products (Changes · Side-effects · Artifacts) behind a single peek→pin→detach
+// ladder. Opened from the summary strips; tabs switch without closing. Peek =
+// overlay over the transcript; pinned = a persistent side pane the transcript
+// reflows beside (single swappable slot — the DevTools dock model); detach =
+// the surface in its own browser tab (/s/:id/work/:tab), the top rung.
 
 import type { Artifact, FileChange, SideEffect } from '@atrium/centaur-client';
-import { PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
+import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { ArtifactsSurface } from './ArtifactsSurface';
 import { ChangesSurface } from './ChangesSurface';
 import { SideEffectsSurface } from './SideEffectsSurface';
 
 export type WorkTab = 'changes' | 'sideEffects' | 'artifacts';
+
+// URL-friendly slugs for the detach route (/s/:id/work/:slug). Kept here next to
+// WorkTab so the drawer's detach link and App's route parser stay in lockstep.
+export const TAB_SLUG: Record<WorkTab, string> = {
+  changes: 'changes',
+  sideEffects: 'side-effects',
+  artifacts: 'artifacts',
+};
+export const SLUG_TAB: Record<string, WorkTab> = {
+  changes: 'changes',
+  'side-effects': 'sideEffects',
+  artifacts: 'artifacts',
+};
+export const TAB_LABEL: Record<WorkTab, string> = {
+  changes: 'Changes',
+  sideEffects: 'Side-effects',
+  artifacts: 'Artifacts',
+};
 
 function Tab({
   active,
@@ -58,6 +77,7 @@ export function WorkDrawer({
   pinned,
   onTogglePin,
   canPin = true,
+  canDetach = true,
   onClose,
 }: {
   changes: FileChange[];
@@ -74,6 +94,9 @@ export function WorkDrawer({
   onTogglePin: () => void;
   /** Whether the pin control is offered (mobile/peek-only ceilings hide it). */
   canPin?: boolean;
+  /** Whether the detach-to-new-tab control is offered (hidden for pending
+   * sessions, which have no permalink yet). */
+  canDetach?: boolean;
   onClose: () => void;
 }) {
   // Only non-empty surfaces get a tab; if the active tab emptied out (or never
@@ -126,6 +149,18 @@ export function WorkDrawer({
           >
             {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
           </button>
+        )}
+        {canDetach && (
+          <a
+            href={`/s/${sessionId}/work/${TAB_SLUG[active]}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open ${TAB_LABEL[active]} in a new tab`}
+            aria-label={`Open ${TAB_LABEL[active]} in a new tab`}
+            className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+          >
+            <ExternalLinkIcon size={15} />
+          </a>
         )}
         <button
           onClick={onClose}

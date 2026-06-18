@@ -152,4 +152,23 @@ describe('WorkDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close work drawer' }));
     expect(props.onClose).toHaveBeenCalled();
   });
+
+  it('detaches the active surface to its own tab (/s/:id/work/:slug)', () => {
+    renderDrawer({ sessionId: 's-9', tab: 'changes' });
+    const detach = screen.getByRole('link', { name: /open changes in a new tab/i });
+    expect(detach.getAttribute('href')).toBe('/s/s-9/work/changes');
+    expect(detach.getAttribute('target')).toBe('_blank');
+    expect(detach.getAttribute('rel')).toContain('noopener');
+  });
+
+  it('the detach link uses the URL-safe slug for the active tab', () => {
+    renderDrawer({ tab: 'sideEffects' });
+    const detach = screen.getByRole('link', { name: /open side-effects in a new tab/i });
+    expect(detach.getAttribute('href')).toBe('/s/s-1/work/side-effects');
+  });
+
+  it('hides the detach control when canDetach is false (pending session)', () => {
+    renderDrawer({ canDetach: false });
+    expect(screen.queryByRole('link', { name: /in a new tab/i })).toBeNull();
+  });
 });

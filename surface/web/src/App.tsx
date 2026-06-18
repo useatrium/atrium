@@ -6,6 +6,8 @@ import { Toasts } from './components/Toasts';
 import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
+import { SessionWorkPage } from './sessions/SessionWorkPage';
+import { SLUG_TAB, type WorkTab } from './sessions/WorkDrawer';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
 function sessionIdFromPath(pathname: string): string | null {
@@ -13,7 +15,17 @@ function sessionIdFromPath(pathname: string): string | null {
   return m?.[1] ?? null;
 }
 
+/** /s/:id/work/:slug — the Detach rung: a single work surface in its own tab.
+ * Returns null for an unknown slug so we fall back to the normal app shell. */
+export function workRouteFromPath(pathname: string): { sessionId: string; tab: WorkTab } | null {
+  const m = /^\/s\/([^/]+)\/work\/([^/]+)$/.exec(pathname);
+  if (!m) return null;
+  const tab = SLUG_TAB[m[2]!];
+  return tab ? { sessionId: m[1]!, tab } : null;
+}
+
 export function App() {
+  const [workRoute] = useState(() => workRouteFromPath(location.pathname));
   const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -89,6 +101,10 @@ export function App() {
         Loading workspace…
       </div>
     );
+  else if (workRoute)
+    // Detached work surface in its own tab — a focused, full-viewport view of one
+    // surface, no channel shell (it folds the same live stream as the in-app pane).
+    body = <SessionWorkPage sessionId={workRoute.sessionId} tab={workRoute.tab} />;
   else
     body = (
       <Chat

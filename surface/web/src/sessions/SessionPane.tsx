@@ -586,6 +586,7 @@ export function SessionPane({
             onTab={setWorkTab}
             pinned={false}
             onTogglePin={togglePin}
+            canDetach={canDetach}
             onClose={closeWork}
           />
         )}
@@ -701,6 +702,7 @@ export function SessionPane({
               onTab={setWorkTab}
               pinned
               onTogglePin={togglePin}
+              canDetach={canDetach}
               onClose={closeWork}
             />
           </div>
