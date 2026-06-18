@@ -56,23 +56,56 @@ git fetch fork && git checkout atrium/integration
 ## Build And Deploy Centaur Locally
 
 The local Atrium deployment expects Centaur at `http://host.docker.internal:18000`.
-Artifact capture additionally requires `ARTIFACT_CAPTURE_API_KEY` (a dedicated key,
-not the control-plane `CENTAUR_API_KEY`) and `CENTAUR_API_URL` in the deploy values.
+
+**Docker build env (required on this Mac):** Docker Desktop's credential helper
+breaks `docker build`, but an empty `DOCKER_CONFIG` also hides the `buildx`
+plugin that the Dockerfiles' `RUN --mount` needs. Use a clean config that keeps
+the plugins, and enable BuildKit:
 
 ```sh
-cd ~/Code/centaur
+export DOCKER_CONFIG=/tmp/atrium-centaur-docker-config
+mkdir -p "$DOCKER_CONFIG"; echo '{}' > "$DOCKER_CONFIG/config.json"
+ln -sfn ~/.docker/cli-plugins "$DOCKER_CONFIG/cli-plugins"
+export DOCKER_BUILDKIT=1
+```
+
+```sh
+cd ~/Code/centaur            # on atrium/integration
 
 just build-one api-rs
 just build-one agent
 
 kind load docker-image centaur-api-rs:latest centaur-agent:latest --name centaur
 
+# Artifact capture: dedicated key on the api-rs pod (envFrom centaur-infra-env);
+# api-rs propagates it to sandboxes. NOT the control-plane CENTAUR_API_KEY.
+kubectl -n centaur patch secret centaur-infra-env --type merge \
+  -p "{\"stringData\":{\"ARTIFACT_CAPTURE_API_KEY\":\"$(openssl rand -hex 32)\"}}"
+
 CENTAUR_EXTRA_VALUES=~/Code/atrium/infra/values.local.yaml just deploy
 kubectl -n centaur rollout restart deploy/centaur-centaur-api-rs
 kubectl -n centaur rollout status deploy/centaur-centaur-api-rs --timeout=180s
 
+# Artifact capture egress (see note below) — required with iron-proxy disabled.
+kubectl apply -f ~/Code/atrium/infra/sandbox-egress-api-rs.yaml
+
 kubectl -n centaur port-forward deploy/centaur-centaur-api-rs 18000:8080
 ```
+
+### Artifact capture: sandbox→api-rs egress gap
+
+Verified end-to-end 2026-06-18, with one fix required. The capture worker in
+each sandbox POSTs to `api-rs:8080`, but with iron-proxy **disabled** (local
+values) no per-sandbox egress NetworkPolicy is created, and the cluster's static
+sandbox egress policies key on the **legacy** `centaur.ai/managed: "true"` label
+— while api-rs-managed sandboxes carry `centaur.ai/managed-by: api-rs`. So they
+match no egress policy and `default-deny` blocks the POST (httpx ConnectTimeout).
+`infra/sandbox-egress-api-rs.yaml` allows `managed-by: api-rs` sandboxes →
+`api-rs:8080` (api-rs ingress already admits `managed-by: api-rs`).
+
+**Proper fix (Centaur side, follow-up):** the api-rs k8s sandbox backend (or the
+chart) should create this egress allowance for `managed-by: api-rs` sandboxes
+when iron-proxy is off, rather than relying on this manual manifest.
 
 In another shell:
 
