@@ -82,3 +82,107 @@ glue (daemon, no-ingress notify, promotion policy) is identical.
 
 A one-page recommendation (chosen backing + why, scored rubric, the conflict-UX
 finding, and the v1 build list for the chosen path) appended here.
+
+---
+
+## Outcome (2026-06-19): **recommend Option B — extend our own CAS-ledger**
+
+Both tracks were stood up and **run live** against the dev stack (Docker:
+postgres `:5433` + MinIO `:9000` + lakeFS 1.82.0 with a Postgres KV and the
+MinIO S3 blockstore). Every number and behavior below is from an actual
+execution, not estimated. The prior lean held — and survived a real look at
+lakeFS: lakeFS lost on **both** heavily-weighted dimensions (#1 conflict-fit,
+#6 ops) while being a wash everywhere it was supposed to win.
+
+### Scored rubric (1–5; **#1 and #6 weighted heaviest**)
+
+| # | Dimension | **Own CAS-ledger** | **lakeFS (OSS)** | Evidence |
+|---|-----------|:---:|:---:|----------|
+| 1 | **Conflict/merge fit** ⚖️ | **5** | **2** | Own: first-class `status=conflict` version storing **both sides** jj-style (markers + `conflict` jsonb), resolve later — proven. lakeFS: whole-object only; conflicting merge → **HTTP 409 abort**, or `strategy=dest-wins` **silently discards** the loser's whole edit. No conflict-state. |
+| 2 | Egress-only fit | 5 | 5 | Own pipeline already egress-only (Centaur→our S3). lakeFS S3-gateway + REST are purely outbound. |
+| 3 | Pointers & lineage | **5** | 3 | Own: explicit `pointers` + `lineage` tables; stale-downstream join proven. lakeFS: great commit-DAG/branches/tags for *pointers*, but **cross-artifact provenance is not native** — you'd track lineage externally anyway. |
+| 4 | Large binaries | 4 | 4 | Parity (see below); both bounded by local MinIO. lakeFS edge: native gateway multipart. Own edge: writes **direct to S3, no proxy hop** in prod. |
+| 5 | Access control | **3** | 2 | Own: presigned-GET + Postgres row scoping; per-channel/tenant model is our SQL to write. lakeFS **OSS**: `/auth/policies`, `/auth/groups`, group ACLs **all 501 Not Implemented** — single-admin; prefix/tenant RBAC is Cloud/Enterprise. |
+| 6 | **Operational burden** ⚖️ | **3** | **2** | Own: our migrations + GC + multipart, but **reuses** the existing lease worker + `s3.ts` + PG. lakeFS: net-new **server + dedicated KV DB**, and committed-GC is a **separate Spark job**. |
+| 7 | Time-to-v1 | **4** | 3 | Own: ~900 LOC mostly-glue on existing scaffolding (built+run in one pass). lakeFS: versioning is free, but you still migrate the `session_artifacts` pipeline onto it, build lineage separately, **and** build conflict-state on top (or accept its merge semantics). |
+| 8 | Notify/invalidation hookability | 5 | 5 | Own: LISTEN/NOTIFY or outbox on `pointers`/`artifact_versions` writes (trivial). lakeFS: Actions/webhooks fire a structured `post-commit` JSON to our event-log listener — **proven** (`run=completed`). |
+| 9 | Search/query | **5** | 3 | Own: full SQL over versions/pointers/lineage incl. jsonb conflict payload. lakeFS: commit-log/diff/listing are good; arbitrary metadata facets (mime/size/tenant) need a side index — it's not a SQL store. |
+| | **Raw total** | **39** | **29** | weighted gap is larger: on #1+#6 alone, **8 vs 4**. |
+
+### The conflict-UX finding (the make-or-break)
+
+This was the whole reason to spike rather than just pick. **lakeFS merge is
+whole-object 3-way only.** Two branches edited the same line off a common base:
+the first merge was clean (`HTTP 200`); the second returned **`HTTP 409` with an
+empty `reference`** (the body doesn't even name the conflicting lines), aborting
+the merge. The only resolution knobs are whole-object **`source-wins` /
+`dest-wins` / fail** — running `dest-wins` kept main's version and **threw the
+other agent's entire edit away**. There is no native way to record "both sides,
+resolve later." To get jj-style conflict-state on lakeFS you would store
+conflict-marker bytes as the object yourself and track conflict status
+out-of-band — i.e. **rebuild the exact mechanism the own-track already has, on
+top of a store that fought you.** The own-track, by contrast, recorded the
+collision as a first-class `seq=3, status=conflict` version whose blob carries
+`<<<<<<< LEFT / ||||||| BASE / ======= / >>>>>>> RIGHT` plus a `conflict` jsonb
+with each side's label/author/sha — verified live. **This single finding is
+decisive given #1's weight.**
+
+### 500 MB parity check (whole-object, no CDC — both)
+
+| | hash | upload | download | integrity |
+|---|---|---|---|---|
+| Own (32×16 MB multipart → MinIO) | 254 ms (1970 MB/s) | 5028 ms (**99 MB/s**) | 3389 ms (**148 MB/s**) | ✅ sha match |
+| lakeFS (S3-gateway PutObject → MinIO) | 274 ms | 4531 ms (**110 MB/s**) | 3744 ms (**134 MB/s**) | ✅ sha match |
+
+At parity. lakeFS's gateway multipart is marginally faster up; own is faster
+down and, in prod, avoids lakeFS's extra proxy hop by writing straight to S3.
+Large binaries are **not** a differentiator.
+
+### Why not lakeFS, in one line
+
+The part everyone assumes lakeFS saves — the version/Merkle/branch engine — is
+the **cheap** part for us (~900 LOC, ~half reused). The parts we actually need —
+**jj-style conflict-state** and **per-tenant/channel scoping** — are exactly
+what OSS lakeFS *can't* give (whole-file merge; RBAC paywalled), so we'd build
+them on top anyway, while also operating a new stateful server + KV + Spark GC.
+Its one genuine strength (event hookability) we match trivially on Postgres.
+
+### v1 build list for the chosen path (own CAS-ledger)
+
+New code on top of the existing `session_artifacts` capture pipeline (TS + SQL):
+
+| Component | LOC |
+|---|---|
+| Schema migration (version chain, pointers, lineage, conflict cols/checks/indexes) | 60–100 |
+| Version-chain + pointer-advance write path (commit-by-hash, dedup via HeadObject, base_seq) | 90–140 |
+| **Write-back PUT endpoint** (client upload → hash → version → pointer; pipeline is capture-only today) | 100–160 |
+| Read-by-pointer serve route (resolve latest/official/pin → presigned redirect; extends `getArtifactServePlan`) | 50–80 |
+| **Conflict-state + 3-way merge** (robust diff3 — pull a lib, don't ship the hand-rolled one; record both-sides version) | 120–180 |
+| Lineage edges + stale-downstream query/API | 50–90 |
+| Multipart upload helper (no `lib-storage` in tree today) | 60–100 |
+| GC (unreferenced-blob sweep; clone the lease worker) | 80–130 |
+| Wiring / types / tests | 80–140 |
+| **Total** | **~690–1120 (~900 midpoint)** |
+
+**Already built & reusable** (shrinks the above): `src/s3.ts`
+(`uploadObject`/`presignGet`/`presignPut`/`deleteObject`, used as-is), sha256
+capture in `recordArtifact`, the **claim-then-release lease worker**
+(`offloadArtifactBatch`/`artifact-offload.ts`) which GC clones almost verbatim,
+and the presigned-redirect path in `getArtifactServePlan`. The net-new surface
+is the ledger tables + write-back + conflict-state.
+
+### Scope notes / not blockers
+
+- **CDC/chunk-dedup stays deferred** (both candidates do whole-object; own does
+  sha256 whole-object dedup — proven by the skipped re-PUT). Revisit only if
+  near-dup large binaries dominate storage cost.
+- The **glue is identical either way** (capture daemon, no-ingress invalidation,
+  promotion policy) — it does not move the decision.
+- Caveat carried from `agent-data-architecture.md`: **mid-session inbound sync**
+  (pulling edits back into a *running* no-ingress sandbox) is separate, new
+  Centaur work and is not affected by this choice.
+- The v1 conflict merge must swap the spike's hand-rolled line-diff3 for a
+  battle-tested diff3 lib (the spike's first pass had a replace-line bug).
+
+**Decision: build Option B (extend own CAS-ledger).** Lean confirmed, not
+falsified; lakeFS got its real look and lost on the weighted axes.
