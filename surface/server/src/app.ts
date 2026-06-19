@@ -49,8 +49,9 @@ import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
-import { deleteObject, ensureBucket, presignGet, presignPut } from './s3.js';
+import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut, uploadObject } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import { writeBackArtifact } from './artifact-writeback.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
@@ -109,6 +110,21 @@ function isUniqueViolation(err: unknown): boolean {
 function sanitizeFilename(name: string): string {
   const cleaned = name.replace(/[^\w.\- ]+/g, '_').trim();
   return cleaned.length > 0 ? cleaned.slice(0, 255) : 'artifact';
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function normalizeMime(value: string | undefined): string {
+  const mime = (value ?? '').split(';', 1)[0]!.trim().toLowerCase();
+  return /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime : 'application/octet-stream';
+}
+
+function parseBaseSeq(value: string | undefined): number | null | false {
+  if (value == null || value.trim() === '') return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : false;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -1882,6 +1898,75 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.code(201).send({ fileId, uploadUrl, existing: false });
   });
 
+  // === writeback route ===
+  await app.register(async (writeback) => {
+    writeback.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+
+    writeback.put('/api/channels/:channelId/artifacts', async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const { channelId } = req.params as { channelId: string };
+      if (!(await canAccessChannel(pool, user.id, channelId))) {
+        return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+      }
+
+      const query = req.query as { path?: unknown; session?: unknown };
+      const headerPath = firstHeader(req.headers['x-artifact-path']);
+      const queryPath = typeof query.path === 'string' ? query.path.trim() : '';
+      const path = (queryPath || headerPath?.trim() || '').trim();
+      if (!path || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_request', message: 'valid artifact path required' });
+      }
+
+      const sessionId = typeof query.session === 'string' ? query.session.trim() : '';
+      if (!/^[0-9a-f-]{36}$/i.test(sessionId)) {
+        return reply.code(400).send({ error: 'bad_request', message: 'session query parameter required' });
+      }
+      const session = await pool.query<{ id: string }>(
+        `SELECT id FROM sessions WHERE id = $1 AND channel_id = $2`,
+        [sessionId, channelId],
+      );
+      if (!session.rows[0]) {
+        return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+      }
+
+      const body = Buffer.isBuffer(req.body)
+        ? req.body
+        : req.body instanceof Uint8Array
+          ? Buffer.from(req.body)
+          : Buffer.alloc(0);
+      const mime = normalizeMime(firstHeader(req.headers['content-type']));
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+
+      const result = await writeBackArtifact({
+        pool,
+        storage: { uploadObject, getObjectBytes },
+        channelId,
+        sessionId,
+        path,
+        bytes: body,
+        mime,
+        author: `human:${user.id}`,
+        ...(baseSeq == null ? {} : { baseSeq }),
+      });
+      if (!result.ok) {
+        return reply.code(409).send({
+          error: result.reason === 'stale_base' ? 'stale_base' : result.reason,
+          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+        });
+      }
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
   app.post('/api/uploads/:fileId/refresh', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
@@ -2151,6 +2236,52 @@ function rawSession(req: FastifyRequest): string | undefined {
       // Durable bytes in atrium's store: short-lived presigned redirect (the
       // presign carries the inline/attachment Content-Disposition). Matches the
       // file-serve route's 302-to-S3 pattern.
+      return reply.redirect(plan.url, 302);
+    }
+    const { artifact, bytes } = plan;
+    const mime = artifact.mime || 'application/octet-stream';
+    const inline = mime.startsWith('image/');
+    const filename = basename(artifact.path) || 'artifact';
+    reply.header('Content-Type', mime);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename="${sanitizeFilename(filename)}"`,
+    );
+    if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
+    if (!bytes.body) return reply.send(Buffer.alloc(0));
+    return reply.send(Readable.fromWeb(bytes.body));
+  });
+
+  // === serve route ===
+  app.get('/api/sessions/:id/artifacts/by-path', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string; at?: string };
+    const path = q.path;
+    if (typeof path !== 'string' || path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    const at = q.at ?? 'latest';
+    const ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
+    let plan: Awaited<ReturnType<typeof sessionRuns.getLedgerServePlan>>;
+    try {
+      plan = await sessionRuns.getLedgerServePlan(id, path, ref);
+    } catch (err) {
+      if (err instanceof CentaurApiError) {
+        if (err.status === 404) {
+          return reply
+            .code(410)
+            .send({ error: 'artifact_gone', message: 'artifact bytes are no longer available' });
+        }
+        return reply
+          .code(502)
+          .send({ error: 'artifact_upstream_error', message: 'failed to fetch artifact from Centaur' });
+      }
+      throw err;
+    }
+    if (plan.kind === 'redirect') {
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;

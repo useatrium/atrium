@@ -86,3 +86,14 @@ export async function downloadObject(key: string, destinationPath: string): Prom
   if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
   await pipeline(res.Body as NodeJS.ReadableStream, createWriteStream(destinationPath));
 }
+
+// === writeback additions ===
+export async function getObjectBytes(key: string): Promise<Buffer> {
+  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+  if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
+  const chunks: Buffer[] = [];
+  for await (const chunk of res.Body as AsyncIterable<Buffer | Uint8Array | string>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}

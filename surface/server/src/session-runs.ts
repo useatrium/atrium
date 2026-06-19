@@ -21,7 +21,7 @@ import {
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { ArtifactLedger } from './artifact-ledger.js';
+import { ArtifactLedger, casBlobKey, type MergeClass, type VersionRef } from './artifact-ledger.js';
 import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
 import {
   appendEvent,
@@ -610,6 +610,58 @@ export class SessionRuns {
     return { kind: 'proxy', artifact, bytes };
   }
 
+  // === serve additions ===
+
+  async getLedgerServePlan(sessionId: string, path: string, ref: VersionRef): Promise<ArtifactServePlan> {
+    const v = await this.artifactLedger.resolveVersion(sessionId, path, ref);
+    if (!v) {
+      throw new DomainError(404, 'artifact_not_found', 'artifact not found');
+    }
+    if (v.kind === 'deleted') {
+      throw new DomainError(410, 'artifact_deleted', 'artifact was deleted');
+    }
+    if (v.s3Key) {
+      const filename = basename(path) || 'artifact';
+      const inline = (v.mime || '').startsWith('image/');
+      const url = await this.artifactStorage.presignGet(v.s3Key, filename, inline);
+      return { kind: 'redirect', url };
+    }
+    if (!v.blobSha) {
+      throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
+    }
+    const staged = await this.pool.query<{ execution_id: string | null; centaur_ref: string }>(
+      `SELECT execution_id, centaur_ref FROM session_artifacts
+       WHERE session_id = $1 AND sha256 = $2 AND centaur_ref IS NOT NULL
+       ORDER BY captured_at DESC LIMIT 1`,
+      [sessionId, v.blobSha],
+    );
+    const stagingRef = staged.rows[0];
+    if (!stagingRef) {
+      throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
+    }
+    if (!stagingRef.execution_id) {
+      throw new DomainError(502, 'artifact_unavailable', 'session has no execution to serve artifacts from');
+    }
+    const bytes = await this.centaur.getArtifactBytes(stagingRef.execution_id, stagingRef.centaur_ref, {
+      apiKey: this.artifactCaptureApiKey,
+    });
+    return {
+      kind: 'proxy',
+      artifact: {
+        id: v.artifactId,
+        path,
+        kind: v.kind,
+        mime: v.mime || 'application/octet-stream',
+        size: Number(v.sizeBytes ?? 0),
+        sha256: v.blobSha,
+        ref: stagingRef.centaur_ref,
+        executionId: stagingRef.execution_id,
+        sourceEventIds: [],
+      },
+      bytes,
+    };
+  }
+
   /**
    * Offload one batch of staged artifacts (B1: S3 offload) from Centaur staging
    * into atrium's durable store. Runs on an interval (see artifact-offload.ts).
@@ -690,28 +742,31 @@ export class SessionRuns {
       await this.markArtifactEvicted(artifact);
       return 'evicted';
     }
-    let bytes: ArtifactBytes;
-    try {
-      bytes = await this.centaur.getArtifactBytes(artifact.execution_id, artifact.centaur_ref, {
-        apiKey: this.artifactCaptureApiKey,
-      });
-    } catch (err) {
-      if (err instanceof CentaurApiError && err.status === 404) {
-        // Ref evicted from staging before we offloaded — the bytes are gone for
-        // good. Mark terminal (evicted_at) so the row leaves the queue.
-        console.warn('artifact offload skipped: ref evicted from Centaur staging', {
-          sessionId: artifact.session_id,
-          artifactId: artifact.id,
+    const s3Key = casBlobKey(artifact.sha256);
+    if (!(await this.artifactLedger.blobIsOffloaded(artifact.sha256))) {
+      let bytes: ArtifactBytes;
+      try {
+        bytes = await this.centaur.getArtifactBytes(artifact.execution_id, artifact.centaur_ref, {
+          apiKey: this.artifactCaptureApiKey,
         });
-        await this.markArtifactEvicted(artifact);
-        return 'evicted';
+      } catch (err) {
+        if (err instanceof CentaurApiError && err.status === 404) {
+          // Ref evicted from staging before we offloaded — the bytes are gone for
+          // good. Mark terminal (evicted_at) so the row leaves the queue.
+          console.warn('artifact offload skipped: ref evicted from Centaur staging', {
+            sessionId: artifact.session_id,
+            artifactId: artifact.id,
+          });
+          await this.markArtifactEvicted(artifact);
+          return 'evicted';
+        }
+        throw err;
       }
-      throw err;
+      const body = bytes.body ? Buffer.from(await new Response(bytes.body).arrayBuffer()) : Buffer.alloc(0);
+      const contentType = bytes.contentType || artifact.mime || 'application/octet-stream';
+      await this.artifactStorage.uploadObject(s3Key, body, contentType);
     }
-    const body = bytes.body ? Buffer.from(await new Response(bytes.body).arrayBuffer()) : Buffer.alloc(0);
-    const contentType = bytes.contentType || artifact.mime || 'application/octet-stream';
-    const s3Key = artifactS3Key(artifact.session_id, artifact.id);
-    await this.artifactStorage.uploadObject(s3Key, body, contentType);
+    await this.artifactLedger.stampBlobS3Key(artifact.sha256, s3Key);
     // Single auto-committed statement — short, well after the network hops.
     // Clearing claimed_at is tidy; offloaded_at already makes the row terminal.
     await this.pool.query(
@@ -1604,6 +1659,7 @@ export class SessionRuns {
     );
     if (frame.event === 'artifact.captured') {
       await this.recordArtifact(id, frame.data);
+      await this.ingestCapturedArtifactToLedger(id, frame.data);
     }
   }
 
@@ -1633,6 +1689,41 @@ export class SessionRuns {
         data.sha256,
       ],
     );
+  }
+
+  // === bridge additions ===
+  private async ingestCapturedArtifactToLedger(
+    sessionId: string,
+    data: Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'],
+  ): Promise<void> {
+    try {
+      const session = await this.pool.query<{ channel_id: string }>(
+        'SELECT channel_id FROM sessions WHERE id = $1',
+        [sessionId],
+      );
+      const channelId = session.rows[0]?.channel_id;
+      if (!channelId) {
+        console.warn('artifact ledger ingest skipped: session not found', { sessionId, path: data.path });
+        return;
+      }
+      await this.artifactLedger.commitVersion({
+        sessionId,
+        channelId,
+        path: data.path,
+        blobSha: data.kind === 'deleted' ? null : data.sha256,
+        sizeBytes: data.size_bytes,
+        mime: data.mime,
+        author: `agent:${sessionId}`,
+        kind: data.kind,
+        mergeClass: mergeClassForMime(data.mime),
+      });
+    } catch (err) {
+      console.warn('artifact ledger ingest failed', {
+        sessionId,
+        path: data.path,
+        err,
+      });
+    }
   }
 
   private async foldFrame(id: string, frame: CentaurEventFrame): Promise<void> {
@@ -2276,10 +2367,16 @@ function isCentaurCode(err: unknown, code: string): boolean {
   return err instanceof CentaurApiError && err.code === code;
 }
 
-/** S3 key for an offloaded artifact's bytes. Content-hash id keeps it stable +
- * collision-free; the session prefix scopes it for lifecycle/debugging. */
-function artifactS3Key(sessionId: string, artifactId: string): string {
-  return `artifacts/${sessionId}/${artifactId}`;
+function mergeClassForMime(mime: string): MergeClass | undefined {
+  const normalized = mime.toLowerCase().split(';', 1)[0]?.trim() ?? '';
+  if (
+    normalized.startsWith('text/') ||
+    normalized.endsWith('/markdown') ||
+    normalized === 'application/json'
+  ) {
+    return 'mergeable-doc';
+  }
+  return undefined;
 }
 
 /** First defined, non-empty string in the list (config env defaults are ''). */

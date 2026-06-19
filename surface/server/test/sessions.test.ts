@@ -3099,17 +3099,19 @@ describe('Phase 2 sessions', () => {
       '/agent/executions/exe_fake/artifacts/blob-1',
     ]);
     expect(fake.artifactApiKeys).toEqual(['artifact-key']);
-    // Uploaded the bytes to the deterministic key with the reported mime.
-    const uploaded = s3.objects.get(`artifacts/${id}/art-1`);
+    // Uploaded the bytes to the content-addressed CAS key (cas/<first2>/<sha>)
+    // with the reported mime — the offload re-key for global dedup.
+    const casKey = `cas/ar/art-1-sha`; // casBlobKey('art-1-sha')
+    const uploaded = s3.objects.get(casKey);
     expect(uploaded).toBeDefined();
     expect(Buffer.from(uploaded!.body)).toEqual(Buffer.from(png));
     expect(uploaded!.contentType).toBe('image/png');
-    // The row is stamped offloaded with the s3_key.
+    // The row is stamped offloaded with the CAS s3_key.
     const row = await pool.query<{ s3_key: string | null; offloaded_at: Date | null }>(
       'SELECT s3_key, offloaded_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
       [id, 'art-1'],
     );
-    expect(row.rows[0]!.s3_key).toBe(`artifacts/${id}/art-1`);
+    expect(row.rows[0]!.s3_key).toBe(casKey);
     expect(row.rows[0]!.offloaded_at).not.toBeNull();
     await app.close();
   });
@@ -3236,7 +3238,7 @@ describe('Phase 2 sessions', () => {
       'SELECT s3_key, claimed_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
       [id, 'art-leased'],
     );
-    expect(row.rows[0]!.s3_key).toBe(`artifacts/${id}/art-leased`);
+    expect(row.rows[0]!.s3_key).toBe(`cas/ar/art-leased-sha`); // casBlobKey('art-leased-sha')
     expect(row.rows[0]!.claimed_at).toBeNull(); // lease cleared on success
     await app.close();
   });

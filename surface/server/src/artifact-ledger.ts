@@ -36,6 +36,13 @@ export interface ResolvedVersion {
   s3Key: string | null;
 }
 
+export interface ChangedArtifact {
+  path: string;
+  seq: number;
+  sha: string | null;
+  kind: VersionKind;
+}
+
 export interface CommitVersionParams {
   sessionId: string;
   channelId: string;
@@ -192,6 +199,39 @@ export class ArtifactLedger {
        ON CONFLICT (artifact_id, name) DO UPDATE SET seq = EXCLUDED.seq, updated_at = now()`,
       [artifactId, name, seq],
     );
+    await client.query("SELECT pg_notify('artifact_advanced', $1)", [
+      JSON.stringify({ artifactId, name, seq }),
+    ]);
+  }
+
+  // === gc additions ===
+
+  /** C1 change-feed source: latest changed version per path after a watermark. */
+  async changedSince(sessionId: string, sinceIso: string): Promise<ChangedArtifact[]> {
+    const res = await this.pool.query<{
+      path: string;
+      seq: number;
+      sha: string | null;
+      kind: VersionKind;
+    }>(
+      `WITH changed AS (
+         SELECT a.path, v.seq, v.blob_sha AS sha, v.kind, v.created_at,
+                row_number() OVER (
+                  PARTITION BY a.path
+                  ORDER BY v.created_at DESC, v.seq DESC
+                ) AS rn
+           FROM artifacts a
+           JOIN artifact_versions v ON v.artifact_id = a.id
+          WHERE a.session_id = $1
+            AND v.created_at > $2::timestamptz
+       )
+       SELECT path, seq, sha, kind
+         FROM changed
+        WHERE rn = 1
+        ORDER BY created_at ASC, path ASC`,
+      [sessionId, sinceIso],
+    );
+    return res.rows;
   }
 
   // === the orchestrated write (capture-bridge + clean write-back) ==========
