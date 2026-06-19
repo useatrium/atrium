@@ -1,5 +1,18 @@
 # CAS-ledger — full design + build plan
 
+> **STATUS (2026-06-19): v1 BUILT on `feat/cas-ledger`** (local, unpushed; off
+> `master`). Foundation + all 4 codex lanes merged + reviewed; **full suite green,
+> 242 tests** (local Postgres 16 on :5433). Built: mig 033 ledger, `ArtifactLedger`
+> core, capture-bridge + CAS re-key, serve-latest-by-path, write-back PUT +
+> node-diff3 conflict-state, blob-GC worker + C1 NOTIFY/changed-since hooks.
+> **Deferred:** client-side gallery by-path reducer view; version-chain
+> compaction (only blob-GC this round); live-stack verification (offload→serve,
+> write-back route) — tested by unit/integration suite, not yet run against the
+> deployed cluster. **C2 overlay DROPPED** (sandbox can't mount: non-root/no-caps);
+> **C3 large-file** needs Centaur object store (16 MiB ceiling today); **C1
+> inbound-sync** is the next Centaur effort (`notes/inbound-sync-spec.md`).
+
+
 The durable artifact CAS-ledger decided in `spike-artifact-store.md` (own
 CAS-ledger over lakeFS, 39–29), planned inside the bigger picture it lives in:
 workspace execution, capture, durable versioning, and no-ingress sync. Companion
