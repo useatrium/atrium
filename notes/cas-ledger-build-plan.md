@@ -418,3 +418,60 @@ Branch off clean `master` as `feat/cas-ledger`. Core ingest is sequential, so:
    channel now.
 4. **Scope of this fan-out round** — capture-bridge substrate only, vs. also pull
    in human write-back + conflict-state (node-diff3) this round.
+
+## 9. Hand-compute findings — concurrent shared editing (2026-06-19)
+
+Hand-computed (skill: hand-compute) two agents + a human editing one shared doc
+against the *built* `commitVersion`, to test "does it work while pulling in remote
+changes mid-edit." It mostly doesn't yet — the built ledger is **session-scoped +
+blind-append**. Five findings, each grounded in the shipped code:
+
+1. **Blind-append capture silently loses updates on a shared chain.** Capture calls
+   `commitVersion` with no `baseSeq` → `effectiveBase = latest.seq`, so it can never
+   trip `stale_base` (`artifact-ledger.ts:277`); dedup only checks byte-equality
+   (`:281–288`). Trace: A and B both hydrate v1, both edit, A captures (→v2), B
+   captures (→v3, base_seq=2) — v3 = B's bytes, **A's v2 is buried**, no conflict.
+   The optimistic-clobber shape, in the capture path. **Fix:** shared-artifact
+   captures must be **base-aware** — pass the hydrated `base_seq`, hit the existing
+   `stale_base` branch, run the node-diff3 3-way (the write-back lane's path). Keep
+   blind-append only for **private** (single-writer, session) artifacts.
+
+2. **Change-feed is session-scoped → can't see other agents.** `changedSince`
+   filters `WHERE a.session_id = $1` (`:225`). An agent's feed shows only its own
+   captures — useless for collab. Needs a **channel/subscription-scoped** feed keyed
+   by the shared artifacts the session hydrated.
+
+3. **C1 delivers bytes but never reconciles (for autonomous agents).** Stage-to-
+   `~/.atrium/incoming/` + no-hot-swap correctly protects a dirty working copy (✓),
+   but nothing makes a *running autonomous* agent act on the staged file — it's
+   inert. Needs a **reconcile trigger** (daemon writes incoming + a conflict marker
+   the harness surfaces as a steer). Human-in-app is fine (sees a banner).
+
+4. **Watermark cursor drops same-timestamp versions.** `changedSince` uses
+   `created_at > $2` (`:225`); two versions sharing a `created_at` → the second is
+   skipped forever if the daemon watermarks on that timestamp. **Fix:** cursor on
+   `(created_at, seq)`; advance the watermark to the max row *returned*, not
+   wall-clock. (`pg_notify` firing inside the commit tx at `:202` is correct — keep.)
+
+5. **"Reconcile at the ledger" is within-artifact (built), shared is cross-chain.**
+   The built conflict-state is `stale_base` on the *same* artifact. Per-session
+   chains + a channel pointer would need a **new cross-artifact merge engine** at
+   promote. **Resolution:** model a shared doc as a **single chain** identified by
+   `(channel, name)`, so the shared-edit merge IS the within-artifact path already
+   built. Identity bifurcates: **private = `(session,path)` blind-append**;
+   **shared = `(channel,name)` base-aware + conflict-state**.
+
+**Scope correction.** "Channel-shared = a modest pointer table" is wrong for
+concurrent editing — a pointer is modest, multi-writer merge is not. The
+small-but-correct delta: add the `(channel,name)` shared identity + make capture
+base-aware for shared artifacts (reuses built OCC/node-diff3). **Single-player v1
+(human in app + one agent in sandbox) is already served** — a within-artifact
+human↔agent conflict, the built path — *provided the agent's capture is base-aware*
+(else the agent blind-append clobbers the human's write-back). The multi-*agent*
+live case is the deferred C1 work, now with findings 2–4 folded into its spec.
+
+**New open decision (5):** take base-aware-shared-capture + `(channel,name)`
+identity in v1 (needed the moment an agent and you co-edit a doc), or stay
+session-private for v1 and gate all shared editing behind C1? **Recommend the
+former** — it's small, and it's what lets the chief-of-staff agent edit your notes
+without silently clobbering your edits.

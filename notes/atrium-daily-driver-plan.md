@@ -102,13 +102,16 @@ S3 object store directly. So the two concerns separate cleanly:
 **Main trap.** Two different things, don't conflate them: **(a) notes** stay
 read-only because they're chat-canonical — agent contributions arrive as
 messages/artifacts that re-materialize, never direct edits to canonical state;
-**(b) artifacts** *do* get write-back, and the conflict model for that is already
-resolved (CAS-ledger jj-style conflict-state, see §3). The genuinely-deferred
-piece is **freshness**: sync is no-ingress / egress-only, so a *running* sandbox
-sees another actor's edits only at its next pull/promote — **mid-session inbound
-sync is new Centaur work** and the gating item for live cross-container collab
-(see Gaps). (Search scaling: ripgrep over a huge mount can get slow — scope
-per-channel/session or add a light index later; MVP ripgrep is fine.)
+**(b) artifacts the agent should edit get *writable-hydrated*** into the workspace
+(not the read-only mount — that's for pure-read context only) and are versioned on
+capture. The human↔agent conflict model is built (OCC + node-diff3), **but a
+hand-compute (2026-06-19) showed shared-doc *capture* must be made base-aware or it
+silently loses updates — see §3.** The genuinely-deferred piece is **freshness**:
+sync is no-ingress / egress-only, so a *running* sandbox sees another actor's edits
+only at its next pull — **mid-session inbound sync is new Centaur work** and the
+gating item for live cross-container collab (see Gaps). (Search scaling: ripgrep
+over a huge mount can get slow — scope per-channel/session or add a light index
+later; MVP ripgrep is fine.)
 
 **Non-obvious improvement.** The same `atrium-memory/` mirror doubles as agent
 memory: point agents' memory/context at it, so notes you take *become* agent
@@ -164,6 +167,41 @@ whole-in-memory at every hop, capped ~1 MiB at capture and ~16 MiB at the route,
 (presigned-PUT to Atrium S3, or stream-through api-rs). Not a v1 blocker (notebook
 = md + small images); a one-config cap-bump (~16 MiB) covers medium artifacts;
 true large-file is a dedicated Centaur fast-follow, gated behind this ledger anyway.
+
+**Concurrent editing — hand-computed (2026-06-19), and where it breaks.** Tracing
+two agents + a human editing one shared doc against the *built* `commitVersion`
+surfaced that the ledger is **session-scoped + blind-append** today, so shared
+editing isn't safe yet. Five findings:
+
+1. **Blind-append capture loses updates on a shared chain.** `commitVersion` with
+   no `baseSeq` sets `effectiveBase = latest.seq` (can't trip `stale_base`) and
+   dedup only checks *equality* — so if two agents both edit base v1 and capture in
+   turn, the second append silently buries the first (code-confirmed
+   `artifact-ledger.ts:277,281`). **Fix:** shared-artifact captures must be
+   **base-aware** — carry the hydrated `base_seq` and route through the *same*
+   OCC → node-diff3 conflict-state the human write-back lane already uses.
+2. **The change-feed is session-scoped.** `changedSince` filters
+   `WHERE a.session_id = $1`, so an agent can't even *see* another session's edit.
+   Cross-agent sharing needs a **channel/subscription-scoped feed**.
+3. **C1 delivers bytes but doesn't reconcile.** Stage-to-`incoming/` + no-hot-swap
+   correctly protects a dirty working copy, but for an *autonomous* agent the
+   staged file is inert — **no trigger** makes it rebase. Needs a reconcile signal
+   (daemon drops a conflict marker the harness surfaces as a steer).
+4. **Watermark cursor bug.** `changedSince` uses `created_at > $2` (bare
+   timestamp); same-`created_at` versions get skipped. **Fix:** `(created_at, seq)`
+   cursor, watermark on the max row *returned*, not wall-clock.
+5. **"Reconcile at the ledger" assumes a within-artifact merge** (built) but the
+   shared case is cross-chain. **Resolution:** make a shared doc a **single chain**
+   identified by `(channel, name)` so it reuses the built within-artifact
+   conflict-state — *not* per-session chains needing a new cross-artifact engine.
+
+**Net:** "channel-shared = a modest pointer table" (last round) was **under-scoped**
+— a pointer is modest, *concurrent shared editing* is not. The small-but-correct v1
+= `(channel,name)` identity + **base-aware capture for shared artifacts** (reusing
+built OCC/node-diff3). **Single-player is well-served**: you-in-app + one
+agent-in-sandbox is a conflict *within one shared artifact* = the built path. The
+multi-*agent* live case needs C1 + the channel-scoped feed + reconcile trigger
+(deferred). Full trace + fixes in `notes/cas-ledger-build-plan.md`.
 
 **Non-obvious improvement.** Unify #2 and #3 into one "Files" abstraction:
 preview + edit + version + mount. **Correction (stress-tested 2026-06-19):** the
@@ -362,16 +400,19 @@ permanent, redacted archive that `cass` syncs into.
   driver running real repos, define those guardrails (especially for Tier-0
   BYO-terminal harnesses you don't fully observe).
 - **Cross-container freshness / mid-session inbound sync (Track C1).** *The gating
-  item* for live cross-container collaboration, and **downstream of the CAS-ledger**
-  (the ledger's LISTEN/NOTIFY on pointer-advance is the invalidation source — Lane 4
-  builds those hooks now). Capture-out (egress) is built; the inbound path is **new
-  Centaur work**, and the mechanism was **corrected** by the repo map: a running
-  sandbox has **no held outbound stream** — its only inbound channel is **stdin via
-  the k8s attach pipe**, so invalidation must be a new stdin directive
-  (`{type:"artifact.sync",path,sha}`) → per-harness handler → lazy GET → write to a
-  *staging* path (never hot-swap under the agent). ~30 s catch-up. Spec:
-  `notes/inbound-sync-spec.md`. Fine for single-player day-1; required before two
-  agents (or agent + you) edit the same artifact live.
+  item* for live cross-container collaboration, **downstream of the CAS-ledger**
+  (its pointer-advance `pg_notify` is the invalidation source — Lane 4 builds those
+  hooks now). Capture-out (egress) is built; the inbound path is **new Centaur
+  work**. Mechanism (corrected by the repo map): a running sandbox has **no held
+  outbound stream** — only **stdin via the k8s attach pipe** — so the primary design
+  is an **egress-poll inbound daemon** (harness-agnostic; polls a change-feed, GETs
+  bytes, stages to `~/.atrium/incoming/`, never hot-swaps), with an optional stdin
+  `artifact.sync` poke as a latency cut. The hand-compute (§3) sharpened three
+  must-fixes before this is correct: the **change-feed must be channel-scoped** (it's
+  session-scoped today, so it can't see other agents), the staged bytes need a
+  **reconcile trigger** for autonomous agents (not just a file in a folder), and the
+  watermark must be a **`(created_at,seq)` cursor**. Spec: `notes/inbound-sync-spec.md`.
+  Fine for single-player day-1; required before two agents edit the same doc live.
 - **Data ownership / export.** Full export of your record — fits the
   archive/`cass` ethos and "own your data."
 - **Comms / calendar integration.** Gmail/Calendar MCP wired into the
