@@ -18,5 +18,10 @@
   "devDependencies": {
     "concurrently": "^9.1.2",
     "ws": "^8.18.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "fbjs>ua-parser-js": "2.0.10"
+    }
   }
 }
