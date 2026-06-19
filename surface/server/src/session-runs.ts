@@ -21,6 +21,7 @@ import {
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { ArtifactLedger } from './artifact-ledger.js';
 import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
 import {
   appendEvent,
@@ -332,6 +333,9 @@ export class SessionRuns {
   private readonly centaur: CentaurClient;
   private readonly artifactCaptureApiKey: string;
   private readonly artifactStorage: ArtifactStorage;
+  /** Durable CAS-ledger (notes/cas-ledger-build-plan.md). Shared by the
+   * capture-bridge, serve, write-back, and GC paths. */
+  private readonly artifactLedger: ArtifactLedger;
   private readonly harness: string;
   private readonly autoResume: boolean;
   private readonly questionRenotifyMinutes: number;
@@ -363,6 +367,7 @@ export class SessionRuns {
       ) ?? '';
     this.artifactStorage =
       options.artifactStorage ?? { uploadObject: s3UploadObject, presignGet: s3PresignGet };
+    this.artifactLedger = new ArtifactLedger(this.pool);
     this.harness = options.harness ?? config.centaurHarness;
     this.autoResume = options.autoResume ?? true;
     this.questionRenotifyMinutes =
