@@ -121,6 +121,9 @@ interface ChatContextValue {
   typing: Record<string, TypingEntry>;
   /** URL for an attachment body — pair with fileHeaders for in-app loads. */
   fileUrl: (fileId: string) => string;
+  /** URL for a captured session artifact's bytes — pair with fileHeaders.
+   * Mirrors the web serve route (302 to presigned S3, else proxy from Centaur). */
+  artifactUrl: (sessionId: string, artifactId: string) => string;
   /** Auth headers for in-app image/file loads (expo-image source.headers). */
   fileHeaders: Record<string, string>;
   /** Open a file externally via a short-lived signed URL (never the session). */
@@ -1442,6 +1445,12 @@ export function ChatProvider({ session, children }: { session: Session; children
     [serverUrl],
   );
 
+  const artifactUrl = useCallback(
+    (sessionId: string, artifactId: string) =>
+      `${serverUrl}/api/sessions/${sessionId}/artifacts/${artifactId}`,
+    [serverUrl],
+  );
+
   const fileHeaders = useMemo(() => ({ authorization: `Bearer ${token}` }), [token]);
 
   const openAttachment = useCallback(
@@ -1536,6 +1545,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       notifyTyping,
       typing,
       fileUrl,
+      artifactUrl,
       fileHeaders,
       openAttachment,
       uploadFile,
@@ -1586,6 +1596,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       notifyTyping,
       typing,
       fileUrl,
+      artifactUrl,
       fileHeaders,
       openAttachment,
       uploadFile,

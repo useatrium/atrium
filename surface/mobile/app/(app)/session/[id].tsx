@@ -33,6 +33,10 @@ import { useChat } from '../../../src/lib/chat';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { normalizeExecutionStatus } from '../../../src/lib/sessionStreamCore';
 import { useSessionStream } from '../../../src/lib/useSessionStream';
+import { artifactCount, collectArtifacts } from '@atrium/centaur-client';
+import { ArtifactsSurface } from '../../../src/components/work/ArtifactsSurface';
+import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/work/MobileWorkSheet';
+import { WorkStrips, type WorkStripItem } from '../../../src/components/work/WorkStrips';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -438,6 +442,7 @@ export default function SessionScreen() {
   const [questionCleared, setQuestionCleared] = useState<string | null>(null);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
+  const [workTab, setWorkTab] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const stickRef = useRef(true);
 
@@ -479,6 +484,35 @@ export default function SessionScreen() {
   const isSpawner = !!session && session.spawnedBy === me.id;
   const canCancel = !!session && (isDriver || isSpawner) && !terminal;
   const canSteer = !!session && isDriver && !terminal;
+
+  // Work surfaces (Phase 4 parity): derive from the shared stream exactly like
+  // web. Artifacts ships here; Changes / Side-effects tabs slot into workTabs as
+  // their RN surfaces land. Each non-empty surface gets a strip chip + a sheet tab.
+  const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
+  const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
+  const workTabs = useMemo<WorkSurfaceTab[]>(() => {
+    const tabs: WorkSurfaceTab[] = [];
+    if (id && artifactsN > 0) {
+      tabs.push({
+        key: 'artifacts',
+        label: 'Artifacts',
+        count: artifactsN,
+        render: () => (
+          <ArtifactsSurface
+            artifacts={artifacts}
+            artifactUri={(artifactId) => chat.artifactUrl(id, artifactId)}
+            imageHeaders={chat.fileHeaders}
+          />
+        ),
+      });
+    }
+    return tabs;
+  }, [artifacts, artifactsN, chat, id]);
+  const workStripItems = useMemo<WorkStripItem[]>(
+    () => workTabs.map((t) => ({ key: t.key, label: t.label, count: t.count, danger: t.danger })),
+    [workTabs],
+  );
+
   const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
   const elapsed = session ? formatElapsed(sessionElapsedMs(session, now)) : '';
   const pendingQuestion =
@@ -729,6 +763,8 @@ export default function SessionScreen() {
           )}
         </ScrollView>
 
+        <WorkStrips items={workStripItems} onOpen={setWorkTab} />
+
         {(steerError ?? chat.failedSessionSteers[id] ?? null) ? (
           <View
             style={{
@@ -831,6 +867,14 @@ export default function SessionScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      <MobileWorkSheet
+        visible={workTab != null}
+        tabs={workTabs}
+        activeKey={workTab}
+        onTab={setWorkTab}
+        onClose={() => setWorkTab(null)}
+      />
     </View>
   );
 }

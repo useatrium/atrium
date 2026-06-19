@@ -1,0 +1,92 @@
+// Mobile work surfaces (Phase 4 parity) — the peek→pin→detach ladder degrades on
+// mobile to "strip → tap → full-screen → back" (peek is the ceiling: no pin, no
+// detach). This is the full-screen container; it hosts one surface at a time
+// behind a tab bar, the RN counterpart of web's WorkDrawer.
+import type { ReactNode } from 'react';
+import { Modal, Pressable, Text, View } from 'react-native';
+import { font, space, useTheme } from '../../lib/theme';
+
+export interface WorkSurfaceTab {
+  key: string;
+  label: string;
+  count: number;
+  danger?: boolean;
+  /** Rendered as the full-screen body when this tab is active. */
+  render: () => ReactNode;
+}
+
+export function MobileWorkSheet({
+  visible,
+  tabs,
+  activeKey,
+  onTab,
+  onClose,
+}: {
+  visible: boolean;
+  tabs: WorkSurfaceTab[];
+  activeKey: string | null;
+  onTab: (key: string) => void;
+  onClose: () => void;
+}) {
+  const { colors } = useTheme();
+  const active = tabs.find((t) => t.key === activeKey) ?? tabs[0];
+
+  return (
+    <Modal visible={visible && tabs.length > 0} animationType="slide" onRequestClose={onClose}>
+      <View testID="mobile-work-sheet" style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+            paddingHorizontal: space.sm,
+            height: 48,
+          }}
+        >
+          <View style={{ flexDirection: 'row', flex: 1, alignItems: 'center' }}>
+            {tabs.map((t) => {
+              const isActive = t.key === active?.key;
+              return (
+                <Pressable
+                  key={t.key}
+                  onPress={() => onTab(t.key)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: isActive }}
+                  style={{
+                    paddingHorizontal: space.sm,
+                    paddingVertical: space.sm,
+                    borderBottomWidth: 2,
+                    borderBottomColor: isActive ? colors.accent : 'transparent',
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: isActive ? colors.text : colors.textMuted,
+                      fontSize: font.sm,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {t.label}{' '}
+                    <Text style={{ color: t.danger ? colors.danger : colors.textMuted, fontWeight: '400' }}>
+                      · {t.count}
+                    </Text>
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close work surfaces"
+            style={{ paddingHorizontal: space.sm, paddingVertical: space.sm }}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: font.lg }}>✕</Text>
+          </Pressable>
+        </View>
+        <View style={{ flex: 1 }}>{active?.render()}</View>
+      </View>
+    </Modal>
+  );
+}
