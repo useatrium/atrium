@@ -1,6 +1,6 @@
 # Agent Data Architecture — logs, artifacts, workspaces
 
-Status: **DRAFT, converged on the architecture; one build-vs-adopt spike open**
+Status: **DRAFT, architecture converged; store backing DECIDED (own CAS-ledger)**
 (updated 2026-06-19). Captures the research, explored ideas, discussion + Gary's
 feedback, and the working conclusions.
 
@@ -39,7 +39,9 @@ latency optimization, not a correctness requirement.
   change-ids, conflict-as-state) in the durable store; don't run jj in the sandbox.
 - **CDC/chunk-dedup deferred** — not needed for v1; whole-object storage is fine;
   may add later for large/churny media.
-- **Store backing (lakeFS vs own CAS-ledger): OPEN** → `spike-artifact-store.md`.
+- **Store backing = own CAS-ledger** (DECIDED by live spike 2026-06-19, 39–29 over
+  lakeFS; lakeFS lost on conflict-fit + ops + paywalled RBAC). Extend the existing
+  `session_artifacts` pipeline; ~900 LOC mostly-glue. See `spike-artifact-store.md`.
 
 ## The core model
 
@@ -216,8 +218,9 @@ Code repos / structured data / docs / artifact pipelines / oversight converged:
 - **Capture:** watcher on the upper (free diff), checkpoint-driven, two-tier;
   hybrid auto-detect→promote = filter-pass at checkpoints.
 - **Durable store:** content-addressed blobs + Merkle metadata → S3/MinIO; refs/
-  pointers/ledger/lineage/index → Postgres. **Backing TBD by the spike** (lakeFS
-  vs. extend the existing `session_artifacts` CAS-ledger).
+  pointers/ledger/lineage/index → Postgres. **Backing = own CAS-ledger** (decided
+  2026-06-19) — extend `session_artifacts`; net-new = ledger tables + write-back
+  PUT + conflict-state/3-way (use a real diff3 lib) + lineage + multipart + GC.
 - **Sync:** egress-only (hydrate-GET, capture-POST, lazy-pull, invalidation over
   the outbound stream). Mid-session inbound = new Centaur work.
 - **Media:** CAS + multipart (CDC deferred).
@@ -233,9 +236,10 @@ Code repos / structured data / docs / artifact pipelines / oversight converged:
 
 ## Open items
 
-- **Store backing spike** — `spike-artifact-store.md` (lakeFS vs own CAS-ledger).
+- ~~Store backing spike~~ — **RESOLVED: own CAS-ledger** (`spike-artifact-store.md`).
 - **Mid-session inbound sync** — new Centaur work (egress pull + invalidation on the
-  outbound stream); until then, freshness = at-promote.
+  outbound stream); until then, freshness = at-promote. **This is now the gating
+  open item** for live cross-container collaboration.
 - **CDC for large media** — deferred to post-v1.
 - **Human-byte-sticky reconciliation** — parked; revisit if jj-style proves
   insufficient for human+agent doc collisions.
