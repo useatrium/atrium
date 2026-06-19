@@ -81,11 +81,31 @@ migration `005_search_fts.sql`). Agent search = the mounted mirror + ripgrep.
 Audio message → blob in S3 + transcript inline (the transcript is what's
 greppable). Basic markdown editor with live preview. No custom retrieval tool.
 
+**Where the bytes live, and why agents can still search them.** Explorability
+comes from the **mount**, not from the canonical store — an agent cannot `rg` an
+S3 object store directly. So the two concerns separate cleanly:
+
+- **Artifacts (incl. agent-written `.md`)** → canonical bytes in the **Atrium S3
+  artifact store**, versioned. (This is the "keep md in the artifact store" idea —
+  correct for *files*.)
+- **Braindump notes** → canonical in **chat/Postgres** (free audio, STT,
+  real-time sync, threading, FTS). Don't move these to files-canonical: it buys
+  nothing on explorability and loses the chat ergonomics.
+- **One read-only mount** materializes *both* (rendered notes + S3 artifacts) as a
+  real file tree in the sandbox. Agents `rg`/`cat`/`ls` it; they never touch S3.
+- **Agent writes** go to a separate **writable drop dir** → captured → offloaded
+  to S3 → re-materialized into the read-only view as a new version. (Same split as
+  the storage plan: writable `/home/agent/artifacts`, read-only
+  `/mnt/atrium-artifacts`.) This is the Archil-style "object store presented as a
+  filesystem" line from `agent-session-resume-and-storage-plan.md`.
+
 **Main trap.** Read-only sidesteps the sync problem; read-*write* (agents editing
 notes that sync back to Postgres) reintroduces a real bidirectional-conflict
 problem. For MVP, agent contributions arrive as **messages or artifacts** that
 re-materialize into the mirror — never direct edits to canonical state. Defer
-read-write until the conflict model is worth building.
+read-write until the conflict model is worth building. (Search scaling note:
+ripgrep over a huge mount can get slow — scope the mount per-channel/session or
+add a light index later; MVP ripgrep is fine.)
 
 **Non-obvious improvement.** The same `atrium-memory/` mirror doubles as agent
 memory: point agents' memory/context at it, so notes you take *become* agent
@@ -314,12 +334,14 @@ permanent, redacted archive that `cass` syncs into.
 
 ## Open decisions
 
-1. **Runtime model** (#5): recommendation = **k3s on a US box** (decider: BYO-subs
-   couples to the k8s iron-proxy sidecar); M1 as a zero-cost bring-up step.
-   _User wanted the comparison table before deciding → provided above; awaiting pick._
-2. **Notebook model** (#2): resolved to **chat-canonical + read-only git mirror
-   projection**. Open sub-decision: keep agents **read-only** (recommended MVP) vs
-   later **read-write**.
+1. **Runtime model** (#5): **DECIDED — k3s on a US box** (decider: BYO-subs couple
+   to the k8s iron-proxy sidecar), with the **M1 as a zero-cost bring-up step**
+   first.
+2. **Notebook model** (#2): **DECIDED — read-only**, with this storage split:
+   **artifacts canonical in Atrium S3** (versioned), **braindump notes canonical
+   in chat/Postgres**, both materialized into **one read-only mount** agents
+   `rg`/`cat`. Agent writes go to a writable drop → captured → S3 → new version.
+   Explorability is the *mount's* job, not S3's. (read-write deferred.)
 3. **Claude-on-subscription** (#6): **like agentboard** — BYO-terminal / local
    bridge with your own auth (user's lean). API key kept as the multi-tenant-future
    path.
