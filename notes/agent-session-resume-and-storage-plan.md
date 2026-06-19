@@ -7,6 +7,11 @@ container needs for that resume to work, and how Atrium should split durable
 product state from short-lived execution state. It also folds in the earlier
 runtime/container research found through `cass`.
 
+> **Sister doc:** the data/storage-layer deep-dive (logs vs artifacts vs
+> workspaces, content-addressed/versioned artifact store, JuiceFS, forkable-runtime
+> research, edit semantics) now lives in `agent-data-architecture.md`. Resume/sleep
+> mechanics stay here.
+
 ## Working Position
 
 Atrium should own the durable product record: transcript mirror, turn metadata,
