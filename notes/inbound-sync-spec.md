@@ -1,5 +1,15 @@
 # Inbound Sync (Track C1) — cross-system spec
 
+> **SUPERSEDED 2026-06-20 by `agent-sync-design.md` §4.** This spec assumed
+> *in-container* daemons (an in-sandbox egress-poll + a stdin-poke-as-primary). The
+> C4 decision (capture moved to a node-level overlay-upper scan) reframes sync:
+> **fetch+stage move to the node** (which has full connectivity — the no-ingress /
+> stdin-poke complexity largely evaporates), and only the **checkpoint adopt** stays
+> in-container (overlay forbids external layer modification). The mechanism facts
+> below (stdin-over-attach, egress-only NetworkPolicy, the grounded verification) are
+> still accurate and reused; the *architecture* (where the daemon lives) is replaced
+> by `agent-sync-design.md`. Read that first.
+
 Pull a human/other-agent edit of a shared artifact into a **running, no-ingress**
 sandbox. This is the gating item for live cross-container collaboration
 (`agent-data-architecture.md`), and it's **downstream of the CAS-ledger** (the

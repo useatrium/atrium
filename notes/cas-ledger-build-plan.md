@@ -430,6 +430,13 @@ Inside the VM we also fully own the kernel (overlay/`mountPropagation`/caps
 guaranteed). This is a **future concern** (daily-driver is single-tenant) and
 **orthogonal to the capture design** — it only sets where the node boundary falls.
 
+**Inbound complement + workspace composition:** C4 is the outbound/capture half. The
+unified inbound+outbound sync design — node-side fetch+stage, in-container checkpoint
+adopt, the hydration manifest, and the **structural workspace scoping** (overlay covers
+*only* the artifact namespace; repos/deps/caches/scratch are separate volumes so they
+never enter the upper → solves capture-filtering + upper-bloat by construction) — is in
+**`agent-sync-design.md`** (supersedes the in-container `inbound-sync-spec.md`).
+
 ### Track C3 — Large-file handling (spec'd + stress-tested 2026-06-19)
 
 **Finding: the Centaur fork has NO large-file handling, and no object store at
