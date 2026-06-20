@@ -347,8 +347,13 @@ hand-computed 2026-06-20 (codex review attempted, runtime non-functional — ver
 is from the in-house pass; its research trail corroborated the mountPropagation,
 torn-read, and hostPath risk points). **Decided as the target. Kernel mechanism
 POC-CONFIRMED 2026-06-20** (9/9, below) on the **real `centaur-agent` image, kernel
-6.12.76-linuxkit**; the residual is the k8s YAML *wiring* (a documented feature), not
-a kernel unknown.
+6.12.76-linuxkit**. **AND the k8s wiring is now CONFIRMED too** — a second agent ran
+the full kind end-to-end POC (privileged init mounts the overlay `Bidirectional` onto
+a hostPath; hardened agent UID-1001/`drop:[ALL]`/`seccomp:RuntimeDefault` mounts it
+`HostToContainer` and writes through `merged`; node verified bytes in `upper`,
+copy-up, whiteout `char 0:0`, mount `shared`). **Both halves PASS; no residual kernel
+or k8s-wiring unknown.** The one correction it surfaced is folded into the propagation
+bullet above (agent = `HostToContainer`, not `Bidirectional`).
 
 **POC result (2026-06-20, privileged Linux container on the agent image, 9/9 PASS):**
 privileged overlay mount works (`metacopy=off`); create→upper regular file w/ bytes;
@@ -359,12 +364,15 @@ process in a separate mount namespace writing via `merged` → node sees it in `
 namespaces via `rshared`**; rename resolves. ⇒ The kernel feasibility that could
 have killed the design — can a hardened non-root agent's writes, through a
 runtime-mounted overlay it doesn't own, land in an `upper` a node component reads? —
-is **confirmed**. *Residual (lower-risk, not kernel):* (a) the k8s
-`mountPropagation: Bidirectional` volume wiring + init-container ordering (documented
-feature; confirm in kind/real-node); (b) rename via `trusted.overlay.redirect` xattr
-read needs `attr`/`CAP_SYS_ADMIN` (POC couldn't read it; rename still resolves by
-path → fidelity falls back to path+whiteout); (c) POC used tmpfs backing — real
-design uses a node ext4 vol (identical mechanism; ext4 also stores trusted xattrs).
+is **confirmed**. *Residual (now small):* (a) ~~k8s wiring~~ **CONFIRMED in kind**
+(privileged-init `Bidirectional` + agent `HostToContainer`); remaining ops detail =
+the init-mounted overlay propagates to and **persists on the node** after the init
+exits, so **unmount-on-pod-teardown** must be handled (else orphaned node mounts); (b)
+rename via `trusted.overlay.redirect` xattr read needs `attr`/`CAP_SYS_ADMIN` (POC
+couldn't read it; rename still resolves by path → fidelity falls back to
+path+whiteout); (c) POCs used tmpfs backing — real design uses a node ext4/hostPath
+vol (identical mechanism; ext4 also stores trusted xattrs; avoids the nested-overlay
+backing error seen on tmpfs-less kind).
 
 **The shape.** Move capture *out* of the agent; relocate privilege to the
 runtime + a node component (we control the node — self-managed k8s on dedicated
@@ -372,10 +380,16 @@ servers, no Autopilot):
 - **Workspace = a runtime-provisioned overlay** (privileged init/controller, NOT the
   agent): `lowerdir` (RO) = base + deps + **repo (clone --shared, read-only)** +
   hydrated shared artifacts; `upperdir`+`workdir` = a **session-keyed persistent
-  node volume** `/var/lib/centaur/overlays/<session>/{upper,work}`; `merged`
-  bind-mounted into the agent at `/workspace` via `mountPropagation: Bidirectional`;
-  `metacopy=off` (so upper files carry real bytes). Agent posture **unchanged**
-  (non-root, `drop:[ALL]`).
+  node volume** `/var/lib/centaur/overlays/<session>/{upper,work}` (a **hostPath** —
+  not the container rootfs / not a nested overlay); `metacopy=off` (so upper files
+  carry real bytes). **Propagation (CORRECTED — k8s POC):** the **privileged setup**
+  (an init container is sufficient) mounts the overlay with
+  `mountPropagation: Bidirectional`, which propagates the mount to the node and
+  persists it there after the init exits; the **hardened agent** mounts the same
+  hostPath at `/workspace` with **`mountPropagation: HostToContainer`** (rslave) to
+  *receive* it — k8s **forbids `Bidirectional` on a non-privileged container**
+  ("available only to privileged containers"). Agent posture **unchanged** (non-root,
+  `drop:[ALL]`).
 - **Capture = a node DaemonSet** (privileged; **one per node = O(nodes)**): k8s pod
   informer → scan each `<session>/upper` (the upper = **only the changed set =
   O(changes)**), prune git working trees at the `.git` root + the existing
@@ -409,15 +423,17 @@ footprint, and a native large-file path.
 3. **Session-keyed persistent upper** (hostPath/PVC, keyed by session not pod-uid) so
    it survives pause (= pod delete) and **resume reattaches** the same upper — which
    also upgrades resume from "fresh re-clone" to "prior state restored."
-4. **`mountPropagation: Bidirectional` was the linchpin — kernel mechanism now
-   POC-CONFIRMED (2026-06-20).** The question (*can a hardened non-root agent's
-   writes, through a runtime-mounted overlay it doesn't own, land in an `upper` a
-   node component reads?*) is answered **yes** at the kernel level — the cross-mount-
-   namespace write-visibility + `rshared` mount-visibility + non-root-write→root-read
-   all PASS (see POC result above). The k8s docs still flag bidirectional propagation
-   "privileged and dangerous," so the **residual** is the k8s YAML wiring +
-   init-container ordering (documented feature) — confirm in kind/real-node — not a
-   kernel unknown. No longer a design-invalidating risk.
+4. **The mount-propagation linchpin — FULLY POC-CONFIRMED (2026-06-20), kernel +
+   k8s.** The question (*can a hardened non-root agent's writes, through a
+   runtime-mounted overlay it doesn't own, land in an `upper` a node component
+   reads?*) is **yes**, proven end-to-end: the bare-kernel POC (9/9) + a **kind k8s
+   POC** (privileged init mounts the overlay `Bidirectional` onto a hostPath; the
+   hardened agent — UID-1001, `drop:[ALL]`, `seccomp:RuntimeDefault` — mounts it
+   **`HostToContainer`** and writes through `merged`; node verified `upper` bytes,
+   copy-up, whiteout, `shared` mount). **The correction it forced:** k8s **forbids
+   `Bidirectional` on a non-privileged container** — so the *setup* uses
+   `Bidirectional`, the *agent* uses `HostToContainer` (folded into the provisioning
+   bullet above). No longer a risk; remaining is the unmount-on-teardown ops detail.
 
 **Multi-tenant blast radius → VM-per-tenant (decided 2026-06-20).** The node
 DaemonSet reads every pod's files on its node — a real cross-tenant read surface.
@@ -715,9 +731,9 @@ O(workspace dirs) per scan, per pod, no delete/rename, ≤2.5s latency. **Decisi
 (2026-06-20, Gary: "scalable/permanent, not an MVP"): the target capture
 architecture is the overlay-upper node-scan in Track C4** — O(changes) scan, O(nodes)
 scanner, delete/rename fidelity, zero agent footprint, native large-file path.
-**Kernel mechanism POC-confirmed 2026-06-20 (9/9 on the real agent image, kernel
-6.12);** residual is the k8s `mountPropagation: Bidirectional` YAML wiring (documented
-feature, confirm in kind/real-node) — see Track C4.
+**POC-confirmed 2026-06-20, end-to-end** — kernel (9/9 on the real agent image, kernel
+6.12) **and** k8s wiring (kind: privileged-init `Bidirectional` + agent
+`HostToContainer`). No residual feasibility unknown — see Track C4.
 
 The earlier event-driven candidates are **demoted to fallbacks** (relevant only where
 node control is unavailable — *not* our self-managed environment):

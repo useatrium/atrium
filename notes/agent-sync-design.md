@@ -149,10 +149,14 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
   node-side capture.
 - **Overlay POSIX quirks** — hardlink-break on copy-up; `redirect_dir=on` required for
   lower-backed dir renames; inode-number changes on copy-up.
-- **k8s `mountPropagation: Bidirectional` wiring** — kernel substrate POC-confirmed;
-  the YAML wiring + init-ordering still to confirm on a real Linux node (documented
-  feature). Tried in kind locally; blocked by Docker-Desktop-on-Mac image plumbing, not
-  design — finish on the real node where the deploy lives.
+- **k8s mount-propagation wiring — CONFIRMED end-to-end (kind, 2026-06-20).** Privileged
+  init mounts the overlay `Bidirectional` onto a hostPath; the hardened agent
+  (UID-1001, `drop:[ALL]`, `seccomp:RuntimeDefault`) mounts it **`HostToContainer`** and
+  writes through `merged`; node verified `upper` bytes, copy-up, whiteout, `shared`
+  mount. **Correction:** k8s forbids `Bidirectional` on a non-privileged container →
+  **setup = `Bidirectional`, agent = `HostToContainer`** (the §2/§4 provisioning must
+  reflect this). Remaining ops detail: the init-mounted overlay persists on the node
+  after the init exits → **unmount-on-pod-teardown** (else orphaned node mounts).
 - **Multi-tenant blast radius** — the node sync daemon reads all pods' uppers on its node
   → VM-per-tenant (hypervisor boundary; per-tenant node → per-tenant daemon).
 
