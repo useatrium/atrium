@@ -78,6 +78,39 @@ construction):
   `artifact.captured` frames only; adding a git-backed source + a git-commit write-back
   path. Aligns with daily-driver §3 "one Files abstraction.")
 
+## 2A. The agent's view — `/workspace` (work) + `/atrium` (read-only context)
+
+The agent's whole filesystem, laid out for **agent UX** (it greps/cats a predictable tree;
+the no-ingress constraint stays out of its way). DECIDED 2026-06-20.
+
+```
+/workspace/                      ← WRITABLE work area (the overlay; the ONLY captured tree)
+  proj-x/  shared/  scratch/<session>/  <repo>/  node_modules/ .venv/ .cache/
+/atrium/                         ← READ-ONLY context (separate mount; NEVER captured;
+  README                            ONE shared copy per node, reflinked into each pod)
+  chat/<channel>/<thread>.md     ← Atrium chat, projected from the events log — live append-tail
+  sessions/<id>/transcript.jsonl ← sibling sessions' raw traces — live append-tail
+  sessions/<id>/{summary.md,meta.json}
+  artifacts/<path>               ← read-only latest-by-path view over the ledger
++ query tool: `atrium search|read|log`  (targeted, always-fresh, reaches the wide cold tail)
+```
+
+**Decisions (Gary, 2026-06-20):**
+- **Two roots, two jobs.** `/workspace` = the agent's work (writable, captured). `/atrium` =
+  the world (read-only). The agent never conflates deliverables with ambient context, and
+  capture has exactly one tree to watch.
+- **Both layered** (chosen): the mounted tree is the ergonomic grep/cat default; the `atrium`
+  tool is the power tool for fresh/targeted/beyond-scope lookups.
+- **Visibility = workspace-wide by default, scope-knob later** (chosen). Affordable ONLY
+  because `/atrium` is **one shared per-node projection** reflinked into pods (content-
+  addressed → free dedup). Naive per-agent eager push is **O(sessions²)** write-amp (~80k
+  appends/s at 200 agents — hand-compute); shared-per-node collapses it ~200×. Eager-tail the
+  near scope (own + channel/topic); serve the wide cold tail lazily via the tool. The scope
+  knob tunes eager-vs-lazy + recency/active-only to cut noise.
+- **Freshness = live append-tail** (chosen). chat/transcripts are append-only → the node just
+  appends new events to the file tail (no merge, no quiesce). Artifacts in `/workspace` use
+  the §4 node-side merge. **Steers/HITL ride the normal message stream, NOT a marker file.**
+
 ## 3. Outbound (capture) — node-scan of the upper
 
 Per C4: a privileged **node DaemonSet** (one per node, O(nodes)) scans each container's
@@ -101,26 +134,44 @@ Two requirements this doc adds:
 - **Torn-read gate:** detect-changed-during-read + re-read (rsync/restic pattern) and/or
   inspect `/proc/<agent-pid>/fd` to skip files currently open for write.
 
-## 4. Inbound — node fetch + stage, in-container checkpoint adopt
+## 4. Inbound — node fetch + **node-side merge** (write-through-`merged`), harness quiesce
 
-The split, and **why each piece lands where it does**:
+**DECISION 2026-06-20 (revises the earlier in-container adopter; Gary's catch — "why rely on
+in-container pull instead of the outside daemon, and the `/incoming` channel is weird for
+agent UX").** Inbound moves to the node, **symmetric with capture (§3)**. The node does
+fetch + merge + the write; the only in-container residue is a lightweight quiesce signal.
 
 | Step | Where | Why there |
 |---|---|---|
-| **Fetch + stage** — poll ledger for advances on this container's hydrated paths; fetch bytes; write to a per-container **`/incoming` staging volume** (separate from the overlay) + a marker `{path, base_seq, new_seq, sha}` | **node** | node has full connectivity (not no-ingress); `/incoming` is not an overlay layer, so writing it is always safe |
-| **Notify** — tell the agent "paths changed" | node→agent | a marker file in `/incoming` the harness polls (cheap, local), or an optional stdin poke. The bytes never ride stdin. |
-| **Adopt** — merge the staged version into the live working copy | **in-container, checkpoint-gated** | overlay forbids external modification of `lower`/`upper`; the only legal write is *through `merged`* (a copy-up); doing it under a running agent is a hot-swap → must be agent-coordinated |
+| **Fetch + merge** — poll ledger for advances on hydrated paths; fetch `theirs`; `diff3(base, ours, theirs)` (`ours` = the agent's `upper`, which the node already reads for capture) | **node** | node has full connectivity **and all three merge inputs** (base from manifest, ours from upper, theirs from ledger) |
+| **Write** — write the reconciled bytes into the live working copy **through the shared `merged` mount** (the normal, allowed overlay write path; reachable from the host via `rshared`) | **node** | writing *through* `merged` is legal (unlike poking `upper`/`lower` directly while mounted); the host reaches `merged` per the kind POC |
+| **Quiesce gate** — only write when the agent isn't mid-read of that path | **harness "between-steps" signal + node `/proc/<pid>/fd` check** | the *sole* residual in-container concern is **timing** (don't clobber an open file), NOT access; the signal is harness-level, **invisible to the model** |
 
-**Adopt has three cases** (from the hand-computes, §6):
-1. **unedited** (`upper[p]=∅`) → write new bytes through `merged` → copy-up. *Still a
-   coordinated hot-swap* (the file changes under the agent) → at a checkpoint, not mid-read.
-2. **edited** (`upper[p]=ours`, base known) → `diff3(base, ours, theirs)`: clean → write
-   result + capture (base=new_seq); conflict → write markers + ledger `status=conflict`.
-3. **resurrect** (agent deleted it → whiteout; remote edited) → remove the whiteout by
-   writing the resurrected bytes through `merged`.
+**Why this revises the prior "in-container adopter":** the earlier rationale ("overlay
+forbids external modification → adopt must be in-container") was **over-stated**. You can't
+poke `upper`/`lower` directly while mounted — but writing **through `merged`** is the normal
+write path, and the kind POC showed `merged` is **writable across mount namespaces via
+`rshared`** (a separate-ns writer landed bytes in `upper`). So the node can do the write.
+What genuinely needs the container is only **hot-swap timing**. ⇒ **`/incoming` + the
+in-container 3-case adopter are demoted to internal node mechanics, never agent-facing.**
 
-**Autonomous vs human:** autonomous agents need a reconcile trigger (the marker surfaced
-as a steer; auto-rebase via case 2 at a safe checkpoint). Humans-in-app get a banner.
+**The three merge cases still exist — but the NODE runs them:**
+1. **unedited** (`upper[p]=∅`) → node writes new bytes through `merged` at a quiesce point.
+2. **edited** (`upper[p]=ours`, base known) → node `diff3`: clean → write; conflict → write
+   markers + ledger `status=conflict`.
+3. **resurrect** (agent deleted → whiteout; remote edited) → node writes resurrected bytes.
+
+**Append-only context (chat / sibling transcripts, §2A) is simpler still:** no merge, no
+quiesce — the node just **appends new events to the file tail**.
+
+**Steers / HITL = the normal message stream, NOT a `/incoming` marker.** A chat-native agent
+already drains its conversation input; a steer is a message in the thread. Autonomous
+reconcile = node lands the merged file + (optionally) a steer message; agent picks it up at
+its next step. **No agent-facing inbox to poll.**
+
+**Verify before build (1 item):** the POC proved *agent-writes-`merged` → node-reads-`upper`*;
+node-side inbound relies on the **inverse** (*node-writes-`merged` → agent-reads*), which
+should hold by the same `rshared` propagation but wasn't the exact case tested. ~10-min POC.
 
 ## 5. The load-bearing new pieces (what C1 lacked)
 
@@ -130,9 +181,11 @@ as a steer; auto-rebase via case 2 at a safe checkpoint). Humans-in-app get a ba
 2. **Per-container hydration subscription set** — the node polls the ledger only for the
    shared paths this container actually hydrated (the §9 "workspace/topic-scoped feed"),
    not all artifacts.
-3. **`/incoming` staging volume** — a per-container volume the node writes and the agent
-   reads, *outside* the overlay (so neither side pokes the overlay layers).
-4. **Checkpoint adopter** — the in-container handler doing cases 1–3 through `merged`.
+3. **`/atrium` read-only context projection** (§2A) — the node-maintained tree of chat +
+   sibling transcripts + an artifacts view, append-tailed live; one shared copy per node.
+   (Replaces the agent-facing `/incoming` — which, if kept at all, is node-internal staging.)
+4. **Harness quiesce signal** — a lightweight "between-steps" hook so the node's write-through-
+   `merged` never lands mid-read. *Replaces* the in-container 3-case adopter (now node-side, §4).
 
 ## 5A. Durability coverage — one mechanism, three destinations (by content class)
 
@@ -305,8 +358,8 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
 | Capture-out, in-container 2.5s poll (`artifact_capture.py`) | **built** — **retired** by C4 (kept as fallback for managed-restricted nodes) |
 | Capture-out, node-scan of upper (C4) | **new** (kernel mechanism POC-confirmed 9/9) |
 | Hydrate-into-lower at startup (ledger → overlay lower) | **new** |
-| Inbound fetch+stage (node) + checkpoint adopt (in-container) | **new** — redesigns C1 (was in-container daemons + stdin-poke-primary) |
-| Hydration manifest + subscription set + `/incoming` | **new** |
+| Inbound fetch + **node-side merge** (write-through-`merged`) + harness quiesce signal | **new** — redesigns C1; supersedes the in-container adopter (DECIDED 2026-06-20) |
+| Hydration manifest + subscription set + **`/atrium` context projection** (append-tail) | **new** |
 
 ## 8. Open items / risks (not closed by this design)
 

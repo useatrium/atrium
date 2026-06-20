@@ -30,7 +30,7 @@ node-side** fetch/stage/adopt + the **hydration manifest** (the genuinely new, b
 | Half | Repo | Bulk of work | Gating |
 |---|---|---|---|
 | **Atrium-side** | this repo (TS/SQL) | small — change-feed endpoint + conflict UX + scope query | none — buildable now on the shipped ledger |
-| **Centaur-side** | `services/api-rs` (Rust) + runtime | large — manifest, node fetch+stage, `/incoming`, adopter | gated on Track C4 overlay + node-scan landing |
+| **Centaur-side** | `services/api-rs` (Rust) + runtime | large — manifest, node-side merge (write-through-`merged`), `/atrium` projection, quiesce signal | gated on Track C4 overlay + node-scan landing |
 
 ## 2. Atrium-side lanes (buildable now)
 
@@ -62,15 +62,20 @@ node-side** fetch/stage/adopt + the **hydration manifest** (the genuinely new, b
 - **C-capture-base — base-aware capture.** The node-scan must pass the hydrated `base_seq`
   per path so concurrent shared edits route through OCC/diff3 (A2) instead of
   blind-append. Without this, conflicts aren't detected (hand-compute #1/#5).
-- **C-fetch — node fetch+stage.** Node polls A1's feed for this container's hydrated
-  paths; fetches bytes; writes to a per-container `/incoming` volume + marker
-  `{path, base_seq, new_seq, sha}` (outside the overlay, always safe to write).
-- **C-notify — marker.** Harness polls the `/incoming` marker (cheap, local); optional
-  stdin poke for latency. **Bytes never ride stdin.**
-- **C-adopt — checkpoint adopter** (in-container, the only legal write is through
-  `merged`): the three cases from §4 — **unedited** → swap at checkpoint; **edited** →
-  `diff3(base, ours, theirs)` clean→write / conflict→markers + ledger `status=conflict`;
-  **resurrect** (agent deleted, remote edited) → remove whiteout.
+- **C-merge — node-side fetch + merge + write** (REVISED 2026-06-20: node-side, not an
+  in-container adopter — see `agent-sync-design.md` §4). Node polls A1's feed for hydrated
+  paths; fetches `theirs`; runs the 3 cases itself (unedited → write; edited → `diff3(base,
+  ours, theirs)` clean→write / conflict→markers + ledger `status=conflict`; resurrect →
+  write); **writes through the shared `merged` mount** (reachable host-side via `rshared`).
+  `ours` = the `upper` the node already reads for capture.
+- **C-quiesce — harness "between-steps" signal** (+ node `/proc/<pid>/fd` gate) so a write
+  never lands mid-read. *This is the only in-container residue* — invisible to the model.
+  **Replaces** the old `/incoming` marker + in-container adopter (demoted to node-internal).
+- **C-project — `/atrium` context projection** (§2A): node maintains the read-only context
+  tree (chat + sibling transcripts + artifacts view) as **append-tail** (no merge/quiesce),
+  one shared copy per node, reflinked into pods. Steers ride the normal message stream.
+- **C-verify — 10-min POC** the inbound write direction (node-writes-`merged` → agent-reads;
+  the POC proved the inverse). Gate C-merge on this.
 
 ## 4. Sequencing
 
@@ -80,8 +85,8 @@ A2 (✅ done)        │
 A3 (conflict UX) ──┘   depends on A2 (done) → buildable now, parallel to A1
 A4 (scope query) ──── pairs with C-hydrate
 
-Centaur: C-hydrate (linchpin) → C-capture-base + C-fetch → C-notify → C-adopt
-         all gated on Track C4 (overlay + node-scan) landing
+Centaur: C-verify → C-hydrate (linchpin) → C-capture-base + C-merge → C-quiesce
+         C-project (independent, append-tail) ── all gated on Track C4 landing
 ```
 **Land first (Atrium, no Centaur dependency):** A1 + A3 — they give the live-UI conflict
 loop for *human + in-app* edits immediately, even before the sandbox node-side exists.
@@ -89,9 +94,10 @@ loop for *human + in-app* edits immediately, even before the sandbox node-side e
 
 ## 5. Open product calls (resolve before/within the build — the 3 gaps)
 
-1. **Autonomous stale-read reconcile trigger** — *how* the `/incoming` marker becomes a
-   steer an autonomous agent acts on (inject as a steer message; auto-rebase via adopt
-   case 2 at the next safe checkpoint, never mid-write). **Decide the trigger contract.**
+1. **Autonomous stale-read reconcile trigger** — the node lands the merged file (case 1/2);
+   *how* does an autonomous agent notice + re-ground? (inject a steer message; it re-reads at
+   its next step, never mid-write). **Decide the trigger contract** (the node-side merge means
+   the file is already fresh; the open question is the *notification*, not the merge).
 2. **Delete-vs-edit resolution default** — stay-deleted vs resurrect (adopt case 3). A
    product call; pick a default + an override.
 3. **Lower-stability across pause/resume** — the re-provisioned `lower` must be
