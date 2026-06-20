@@ -6,6 +6,16 @@ sandbox. This is the gating item for live cross-container collaboration
 ledger is the version source it pulls from). Spec'd before the ledger fan-out so
 the ledger is built C1-ready. Grounded in `centaur-wt/integration` (2026-06-19).
 
+> **Design-pass update (2026-06-19)** — three decisions firm up this spec:
+> 1. **Live mid-session inbound is IN SCOPE.** The goal is a running agent seeing an
+>    edit *within seconds*. The egress-poll daemon (below) is the floor; the stdin
+>    poke is the latency cut — now a **target**, not just an optional optimization.
+> 2. **The change-feed is workspace/topic-scoped**, not session- or channel-scoped.
+>    Shared artifacts live in a `(workspace, fullpath)` namespace (scope = path
+>    prefix; `scratch/`=private). The feed keys on the **shared paths a session
+>    hydrated**, not on `session_id`. (See `cas-ledger-build-plan.md` §10.1.)
+> 3. **Autonomous reconcile = auto-rebase**, not stage-and-wait (see Reconciliation).
+
 ## The constraint, and the mechanism reality (corrects the design doc)
 
 Sandboxes are **no-ingress** — nothing dials in. The design doc said invalidation
@@ -85,6 +95,17 @@ The sandbox only *stages* incoming bytes; it never merges. If the agent edits an
 later promotes, the **ledger** forks → conflict-state (the `status=conflict` /
 `conflict` jsonb path being built in the ledger round). So C1 needs **no merge
 logic in the sandbox** — it's a fetch-and-stage + notify. This keeps C1 tractable.
+
+**Autonomous-agent reconcile (design-pass 2026-06-19).** Staging is correct but
+*inert* for an agent with no human watching — nothing makes it adopt the staged
+file (hand-compute finding 3). Decision: the daemon drops the incoming bytes **plus
+a reconcile signal**, and the harness **auto-rebases** (node-diff3) the staged
+version against the agent's working copy **at a safe checkpoint** (next read /
+between edits — *never splicing into a file mid-write*), continuing with inline
+conflict markers + a `status=conflict` version recorded in the ledger. Human-in-app
+stays notify-then-resolve (a banner). This is the §10.4 fix; the merge still happens
+ledger-side as conflict-state — the agent just adopts it deliberately rather than
+blocking.
 
 ## What the LEDGER must expose for C1 (build these C1-ready in this round)
 1. **A pointer-advance signal** — `LISTEN/NOTIFY` (or an outbox row) on

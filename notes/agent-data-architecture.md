@@ -43,6 +43,42 @@ latency optimization, not a correctness requirement.
   lakeFS; lakeFS lost on conflict-fit + ops + paywalled RBAC). Extend the existing
   `session_artifacts` pipeline; ~900 LOC mostly-glue. See `spike-artifact-store.md`.
 
+## Revised decisions (2026-06-19, design pass after CAS-ledger v1)
+
+A conversation after v1 landed settled the sharing / identity / notes / sync opens.
+Full record: `cas-ledger-build-plan.md` §10. Deltas to the design above:
+
+- **Identity = workspace-scoped, scope-as-path-prefix.** Artifacts are **shared
+  across the whole workspace by default** (sessions share *across channels*), so the
+  key is `(workspace, fullpath)` — session/channel are provenance, not the key.
+  Scope folds into a path prefix the filter reads: `scratch/<session>/`=private
+  (blind-append), `proj-x/`=topic/team (the realistic default altitude),
+  `shared/`/root=workspace-wide. Access follows scope; a default per-task working dir
+  keeps generic-name collisions structural, not accidental.
+- **Notes → artifact-canonical** (reverses the daily-driver chat-canonical-notes
+  model). Chat = input + view; agents edit notes as artifacts. The voice/mobile
+  braindump is preserved by an **append write-mode** → append-only log artifact
+  (never conflicts), distinct from the **edit mode** (conflict-state).
+- **Conflict model: jj-style state is what's BUILT** — conflicts are first-class
+  committable versions (`latest` advances, never blocks), *not* git-style blocking.
+  node-diff3 is just the merge algorithm. **CRDT is NOT the tracking model** (agents
+  emit file overwrites not CRDT ops; CRDT convergence ≠ correctness; it wants a live
+  connection, anti no-ingress). CRDT stays a narrow **opt-in human-editor
+  live-co-edit fast-path** committing back to the chain. (Firms up the prior
+  "CRDT only opt-in" line into a hard boundary.)
+- **diff3 gated by merge-class:** binaries → `immutable-data` (never diff3);
+  structured-serialized (JSON/YAML/CSV/`.ipynb`) → diff3-unsafe → whole-file
+  conflict-state; line-text (code, md prose) → diff3 OK.
+- **Code repos excluded from the shared-artifact pool** — code = coordinate around
+  git; a repo in two containers is git's to merge, never artifact-synced between
+  them. Filter excludes anything under a git working tree (extends the `.git/`-only
+  ignore); deliverables are written outside repo roots into the shared namespace.
+- **Mid-session inbound (C1) is IN SCOPE** (not "freshness=at-promote"): target is a
+  running agent seeing an edit within seconds; egress-poll daemon (floor) + stdin
+  poke (latency cut). Autonomous reconcile = **auto-rebase at a safe checkpoint**,
+  never hot-swap mid-write. Mechanism = **stdin directive over the attach pipe**,
+  NOT an outbound stream (see the corrected sync section below).
+
 ## The core model
 
 Three shapes, three merge behaviors — don't unify into one consistency model.
@@ -63,6 +99,13 @@ right *data structure* is a content-addressed Merkle DAG; **S3 is just the backi
 `derived-output` (regenerate-only; manual edit = anomaly).
 
 ## Execution & capture (in-container)
+
+> **SUPERSEDED 2026-06-19 — the overlay was DROPPED.** The sandbox is non-root with
+> `drop:[ALL]` caps, so an overlay mount needs `CAP_SYS_ADMIN` (`EPERM`) and GKE-COS
+> blocks the userns escape. Today's workspace is a plain **`git clone --shared`**;
+> the "free diff" = `git status`/`git diff` over the session branch; capture is the
+> in-process 2.5 s watcher. The overlay description below is retained as original
+> design intent only. (See `cas-ledger-build-plan.md` §4/§5b.)
 
 **Execution FS = a real local overlay per agent** (NOT object-FUSE — FUSE dies on
 atomic rename, lock files, partial writes, fsync, many tiny files):
@@ -143,9 +186,12 @@ sync is sandbox-initiated egress**:
   **no push into the sandbox** —
   - **lazy pull-on-access:** the daemon GETs the current version when the agent
     reads it (covers most cases);
-  - **invalidation over the outbound stream:** "X advanced under you" rides the
-    *already-held* outbound event stream (the one carrying steers/HITL), then the
-    daemon pulls (egress).
+  - **invalidation via a stdin directive (CORRECTED 2026-06-19):** there is **no**
+    held outbound subscribe stream — a running agent's only inbound channel is
+    **stdin over the k8s attach pipe**. So "X advanced under you" is a **new stdin
+    directive** (`{type:artifact.sync,path,sha}`) the control plane pushes, or
+    (primary) an **egress-poll daemon** polling a change-feed; then the daemon GETs
+    the bytes (egress). See `inbound-sync-spec.md`.
 - Reconciliation happens **at promote time in the durable ledger** (fork →
   conflict-state). Agents never see each other's *uncommitted* edits (private
   working copies). We **never hot-swap a file under a running agent** — notify, it
@@ -221,8 +267,9 @@ Code repos / structured data / docs / artifact pipelines / oversight converged:
   pointers/ledger/lineage/index → Postgres. **Backing = own CAS-ledger** (decided
   2026-06-19) — extend `session_artifacts`; net-new = ledger tables + write-back
   PUT + conflict-state/3-way (use a real diff3 lib) + lineage + multipart + GC.
-- **Sync:** egress-only (hydrate-GET, capture-POST, lazy-pull, invalidation over
-  the outbound stream). Mid-session inbound = new Centaur work.
+- **Sync:** egress-only (hydrate-GET, capture-POST, lazy-pull, invalidation via a
+  **stdin directive** / egress-poll daemon — *not* an outbound stream). Mid-session
+  inbound (C1) is **in scope** (target: running agent fresh within seconds).
 - **Media:** CAS + multipart (CDC deferred).
 - **GC:** mark-and-sweep + grace window from day one; expire dead session branches;
   compact working-history.
@@ -237,9 +284,10 @@ Code repos / structured data / docs / artifact pipelines / oversight converged:
 ## Open items
 
 - ~~Store backing spike~~ — **RESOLVED: own CAS-ledger** (`spike-artifact-store.md`).
-- **Mid-session inbound sync** — new Centaur work (egress pull + invalidation on the
-  outbound stream); until then, freshness = at-promote. **This is now the gating
-  open item** for live cross-container collaboration.
+- **Mid-session inbound sync (C1) — IN SCOPE (design pass 2026-06-19).** Egress-poll
+  daemon + **stdin-directive** invalidation (NOT an outbound stream); reconcile =
+  auto-rebase at a safe checkpoint. The gating item for live cross-container collab;
+  spec in `inbound-sync-spec.md`, decisions in `cas-ledger-build-plan.md` §10.
 - **CDC for large media** — deferred to post-v1.
 - **Human-byte-sticky reconciliation** — parked; revisit if jj-style proves
   insufficient for human+agent doc collisions.

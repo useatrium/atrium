@@ -50,6 +50,16 @@ parity-first.
 
 ## 2. Single-player "chief of staff / braindump" notebook
 
+> **REVISED 2026-06-19 — supersedes the read-only / chat-canonical model below.**
+> Notes move to **artifact-canonical files** in the CAS-ledger; chat becomes an
+> **input method + rendered view**, not the source of truth, so agents can edit
+> notes directly (base-aware capture + conflict-state). The frictionless
+> **voice/mobile braindump** is preserved by a **second write mode**: chat-style
+> *append* materializes into an **append-only daily/log artifact** (appends commute
+> → never conflicts); structured docs use the *edit* mode (conflict-state). See
+> `cas-ledger-build-plan.md` §10.2. The §2 body below is retained as the original
+> brainstorm.
+
 **Current state.** Channels are chat surfaces backed by Postgres. STT exists from
 the voice work. No markdown-doc/editor surface yet; no file projection.
 
@@ -212,6 +222,21 @@ workspace is a plain **`git clone --shared`** (no overlay), capture is an
 **in-process 2.5 s watcher** (`artifact_capture.py`, not a sidecar), and the free
 changed-set is just **`git status`/`git diff`** over the session branch. The
 ledger is cadence- and FS-agnostic, so none of this blocks it.
+
+**Scope + filtering — design pass 2026-06-19 (see `cas-ledger-build-plan.md` §10).**
+Artifacts are **shared workspace-wide by default** — sessions share *across*
+channels. Identity is effectively `(workspace, fullpath)`; **scope is a path
+prefix** the filter/access layer reads, not a session/channel tag: `scratch/<session>/`
+= private (filter-excluded, blind-append), `proj-x/` = topic/team scope (the default
+altitude), `shared/`/root = workspace-wide. Each task gets a default working dir so
+files land namespaced and generic names (`report.md`) don't accidentally collide.
+**diff3 is gated by merge-class**: binaries → `immutable-data` (never merged);
+structured-serialized (JSON/YAML/CSV/`.ipynb`) → diff3-unsafe, whole-file
+conflict-state; line-text (code, md prose) → diff3 OK. **Code repos are excluded
+from the shared pool** — a repo checked out in two containers is git's to coordinate,
+never artifact-synced between them; the filter excludes anything under a git working
+tree (extends today's `.git/`-only ignore), and deliverables are written *outside*
+repo roots into the shared namespace.
 
 ## 4. Video + voice chat + outside guests
 
@@ -408,11 +433,15 @@ permanent, redacted archive that `cass` syncs into.
   is an **egress-poll inbound daemon** (harness-agnostic; polls a change-feed, GETs
   bytes, stages to `~/.atrium/incoming/`, never hot-swaps), with an optional stdin
   `artifact.sync` poke as a latency cut. The hand-compute (§3) sharpened three
-  must-fixes before this is correct: the **change-feed must be channel-scoped** (it's
-  session-scoped today, so it can't see other agents), the staged bytes need a
-  **reconcile trigger** for autonomous agents (not just a file in a folder), and the
-  watermark must be a **`(created_at,seq)` cursor**. Spec: `notes/inbound-sync-spec.md`.
-  Fine for single-player day-1; required before two agents edit the same doc live.
+  must-fixes before this is correct: the **change-feed must be workspace/topic-scoped**
+  (it's session-scoped today, so it can't see other agents — see §10.1 scope), the
+  staged bytes need a **reconcile trigger** for autonomous agents (decided:
+  **auto-rebase** via diff3 at a safe checkpoint, §10.4 — not just a file in a
+  folder), and the watermark must be a **`(created_at,seq)` cursor**. Spec:
+  `notes/inbound-sync-spec.md`. **Design pass 2026-06-19 put live mid-session inbound
+  IN SCOPE** (target: a running agent sees an edit within seconds via the egress-poll
+  daemon + stdin poke) — single-player works on the built path day-1; live multi-actor
+  is this C1 work.
 - **Data ownership / export.** Full export of your record — fits the
   archive/`cass` ethos and "own your data."
 - **Comms / calendar integration.** Gmail/Calendar MCP wired into the
@@ -435,11 +464,15 @@ permanent, redacted archive that `cass` syncs into.
 1. **Runtime model** (#5): **DECIDED — k3s on a US box** (decider: BYO-subs couple
    to the k8s iron-proxy sidecar), with the **M1 as a zero-cost bring-up step**
    first.
-2. **Notebook model** (#2): **DECIDED — read-only**, with this storage split:
-   **artifacts canonical in Atrium S3** (versioned), **braindump notes canonical
-   in chat/Postgres**, both materialized into **one read-only mount** agents
-   `rg`/`cat`. Agent writes go to a writable drop → captured → S3 → new version.
-   Explorability is the *mount's* job, not S3's. (read-write deferred.)
+2. **Notebook model** (#2): **DECIDED (revised 2026-06-19) — notes are
+   artifact-canonical**, agents edit them directly (base-aware + conflict-state).
+   Chat is an **input method + rendered view**, not the source of truth. The
+   voice/mobile braindump is kept via a **second write mode** — append-style
+   capture → an **append-only daily/log artifact** (never conflicts) — while
+   structured docs use the edit mode. Explorability stays the *mount's* job (notes
+   are now plain greppable files, no projection step). *(This reverses the earlier
+   "read-only / braindump-notes-canonical-in-chat/Postgres" call.)* See
+   `cas-ledger-build-plan.md` §10.2.
 2b. **Storage substrate** (under #2/#3/#8): **BUILDING NOW on `feat/cas-ledger`** —
    own CAS-ledger (mig 033: cas_blobs/artifacts/artifact_versions/artifact_pointers;
    foundation + 4 codex lanes incl. write-back + node-diff3 conflict-state + GC +

@@ -11,6 +11,13 @@
 > deployed cluster. **C2 overlay DROPPED** (sandbox can't mount: non-root/no-caps);
 > **C3 large-file** needs Centaur object store (16 MiB ceiling today); **C1
 > inbound-sync** is the next Centaur effort (`notes/inbound-sync-spec.md`).
+>
+> **DESIGN PASS 2026-06-19 (see §10):** identity went **workspace-scoped**
+> (`(workspace,fullpath)`, scope as a path prefix; `scratch/`=private); **notes →
+> artifact-canonical** (reverses daily-driver §2); **C1 live inbound now IN SCOPE**;
+> autonomous reconcile = **auto-rebase**; **diff3 gated by merge-class**; **code
+> repos excluded from sharing** (git owns them). v1's `(session,path)` blind-append
+> is now only the `scratch/` path.
 
 
 The durable artifact CAS-ledger decided in `spike-artifact-store.md` (own
@@ -475,3 +482,129 @@ identity in v1 (needed the moment an agent and you co-edit a doc), or stay
 session-private for v1 and gate all shared editing behind C1? **Recommend the
 former** — it's small, and it's what lets the chief-of-staff agent edit your notes
 without silently clobbering your edits.
+
+> **RESOLVED in §10.1** — and went *broader* than `(channel,name)`: identity is
+> workspace-scoped (`(workspace, fullpath)`) with scope folded into a path prefix.
+
+## 10. Revised decisions — design pass after the build (2026-06-19)
+
+A design conversation after v1 landed (Gary) settled the open items from §8/§9 and
+reversed two earlier calls. **These supersede the narrower models above.**
+
+### 10.1 Identity = workspace-scoped, path-prefix scoping (supersedes `(session,path)` / `(channel,name)`)
+
+Default is **shared across the whole Atrium workspace** — sessions share artifacts
+*across channels*, not just within one. The identity key is effectively
+**`(workspace, fullpath)`**; session/channel tags are **not** the key (kept only as
+denormalized provenance/access metadata, if at all). "Scope" folds into the **path
+prefix**, interpreted by the filter/access layer — no separate scope column, no
+per-artifact tag machinery:
+
+- `scratch/<session>/…` → **private** to the session (filter excludes it from the
+  shared pool; blind-append, zero merge cost). Preserves the private affordance Gary
+  flagged we'd otherwise lose by going fully public.
+- `proj-x/…` / `team-y/…` → **topic/team scope** — the realistic default altitude
+  (not everything is company-wide). Co-edited + conflict-stated.
+- `shared/…` / root → **workspace-wide**.
+
+To keep collisions *structural, not accidental*, each task/agent gets a **default
+working dir** (`proj-x/`) so files land namespaced without the agent thinking about
+it — otherwise two unrelated tasks both writing `report.md` collide on one chain.
+**Access-control follows scope**: anything past `scratch/` is gated by
+workspace/team membership, retiring the built channel-only `non-member→404` as the
+*only* gate. **Net vs §9:** the bifurcation "private=`(session,path)` /
+shared=`(channel,name)`" becomes "private=`scratch/` prefix / shared=everything
+else, workspace-default" — same base-aware-capture + conflict-state requirement,
+simpler key. Shared captures are base-aware (route through the built node-diff3
+path); only `scratch/` stays blind-append.
+
+### 10.2 Notes → artifact-canonical (REVERSES daily-driver §2)
+
+The braindump/chief-of-staff notebook moves from **chat/Postgres-canonical +
+read-only mount** to **artifact-canonical files** in the CAS-ledger; chat becomes an
+**input method + rendered view** over the doc, not the source of truth. Agents edit
+notes like any other artifact (base-aware, conflict-state).
+
+**The one user story this risks** = the frictionless **append-only voice/mobile
+braindump** ("talk while walking, never think about where it goes") — a *document*
+forces "where does this thought go?" that the chat *stream* doesn't. Protect it with
+**two write modes over the same file substrate**:
+- **append** (voice/quick-thoughts → an append-only daily/log artifact) — *never
+  conflicts* (appends commute; no diff3), and
+- **edit** (structured docs) — base-aware, conflict-state.
+
+This also dodges the wrong-feeling case of a *braindump* throwing conflict-state
+because you voice-appended while an agent edited it. Everything else (search,
+agent-memory) is fine or **better** — notes are now directly greppable files, no
+projection step.
+
+### 10.3 Freshness — live mid-session inbound (C1) is IN SCOPE (not deferred)
+
+A *running* agent must see another actor's edit **within seconds**, not at next
+hydrate. C1 is the full chain: ledger `latest` advances → Atrium NOTIFY → api-rs →
+**stdin poke** → harness pulls + stages. The **egress-poll inbound daemon stays the
+floor** (harness-agnostic, no-ingress-clean); the **stdin poke is the latency cut**
+layered on. Real dependency risk (open verification item): does codex/claude/amp act
+on a new stdin `source` line or treat all stdin as a user turn? If a harness can't,
+it falls back to poll. (See `inbound-sync-spec.md`.)
+
+### 10.4 Autonomous reconcile = auto-rebase, with a safe-point rule
+
+An autonomous agent (no human watching) that hits an inbound change colliding with
+its in-flight edit **auto-rebases (node-diff3) and continues** — flagging the
+conflict inline (markers) + recording a `status=conflict` version — *not*
+pause-and-wait. Hard rule: **never splice bytes into a file the agent is mid-write
+on.** The daemon stages to `incoming/`; the **harness adopts the merge at a
+checkpoint** (next read / between edits). Auto-rebase = the agent *deliberately*
+picking up the merge, not the daemon hot-swapping under it. (This is jj's
+materialize-resolve-rebase-forward loop, agent-driven.)
+
+### 10.5 Conflict model = jj-style state (already built), CRDT opt-in only
+
+We are **already jj-style**, not git-style: conflicts are first-class committable
+state (`status=conflict` version, `latest` advances to it, never blocks,
+resolve-later) — jj's *model*, not git's *blocking* merge. **node-diff3 is just the
+merge algorithm** (git and jj both use 3-way textual merge; the difference is what
+happens on a non-clean merge — we store-as-state). We do **not** adopt true
+conflict-free (**CRDT**) as the tracking model: agents emit file overwrites, not
+CRDT ops; CRDT convergence ≠ correctness (silently merges two `function foo()` into
+broken code); it covers only one merge-class; and it wants a live connection (anti
+no-ingress). **CRDT stays a narrow opt-in fast-path in the human in-app editor** for
+live co-typing, committing back to the chain as ordinary versions — never the agent
+write path.
+
+### 10.6 diff3 gated by merge_class / type policy
+
+diff3 is line-based textual merge; route by merge-class (the schema lever already
+exists):
+- **Binaries** (png/pdf/img/audio/compiled) → `immutable-data`, **never diff3**
+  (line-merge on bytes = garbage); conflict = keep-both, last-writer `latest`.
+- **Structured-serialized** (JSON/YAML/TOML/CSV/`.ipynb`) → **diff3-unsafe**: a
+  textual merge can produce *syntactically invalid* output ("merged but won't
+  parse"). Treat as **whole-file conflict-state (both sides), not line-merge**;
+  notebooks especially (nbdime-style later).
+- **Line-oriented text** (code, markdown prose) → diff3 **OK**. Caveats: prose
+  reflow/rewrap reads as many line-changes → false conflicts (diff3 conservatism,
+  already noted); normalize CRLF (node-diff3 is trailing-newline-safe, not
+  CRLF-safe). Word/semantic diff is a later upgrade; conflict-state is lossless
+  meanwhile.
+
+### 10.7 Code repos excluded from the shared-artifact pool
+
+A repo checked out in two containers must **not** be artifact-synced between them —
+that fights git (merging branch A's working tree into branch B's is incoherent; git
+branches exist for exactly this). Principle: **code = coordinate around git
+(git-on-forge canonical); Atrium does not reinvent VCS.** Today only `.git/` is
+capture-ignored — that stops metadata but **not** tracked source files. Extend the
+filter: **anything under a git working tree (a `.git` at/above it) is excluded from
+artifact-*sharing*** — git owns it; shareable deliverables are written *outside* repo
+roots, into the shared namespace (§10.1). (Capture-for-history, derived from `git
+diff`, is separate from share-across-containers; you may want the former, never the
+latter.)
+
+### 10.8 Through-line: the path/filter layer carries the policy
+
+Scope (private/topic/workspace), code-vs-artifact, and diff3-eligibility are all
+**policy keyed off path + type + merge-class** — not new machinery. The path-prefix
+convention + the existing filter + `merge_class` do the work. That the model
+collapses onto one layer is a sign it's holding.
