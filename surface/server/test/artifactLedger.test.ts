@@ -180,3 +180,44 @@ describe('ArtifactLedger foundation', () => {
     expect(casBlobKey(sha)).toBe(`cas/01/${sha}`);
   });
 });
+
+// CHARACTERIZATION (green in CI on purpose): documents a KNOWN gap, not a desired
+// behavior — the blind-append clobber from notes/cas-ledger-build-plan.md §9
+// finding 1. capture() passes no baseSeq, so commitVersion linearizes every writer
+// onto `latest` regardless of the base it actually edited. Two agents that both
+// fork v1 → the second silently buries the first, with NO conflict recorded.
+//
+// WHEN shared-doc capture is made base-aware (the §9 fix), FLIP this test: agent
+// B's capture should carry base_seq=1 → trip stale_base → node-diff3 → a
+// status='conflict' version, not overwrite A. Rewrite the assertions then and
+// delete this comment.
+describe('ArtifactLedger — concurrent shared editing (characterization, §9)', () => {
+  it('blind-append capture buries the prior edit with no conflict', async () => {
+    const HELLO = 'a'.repeat(64);
+    const A_EDIT = 'b'.repeat(64); // agent A's edit off v1
+    const B_EDIT = 'c'.repeat(64); // agent B's edit off v1 — does NOT contain A's change
+
+    await capture('design.md', HELLO, 'created'); // v1: both agents hydrate this
+
+    const a = await capture('design.md', A_EDIT, 'modified'); // implicit base = latest(1) → seq 2
+    expect(a).toMatchObject({ ok: true, seq: 2 });
+
+    const b = await capture('design.md', B_EDIT, 'modified'); // B also forked v1, but no base →
+    expect(b).toMatchObject({ ok: true, seq: 3 }); // implicit base = latest(2): appended over A
+
+    // The clobber: latest is B's bytes; nothing flagged that A's edit was lost.
+    const latest = await ledger.resolveVersion(sessionId, 'design.md', { pointer: 'latest' });
+    expect(latest).toMatchObject({ seq: 3, blobSha: B_EDIT, status: 'normal' });
+
+    // The lost update is SILENT — no conflict version was ever recorded.
+    const conflicts = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM artifact_versions WHERE status = 'conflict'`,
+    );
+    expect(conflicts.rows[0]!.n).toBe(0);
+
+    // A's edit still exists in history (seq 2) but is unreachable via latest — it
+    // never merged forward into B's version.
+    const aStill = await ledger.resolveVersion(sessionId, 'design.md', { seq: 2 });
+    expect(aStill?.blobSha).toBe(A_EDIT);
+  });
+});
