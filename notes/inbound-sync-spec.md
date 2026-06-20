@@ -46,6 +46,61 @@ So inbound sync is **not** "hold a stream open." Two viable mechanisms:
 later as a latency cut.** It avoids per-harness changes and the at-least-once
 ordering trap.
 
+### Grounded verification — container comms + file monitoring (2026-06-20)
+
+Two read-only research passes over `centaur-wt/integration` (branch
+`atrium/integration`) confirmed the mechanism and sharpened the
+exists-vs-net-new boundary. The poke and the daemon are **complementary, not
+alternatives**: the poke is a *control signal* (go pull now); the bytes **must**
+come over egress regardless — so the daemon (the egress fetcher) is needed either
+way, and the poke only removes the *idle polling*, it does not replace the daemon.
+
+**The notify-a-running-container channel EXISTS and is the only one:**
+- Sandboxes are k8s `Sandbox` CRs (Deployment-shaped, `spec.replicas`); **pause =
+  scale to 0**, not delete (`sandbox-agent-k8s/src/lib.rs:485,512`). Warm-pool
+  replenish 5s. Workspace = **`git clone --shared`** one-shot at boot, fresh
+  `agent-<ts>` branch (`entrypoint.sh:351`); **no overlay, no workspace PVC**.
+- Security posture (the overlay-killer, reconfirmed): `allowPrivilegeEscalation:
+  false`, `capabilities.drop:["ALL"]`, `runAsNonRoot:true`, seccomp `RuntimeDefault`
+  (`tools.rs:109`). ⇒ **inotify (unprivileged) is fine; `fanotify`/overlay (want
+  `CAP_SYS_ADMIN`) are off the table** without a posture regression.
+- Inbound transport = **stdin over a held k8s `attach` stream**: api-rs holds
+  `pods().attach()` and keeps the write half in a per-sandbox `SessionPipe`
+  (`sandbox_pipes: HashMap<sandbox_id, SessionPipe>`, `session-runtime
+  lib.rs:57,169`); `write_input_lines` → `pipe.stdin.send(line)` (`lib.rs:3663`).
+  Mapping: thread_key → `session.sandbox_id` → `sandbox_pipes[sandbox_id]` → attach.
+- **No held outbound/subscribe stream — confirmed.** The only persistent connection
+  is the attach (stdin in; stdout/stderr pumped to events); missed-output recovery
+  replays **kubelet logs** (`lib.rs:371`), not a stream.
+- Egress posture — **default-deny ingress, egress-only** NetworkPolicy
+  (`iron_proxy.rs:1112`); egress allowed to iron-proxy, **api-rs on 8000/8080**,
+  DNS, optional OTLP. The control plane reaches the container **only** via the kube
+  API attach, never a network port.
+- Existing api-rs cadences (precedent for our floors): warm-pool 5s; **event-stream
+  safety poll 30s** (`EVENT_STREAM_SAFETY_POLL_INTERVAL`, `lib.rs:43`); steering
+  startup retry 250ms→15s. Sandbox capture loop = 2.5s.
+
+**Three net-new pieces (the channel is reusable; the message + both endpoints are not):**
+1. **A control-line emit path.** Steering today forwards **only `MessageRole::User`**
+   — non-user roles are dropped (`lib.rs:3786`). A `source:"artifact.sync"` poke is
+   *not* a user turn, so it needs a **new emit path** (not a reuse of
+   `append_messages`), else it's dropped or mis-fed to the model as a user message.
+2. **An in-container consumer.** The app-server stdin reader handles harness turns,
+   not arbitrary control directives → the **harness (or a sidecar daemon) must grow
+   a handler** for the new line type. This is the per-harness open risk; the
+   egress-poll daemon sidesteps it (it acts on its own poll, needs no poke handler).
+3. **The byte transfer.** The attach pipe carries the harness JSON protocol; **bulk
+   file bytes have no inbound channel**. A pull must **egress** to api-rs (and from
+   there Atrium S3) over the existing proxy allowance — i.e. exactly the daemon's
+   egress GET. The poke only triggers it.
+
+**Net:** the Atrium-side push trigger is already wired (`pg_notify('artifact_advanced')`,
+`artifact-ledger.ts:202`); the Centaur-side stdin transport already exists. The
+net-new is the **dispatcher** (LISTEN→api-rs), a **non-user control-line type +
+emit path**, a **harness/daemon consumer**, and the **egress byte-pull** (the
+daemon). v1 = daemon-only (poll, harness-agnostic, correct); v1.x adds the poke to
+collapse idle poll QPS to ~zero.
+
 ## The three components + contracts
 
 ### 1. Atrium — ledger advance emitter

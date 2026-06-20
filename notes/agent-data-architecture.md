@@ -78,6 +78,14 @@ Full record: `cas-ledger-build-plan.md` §10. Deltas to the design above:
   poke (latency cut). Autonomous reconcile = **auto-rebase at a safe checkpoint**,
   never hot-swap mid-write. Mechanism = **stdin directive over the attach pipe**,
   NOT an outbound stream (see the corrected sync section below).
+- **Capture mechanism is an OPEN research item** (not v1-blocking). The in-container
+  capture is a **2.5s polling stat-walk**; before hardening, research event-driven
+  alternatives — **`inotify` + slow-safety-sweep hybrid** (unprivileged, sub-second,
+  ~0 idle CPU), `fanotify` (verify vs the non-root `drop:[ALL]` posture that killed
+  overlay), platform-specific (Linux inotify vs macOS FSEvents/kqueue for any local
+  bring-up). Both the capture (local CPU) and inbound (network QPS) loops share the
+  same poll-vs-event question. Details + open questions: `cas-ledger-build-plan.md`
+  §10.7b.
 
 ## The core model
 

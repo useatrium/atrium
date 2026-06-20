@@ -1,7 +1,7 @@
 # CAS-ledger — full design + build plan
 
-> **STATUS (2026-06-19): v1 BUILT on `feat/cas-ledger`** (local, unpushed; off
-> `master`). Foundation + all 4 codex lanes merged + reviewed; **full suite green,
+> **STATUS (2026-06-20): v1 MERGED to `master`** (PR #35 = `aeb4e9f`; pushed to
+> origin). Foundation + all 4 codex lanes merged + reviewed; **full suite green,
 > 242 tests** (local Postgres 16 on :5433). Built: mig 033 ledger, `ArtifactLedger`
 > core, capture-bridge + CAS re-key, serve-latest-by-path, write-back PUT +
 > node-diff3 conflict-state, blob-GC worker + C1 NOTIFY/changed-since hooks.
@@ -601,6 +601,39 @@ artifact-*sharing*** — git owns it; shareable deliverables are written *outsid
 roots, into the shared namespace (§10.1). (Capture-for-history, derived from `git
 diff`, is separate from share-across-containers; you may want the former, never the
 latter.)
+
+### 10.7b Capture mechanism — research the alternatives to the 2.5s poll (OPEN)
+
+The capture watcher is a **2.5s polling stat-walk** today (`artifact_capture.py`).
+That's a local-CPU cost bounded by file count (negligible for small trees; ~1% +
+churn for large un-pruned ones) and a **≤2.5s write→capture latency floor**. Before
+hardening, **research mechanisms beyond polling** — this likely needs a dedicated
+pass and several options are **platform-specific**:
+
+- **`inotify` (Linux), hybrid** — unprivileged (no `CAP_SYS_ADMIN`, unlike the
+  dropped overlay), event-driven, sub-second, ~0 idle CPU. Caveats: one watch
+  descriptor per directory (`fs.inotify.max_user_watches`, default 8192 — tunable,
+  but a node-level sysctl), **events dropped on queue overflow under burst**, no
+  recursive watch (must walk + add per subdir). Standard pattern = **inotify for
+  liveness + a slow (30–60s) safety sweep** to catch misses. Cheaper *and* lower
+  latency than the 2.5s poll.
+- **`fanotify`** — can watch whole mounts (fewer descriptors) but historically
+  wants `CAP_SYS_ADMIN`/`CAP_AUDIT_WRITE`; `FAN_REPORT_FID` modes relax some of that
+  on newer kernels. **Verify against the sandbox's non-root `drop:[ALL]` posture** —
+  may be the same blocker that killed overlay.
+- **`io_uring` poll / `epoll` over inotify fds** — efficiency layer, not a different
+  source.
+- **macOS = different APIs** (`FSEvents`/`kqueue`) — only relevant for any local/M1
+  bring-up, not the GKE-COS sandbox; flag so the solution isn't assumed portable.
+
+Open questions for the research pass: which mechanisms survive the sandbox's
+non-root + `drop:[ALL]` + RuntimeDefault-seccomp posture (the overlay-killer); the
+`max_user_watches` ceiling vs realistic workspace dir counts; overflow-recovery
+correctness (the safety sweep is mandatory either way); and whether the win over a
+tuned/backoff poll justifies the per-platform code. **Not a v1 blocker** — the 2.5s
+poll works; this is a freshness+CPU optimization to scope deliberately. Tie-in: the
+inbound daemon (§10.3 / `inbound-sync-spec.md`) has the *same* poll-vs-event question
+on the network side.
 
 ### 10.8 Through-line: the path/filter layer carries the policy
 
