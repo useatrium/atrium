@@ -71,6 +71,16 @@ Per C4: a privileged **node DaemonSet** (one per node, O(nodes)) scans each cont
 overlay `upper` (= the changed set, O(changes)), interprets overlay encoding
 (regular→created/modified, char-dev 0/0→delete, `trusted.overlay.redirect`→rename), reads
 bytes, and POSTs **direct to Atrium S3** (bypasses the `bytea` ceiling → large-file path).
+
+**Cadence — this replaces the old 2.5s in-container whole-tree poll.** The watcher is now
+*outside* the container, and it does **not** walk the whole workspace: it scans the
+`upper` (only the changed set, so an interval scan is cheap, complete — a state-diff, no
+event-drop — and doubles as the reconcile sweep). **Because the node is privileged it can
+also run `fanotify`/`inotify` on the `upper`** (the hardened agent never could) → optional
+event-driven, sub-second capture with the interval scan as the completeness backstop. So:
+node-side changed-set scan (floor) ± node-side `fanotify` (latency) — *not* a 2.5s
+whole-tree timer.
+
 Two requirements this doc adds:
 - **Base-aware capture** (the §9 fix): the scan must pass the *hydrated base seq* per
   path so concurrent shared edits route through OCC/diff3 instead of blind-append. →
@@ -110,6 +120,131 @@ as a steer; auto-rebase via case 2 at a safe checkpoint). Humans-in-app get a ba
 3. **`/incoming` staging volume** — a per-container volume the node writes and the agent
    reads, *outside* the overlay (so neither side pokes the overlay layers).
 4. **Checkpoint adopter** — the in-container handler doing cases 1–3 through `merged`.
+
+## 5A. Durability coverage — one mechanism, three destinations (by content class)
+
+Capture is **not artifact-only**: it's one node-side mechanism that routes by content
+class to the *right durability shape*. Forcing everything into the version-ledger is the
+mistake (logs churn it; code fights its branch model).
+
+| Content class | Destination | Why there |
+|---|---|---|
+| **Artifacts** (`proj-x/`, `shared/`) | version-**ledger** (CAS + chain + pointers + conflict-state) | edited, versioned, workspace-shared |
+| **Code working-state** (repos) | **git shadow-ref** (`refs/centaur/wip/*`, pushed to forge/mirror) | git owns it; branch-aware; the only durable home for *uncommitted* repo work |
+| **Logs / transcripts** (`~/.codex`, `~/.claude`, …) | **chunked CAS blob + append-index** (NOT a version chain) | append-only; resume consumer; versioning is the wrong shape |
+
+**The uncommitted-repo-work hole + fix.** Repo files are excluded from the ledger
+(branch-incoherent — see §2). Git only makes work durable *at commit*, so uncommitted
+edits are lost on crash/destroy (survive pause only on a persistent repo volume). Fix =
+a **side-effect-free shadow snapshot** on a heartbeat, run by the node daemon against the
+repo volume — **never** a real auto-commit (that mutates HEAD/branch/index the agent
+reasons about and races `.git/index.lock`):
+```
+GIT_INDEX_FILE=<persistent wip-idx> git add -A   # separate index → no contention; respects .gitignore (auto-excludes deps/junk)
+tree=$(… write-tree); commit=$(git commit-tree $tree -p HEAD -m wip)
+git update-ref refs/centaur/wip/<ts> $commit; git push <mirror> refs/centaur/wip/<ts>
+```
+Invisible to `git status`/`git log`/`git branch` (non-default ref namespace). **Overhead
+to manage:** the wip-index must be *persistent* (else `add` is O(repo) each time); prune
+old wip-refs + gc (they pin objects); decouple push cadence from snapshot cadence; torn
+snapshots are fine (best-effort recovery points). It runs over **disjoint paths** from
+the artifact scan (repos vs the overlay upper) → no double-capture, no logical
+contention; they share the node daemon's resources, egress, and pod→session attribution.
+
+**Transcripts** (the rollout JSONL) are *mechanically* capturable by the same node
+file-watch — they're just not in `/workspace` and they're a *log*, so they route to the
+log destination (chunked blob + append-index), feeding harness-resume, not the gallery.
+
+## 5B. Storage layout & hydration — `lower` is a checkout, not a byte-merge
+
+**The store is heterogeneous by class:**
+```
+ARTIFACTS   → S3 cas/<sha> blobs + PG ledger;  whole file = 1 blob;  chunked = manifest{chunk-shas} + N chunk blobs
+CODE        → git objects on the FORGE/mirror (NOT our S3), incl. refs/centaur/wip/*
+LOGS/XCRIPT → S3 cas/<sha> chunk blobs + an append-index
+```
+There is **no single merged blob**. Artifacts + log-chunks share the `cas/<sha>` store;
+**code lives entirely in git's store** (we don't put repo objects in our S3).
+
+**Hydrating the artifact `lower`** (the RO lowerdir of the artifact overlay — repos/deps
+are *separate volumes*, not this) is a **checkout**, mostly *not* a merge:
+1. Resolve the session's scope → the **hydration manifest** (`path → version/base_seq`) —
+   the same object §5 needs for base-aware capture; it *is* the lower's content list.
+2. Per path: ledger → latest version → a **blob_sha** (whole file) or a **chunk-manifest**.
+3. Fetch S3: whole file = **1 GET**; chunked = GET chunks + **concat** (the *only* real
+   byte-merge, and only for chunked large files — normal artifacts never concat).
+4. Materialize the files into the lowerdir tree → overlay mounts it RO.
+
+So "blobs merged together" = **a tree laid out one-blob-per-file by path**, not blobs
+concatenated. Conceptually: artifact `lower` = a **CAS checkout** (tree-manifest →
+per-file blobs); the repo = a **git checkout** (separate volume). Two checkouts, two
+stores, composed into `/workspace`.
+
+**Scale levers (design, not built):** a **node-local CAS cache** (`/var/lib/centaur/cas/<sha>`)
+materialized into `lower` by **reflink/hardlink** (content-addressed → free dedup across
+pods; mirrors the existing repo-cache hostPath); and a **tree-manifest** object
+(`path→sha` for the whole scope, à la a git tree / lakeFS range) so hydration is one GET
+for the tree + cache-miss blob GETs, not N ledger lookups. *None of lower-hydration is
+built today* (workspace is `git clone --shared`, no artifact-lower); the ledger +
+`cas/<sha>` + serve-by-path exist, but `hydration-manifest → materialize-lower` is new.
+
+## 5C. Small objects & packing — don't make one S3 object per append
+
+The chunked-log + fine-grained-working-history model would **explode tiny S3 objects** if
+naive (one object per appended line → per-PUT cost, per-prefix rate limits (~3,500 PUT/s),
+slow LIST/GC, N-round-trip reads). The fixes, in layers:
+- **Chunk at MB scale** (CDC ~1–4 MB), never per-line; appends **buffer until a chunk
+  closes**.
+- **Heartbeat-batch** — capture on an interval, so a flush is *one delta*, not one
+  per write.
+- **Pack** — content-addressed chunks go into **pack files** (≤64–128 MB, git/restic
+  style) with a `sha→(pack,offset,len)` index in PG; reads = **range-GET**. Millions of
+  tiny chunks → thousands of pack objects + an index. (The "pack chunks into ≤64 MB
+  blocks" the data-arch already noted — applies to logs + working-history, not just media.)
+- **PG hot-tier** — the growing tail / recent working-history stays in PG `bytea` and only
+  **seals to S3 (packed) when cold/large** — the existing offload-worker pattern.
+- Cross-cutting: **content-dedup** (identical bytes → no new blob), **GC** (mark-sweep
+  unreferenced — mandatory day one), **compaction** (thin working-history).
+
+**This is the trigger to un-defer CDC** — parked as a media optimization, but append-heavy
+transcripts/working-history are where it earns its keep. v1 (single-user, modest logs)
+tolerates per-interval delta + dedup + GC; **packing + CDC are the scaling answer.**
+
+## 5D. Build vs buy — commodity OSS vs the must-build glue
+
+Most *individual layers* here are well-trodden infra with mature OSS — we should **reuse
+the commodity, build only the glue.** The mistake would be hand-rolling chunking/packing
+or log storage.
+
+| Layer | Strong OSS prior art | Stance |
+|---|---|---|
+| Chunking / CDC / pack / dedup | **restic, borg, Kopia, casync/desync, Xet, git packfiles** | **REUSE** — hand-rolling CDC + pack-GC + repair is a multi-year trap. Pull a chunker lib / sidecar when we un-defer CDC. |
+| Content-addressed blob + versioned refs over S3 | **lakeFS, Nessie, Dolt, git** | **BUILD (already decided)** — the spike chose own-CAS-ledger 39–29 over lakeFS, but only because lakeFS lacks **jj-style conflict-state** + per-tenant RBAC. That justification holds for the *conflict/version metadata*, not the blob plumbing. |
+| WIP working-copy snapshots | **`dura` (auto-commit to a shadow ref), jj (auto-commits the working copy)** | **REUSE the pattern** — the §5A shadow-ref snippet *is* what `dura`/jj do; it's ~a script, not a system. |
+| Append-only log storage | **Loki, Vector, Kafka log-segments** | **REUSE the pattern** (segment + index); don't invent log storage. |
+| POSIX over object store (lazy hydrate) | **JuiceFS, SeaweedFS, Mountpoint-S3** | **EVALUATE** — JuiceFS handles the rename/lock/fsync cases naive FUSE fails; could be the hydrate/serve layer (it doesn't do versioning/conflict/no-ingress). |
+| File sync between hosts | **Syncthing, Mutagen, rclone** | **N/A** — they need reachability; **no-ingress disqualifies them** (this is *why* we build the egress sync). |
+
+**What is genuinely must-build (the glue, no single product fits):** the **no-ingress
+egress-only sync orchestration**, the **overlay-upper node-scan capture**, the
+**agent-UX policy** (structural scoping, merge-class, filtering, workspace-scoped
+identity), the **jj-style conflict-state ledger** (lakeFS can't), and the **per-tenant /
+VM model**. `agent-data-architecture.md` already concluded *no single off-the-shelf
+system* does this exact combination (no-ingress + large-binary + versioned-with-merge +
+multi-shape + agent-semantics) — "the integration is the product."
+
+**Honest meta-observation:** we keep re-deriving **jj's model** (conflict-as-state,
+auto-committed working copy, change-ids, op-log). That's a signal, not a coincidence —
+jj is the conceptual reference. We don't *run* jj because its scalable S3 cloud backend +
+CDC layer are Google's **closed** pieces (per the prior eval); so this is "jj's model on
+our own backend, for the no-ingress agent context." Legitimate, but worth naming so we
+borrow jj's *design* deliberately instead of accidentally.
+
+**Recommendation:** before building the chunking/packing/log layers, run a focused
+**build-vs-buy eval** (analogous to the lakeFS spike) over restic/casync/Xet (chunk+pack
+as a library or sidecar), `dura`/jj (WIP), and JuiceFS (hydrate/serve). v1 stays
+whole-object (the spike's deferral); reach for the chunker when un-deferring CDC — don't
+write our own.
 
 ## 6. Hand-compute evidence (the flows that justify §4)
 
@@ -159,6 +294,15 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
   after the init exits → **unmount-on-pod-teardown** (else orphaned node mounts).
 - **Multi-tenant blast radius** — the node sync daemon reads all pods' uppers on its node
   → VM-per-tenant (hypervisor boundary; per-tenant node → per-tenant daemon).
+- **WIP shadow-snapshot overhead** (§5A) — persistent wip-index (else `add` is O(repo));
+  prune wip-refs + gc; decouple push cadence; gc/repack races with the agent.
+- **Build-vs-buy eval before the chunking/packing/log layers** (§5D) — evaluate
+  restic/casync/Xet (chunk+pack), `dura`/jj (WIP), JuiceFS (hydrate/serve) rather than
+  hand-roll. v1 stays whole-object; reach for a chunker when un-deferring CDC.
+- **Repo-`.md` UX (OPEN — needs Gary's call)** — repo docs aren't in the ledger (branch-
+  incoherent). *Recommended resolution:* don't dual-store; unify the **Files surface**
+  over git + ledger (location = backing/semantics) so repo docs keep preview/edit/history
+  via git. Not yet folded in pending sign-off.
 
 ## 9. Relationship to other docs
 
