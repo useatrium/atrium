@@ -345,9 +345,26 @@ clone today).
 The scalable/permanent replacement for the in-container 2.5s poll. Stress-tested +
 hand-computed 2026-06-20 (codex review attempted, runtime non-functional — verdict
 is from the in-house pass; its research trail corroborated the mountPropagation,
-torn-read, and hostPath risk points). **Decided as the target; gated on ONE
-pre-implementation verification** (the `mountPropagation` linchpin, below) — not
-claimed validated until that's checked on a real Linux node.
+torn-read, and hostPath risk points). **Decided as the target. Kernel mechanism
+POC-CONFIRMED 2026-06-20** (9/9, below) on the **real `centaur-agent` image, kernel
+6.12.76-linuxkit**; the residual is the k8s YAML *wiring* (a documented feature), not
+a kernel unknown.
+
+**POC result (2026-06-20, privileged Linux container on the agent image, 9/9 PASS):**
+privileged overlay mount works (`metacopy=off`); create→upper regular file w/ bytes;
+modify-lower→**full** copy-up bytes; delete→**whiteout char-dev 0/0**; **non-root
+uid-1001 agent writes via `merged` → root "node" reads them from `upper`**; **a
+process in a separate mount namespace writing via `merged` → node sees it in `upper`
+(the agent-in-own-ns linchpin)**; the `merged` mount is **visible across mount
+namespaces via `rshared`**; rename resolves. ⇒ The kernel feasibility that could
+have killed the design — can a hardened non-root agent's writes, through a
+runtime-mounted overlay it doesn't own, land in an `upper` a node component reads? —
+is **confirmed**. *Residual (lower-risk, not kernel):* (a) the k8s
+`mountPropagation: Bidirectional` volume wiring + init-container ordering (documented
+feature; confirm in kind/real-node); (b) rename via `trusted.overlay.redirect` xattr
+read needs `attr`/`CAP_SYS_ADMIN` (POC couldn't read it; rename still resolves by
+path → fidelity falls back to path+whiteout); (c) POC used tmpfs backing — real
+design uses a node ext4 vol (identical mechanism; ext4 also stores trusted xattrs).
 
 **The shape.** Move capture *out* of the agent; relocate privilege to the
 runtime + a node component (we control the node — self-managed k8s on dedicated
@@ -392,12 +409,15 @@ footprint, and a native large-file path.
 3. **Session-keyed persistent upper** (hostPath/PVC, keyed by session not pod-uid) so
    it survives pause (= pod delete) and **resume reattaches** the same upper — which
    also upgrades resume from "fresh re-clone" to "prior state restored."
-4. **`mountPropagation: Bidirectional` is the linchpin** — k8s docs flag it
-   "privileged and dangerous." It's the one claim that could invalidate the whole
-   design: *can a privileged setup container mount an overlay and share `merged` into
-   a hardened non-root container, with the node seeing upper writes?* **Verify on a
-   real Linux node before implementation** (can't POC on macOS — no overlay /
-   mount-namespace; local Docker wedged). This is the single pre-build gate.
+4. **`mountPropagation: Bidirectional` was the linchpin — kernel mechanism now
+   POC-CONFIRMED (2026-06-20).** The question (*can a hardened non-root agent's
+   writes, through a runtime-mounted overlay it doesn't own, land in an `upper` a
+   node component reads?*) is answered **yes** at the kernel level — the cross-mount-
+   namespace write-visibility + `rshared` mount-visibility + non-root-write→root-read
+   all PASS (see POC result above). The k8s docs still flag bidirectional propagation
+   "privileged and dangerous," so the **residual** is the k8s YAML wiring +
+   init-container ordering (documented feature) — confirm in kind/real-node — not a
+   kernel unknown. No longer a design-invalidating risk.
 
 **Multi-tenant blast radius → VM-per-tenant (decided 2026-06-20).** The node
 DaemonSet reads every pod's files on its node — a real cross-tenant read surface.
@@ -687,9 +707,10 @@ The capture watcher is a **2.5s polling stat-walk** today (`artifact_capture.py`
 O(workspace dirs) per scan, per pod, no delete/rename, ≤2.5s latency. **Decision
 (2026-06-20, Gary: "scalable/permanent, not an MVP"): the target capture
 architecture is the overlay-upper node-scan in Track C4** — O(changes) scan, O(nodes)
-scanner, delete/rename fidelity, zero agent footprint, native large-file path. Gated
-on the `mountPropagation` node-verification (Track C4 commitment #4) before
-implementation.
+scanner, delete/rename fidelity, zero agent footprint, native large-file path.
+**Kernel mechanism POC-confirmed 2026-06-20 (9/9 on the real agent image, kernel
+6.12);** residual is the k8s `mountPropagation: Bidirectional` YAML wiring (documented
+feature, confirm in kind/real-node) — see Track C4.
 
 The earlier event-driven candidates are **demoted to fallbacks** (relevant only where
 node control is unavailable — *not* our self-managed environment):
