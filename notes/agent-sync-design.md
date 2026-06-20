@@ -253,11 +253,22 @@ CDC layer are Google's **closed** pieces (per the prior eval); so this is "jj's 
 our own backend, for the no-ingress agent context." Legitimate, but worth naming so we
 borrow jj's *design* deliberately instead of accidentally.
 
-**Recommendation:** before building the chunking/packing/log layers, run a focused
-**build-vs-buy eval** (analogous to the lakeFS spike) over restic/casync/Xet (chunk+pack
-as a library or sidecar), `dura`/jj (WIP), and JuiceFS (hydrate/serve). v1 stays
-whole-object (the spike's deferral); reach for the chunker when un-deferring CDC — don't
-write our own.
+**Recommendation — DONE: see `build-vs-buy-eval.md`** (the focused eval this section
+called for; 5 cited research passes + 2 hand-computes + a user-story stress-test).
+**Verdict: buy the *algorithm*, borrow the *pattern*, build the *glue* — no buy for the
+whole** (the integration is the product; the one same-category competitor, Mesa, is
+closed with undisclosed conflict internals). Concrete picks: **buy** `fastcdc-rs`
+(chunker) + `xet-core` (large-file CDC, when >16 MiB lands) + **Vector** (capture/ship
+daemon) + **Parquet/DuckDB** (working-history cold archive); **borrow** the segment+index
+log-seal and the `git commit-tree` shadow-ref (each ≈ a script — dura is local-only/no-push
+→ disqualified by no-ingress; jj-for-WIP = op-log tax for no gain); **build** the
+pack-index+GC (~1–1.5k LOC, *same shape as the shipped `artifact-ledger-gc.ts` lease
+worker*) and the lower-hydration (parallel-GET + node-local CAS cache + reflink — *not*
+JuiceFS/CubeFS, which replace the store + add a cross-tenant metadata blast surface;
+Mountpoint-S3 read-only is back-pocket-only). **No OSS jj cloud backend exists in 2026**,
+so the own-CAS-ledger decision re-validates. v1 stays whole-object; un-defer triggers are
+type-gated (CDC only when large-churny-binary storage dominates — 14–34× there, ~1× for
+text).
 
 ## 6. Hand-compute evidence (the flows that justify §4)
 
@@ -309,9 +320,14 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
   → VM-per-tenant (hypervisor boundary; per-tenant node → per-tenant daemon).
 - **WIP shadow-snapshot overhead** (§5A) — persistent wip-index (else `add` is O(repo));
   prune wip-refs + gc; decouple push cadence; gc/repack races with the agent.
-- **Build-vs-buy eval before the chunking/packing/log layers** (§5D) — evaluate
-  restic/casync/Xet (chunk+pack), `dura`/jj (WIP), JuiceFS (hydrate/serve) rather than
-  hand-roll. v1 stays whole-object; reach for a chunker when un-deferring CDC.
+- **Build-vs-buy eval — DONE 2026-06-20 (`build-vs-buy-eval.md`).** Buy
+  `fastcdc-rs`/`xet-core` + Vector + Parquet/DuckDB; borrow the segment+index and
+  `git commit-tree` shadow-ref patterns; build the pack-GC (same shape as the shipped
+  `artifact-ledger-gc.ts`) + lower-hydration (parallel-GET+reflink, *not* JuiceFS). No OSS
+  jj cloud backend exists → own-ledger re-validated; no buy for the whole (Mesa is the one
+  closed competitor). v1 stays whole-object; CDC un-defer is type-gated (14–34× on large
+  churny binaries, ~1× on text). *Three gaps surfaced for the build list:* autonomous
+  stale-read reconcile trigger, delete-vs-edit resolution UX, lower-stability across resume.
 - **Repo-`.md` UX — DECIDED 2026-06-20 (§2):** location-as-backing (git for repo files,
   ledger for artifact-namespace files), **no dual-store**; UX preserved by a polymorphic
   **Files surface** over both. The only *remaining* work is building that unified surface
