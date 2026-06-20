@@ -214,14 +214,19 @@ multi-*agent* live case needs C1 + the channel-scoped feed + reconcile trigger
 (deferred). Full trace + fixes in `notes/cas-ledger-build-plan.md`.
 
 **Non-obvious improvement.** Unify #2 and #3 into one "Files" abstraction:
-preview + edit + version + mount. **Correction (stress-tested 2026-06-19):** the
-earlier "per-agent overlay FS, upper-is-the-diff" execution model is **dropped** —
-the agent sandbox runs non-root with `drop:[ALL]` caps, so an overlay mount needs
-CAP_SYS_ADMIN (`EPERM`) and the GKE-COS kernel blocks the userns escape. Today's
-workspace is a plain **`git clone --shared`** (no overlay), capture is an
-**in-process 2.5 s watcher** (`artifact_capture.py`, not a sidecar), and the free
-changed-set is just **`git status`/`git diff`** over the session branch. The
-ledger is cadence- and FS-agnostic, so none of this blocks it.
+preview + edit + version + mount. **Capture mechanism — DECIDED 2026-06-20
+(scalable/permanent): overlay-upper node-scan (`cas-ledger-build-plan.md` Track
+C4).** The overlay model is **reinstated with the privilege relocated**: the
+*runtime* provisions a per-pod overlay (lower = base+deps+repo RO; upper on a
+session-keyed persistent node volume; `merged` bind into the hardened agent), and a
+**node DaemonSet scans the upper** — O(changes) scan, O(nodes) scanner, delete/rename
+fidelity, zero agent footprint, direct-to-S3 large files. *(This refines the
+2026-06-19 correction: agent-mounts-overlay stays dropped — no `CAP_SYS_ADMIN` in the
+sandbox — but runtime-mounts-overlay + node-scan is the target; today's 2.5s
+`git clone --shared` watcher is the fallback.)* The one pre-build check is the
+`mountPropagation: Bidirectional` linchpin (verify on a real Linux node). Multi-tenant
+isolation = **VM-per-tenant** (per-tenant node → per-tenant DaemonSet; hypervisor
+boundary). The ledger is cadence- and FS-agnostic, so none of this blocks it.
 
 **Scope + filtering — design pass 2026-06-19 (see `cas-ledger-build-plan.md` §10).**
 Artifacts are **shared workspace-wide by default** — sessions share *across*

@@ -303,6 +303,12 @@ ships, cross-container freshness = at next hydrate/restart.
 
 ### Track C2 — Overlayfs per-agent execution workspace — **DROPPED (stress-tested 2026-06-19)**
 
+> **Reframed 2026-06-20 → see Track C4.** C2 = *the agent mounts its own overlay*,
+> which stays correctly dropped (no `CAP_SYS_ADMIN` in the hardened sandbox). **Track
+> C4 relocates the privilege**: the *runtime/node* sets up the overlay and a *node*
+> scanner reads the upper — the agent never mounts anything and stays hardened. The
+> C2 drop reasoning below is right for the agent-mount framing; it does not bind C4.
+
 **Verdict: infeasible as specced; do NOT build the in-container overlay mount.**
 The make-or-break fails: the agent sandbox runs **non-root, `drop:[ALL]` caps,
 `allowPrivilegeEscalation:false`, RuntimeDefault seccomp**
@@ -333,6 +339,76 @@ what the watcher gives, that's the no-privilege path. **Mark the privileged
 overlay model in `agent-data-architecture.md` as superseded by this finding.**
 None of this blocks the ledger or the daily-driver v1 (capture works on the plain
 clone today).
+
+### Track C4 — Overlay-upper capture via a node-level scan — **DECIDED target capture architecture (2026-06-20)**
+
+The scalable/permanent replacement for the in-container 2.5s poll. Stress-tested +
+hand-computed 2026-06-20 (codex review attempted, runtime non-functional — verdict
+is from the in-house pass; its research trail corroborated the mountPropagation,
+torn-read, and hostPath risk points). **Decided as the target; gated on ONE
+pre-implementation verification** (the `mountPropagation` linchpin, below) — not
+claimed validated until that's checked on a real Linux node.
+
+**The shape.** Move capture *out* of the agent; relocate privilege to the
+runtime + a node component (we control the node — self-managed k8s on dedicated
+servers, no Autopilot):
+- **Workspace = a runtime-provisioned overlay** (privileged init/controller, NOT the
+  agent): `lowerdir` (RO) = base + deps + **repo (clone --shared, read-only)** +
+  hydrated shared artifacts; `upperdir`+`workdir` = a **session-keyed persistent
+  node volume** `/var/lib/centaur/overlays/<session>/{upper,work}`; `merged`
+  bind-mounted into the agent at `/workspace` via `mountPropagation: Bidirectional`;
+  `metacopy=off` (so upper files carry real bytes). Agent posture **unchanged**
+  (non-root, `drop:[ALL]`).
+- **Capture = a node DaemonSet** (privileged; **one per node = O(nodes)**): k8s pod
+  informer → scan each `<session>/upper` (the upper = **only the changed set =
+  O(changes)**), prune git working trees at the `.git` root + the existing
+  junk/secret filters; interpret overlay encoding (regular file → created/modified;
+  **char-dev 0/0 → delete**; `trusted.overlay.redirect` → **rename**;
+  `trusted.overlay.opaque` → opaque); read bytes, hash, **POST direct to Atrium S3**
+  (the node is trusted infra, not bound by the sandbox egress NetworkPolicy → big
+  files bypass the `bytea` 1 MiB/16 MiB wall → **closes C3 in the same design**); map
+  `session` via the `centaur.ai/{thread-key,execution-id}` annotations. The scan **is**
+  the reconcile sweep (state diff → complete, no event-drop window).
+- **The in-container poll is retired** (kept only as a fallback for any future
+  managed-restricted node where privileged DaemonSets/overlay setup are disallowed —
+  not our environment).
+
+**Why this is the permanent scalable shape:** O(changes) scan (no `max_user_watches`
+ceiling, no full-tree walk) **and** O(nodes) scanner (scales with pod density, not
+per-pod) — the only mechanism that scales on *both* axes while keeping the agent
+fully hardened. Plus delete/rename fidelity the poll never had, zero in-agent
+footprint, and a native large-file path.
+
+**The four commitments it forces (hand-compute, 2026-06-20):**
+1. **Repo in the RO lower, not cloned into the writable workspace** — else the
+   `git clone` lands in the upper and bloats it to repo-size (the scan would prune it
+   but the bytes still sit there). Repo-in-lower keeps the upper = genuine changes.
+   (A Centaur provisioning change, not a drop-in.)
+2. **Torn reads are NOT auto-solved** by a state-scan (no `FAN_CLOSE_WRITE`-style
+   signal). Real backup/sync tools (rsync temp-file+atomic-rename + "modified during
+   transfer"; restic "file changed during backup") gate this via **detect-changed-
+   during-read → re-read**, plus the node scanner can **inspect `/proc/<agent-pid>/fd`
+   and skip files currently open for write**. Combine both.
+3. **Session-keyed persistent upper** (hostPath/PVC, keyed by session not pod-uid) so
+   it survives pause (= pod delete) and **resume reattaches** the same upper — which
+   also upgrades resume from "fresh re-clone" to "prior state restored."
+4. **`mountPropagation: Bidirectional` is the linchpin** — k8s docs flag it
+   "privileged and dangerous." It's the one claim that could invalidate the whole
+   design: *can a privileged setup container mount an overlay and share `merged` into
+   a hardened non-root container, with the node seeing upper writes?* **Verify on a
+   real Linux node before implementation** (can't POC on macOS — no overlay /
+   mount-namespace; local Docker wedged). This is the single pre-build gate.
+
+**Multi-tenant blast radius → VM-per-tenant (decided 2026-06-20).** The node
+DaemonSet reads every pod's files on its node — a real cross-tenant read surface.
+Software-scoping (a per-tenant DaemonSet that only attributes its own pods) is weak
+(it still holds node-root). The right boundary is a **VM**: each tenant in its own
+VM = its own k8s node (microVMs — Firecracker/Cloud Hypervisor — for density), pods
+pinned per tenant → the per-node DaemonSet is **structurally per-tenant**, and the
+hypervisor makes cross-tenant read **hardware-impossible**, not policy-disallowed.
+Inside the VM we also fully own the kernel (overlay/`mountPropagation`/caps
+guaranteed). This is a **future concern** (daily-driver is single-tenant) and
+**orthogonal to the capture design** — it only sets where the node boundary falls.
 
 ### Track C3 — Large-file handling (spec'd + stress-tested 2026-06-19)
 
@@ -605,38 +681,29 @@ roots, into the shared namespace (§10.1). (Capture-for-history, derived from `g
 diff`, is separate from share-across-containers; you may want the former, never the
 latter.)
 
-### 10.7b Capture mechanism — research the alternatives to the 2.5s poll (OPEN)
+### 10.7b Capture mechanism — DECIDED: overlay-upper node-scan (see Track C4)
 
-The capture watcher is a **2.5s polling stat-walk** today (`artifact_capture.py`).
-That's a local-CPU cost bounded by file count (negligible for small trees; ~1% +
-churn for large un-pruned ones) and a **≤2.5s write→capture latency floor**. Before
-hardening, **research mechanisms beyond polling** — this likely needs a dedicated
-pass and several options are **platform-specific**:
+The capture watcher is a **2.5s polling stat-walk** today (`artifact_capture.py`) —
+O(workspace dirs) per scan, per pod, no delete/rename, ≤2.5s latency. **Decision
+(2026-06-20, Gary: "scalable/permanent, not an MVP"): the target capture
+architecture is the overlay-upper node-scan in Track C4** — O(changes) scan, O(nodes)
+scanner, delete/rename fidelity, zero agent footprint, native large-file path. Gated
+on the `mountPropagation` node-verification (Track C4 commitment #4) before
+implementation.
 
-- **`inotify` (Linux), hybrid** — unprivileged (no `CAP_SYS_ADMIN`, unlike the
-  dropped overlay), event-driven, sub-second, ~0 idle CPU. Caveats: one watch
-  descriptor per directory (`fs.inotify.max_user_watches`, default 8192 — tunable,
-  but a node-level sysctl), **events dropped on queue overflow under burst**, no
-  recursive watch (must walk + add per subdir). Standard pattern = **inotify for
-  liveness + a slow (30–60s) safety sweep** to catch misses. Cheaper *and* lower
-  latency than the 2.5s poll.
-- **`fanotify`** — can watch whole mounts (fewer descriptors) but historically
-  wants `CAP_SYS_ADMIN`/`CAP_AUDIT_WRITE`; `FAN_REPORT_FID` modes relax some of that
-  on newer kernels. **Verify against the sandbox's non-root `drop:[ALL]` posture** —
-  may be the same blocker that killed overlay.
-- **`io_uring` poll / `epoll` over inotify fds** — efficiency layer, not a different
-  source.
-- **macOS = different APIs** (`FSEvents`/`kqueue`) — only relevant for any local/M1
-  bring-up, not the GKE-COS sandbox; flag so the solution isn't assumed portable.
+The earlier event-driven candidates are **demoted to fallbacks** (relevant only where
+node control is unavailable — *not* our self-managed environment):
+- **`inotify` hybrid** (in-agent, unprivileged) — bounded by `fs.inotify.max_user_watches`
+  (8192, per-UID-per-node, shared across same-UID pods) → **doesn't scale** to large
+  or many workspaces; only a fallback.
+- **`fanotify` filesystem-mark** — O(1) in dirs but `CAP_SYS_ADMIN` + watches a whole
+  superblock (node-fs torrent unless on a dedicated per-pod fs); the node-scan of the
+  upper achieves the same scale without the event-stream drop risk.
+- The current **2.5s poll** stays as the managed-restricted fallback.
 
-Open questions for the research pass: which mechanisms survive the sandbox's
-non-root + `drop:[ALL]` + RuntimeDefault-seccomp posture (the overlay-killer); the
-`max_user_watches` ceiling vs realistic workspace dir counts; overflow-recovery
-correctness (the safety sweep is mandatory either way); and whether the win over a
-tuned/backoff poll justifies the per-platform code. **Not a v1 blocker** — the 2.5s
-poll works; this is a freshness+CPU optimization to scope deliberately. Tie-in: the
-inbound daemon (§10.3 / `inbound-sync-spec.md`) has the *same* poll-vs-event question
-on the network side.
+Tie-in: the inbound daemon (§10.3 / `inbound-sync-spec.md`) has the *same*
+poll-vs-event question on the network side; C4's node component is the natural place
+the inbound-pull also lives.
 
 ### 10.8 Through-line: the path/filter layer carries the policy
 

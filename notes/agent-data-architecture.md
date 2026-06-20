@@ -78,14 +78,20 @@ Full record: `cas-ledger-build-plan.md` §10. Deltas to the design above:
   poke (latency cut). Autonomous reconcile = **auto-rebase at a safe checkpoint**,
   never hot-swap mid-write. Mechanism = **stdin directive over the attach pipe**,
   NOT an outbound stream (see the corrected sync section below).
-- **Capture mechanism is an OPEN research item** (not v1-blocking). The in-container
-  capture is a **2.5s polling stat-walk**; before hardening, research event-driven
-  alternatives — **`inotify` + slow-safety-sweep hybrid** (unprivileged, sub-second,
-  ~0 idle CPU), `fanotify` (verify vs the non-root `drop:[ALL]` posture that killed
-  overlay), platform-specific (Linux inotify vs macOS FSEvents/kqueue for any local
-  bring-up). Both the capture (local CPU) and inbound (network QPS) loops share the
-  same poll-vs-event question. Details + open questions: `cas-ledger-build-plan.md`
-  §10.7b.
+- **Capture mechanism = DECIDED: overlay-upper node-scan** (2026-06-20, Gary:
+  "scalable/permanent, not an MVP"). The overlay model is **reinstated — with the
+  privilege relocated**: the *runtime* provisions a per-pod overlay (lower = base +
+  deps + repo RO; upper+work on a session-keyed persistent node volume; `merged` bind
+  into the hardened agent via `mountPropagation: Bidirectional`), and a **node
+  DaemonSet** (O(nodes)) scans each upper (O(changes)) — delete/rename fidelity, zero
+  agent footprint, direct-to-S3 large files. This supersedes both the dropped
+  *agent-mounts-overlay* (no caps) and the in-container poll/inotify (doesn't scale:
+  per-UID `max_user_watches`). Forces 4 commitments — repo-in-RO-lower, torn-read via
+  changed-during-read + `/proc`-fd gating (rsync/restic pattern), session-keyed
+  persistent upper (also upgrades resume), and the **`mountPropagation` linchpin**
+  (verify on a real Linux node before build). Multi-tenant blast radius →
+  **VM-per-tenant** (per-tenant node = per-tenant DaemonSet; hypervisor boundary, not
+  software policy). Full design: `cas-ledger-build-plan.md` **Track C4** (+ §10.7b).
 
 ## The core model
 
@@ -108,6 +114,13 @@ right *data structure* is a content-addressed Merkle DAG; **S3 is just the backi
 
 ## Execution & capture (in-container)
 
+> **UPDATE 2026-06-20 — overlay REINSTATED at the runtime level (Track C4).** The
+> banner below dropped *agent-mounts-overlay* (correct: no caps in the sandbox). The
+> decided design relocates the privilege: the **runtime** provisions the overlay and
+> a **node DaemonSet scans the upper** — the agent never mounts and stays hardened.
+> The "free diff / upper-is-the-diff" intent below is therefore back on, just owned
+> by the node, not the agent. See `cas-ledger-build-plan.md` Track C4.
+>
 > **SUPERSEDED 2026-06-19 — the overlay was DROPPED.** The sandbox is non-root with
 > `drop:[ALL]` caps, so an overlay mount needs `CAP_SYS_ADMIN` (`EPERM`) and GKE-COS
 > blocks the userns escape. Today's workspace is a plain **`git clone --shared`**;
