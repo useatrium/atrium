@@ -5,10 +5,13 @@
 > 242 tests** (local Postgres 16 on :5433). Built: mig 033 ledger, `ArtifactLedger`
 > core, capture-bridge + CAS re-key, serve-latest-by-path, write-back PUT +
 > node-diff3 conflict-state, blob-GC worker + C1 NOTIFY/changed-since hooks.
-> **Deferred:** client-side gallery by-path reducer view; version-chain
-> compaction (only blob-GC this round); live-stack verification (offload→serve,
-> write-back route) — tested by unit/integration suite, not yet run against the
-> deployed cluster. **C2 overlay DROPPED** (sandbox can't mount: non-root/no-caps);
+> **Verified live (2026-06-20):** the Atrium half on real PG+MinIO (write-back /
+> serve / presigned-fetch / diff3 conflict round-trip) AND the **full
+> capture→offload→serve chain on the real `centaur` kind cluster** — drove a real
+> session+capture, the bridge created the ledger version from a real producer
+> frame, offload re-keyed to `cas/<sha>`, serve-by-path returned the bytes (match).
+> **Deferred:** client-side gallery by-path reducer view; version-chain compaction
+> (only blob-GC this round). **C2 overlay DROPPED** (sandbox can't mount: non-root/no-caps);
 > **C3 large-file** needs Centaur object store (16 MiB ceiling today); **C1
 > inbound-sync** is the next Centaur effort (`notes/inbound-sync-spec.md`).
 >
