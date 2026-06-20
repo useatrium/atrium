@@ -923,8 +923,8 @@ describe('artifacts surface (Phase 4)', () => {
     fireEvent.click(strip);
     const drawer = screen.getByTestId('work-drawer');
     expect(within(drawer).getByRole('tab', { name: /Artifacts/ }).getAttribute('aria-selected')).toBe('true');
-    // The gallery tile serves bytes via the session artifact route.
+    // The gallery tile serves bytes via the ledger by-path route (latest for the path).
     const img = within(drawer).getByRole('img') as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/art-1');
+    expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/by-path?path=%2Ftmp%2Fchart.png');
   });
 });

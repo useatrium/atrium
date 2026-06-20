@@ -41,10 +41,38 @@ describe('ArtifactsSurface', () => {
     expect(screen.getByText('report.csv')).toBeTruthy();
   });
 
-  it('serves image bytes via the session artifact route', () => {
-    render(<ArtifactsSurface sessionId="s-9" onClose={() => {}} artifacts={[art({ id: 'pic', ref: 'b1' })]} />);
+  it('serves image bytes via the ledger by-path route (latest for the path)', () => {
+    render(
+      <ArtifactsSurface
+        sessionId="s-9"
+        onClose={() => {}}
+        artifacts={[art({ id: 'pic', path: '/home/agent/workspace/out/chart.png', ref: 'b1' })]}
+      />,
+    );
     const img = screen.getByRole('img') as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe('/api/sessions/s-9/artifacts/pic');
+    expect(img.getAttribute('src')).toBe(
+      '/api/sessions/s-9/artifacts/by-path?path=%2Fhome%2Fagent%2Fworkspace%2Fout%2Fchart.png',
+    );
+  });
+
+  it('collapses repeat captures of one path into a single newest-wins tile with a version count', () => {
+    render(
+      <ArtifactsSurface
+        sessionId="s-1"
+        onClose={() => {}}
+        artifacts={[
+          art({ id: 'v1', path: '/w/notes.md', mime: 'text/markdown', kind: 'created' }),
+          art({ id: 'v2', path: '/w/notes.md', mime: 'text/markdown', kind: 'modified' }),
+          art({ id: 'v3', path: '/w/notes.md', mime: 'text/markdown', kind: 'modified' }),
+        ]}
+      />,
+    );
+    // One tile for the path (not three), count reflects distinct paths.
+    expect(screen.getAllByTestId('artifact-tile')).toHaveLength(1);
+    expect(screen.getByText('· 1')).toBeTruthy();
+    expect(screen.getByText('v3')).toBeTruthy(); // version count badge
+    // Newest capture wins → the 'changed' (modified) kind badge, not 'new'.
+    expect(screen.getByText('changed')).toBeTruthy();
   });
 
   it('marks manifest-only artifacts (no bytes staged) and shows a type label', () => {

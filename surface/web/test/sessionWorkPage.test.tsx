@@ -88,6 +88,6 @@ describe('SessionWorkPage', () => {
     const page = screen.getByTestId('session-work-page');
     expect(within(page).getByText('Artifacts')).toBeTruthy();
     const img = within(page).getByRole('img') as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe('/api/sessions/s-x/artifacts/art-1');
+    expect(img.getAttribute('src')).toBe('/api/sessions/s-x/artifacts/by-path?path=%2Ftmp%2Fchart.png');
   });
 });

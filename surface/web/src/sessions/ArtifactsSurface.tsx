@@ -42,10 +42,36 @@ function formatBytes(n: number): string {
 /** URL atrium serves the bytes from (presigned-GET redirect server-side). Null
  * for manifest-only artifacts (no bytes were staged). */
 function artifactSrc(sessionId: string, artifact: Artifact): string | null {
-  return artifact.ref ? `/api/sessions/${sessionId}/artifacts/${encodeURIComponent(artifact.id)}` : null;
+  // Serve the ledger's *latest* version for this path (the by-path route follows
+  // the pointer, so it reflects later captures / write-back edits) rather than
+  // this single capture's bytes.
+  return artifact.ref
+    ? `/api/sessions/${sessionId}/artifacts/by-path?path=${encodeURIComponent(artifact.path)}`
+    : null;
 }
 
-function ArtifactTile({ sessionId, artifact }: { sessionId: string; artifact: Artifact }) {
+/** Collapse captures to one entry per path (newest-wins) with a version count —
+ * mirroring the ledger, which keys versions by (session, path). A file captured
+ * N times shows as a single tile, not N tiles. */
+function latestByPath(artifacts: Artifact[]): { artifact: Artifact; versions: number }[] {
+  const byPath = new Map<string, { artifact: Artifact; versions: number }>();
+  for (const a of artifacts) {
+    const versions = (byPath.get(a.path)?.versions ?? 0) + 1;
+    byPath.delete(a.path); // re-insert so the most-recently-active path sorts last
+    byPath.set(a.path, { artifact: a, versions });
+  }
+  return [...byPath.values()].reverse(); // newest activity first
+}
+
+function ArtifactTile({
+  sessionId,
+  artifact,
+  versions,
+}: {
+  sessionId: string;
+  artifact: Artifact;
+  versions: number;
+}) {
   const src = artifactSrc(sessionId, artifact);
   const isImage = artifact.mime.startsWith('image/') && src !== null;
   return (
@@ -84,6 +110,14 @@ function ArtifactTile({ sessionId, artifact }: { sessionId: string; artifact: Ar
         <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-body" title={artifact.path}>
           {basename(artifact.path)}
         </span>
+        {versions > 1 && (
+          <span
+            className="shrink-0 text-3xs tabular-nums text-fg-muted"
+            title={`${versions} captured versions`}
+          >
+            v{versions}
+          </span>
+        )}
         <span className="shrink-0 text-3xs tabular-nums text-fg-muted">{formatBytes(artifact.size)}</span>
       </div>
       {artifact.ref === null && (
@@ -105,14 +139,15 @@ export function ArtifactsSurface({
   /** Render body-only (no own header/overlay) — the WorkDrawer supplies the chrome. */
   embedded?: boolean;
 }) {
-  // Newest capture first (artifacts accumulate in capture order).
-  const ordered = useMemo(() => [...artifacts].reverse(), [artifacts]);
+  // One tile per path, newest-wins (mirrors the ledger's (session,path) chain),
+  // newest activity first.
+  const tiles = useMemo(() => latestByPath(artifacts), [artifacts]);
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto p-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {ordered.map((artifact) => (
-          <ArtifactTile key={artifact.id} sessionId={sessionId} artifact={artifact} />
+        {tiles.map(({ artifact, versions }) => (
+          <ArtifactTile key={artifact.path} sessionId={sessionId} artifact={artifact} versions={versions} />
         ))}
       </div>
     </div>
@@ -130,7 +165,7 @@ export function ArtifactsSurface({
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
         <h3 className="text-xs font-semibold text-fg">
-          Artifacts <span className="tabular-nums text-fg-muted">· {artifacts.length}</span>
+          Artifacts <span className="tabular-nums text-fg-muted">· {tiles.length}</span>
         </h3>
         <button
           onClick={onClose}
