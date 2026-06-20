@@ -143,26 +143,36 @@ mistake (logs churn it; code fights its branch model).
 | Content class | Destination | Why there |
 |---|---|---|
 | **Artifacts** (`proj-x/`, `shared/`) | version-**ledger** (CAS + chain + pointers + conflict-state) | edited, versioned, workspace-shared |
-| **Code working-state** (repos) | **git shadow-ref** (`refs/centaur/wip/*`, pushed to forge/mirror) | git owns it; branch-aware; the only durable home for *uncommitted* repo work |
+| **Code working-state** (repos) | **patch/diff artifact** (a `git diff HEAD` + untracked-file snapshot stored as a ledger blob; **no git refs created**) | keeps uncommitted repo work durable *without* writing git objects/refs into a repo a fleet shares (DECIDED 2026-06-20 — see below) |
 | **Logs / transcripts** (`~/.codex`, `~/.claude`, …) | **chunked CAS blob + append-index** (NOT a version chain) | append-only; resume consumer; versioning is the wrong shape |
 
-**The uncommitted-repo-work hole + fix.** Repo files are excluded from the ledger
-(branch-incoherent — see §2). Git only makes work durable *at commit*, so uncommitted
-edits are lost on crash/destroy (survive pause only on a persistent repo volume). Fix =
-a **side-effect-free shadow snapshot** on a heartbeat, run by the node daemon against the
-repo volume — **never** a real auto-commit (that mutates HEAD/branch/index the agent
-reasons about and races `.git/index.lock`):
+**The uncommitted-repo-work hole + fix (DECIDED 2026-06-20: patch-artifact, NOT a git
+ref).** Repo files are excluded from the ledger (branch-incoherent — see §2). Git only
+makes work durable *at commit*, so uncommitted edits are lost on crash/destroy (survive
+pause only on a persistent repo volume). The fix must keep that work durable **without
+confusing the agents that share the repo** — Gary's call: *any* automated git activity
+(even a hidden ref) in a fleet-shared repo risks surprising agents/parallel sessions
+(unexpected objects, refs, gc churn). So the node daemon captures WIP as a
+**read-only patch/diff snapshot** stored as a ledger blob — it creates **zero git
+objects or refs** the agent can see:
 ```
-GIT_INDEX_FILE=<persistent wip-idx> git add -A   # separate index → no contention; respects .gitignore (auto-excludes deps/junk)
-tree=$(… write-tree); commit=$(git commit-tree $tree -p HEAD -m wip)
-git update-ref refs/centaur/wip/<ts> $commit; git push <mirror> refs/centaur/wip/<ts>
+# pure-READ against the repo volume; writes nothing into .git, touches no ref/index/HEAD
+git diff HEAD                       # tracked changes (binary-safe)
+git ls-files --others --exclude-standard | xargs … # untracked, .gitignore-respected
+→ bundle as a {repo, base_HEAD_sha, patch_blob, untracked_blobs} artifact in the ledger
 ```
-Invisible to `git status`/`git log`/`git branch` (non-default ref namespace). **Overhead
-to manage:** the wip-index must be *persistent* (else `add` is O(repo) each time); prune
-old wip-refs + gc (they pin objects); decouple push cadence from snapshot cadence; torn
-snapshots are fine (best-effort recovery points). It runs over **disjoint paths** from
-the artifact scan (repos vs the overlay upper) → no double-capture, no logical
-contention; they share the node daemon's resources, egress, and pod→session attribution.
+**Recovery** = re-clone at `base_HEAD_sha`, then `git apply` the patch + drop in the
+untracked files. **Trade-off (accepted):** not a faithful mirror of exotic git states
+(in-progress rebase/merge, staged-vs-unstaged distinction, submodule state) — it's a
+*recovery point*, not a clone; binary diffs are bulkier than a tree. **Why this over the
+rejected git-shadow-ref (`commit-tree`→`refs/centaur/wip/*`):** the shadow-ref is
+invisible to `git status/log/branch` but still *writes git objects* into the shared repo
+and needs ref-prune/gc — exactly the automated-git-activity the decision rules out. The
+patch path is pure-read → structurally can't surprise an agent. It runs over **disjoint
+paths** from the artifact scan (repos vs the overlay upper) → no double-capture; shares
+the node daemon's resources, egress, and pod→session attribution. **Overhead to manage:**
+diff cost is O(changes) per heartbeat (cheap); store patches in the CAS (sha-dedup across
+heartbeats); GC old WIP patches on a grace window like any blob.
 
 **Transcripts** (the rollout JSONL) are *mechanically* capturable by the same node
 file-watch — they're just not in `/workspace` and they're a *log*, so they route to the
@@ -173,7 +183,7 @@ log destination (chunked blob + append-index), feeding harness-resume, not the g
 **The store is heterogeneous by class:**
 ```
 ARTIFACTS   → S3 cas/<sha> blobs + PG ledger;  whole file = 1 blob;  chunked = manifest{chunk-shas} + N chunk blobs
-CODE        → git objects on the FORGE/mirror (NOT our S3), incl. refs/centaur/wip/*
+CODE        → git objects on the FORGE/mirror (NOT our S3); uncommitted WIP = a patch-artifact in OUR cas/<sha> (no git refs)
 LOGS/XCRIPT → S3 cas/<sha> chunk blobs + an append-index
 ```
 There is **no single merged blob**. Artifacts + log-chunks share the `cas/<sha>` store;
@@ -233,7 +243,7 @@ or log storage.
 |---|---|---|
 | Chunking / CDC / pack / dedup | **restic, borg, Kopia, casync/desync, Xet, git packfiles** | **REUSE** — hand-rolling CDC + pack-GC + repair is a multi-year trap. Pull a chunker lib / sidecar when we un-defer CDC. |
 | Content-addressed blob + versioned refs over S3 | **lakeFS, Nessie, Dolt, git** | **BUILD (already decided)** — the spike chose own-CAS-ledger 39–29 over lakeFS, but only because lakeFS lacks **jj-style conflict-state** + per-tenant RBAC. That justification holds for the *conflict/version metadata*, not the blob plumbing. |
-| WIP working-copy snapshots | **`dura` (auto-commit to a shadow ref), jj (auto-commits the working copy)** | **REUSE the pattern** — the §5A shadow-ref snippet *is* what `dura`/jj do; it's ~a script, not a system. |
+| WIP working-copy snapshots | **`dura` (auto-commit to a shadow ref), jj (auto-commits the working copy)** | **BORROW the *durability* idea, NOT the git mechanism** — both auto-commit git objects (`dura` is also local-only/no-push → disqualified by no-ingress). DECIDED 2026-06-20: capture WIP as a **pure-read patch artifact (no git refs)** instead (§5A), so it can't confuse fleet-shared repos. |
 | Append-only log storage | **Loki, Vector, Kafka log-segments** | **REUSE the pattern** (segment + index); don't invent log storage. |
 | POSIX over object store (lazy hydrate) | **JuiceFS, SeaweedFS, Mountpoint-S3** | **EVALUATE** — JuiceFS handles the rename/lock/fsync cases naive FUSE fails; could be the hydrate/serve layer (it doesn't do versioning/conflict/no-ingress). |
 | File sync between hosts | **Syncthing, Mutagen, rclone** | **N/A** — they need reachability; **no-ingress disqualifies them** (this is *why* we build the egress sync). |
@@ -260,8 +270,9 @@ whole** (the integration is the product; the one same-category competitor, Mesa,
 closed with undisclosed conflict internals). Concrete picks: **buy** `fastcdc-rs`
 (chunker) + `xet-core` (large-file CDC, when >16 MiB lands) + **Vector** (capture/ship
 daemon) + **Parquet/DuckDB** (working-history cold archive); **borrow** the segment+index
-log-seal and the `git commit-tree` shadow-ref (each ≈ a script — dura is local-only/no-push
-→ disqualified by no-ingress; jj-for-WIP = op-log tax for no gain); **build** the
+log-seal and the **pure-read patch-artifact** for WIP capture (DECIDED 2026-06-20 over a
+git shadow-ref, which writes git objects → can confuse fleet-shared repos; dura is also
+local-only/no-push → disqualified by no-ingress; jj-for-WIP = op-log tax for no gain); **build** the
 pack-index+GC (~1–1.5k LOC, *same shape as the shipped `artifact-ledger-gc.ts` lease
 worker*) and the lower-hydration (parallel-GET + node-local CAS cache + reflink — *not*
 JuiceFS/CubeFS, which replace the store + add a cross-tenant metadata blast surface;
@@ -318,11 +329,13 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
   after the init exits → **unmount-on-pod-teardown** (else orphaned node mounts).
 - **Multi-tenant blast radius** — the node sync daemon reads all pods' uppers on its node
   → VM-per-tenant (hypervisor boundary; per-tenant node → per-tenant daemon).
-- **WIP shadow-snapshot overhead** (§5A) — persistent wip-index (else `add` is O(repo));
-  prune wip-refs + gc; decouple push cadence; gc/repack races with the agent.
+- **WIP patch-artifact fidelity** (§5A, DECIDED 2026-06-20) — capturing uncommitted repo
+  work as a pure-read `git diff` patch (no git refs, so it can't confuse fleet-shared
+  repos) is a *recovery point, not a clone*: exotic git states (in-progress rebase/merge,
+  staged-vs-unstaged, submodules) aren't faithfully captured. Accepted trade-off.
 - **Build-vs-buy eval — DONE 2026-06-20 (`build-vs-buy-eval.md`).** Buy
-  `fastcdc-rs`/`xet-core` + Vector + Parquet/DuckDB; borrow the segment+index and
-  `git commit-tree` shadow-ref patterns; build the pack-GC (same shape as the shipped
+  `fastcdc-rs`/`xet-core` + Vector + Parquet/DuckDB; borrow the segment+index log-seal +
+  the pure-read patch-artifact for WIP (no git refs, DECIDED 2026-06-20); build the pack-GC (same shape as the shipped
   `artifact-ledger-gc.ts`) + lower-hydration (parallel-GET+reflink, *not* JuiceFS). No OSS
   jj cloud backend exists → own-ledger re-validated; no buy for the whole (Mesa is the one
   closed competitor). v1 stays whole-object; CDC un-defer is type-gated (14–34× on large

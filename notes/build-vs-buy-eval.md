@@ -35,7 +35,7 @@ competitor to watch (Mesa), and three measurable un-defer triggers.
 | **Capture / ship daemon** | Vector, Fluent Bit | **BUY (adopt)** | **Vector** (MPL-2.0, disk-buffer at-least-once) as the node tailer for transcripts/logs — replaces a hand-rolled tailer | Now (when wiring the log destination) |
 | **Working-history cold archive** | Parquet+S3, ClickHouse | **BUY (light) / WATCH** | **Parquet+DuckDB** time-partitioned on S3 (trivial prefix-delete GC); **ClickHouse only at analytics scale** | ClickHouse when cross-corpus analytics walls a single PG primary |
 | **POSIX-over-S3 / lazy hydrate** (the `lower`) | JuiceFS, Mountpoint-S3, CubeFS, Alluxio | **BUILD** | Parallel-GET materializer + node-local CAS cache + **reflink/hardlink** (the lower is content-addressed + fully known from the manifest → a FS's two hard problems vanish) | Mountpoint-S3 *read-only* only if pre-materializing ever proves too slow (sparse hydrate) |
-| **WIP working-copy snapshot** (code repos) | dura, jj | **BORROW the pattern** | Script `GIT_INDEX_FILE`→`git commit-tree`→push `refs/centaur/wip/*` via the node daemon (steal dura's mtime-peek throttle). dura is **local-only/no-push → disqualified by no-ingress**; jj-for-WIP = op-log/watchman tax for no gain | n/a (build now per §5A) |
+| **WIP working-copy snapshot** (code repos) | dura, jj | **BORROW the idea, not the git mechanism** | **DECIDED 2026-06-20: pure-read patch-artifact (no git refs)** — node daemon captures `git diff HEAD` + untracked as a ledger blob; recovery = re-clone + `git apply`. *Chosen over* a git shadow-ref (`commit-tree`→`refs/centaur/wip/*`) because any automated git objects in a fleet-shared repo can confuse agents (Gary's call). dura/jj both auto-commit git objects (dura also local-only/no-push → no-ingress-disqualified) | n/a (build now per §5A) |
 | **Versioned CAS + conflict-state over S3** | lakeFS, Nessie, Dolt, **jj** | **BUILD (decided, re-validated)** | Own CAS-ledger (shipped, PR #35). **No OSS jj cloud backend exists in 2026** (Google's is closed) — jj stays the *model*, not the engine | n/a |
 | **File sync between hosts** | Syncthing, Mutagen, rclone | **N/A** | No-ingress disqualifies all (need reachability) — this is *why* we build egress sync | n/a |
 
@@ -107,12 +107,18 @@ competitor to watch (Mesa), and three measurable un-defer triggers.
   active to 2026-03). **But its snapshots are local-only with no push** → breaks the
   hard "durable on crash/destroy in a no-ingress box" requirement; you'd wrap it anyway.
 - **jj-for-WIP** = elegant auto-snapshot but a colocated `.jj`, op-log GC, watchman dep,
-  and a second VCS brain per sandbox — buys nothing the shadow-ref script doesn't, and
-  doesn't solve the egress half either.
-- **Build the ~50-line `git commit-tree` + `refs/centaur/wip/*` push** (side
-  `GIT_INDEX_FILE` → zero index contention; node daemon does the push). It's the *only*
-  option that gets WIP off-box. Treat dura as validation the approach is right; steal its
-  mtime-peek (`PollGuard`) throttle.
+  and a second VCS brain per sandbox — buys nothing simpler approaches don't, and doesn't
+  solve the egress half either.
+- **DECISION (Gary, 2026-06-20): capture WIP as a pure-read patch-artifact, NOT a git
+  shadow-ref.** Both the git-`commit-tree`→`refs/centaur/wip/*` snippet originally
+  proposed *and* dura/jj **write git objects** into the repo — and any automated git
+  activity in a repo a fleet of agents shares risks confusing them (unexpected objects,
+  refs, gc churn). Instead the node daemon does a **pure read** (`git diff HEAD` +
+  untracked files, `.gitignore`-respected) and stores it as a ledger blob; **zero git
+  refs/objects** the agent can see. Recovery = re-clone at `base_HEAD_sha` + `git apply`.
+  Trade-off: a *recovery point, not a clone* (exotic git states — rebase-in-progress,
+  staged-vs-unstaged, submodules — aren't faithful). Still gets WIP off-box (the property
+  dura lacks). Steal dura's mtime-peek throttle to skip clean trees. See `agent-sync-design.md` §5A.
 
 ### 2e. Versioned store / jj backend — build decision re-validated, one adjustment
 - **No OSS jj cloud/S3 backend exists as of 2026.** jj's `Backend` trait is pluggable but
