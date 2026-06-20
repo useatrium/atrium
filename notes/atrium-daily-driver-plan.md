@@ -214,7 +214,14 @@ multi-*agent* live case needs C1 + the channel-scoped feed + reconcile trigger
 (deferred). Full trace + fixes in `notes/cas-ledger-build-plan.md`.
 
 **Non-obvious improvement.** Unify #2 and #3 into one "Files" abstraction:
-preview + edit + version + mount. **Capture mechanism — DECIDED 2026-06-20
+preview + edit + version + mount. **DECIDED 2026-06-20 — this is "unify the SURFACE,
+not the storage" (location-as-backing):** a file in a repo is **git-backed**, a file in
+the artifact namespace is **ledger-backed** — one source of truth per file, chosen by
+location; we do **not** dual-store repo docs into the ledger (branch-incoherent). The
+Files surface is **polymorphic over backing** (shows/previews/edits both; history from
+git or the ledger; in-app edit of a repo file = a git commit). So repo `.md`s aren't
+dropped — they're git-backed and shown via the unified surface. Detail in
+`agent-sync-design.md` §2. **Capture mechanism — DECIDED 2026-06-20
 (scalable/permanent): overlay-upper node-scan (`cas-ledger-build-plan.md` Track
 C4).** The overlay model is **reinstated with the privilege relocated**: the
 *runtime* provisions a per-pod overlay (lower = base+deps+repo RO; upper on a

@@ -60,10 +60,23 @@ construction):
   output fills the upper volume → agent writes fail **ENOSPC mid-operation**. Structural
   scoping prevents most of it; still **size + monitor the upper volume**. The upper is
   the live working set (not GC-able mid-session); it's reclaimed at session end / pause.
-- **Carry-over trap:** an agent writing a deliverable *inside* the repo volume isn't
-  captured (repo is git's, separate). Mitigation = convention + agent instruction: write
-  deliverables to the artifact namespace (`proj-x/`, `shared/`). Unchanged from the
-  repo-exclusion finding.
+- **Repo docs (`.md` etc.) — DECIDED 2026-06-20: location-as-backing, NOT dual-store.**
+  A file in a repo is **git-backed only**; a file in the artifact namespace is
+  **ledger-backed only** — *one source of truth per file, chosen by where it lives.* We
+  do **not dual-store** (capture a repo file into the ledger too): the ledger is
+  branch-blind while a repo file is branch-specific, so `(workspace, path)` would collide
+  across branches, and an edit would advance two stores with no canonical winner — the
+  exact incoherence repo-exclusion exists to prevent. **The UX is preserved by unifying
+  the *surface*, not the storage:** the Files/gallery/preview/editor is **polymorphic over
+  backing** — it shows + previews + edits files from *both* git and the ledger in one
+  view, pulling history from git (repo files) or the ledger (artifacts) as appropriate;
+  editing a repo file in-app = a **git commit** (branch-aware), editing an artifact = a
+  ledger write-back. So a repo `.md` is **not "dropped" — it's git-backed and shown via
+  the unified surface.** The user/agent chooses backing by intent: version-with-the-code
+  → put it in the repo; standalone conflict-state co-edit → put it in the artifact
+  namespace. (Cost: the unified surface is new work — today's gallery reads
+  `artifact.captured` frames only; adding a git-backed source + a git-commit write-back
+  path. Aligns with daily-driver §3 "one Files abstraction.")
 
 ## 3. Outbound (capture) — node-scan of the upper
 
@@ -299,10 +312,10 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
 - **Build-vs-buy eval before the chunking/packing/log layers** (§5D) — evaluate
   restic/casync/Xet (chunk+pack), `dura`/jj (WIP), JuiceFS (hydrate/serve) rather than
   hand-roll. v1 stays whole-object; reach for a chunker when un-deferring CDC.
-- **Repo-`.md` UX (OPEN — needs Gary's call)** — repo docs aren't in the ledger (branch-
-  incoherent). *Recommended resolution:* don't dual-store; unify the **Files surface**
-  over git + ledger (location = backing/semantics) so repo docs keep preview/edit/history
-  via git. Not yet folded in pending sign-off.
+- **Repo-`.md` UX — DECIDED 2026-06-20 (§2):** location-as-backing (git for repo files,
+  ledger for artifact-namespace files), **no dual-store**; UX preserved by a polymorphic
+  **Files surface** over both. The only *remaining* work is building that unified surface
+  (git-backed source + git-commit write-back) — an Atrium UI task, not a design open.
 
 ## 9. Relationship to other docs
 
