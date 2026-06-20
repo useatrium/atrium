@@ -20,13 +20,14 @@
     "@fastify/websocket": "^11.0.2",
     "fastify": "^5.2.1",
     "livekit-server-sdk": "^2.15.4",
+    "node-diff3": "^3.2.1",
     "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "esbuild": "^0.27.7",
     "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
+    "esbuild": "^0.27.7",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^4.1.8"

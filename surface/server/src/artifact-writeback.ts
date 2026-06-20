@@ -1,0 +1,276 @@
+import { createHash } from 'node:crypto';
+import { mergeDiff3 } from 'node-diff3';
+import {
+  ArtifactLedger,
+  casBlobKey,
+  type MergeClass,
+  type VersionKind,
+  type VersionStatus,
+} from './artifact-ledger.js';
+import type { Db, DbClient } from './db.js';
+import { withTx } from './db.js';
+
+export interface ArtifactWritebackStorage {
+  uploadObject(key: string, body: Buffer | Uint8Array, contentType: string): Promise<void>;
+  getObjectBytes(key: string): Promise<Buffer>;
+}
+
+export type WriteBackArtifactResult =
+  | { ok: true; seq: number; status: VersionStatus; idempotent: boolean }
+  | {
+      ok: false;
+      reason: 'base_required' | 'stale_base' | 'base_not_found' | 'blob_unavailable';
+      baseSeq?: number;
+      latestSeq?: number;
+    };
+
+export interface WriteBackArtifactParams {
+  pool: Db;
+  storage: ArtifactWritebackStorage;
+  channelId: string;
+  sessionId: string;
+  path: string;
+  bytes: Buffer;
+  mime: string;
+  author: string;
+  baseSeq?: number;
+}
+
+interface ArtifactRow {
+  id: string;
+  merge_class: MergeClass;
+}
+
+interface VersionBlobRow {
+  seq: number;
+  blob_sha: string | null;
+  author: string;
+  kind: VersionKind;
+  status: VersionStatus;
+  s3_key: string | null;
+  mime: string | null;
+  size_bytes: number | null;
+}
+
+export async function writeBackArtifact(params: WriteBackArtifactParams): Promise<WriteBackArtifactResult> {
+  const ledger = new ArtifactLedger(params.pool);
+  const existing = await findArtifact(params.pool, params.sessionId, params.path);
+  if (existing && params.baseSeq == null) {
+    return { ok: false, reason: 'base_required' };
+  }
+  if (!existing && params.baseSeq != null) {
+    return { ok: false, reason: 'base_not_found', baseSeq: params.baseSeq };
+  }
+
+  const sha = sha256(params.bytes);
+  await ensureCasBlobStored({
+    pool: params.pool,
+    ledger,
+    storage: params.storage,
+    sha,
+    bytes: params.bytes,
+    mime: params.mime,
+  });
+
+  const committed = await ledger.commitVersion({
+    sessionId: params.sessionId,
+    channelId: params.channelId,
+    path: params.path,
+    blobSha: sha,
+    sizeBytes: params.bytes.byteLength,
+    mime: params.mime,
+    author: params.author,
+    kind: existing ? 'modified' : 'created',
+    baseSeq: params.baseSeq,
+  });
+
+  if (committed.ok) {
+    return { ok: true, seq: committed.seq, status: 'normal', idempotent: committed.idempotent };
+  }
+
+  const artifact = await findArtifactById(params.pool, committed.artifactId);
+  if (!artifact || artifact.merge_class !== 'mergeable-doc') {
+    return {
+      ok: false,
+      reason: 'stale_base',
+      baseSeq: committed.baseSeq,
+      latestSeq: committed.latestSeq,
+    };
+  }
+
+  return mergeStaleWrite({
+    ...params,
+    ledger,
+    incomingSha: sha,
+    incomingBytes: params.bytes,
+    baseSeq: committed.baseSeq,
+  });
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function findArtifact(pool: Db, sessionId: string, path: string): Promise<ArtifactRow | null> {
+  const res = await pool.query<ArtifactRow>(
+    `SELECT id, merge_class FROM artifacts WHERE session_id = $1 AND path = $2`,
+    [sessionId, path],
+  );
+  return res.rows[0] ?? null;
+}
+
+async function findArtifactById(pool: Db, artifactId: string): Promise<ArtifactRow | null> {
+  const res = await pool.query<ArtifactRow>(
+    `SELECT id, merge_class FROM artifacts WHERE id = $1`,
+    [artifactId],
+  );
+  return res.rows[0] ?? null;
+}
+
+async function ensureCasBlobStored(args: {
+  pool: Db;
+  ledger: ArtifactLedger;
+  storage: ArtifactWritebackStorage;
+  sha: string;
+  bytes: Buffer;
+  mime: string;
+  client?: DbClient;
+}): Promise<void> {
+  const key = casBlobKey(args.sha);
+  if (!(await args.ledger.blobIsOffloaded(args.sha))) {
+    await args.storage.uploadObject(key, args.bytes, args.mime);
+  }
+  if (args.client) {
+    await args.ledger.upsertBlob(args.client, {
+      sha256: args.sha,
+      sizeBytes: args.bytes.byteLength,
+      mime: args.mime,
+    });
+    await stampBlobS3Key(args.client, args.sha, key);
+    return;
+  }
+  await withTx(args.pool, async (client) => {
+    await args.ledger.upsertBlob(client, {
+      sha256: args.sha,
+      sizeBytes: args.bytes.byteLength,
+      mime: args.mime,
+    });
+  });
+  await args.ledger.stampBlobS3Key(args.sha, key);
+}
+
+async function stampBlobS3Key(client: DbClient, sha: string, key: string): Promise<void> {
+  await client.query(
+    `UPDATE cas_blobs SET s3_key = $2 WHERE sha256 = $1 AND s3_key IS NULL`,
+    [sha, key],
+  );
+}
+
+async function mergeStaleWrite(args: WriteBackArtifactParams & {
+  ledger: ArtifactLedger;
+  incomingSha: string;
+  incomingBytes: Buffer;
+  baseSeq: number;
+}): Promise<WriteBackArtifactResult> {
+  return withTx(args.pool, async (client) => {
+    const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
+      sessionId: args.sessionId,
+      channelId: args.channelId,
+      path: args.path,
+    });
+    const artifact = await client.query<{ merge_class: MergeClass }>(
+      `SELECT merge_class FROM artifacts WHERE id = $1`,
+      [artifactId],
+    );
+    if (artifact.rows[0]?.merge_class !== 'mergeable-doc') {
+      const latest = await args.ledger.latestVersion(client, artifactId);
+      return { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest?.seq };
+    }
+
+    const latest = await args.ledger.latestVersion(client, artifactId);
+    if (!latest) {
+      return { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq };
+    }
+    const baseRow = await versionBlob(client, artifactId, args.baseSeq);
+    const latestRow = await versionBlob(client, artifactId, latest.seq);
+    if (!baseRow) {
+      return { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq, latestSeq: latest.seq };
+    }
+    if (!latestRow?.s3_key || !baseRow.s3_key || latestRow.blob_sha == null || baseRow.blob_sha == null) {
+      return { ok: false, reason: 'blob_unavailable', baseSeq: args.baseSeq, latestSeq: latest.seq };
+    }
+
+    const [baseBytes, latestBytes] = await Promise.all([
+      args.storage.getObjectBytes(baseRow.s3_key),
+      args.storage.getObjectBytes(latestRow.s3_key),
+    ]);
+    const merged = mergeDiff3(
+      splitLines(latestBytes),
+      splitLines(baseBytes),
+      splitLines(args.incomingBytes),
+      { label: { a: `latest:${latest.seq}`, o: `base:${args.baseSeq}`, b: 'incoming' } },
+    );
+    const mergedBytes = Buffer.from(merged.result.join('\n'), 'utf8');
+    const mergedSha = sha256(mergedBytes);
+    await ensureCasBlobStored({
+      pool: args.pool,
+      ledger: args.ledger,
+      storage: args.storage,
+      sha: mergedSha,
+      bytes: mergedBytes,
+      mime: args.mime,
+      client,
+    });
+
+    const seq = latest.seq + 1;
+    if (!merged.conflict) {
+      await args.ledger.insertVersion(client, {
+        artifactId,
+        seq,
+        blobSha: mergedSha,
+        baseSeq: latest.seq,
+        author: args.author,
+        kind: 'modified',
+        status: 'normal',
+      });
+      await args.ledger.advancePointer(client, artifactId, 'latest', seq);
+      return { ok: true, seq, status: 'normal', idempotent: false };
+    }
+
+    await args.ledger.insertVersion(client, {
+      artifactId,
+      seq,
+      blobSha: mergedSha,
+      baseSeq: latest.seq,
+      author: args.author,
+      kind: 'modified',
+      status: 'conflict',
+      conflict: {
+        base_seq: args.baseSeq,
+        left: { seq: latest.seq, author: latestRow.author, sha: latestRow.blob_sha },
+        right: { author: args.author, sha: args.incomingSha },
+      },
+    });
+    await args.ledger.advancePointer(client, artifactId, 'latest', seq);
+    return { ok: true, seq, status: 'conflict', idempotent: false };
+  });
+}
+
+async function versionBlob(
+  client: DbClient,
+  artifactId: string,
+  seq: number,
+): Promise<VersionBlobRow | null> {
+  const res = await client.query<VersionBlobRow>(
+    `SELECT v.seq, v.blob_sha, v.author, v.kind, v.status, b.s3_key, b.mime, b.size_bytes
+       FROM artifact_versions v
+       LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+      WHERE v.artifact_id = $1 AND v.seq = $2`,
+    [artifactId, seq],
+  );
+  return res.rows[0] ?? null;
+}
+
+function splitLines(bytes: Buffer): string[] {
+  return bytes.toString('utf8').split('\n');
+}
