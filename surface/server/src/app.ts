@@ -51,8 +51,9 @@ import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
 import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut, uploadObject } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
-import { writeBackArtifact } from './artifact-writeback.js';
+import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
+import { loadConflictDetail } from './artifact-conflict.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
@@ -2265,7 +2266,24 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
     }
     const at = q.at ?? 'latest';
-    const ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
+    // Conflict-aware serve (§8B #5): for the default `latest`, serve the newest
+    // status='normal' version (never the conflict-marker bytes) and flag an
+    // unresolved conflict in headers so the UI can show a banner. Explicit `at`
+    // (a seq) is served verbatim for inspect/resolve flows.
+    let ref: { seq: number } | { pointer: string };
+    if (at === 'latest') {
+      const ledger = new ArtifactLedger(pool);
+      const res = await ledger.serveResolution(id, path);
+      if (!res || res.servedSeq == null) {
+        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      }
+      reply.header('X-Artifact-Seq', String(res.servedSeq));
+      reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
+      if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
+      ref = { seq: res.servedSeq };
+    } else {
+      ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
+    }
     let plan: Awaited<ReturnType<typeof sessionRuns.getLedgerServePlan>>;
     try {
       plan = await sessionRuns.getLedgerServePlan(id, path, ref);
@@ -2333,6 +2351,83 @@ function rawSession(req: FastifyRequest): string | undefined {
       rows: page.rows,
       next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
     });
+  });
+
+  // Conflict detail (A3): the both-sides payload for the resolution UI.
+  app.get('/api/sessions/:id/artifacts/conflict', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const path = (req.query as { path?: string }).path;
+    if (typeof path !== 'string' || path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    const detail = await loadConflictDetail(pool, { getObjectBytes }, id, path);
+    if (!detail) {
+      return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
+    }
+    return reply.send(detail);
+  });
+
+  // Resolve a conflict (A3): a write-back against the conflict seq advances
+  // `latest` to a normal version (jj-style resolution, never a blind overwrite).
+  // Body bytes = the resolved content; or { "delete": true } to stay-deleted.
+  app.register(async (resolveScope) => {
+    resolveScope.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    resolveScope.post('/api/sessions/:id/artifacts/:artifactId/resolve', async (req, reply) => {
+      const user = await requireSessionAccess(req, reply);
+      if (!user) return;
+      const { artifactId } = req.params as { artifactId: string };
+      const ledger = new ArtifactLedger(pool);
+      const art = await ledger.artifactById(artifactId);
+      if (!art) {
+        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      }
+      const conflict = await ledger.getConflict(art.sessionId, art.path);
+      if (!conflict) {
+        return reply.code(409).send({ error: 'no_conflict', message: 'artifact has no unresolved conflict' });
+      }
+      const stayDeleted = firstHeader(req.headers['x-artifact-delete']) === 'true';
+      const result = stayDeleted
+        ? await writeBackDelete({
+            pool,
+            channelId: art.channelId,
+            sessionId: art.sessionId,
+            path: art.path,
+            author: `human:${user.id}`,
+            baseSeq: conflict.conflictSeq,
+          })
+        : await writeBackArtifact({
+            pool,
+            storage: { uploadObject, getObjectBytes },
+            channelId: art.channelId,
+            sessionId: art.sessionId,
+            path: art.path,
+            bytes: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+            mime: normalizeMime(firstHeader(req.headers['content-type'])),
+            author: `human:${user.id}`,
+            baseSeq: conflict.conflictSeq,
+          });
+      if (!result.ok) {
+        return reply.code(409).send({ error: result.reason });
+      }
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
+  // Hydration scope (A4): the artifact paths this session subscribes + latest seq
+  // — the seed for the Centaur node's hydration manifest + subscription set.
+  app.get('/api/sessions/:id/hydration-scope', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const ledger = new ArtifactLedger(pool);
+    const paths = await ledger.sessionScope(id);
+    return reply.send({ sessionId: id, scope: 'session', paths });
   });
 
   app.get('/api/sessions/:id/stream', async (req, reply) => {

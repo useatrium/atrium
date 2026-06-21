@@ -325,6 +325,137 @@ export class ArtifactLedger {
     return { rows, nextCursor };
   }
 
+  // === conflict-aware serve resolution (§8B #5) ===========================
+
+  /**
+   * Decide which version to SERVE for `(session, path)` and whether the true
+   * latest is an unresolved conflict. We never serve conflict-marker bytes by
+   * default: the served version is the newest `status='normal'` one, while
+   * `conflicted`/`conflictSeq` flag that a later conflict version is awaiting
+   * resolution (so the UI can show a banner and the read stays clean). Returns
+   * null when the artifact has no versions at all.
+   */
+  async serveResolution(
+    sessionId: string,
+    path: string,
+  ): Promise<{
+    servedSeq: number | null;
+    servedKind: VersionKind | null;
+    conflicted: boolean;
+    conflictSeq: number | null;
+    latestSeq: number | null;
+  } | null> {
+    const art = await this.pool.query<{ id: string }>(
+      `SELECT id FROM artifacts WHERE session_id = $1 AND path = $2`,
+      [sessionId, path],
+    );
+    const artifactId = art.rows[0]?.id;
+    if (!artifactId) return null;
+
+    const latest = await this.pool.query<{ seq: number; status: VersionStatus }>(
+      `SELECT v.seq, v.status
+         FROM artifact_pointers p
+         JOIN artifact_versions v ON v.artifact_id = p.artifact_id AND v.seq = p.seq
+        WHERE p.artifact_id = $1 AND p.name = 'latest'`,
+      [artifactId],
+    );
+    const latestRow = latest.rows[0] ?? null;
+
+    const normal = await this.pool.query<{ seq: number; kind: VersionKind }>(
+      `SELECT seq, kind FROM artifact_versions
+        WHERE artifact_id = $1 AND status = 'normal'
+        ORDER BY seq DESC LIMIT 1`,
+      [artifactId],
+    );
+    const normalRow = normal.rows[0] ?? null;
+
+    const conflicted = latestRow?.status === 'conflict';
+    return {
+      servedSeq: normalRow?.seq ?? null,
+      servedKind: normalRow?.kind ?? null,
+      conflicted,
+      conflictSeq: conflicted ? latestRow!.seq : null,
+      latestSeq: latestRow?.seq ?? null,
+    };
+  }
+
+  /** The full conflict payload for one path (for the resolution UI): the
+   * `status=conflict` version's jsonb + the seq/path needed to resolve. Returns
+   * null when the path's latest is not a conflict. */
+  async getConflict(
+    sessionId: string,
+    path: string,
+  ): Promise<{ artifactId: string; conflictSeq: number; conflict: unknown; markerSha: string | null } | null> {
+    const res = await this.pool.query<{
+      artifact_id: string;
+      seq: number;
+      conflict: unknown;
+      blob_sha: string | null;
+    }>(
+      `SELECT v.artifact_id, v.seq, v.conflict, v.blob_sha
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+        WHERE a.session_id = $1 AND a.path = $2 AND v.status = 'conflict'`,
+      [sessionId, path],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+      artifactId: row.artifact_id,
+      conflictSeq: row.seq,
+      conflict: row.conflict,
+      markerSha: row.blob_sha,
+    };
+  }
+
+  /** The S3 key for a blob sha (or null if unknown/unstamped). */
+  async blobS3Key(sha: string): Promise<string | null> {
+    const res = await this.pool.query<{ s3_key: string | null }>(
+      `SELECT s3_key FROM cas_blobs WHERE sha256 = $1`,
+      [sha],
+    );
+    return res.rows[0]?.s3_key ?? null;
+  }
+
+  /** Resolve `(session, path)` to an artifact id (no create). */
+  async artifactIdByPath(sessionId: string, path: string): Promise<string | null> {
+    const res = await this.pool.query<{ id: string; path: string }>(
+      `SELECT id, path FROM artifacts WHERE session_id = $1 AND path = $2`,
+      [sessionId, path],
+    );
+    return res.rows[0]?.id ?? null;
+  }
+
+  /** Resolve an artifact id back to its (session, channel, path) — for the
+   * by-id resolve endpoint. */
+  async artifactById(
+    artifactId: string,
+  ): Promise<{ sessionId: string; channelId: string; path: string } | null> {
+    const res = await this.pool.query<{ session_id: string; channel_id: string; path: string }>(
+      `SELECT session_id, channel_id, path FROM artifacts WHERE id = $1`,
+      [artifactId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return { sessionId: row.session_id, channelId: row.channel_id, path: row.path };
+  }
+
+  /** Scope query (A4): the artifact paths a session subscribes, with their
+   * current latest seq — the node's hydration/subscription set seed (§10.1). */
+  async sessionScope(sessionId: string): Promise<Array<{ path: string; latestSeq: number; kind: VersionKind }>> {
+    const res = await this.pool.query<{ path: string; seq: number; kind: VersionKind }>(
+      `SELECT a.path, p.seq, v.kind
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+        WHERE a.session_id = $1
+        ORDER BY a.path ASC`,
+      [sessionId],
+    );
+    return res.rows.map((r) => ({ path: r.path, latestSeq: r.seq, kind: r.kind }));
+  }
+
   // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
 
   async getSyncState(sessionId: string, path: string): Promise<SyncState | null> {

@@ -88,6 +88,22 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
     return { ok: true, seq: committed.seq, status: 'normal', idempotent: committed.idempotent };
   }
 
+  // Delete-vs-edit (hand-compute #5): the write is stale because another actor
+  // DELETED the file (latest is a tombstone). Per the product decision this is
+  // recorded as a conflict and never auto-picked — regardless of merge_class —
+  // resurrecting the edit's bytes as a `status=conflict` version that carries
+  // both sides. Resolution (stay-deleted vs keep-edit) is a later explicit write.
+  const latestRow0 = await latestVersionRow(params.pool, committed.artifactId);
+  if (latestRow0 && (latestRow0.kind === 'deleted' || latestRow0.blob_sha == null)) {
+    return recordDeleteVsEditConflict({
+      ...params,
+      ledger,
+      incomingSha: sha,
+      deletedSeq: latestRow0.seq,
+      deletedAuthor: latestRow0.author,
+    });
+  }
+
   const artifact = await findArtifactById(params.pool, committed.artifactId);
   if (!artifact || artifact.merge_class !== 'mergeable-doc') {
     return {
@@ -252,6 +268,118 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
       },
     });
     await args.ledger.advancePointer(client, artifactId, 'latest', seq);
+    return { ok: true, seq, status: 'conflict', idempotent: false };
+  });
+}
+
+interface LatestRow {
+  seq: number;
+  kind: VersionKind;
+  blob_sha: string | null;
+  author: string;
+}
+
+async function latestVersionRow(pool: Db, artifactId: string): Promise<LatestRow | null> {
+  const res = await pool.query<LatestRow>(
+    `SELECT v.seq, v.kind, v.blob_sha, v.author
+       FROM artifact_pointers p
+       JOIN artifact_versions v ON v.artifact_id = p.artifact_id AND v.seq = p.seq
+      WHERE p.artifact_id = $1 AND p.name = 'latest'`,
+    [artifactId],
+  );
+  return res.rows[0] ?? null;
+}
+
+/** Record a delete-vs-edit conflict: the incoming edit lands as a
+ * `status=conflict` version (bytes preserved = resurrect-as-conflict) noting the
+ * competing delete. Never auto-picks a side (Gary's decision). */
+async function recordDeleteVsEditConflict(args: WriteBackArtifactParams & {
+  ledger: ArtifactLedger;
+  incomingSha: string;
+  deletedSeq: number;
+  deletedAuthor: string;
+}): Promise<WriteBackArtifactResult> {
+  return withTx(args.pool, async (client) => {
+    const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
+      sessionId: args.sessionId,
+      channelId: args.channelId,
+      path: args.path,
+    });
+    const latest = await args.ledger.latestVersion(client, artifactId);
+    if (!latest) return { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq };
+    // Re-check under the lock: only conflict if the latest is still a delete.
+    if (latest.kind !== 'deleted' && latest.blobSha != null) {
+      return { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest.seq };
+    }
+    const seq = latest.seq + 1;
+    await args.ledger.insertVersion(client, {
+      artifactId,
+      seq,
+      blobSha: args.incomingSha,
+      baseSeq: latest.seq,
+      author: args.author,
+      kind: 'modified',
+      status: 'conflict',
+      conflict: {
+        kind: 'delete_vs_edit',
+        base_seq: args.baseSeq ?? null,
+        deleted: { seq: args.deletedSeq, author: args.deletedAuthor },
+        edited: { author: args.author, sha: args.incomingSha },
+      },
+    });
+    await args.ledger.advancePointer(client, artifactId, 'latest', seq);
+    return { ok: true, seq, status: 'conflict', idempotent: false };
+  });
+}
+
+/** Write-back a DELETE against a base (capture of an agent delete, or a
+ * "stay-deleted" resolution). Clean → a delete tombstone; stale where the latest
+ * is a normal edit → an edit-vs-delete conflict (symmetric to the above). */
+export async function writeBackDelete(params: {
+  pool: Db;
+  channelId: string;
+  sessionId: string;
+  path: string;
+  author: string;
+  baseSeq?: number;
+}): Promise<WriteBackArtifactResult> {
+  const ledger = new ArtifactLedger(params.pool);
+  return withTx(params.pool, async (client) => {
+    const artifactId = await ledger.resolveOrCreateArtifactLocked(client, {
+      sessionId: params.sessionId,
+      channelId: params.channelId,
+      path: params.path,
+    });
+    const latest = await ledger.latestVersion(client, artifactId);
+    if (!latest) return { ok: false, reason: 'base_not_found', baseSeq: params.baseSeq };
+
+    const effectiveBase = params.baseSeq ?? latest.seq;
+    if (effectiveBase === latest.seq) {
+      if (latest.kind === 'deleted') {
+        return { ok: true, seq: latest.seq, status: 'normal', idempotent: true };
+      }
+      const seq = latest.seq + 1;
+      await ledger.insertVersion(client, {
+        artifactId, seq, blobSha: null, baseSeq: latest.seq,
+        author: params.author, kind: 'deleted', status: 'normal',
+      });
+      await ledger.advancePointer(client, artifactId, 'latest', seq);
+      return { ok: true, seq, status: 'normal', idempotent: false };
+    }
+
+    // Stale: the latest is a competing edit → edit-vs-delete conflict (preserve it).
+    const seq = latest.seq + 1;
+    await ledger.insertVersion(client, {
+      artifactId, seq, blobSha: latest.blobSha, baseSeq: latest.seq,
+      author: params.author, kind: 'modified', status: 'conflict',
+      conflict: {
+        kind: 'edit_vs_delete',
+        base_seq: params.baseSeq ?? null,
+        edited: { seq: latest.seq, author: 'latest', sha: latest.blobSha },
+        deleted: { author: params.author },
+      },
+    });
+    await ledger.advancePointer(client, artifactId, 'latest', seq);
     return { ok: true, seq, status: 'conflict', idempotent: false };
   });
 }
