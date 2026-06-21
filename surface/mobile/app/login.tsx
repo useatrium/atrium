@@ -41,7 +41,7 @@ export default function Login() {
   const { colors } = useTheme();
   const [autoServer, autoHandle, autoName] = (AUTO_LOGIN ?? '').split('|');
   const [serverUrl, setServerUrl] = useState(autoServer ?? '');
-  const [methods, setMethods] = useState<AuthMethods>({ open: true, email: true, google: false });
+  const [methods, setMethods] = useState<AuthMethods>({ open: true, email: true, google: false, calls: false });
   const [emailStep, setEmailStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { SideEffect, SideEffectCategory, SideEffectRisk } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { EmptyState } from './EmptyState';
 
 const CATEGORY_ORDER: SideEffectCategory[] = ['network', 'package', 'git', 'filesystem', 'process', 'shell'];
 const RISK_BADGE: Record<SideEffectRisk, string> = {
@@ -38,7 +39,10 @@ export function SideEffectsSurface({
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      {groups.map(([category, list]) => (
+      {groups.length === 0 ? (
+        <EmptyState title="No side-effects" hint="Commands and effects the agent ran will appear here." />
+      ) : (
+        groups.map(([category, list]) => (
           <section key={category} className="border-b border-edge last:border-b-0">
             <div className="flex items-center gap-2 bg-surface-raised/40 px-3 py-1.5">
               <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
@@ -59,7 +63,8 @@ export function SideEffectsSurface({
               </div>
             ))}
           </section>
-        ))}
+        ))
+      )}
     </div>
   );
 
@@ -69,17 +74,17 @@ export function SideEffectsSurface({
     <div
       data-testid="sideeffects-surface"
       role="dialog"
-      aria-label="Side-effects"
+      aria-label="What it ran"
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
         <h3 className="text-xs font-semibold text-fg">
-          Side-effects <span className="tabular-nums text-fg-muted">· {effects.length}</span>
+          What it ran <span className="tabular-nums text-fg-muted">· {effects.length}</span>
         </h3>
         <button
           onClick={onClose}
-          aria-label="Close side-effects"
+          aria-label="Close what it ran"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
         >
           <XIcon size={15} />

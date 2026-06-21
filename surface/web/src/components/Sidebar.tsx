@@ -23,7 +23,7 @@ import {
 } from '@atrium/surface-client';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
-import { channelLabel, dmPartner } from '@atrium/surface-client';
+import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
 import { useTheme } from '../theme';
@@ -54,6 +54,8 @@ export function Sidebar({
   providerCredentials,
   onConnectProvider,
   onLogout,
+  isOpen = false,
+  onClose,
 }: {
   workspaceName: string;
   channels: Channel[];
@@ -70,6 +72,8 @@ export function Sidebar({
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onLogout: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -153,8 +157,30 @@ export function Sidebar({
     onClose: closeSettings,
   });
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   return (
-    <nav className="flex w-56 shrink-0 flex-col border-r border-edge bg-surface-raised/50">
+    <>
+      <button
+        type="button"
+        aria-label="Close navigation"
+        onClick={onClose}
+        className={`fixed inset-0 z-30 bg-black/50 motion-safe:transition-opacity md:hidden ${
+          isOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+      />
+      <nav
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0 md:bg-surface-raised/50 md:shadow-none md:transition-none ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
         <span className="truncate text-sm font-bold tracking-tight text-fg">
           {workspaceName}
@@ -332,6 +358,7 @@ export function Sidebar({
             const level = c.muted || active ? false : unread[c.id] ?? false;
             const label = channelLabel(c, me.id);
             const partner = dmPartner(c, me.id);
+            const avatarName = channelAvatarName(c, me.id);
             return (
               <li key={c.id} className="group flex items-center">
                 <button
@@ -346,7 +373,7 @@ export function Sidebar({
                           : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                   }`}
                 >
-                  <Avatar name={label} seed={partner?.id ?? c.id} size={16} />
+                  <Avatar name={avatarName} seed={partner?.id ?? c.id} size={16} />
                   <span className="truncate">{label}</span>
                   {unreadBadge(c.id, active)}
                 </button>
@@ -406,7 +433,8 @@ export function Sidebar({
           Log out
         </button>
       </footer>
-    </nav>
+      </nav>
+    </>
   );
 }
 

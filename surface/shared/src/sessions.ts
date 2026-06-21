@@ -268,8 +268,12 @@ function statusRank(s: SessionStatus): number {
       return 1;
     case 'running':
       return 2;
-    default:
-      return 3; // terminal
+    case 'failed':
+      return 3;
+    case 'cancelled':
+      return 4;
+    case 'completed':
+      return 5;
   }
 }
 
@@ -331,7 +335,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     // not echo repo/branch).
     repo: resp.repo ?? live.repo ?? null,
     branch: resp.branch ?? live.branch ?? null,
-    status: statusRank(live.status) >= statusRank(resp.status) ? live.status : resp.status,
+    status: maxSessionStatus(live.status, resp.status),
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
     completedAt: live.completedAt ?? resp.completedAt,
@@ -406,19 +410,22 @@ export function applySessionEvent(
 
   if (ev.type === 'session.status_changed') {
     const status = asSessionStatus(p.status);
-    if (!status || status === prev.status) return sessions;
-    return { ...sessions, [sessionId]: { ...prev, status } };
+    if (!status) return sessions;
+    const nextStatus = maxSessionStatus(prev.status, status);
+    if (nextStatus === prev.status) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, status: nextStatus } };
   }
 
   if (ev.type === 'session.completed') {
     const status = asSessionStatus(p.status) ?? 'completed';
+    const nextStatus = maxSessionStatus(prev.status, status);
     const excerpt = typeof p.resultExcerpt === 'string' && p.resultExcerpt ? p.resultExcerpt : null;
     const permalink = typeof p.permalink === 'string' && p.permalink ? p.permalink : prev.permalink;
     return {
       ...sessions,
       [sessionId]: {
         ...prev,
-        status,
+        status: nextStatus,
         resultText: excerpt ?? prev.resultText,
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,

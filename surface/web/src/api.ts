@@ -7,6 +7,7 @@ import { desktopApiOptions } from './desktop';
 
 export { ApiError } from '@atrium/surface-client';
 export type {
+  AuthMethods,
   Workspace,
   Channel,
   ProviderCredentialProvider,

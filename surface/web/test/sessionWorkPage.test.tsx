@@ -13,7 +13,7 @@ describe('workRouteFromPath', () => {
   it('parses the work-surface slugs', () => {
     expect(workRouteFromPath('/s/abc/work/changes')).toEqual({ sessionId: 'abc', tab: 'changes' });
     expect(workRouteFromPath('/s/abc/work/side-effects')).toEqual({ sessionId: 'abc', tab: 'sideEffects' });
-    expect(workRouteFromPath('/s/abc/work/artifacts')).toEqual({ sessionId: 'abc', tab: 'artifacts' });
+    expect(workRouteFromPath('/s/abc/work/artifacts')).toEqual({ sessionId: 'abc', tab: 'changes' });
   });
 
   it('returns null for an unknown slug, the bare permalink, or an over-long path', () => {
@@ -45,7 +45,7 @@ describe('SessionWorkPage', () => {
     });
   }
 
-  it('renders the Changes surface full-page from the live stream (codex edit)', async () => {
+  it('renders the What changed surface full-page from the live stream (codex edit)', async () => {
     await renderPage('changes', [
       { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_c' } },
       {
@@ -60,13 +60,14 @@ describe('SessionWorkPage', () => {
 
     const page = screen.getByTestId('session-work-page');
     // Header: title + count + a link back to the full session.
-    expect(within(page).getByText('Changes')).toBeTruthy();
+    expect(within(page).getByText('What changed')).toBeTruthy();
     expect(within(page).getByRole('link', { name: /full session/i }).getAttribute('href')).toBe('/s/s-x');
     // Body: the edited file from the codex fileChange.
+    expect(within(page).getByText('Edited in repo')).toBeTruthy();
     expect(within(page).getByText('src/config.ts')).toBeTruthy();
   });
 
-  it('renders the Artifacts gallery full-page, serving bytes via the session route', async () => {
+  it('renders artifacts inside the What changed surface, serving bytes via the session route', async () => {
     await renderPage('artifacts', [
       { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' } },
       {
@@ -86,7 +87,8 @@ describe('SessionWorkPage', () => {
     ] as unknown as CentaurEventFrame[]);
 
     const page = screen.getByTestId('session-work-page');
-    expect(within(page).getByText('Artifacts')).toBeTruthy();
+    expect(within(page).getByText('What changed')).toBeTruthy();
+    expect(within(page).getByText('Created artifacts')).toBeTruthy();
     const img = within(page).getByRole('img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/sessions/s-x/artifacts/by-path?path=%2Ftmp%2Fchart.png');
   });

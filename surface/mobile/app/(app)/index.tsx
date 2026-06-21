@@ -6,7 +6,7 @@ import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-na
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
-import { channelLabel, dmPartner, type Channel } from '@atrium/surface-client';
+import { channelAvatarName, channelLabel, dmPartner, type Channel } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
 import { font, space, useTheme } from '../../src/lib/theme';
 import { Avatar } from '../../src/components/Avatar';
@@ -113,7 +113,7 @@ export default function ChannelList() {
         })}
       >
         {c.kind === 'dm' && partner ? (
-          <Avatar name={channelLabel(c, me.id)} seed={partner.id} size={28} />
+          <Avatar name={channelAvatarName(c, me.id)} seed={partner.id} size={28} />
         ) : c.kind === 'gdm' ? (
           <View style={{ width: 28, alignItems: 'center' }}>
             <Text style={{ color: colors.textMuted, fontSize: font.md, fontWeight: '700' }}>

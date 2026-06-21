@@ -224,8 +224,8 @@ describe('driver seat', () => {
     let s = spawnedState();
     const { rerender } = render(paneFor(s));
 
-    // I spawned it → I hold the seat: enabled composer, "you have the seat".
-    const boxBefore = screen.getByPlaceholderText(/you have the seat/i);
+    // I spawned it → I hold the seat: enabled composer, steer placeholder.
+    const boxBefore = screen.getByPlaceholderText(/steer the agent/i);
     expect((boxBefore as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.getByTestId('driver-chip').textContent).toBe('driver: Me');
 
@@ -844,9 +844,9 @@ describe('work drawer (Phase 4 consolidation)', () => {
 
     fireEvent.click(strip);
     const drawer = screen.getByTestId('work-drawer');
-    // Opened on the Side-effects tab — the classified command shows in the body.
+    // Opened on the What it ran tab — the classified command shows in the body.
     expect(within(drawer).getByText(/echo atrium-roundtrip-ok/)).toBeTruthy();
-    expect(within(drawer).getByRole('tab', { name: /Side-effects/ }).getAttribute('aria-selected')).toBe('true');
+    expect(within(drawer).getByRole('tab', { name: /What it ran/ }).getAttribute('aria-selected')).toBe('true');
 
     // Clicking the same strip again toggles the drawer closed.
     fireEvent.click(strip);
@@ -999,7 +999,7 @@ describe('artifacts surface (Phase 4)', () => {
     { event: 'execution_state', event_id: 3, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_a' } },
   ] as unknown as CentaurEventFrame[];
 
-  it('the artifacts strip opens the work drawer on the Artifacts tab gallery', async () => {
+  it('the artifacts strip opens the work drawer on the What changed tab gallery', async () => {
     render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
     const es = FakeEventSource.last();
     await act(async () => {
@@ -1015,7 +1015,8 @@ describe('artifacts surface (Phase 4)', () => {
 
     fireEvent.click(strip);
     const drawer = screen.getByTestId('work-drawer');
-    expect(within(drawer).getByRole('tab', { name: /Artifacts/ }).getAttribute('aria-selected')).toBe('true');
+    expect(within(drawer).getByRole('tab', { name: /What changed/ }).getAttribute('aria-selected')).toBe('true');
+    expect(within(drawer).getByText('Created artifacts')).toBeTruthy();
     // The gallery tile serves bytes via the ledger by-path route (latest for the path).
     const img = within(drawer).getByRole('img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/by-path?path=%2Ftmp%2Fchart.png');

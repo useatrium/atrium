@@ -7,6 +7,7 @@
 import { useMemo } from 'react';
 import type { Artifact } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { EmptyState } from './EmptyState';
 
 const KIND_BADGE: Record<Artifact['kind'], string> = {
   created: 'bg-success/15 text-success-text',
@@ -53,7 +54,7 @@ function artifactSrc(sessionId: string, artifact: Artifact): string | null {
 /** Collapse captures to one entry per path (newest-wins) with a version count —
  * mirroring the ledger, which keys versions by (session, path). A file captured
  * N times shows as a single tile, not N tiles. */
-function latestByPath(artifacts: Artifact[]): { artifact: Artifact; versions: number }[] {
+export function latestArtifactsByPath(artifacts: Artifact[]): { artifact: Artifact; versions: number }[] {
   const byPath = new Map<string, { artifact: Artifact; versions: number }>();
   for (const a of artifacts) {
     const versions = (byPath.get(a.path)?.versions ?? 0) + 1;
@@ -63,7 +64,7 @@ function latestByPath(artifacts: Artifact[]): { artifact: Artifact; versions: nu
   return [...byPath.values()].reverse(); // newest activity first
 }
 
-function ArtifactTile({
+export function ArtifactTile({
   sessionId,
   artifact,
   versions,
@@ -141,15 +142,19 @@ export function ArtifactsSurface({
 }) {
   // One tile per path, newest-wins (mirrors the ledger's (session,path) chain),
   // newest activity first.
-  const tiles = useMemo(() => latestByPath(artifacts), [artifacts]);
+  const tiles = useMemo(() => latestArtifactsByPath(artifacts), [artifacts]);
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto p-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {tiles.map(({ artifact, versions }) => (
-          <ArtifactTile key={artifact.path} sessionId={sessionId} artifact={artifact} versions={versions} />
-        ))}
-      </div>
+      {tiles.length === 0 ? (
+        <EmptyState title="No artifacts yet" hint="Files the agent creates will show up here." />
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {tiles.map(({ artifact, versions }) => (
+            <ArtifactTile key={artifact.path} sessionId={sessionId} artifact={artifact} versions={versions} />
+          ))}
+        </div>
+      )}
     </div>
   );
 

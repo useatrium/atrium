@@ -342,6 +342,8 @@ interface SessionListRow extends SessionRow {
 }
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
+const DEMO_HARNESS = 'demo';
+const DEMO_TITLE = 'Demo — watch an agent work';
 
 // Idle window before a terminal session's sandbox assignment is released.
 const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
@@ -430,8 +432,9 @@ export class SessionRuns {
       return { session: toJson(existing), created: false, event: null, row: existing };
     }
 
-    const title = args.task.trim().slice(0, 80);
     const harness = args.harness ?? this.harness;
+    const demo = isDemoHarness(harness);
+    const title = demo ? DEMO_TITLE : args.task.trim().slice(0, 80);
     const repo = normalizeGitMeta(args.repo);
     const branch = normalizeGitMeta(args.branch);
     const provider = providerForHarness(harness);
@@ -459,7 +462,7 @@ export class SessionRuns {
         channel.workspace_id,
         args.channelId,
         args.threadRootEventId,
-        `surface:${randomUUID()}`,
+        `${demo ? 'demo' : 'surface'}:${randomUUID()}`,
         harness,
         repo,
         branch,
@@ -815,13 +818,20 @@ export class SessionRuns {
   /** Replay the durable mirror into a reduced session state (transcript items +
    * derived work products). Survives Centaur retention. */
   private async readMirroredState(id: string): Promise<ReturnType<typeof initialSessionState>> {
-    const res = await this.pool.query<{ frame: CentaurEventFrame }>(
-      'SELECT frame FROM session_events WHERE session_id = $1 ORDER BY centaur_event_id ASC',
-      [id],
-    );
+    const res = await this.readMirroredFrames(id, 0);
     let state = initialSessionState();
     for (const r of res.rows) state = reduceSession(state, r.frame);
     return state;
+  }
+
+  private readMirroredFrames(id: string, afterEventId: number): Promise<{ rows: { frame: CentaurEventFrame }[] }> {
+    return this.pool.query<{ frame: CentaurEventFrame }>(
+      `SELECT frame
+       FROM session_events
+       WHERE session_id = $1 AND centaur_event_id > $2
+       ORDER BY centaur_event_id ASC`,
+      [id, afterEventId],
+    );
   }
 
   private async resolveParticipants(
@@ -911,14 +921,29 @@ export class SessionRuns {
     }, 15_000);
     keepAlive.unref?.();
     try {
-      for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
-        executionId: row.current_execution_id ?? undefined,
-        afterEventId,
-        signal,
-      })) {
+      let cursor = afterEventId;
+      const mirrored = await this.readMirroredFrames(session.id, cursor);
+      for (const { frame } of mirrored.rows) {
         if (signal.aborted) break;
-        raw.write(`event: ${frame.event}\n`);
-        raw.write(`data: ${JSON.stringify({ ...frame.data, event_id: frame.event_id })}\n\n`);
+        cursor = Math.max(cursor, frame.event_id);
+        writeSessionFrame(raw, frame);
+      }
+      // Only tail live for a session with an active execution. A terminal
+      // session's mirror already contains its terminal execution_state, which we
+      // just replayed; the live tail would start past it (afterEventId: cursor)
+      // and never observe a terminal frame to return on, holding the SSE open and
+      // polling Centaur forever. Closing after replay matches the pre-replay
+      // behavior (the terminal frame closed the stream); a follow-up turn flips
+      // the status back to non-terminal and the client re-opens the stream.
+      if (!signal.aborted && !TERMINAL_STATUSES.has(row.status)) {
+        for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
+          executionId: row.current_execution_id ?? undefined,
+          afterEventId: cursor,
+          signal,
+        })) {
+          if (signal.aborted) break;
+          writeSessionFrame(raw, frame);
+        }
       }
     } finally {
       clearInterval(keepAlive);
@@ -2556,6 +2581,15 @@ function userInputLine(text: string): string {
       content: [{ type: 'text', text }],
     },
   });
+}
+
+function writeSessionFrame(raw: ServerResponse, frame: CentaurEventFrame): void {
+  raw.write(`event: ${frame.event}\n`);
+  raw.write(`data: ${JSON.stringify({ ...frame.data, event_id: frame.event_id })}\n\n`);
+}
+
+function isDemoHarness(harness: string): boolean {
+  return harness.trim().toLowerCase() === DEMO_HARNESS;
 }
 
 function isCentaurCode(err: unknown, code: string): boolean {
