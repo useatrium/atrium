@@ -3,9 +3,10 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { basename } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -49,11 +50,27 @@ import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
-import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, presignPut, uploadObject } from './s3.js';
+import {
+  copyObject,
+  deleteObject,
+  ensureBucket,
+  getObjectBytes,
+  headObject,
+  presignGet,
+  presignPut,
+  uploadObject,
+  uploadObjectStream,
+} from './s3.js';
 import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
-import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO, type CommitVersionGroupFile } from './artifact-ledger.js';
+import {
+  ArtifactLedger,
+  casBlobKey,
+  type ChangeCursor,
+  CHANGE_CURSOR_ZERO,
+  type CommitVersionGroupFile,
+} from './artifact-ledger.js';
 import { classifyScope, userCanReadScope, type ArtifactScope } from './artifact-scope.js';
 import { loadConflictDetail } from './artifact-conflict.js';
 import type { AttachmentMeta } from './events.js';
@@ -130,6 +147,11 @@ function parseBaseSeq(value: string | undefined): number | null | false {
   if (value == null || value.trim() === '') return null;
   const n = Number(value);
   return Number.isSafeInteger(n) && n > 0 ? n : false;
+}
+
+function isReadableStream(value: unknown): value is Readable {
+  const candidate = value as { pipe?: unknown } | null;
+  return candidate != null && typeof candidate.pipe === 'function';
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -2955,6 +2977,83 @@ function rawSession(req: FastifyRequest): string | undefined {
           });
       if (!result.ok) return reply.code(409).send({ error: result.reason });
       return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
+  // === H8 streaming capture ===
+  await app.register(async (captureStream) => {
+    captureStream.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    captureStream.post('/api/internal/sessions/:id/artifacts/capture-stream', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const path = (req.query as { path?: string }).path;
+      if (typeof path !== 'string' || path.length === 0 || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
+      }
+      const sess = await pool.query<{ channel_id: string }>(
+        `SELECT channel_id FROM sessions WHERE id = $1`,
+        [id],
+      );
+      const channelId = sess.rows[0]?.channel_id;
+      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+
+      const mime = normalizeMime(firstHeader(req.headers['content-type']));
+      const source = isReadableStream(req.body) ? req.body : Readable.from(Buffer.alloc(0));
+      const stagingKey = `cas-staging/${randomBytes(16).toString('hex')}`;
+      let stagingDeleted = false;
+      try {
+        const hash = createHash('sha256');
+        let sizeBytes = 0;
+        const hashingStream = new Transform({
+          transform(chunk, encoding, callback) {
+            const bytes = Buffer.isBuffer(chunk)
+              ? chunk
+              : typeof chunk === 'string'
+                ? Buffer.from(chunk, encoding)
+                : Buffer.from(chunk as Uint8Array);
+            hash.update(bytes);
+            sizeBytes += bytes.byteLength;
+            callback(null, chunk);
+          },
+        });
+        const upload = uploadObjectStream(stagingKey, hashingStream, mime);
+        await Promise.all([pipeline(source, hashingStream), upload]);
+
+        const sha = hash.digest('hex');
+        const finalKey = casBlobKey(sha);
+        await copyObject(stagingKey, finalKey);
+        await deleteObject(stagingKey);
+        stagingDeleted = true;
+
+        const ledger = new ArtifactLedger(pool);
+        const result = await ledger.commitVersion({
+          sessionId: id,
+          channelId,
+          path,
+          blobSha: sha,
+          sizeBytes,
+          mime,
+          kind: 'modified',
+          mergeClass: 'immutable-data',
+          author: `node:${id}`,
+          ...(baseSeq == null ? {} : { baseSeq }),
+        });
+        if (!result.ok) {
+          // Large streamed files are immutable-class; stale OCC is rebased by the node daemon.
+          return reply.code(409).send({ error: 'stale_base', latestSeq: result.latestSeq, baseSeq: result.baseSeq });
+        }
+        await ledger.stampBlobS3Key(sha, finalKey);
+        return reply.send({ seq: result.seq, status: 'normal' });
+      } finally {
+        if (!stagingDeleted) {
+          await deleteObject(stagingKey).catch(() => {});
+        }
+      }
     });
   });
 
