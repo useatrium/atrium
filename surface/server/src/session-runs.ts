@@ -902,13 +902,22 @@ export class SessionRuns {
         cursor = Math.max(cursor, frame.event_id);
         writeSessionFrame(raw, frame);
       }
-      for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
-        executionId: row.current_execution_id ?? undefined,
-        afterEventId: cursor,
-        signal,
-      })) {
-        if (signal.aborted) break;
-        writeSessionFrame(raw, frame);
+      // Only tail live for a session with an active execution. A terminal
+      // session's mirror already contains its terminal execution_state, which we
+      // just replayed; the live tail would start past it (afterEventId: cursor)
+      // and never observe a terminal frame to return on, holding the SSE open and
+      // polling Centaur forever. Closing after replay matches the pre-replay
+      // behavior (the terminal frame closed the stream); a follow-up turn flips
+      // the status back to non-terminal and the client re-opens the stream.
+      if (!signal.aborted && !TERMINAL_STATUSES.has(row.status)) {
+        for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
+          executionId: row.current_execution_id ?? undefined,
+          afterEventId: cursor,
+          signal,
+        })) {
+          if (signal.aborted) break;
+          writeSessionFrame(raw, frame);
+        }
       }
     } finally {
       clearInterval(keepAlive);
