@@ -54,7 +54,13 @@ async function truncateDatabase() {
         workspaces,
         sessions,
         auth_sessions,
-        users
+        users,
+        -- cas_blobs is content-addressed (no session FK), so the sessions
+        -- CASCADE never reaches it. Without this, a reused local DB keeps
+        -- cas_blobs rows with s3_key stamped; blobIsOffloaded then skips the
+        -- re-upload, and a write-back read 500s if the bytes aren't in the
+        -- current object store.
+        cas_blobs
       RESTART IDENTITY CASCADE
     `);
   } catch (err) {
