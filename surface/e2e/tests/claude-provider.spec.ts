@@ -1,15 +1,18 @@
 import { expect, test } from '@playwright/test';
 import { login, unique } from './helpers.js';
 
-test('Claude Code spawn is gated until the user connects Claude', async ({ page }) => {
+test('Claude Code spawn offers subscription auth without blocking default auth', async ({ page }) => {
   await login(page, unique('claude-user'), 'Claude User');
 
   await page.getByRole('button', { name: 'Start an agent session' }).click();
   await page.getByPlaceholder('What should the agent do?').fill('check claude provider wiring');
   await page.getByRole('combobox').selectOption('claude-code');
 
-  await expect(page.getByText('Claude Code needs your subscription token.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start session' })).toBeDisabled();
+  await expect(page.getByText('Claude Code subscription auth is not connected.')).toBeVisible();
+  await expect(
+    page.getByText('This session will use the default harness auth. Connect Claude to prefer subscription auth.'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start session' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Connect Claude' }).click();
   await expect(page.getByRole('dialog', { name: 'Connect Claude Code' })).toBeVisible();
