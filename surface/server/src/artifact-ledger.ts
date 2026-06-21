@@ -104,6 +104,47 @@ export type CommitVersionResult =
   | { ok: true; artifactId: string; seq: number; idempotent: boolean }
   | { ok: false; reason: 'stale_base'; artifactId: string; latestSeq: number; baseSeq: number };
 
+export interface CommitVersionGroupFile {
+  path: string;
+  /** null only for a delete tombstone (kind='deleted'). */
+  blobSha: string | null;
+  sizeBytes: number;
+  mime: string;
+  baseSeq?: number | null;
+  kind: VersionKind;
+  /** Set when the artifact is first created; ignored afterwards. */
+  mergeClass?: MergeClass;
+}
+
+export interface CommitVersionGroupParams {
+  sessionId: string;
+  channelId: string;
+  groupId: string;
+  author: string;
+  files: CommitVersionGroupFile[];
+}
+
+export interface CommitGroupFileResult {
+  path: string;
+  seq: number;
+}
+
+export interface CommitGroupStaleFile {
+  path: string;
+  latest_seq: number | null;
+  base_seq: number | null;
+}
+
+export type CommitGroupResult =
+  | { ok: true; group_id: string; results: CommitGroupFileResult[] }
+  | { ok: false; reason: 'stale_base'; stale: CommitGroupStaleFile[] };
+
+class CommitGroupStaleBaseError extends Error {
+  constructor(readonly stale: CommitGroupStaleFile[]) {
+    super('stale_base');
+  }
+}
+
 /** Content-addressed S3 key for a blob. Sharded by the first byte so the
  * keyspace spreads across S3 prefixes (write-throughput + Merkle locality). */
 export function casBlobKey(sha256: string): string {
@@ -575,6 +616,123 @@ export class ArtifactLedger {
       await this.advancePointer(client, artifactId, 'latest', seq);
       return { ok: true, artifactId, seq, idempotent: false };
     });
+  }
+
+  /**
+   * Commit a tree manifest as one atomic version set. The whole group lands or
+   * rolls back together; stale-base detection is performed across every file
+   * before any version row is inserted.
+   */
+  async commitVersionGroup(params: CommitVersionGroupParams): Promise<CommitGroupResult> {
+    try {
+      return await withTx(this.pool, async (client) => {
+        const insertedGroup = await client.query<{ group_id: string }>(
+          `INSERT INTO artifact_commit_groups (group_id, session_id)
+           VALUES ($1, $2)
+           ON CONFLICT (group_id) DO NOTHING
+           RETURNING group_id`,
+          [params.groupId, params.sessionId],
+        );
+        if (!insertedGroup.rows[0]) {
+          const existing = await client.query<{ result: CommitGroupResult | null }>(
+            `SELECT result FROM artifact_commit_groups WHERE group_id = $1 FOR UPDATE`,
+            [params.groupId],
+          );
+          const cached = existing.rows[0]?.result;
+          if (cached != null) return cached;
+          throw new Error(`commit group ${params.groupId} exists without a committed result`);
+        }
+
+        const locked: Array<{
+          file: CommitVersionGroupFile;
+          index: number;
+          artifactId: string;
+          latest: LatestVersion | null;
+        }> = [];
+        for (const { file, index } of params.files
+          .map((file, index) => ({ file, index }))
+          .sort((a, b) => a.file.path.localeCompare(b.file.path))) {
+          const artifactId = await this.resolveOrCreateArtifactLocked(client, {
+            sessionId: params.sessionId,
+            channelId: params.channelId,
+            path: file.path,
+            mergeClass: file.mergeClass,
+          });
+          const latest = await this.latestVersion(client, artifactId);
+          locked.push({ file, index, artifactId, latest });
+        }
+
+        const stale: CommitGroupStaleFile[] = [];
+        for (const item of locked) {
+          if (item.latest == null) {
+            if (item.file.baseSeq != null) {
+              stale.push({ path: item.file.path, latest_seq: null, base_seq: item.file.baseSeq });
+            }
+            continue;
+          }
+          const effectiveBase = item.file.baseSeq ?? item.latest.seq;
+          if (effectiveBase !== item.latest.seq) {
+            stale.push({ path: item.file.path, latest_seq: item.latest.seq, base_seq: effectiveBase });
+          }
+        }
+        if (stale.length > 0) throw new CommitGroupStaleBaseError(stale);
+
+        const blobs = new Map<string, { sizeBytes: number; mime: string }>();
+        for (const file of params.files) {
+          if (file.blobSha != null && !blobs.has(file.blobSha)) {
+            blobs.set(file.blobSha, { sizeBytes: file.sizeBytes, mime: file.mime });
+          }
+        }
+        for (const [sha256, blob] of blobs) {
+          await this.upsertBlob(client, { sha256, sizeBytes: blob.sizeBytes, mime: blob.mime });
+        }
+
+        const results: CommitGroupFileResult[] = new Array(params.files.length);
+        for (const item of locked.sort((a, b) => a.index - b.index)) {
+          if (
+            item.latest != null &&
+            item.file.kind !== 'deleted' &&
+            item.file.blobSha != null &&
+            item.file.blobSha === item.latest.blobSha
+          ) {
+            results[item.index] = { path: item.file.path, seq: item.latest.seq };
+            continue;
+          }
+
+          const seq = item.latest == null ? 1 : item.latest.seq + 1;
+          await this.insertVersion(client, {
+            artifactId: item.artifactId,
+            seq,
+            blobSha: item.file.blobSha,
+            baseSeq: item.latest?.seq ?? null,
+            author: params.author,
+            kind: item.file.kind,
+          });
+          await client.query(
+            `UPDATE artifact_changes
+                SET group_id = $3
+              WHERE artifact_id = $1 AND seq = $2`,
+            [item.artifactId, seq, params.groupId],
+          );
+          await this.advancePointer(client, item.artifactId, 'latest', seq);
+          results[item.index] = { path: item.file.path, seq };
+        }
+
+        const result: CommitGroupResult = { ok: true, group_id: params.groupId, results };
+        await client.query(
+          `UPDATE artifact_commit_groups
+              SET result = $2, committed_at = now()
+            WHERE group_id = $1`,
+          [params.groupId, JSON.stringify(result)],
+        );
+        return result;
+      });
+    } catch (err) {
+      if (err instanceof CommitGroupStaleBaseError) {
+        return { ok: false, reason: 'stale_base', stale: err.stale };
+      }
+      throw err;
+    }
   }
 
   // === the read path (Lane 2 serve) ========================================
