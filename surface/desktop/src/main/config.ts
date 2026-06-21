@@ -19,9 +19,17 @@ export const SERVER_URL = process.env.ATRIUM_SERVER_URL ?? 'http://localhost:180
  */
 export const RENDERER_DEV_URL = process.env.ATRIUM_RENDERER_URL ?? null;
 
-/** Bundled @atrium/web build directory (vite default output: web/dist). */
+/**
+ * Bundled @atrium/web build directory. Dev: web/dist next to the package.
+ * Packaged: copied into the app's Resources via electron-builder extraResources.
+ */
 export const WEB_DIST =
-  process.env.ATRIUM_WEB_DIST ?? join(app.getAppPath(), '..', 'web', 'dist');
+  process.env.ATRIUM_WEB_DIST ??
+  (app.isPackaged
+    ? join(process.resourcesPath, 'web-dist')
+    : join(app.getAppPath(), '..', 'web', 'dist'));
 
-/** Menu-bar/tray template icon (resources/ ships next to the app root). */
-export const TRAY_ICON = join(app.getAppPath(), 'resources', 'trayTemplate.png');
+/** Menu-bar/tray template icon (dev: package resources/; packaged: Resources/). */
+export const TRAY_ICON = app.isPackaged
+  ? join(process.resourcesPath, 'resources', 'trayTemplate.png')
+  : join(app.getAppPath(), 'resources', 'trayTemplate.png');
