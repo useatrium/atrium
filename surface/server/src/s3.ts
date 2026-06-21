@@ -6,6 +6,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -88,6 +89,20 @@ export async function downloadObject(key: string, destinationPath: string): Prom
 }
 
 // === writeback additions ===
+/** Verify an object is durable: HEAD it and return its size, or null if absent.
+ * Used by the write-back path to confirm a PUT actually landed BEFORE stamping
+ * the blob's s3_key (which is the ledger's "this version is servable" signal). */
+export async function headObject(key: string): Promise<{ contentLength: number } | null> {
+  try {
+    const res = await client.send(new HeadObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+    return { contentLength: Number(res.ContentLength ?? 0) };
+  } catch (err) {
+    const code = (err as { name?: string; $metadata?: { httpStatusCode?: number } });
+    if (code.name === 'NotFound' || code.$metadata?.httpStatusCode === 404) return null;
+    throw err;
+  }
+}
+
 export async function getObjectBytes(key: string): Promise<Buffer> {
   const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
   if (!res.Body) throw new Error(`S3 object has no body: ${key}`);

@@ -13,6 +13,10 @@ import { withTx } from './db.js';
 export interface ArtifactWritebackStorage {
   uploadObject(key: string, body: Buffer | Uint8Array, contentType: string): Promise<void>;
   getObjectBytes(key: string): Promise<Buffer>;
+  /** Optional durability check (#9): verify a PUT landed before we stamp the
+   * blob's s3_key (the "version is servable" signal). When absent, verify is
+   * skipped (back-compat for callers/tests that don't provide it). */
+  headObject?(key: string): Promise<{ contentLength: number } | null>;
 }
 
 export type WriteBackArtifactResult =
@@ -155,6 +159,16 @@ async function ensureCasBlobStored(args: {
   const key = casBlobKey(args.sha);
   if (!(await args.ledger.blobIsOffloaded(args.sha))) {
     await args.storage.uploadObject(key, args.bytes, args.mime);
+    // #9: verify the PUT actually landed (right size) BEFORE we stamp s3_key —
+    // so a committed version never references a blob that isn't durable in S3.
+    if (args.storage.headObject) {
+      const head = await args.storage.headObject(key);
+      if (!head || head.contentLength !== args.bytes.byteLength) {
+        throw new Error(
+          `blob durability check failed for ${args.sha} (head=${head ? head.contentLength : 'missing'}, want ${args.bytes.byteLength})`,
+        );
+      }
+    }
   }
   if (args.client) {
     await args.ledger.upsertBlob(args.client, {
