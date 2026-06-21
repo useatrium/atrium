@@ -53,7 +53,7 @@ import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, pre
 import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
-import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
+import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO, type CommitVersionGroupFile } from './artifact-ledger.js';
 import { classifyScope, userCanReadScope, type ArtifactScope } from './artifact-scope.js';
 import { loadConflictDetail } from './artifact-conflict.js';
 import type { AttachmentMeta } from './events.js';
@@ -2997,6 +2997,104 @@ function rawSession(req: FastifyRequest): string | undefined {
       const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, id, harness, bytes);
       return reply.send({ size_bytes: size, sha256 });
     });
+  });
+
+  // === H10 commit-group additions ===
+  app.post('/api/internal/sessions/:id/artifacts/commit-group', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      group_id?: unknown;
+      files?: unknown;
+    };
+    const badManifest = (message: string) => reply.code(400).send({ error: 'bad_manifest', message });
+    if (typeof body.group_id !== 'string' || body.group_id.length === 0) {
+      return badManifest('group_id is required');
+    }
+    if (!Array.isArray(body.files) || body.files.length === 0) {
+      return badManifest('files must be a non-empty array');
+    }
+    const files: CommitVersionGroupFile[] = [];
+    const seenPaths = new Set<string>();
+    for (const raw of body.files) {
+      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return badManifest('each file must be an object');
+      }
+      const file = raw as {
+        path?: unknown;
+        blob_sha?: unknown;
+        size_bytes?: unknown;
+        mime?: unknown;
+        base_seq?: unknown;
+        kind?: unknown;
+        merge_class?: unknown;
+      };
+      if (typeof file.path !== 'string' || file.path.length === 0 || file.path.includes('..')) {
+        return badManifest('valid path required');
+      }
+      if (seenPaths.has(file.path)) return badManifest('duplicate path');
+      seenPaths.add(file.path);
+      if (file.kind !== 'created' && file.kind !== 'modified' && file.kind !== 'deleted') {
+        return badManifest('kind must be created, modified, or deleted');
+      }
+      const blobSha = file.blob_sha;
+      if (file.kind === 'deleted') {
+        if (blobSha !== null) return badManifest('deleted files must use blob_sha null');
+      } else if (typeof blobSha !== 'string' || blobSha.length === 0) {
+        return badManifest('created and modified files require blob_sha');
+      }
+      if (!Number.isSafeInteger(file.size_bytes) || (file.size_bytes as number) < 0) {
+        return badManifest('size_bytes must be a non-negative integer');
+      }
+      if (typeof file.mime !== 'string' || file.mime.length === 0) {
+        return badManifest('mime is required');
+      }
+      let baseSeq: number | null | undefined;
+      if (file.base_seq === null || file.base_seq === undefined) {
+        baseSeq = file.base_seq;
+      } else if (Number.isSafeInteger(file.base_seq) && (file.base_seq as number) > 0) {
+        baseSeq = file.base_seq as number;
+      } else {
+        return badManifest('base_seq must be a positive integer or null');
+      }
+      let mergeClass: CommitVersionGroupFile['mergeClass'];
+      if (file.merge_class !== undefined) {
+        if (
+          file.merge_class !== 'immutable-data' &&
+          file.merge_class !== 'mergeable-doc' &&
+          file.merge_class !== 'derived-output'
+        ) {
+          return badManifest('merge_class is invalid');
+        }
+        mergeClass = file.merge_class;
+      }
+      files.push({
+        path: file.path,
+        blobSha: file.kind === 'deleted' ? null : blobSha as string,
+        sizeBytes: file.size_bytes as number,
+        mime: normalizeMime(file.mime),
+        baseSeq,
+        kind: file.kind,
+        ...(mergeClass === undefined ? {} : { mergeClass }),
+      });
+    }
+
+    const sess = await pool.query<{ channel_id: string }>(
+      `SELECT channel_id FROM sessions WHERE id = $1`,
+      [id],
+    );
+    const channelId = sess.rows[0]?.channel_id;
+    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+    const result = await new ArtifactLedger(pool).commitVersionGroup({
+      sessionId: id,
+      channelId,
+      groupId: body.group_id,
+      author: `node:${id}`,
+      files,
+    });
+    if (!result.ok) return reply.code(409).send(result);
+    return reply.send(result);
   });
 
   app.get('/api/sessions/:id/stream', async (req, reply) => {
