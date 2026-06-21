@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { ChevronRightIcon, FileIcon, XIcon } from '../components/icons';
+import { VersionSkewBadge } from './ConflictSurface';
 
 type Backing = 'git' | 'ledger';
 type FileType = 'file' | 'dir';
@@ -29,6 +30,12 @@ type LedgerHistoryEntry = {
 type HistoryResponse = {
   backing: Backing;
   entries: Array<GitHistoryEntry | LedgerHistoryEntry>;
+};
+
+type PreviewVersionSkew = {
+  path: string;
+  workingSeq: number;
+  latestSeq: number;
 };
 
 const BACKING_BADGE: Record<Backing, string> = {
@@ -63,6 +70,22 @@ async function responseError(response: Response, fallback: string): Promise<stri
   if (typeof response.text !== 'function') return fallback;
   const text = await response.text();
   return text.trim() || fallback;
+}
+
+function seqHeader(response: Response, name: string): number | null {
+  const raw = response.headers?.get(name);
+  if (!raw) return null;
+  const seq = Number(raw);
+  return Number.isInteger(seq) && seq >= 0 ? seq : null;
+}
+
+function previewVersionSkew(row: FileRow, response: Response): PreviewVersionSkew | null {
+  if (row.backing !== 'ledger') return null;
+  if (response.headers?.get('X-Artifact-Conflicted') !== 'true') return null;
+  const workingSeq = seqHeader(response, 'X-Artifact-Seq');
+  const latestSeq = seqHeader(response, 'X-Artifact-Conflict-Seq');
+  if (workingSeq == null || latestSeq == null || latestSeq <= workingSeq) return null;
+  return { path: row.path, workingSeq, latestSeq };
 }
 
 function BackingBadge({ backing }: { backing: Backing }) {
@@ -166,6 +189,7 @@ export function FilesSurface({
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [versionSkew, setVersionSkew] = useState<PreviewVersionSkew | null>(null);
 
   const sortedRows = useMemo(
     () =>
@@ -177,18 +201,22 @@ export function FilesSurface({
   );
 
   const loadContent = useCallback(
-    async (path: string) => {
+    async (row: FileRow) => {
       setContentLoading(true);
       setContentError(null);
+      setVersionSkew(null);
       try {
-        const response = await fetch(contentUrl(sessionId, path), { credentials: 'same-origin' });
+        const response = await fetch(contentUrl(sessionId, row.path), { credentials: 'same-origin' });
         if (!response.ok) throw new Error(await responseError(response, 'Could not load file'));
+        const skew = previewVersionSkew(row, response);
         const text = await response.text();
         setContent(text);
         setDraft(text);
+        setVersionSkew(skew);
       } catch (error) {
         setContent('');
         setDraft('');
+        setVersionSkew(null);
         setContentError(error instanceof Error ? error.message : 'Could not load file');
       } finally {
         setContentLoading(false);
@@ -227,7 +255,7 @@ export function FilesSurface({
     setHistoryOpen(false);
     setHistory(null);
     setHistoryError(null);
-    void loadContent(row.path);
+    void loadContent(row);
   }
 
   async function toggleHistory() {
@@ -262,7 +290,7 @@ export function FilesSurface({
         body: draft,
       });
       if (!response.ok) throw new Error(await responseError(response, 'Could not save file'));
-      await loadContent(selected.path);
+      await loadContent(selected);
       setEditing(false);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not save file');
@@ -329,6 +357,9 @@ export function FilesSurface({
             <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-body" title={selected.path}>
               {selected.path}
             </span>
+            {versionSkew?.path === selected.path && (
+              <VersionSkewBadge workingSeq={versionSkew.workingSeq} latestSeq={versionSkew.latestSeq} />
+            )}
             <BackingBadge backing={selected.backing} />
             <button
               type="button"

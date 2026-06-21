@@ -8,8 +8,8 @@ function jsonResponse(body: unknown, ok = true) {
   return { ok, json: async () => body } as Response;
 }
 
-function textResponse(body: string, ok = true) {
-  return { ok, text: async () => body } as Response;
+function textResponse(body: string, ok = true, headers: Record<string, string> = {}) {
+  return { ok, headers: new Headers(headers), text: async () => body } as Response;
 }
 
 const rootRows = [
@@ -64,6 +64,57 @@ describe('FilesSurface', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/sessions/s-1/files/content?path=proj-x%2Fplan.md', {
       credentials: 'same-origin',
     });
+  });
+
+  it('renders a version skew badge for a ledger file with a newer conflict seq', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'PUT') return Promise.resolve(jsonResponse({ backing: 'ledger', seq: 3 }));
+      if (url.includes('/files/content')) {
+        return Promise.resolve(
+          textResponse('initial contents', true, {
+            'X-Artifact-Seq': '5',
+            'X-Artifact-Conflicted': 'true',
+            'X-Artifact-Conflict-Seq': '7',
+          }),
+        );
+      }
+      if (url.includes('/files?dir=')) return Promise.resolve(jsonResponse({ rows: rootRows }));
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<FilesSurface sessionId="s-1" onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('plan.md')).toBeTruthy());
+    fireEvent.click(screen.getByText('plan.md'));
+
+    await waitFor(() => expect(screen.getByText('newer: v7')).toBeTruthy());
+  });
+
+  it('does not render a version skew badge when ledger seqs are equal', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'PUT') return Promise.resolve(jsonResponse({ backing: 'ledger', seq: 3 }));
+      if (url.includes('/files/content')) {
+        return Promise.resolve(
+          textResponse('initial contents', true, {
+            'X-Artifact-Seq': '5',
+            'X-Artifact-Conflicted': 'true',
+            'X-Artifact-Conflict-Seq': '5',
+          }),
+        );
+      }
+      if (url.includes('/files?dir=')) return Promise.resolve(jsonResponse({ rows: rootRows }));
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<FilesSurface sessionId="s-1" onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('plan.md')).toBeTruthy());
+    fireEvent.click(screen.getByText('plan.md'));
+
+    await waitFor(() => expect(screen.getByText('initial contents')).toBeTruthy());
+    expect(screen.queryByText(/^newer:/)).toBeNull();
   });
 
   it('navigating into a dir refetches with the new dir', async () => {
