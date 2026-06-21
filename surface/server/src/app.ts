@@ -49,7 +49,7 @@ import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
-import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut, uploadObject } from './s3.js';
+import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, presignPut, uploadObject } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
@@ -1949,7 +1949,7 @@ function rawSession(req: FastifyRequest): string | undefined {
 
       const result = await writeBackArtifact({
         pool,
-        storage: { uploadObject, getObjectBytes },
+        storage: { uploadObject, getObjectBytes, headObject },
         channelId,
         sessionId,
         path,
@@ -2496,7 +2496,7 @@ function rawSession(req: FastifyRequest): string | undefined {
         }
         const result = await writeBackArtifact({
           pool,
-          storage: { uploadObject, getObjectBytes },
+          storage: { uploadObject, getObjectBytes, headObject },
           channelId,
           sessionId: id,
           path: resolved.relPath,
@@ -2665,7 +2665,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           })
         : await writeBackArtifact({
             pool,
-            storage: { uploadObject, getObjectBytes },
+            storage: { uploadObject, getObjectBytes, headObject },
             channelId: art.channelId,
             sessionId: art.sessionId,
             path: art.path,
@@ -2769,7 +2769,7 @@ function rawSession(req: FastifyRequest): string | undefined {
         ? await writeBackDelete({ pool, channelId, sessionId: id, path, author, ...(baseSeq == null ? {} : { baseSeq }) })
         : await writeBackArtifact({
             pool,
-            storage: { uploadObject, getObjectBytes },
+            storage: { uploadObject, getObjectBytes, headObject },
             channelId,
             sessionId: id,
             path,
