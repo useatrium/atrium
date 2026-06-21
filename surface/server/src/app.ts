@@ -2464,26 +2464,12 @@ function rawSession(req: FastifyRequest): string | undefined {
           return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
         }
 
-        const body = bodyBuffer(req.body);
         const resolved = resolveBacking(path, { gitPrefix });
         if (resolved.backing === 'git') {
-          if (!gitSource.isConfigured()) {
-            return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
-          }
-          try {
-            const result = await gitSource.commitFile(
-              resolved.relPath,
-              body,
-              `Update ${resolved.relPath} via Atrium Files`,
-              `human:${user.id}`,
-            );
-            return reply.send({ backing: 'git', sha: result.sha });
-          } catch (err) {
-            if (unsafeGitPathError(err)) {
-              return reply.code(400).send({ error: 'bad_query', message: 'path must be a safe relative path' });
-            }
-            throw err;
-          }
+          return reply.code(405).send({
+            error: 'repo_read_only',
+            message: 'repo files are read-only in-app; steer the agent to change code',
+          });
         }
 
         const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
@@ -2494,6 +2480,7 @@ function rawSession(req: FastifyRequest): string | undefined {
         if (!channelId) {
           return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
         }
+        const body = bodyBuffer(req.body);
         const result = await writeBackArtifact({
           pool,
           storage: { uploadObject, getObjectBytes, headObject },

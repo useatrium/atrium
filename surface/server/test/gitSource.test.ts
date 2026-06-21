@@ -18,7 +18,7 @@ describe('createGitSource', () => {
     expect(createGitSource(undefined).isConfigured()).toBe(false);
   });
 
-  it('lists, reads, histories, and commits files in a git repo', async () => {
+  it('lists, reads, and histories files in a git repo', async () => {
     const repo = await seedRepo();
     const source = createGitSource(repo);
 
@@ -39,19 +39,6 @@ describe('createGitSource', () => {
     const initialHistory = await source.history('src/a.ts');
     expect(initialHistory).toHaveLength(1);
     expect(initialHistory[0]).toMatchObject({ author: 'Test User', subject: 'initial commit' });
-
-    const committed = await source.commitFile(
-      'src/a.ts',
-      Buffer.from('export const a = 2;\n'),
-      'update a',
-      'human:test-user',
-    );
-
-    expect(committed.sha).toMatch(/^[0-9a-f]{40}$/);
-    expect((await source.readFile('src/a.ts'))?.bytes.toString('utf8')).toBe('export const a = 2;\n');
-    const history = await source.history('src/a.ts');
-    expect(history[0]).toMatchObject({ sha: committed.sha, author: 'human:test-user', subject: 'update a' });
-    expect(history[1]).toMatchObject({ author: 'Test User', subject: 'initial commit' });
   });
 
   it('rejects unsafe paths', async () => {
@@ -61,7 +48,6 @@ describe('createGitSource', () => {
     await expect(source.listDir('..')).rejects.toThrow('unsafe git path');
     await expect(source.readFile('/x')).rejects.toThrow('unsafe git path');
     await expect(source.history('src/../a.ts')).rejects.toThrow('unsafe git path');
-    await expect(source.commitFile('/x', Buffer.from('x'), 'bad', 'human:test')).rejects.toThrow('unsafe git path');
   });
 });
 
