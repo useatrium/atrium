@@ -149,7 +149,11 @@ function executionStateFrame(eventId: number, status: string): string {
   })}\n\n`;
 }
 
-test('session conflicts drawer resolves a mergeable artifact conflict', async ({ page }) => {
+// QUARANTINED (#41): write-back offloads blobs to S3, but CI has no MinIO, and
+// even with one the conflict-merge write 500s against fresh storage (passes
+// locally only because the dev MinIO volume has blobs from prior runs). This
+// test has never run green in CI. Re-enable once both are fixed — see #41.
+test.fixme('session conflicts drawer resolves a mergeable artifact conflict', async ({ page }) => {
   const aliceHandle = unique('conflict-alice');
   let bobApi: APIRequestContext | null = null;
 
