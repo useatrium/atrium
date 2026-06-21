@@ -12,7 +12,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::io::{AsRawFd, OwnedFd, FromRawFd};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::overlay::{RawEntry, RawFileType, XATTR_METACOPY, XATTR_OPAQUE, XATTR_REDIRECT};
 use crate::safety::{is_safe_relpath, HARDENED_RESOLVE};

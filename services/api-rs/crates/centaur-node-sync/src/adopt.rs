@@ -8,7 +8,7 @@
 //! exhaustively-testable decision function; the I/O (fetch/write-through-merged/
 //! HTTP) is the runtime around it.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LocalState {
     /// The version this container hydrated / last cleanly adopted.
     pub base_seq: u64,

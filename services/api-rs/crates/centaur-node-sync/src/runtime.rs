@@ -46,7 +46,7 @@ pub trait UpperReader {
     fn read(&self, path: &PathBuf) -> Option<Vec<u8>>;
 }
 
-fn sha_hex(bytes: &[u8]) -> String {
+pub fn sha_hex(bytes: &[u8]) -> String {
     // A tiny FNV-1a — enough for echo/identity comparison in tests + matches by
     // content. The live node uses sha256 (cas key); this stays dependency-free.
     let mut h: u64 = 0xcbf29ce484222325;
@@ -58,7 +58,7 @@ fn sha_hex(bytes: &[u8]) -> String {
 }
 
 pub struct CaptureOutcome {
-    pub captured: Vec<(String, u64)>, // (path, seq)
+    pub captured: Vec<(String, u64, String)>, // (path, seq, sha)
     pub deleted: Vec<(String, u64)>,
     pub skipped_echo: Vec<String>,
     pub skipped_other: Vec<String>,
@@ -101,7 +101,7 @@ pub fn capture_sweep(
                     continue;
                 }
                 match client.post_capture(&key, base, &bytes) {
-                    Ok(seq) => out.captured.push((key, seq)),
+                    Ok(seq) => out.captured.push((key, seq, sha)),
                     Err(e) => out.errors.push((key, e)),
                 }
             }
