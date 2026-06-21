@@ -2255,6 +2255,232 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.send(Readable.fromWeb(bytes.body));
   });
 
+  // === Phase 3 unified Files routes ===
+  {
+    const { createGitSource } = await import('./git-source.js');
+    const { resolveBacking } = await import('./file-resolver.js');
+    const gitPrefix = normalizeFilesGitPrefix(process.env.GIT_PREFIX ?? 'repo/');
+    const gitSource = createGitSource(process.env.GIT_REPO_ROOT);
+
+    type UnifiedFileRow = { path: string; backing: 'git' | 'ledger'; type: 'file' | 'dir' };
+
+    function normalizeFilesGitPrefix(value: string): string {
+      const trimmed = value.trim();
+      const prefix = trimmed.length > 0 ? trimmed : 'repo/';
+      return prefix.endsWith('/') ? prefix : `${prefix}/`;
+    }
+
+    function normalizeFilesDir(value: unknown): string | null {
+      if (value == null) return '';
+      if (typeof value !== 'string') return null;
+      const dir = value.trim();
+      if (dir.includes('\0') || dir.includes('..') || dir.startsWith('/')) return null;
+      return dir.replace(/\/+$/g, '');
+    }
+
+    function normalizeFilesPath(value: unknown): string | null {
+      if (typeof value !== 'string') return null;
+      const path = value.trim();
+      if (!path || path.includes('\0') || path.includes('..') || path.startsWith('/')) return null;
+      return path;
+    }
+
+    function gitRelDirForApiDir(dir: string): string | null {
+      const prefixRoot = gitPrefix.replace(/\/+$/g, '');
+      if (dir.length === 0) return '';
+      if (dir === prefixRoot) return '';
+      if (dir.startsWith(gitPrefix)) return dir.slice(gitPrefix.length).replace(/\/+$/g, '');
+      return null;
+    }
+
+    function ledgerRowsForDir(
+      scope: Array<{ path: string; latestSeq: number; kind: string }>,
+      dir: string,
+    ): UnifiedFileRow[] {
+      const prefix = dir.length > 0 ? `${dir}/` : '';
+      const rows = new Map<string, UnifiedFileRow>();
+      for (const item of scope) {
+        if (item.kind === 'deleted') continue;
+        if (resolveBacking(item.path, { gitPrefix }).backing !== 'ledger') continue;
+        if (!item.path.startsWith(prefix)) continue;
+        const rest = item.path.slice(prefix.length);
+        if (!rest) continue;
+        const slash = rest.indexOf('/');
+        const path = slash < 0 ? item.path : `${prefix}${rest.slice(0, slash)}`;
+        const type = slash < 0 ? 'file' : 'dir';
+        if (!rows.has(path) || type === 'dir') rows.set(path, { path, backing: 'ledger', type });
+      }
+      return [...rows.values()];
+    }
+
+    function bodyBuffer(body: unknown): Buffer {
+      if (Buffer.isBuffer(body)) return body;
+      if (body instanceof Uint8Array) return Buffer.from(body);
+      return Buffer.alloc(0);
+    }
+
+    function unsafeGitPathError(err: unknown): boolean {
+      return err instanceof Error && err.message === 'unsafe git path';
+    }
+
+    function isoDate(value: Date | string): string {
+      return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+    }
+
+    async function ledgerHistory(sessionId: string, path: string) {
+      const res = await pool.query<{
+        seq: number;
+        blob_sha: string | null;
+        author: string;
+        kind: string;
+        status: string;
+        created_at: Date | string;
+      }>(
+        `SELECT v.seq, v.blob_sha, v.author, v.kind, v.status, v.created_at
+           FROM artifacts a
+           JOIN artifact_versions v ON v.artifact_id = a.id
+          WHERE a.session_id = $1 AND a.path = $2
+          ORDER BY v.seq DESC`,
+        [sessionId, path],
+      );
+      return res.rows.map((row) => ({
+        seq: row.seq,
+        sha: row.blob_sha,
+        author: row.author,
+        date: isoDate(row.created_at),
+        kind: row.kind,
+        status: row.status,
+      }));
+    }
+
+    async function sessionChannelId(sessionId: string): Promise<string | null> {
+      const res = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+      return res.rows[0]?.channel_id ?? null;
+    }
+
+    await app.register(async (filesScope) => {
+      filesScope.addContentTypeParser(
+        '*',
+        { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+        (_req, body, done) => done(null, body),
+      );
+
+      filesScope.get('/api/sessions/:id/files', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const dir = normalizeFilesDir((req.query as { dir?: unknown }).dir);
+        if (dir == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'dir must be a safe relative path' });
+        }
+
+        const ledger = new ArtifactLedger(pool);
+        const rows = ledgerRowsForDir(await ledger.sessionScope(id), dir);
+        const gitRelDir = gitRelDirForApiDir(dir);
+        if (gitRelDir != null && gitSource.isConfigured()) {
+          try {
+            const gitRows = await gitSource.listDir(gitRelDir);
+            rows.push(...gitRows.map((row) => ({ ...row, path: `${gitPrefix}${row.path}`, backing: 'git' as const })));
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'dir must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+        rows.sort((a, b) => a.path.localeCompare(b.path) || a.backing.localeCompare(b.backing));
+        return reply.send({ rows });
+      });
+
+      filesScope.get('/api/sessions/:id/files/history', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const path = normalizeFilesPath((req.query as { path?: unknown }).path);
+        if (path == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+        }
+
+        const resolved = resolveBacking(path, { gitPrefix });
+        if (resolved.backing === 'git') {
+          if (!gitSource.isConfigured()) {
+            return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
+          }
+          try {
+            return reply.send({ backing: 'git', entries: await gitSource.history(resolved.relPath) });
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'path must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+
+        return reply.send({ backing: 'ledger', entries: await ledgerHistory(id, resolved.relPath) });
+      });
+
+      filesScope.put('/api/sessions/:id/files', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const path = normalizeFilesPath((req.query as { path?: unknown }).path);
+        if (path == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+        }
+
+        const body = bodyBuffer(req.body);
+        const resolved = resolveBacking(path, { gitPrefix });
+        if (resolved.backing === 'git') {
+          if (!gitSource.isConfigured()) {
+            return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
+          }
+          try {
+            const result = await gitSource.commitFile(
+              resolved.relPath,
+              body,
+              `Update ${resolved.relPath} via Atrium Files`,
+              `human:${user.id}`,
+            );
+            return reply.send({ backing: 'git', sha: result.sha });
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'path must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+
+        const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+        if (baseSeq === false) {
+          return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+        }
+        const channelId = await sessionChannelId(id);
+        if (!channelId) {
+          return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+        }
+        const result = await writeBackArtifact({
+          pool,
+          storage: { uploadObject, getObjectBytes },
+          channelId,
+          sessionId: id,
+          path: resolved.relPath,
+          bytes: body,
+          mime: normalizeMime(firstHeader(req.headers['content-type'])),
+          author: `human:${user.id}`,
+          ...(baseSeq == null ? {} : { baseSeq }),
+        });
+        if (!result.ok) {
+          return reply.code(409).send({
+            error: result.reason === 'stale_base' ? 'stale_base' : result.reason,
+            ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+            ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+          });
+        }
+        return reply.send({ backing: 'ledger', seq: result.seq });
+      });
+    });
+  }
+
   // === serve route ===
   app.get('/api/sessions/:id/artifacts/by-path', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
