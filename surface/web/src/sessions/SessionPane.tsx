@@ -874,7 +874,7 @@ function QuestionBanner({
 }) {
   const bannerId = useId();
   const titleId = `${bannerId}-title`;
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, QuestionDraftValue>>({});
   const [submitting, setSubmitting] = useState(false);
   const [cleared, setCleared] = useState<string | null>(null);
   const [proposed, setProposed] = useState(false);
@@ -892,12 +892,24 @@ function QuestionBanner({
     setError(null);
     setValues((prev) => ({ ...prev, [id]: value }));
   };
-  const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
+  const toggleAnswer = (id: string, value: string) => {
+    setError(null);
+    setValues((prev) => {
+      const existing = Array.isArray(prev[id]) ? prev[id] : [];
+      return {
+        ...prev,
+        [id]: existing.includes(value)
+          ? existing.filter((selected) => selected !== value)
+          : [...existing, value],
+      };
+    });
+  };
+  const complete = pending.questions.every((q) => answerValuesForPrompt(q, values[q.id]).length > 0);
   // The driver answers directly; a spectator proposes an answer the driver decides.
   const submit = () => {
     if (!complete || submitting) return;
     const answers: Record<string, { answers: string[] }> = {};
-    for (const q of pending.questions) answers[q.id] = { answers: [values[q.id]!.trim()] };
+    for (const q of pending.questions) answers[q.id] = { answers: answerValuesForPrompt(q, values[q.id]) };
     setSubmitting(true);
     setError(null);
     if (isDriver) {
@@ -957,7 +969,10 @@ function QuestionBanner({
               {q.options?.length ? (
                 <div className="grid gap-1.5 sm:grid-cols-2">
                   {q.options.map((option, optionIndex) => {
-                    const selected = values[q.id] === option.label;
+                    const promptValue = values[q.id];
+                    const selected = q.multiSelect
+                      ? Array.isArray(promptValue) && promptValue.includes(option.label)
+                      : promptValue === option.label;
                     const optionDescId = `${bannerId}-option-${questionIndex}-${optionIndex}-description`;
                     return (
                       <label
@@ -970,12 +985,14 @@ function QuestionBanner({
                         } ${submitting ? 'cursor-not-allowed opacity-60' : ''}`}
                       >
                         <input
-                          type="radio"
+                          type={q.multiSelect ? 'checkbox' : 'radio'}
                           name={groupName}
                           value={option.label}
                           checked={selected}
                           disabled={submitting}
-                          onChange={() => setAnswer(q.id, option.label)}
+                          onChange={() =>
+                            q.multiSelect ? toggleAnswer(q.id, option.label) : setAnswer(q.id, option.label)
+                          }
                           aria-describedby={`${promptId} ${optionDescId}`}
                           className="sr-only"
                         />
@@ -986,6 +1003,13 @@ function QuestionBanner({
                         >
                           {option.description}
                         </span>
+                        {option.preview && (
+                          <QuestionOptionPreview
+                            preview={option.preview}
+                            format={option.previewFormat}
+                            title={`${option.label} preview`}
+                          />
+                        )}
                       </label>
                     );
                   })}
@@ -999,7 +1023,7 @@ function QuestionBanner({
                     id={inputId}
                     type={q.isSecret ? 'password' : 'text'}
                     disabled={submitting}
-                    value={values[q.id] ?? ''}
+                    value={typeof values[q.id] === 'string' ? values[q.id] : ''}
                     onChange={(e) => setAnswer(q.id, e.target.value)}
                     aria-describedby={promptId}
                     autoComplete={q.isSecret ? 'off' : undefined}
@@ -1062,6 +1086,48 @@ function QuestionBanner({
       </div>
     </div>
   );
+}
+
+type QuestionDraftValue = string | string[];
+
+function answerValuesForPrompt(q: QuestionPrompt, value: QuestionDraftValue | undefined): string[] {
+  if (q.options?.length && q.multiSelect) {
+    return Array.isArray(value) ? value.filter((answer) => answer.trim().length > 0) : [];
+  }
+  if (typeof value !== 'string') return [];
+  const trimmed = value.trim();
+  return trimmed ? [trimmed] : [];
+}
+
+function QuestionOptionPreview({
+  preview,
+  format,
+  title,
+}: {
+  preview: string;
+  format?: 'markdown' | 'html';
+  title: string;
+}) {
+  if (format === 'html') {
+    return (
+      <iframe
+        sandbox=""
+        title={title}
+        srcDoc={optionPreviewHtmlDocument(preview)}
+        className="pointer-events-none mt-1.5 h-28 w-full rounded border border-edge bg-white"
+      />
+    );
+  }
+
+  return (
+    <pre className="mt-1.5 max-h-32 overflow-auto rounded border border-edge bg-surface px-2 py-1.5 text-[11px] leading-snug text-fg-secondary">
+      {preview}
+    </pre>
+  );
+}
+
+function optionPreviewHtmlDocument(fragment: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline';"><style>html,body{margin:0;padding:0;background:#fff;color:#111;font:12px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}body{padding:8px;overflow:hidden;}*{box-sizing:border-box;}</style></head><body>${fragment}</body></html>`;
 }
 
 function AnswerProposalRow({

@@ -2550,8 +2550,17 @@ function isQuestionPrompt(value: unknown): value is QuestionPrompt {
       if (!option || typeof option !== 'object' || Array.isArray(option)) return false;
       const o = option as Record<string, unknown>;
       if (typeof o.label !== 'string' || typeof o.description !== 'string') return false;
+      if (o.preview !== undefined && typeof o.preview !== 'string') return false;
+      if (
+        o.previewFormat !== undefined &&
+        o.previewFormat !== 'markdown' &&
+        o.previewFormat !== 'html'
+      ) {
+        return false;
+      }
     }
   }
+  if (raw.multiSelect !== undefined && typeof raw.multiSelect !== 'boolean') return false;
   return true;
 }
 
@@ -2560,11 +2569,14 @@ function eventQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] 
     id: q.id,
     header: q.header,
     question: q.question,
+    multiSelect: q.multiSelect === true,
     isOther: q.isOther === true,
     isSecret: q.isSecret === true,
     options: (q.options ?? []).slice(0, 8).map((option) => ({
       label: option.label.slice(0, 120),
       description: option.description.slice(0, 300),
+      ...(option.preview ? { preview: option.preview.slice(0, 8000) } : {}),
+      ...(option.previewFormat ? { previewFormat: option.previewFormat } : {}),
     })),
   }));
 }

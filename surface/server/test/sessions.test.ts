@@ -471,9 +471,20 @@ function questionRequestedFrame(eventId = 1) {
           id: 'choice',
           header: 'Decision',
           question: 'Which deployment path should I take?',
+          multiSelect: true,
           options: [
-            { label: 'Fast', description: 'Ship the smallest change' },
-            { label: 'Careful', description: 'Run the full suite first' },
+            {
+              label: 'Fast',
+              description: 'Ship the smallest change',
+              preview: 'FAST PATH',
+              previewFormat: 'markdown',
+            },
+            {
+              label: 'Careful',
+              description: 'Run the full suite first',
+              preview: '<div>Careful path</div>',
+              previewFormat: 'html',
+            },
           ],
         },
       ],

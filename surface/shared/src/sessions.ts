@@ -34,12 +34,15 @@ export interface SeatAuditEntry {
 export interface QuestionOption {
   label: string;
   description: string;
+  preview?: string;
+  previewFormat?: 'markdown' | 'html';
 }
 
 export interface QuestionPrompt {
   id: string;
   header: string;
   question: string;
+  multiSelect?: boolean;
   isOther?: boolean;
   isSecret?: boolean;
   options?: QuestionOption[];
@@ -657,7 +660,14 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
               if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
               const o = option as Record<string, unknown>;
               if (typeof o.label !== 'string' || typeof o.description !== 'string') return null;
-              return { label: o.label, description: o.description };
+              const previewFormat =
+                o.previewFormat === 'markdown' || o.previewFormat === 'html' ? o.previewFormat : undefined;
+              return {
+                label: o.label,
+                description: o.description,
+                ...(typeof o.preview === 'string' ? { preview: o.preview } : {}),
+                ...(previewFormat ? { previewFormat } : {}),
+              };
             })
             .filter((option): option is QuestionOption => option !== null)
         : [];
@@ -665,6 +675,7 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
         id: raw.id,
         header: typeof raw.header === 'string' ? raw.header : 'Question',
         question: raw.question,
+        multiSelect: raw.multiSelect === true,
         isOther: raw.isOther === true,
         isSecret: raw.isSecret === true,
         options,

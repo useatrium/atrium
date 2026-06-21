@@ -441,6 +441,62 @@ describe('answer proposals', () => {
     });
   });
 
+  it('driver: supports Claude multi-select answers and option previews', async () => {
+    const onAnswerQuestion = vi.fn().mockResolvedValue(undefined);
+    const session = bSession({
+      driverId: me.id,
+      pendingQuestion: {
+        questionId: 'q-preview',
+        questions: [
+          {
+            id: 'sections',
+            header: 'Sections',
+            question: 'Which sections should be visible?',
+            multiSelect: true,
+            options: [
+              {
+                label: 'Summary',
+                description: 'Show the short overview.',
+                preview: '┌────────┐\n│Summary │\n└────────┘',
+                previewFormat: 'markdown',
+              },
+              {
+                label: 'Timeline',
+                description: 'Show recent activity.',
+                preview: '<div style="padding:8px;border:1px solid #ddd">Timeline</div>',
+                previewFormat: 'html',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={onAnswerQuestion}
+      />,
+    );
+
+    expect(screen.getByText('Show the short overview.')).toBeTruthy();
+    expect(screen.getByText(/┌────────┐/)).toBeTruthy();
+    const htmlPreview = screen.getByTitle('Timeline preview') as HTMLIFrameElement;
+    expect(htmlPreview.getAttribute('sandbox')).toBe('');
+    expect(htmlPreview.getAttribute('srcdoc')).toContain('Content-Security-Policy');
+
+    fireEvent.click(screen.getByText('Summary'));
+    fireEvent.click(screen.getByText('Timeline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+
+    await waitFor(() => expect(onAnswerQuestion).toHaveBeenCalledTimes(1));
+    expect(onAnswerQuestion).toHaveBeenCalledWith('s-b', 'q-preview', {
+      sections: { answers: ['Summary', 'Timeline'] },
+    });
+  });
+
   it('driver: the proposals strip Submit posts resolve {action:submit}', async () => {
     const fetchMock = stub202();
     const session = bSession({
