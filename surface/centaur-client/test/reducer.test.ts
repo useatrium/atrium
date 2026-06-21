@@ -150,6 +150,98 @@ describe("reduceSession", () => {
     expect(state.resultText).toBe("");
   });
 
+  it("reduces Codex app-server method/params notifications", () => {
+    const state = reduceAll([
+      {
+        event: "amp_raw_event",
+        event_id: 1,
+        data: {
+          method: "item/completed",
+          params: {
+            item: {
+              id: "prompt-1",
+              type: "userMessage",
+              content: [{ type: "text", text: "say howdy", text_elements: [] }],
+            },
+          },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 2,
+        data: {
+          method: "item/agentMessage/delta",
+          params: { itemId: "agent-1", delta: "how" },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 3,
+        data: {
+          method: "item/agentMessage/delta",
+          params: { itemId: "agent-1", delta: "dy!" },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 4,
+        data: {
+          method: "item/completed",
+          params: { item: { id: "agent-1", type: "agentMessage", text: "howdy" } },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 5,
+        data: {
+          method: "item/started",
+          params: { item: { id: "cmd-1", type: "commandExecution", command: "pwd" } },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 6,
+        data: {
+          method: "item/commandExecution/outputDelta",
+          params: { itemId: "cmd-1", delta: "/home/agent/workspace\n" },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 7,
+        data: {
+          method: "item/completed",
+          params: {
+            item: {
+              id: "cmd-1",
+              type: "commandExecution",
+              command: "pwd",
+              output: "/home/agent/workspace\n",
+              exitCode: 0,
+              status: "completed",
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(state.items).toHaveLength(3);
+    expect(state.items[0]).toMatchObject({ type: "user_message", text: "say howdy" });
+    expect(state.items[1]).toMatchObject({
+      type: "text",
+      id: "text:codex:agent-1",
+      text: "howdy",
+      messageId: "agent-1",
+      sourceEventIds: [2, 3, 4],
+    });
+    expect(state.items[2]).toMatchObject({
+      type: "tool_call",
+      name: "command",
+      input: { command: "pwd" },
+      result: { content: "/home/agent/workspace\n", is_error: false },
+    });
+  });
+
   it("folds Codex userMessage completed frames with injected session context stripped", () => {
     const state = reduceAll([
       userMessageFrame(

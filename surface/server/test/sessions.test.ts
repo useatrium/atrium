@@ -924,6 +924,63 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('GET /api/sessions/:id/stream replays mirrored history before tailing current execution', async () => {
+    const id = await insertSessionRow({ title: 'stream replay', status: 'running', currentExecutionId: 'exe_live' });
+    await pool.query(
+      `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
+       VALUES ($1, 10, 'amp_raw_event', $2), ($1, 20, 'execution_state', $3)`,
+      [
+        id,
+        {
+          event: 'amp_raw_event',
+          event_id: 10,
+          data: {
+            method: 'item/completed',
+            params: { item: { id: 'u-old', type: 'userMessage', text: 'old turn' } },
+          },
+        },
+        {
+          event: 'execution_state',
+          event_id: 20,
+          data: { type: 'execution.state', status: 'completed', result_text: 'old result' },
+        },
+      ],
+    );
+    fake.setFrames([
+      {
+        event: 'amp_raw_event',
+        event_id: 21,
+        data: {
+          method: 'item/completed',
+          params: { item: { id: 'u-live', type: 'userMessage', text: 'live turn' } },
+        },
+      },
+      {
+        event: 'execution_state',
+        event_id: 22,
+        data: { type: 'execution.state', status: 'completed', result_text: 'live result' },
+      },
+    ]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=0`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(fake.streamAfterIds.at(-1)).toBe(20);
+    expect(res.body.indexOf('old turn')).toBeLessThan(res.body.indexOf('old result'));
+    expect(res.body.indexOf('old result')).toBeLessThan(res.body.indexOf('live turn'));
+
+    await app.close();
+  });
+
   it('boot resume tails a running session to completion', async () => {
     const inserted = await pool.query<{ id: string }>(
       `INSERT INTO sessions (

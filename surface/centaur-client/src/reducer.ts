@@ -183,23 +183,59 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     return next;
   }
 
-  if (frame.data.type === "assistant") {
-    reduceAssistant(next, frame.event_id, frame.data);
-  } else if (frame.data.type === "tool") {
-    reduceToolResult(next, frame.event_id, frame.data);
-  } else if (frame.data.type === "result") {
-    next.resultText = frame.data.text;
-  } else if (frame.data.type === "item.agentMessage.delta") {
-    reduceCodexAgentMessageDelta(next, frame.event_id, frame.data);
-  } else if (frame.data.type === "item.started") {
-    reduceCodexItemStarted(next, frame.event_id, frame.data);
-  } else if (frame.data.type === "item.commandExecution.outputDelta") {
-    reduceCodexCommandOutputDelta(next, frame.event_id, frame.data);
-  } else if (frame.data.type === "item.completed") {
-    reduceCodexItemCompleted(next, frame.event_id, frame.data);
+  const raw = normalizeRawEvent(frame.data);
+  if (raw.type === "assistant") {
+    reduceAssistant(next, frame.event_id, raw);
+  } else if (raw.type === "tool") {
+    reduceToolResult(next, frame.event_id, raw);
+  } else if (raw.type === "result") {
+    next.resultText = raw.text;
+  } else if (raw.type === "item.agentMessage.delta") {
+    reduceCodexAgentMessageDelta(next, frame.event_id, raw);
+  } else if (raw.type === "item.started") {
+    reduceCodexItemStarted(next, frame.event_id, raw);
+  } else if (raw.type === "item.commandExecution.outputDelta") {
+    reduceCodexCommandOutputDelta(next, frame.event_id, raw);
+  } else if (raw.type === "item.completed") {
+    reduceCodexItemCompleted(next, frame.event_id, raw);
   }
 
   return next;
+}
+
+function normalizeRawEvent(event: CentaurEventFrame["data"]): CentaurEventFrame["data"] {
+  if (typeof event.type === "string") return event;
+  const raw = event as JsonObject;
+  if (typeof raw.method !== "string" || !isJsonObject(raw.params)) return event;
+  const params = raw.params;
+  switch (raw.method) {
+    case "item/started":
+      return { type: "item.started", ...params } as CentaurEventFrame["data"];
+    case "item/completed":
+      return { type: "item.completed", ...params } as CentaurEventFrame["data"];
+    case "item/agentMessage/delta":
+      return {
+        type: "item.agentMessage.delta",
+        ...params,
+        itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
+      } as CentaurEventFrame["data"];
+    case "item/commandExecution/outputDelta":
+      return {
+        type: "item.commandExecution.outputDelta",
+        ...params,
+        itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
+      } as CentaurEventFrame["data"];
+    default:
+      return event;
+  }
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function upsertQuestionItem(

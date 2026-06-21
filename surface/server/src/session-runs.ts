@@ -792,13 +792,20 @@ export class SessionRuns {
   /** Replay the durable mirror into a reduced session state (transcript items +
    * derived work products). Survives Centaur retention. */
   private async readMirroredState(id: string): Promise<ReturnType<typeof initialSessionState>> {
-    const res = await this.pool.query<{ frame: CentaurEventFrame }>(
-      'SELECT frame FROM session_events WHERE session_id = $1 ORDER BY centaur_event_id ASC',
-      [id],
-    );
+    const res = await this.readMirroredFrames(id, 0);
     let state = initialSessionState();
     for (const r of res.rows) state = reduceSession(state, r.frame);
     return state;
+  }
+
+  private readMirroredFrames(id: string, afterEventId: number): Promise<{ rows: { frame: CentaurEventFrame }[] }> {
+    return this.pool.query<{ frame: CentaurEventFrame }>(
+      `SELECT frame
+       FROM session_events
+       WHERE session_id = $1 AND centaur_event_id > $2
+       ORDER BY centaur_event_id ASC`,
+      [id, afterEventId],
+    );
   }
 
   private async resolveParticipants(
@@ -888,14 +895,20 @@ export class SessionRuns {
     }, 15_000);
     keepAlive.unref?.();
     try {
+      let cursor = afterEventId;
+      const mirrored = await this.readMirroredFrames(session.id, cursor);
+      for (const { frame } of mirrored.rows) {
+        if (signal.aborted) break;
+        cursor = Math.max(cursor, frame.event_id);
+        writeSessionFrame(raw, frame);
+      }
       for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
         executionId: row.current_execution_id ?? undefined,
-        afterEventId,
+        afterEventId: cursor,
         signal,
       })) {
         if (signal.aborted) break;
-        raw.write(`event: ${frame.event}\n`);
-        raw.write(`data: ${JSON.stringify({ ...frame.data, event_id: frame.event_id })}\n\n`);
+        writeSessionFrame(raw, frame);
       }
     } finally {
       clearInterval(keepAlive);
@@ -2361,6 +2374,11 @@ function userInputLine(text: string): string {
       content: [{ type: 'text', text }],
     },
   });
+}
+
+function writeSessionFrame(raw: ServerResponse, frame: CentaurEventFrame): void {
+  raw.write(`event: ${frame.event}\n`);
+  raw.write(`data: ${JSON.stringify({ ...frame.data, event_id: frame.event_id })}\n\n`);
 }
 
 function isCentaurCode(err: unknown, code: string): boolean {
