@@ -159,3 +159,13 @@ pub fn read_file_safe(dir: &Path, rel_path: &Path, max_retries: u32) -> io::Resu
         TornReadError::Io(s) => io::Error::other(s),
     })
 }
+
+/// Open a large file for STREAMING (H8): the hardened openat2 fd as a `File` so the
+/// caller streams the body to Atrium without ever buffering it whole. Unlike
+/// [`read_file_safe`] there is no full-buffer torn-read retry (you can't re-read a
+/// stream); the size-stability guard is the stat the scanner already captured, and
+/// the openat2 RESOLVE mask still blocks any symlink/escape before a byte is read.
+pub fn open_file_stream(dir: &Path, rel_path: &Path) -> io::Result<fs::File> {
+    let fd = open_hardened(dir, rel_path)?;
+    Ok(fs::File::from(fd))
+}

@@ -71,6 +71,12 @@ fn main() {
         fn read(&self, rel: &std::path::Path) -> Option<Vec<u8>> {
             fs_linux::read_file_safe(&self.upper, rel, 3).ok()
         }
+        fn open_stream<'a>(&'a self, rel: &std::path::Path) -> Option<Box<dyn std::io::Read + 'a>> {
+            // Large files stream straight from the hardened fd — never buffered whole.
+            fs_linux::open_file_stream(&self.upper, rel)
+                .ok()
+                .map(|f| Box::new(f) as Box<dyn std::io::Read + 'a>)
+        }
     }
 
     // Write reconciled bytes THROUGH `merged`: atomic temp+rename + agent ownership
@@ -187,9 +193,16 @@ fn main() {
                     upper: upper.clone(),
                 };
                 let base_seqs = state.base_seqs();
+                let large = std::env::var("NODE_SYNC_LARGE_FILE_BYTES")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(centaur_node_sync::runtime::DEFAULT_LARGE_FILE_BYTES);
                 // Backpressure (#11): the upper is the agent's dirty set; warn the
-                // harness before it fills the node volume (ENOSPC mid-write).
-                let dirty = centaur_node_sync::backpressure::dirty_bytes(&entries);
+                // harness before it fills the node volume (ENOSPC mid-write). Large
+                // files stream direct (H8) → routed OUT of the dirty-byte budget, so
+                // the budget measures only the buffered set.
+                let dirty =
+                    centaur_node_sync::backpressure::dirty_bytes_excluding_large(&entries, large);
                 if budget.over(dirty) {
                     eprintln!(
                         "BACKPRESSURE: upper dirty {dirty}B OVER budget {}B — harness should pause the agent",
@@ -202,13 +215,15 @@ fn main() {
                         budget.headroom(dirty)
                     );
                 }
-                let out = capture_sweep(&entries, &base_seqs, &reader, &mut echo, &mut client);
-                for (path, seq, sha) in &out.captured {
+                let out =
+                    capture_sweep(&entries, &base_seqs, &reader, &mut echo, &mut client, large);
+                for (path, seq, sha) in out.captured.iter().chain(out.streamed.iter()) {
                     state.sync_to(path, *seq, Some(sha.clone()), false);
                 }
                 println!(
-                    "capture: {} upserts, {} deletes, {} echo-skipped, {} errors",
-                    out.captured.len(),
+                    "capture: {} upserts ({} streamed), {} deletes, {} echo-skipped, {} errors",
+                    out.captured.len() + out.streamed.len(),
+                    out.streamed.len(),
                     out.deleted.len(),
                     out.skipped_echo.len(),
                     out.errors.len()

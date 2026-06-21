@@ -68,6 +68,36 @@ impl AtriumClient for HttpAtriumClient {
             .ok_or_else(|| "no seq in capture response".to_string())
     }
 
+    fn post_capture_stream(
+        &mut self,
+        path: &str,
+        base_seq: u64,
+        reader: &mut dyn std::io::Read,
+        size_hint: u64,
+    ) -> Result<u64, String> {
+        // Stream the body (chunked) — ureq reads `reader` to EOF without buffering it
+        // whole, so an arbitrarily large file uploads in constant node memory. The
+        // server streams the chunked body straight to S3 (the x-artifact-stream hint
+        // lets it pick the multipart/streaming path; x-artifact-size pre-sizes it).
+        let mut req = self
+            .agent
+            .post(&self.url(&format!("/artifacts/capture?path={}", enc(path))))
+            .set("x-api-key", &self.api_key)
+            .set("content-type", "application/octet-stream")
+            .set("x-artifact-stream", "1")
+            .set("x-artifact-size", &size_hint.to_string());
+        if base_seq > 0 {
+            req = req.set("x-artifact-base-seq", &base_seq.to_string());
+        }
+        let resp = req
+            .send(reader)
+            .map_err(|e| format!("stream {path}: {e}"))?;
+        let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+        v.get("seq")
+            .and_then(|s| s.as_u64())
+            .ok_or_else(|| "no seq in capture response".to_string())
+    }
+
     fn post_delete(&mut self, path: &str, base_seq: u64) -> Result<u64, String> {
         let mut req = self
             .agent

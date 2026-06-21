@@ -37,6 +37,20 @@ pub fn dirty_bytes(entries: &[RawEntry]) -> u64 {
         .sum()
 }
 
+/// Dirty bytes EXCLUDING large files (H8): files above `large_threshold` are
+/// streamed straight to S3, never held in the buffered upload set, so they must not
+/// count toward the per-session dirty-byte budget (a single huge log/checkpoint
+/// would otherwise trip backpressure spuriously). `large_threshold == 0` disables
+/// the exclusion (everything counts).
+pub fn dirty_bytes_excluding_large(entries: &[RawEntry], large_threshold: u64) -> u64 {
+    entries
+        .iter()
+        .filter(|e| matches!(e.file_type, RawFileType::Regular))
+        .map(|e| e.size)
+        .filter(|&size| large_threshold == 0 || size <= large_threshold)
+        .sum()
+}
+
 /// Scan-lag: ticks since capture last fully drained the upper to Atrium. Growing
 /// lag + near-budget is the danger signal (writes outpacing the egress).
 #[derive(Debug, Default, Clone, Copy)]
@@ -85,6 +99,16 @@ mod tests {
     fn dirty_bytes_sums_regular_files_only() {
         let entries = vec![reg(100), reg(50), whiteout()]; // whiteout's "size" doesn't count
         assert_eq!(dirty_bytes(&entries), 150);
+    }
+
+    #[test]
+    fn dirty_bytes_excludes_large_streamed_files() {
+        // a 10MiB checkpoint + two small files; the big one streams direct → excluded.
+        let big = 10 * 1024 * 1024;
+        let entries = vec![reg(big), reg(100), reg(50)];
+        assert_eq!(dirty_bytes_excluding_large(&entries, 8 * 1024 * 1024), 150);
+        // threshold 0 disables the exclusion (everything counts again).
+        assert_eq!(dirty_bytes_excluding_large(&entries, 0), big + 150);
     }
 
     #[test]
