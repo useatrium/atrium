@@ -174,7 +174,7 @@ describe('internal streaming artifact capture', () => {
     });
     expect(raw.statusCode).toBe(200);
     expect(Buffer.from(raw.rawPayload)).toEqual(body);
-  });
+  }, 60_000); // real S3 multipart + copy + serve-back round-trip is slow in CI
 
   it('accepts a body larger than maxUploadBytes', async () => {
     const sid = await session();
@@ -195,7 +195,7 @@ describe('internal streaming artifact capture', () => {
     expect(cap.statusCode).toBe(200);
     expect(cap.json()).toEqual({ seq: 1, status: 'normal' });
     expect(mockedS3.storage.objects.get(casBlobKey(sha))?.body.byteLength).toBe(body.byteLength);
-  });
+  }, 60_000); // 25 MiB multipart upload is slow in CI
 
   it('returns stale_base when base_seq is behind latest', async () => {
     const sid = await session();
