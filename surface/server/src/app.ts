@@ -54,6 +54,7 @@ import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harn
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
+import { classifyScope, userCanReadScope, type ArtifactScope } from './artifact-scope.js';
 import { loadConflictDetail } from './artifact-conflict.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
@@ -2256,7 +2257,12 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    return { record: await sessionRuns.getSessionRecord(id) };
+    const record = await sessionRuns.getSessionRecord(id);
+    // === ACL scope enforcement (#4) ===
+    record.artifacts = record.artifacts
+      .filter((artifact) => userCanReadScope(classifyScope(artifact.path)))
+      .map((artifact) => ({ ...artifact, scope: classifyScope(artifact.path) }));
+    return { record };
   });
 
   // Serve a captured artifact's bytes — unblocks the Artifacts gallery, which
@@ -2273,6 +2279,15 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id, artifactId } = req.params as { id: string; artifactId: string };
+    // === ACL scope enforcement (#4) ===
+    const meta = await pool.query<{ path: string }>(
+      `SELECT path FROM session_artifacts WHERE session_id = $1 AND id = $2`,
+      [id, artifactId],
+    );
+    let scope = meta.rows[0] ? classifyScope(meta.rows[0].path) : null;
+    if (scope && !userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
     try {
       plan = await sessionRuns.getArtifactServePlan(id, artifactId);
@@ -2292,16 +2307,25 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw err;
     }
     if (plan.kind === 'redirect') {
+      // === ACL scope enforcement (#4) ===
+      reply.header('X-Artifact-Scope', scope ?? 'workspace');
       // Durable bytes in atrium's store: short-lived presigned redirect (the
       // presign carries the inline/attachment Content-Disposition). Matches the
       // file-serve route's 302-to-S3 pattern.
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
+    // === ACL scope enforcement (#4) ===
+    scope ??= classifyScope(artifact.path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     const mime = artifact.mime || 'application/octet-stream';
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
     reply.header('Content-Type', mime);
+    // === ACL scope enforcement (#4) ===
+    reply.header('X-Artifact-Scope', scope);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header(
       'Content-Disposition',
@@ -2319,7 +2343,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     const gitPrefix = normalizeFilesGitPrefix(process.env.GIT_PREFIX ?? 'repo/');
     const gitSource = createGitSource(process.env.GIT_REPO_ROOT);
 
-    type UnifiedFileRow = { path: string; backing: 'git' | 'ledger'; type: 'file' | 'dir' };
+    type UnifiedFileRow = { path: string; backing: 'git' | 'ledger'; type: 'file' | 'dir'; scope?: ArtifactScope };
 
     function normalizeFilesGitPrefix(value: string): string {
       const trimmed = value.trim();
@@ -2357,6 +2381,9 @@ function rawSession(req: FastifyRequest): string | undefined {
       const prefix = dir.length > 0 ? `${dir}/` : '';
       const rows = new Map<string, UnifiedFileRow>();
       for (const item of scope) {
+        // === ACL scope enforcement (#4) ===
+        const artifactScope = classifyScope(item.path);
+        if (!userCanReadScope(artifactScope)) continue;
         if (item.kind === 'deleted') continue;
         if (resolveBacking(item.path, { gitPrefix }).backing !== 'ledger') continue;
         if (!item.path.startsWith(prefix)) continue;
@@ -2365,7 +2392,8 @@ function rawSession(req: FastifyRequest): string | undefined {
         const slash = rest.indexOf('/');
         const path = slash < 0 ? item.path : `${prefix}${rest.slice(0, slash)}`;
         const type = slash < 0 ? 'file' : 'dir';
-        if (!rows.has(path) || type === 'dir') rows.set(path, { path, backing: 'ledger', type });
+        const scope = type === 'dir' ? classifyScope(`${path}/`) : artifactScope;
+        if (!rows.has(path) || type === 'dir') rows.set(path, { path, backing: 'ledger', type, scope });
       }
       return [...rows.values()];
     }
@@ -2459,6 +2487,11 @@ function rawSession(req: FastifyRequest): string | undefined {
         }
 
         const resolved = resolveBacking(path, { gitPrefix });
+        // === ACL scope enforcement (#4) ===
+        const scope = classifyScope(resolved.relPath);
+        if (resolved.backing === 'ledger' && !userCanReadScope(scope)) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
         if (resolved.backing === 'git') {
           if (!gitSource.isConfigured()) {
             return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
@@ -2473,7 +2506,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           }
         }
 
-        return reply.send({ backing: 'ledger', entries: await ledgerHistory(id, resolved.relPath) });
+        return reply.send({ backing: 'ledger', scope, entries: await ledgerHistory(id, resolved.relPath) });
       });
 
       // Read content by backing: git files inline; ledger files via the
@@ -2488,6 +2521,10 @@ function rawSession(req: FastifyRequest): string | undefined {
           return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
         }
         const resolved = resolveBacking(path, { gitPrefix });
+        // === ACL scope enforcement (#4) ===
+        if (resolved.backing === 'ledger' && !userCanReadScope(classifyScope(resolved.relPath))) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
         if (resolved.backing === 'git') {
           if (!gitSource.isConfigured()) {
             return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
@@ -2571,6 +2608,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (typeof path !== 'string' || path.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
     }
+    // === ACL scope enforcement (#4) ===
+    const scope = classifyScope(path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     const at = q.at ?? 'latest';
     // Conflict-aware serve (§8B #5): for the default `latest`, serve the newest
     // status='normal' version (never the conflict-marker bytes) and flag an
@@ -2607,6 +2649,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw err;
     }
     if (plan.kind === 'redirect') {
+      // === ACL scope enforcement (#4) ===
+      reply.header('X-Artifact-Scope', scope);
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
@@ -2614,6 +2658,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
     reply.header('Content-Type', mime);
+    // === ACL scope enforcement (#4) ===
+    reply.header('X-Artifact-Scope', scope);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header(
       'Content-Disposition',
@@ -2653,8 +2699,12 @@ function rawSession(req: FastifyRequest): string | undefined {
 
     const ledger = new ArtifactLedger(pool);
     const page = await ledger.changesSince(id, cursor, limit);
+    // === ACL scope enforcement (#4) ===
+    const rows = page.rows
+      .map((row) => ({ ...row, scope: classifyScope(row.path) }))
+      .filter((row) => userCanReadScope(row.scope));
     return reply.send({
-      rows: page.rows,
+      rows,
       next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
     });
   });
@@ -2667,6 +2717,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     const path = (req.query as { path?: string }).path;
     if (typeof path !== 'string' || path.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    // === ACL scope enforcement (#4) ===
+    if (!userCanReadScope(classifyScope(path))) {
+      return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
     }
     const detail = await loadConflictDetail(pool, { getObjectBytes }, id, path);
     if (!detail) {
@@ -2733,7 +2787,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     const { id } = req.params as { id: string };
     const ledger = new ArtifactLedger(pool);
     const paths = await ledger.sessionScope(id);
-    return reply.send({ sessionId: id, scope: 'session', paths });
+    // === ACL scope enforcement (#4) ===
+    const scopedPaths = paths
+      .map((path) => ({ ...path, scope: classifyScope(path.path) }))
+      .filter((path) => userCanReadScope(path.scope));
+    return reply.send({ sessionId: id, scope: 'session', paths: scopedPaths });
   });
 
   // === /atrium chat projection ===
