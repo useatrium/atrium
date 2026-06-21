@@ -74,15 +74,18 @@ node-side** fetch/stage/adopt + the **hydration manifest** (the genuinely new, b
 - **C-project — `/atrium` context projection** (§2A): node maintains the read-only context
   tree (chat + sibling transcripts + artifacts view) as **append-tail** (no merge/quiesce),
   one shared copy per node, reflinked into pods. Steers ride the normal message stream.
-- **C-verify — pre-build POC gate** (expanded by the 2026-06-20 adversarial review,
-  `agent-sync-design.md` §8A). On the kind/centaur-image harness, prove all five before
-  C-merge: (a) **inverse write** node-writes-`merged` → agent-reads; (b) **symlink-escape
-  blocked** — agent symlink under `upper`, scanner with `openat2(RESOLVE_BENEATH|
-  NO_SYMLINKS|NO_MAGICLINKS|NO_XDEV)` refuses to follow it; (c) **no echo loop** —
-  node-injected write is NOT re-captured (per-path-state / base-advance suppresses it);
-  (d) **ownership** — root-written file chown'd so the uid-1001 agent reads+overwrites it;
-  (e) **write race** — atomic temp+rename + per-path lease holds under a concurrent agent
-  write. **Gate C-merge on all five.**
+- **C-verify — pre-build POC gate.** **All five PASS on a local overlay (Docker, kernel
+  6.12 aarch64) 2026-06-20** (see `agent-sync-design.md` §8B): (a) **inverse write**
+  node-writes-`merged` → agent-reads ✅ (RO lower stays CoW-pristine); (b) **symlink-escape
+  blocked** ✅ — naive `cat upper/leak` read `/etc/shadow`; `openat2(NO_SYMLINKS|
+  NO_MAGICLINKS|BENEATH|NO_XDEV)` → `ELOOP` (**`NO_SYMLINKS` is the load-bearing flag**, not
+  BENEATH); (c) **no echo loop** ✅ — sha==node-intended → skip; (d) **ownership** ✅
+  **CORRECTED** — direct-upper-write+chown = EACCES regardless; node must **write *through*
+  `merged`** + set agent ownership (`uid-1001`,`664`); (e) **write race** ✅ — in-place
+  `O_TRUNC` ≈ 74% torn reads, temp+`rename()` = 0. **Residual (real-node only):** the
+  `mountPropagation Bidirectional→HostToContainer` linchpin (multi-process real node), still
+  a Track-C4 gate. C-merge unblocked on the five; build still gated on all 20 (§8B) + the
+  real-node linchpin.
 
 ## 4. Sequencing
 

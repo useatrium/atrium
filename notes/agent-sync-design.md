@@ -439,10 +439,62 @@ ones). Prioritized; CRITICALs **gate** the inbound node-write decision (§4) and
    narrowing (#19) must gate the privileged node component — a privileged *host* process
    resolving agent-controlled paths is the scariest surface in the design.
 
-**Status:** CRITICALs #1–#4 are pre-build gates for §4 / Track C4. Research + POC underway
-(openat2 / overlayfs / reflink facts; symlink-escape + node-write + echo-loop POC on the
-centaur image). Open product calls: ACL-projection model (#4), conflict-read semantics (#5),
-chat-projection form (#6), and which issues are v1-blocking vs deferred.
+**Status: RESOLVED — see §8B** (2026-06-20). All 20 specified; product calls decided; **POC
+5/5 criticals PASS** (real overlay, kernel 6.12 aarch64); **research 4/5 verified** w/ primary
+sources + overlay mechanics via the POC. §8B **supersedes** the fix-direction for #1/#3/#7.
+
+## 8B. Resolutions — all 20 specified (2026-06-20)
+
+Per Gary's "solve all 20 first": **no inbound-sync build until every issue has a specified
+mitigation.** All 20 are now design-gated. Evidence: **POC 5/5 PASS** (real overlay, kernel
+6.12 aarch64), **research 4/5 primary-sourced** (openat2, reflink, PG-cursor, k8s Local-PV) +
+overlay mechanics via POC. Tags: **[POC]** live-verified, **[R]** research-sourced, **[D]**
+decided by Gary, **[S]** design (no external dep).
+
+**Three corrections/refinements to §8A's fix-direction (this section supersedes those cells):**
+- **#3 — CORRECTED by POC:** chown-after-write is *not* the fix. Writing **directly to
+  `upperdir`** + chown leaves overlay inode-metadata stale → the agent gets **EACCES
+  regardless of ownership** (verified on `O_WRONLY`/`APPEND`/`TRUNC`). The node MUST **write
+  *through* the `merged` mount** and set agent ownership (`uid-1001`, `664`); then the agent
+  can overwrite. "Write to upper + chown" is a trap.
+- **#1 — REFINED by research+POC:** `RESOLVE_BENEATH` *alone* is insufficient (it still
+  follows in-bounds symlinks). **`RESOLVE_NO_SYMLINKS` is load-bearing.** POC: naive
+  `cat upper/leak` read `/etc/shadow`; `openat2(NO_SYMLINKS|NO_MAGICLINKS|BENEATH|NO_XDEV)` → `ELOOP`.
+- **#7 — REFINED by research:** an outbox `id bigserial` + `max(id)` watermark **silently
+  drops rows** (allocated-at-INSERT, visible-at-COMMIT → a slower concurrent txn is skipped).
+  Use a **logical-replication slot (LSN)** — gap-free by construction, resumable via
+  `confirmed_flush_lsn` (cap WAL with `max_slot_wal_keep_size` + monitor slot lag); or an
+  outbox watermarked on `pg_snapshot_xmin`, never `max(id)`.
+
+**CRITICAL**
+1. **Symlink escape** — `openat2(RESOLVE_NO_SYMLINKS|NO_MAGICLINKS|BENEATH|NO_XDEV)`, fresh per path-component, `ELOOP/EXDEV`→skip+log; symlinks captured as metadata, never followed. [POC+R]
+2. **Echo loop + stale base** — per-path state `{base_seq, base_sha, upper_sha, applied_remote_seq}`; node-merge *is* the ledger txn; scan skips entries whose sha == node-intended (echo suppressed — POC-verified); advance `base_seq` after a clean adopt (kills stale-base false conflicts). [POC+S]
+3. **Node-write race + ownership** — node writes **through `merged`** (NOT direct-to-upper) + sets agent ownership (`uid-1001`,`664`) + **atomic temp+`rename()`** (in-place `O_TRUNC` ≈ 74% torn reads under contention, POC) + per-path write-lease / `/proc`-fd timing gate. [POC]
+4. **/atrium ACL** — hybrid: workspace-public slice shared per-node (reflinked) + small per-agent overlay for the private channels/DMs that session is a member of; projection honors `channel_members`/DM ACL. [D]
+**MAJOR**
+5. **Conflict reads** — serve last `status='normal'` version + `conflicted` flag + conflict seq; marker bytes only via explicit inspect/resolve API; a write whose base = a conflict seq is a *resolution*, not a blind new version (prevents silent-clear). [D]
+6. **Chat projection** — `/atrium/chat/<ch>/<thread>.md` = debounced re-rendered *current* view (edits/deletes/redactions applied) + `…events.jsonl` raw log; agents default to `current.md`; transcripts stay append-tail. [D]
+7. **Change-feed** — logical-replication slot (LSN); commit-ordered, gap-free, resumable; cap WAL + monitor slot lag; (fallback: outbox on `pg_snapshot_xmin`). [R]
+8. **GC vs conflict-blobs** — normalize ALL blob refs (incl. conflict-side shas) into relational rows; GC marks from rows + honors unresolved conflicts, upload leases, outbox lag. [S]
+9. **Upload↔commit atomicity** — `pending_blob` row → conditional PUT + verify `HEAD`(sha) → THEN advance `latest`; orphan-sweep abandoned pending_blobs. [S]
+10. **Cold-start hydration** — tree-manifest (1 GET) + node-local CAS cache (reflink) in v1; eager-size cap + lazy pull-on-open for the tail; admission backpressure (hand-compute: ~4s@10k / ~40s@50k if eager). [S]
+11. **Backpressure** — per-session dirty-byte budget + scan-lag metric + harness backpressure (pause before ENOSPC) + bounded upload queue. [S]
+12. **metacopy=off amplification** — route large/append-heavy files OUT of the overlay artifact ns (direct-write path); overlay only for normal artifacts. [S]
+13. **Atomic multi-file** — commit-group / tree-manifest snapshot at a quiesce checkpoint; readers hydrate by snapshot id, not per-path latest. [S]
+14. **Version skew** — seq labels on both views; `/atrium/artifacts` flags "newer than your working copy"; hide dup-latest for paths already hydrated in `/workspace`. [S/D]
+**MODERATE**
+15. **FD/watcher cache** — node adoption emits a process-level invalidation (reopen/restart) signal on adopt. [S]
+16. **Rename fidelity** — mount `redirect_dir=on`; privileged scanner reads `trusted.overlay.redirect` (`CAP_SYS_ADMIN`); until proven on the prod-node FS, downgrade to delete/create; test long paths vs `redirect_max`. [R/POC]
+17. **Persistent-upper affinity** — Local PV (NOT hostPath) + required `nodeAffinity` + `WaitForFirstConsumer` + app-level manifest/hash check (fail-closed on mismatch); per-session PVC `Retain`; Pending-forever alerting + orphan-PV cleanup. [R]
+18. **reflink FS** — require XFS/btrfs at node admission (FICLONE probe; ext4→`EOPNOTSUPP`→refuse the node); blobs immutable `0444` (`chattr +i` where avail); **no hardlink fallback** (shares inode → CAS corruption). [R]
+19. **DaemonSet TCB** — gate multi-tenant on VM-per-tenant; narrow scanner IAM to session/tenant prefixes; seccomp/AppArmor; split setup-privilege (init) from steady-state scan; openat2-hardened reads (#1). [S]
+20. **Large-file path** — streaming multipart (xet/fastcdc when un-deferred) + size caps + per-node concurrency cap + resumable upload before claiming C3 closed. [S]
+
+**Residual to validate on a real Linux node** (not exercised by the single-container POC):
+the **`mountPropagation: Bidirectional` (setup) → `HostToContainer` (agent)** linchpin on a
+multi-process real-node FS — already a Track-C4 open item, reaffirmed. (The POC's
+arm64/linuxkit quirk — upper can't sit on the container's own overlay rootfs — is a non-issue
+in prod: the upper is a node-local ext4/xfs PV, exactly the design.)
 
 ## 9. Relationship to other docs
 
