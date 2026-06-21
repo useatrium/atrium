@@ -4,7 +4,7 @@
 // Phase 4 work surfaces + side-effect gate (Centaur doesn't consume it yet).
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { ProviderCredentialStatus } from '../api';
+import type { ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
 import { XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
@@ -30,7 +30,7 @@ export function SpawnDialog({
   onCancel: () => void;
   onSpawn: (config: SpawnConfig) => void;
   providerStatuses?: Record<string, ProviderCredentialStatus | undefined>;
-  onConnectProvider?: (provider: 'claude-code') => void;
+  onConnectProvider?: (provider: ProviderCredentialProvider) => void;
 }) {
   const [task, setTask] = useState('');
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
@@ -38,8 +38,10 @@ export function SpawnDialog({
   const [branch, setBranch] = useState('');
 
   const claudeStatus = providerStatuses?.['claude-code'];
-  const claudeNeedsAuth = harness === 'claude-code' && claudeStatus?.connected !== true;
-  const canSpawn = task.trim().length > 0 && !claudeNeedsAuth;
+  const codexStatus = providerStatuses?.codex;
+  const claudeUsesDefaultAuth = harness === 'claude-code' && claudeStatus?.connected !== true;
+  const codexUsesDefaultAuth = harness === 'codex' && codexStatus?.connected !== true;
+  const canSpawn = task.trim().length > 0;
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -119,14 +121,14 @@ export function SpawnDialog({
             </select>
           </label>
 
-          {claudeNeedsAuth && (
+          {claudeUsesDefaultAuth && (
             <div
               role="status"
               className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg-body"
             >
-              <div className="font-medium">Claude Code needs your subscription token.</div>
+              <div className="font-medium">Claude Code subscription auth is not connected.</div>
               <div className="mt-1 text-2xs leading-relaxed text-fg-muted">
-                Run <span className="font-mono">claude setup-token</span>, then connect Claude here.
+                This session will use the default harness auth. Connect Claude to prefer subscription auth.
               </div>
               <button
                 type="button"
@@ -134,6 +136,25 @@ export function SpawnDialog({
                 className="mt-2 rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
               >
                 Connect Claude
+              </button>
+            </div>
+          )}
+
+          {codexUsesDefaultAuth && (
+            <div
+              role="status"
+              className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg-body"
+            >
+              <div className="font-medium">Codex subscription auth is not connected.</div>
+              <div className="mt-1 text-2xs leading-relaxed text-fg-muted">
+                This session will use the default harness auth. Connect Codex to prefer subscription auth.
+              </div>
+              <button
+                type="button"
+                onClick={() => onConnectProvider?.('codex')}
+                className="mt-2 rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+              >
+                Connect Codex
               </button>
             </div>
           )}

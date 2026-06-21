@@ -408,7 +408,9 @@ async function loginUser(
 }
 
 async function loginCookie(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {
-  return (await loginUser(app, 'alice', 'Alice')).cookie;
+  const { cookie } = await loginUser(app, 'alice', 'Alice');
+  await connectCodex(app, cookie);
+  return cookie;
 }
 
 async function connectClaude(
@@ -421,6 +423,29 @@ async function connectClaude(
     url: '/api/me/provider-credentials/claude-code',
     headers: { cookie },
     payload: { token },
+  });
+  expect(res.statusCode).toBe(200);
+}
+
+const TEST_CODEX_AUTH_JSON = JSON.stringify({
+  OPENAI_API_KEY: null,
+  auth_mode: 'chatgpt',
+  tokens: {
+    access_token: 'test-codex-access-token',
+    account_id: '00000000-0000-0000-0000-000000000000',
+  },
+});
+
+async function connectCodex(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  cookie: string,
+  authJson = TEST_CODEX_AUTH_JSON,
+): Promise<void> {
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/api/me/provider-credentials/codex',
+    headers: { cookie },
+    payload: { authJson },
   });
   expect(res.statusCode).toBe(200);
 }
@@ -694,7 +719,7 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
-  it('POST /api/sessions requires a per-user Claude token for Claude Code', async () => {
+  it('POST /api/sessions allows Claude Code without a subscription token', async () => {
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
@@ -709,9 +734,77 @@ describe('Phase 2 sessions', () => {
       payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
     });
 
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ error: 'provider_auth_required' });
-    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    expect(res.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    const execute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(execute?.body.environment).toBeUndefined();
+    await app.close();
+  });
+
+  it('POST /api/sessions allows Codex without auth JSON and injects it when connected', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie } = await loginUser(app, 'alice-codex', 'Alice Codex');
+
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'codex' },
+    });
+
+    expect(missing.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    const firstExecute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(firstExecute?.body.environment).toBeUndefined();
+
+    await connectCodex(app, cookie);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'codex' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.filter((r) => r.path === '/agent/execute')).toHaveLength(2);
+    });
+    const executes = fake.requests.filter((r) => r.path === '/agent/execute');
+    const execute = executes[executes.length - 1];
+    expect(execute?.body.environment).toEqual({ CODEX_AUTH_JSON: TEST_CODEX_AUTH_JSON });
+    await app.close();
+  });
+
+  it('rejects Codex auth JSON that contains an API key', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie } = await loginUser(app, 'alice-codex-bad', 'Alice Codex Bad');
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/me/provider-credentials/codex',
+      headers: { cookie },
+      payload: {
+        authJson: JSON.stringify({
+          OPENAI_API_KEY: 'sk-test',
+          auth_mode: 'chatgpt',
+          tokens: { access_token: 'test-codex-access-token' },
+        }),
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('OPENAI_API_KEY');
     await app.close();
   });
 

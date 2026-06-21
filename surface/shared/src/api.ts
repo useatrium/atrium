@@ -53,8 +53,10 @@ export interface AuthMethods {
   google: boolean;
 }
 
+export type ProviderCredentialProvider = 'claude-code' | 'codex';
+
 export interface ProviderCredentialStatus {
-  provider: 'claude-code';
+  provider: ProviderCredentialProvider;
   connected: boolean;
   status: 'connected' | 'needs_auth';
   lastValidatedAt: string | null;
@@ -130,8 +132,17 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'PUT',
         body: JSON.stringify({ token }),
       }),
+    connectCodex: (authJson: string) =>
+      req<{ provider: ProviderCredentialStatus }>('/api/me/provider-credentials/codex', {
+        method: 'PUT',
+        body: JSON.stringify({ authJson }),
+      }),
     disconnectClaudeCode: () =>
       req<{ ok: true }>('/api/me/provider-credentials/claude-code', {
+        method: 'DELETE',
+      }),
+    disconnectCodex: () =>
+      req<{ ok: true }>('/api/me/provider-credentials/codex', {
         method: 'DELETE',
       }),
     /** Partial update; server merges over stored prefs and fans the full

@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { api, type Channel, type ProviderCredentialStatus } from '../api';
+import { api, type Channel, type ProviderCredentialProvider, type ProviderCredentialStatus } from '../api';
 import {
   ACCENTS,
   FONT_SCALES,
@@ -68,7 +68,7 @@ export function Sidebar({
   onOpenSession: (sessionId: string) => void;
   sessionEventSeq: number;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
-  onConnectProvider?: (provider: 'claude-code') => void;
+  onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onLogout: () => void;
 }) {
   const [creating, setCreating] = useState(false);
@@ -394,7 +394,9 @@ export function Sidebar({
             notify={notify}
             setNotify={setNotify}
             claudeStatus={providerCredentials?.['claude-code']}
+            codexStatus={providerCredentials?.codex}
             onConnectClaude={() => onConnectProvider?.('claude-code')}
+            onConnectCodex={() => onConnectProvider?.('codex')}
           />
         )}
         <button
@@ -447,14 +449,18 @@ function SettingsPopover({
   notify,
   setNotify,
   claudeStatus,
+  codexStatus,
   onConnectClaude,
+  onConnectCodex,
 }: {
   refEl: RefObject<HTMLDivElement | null>;
   firstControlRef: RefObject<HTMLButtonElement | null>;
   notify: NotifyState;
   setNotify: (state: NotifyState) => void;
   claudeStatus?: ProviderCredentialStatus;
+  codexStatus?: ProviderCredentialStatus;
   onConnectClaude?: () => void;
+  onConnectCodex?: () => void;
 }) {
   const { prefs, setPrefs } = useTheme();
   const segmentButton = (active: boolean) =>
@@ -587,6 +593,21 @@ function SettingsPopover({
               }`}
             />
             <span>{claudeStatus?.connected ? 'Connected' : 'Connect'}</span>
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Codex">
+          <button
+            type="button"
+            onClick={onConnectCodex}
+            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+          >
+            <span
+              className={`size-2 rounded-full ${
+                codexStatus?.connected ? 'bg-success' : 'bg-warning'
+              }`}
+            />
+            <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
           </button>
         </SettingRow>
       </div>

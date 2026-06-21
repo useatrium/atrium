@@ -50,6 +50,7 @@ import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.j
 import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
 import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, presignPut, uploadObject } from './s3.js';
+import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
@@ -61,7 +62,7 @@ import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
 import { CentaurApiError } from '@atrium/centaur-client';
-import { ProviderCredentials } from './provider-credentials.js';
+import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -867,10 +868,35 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { provider };
   });
 
+  app.put('/api/me/provider-credentials/codex', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { authJson?: unknown };
+    const authJson = typeof body.authJson === 'string' ? body.authJson.trim() : '';
+    if (!authJson) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Codex auth.json required' });
+    }
+    try {
+      const provider = await providerCredentials.upsertCodexAuthJson(user.id, authJson);
+      await sessionRuns.clearProviderAuthRequired(user.id, CODEX_PROVIDER);
+      return { provider };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid Codex auth.json';
+      return reply.code(400).send({ error: 'bad_request', message });
+    }
+  });
+
   app.delete('/api/me/provider-credentials/claude-code', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
     await providerCredentials.deleteClaudeToken(user.id);
+    return { ok: true };
+  });
+
+  app.delete('/api/me/provider-credentials/codex', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    await providerCredentials.deleteCodexAuthJson(user.id);
     return { ok: true };
   });
 
@@ -2871,6 +2897,47 @@ function rawSession(req: FastifyRequest): string | undefined {
           });
       if (!result.ok) return reply.code(409).send({ error: result.reason });
       return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
+  // Harness-resume (rollout-JSONL): capture the harness CLI transcript snapshot
+  // (the daemon PUTs it each turn) + serve it back for cold-start restore. Stored
+  // outside the artifact ledger — internal harness state, not a user work product.
+  app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const t = await loadHarnessTranscript(pool, { getObjectBytes }, id, harness);
+    if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
+    reply.header('Content-Type', 'application/x-ndjson');
+    reply.header('X-Transcript-Sha256', t.sha256);
+    return reply.send(t.bytes);
+  });
+
+  await app.register(async (ht) => {
+    ht.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    ht.put('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const harness = (req.query as { harness?: string }).harness ?? '';
+      if (!isHarness(harness)) {
+        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+      }
+      const sess = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1`, [id]);
+      if (!sess.rows[0]) return reply.code(404).send({ error: 'session_not_found' });
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (bytes.length === 0) {
+        return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
+      }
+      const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, id, harness, bytes);
+      return reply.send({ size_bytes: size, sha256 });
     });
   });
 

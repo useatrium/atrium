@@ -24,7 +24,7 @@ import {
   type ToolCallItem,
   type UserMessageItem,
 } from '@atrium/centaur-client';
-import { ApiError, type ProviderCredentialStatus } from '../api';
+import { ApiError, type ProviderCredentialProvider, type ProviderCredentialStatus } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
@@ -105,7 +105,7 @@ export function SessionPane({
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
-  onConnectProvider?: (provider: 'claude-code') => void;
+  onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
@@ -885,7 +885,7 @@ function ProviderAuthBanner({
     <div
       data-testid="provider-auth-banner"
       role="region"
-      aria-label="Claude Code authentication required"
+      aria-label={`${providerLabel(required.provider)} authentication required`}
       className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -895,9 +895,9 @@ function ProviderAuthBanner({
         <span className="min-w-0 flex-1 text-fg-body">
           {isOwner
             ? connected
-              ? 'Claude is connected. Send a steer to retry this session.'
+              ? `${providerLabel(required.provider)} is connected. Send a steer to retry this session.`
               : required.message
-            : `Waiting for ${ownerName} to reconnect Claude Code.`}
+            : `Waiting for ${ownerName} to reconnect ${providerLabel(required.provider)}.`}
         </span>
         {isOwner && (
           <button
@@ -905,12 +905,20 @@ function ProviderAuthBanner({
             onClick={onConnect}
             className="rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
           >
-            {connected ? 'Reconnect' : 'Connect Claude'}
+            {connected ? 'Reconnect' : `Connect ${providerActionLabel(required.provider)}`}
           </button>
         )}
       </div>
     </div>
   );
+}
+
+function providerLabel(provider: SessionProviderAuthRequired['provider']): string {
+  return provider === 'codex' ? 'Codex' : 'Claude Code';
+}
+
+function providerActionLabel(provider: SessionProviderAuthRequired['provider']): string {
+  return provider === 'codex' ? 'Codex' : 'Claude';
 }
 
 function QuestionBanner({

@@ -36,9 +36,13 @@ import { sendQuestionPush } from './push.js';
 import {
   CLAUDE_CODE_PROVIDER,
   ProviderCredentials,
-  claudeAuthRequired,
   claudeExecutionEnvironment,
-  isClaudeAuthFailureText,
+  codexExecutionEnvironment,
+  isProviderAuthFailureText,
+  providerAuthRequired,
+  providerDisplayName,
+  providerForHarness,
+  type ProviderCredentialProvider,
   type ProviderAuthRequiredJson,
 } from './provider-credentials.js';
 
@@ -430,23 +434,14 @@ export class SessionRuns {
     const harness = args.harness ?? this.harness;
     const repo = normalizeGitMeta(args.repo);
     const branch = normalizeGitMeta(args.branch);
-    const providerCredentialUserId = harness === CLAUDE_CODE_PROVIDER ? args.user.id : null;
+    const provider = providerForHarness(harness);
+    const providerCredentialUserId = provider ? args.user.id : null;
     const channel = await getChannel(client, args.channelId);
     if (!channel) {
       throw new DomainError(404, 'channel_not_found', 'channel not found');
     }
     if (args.threadRootEventId != null) {
       await assertThreadRoot(client, args.channelId, args.threadRootEventId);
-    }
-    if (providerCredentialUserId) {
-      const token = await this.providerCredentials.getClaudeToken(providerCredentialUserId, client);
-      if (!token) {
-        throw new DomainError(
-          409,
-          'provider_auth_required',
-          'Connect Claude Code before starting a Claude session',
-        );
-      }
     }
     const conflictClause = args.clientSpawnId
       ? `ON CONFLICT (spawned_by, client_spawn_id) WHERE client_spawn_id IS NOT NULL DO NOTHING`
@@ -944,7 +939,7 @@ export class SessionRuns {
         await this.markProviderAuthRequired(
           id,
           'missing_token',
-          'Reconnect Claude Code before continuing this session.',
+          undefined,
         ).catch(() => {});
       }
       throw err;
@@ -1168,18 +1163,15 @@ export class SessionRuns {
   private async providerEnvironmentFor(
     row: SessionRow,
   ): Promise<Record<string, string> | undefined> {
-    if (row.harness !== CLAUDE_CODE_PROVIDER) return undefined;
+    const provider = providerForHarness(row.harness);
+    if (!provider) return undefined;
     const ownerId = row.provider_credential_user_id;
     if (!ownerId) return undefined;
-    const token = await this.providerCredentials.getClaudeToken(ownerId);
-    if (!token) {
-      throw new DomainError(
-        409,
-        'provider_auth_required',
-        'Reconnect Claude Code before continuing this session',
-      );
-    }
-    return claudeExecutionEnvironment(token);
+    const secret = await this.providerCredentials.getProviderSecret(ownerId, provider);
+    if (!secret) return undefined;
+    return provider === CLAUDE_CODE_PROVIDER
+      ? claudeExecutionEnvironment(secret)
+      : codexExecutionEnvironment(secret);
   }
 
   async clearStalePendingQuestion(id: string, questionId: string): Promise<void> {
@@ -1661,7 +1653,7 @@ export class SessionRuns {
         await this.markProviderAuthRequired(
           id,
           'missing_token',
-          'Reconnect Claude Code before continuing this session.',
+          undefined,
         ).catch(() => {});
         return;
       }
@@ -1823,14 +1815,14 @@ export class SessionRuns {
     const status = normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
       const resultText = typeof frame.data.result_text === 'string' ? frame.data.result_text : null;
-      if (status === 'failed' && isClaudeAuthFailureText(resultText)) {
-        await this.markProviderAuthRequired(
+      if (status === 'failed' && isProviderAuthFailureText(resultText)) {
+        const marked = await this.markProviderAuthRequired(
           id,
           'invalid_token',
-          'Claude Code authentication failed. Reconnect Claude to continue.',
+          undefined,
           frame.event_id,
         );
-        return;
+        if (marked) return;
       }
       await this.completeSession(id, status, resultText, frame.event_id);
     } else {
@@ -1921,6 +1913,13 @@ export class SessionRuns {
   }
 
   async clearClaudeAuthRequired(userId: string): Promise<void> {
+    await this.clearProviderAuthRequired(userId, CLAUDE_CODE_PROVIDER);
+  }
+
+  async clearProviderAuthRequired(
+    userId: string,
+    provider: ProviderCredentialProvider,
+  ): Promise<void> {
     const events = await withTx(this.pool, async (client) => {
       const res = await client.query<SessionRow>(
         `SELECT *
@@ -1928,7 +1927,7 @@ export class SessionRuns {
          WHERE provider_credential_user_id = $1
            AND provider_auth_required->>'provider' = $2
          FOR UPDATE`,
-        [userId, CLAUDE_CODE_PROVIDER],
+        [userId, provider],
       );
       const out: WireEvent[] = [];
       for (const row of res.rows) {
@@ -1948,7 +1947,7 @@ export class SessionRuns {
             threadRootEventId: next.thread_root_event_id,
             type: 'session.provider_auth_resolved',
             actorId: userId,
-            payload: { sessionId: next.id, provider: CLAUDE_CODE_PROVIDER, by: userId },
+            payload: { sessionId: next.id, provider, by: userId },
           }),
         );
       }
@@ -1961,24 +1960,26 @@ export class SessionRuns {
     await this.markProviderAuthRequired(
       id,
       'missing_token',
-      'Reconnect Claude Code before continuing this session.',
+      undefined,
     );
   }
 
   private async markProviderAuthRequired(
     id: string,
     reason: ProviderAuthRequiredJson['reason'],
-    message: string,
+    message: string | undefined,
     lastEventId = 0,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let rowToRelease: SessionRow | null = null;
     const events = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];
-      if (!row || row.harness !== CLAUDE_CODE_PROVIDER || TERMINAL_STATUSES.has(row.status)) return [];
+      const provider = row ? providerForHarness(row.harness) : null;
+      if (!row || !provider || TERMINAL_STATUSES.has(row.status)) return [];
       const ownerId = row.provider_credential_user_id ?? row.spawned_by;
       const pending = parsePendingQuestion(row.pending_question);
-      const required = claudeAuthRequired(ownerId, reason, message);
+      const authMessage = message ?? authRequiredMessage(provider, reason);
+      const required = providerAuthRequired(provider, ownerId, reason, authMessage);
       const updated = await client.query<SessionRow>(
         `UPDATE sessions
          SET provider_auth_required = $1,
@@ -1991,7 +1992,7 @@ export class SessionRuns {
         [JSON.stringify(required), lastEventId, id],
       );
       const next = updated.rows[0]!;
-      await this.providerCredentials.markClaudeAuthRequired(ownerId, message, client);
+      await this.providerCredentials.markProviderAuthRequired(provider, ownerId, authMessage, client);
       rowToRelease = next;
       const authEvent = await appendEvent(client, {
         workspaceId: next.workspace_id,
@@ -2021,9 +2022,10 @@ export class SessionRuns {
       await this.centaur
         .release(releaseRow.centaur_thread_key, `rel-${id}-auth-${Date.now()}`, true)
         .catch((err) => {
-          console.warn('session release after Claude auth failure failed', { id, err });
+          console.warn('session release after provider auth failure failed', { id, err });
         });
     }
+    return events.length > 0;
   }
 
   private async updateStatus(id: string, status: SessionStatus): Promise<void> {
@@ -2735,7 +2737,8 @@ function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null
 function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
-  if (raw.provider !== CLAUDE_CODE_PROVIDER) return null;
+  const provider = typeof raw.provider === 'string' ? providerForHarness(raw.provider) : null;
+  if (!provider) return null;
   if (typeof raw.userId !== 'string') return null;
   if (
     raw.reason !== 'missing_token' &&
@@ -2745,15 +2748,31 @@ function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | n
     return null;
   }
   return {
-    provider: CLAUDE_CODE_PROVIDER,
+    provider,
     userId: raw.userId,
     reason: raw.reason,
     message:
       typeof raw.message === 'string' && raw.message.trim()
         ? raw.message
-        : 'Reconnect Claude Code to continue this session.',
+        : reconnectMessage(provider),
     at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
   };
+}
+
+function reconnectMessage(provider: ProviderCredentialProvider): string {
+  return `Reconnect ${providerDisplayName(provider)} to continue this session.`;
+}
+
+function authRequiredMessage(
+  provider: ProviderCredentialProvider,
+  reason: ProviderAuthRequiredJson['reason'],
+): string {
+  if (reason === 'invalid_token' || reason === 'auth_error') {
+    return provider === CLAUDE_CODE_PROVIDER
+      ? 'Claude Code authentication failed. Reconnect Claude to continue.'
+      : 'Codex authentication failed. Reconnect Codex to continue.';
+  }
+  return reconnectMessage(provider);
 }
 
 function isQuestionPrompt(value: unknown): value is QuestionPrompt {

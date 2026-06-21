@@ -8,10 +8,14 @@ import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 
 export const CLAUDE_CODE_PROVIDER = 'claude-code';
+export const CODEX_PROVIDER = 'codex';
 const CLAUDE_CODE_OAUTH_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
+const CODEX_AUTH_JSON_ENV = 'CODEX_AUTH_JSON';
 
-export type ProviderCredentialProvider = typeof CLAUDE_CODE_PROVIDER;
+export type ProviderCredentialProvider = typeof CLAUDE_CODE_PROVIDER | typeof CODEX_PROVIDER;
 export type ProviderCredentialStatusValue = 'connected' | 'needs_auth';
+
+const PROVIDERS: readonly ProviderCredentialProvider[] = [CLAUDE_CODE_PROVIDER, CODEX_PROVIDER];
 
 export interface ProviderCredentialStatusJson {
   provider: ProviderCredentialProvider;
@@ -52,10 +56,17 @@ export class ProviderCredentials {
     const res = await this.pool.query<CredentialRow>(
       `SELECT user_id, provider, token_ciphertext, status, last_validated_at, last_error, updated_at
        FROM user_provider_credentials
-       WHERE user_id = $1 AND provider = $2`,
-      [userId, CLAUDE_CODE_PROVIDER],
+       WHERE user_id = $1 AND provider = ANY($2::text[])`,
+      [userId, PROVIDERS],
     );
-    return [statusFromRow(res.rows[0] ?? null)];
+    const byProvider = new Map(
+      res.rows
+        .filter((row): row is CredentialRow & { provider: ProviderCredentialProvider } =>
+          isProviderCredentialProvider(row.provider),
+        )
+        .map((row) => [row.provider, row]),
+    );
+    return PROVIDERS.map((provider) => statusFromRow(provider, byProvider.get(provider) ?? null));
   }
 
   async upsertClaudeToken(userId: string, token: string): Promise<ProviderCredentialStatusJson> {
@@ -63,7 +74,19 @@ export class ProviderCredentials {
     if (!normalized) {
       throw new Error('Claude token is required');
     }
-    const ciphertext = encryptSecret(this.secret, normalized);
+    return this.upsertProviderSecret(userId, CLAUDE_CODE_PROVIDER, normalized);
+  }
+
+  async upsertCodexAuthJson(userId: string, authJson: string): Promise<ProviderCredentialStatusJson> {
+    return this.upsertProviderSecret(userId, CODEX_PROVIDER, normalizeCodexAuthJson(authJson));
+  }
+
+  private async upsertProviderSecret(
+    userId: string,
+    provider: ProviderCredentialProvider,
+    secretValue: string,
+  ): Promise<ProviderCredentialStatusJson> {
+    const ciphertext = encryptSecret(this.secret, secretValue);
     const res = await this.pool.query<CredentialRow>(
       `INSERT INTO user_provider_credentials
          (user_id, provider, token_ciphertext, status, last_validated_at, last_error)
@@ -75,15 +98,26 @@ export class ProviderCredentials {
            last_error = NULL,
            updated_at = now()
        RETURNING user_id, provider, token_ciphertext, status, last_validated_at, last_error, updated_at`,
-      [userId, CLAUDE_CODE_PROVIDER, ciphertext],
+      [userId, provider, ciphertext],
     );
-    return statusFromRow(res.rows[0] ?? null);
+    return statusFromRow(provider, res.rows[0] ?? null);
   }
 
   async deleteClaudeToken(userId: string): Promise<void> {
+    await this.deleteProviderSecret(userId, CLAUDE_CODE_PROVIDER);
+  }
+
+  async deleteCodexAuthJson(userId: string): Promise<void> {
+    await this.deleteProviderSecret(userId, CODEX_PROVIDER);
+  }
+
+  private async deleteProviderSecret(
+    userId: string,
+    provider: ProviderCredentialProvider,
+  ): Promise<void> {
     await this.pool.query(
       'DELETE FROM user_provider_credentials WHERE user_id = $1 AND provider = $2',
-      [userId, CLAUDE_CODE_PROVIDER],
+      [userId, provider],
     );
   }
 
@@ -91,11 +125,26 @@ export class ProviderCredentials {
     userId: string,
     client: Queryable = this.pool,
   ): Promise<string | null> {
+    return this.getProviderSecret(userId, CLAUDE_CODE_PROVIDER, client);
+  }
+
+  async getCodexAuthJson(
+    userId: string,
+    client: Queryable = this.pool,
+  ): Promise<string | null> {
+    return this.getProviderSecret(userId, CODEX_PROVIDER, client);
+  }
+
+  async getProviderSecret(
+    userId: string,
+    provider: ProviderCredentialProvider,
+    client: Queryable = this.pool,
+  ): Promise<string | null> {
     const res = await client.query<Pick<CredentialRow, 'token_ciphertext' | 'status'>>(
       `SELECT token_ciphertext, status
        FROM user_provider_credentials
        WHERE user_id = $1 AND provider = $2`,
-      [userId, CLAUDE_CODE_PROVIDER],
+      [userId, provider],
     );
     const row = res.rows[0];
     if (!row || row.status !== 'connected') return null;
@@ -107,13 +156,30 @@ export class ProviderCredentials {
     message: string,
     client: Queryable = this.pool,
   ): Promise<void> {
+    await this.markProviderAuthRequired(CLAUDE_CODE_PROVIDER, userId, message, client);
+  }
+
+  async markCodexAuthRequired(
+    userId: string,
+    message: string,
+    client: Queryable = this.pool,
+  ): Promise<void> {
+    await this.markProviderAuthRequired(CODEX_PROVIDER, userId, message, client);
+  }
+
+  async markProviderAuthRequired(
+    provider: ProviderCredentialProvider,
+    userId: string,
+    message: string,
+    client: Queryable = this.pool,
+  ): Promise<void> {
     await client.query(
       `UPDATE user_provider_credentials
        SET status = 'needs_auth',
            last_error = $3,
            updated_at = now()
        WHERE user_id = $1 AND provider = $2`,
-      [userId, CLAUDE_CODE_PROVIDER, message],
+      [userId, provider, message],
     );
   }
 }
@@ -122,13 +188,34 @@ export function claudeExecutionEnvironment(token: string): Record<string, string
   return { [CLAUDE_CODE_OAUTH_ENV]: token };
 }
 
+export function codexExecutionEnvironment(authJson: string): Record<string, string> {
+  return { [CODEX_AUTH_JSON_ENV]: authJson };
+}
+
 export function claudeAuthRequired(
   userId: string,
   reason: ProviderAuthRequiredJson['reason'],
   message = 'Reconnect Claude Code to continue this session.',
 ): ProviderAuthRequiredJson {
+  return providerAuthRequired(CLAUDE_CODE_PROVIDER, userId, reason, message);
+}
+
+export function codexAuthRequired(
+  userId: string,
+  reason: ProviderAuthRequiredJson['reason'],
+  message = 'Reconnect Codex to continue this session.',
+): ProviderAuthRequiredJson {
+  return providerAuthRequired(CODEX_PROVIDER, userId, reason, message);
+}
+
+export function providerAuthRequired(
+  provider: ProviderCredentialProvider,
+  userId: string,
+  reason: ProviderAuthRequiredJson['reason'],
+  message: string,
+): ProviderAuthRequiredJson {
   return {
-    provider: CLAUDE_CODE_PROVIDER,
+    provider,
     userId,
     reason,
     message,
@@ -148,10 +235,50 @@ export function isClaudeAuthFailureText(value: string | null | undefined): boole
   );
 }
 
-function statusFromRow(row: CredentialRow | null): ProviderCredentialStatusJson {
+export function isCodexAuthFailureText(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const text = value.toLowerCase();
+  return (
+    text.includes('codex') &&
+    (text.includes('not logged in') ||
+      text.includes('login') ||
+      text.includes('auth') ||
+      text.includes('credential') ||
+      text.includes('401') ||
+      text.includes('unauthorized') ||
+      text.includes('codex_access_token') ||
+      text.includes('auth.json') ||
+      text.includes('openai_api_key'))
+  );
+}
+
+export function isProviderAuthFailureText(
+  value: string | null | undefined,
+): boolean {
+  return isClaudeAuthFailureText(value) || isCodexAuthFailureText(value);
+}
+
+export function isProviderCredentialProvider(value: string): value is ProviderCredentialProvider {
+  return value === CLAUDE_CODE_PROVIDER || value === CODEX_PROVIDER;
+}
+
+export function providerForHarness(harness: string): ProviderCredentialProvider | null {
+  if (harness === CLAUDE_CODE_PROVIDER) return CLAUDE_CODE_PROVIDER;
+  if (harness === CODEX_PROVIDER) return CODEX_PROVIDER;
+  return null;
+}
+
+export function providerDisplayName(provider: ProviderCredentialProvider): string {
+  return provider === CLAUDE_CODE_PROVIDER ? 'Claude Code' : 'Codex';
+}
+
+function statusFromRow(
+  provider: ProviderCredentialProvider,
+  row: CredentialRow | null,
+): ProviderCredentialStatusJson {
   if (!row) {
     return {
-      provider: CLAUDE_CODE_PROVIDER,
+      provider,
       connected: false,
       status: 'needs_auth',
       lastValidatedAt: null,
@@ -160,13 +287,48 @@ function statusFromRow(row: CredentialRow | null): ProviderCredentialStatusJson 
     };
   }
   return {
-    provider: CLAUDE_CODE_PROVIDER,
+    provider,
     connected: row.status === 'connected',
     status: row.status,
     lastValidatedAt: row.last_validated_at ? row.last_validated_at.toISOString() : null,
     lastError: row.last_error,
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+function normalizeCodexAuthJson(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Codex auth.json is required');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error('Codex auth.json must be valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Codex auth.json must be a JSON object');
+  }
+
+  const auth = parsed as Record<string, unknown>;
+  if (typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.trim()) {
+    throw new Error('Codex auth.json must use ChatGPT login, not an OPENAI_API_KEY');
+  }
+  if (auth.auth_mode !== 'chatgpt') {
+    throw new Error('Codex auth.json must have auth_mode "chatgpt"');
+  }
+  const tokens = auth.tokens;
+  if (!tokens || typeof tokens !== 'object' || Array.isArray(tokens)) {
+    throw new Error('Codex auth.json must include tokens');
+  }
+  const accessToken = (tokens as Record<string, unknown>).access_token;
+  if (typeof accessToken !== 'string' || !accessToken.trim()) {
+    throw new Error('Codex auth.json must include tokens.access_token');
+  }
+
+  return JSON.stringify({ ...auth, OPENAI_API_KEY: null });
 }
 
 function encryptSecret(secret: string, plaintext: string): string {
