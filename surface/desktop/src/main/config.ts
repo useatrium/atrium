@@ -22,3 +22,6 @@ export const RENDERER_DEV_URL = process.env.ATRIUM_RENDERER_URL ?? null;
 /** Bundled @atrium/web build directory (vite default output: web/dist). */
 export const WEB_DIST =
   process.env.ATRIUM_WEB_DIST ?? join(app.getAppPath(), '..', 'web', 'dist');
+
+/** Menu-bar/tray template icon (resources/ ships next to the app root). */
+export const TRAY_ICON = join(app.getAppPath(), 'resources', 'trayTemplate.png');
