@@ -5,10 +5,21 @@
 import { useMemo, useState } from 'react';
 import type { FileChange } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { EmptyState } from './EmptyState';
 import { DiffView, KIND_BADGE, KIND_LABEL, diffStats } from './fileChangeView';
 
+export function groupFileChanges(changes: FileChange[]): [string, FileChange[]][] {
+  const byPath = new Map<string, FileChange[]>();
+  for (const c of changes) {
+    const list = byPath.get(c.path);
+    if (list) list.push(c);
+    else byPath.set(c.path, [c]);
+  }
+  return [...byPath.entries()];
+}
+
 /** One file's row: path + kind badge + a collapsible diff (every edit to the file). */
-function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
+export function ChangeFileRow({ path, changes }: { path: string; changes: FileChange[] }) {
   const [open, setOpen] = useState(false);
   // Newest edit wins the displayed kind; the diff shows every edit to the file.
   const kind = changes[changes.length - 1]!.kind;
@@ -49,21 +60,17 @@ export function ChangesSurface({
   embedded?: boolean;
 }) {
   // Group by display path, preserving first-seen order.
-  const groups = useMemo(() => {
-    const byPath = new Map<string, FileChange[]>();
-    for (const c of changes) {
-      const list = byPath.get(c.path);
-      if (list) list.push(c);
-      else byPath.set(c.path, [c]);
-    }
-    return [...byPath.entries()];
-  }, [changes]);
+  const groups = useMemo(() => groupFileChanges(changes), [changes]);
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      {groups.map(([path, fileChanges]) => (
-        <FileRow key={path} path={path} changes={fileChanges} />
-      ))}
+      {groups.length === 0 ? (
+        <EmptyState title="No files changed" hint="This run didn't edit any files in the repo." />
+      ) : (
+        groups.map(([path, fileChanges]) => (
+          <ChangeFileRow key={path} path={path} changes={fileChanges} />
+        ))
+      )}
     </div>
   );
 

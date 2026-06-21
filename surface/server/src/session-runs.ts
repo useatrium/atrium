@@ -342,6 +342,8 @@ interface SessionListRow extends SessionRow {
 }
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
+const DEMO_HARNESS = 'demo';
+const DEMO_TITLE = 'Demo — watch an agent work';
 
 // Idle window before a terminal session's sandbox assignment is released.
 const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
@@ -430,8 +432,9 @@ export class SessionRuns {
       return { session: toJson(existing), created: false, event: null, row: existing };
     }
 
-    const title = args.task.trim().slice(0, 80);
     const harness = args.harness ?? this.harness;
+    const demo = isDemoHarness(harness);
+    const title = demo ? DEMO_TITLE : args.task.trim().slice(0, 80);
     const repo = normalizeGitMeta(args.repo);
     const branch = normalizeGitMeta(args.branch);
     const provider = providerForHarness(harness);
@@ -459,7 +462,7 @@ export class SessionRuns {
         channel.workspace_id,
         args.channelId,
         args.threadRootEventId,
-        `surface:${randomUUID()}`,
+        `${demo ? 'demo' : 'surface'}:${randomUUID()}`,
         harness,
         repo,
         branch,
@@ -2583,6 +2586,10 @@ function userInputLine(text: string): string {
 function writeSessionFrame(raw: ServerResponse, frame: CentaurEventFrame): void {
   raw.write(`event: ${frame.event}\n`);
   raw.write(`data: ${JSON.stringify({ ...frame.data, event_id: frame.event_id })}\n\n`);
+}
+
+function isDemoHarness(harness: string): boolean {
+  return harness.trim().toLowerCase() === DEMO_HARNESS;
 }
 
 function isCentaurCode(err: unknown, code: string): boolean {

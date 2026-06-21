@@ -213,6 +213,14 @@ export function SessionPane({
     return userId;
   };
   const driverName = nameFor(driverId);
+  const composerStatusText = isDriver
+    ? "You're driving this session"
+    : driverPresent
+      ? `You're watching — ${driverName} is driving`
+      : "You're watching";
+  const composerPlaceholder = isDriver
+    ? 'Steer the agent...'
+    : `Suggest a message — ${driverName} decides`;
   const providerAuthOwnerName = nameFor(session.providerAuthRequired?.userId ?? null);
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
@@ -816,12 +824,11 @@ export function SessionPane({
             </div>
           )}
           <SessionTypingLine typers={typers} />
+          <div className="shrink-0 border-t border-edge bg-surface-overlay/30 px-4 py-1.5 text-2xs font-medium text-fg-muted">
+            {composerStatusText}
+          </div>
           <Composer
-            placeholder={
-              isDriver
-                ? 'You have the seat — message this session'
-                : `Suggest a message — ${driverName} decides`
-            }
+            placeholder={composerPlaceholder}
             onSend={isDriver ? sendSteer : sendSuggestion}
             onTyping={onComposerTyping}
             footer={
