@@ -93,40 +93,15 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[atrium] renderer loaded:', target);
-    const probe = `(async () => {
-      const base = window.atrium?.serverUrl ?? null;
-      let serverFetch = 'skip';
-      let loginRoundTrip = 'skip';
-      if (base) {
-        try {
-          const r = await fetch(base + '/auth/methods');
-          serverFetch = r.ok ? ('ok ' + JSON.stringify(await r.json())) : ('http ' + r.status);
-        } catch (e) { serverFetch = 'ERR ' + (e && e.message ? e.message : e); }
-        try {
-          // Full cross-origin token flow: POST login (preflights content-type)
-          // then GET /auth/me with Authorization (preflights the auth header).
-          const lr = await fetch(base + '/auth/login', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ handle: 'desktopprobe', displayName: 'Desktop Probe' }),
-          });
-          if (!lr.ok) { loginRoundTrip = 'login http ' + lr.status; }
-          else {
-            const lj = await lr.json();
-            const mr = await fetch(base + '/auth/me', { headers: { authorization: 'Bearer ' + lj.token } });
-            loginRoundTrip = 'login=' + (lj.token ? 'token' : 'notoken') + ' me=' + (mr.ok ? 'ok' : ('http' + mr.status));
-          }
-        } catch (e) { loginRoundTrip = 'ERR ' + (e && e.message ? e.message : e); }
-      }
-      return JSON.stringify({
-        secureContext: window.isSecureContext,
-        reactMounted: (document.getElementById('root')?.childElementCount ?? 0) > 0,
-        bridge: !!window.atrium,
-        serverUrl: base,
-        serverFetch,
-        loginRoundTrip,
-      });
-    })()`;
+    // Dev-only sanity probe: confirm the secure context + preload bridge are
+    // live. Never runs in a packaged build and never touches auth/accounts.
+    if (app.isPackaged) return;
+    const probe = `JSON.stringify({
+      secureContext: window.isSecureContext,
+      reactMounted: (document.getElementById('root')?.childElementCount ?? 0) > 0,
+      bridge: !!window.atrium,
+      serverUrl: window.atrium?.serverUrl ?? null,
+    })`;
     void mainWindow?.webContents
       .executeJavaScript(probe)
       .then((result) => console.log('[atrium] renderer probe:', result))
