@@ -23,7 +23,7 @@ import {
 } from '@atrium/surface-client';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
-import { channelLabel, dmPartner } from '@atrium/surface-client';
+import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
 import { useTheme } from '../theme';
@@ -332,7 +332,7 @@ export function Sidebar({
             const level = c.muted || active ? false : unread[c.id] ?? false;
             const label = channelLabel(c, me.id);
             const partner = dmPartner(c, me.id);
-            const avatarName = partner?.displayName ?? label;
+            const avatarName = channelAvatarName(c, me.id);
             return (
               <li key={c.id} className="group flex items-center">
                 <button

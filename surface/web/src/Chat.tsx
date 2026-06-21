@@ -69,7 +69,7 @@ import {
   type Session,
 } from './sessions/types';
 import { adoptPrefs } from './theme';
-import { channelLabel, dmPartner } from '@atrium/surface-client';
+import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { useDialog } from './useDialog';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
@@ -1712,7 +1712,7 @@ export function Chat({
             {active?.kind === 'dm' || active?.kind === 'gdm' ? (
               <>
                 <Avatar
-                  name={channelLabel(active, me.id)}
+                  name={channelAvatarName(active, me.id)}
                   seed={dmPartner(active, me.id)?.id ?? active.id}
                   size={18}
                 />
