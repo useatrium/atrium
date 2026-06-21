@@ -21,13 +21,17 @@ log(){ echo "[launch] $*" >&2; }
 free_port(){ python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'; }
 
 # --- shared dev Postgres (idempotent) ---
+# The dev DB runs in the compose container `atrium-surface-db` (service `db`), mapped to :5433.
+# We talk to it by container name (the compose project name differs from the file dir, so
+# `docker compose exec` is unreliable here).
 COMPOSE="$REPO/surface/docker-compose.yml"
-log "ensuring dev Postgres is up (docker compose)"
-docker compose -f "$COMPOSE" up -d postgres >/dev/null 2>&1 || log "WARN: could not 'compose up postgres' (assuming it's already running)"
+PG_CONTAINER=atrium-surface-db
+log "ensuring dev Postgres ($PG_CONTAINER) is up"
+docker start "$PG_CONTAINER" >/dev/null 2>&1 || docker compose -f "$COMPOSE" up -d db >/dev/null 2>&1 || log "WARN: could not start $PG_CONTAINER (assuming it's already running)"
 
 PGUSER=atrium; PGPASS=atrium; PGHOST=localhost; PGPORT=5433
 DB="atrium_sj_${ID}"
-psql_exec(){ docker compose -f "$COMPOSE" exec -T postgres psql -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 "$@"; }
+psql_exec(){ docker exec -i "$PG_CONTAINER" psql -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 "$@"; }
 log "creating fresh database $DB"
 psql_exec -c "DROP DATABASE IF EXISTS ${DB};" >/dev/null 2>&1 || true
 psql_exec -c "CREATE DATABASE ${DB};" >/dev/null
@@ -53,18 +57,23 @@ log "running migrations against $DB"
 SERVER_PORT="$(free_port)"; WEB_PORT="$(free_port)"
 log "server :$SERVER_PORT  web :$WEB_PORT"
 
-# --- start server ---
+# --- start server (detached so it survives this hook returning) ---
 ( cd "$SURF" && \
   PORT="$SERVER_PORT" HOST=127.0.0.1 DATABASE_URL="$DATABASE_URL" \
   EMAIL_MODE=log AUTH_DEV_CODES=1 \
-  pnpm --filter @atrium/server start >"$RUN/server.log" 2>&1 ) &
+  exec pnpm --filter @atrium/server start ) >"$RUN/server.log" 2>&1 &
 SERVER_PID=$!
+disown "$SERVER_PID" 2>/dev/null || disown 2>/dev/null || true
 
 # --- start web (vite) pointed at our isolated server, with the sessions mock on ---
+# NODE_ENV=development is REQUIRED — Atrium's `dev` script sets it, and without it Vite's React
+# Fast Refresh preamble is omitted and the SPA dies with "$RefreshSig$ is not defined" (blank page).
+# We call vite directly (not `pnpm run dev -- --port`) because the `--` swallows the port flag.
 ( cd "$SURF" && \
-  ATRIUM_API_TARGET="http://localhost:${SERVER_PORT}" VITE_SESSIONS_MOCK=1 \
-  pnpm --filter @atrium/web exec vite --port "$WEB_PORT" --strictPort >"$RUN/web.log" 2>&1 ) &
+  NODE_ENV=development ATRIUM_API_TARGET="http://localhost:${SERVER_PORT}" VITE_SESSIONS_MOCK=1 \
+  exec pnpm --filter @atrium/web exec vite --port "$WEB_PORT" --strictPort ) >"$RUN/web.log" 2>&1 &
 WEB_PID=$!
+disown "$WEB_PID" 2>/dev/null || disown 2>/dev/null || true
 
 # --- wait for web to answer ---
 BASE_URL="http://localhost:${WEB_PORT}"
