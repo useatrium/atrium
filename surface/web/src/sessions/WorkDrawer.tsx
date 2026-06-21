@@ -11,8 +11,9 @@ import { ArtifactsSurface } from './ArtifactsSurface';
 import { ChangesSurface } from './ChangesSurface';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
+import { FilesSurface } from './FilesSurface';
 
-export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
+export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts' | 'files';
 
 // URL-friendly slugs for the detach route (/s/:id/work/:slug). Kept here next to
 // WorkTab so the drawer's detach link and App's route parser stay in lockstep.
@@ -21,15 +22,18 @@ export const TAB_SLUG: Record<WorkTab, string> = {
   changes: 'changes',
   sideEffects: 'side-effects',
   artifacts: 'artifacts',
+  files: 'files',
 };
 export const SLUG_TAB: Record<string, WorkTab> = {
   conflicts: 'conflicts',
   changes: 'changes',
   'side-effects': 'sideEffects',
   artifacts: 'artifacts',
+  files: 'files',
 };
 export const TAB_LABEL: Record<WorkTab, string> = {
   conflicts: 'Conflicts',
+  files: 'Files',
   changes: 'Changes',
   sideEffects: 'Side-effects',
   artifacts: 'Artifacts',
@@ -45,7 +49,8 @@ function Tab({
   active: boolean;
   onClick: () => void;
   label: string;
-  count: number;
+  /** Omit to render a count-less tab (e.g. Files, which is always present). */
+  count?: number;
   danger?: boolean;
 }) {
   return (
@@ -60,9 +65,11 @@ function Tab({
       }`}
     >
       <span>{label}</span>
-      <span className={`tabular-nums font-normal ${danger ? 'text-danger-text' : 'text-fg-muted'}`}>
-        · {count}
-      </span>
+      {count != null && (
+        <span className={`tabular-nums font-normal ${danger ? 'text-danger-text' : 'text-fg-muted'}`}>
+          · {count}
+        </span>
+      )}
     </button>
   );
 }
@@ -112,15 +119,17 @@ export function WorkDrawer({
 }) {
   // Only non-empty surfaces get a tab; if the active tab emptied out (or never
   // had content), fall back to the first available one.
-  const available = (
-    [
-      // Conflicts lead — an unresolved collision is the most action-worthy surface.
-      { key: 'conflicts' as const, label: 'Conflicts', count: conflictCount, danger: true },
-      { key: 'changes' as const, label: 'Changes', count: changedFileCount },
-      { key: 'sideEffects' as const, label: 'Side-effects', count: sideEffectCount, danger: hasDanger },
-      { key: 'artifacts' as const, label: 'Artifacts', count: artifactCount },
-    ] satisfies { key: WorkTab; label: string; count: number; danger?: boolean }[]
-  ).filter((t) => t.count > 0);
+  const counted: { key: WorkTab; label: string; count?: number; danger?: boolean }[] = [
+    // Conflicts lead — an unresolved collision is the most action-worthy surface.
+    { key: 'conflicts', label: 'Conflicts', count: conflictCount, danger: true },
+    { key: 'changes', label: 'Changes', count: changedFileCount },
+    { key: 'sideEffects', label: 'Side-effects', count: sideEffectCount, danger: hasDanger },
+    { key: 'artifacts', label: 'Artifacts', count: artifactCount },
+  ];
+  // Files is always available (it browses the whole git+ledger tree, count-less).
+  const available = counted
+    .filter((t) => (t.count ?? 0) > 0)
+    .concat([{ key: 'files', label: 'Files' }]);
   const active: WorkTab = available.some((t) => t.key === tab) ? tab : available[0]?.key ?? tab;
 
   return (
@@ -192,6 +201,8 @@ export function WorkDrawer({
             embedded
           />
         ) : null
+      ) : active === 'files' ? (
+        <FilesSurface sessionId={sessionId} onClose={onClose} embedded />
       ) : active === 'changes' ? (
         <ChangesSurface changes={changes} onClose={onClose} embedded />
       ) : active === 'sideEffects' ? (

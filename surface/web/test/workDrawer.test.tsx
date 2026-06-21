@@ -43,18 +43,21 @@ describe('WorkDrawer', () => {
   it('renders a tab per non-empty surface, with counts', () => {
     renderDrawer();
     const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(2);
+    // changes + side-effects + the always-present Files tab.
+    expect(tabs).toHaveLength(3);
     expect(screen.getByRole('tab', { name: /Changes/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /Side-effects/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Files/ })).toBeTruthy();
     // Changes tab is active → shows the file row, not the command.
     expect(screen.getByText('src/a.ts')).toBeTruthy();
     expect(screen.queryByText('npm install')).toBeNull();
   });
 
-  it('omits the tab for an empty surface', () => {
+  it('omits the tab for an empty surface (but keeps the always-present Files tab)', () => {
     renderDrawer({ effects: [], sideEffectCount: 0 });
-    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getAllByRole('tab')).toHaveLength(2); // changes + files
     expect(screen.queryByRole('tab', { name: /Side-effects/ })).toBeNull();
+    expect(screen.getByRole('tab', { name: /Files/ })).toBeTruthy();
   });
 
   it('clicking the Side-effects tab calls onTab', () => {
@@ -141,7 +144,7 @@ describe('WorkDrawer', () => {
       artifactCount: 1,
       tab: 'artifacts',
     });
-    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getAllByRole('tab')).toHaveLength(4); // changes + side-effects + artifacts + files
     expect(screen.getByRole('tab', { name: /Artifacts/ })).toBeTruthy();
     // Artifacts tab active → the gallery tile shows the filename.
     expect(screen.getByTestId('artifact-tile')).toBeTruthy();
