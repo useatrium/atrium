@@ -2419,6 +2419,42 @@ function rawSession(req: FastifyRequest): string | undefined {
         return reply.send({ backing: 'ledger', entries: await ledgerHistory(id, resolved.relPath) });
       });
 
+      // Read content by backing: git files inline; ledger files via the
+      // conflict-aware by-path serve (redirect so the last-normal +
+      // X-Artifact-Conflicted semantics live in one place).
+      filesScope.get('/api/sessions/:id/files/content', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const path = normalizeFilesPath((req.query as { path?: unknown }).path);
+        if (path == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+        }
+        const resolved = resolveBacking(path, { gitPrefix });
+        if (resolved.backing === 'git') {
+          if (!gitSource.isConfigured()) {
+            return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
+          }
+          try {
+            const file = await gitSource.readFile(resolved.relPath);
+            if (!file) return reply.code(404).send({ error: 'not_found', message: 'file not found' });
+            reply.header('X-File-Backing', 'git');
+            reply.header('X-Git-Blob-Sha', file.sha);
+            reply.header('Content-Type', 'application/octet-stream');
+            return reply.send(file.bytes);
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'path must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+        return reply.redirect(
+          `/api/sessions/${id}/artifacts/by-path?path=${encodeURIComponent(resolved.relPath)}`,
+          302,
+        );
+      });
+
       filesScope.put('/api/sessions/:id/files', async (req, reply) => {
         const user = await requireSessionAccess(req, reply);
         if (!user) return;
