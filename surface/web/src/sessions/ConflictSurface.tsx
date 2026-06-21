@@ -87,6 +87,19 @@ export function ConflictSurface({
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
+      {embedded && (
+        // The drawer chrome shows the tab but not which file — surface the path +
+        // seq at the top of the body so the user knows what they're resolving.
+        <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5">
+          <span className="shrink-0 rounded bg-danger-surface px-1 py-px text-3xs font-semibold uppercase tracking-wide text-danger-text">
+            Conflict
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-body" title={conflict.path}>
+            {conflict.path}
+          </span>
+          <span className="shrink-0 tabular-nums text-2xs text-fg-muted">· v{conflict.conflictSeq}</span>
+        </div>
+      )}
       <div className="flex border-b border-edge">
         <SideColumn side={conflict.left} base={conflict.base.text} />
         <div className="w-px shrink-0 bg-edge" />
