@@ -13,10 +13,14 @@
 //! the syscalls (openat2/statx/xattr/`/proc`) are in fs_linux.rs behind cfg(linux)
 //! and exercised by the on-node integration tests.
 
+pub mod adopt;
 pub mod echo;
 pub mod overlay;
 pub mod safety;
 pub mod tornread;
+
+#[cfg(target_os = "linux")]
+pub mod fs_linux;
 
 use std::path::PathBuf;
 

@@ -17,5 +17,11 @@ repository.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
+# Linux-only: the privileged node scanner's real syscalls (statx/rdev via std,
+# overlay xattrs via `xattr`, openat2 via a raw `libc` syscall).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+xattr = "1"
+
 [lints]
 workspace = true
