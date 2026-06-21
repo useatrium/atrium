@@ -66,6 +66,19 @@ describe('FilesSurface', () => {
     });
   });
 
+  it('renders git-backed files read-only', async () => {
+    render(<FilesSurface sessionId="s-1" onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('README.md')).toBeTruthy());
+    fireEvent.click(screen.getByText('README.md'));
+
+    await waitFor(() => expect(screen.getByText('initial contents')).toBeTruthy());
+    expect(screen.getByText('read-only (repo)')).toBeTruthy();
+    expect(screen.queryByText('Edit')).toBeNull();
+    expect(screen.queryByText('Save')).toBeNull();
+    expect(screen.queryByLabelText('File contents')).toBeNull();
+  });
+
   it('renders a version skew badge for a ledger file with a newer conflict seq', async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -137,6 +150,7 @@ describe('FilesSurface', () => {
     fireEvent.click(screen.getByText('plan.md'));
     await waitFor(() => expect(screen.getByText('initial contents')).toBeTruthy());
 
+    expect(screen.getByText('Edit')).toBeTruthy();
     fireEvent.click(screen.getByText('Edit'));
     const editor = screen.getByLabelText('File contents');
     fireEvent.change(editor, { target: { value: 'updated contents' } });

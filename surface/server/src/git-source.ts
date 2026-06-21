@@ -1,13 +1,11 @@
 import { execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 export interface GitSource {
   listDir(relDir: string): Promise<Array<{ path: string; type: 'file' | 'dir' }>>;
   readFile(relPath: string): Promise<{ bytes: Buffer; sha: string } | null>;
   history(relPath: string): Promise<Array<{ sha: string; author: string; date: string; subject: string }>>;
-  commitFile(relPath: string, bytes: Buffer, message: string, author: string): Promise<{ sha: string }>;
   isConfigured(): boolean;
 }
 
@@ -58,39 +56,6 @@ export function createGitSource(repoRoot?: string, branch = 'HEAD'): GitSource {
       const cwd = requireRepoRoot(root);
       const stdout = await git(cwd, ['log', '--format=%H%x00%an%x00%aI%x00%s', tree, '--', path]);
       return parseHistory(stdout);
-    },
-
-    async commitFile(relPath: string, bytes: Buffer, message: string, author: string) {
-      const path = safeGitPath(relPath);
-      const cwd = requireRepoRoot(root);
-      if (tree !== 'HEAD') {
-        await git(cwd, ['checkout', tree]);
-      }
-      const destination = join(cwd, path);
-      await mkdir(dirname(destination), { recursive: true });
-      await writeFile(destination, bytes);
-      await git(cwd, ['add', '--', path]);
-
-      const identity = gitIdentity(author);
-      const commitMessage = cleanCommitMessage(message, path);
-      try {
-        await git(cwd, [
-          '-c',
-          `user.name=${identity.name}`,
-          '-c',
-          `user.email=${identity.email}`,
-          'commit',
-          '-m',
-          commitMessage,
-          '--',
-          path,
-        ]);
-      } catch (err) {
-        if (!isNothingToCommit(err)) throw err;
-      }
-
-      const sha = (await git(cwd, ['rev-parse', 'HEAD'])).toString('utf8').trim();
-      return { sha };
     },
   };
 }
@@ -159,27 +124,11 @@ function parseHistory(stdout: Buffer): Array<{ sha: string; author: string; date
   });
 }
 
-function gitIdentity(author: string): { name: string; email: string } {
-  const name = author.replace(/[\0\r\n<>]+/g, ' ').trim() || 'Atrium';
-  const local = name.toLowerCase().replace(/[^a-z0-9._+-]+/g, '-').replace(/^-+|-+$/g, '') || 'atrium';
-  return { name, email: `${local}@atrium.local` };
-}
-
-function cleanCommitMessage(message: string, relPath: string): string {
-  const cleaned = message.replace(/\0/g, '').trim();
-  return cleaned.length > 0 ? cleaned : `Update ${relPath}`;
-}
-
 function isMissingTreeish(err: unknown): boolean {
   const text = errorText(err).toLowerCase();
   return text.includes('not a valid object name')
     || text.includes('path ') && text.includes('does not exist')
     || text.includes('exists on disk, but not in');
-}
-
-function isNothingToCommit(err: unknown): boolean {
-  const text = errorText(err).toLowerCase();
-  return text.includes('nothing to commit') || text.includes('no changes added to commit');
 }
 
 function errorText(err: unknown): string {

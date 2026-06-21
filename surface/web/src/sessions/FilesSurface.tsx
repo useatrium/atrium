@@ -199,6 +199,7 @@ export function FilesSurface({
       }),
     [rows],
   );
+  const selectedReadOnlyRepo = selected?.backing === 'git';
 
   const loadContent = useCallback(
     async (row: FileRow) => {
@@ -281,6 +282,7 @@ export function FilesSurface({
 
   async function saveFile() {
     if (!selected) return;
+    if (selected.backing === 'git') return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -361,6 +363,7 @@ export function FilesSurface({
               <VersionSkewBadge workingSeq={versionSkew.workingSeq} latestSeq={versionSkew.latestSeq} />
             )}
             <BackingBadge backing={selected.backing} />
+            {selectedReadOnlyRepo && <span className="shrink-0 text-2xs text-fg-muted">read-only (repo)</span>}
             <button
               type="button"
               onClick={toggleHistory}
@@ -368,17 +371,19 @@ export function FilesSurface({
             >
               History
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing((value) => !value);
-                setDraft(content);
-                setSaveError(null);
-              }}
-              className="rounded border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-body hover:bg-surface-overlay"
-            >
-              {editing ? 'Preview' : 'Edit'}
-            </button>
+            {!selectedReadOnlyRepo && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing((value) => !value);
+                  setDraft(content);
+                  setSaveError(null);
+                }}
+                className="rounded border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-body hover:bg-surface-overlay"
+              >
+                {editing ? 'Preview' : 'Edit'}
+              </button>
+            )}
           </div>
           {historyOpen && (
             <div className="shrink-0 bg-surface-raised/30">
@@ -401,7 +406,7 @@ export function FilesSurface({
             <div role="alert" className="px-3 py-2 text-2xs text-danger-text">
               {contentError}
             </div>
-          ) : editing ? (
+          ) : editing && !selectedReadOnlyRepo ? (
             <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
               <textarea
                 aria-label="File contents"
