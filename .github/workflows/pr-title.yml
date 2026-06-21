@@ -1,0 +1,27 @@
+name: PR Title
+
+# Squash-merge uses the PR *title* as the master commit subject
+# (squash_merge_commit_title=PR_TITLE). Enforce Conventional Commits on the
+# title so master stays consistent and changelog/release automation can parse
+# it later. This does not touch individual branch commits — those are squashed
+# away — so contributors never need to clean up their own history.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
