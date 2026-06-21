@@ -165,6 +165,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     });
   }
 
+  // CORS for allowlisted cross-origin clients (the Electron desktop shell at
+  // app://atrium uses an absolute origin + bearer token). The web SPA is
+  // same-origin and never sends an Origin header here. Token auth carries no
+  // cookies, so we echo only allowlisted origins and omit allow-credentials.
+  const corsOrigins = new Set(config.corsOrigins);
+  app.addHook('onRequest', async (req, reply) => {
+    const origin = req.headers.origin;
+    if (typeof origin !== 'string' || !corsOrigins.has(origin)) return;
+    reply.header('access-control-allow-origin', origin);
+    reply.header('vary', 'Origin');
+    reply.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    reply.header('access-control-allow-headers', 'authorization, content-type');
+    reply.header('access-control-max-age', '600');
+    if (req.method === 'OPTIONS') {
+      reply.code(204).send();
+      return reply;
+    }
+  });
+
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof DomainError) {
       return reply.code(err.statusCode).send({ error: err.code, message: err.message });
