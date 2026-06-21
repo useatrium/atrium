@@ -217,3 +217,14 @@ pub enum SessionEventConversionError {
     #[error("failed to serialize session event {event_id} payload as SSE JSON: {source}")]
     JsonData { event_id: i64, source: axum::Error },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SessionEventName;
+
+    #[test]
+    fn artifact_captured_is_forwarded_as_its_event_kind() {
+        let event = SessionEventName::from("artifact.captured");
+        assert_eq!(event.as_str(), "artifact.captured");
+    }
+}

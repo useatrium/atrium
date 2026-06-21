@@ -36,6 +36,30 @@ pub struct ClaimExecutionResult {
     pub claimed: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct ArtifactCaptureInput {
+    pub path: String,
+    pub kind: String,
+    pub mime: String,
+    pub size_bytes: i64,
+    pub sha256: String,
+    pub data: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtifactCaptureResult {
+    pub event: Option<SessionEvent>,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtifactBlob {
+    pub mime: String,
+    pub size_bytes: i64,
+    pub sha256: String,
+    pub data: Vec<u8>,
+}
+
 #[derive(Clone)]
 pub struct PgSessionStore {
     pool: PgPool,
@@ -311,6 +335,31 @@ impl PgSessionStore {
         row.map(TryInto::try_into).transpose()
     }
 
+    pub async fn execution_thread_key(
+        &self,
+        execution_id: &str,
+    ) -> Result<ThreadKey, SessionStoreError> {
+        let raw = sqlx::query_scalar::<_, String>(
+            r#"
+            select thread_key
+            from session_executions
+            where execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| SessionStoreError::ExecutionNotFound {
+            execution_id: execution_id.to_owned(),
+        })?;
+
+        ThreadKey::parse(raw).map_err(|error| {
+            SessionStoreError::InvalidPersistedValue(format!(
+                "invalid execution thread_key: {error}"
+            ))
+        })
+    }
+
     pub async fn mark_execution_running(
         &self,
         execution_id: &str,
@@ -510,6 +559,112 @@ impl PgSessionStore {
         .await?;
 
         row.try_into()
+    }
+
+    pub async fn capture_artifact(
+        &self,
+        thread_key: &ThreadKey,
+        execution_id: &str,
+        input: ArtifactCaptureInput,
+    ) -> Result<ArtifactCaptureResult, SessionStoreError> {
+        let artifact_id = input
+            .sha256
+            .get(..16)
+            .ok_or_else(|| SessionStoreError::InvalidPersistedValue("sha256 too short".to_owned()))?
+            .to_owned();
+        let artifact_ref = input.data.as_ref().map(|_| input.sha256.clone());
+        let payload = serde_json::json!({
+            "artifact_id": artifact_id,
+            "execution_id": execution_id,
+            "path": input.path,
+            "kind": input.kind,
+            "mime": input.mime,
+            "size_bytes": input.size_bytes,
+            "sha256": input.sha256,
+            "ref": artifact_ref,
+        });
+
+        let mut tx = self.pool.begin().await?;
+        let execution_thread_key = sqlx::query_scalar::<_, String>(
+            r#"
+            select thread_key
+            from session_executions
+            where execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| SessionStoreError::ExecutionNotFound {
+            execution_id: execution_id.to_owned(),
+        })?;
+        if execution_thread_key != thread_key.as_str() {
+            return Err(SessionStoreError::InvalidPersistedValue(format!(
+                "execution {execution_id} belongs to thread_key {execution_thread_key}, not {thread_key}"
+            )));
+        }
+
+        if let (Some(ref artifact_ref), Some(data)) = (artifact_ref.as_ref(), input.data.as_ref()) {
+            sqlx::query(
+                r#"
+                insert into artifact_blobs (execution_id, ref, mime, size_bytes, sha256, data)
+                values ($1, $2, $3, $4, $5, $6)
+                on conflict (execution_id, ref) do nothing
+                "#,
+            )
+            .bind(execution_id)
+            .bind(artifact_ref)
+            .bind(
+                payload["mime"]
+                    .as_str()
+                    .unwrap_or("application/octet-stream"),
+            )
+            .bind(input.size_bytes)
+            .bind(payload["sha256"].as_str().unwrap_or_default())
+            .bind(data)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        let row = sqlx::query_as::<_, SessionEventRow>(
+            r#"
+            insert into session_events (thread_key, execution_id, event_type, payload)
+            values ($1, $2, 'artifact.captured', $3)
+            on conflict do nothing
+            returning event_id, thread_key, execution_id, event_type, payload, created_at
+            "#,
+        )
+        .bind(thread_key.as_str())
+        .bind(execution_id)
+        .bind(payload.clone())
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(ArtifactCaptureResult {
+            event: row.map(TryInto::try_into).transpose()?,
+            payload,
+        })
+    }
+
+    pub async fn get_artifact_blob(
+        &self,
+        execution_id: &str,
+        artifact_ref: &str,
+    ) -> Result<Option<ArtifactBlob>, SessionStoreError> {
+        let row = sqlx::query_as::<_, ArtifactBlobRow>(
+            r#"
+            select mime, size_bytes, sha256, data
+            from artifact_blobs
+            where execution_id = $1 and ref = $2
+            "#,
+        )
+        .bind(execution_id)
+        .bind(artifact_ref)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
     }
 
     pub async fn list_events_after(
@@ -776,6 +931,8 @@ pub struct SessionEventNotification {
 pub enum SessionStoreError {
     #[error("session not found for thread_key {thread_key}")]
     NotFound { thread_key: String },
+    #[error("execution not found for execution_id {execution_id}")]
+    ExecutionNotFound { execution_id: String },
     #[error(
         "session {thread_key} already exists with harness_type {existing}, requested {requested}"
     )]
@@ -949,6 +1106,14 @@ struct SessionEventRow {
     created_at: OffsetDateTime,
 }
 
+#[derive(FromRow)]
+struct ArtifactBlobRow {
+    mime: String,
+    size_bytes: i64,
+    sha256: String,
+    data: Vec<u8>,
+}
+
 impl TryFrom<SessionEventRow> for SessionEvent {
     type Error = SessionStoreError;
 
@@ -961,6 +1126,17 @@ impl TryFrom<SessionEventRow> for SessionEvent {
             payload: row.payload,
             created_at: row.created_at,
         })
+    }
+}
+
+impl From<ArtifactBlobRow> for ArtifactBlob {
+    fn from(row: ArtifactBlobRow) -> Self {
+        Self {
+            mime: row.mime,
+            size_bytes: row.size_bytes,
+            sha256: row.sha256,
+            data: row.data,
+        }
     }
 }
 

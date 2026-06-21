@@ -249,6 +249,17 @@ where
             .await
     }
 
+    pub async fn set_runtime_context(
+        &self,
+        id: &SandboxId,
+        thread_key: &str,
+        execution_id: &str,
+    ) -> SandboxResult<()> {
+        self.backend
+            .set_runtime_context(id, thread_key, execution_id)
+            .await
+    }
+
     pub async fn reconcile_one(&self, id: &SandboxId) -> SandboxResult<ReconcileOutcome> {
         let Some(desired) = self.store.get(id) else {
             return Ok(ReconcileOutcome::Drift(DriftReason::NoDesiredState));

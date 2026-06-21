@@ -445,6 +445,24 @@ if [ "$CODEX_AUTH_MODE" != "access_token" ]; then
     fi
 fi
 
+# ── Background: artifact capture ────────────────────────────────────────────
+# Runs in-process rather than as a second container so it sees the exact /tmp
+# and workspace filesystem the harness writes to. Logs stay out of stdout,
+# which is reserved for the harness protocol.
+case "${ARTIFACT_CAPTURE_ENABLED:-1}" in
+    0|false|False|FALSE|no|No|NO|off|Off|OFF)
+        ;;
+    *)
+        if [ -n "${CENTAUR_API_URL:-}" ] && [ -n "${ARTIFACT_CAPTURE_API_KEY:-}" ]; then
+            mkdir -p "$HOME_DIR/outputs"
+            export ARTIFACT_CAPTURE_DIRS="${ARTIFACT_CAPTURE_DIRS:-$WORKSPACE_DIR:/tmp:$HOME_DIR/outputs:/var/tmp}"
+            artifact-capture > /tmp/artifact-capture.log 2>&1 &
+        else
+            echo "artifact capture disabled: missing CENTAUR_API_URL or ARTIFACT_CAPTURE_API_KEY" >&2
+        fi
+        ;;
+esac
+
 # Wait for the tool-server sidecar before signalling readiness, so the harness
 # doesn't issue its first tool call before the server is listening.
 if [ -n "${CENTAUR_TOOLS_URL:-}" ]; then

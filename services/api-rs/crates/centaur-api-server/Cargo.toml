@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-axum.workspace = true
+axum = { workspace = true, features = ["multipart"] }
 base64.workspace = true
 centaur-iron-control.workspace = true
 centaur-iron-proxy.workspace = true

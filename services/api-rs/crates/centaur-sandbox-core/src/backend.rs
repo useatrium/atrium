@@ -66,6 +66,21 @@ pub trait SandboxBackend: Send + Sync {
         })
     }
 
+    /// Publish the active Centaur execution context to an already-running
+    /// sandbox. Backends that can patch runtime metadata use this to update
+    /// downward-API files for background helpers in warm sandboxes.
+    async fn set_runtime_context(
+        &self,
+        _id: &SandboxId,
+        _thread_key: &str,
+        _execution_id: &str,
+    ) -> SandboxResult<()> {
+        Err(crate::SandboxError::Unsupported {
+            backend: self.name(),
+            operation: "set_runtime_context",
+        })
+    }
+
     /// Suspend the sandbox while preserving any backend-supported runtime state.
     async fn pause(&self, id: &SandboxId) -> SandboxResult<()>;
 

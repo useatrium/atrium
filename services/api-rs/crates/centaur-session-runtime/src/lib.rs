@@ -18,7 +18,8 @@ use centaur_session_core::{
     SessionMessageInput, ThreadKey,
 };
 use centaur_session_sqlx::{
-    PgSessionStore, SessionEventListener, SessionStoreError, default_metadata,
+    ArtifactBlob, ArtifactCaptureInput, ArtifactCaptureResult, PgSessionStore,
+    SessionEventListener, SessionStoreError, default_metadata,
 };
 use centaur_telemetry::{
     record_sandbox_warm_pool_claim, record_session_execution_finished,
@@ -989,6 +990,27 @@ impl SessionRuntime {
             span.record("sandbox_id", sandbox_id.as_str());
             execution_trace_span.record("centaur.sandbox_id", sandbox_id.as_str());
             execution_trace_span.record("sandbox_id", sandbox_id.as_str());
+            if let Err(error) = self
+                .sandbox_runtime
+                .manager
+                .set_runtime_context(
+                    &SandboxId::new(sandbox_id.as_str()),
+                    thread_key.as_str(),
+                    &execution.execution_id,
+                )
+                .await
+                && !matches!(error, SandboxError::Unsupported { .. })
+            {
+                warn!(
+                    component = COMPONENT_SESSION_RUNTIME,
+                    event = "sandbox_runtime_context_update_failed",
+                    thread_key = %thread_key,
+                    execution_id = %execution.execution_id,
+                    sandbox_id = %sandbox_id,
+                    %error,
+                    "failed to publish runtime context to sandbox"
+                );
+            }
 
             if let Some(execution) = self
                 .inactive_execution_snapshot(thread_key, &execution.execution_id, Some(&sandbox_id))
@@ -1333,6 +1355,39 @@ impl SessionRuntime {
             );
         }
         result
+    }
+
+    pub async fn execution_thread_key(
+        &self,
+        execution_id: &str,
+    ) -> Result<ThreadKey, SessionRuntimeError> {
+        self.store
+            .execution_thread_key(execution_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn capture_artifact(
+        &self,
+        thread_key: &ThreadKey,
+        execution_id: &str,
+        input: ArtifactCaptureInput,
+    ) -> Result<ArtifactCaptureResult, SessionRuntimeError> {
+        self.store
+            .capture_artifact(thread_key, execution_id, input)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn get_artifact_blob(
+        &self,
+        execution_id: &str,
+        artifact_ref: &str,
+    ) -> Result<Option<ArtifactBlob>, SessionRuntimeError> {
+        self.store
+            .get_artifact_blob(execution_id, artifact_ref)
+            .await
+            .map_err(Into::into)
     }
 
     async fn ensure_session_sandbox(
@@ -2064,7 +2119,11 @@ impl SandboxRuntime {
         let warm_workload = workload.clone();
         let mut runtime = Self::backend_with_warm_spec_factory(
             backend,
-            move |thread_key, _execution_id, harness| workload.spec(thread_key, harness),
+            move |thread_key, execution_id, harness| {
+                workload
+                    .spec(thread_key, harness)
+                    .env("CENTAUR_EXECUTION_ID", execution_id)
+            },
             move || warm_workload.warm_spec(),
         );
         runtime.warm_harness = warm_harness;

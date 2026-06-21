@@ -42,6 +42,10 @@ const MANAGED_BY_VALUE: &str = "api-rs";
 // so resume (which has only the sandbox id) can rebind without the spec or any
 // in-memory state. Survives pause and api-rs restarts.
 const IRON_CONTROL_PRINCIPAL_ANNOTATION: &str = "centaur.ai/iron-control-principal";
+const RUNTIME_THREAD_KEY_ANNOTATION: &str = "centaur.ai/thread-key";
+const RUNTIME_EXECUTION_ID_ANNOTATION: &str = "centaur.ai/execution-id";
+const RUNTIME_CONTEXT_VOLUME: &str = "runtime-context";
+const RUNTIME_CONTEXT_MOUNT_PATH: &str = "/etc/centaur/runtime-context";
 // RFC 3339 instant stamped when the sandbox is paused for idleness and
 // cleared on resume. The reaper uses it to stop sandboxes whose pause
 // outlived the idle TTL, surviving api-rs restarts (the pause timer is
@@ -451,6 +455,31 @@ impl SandboxBackend for AgentSandboxBackend {
         self.assign_proxy_principal(id, principal_id).await
     }
 
+    async fn set_runtime_context(
+        &self,
+        id: &SandboxId,
+        thread_key: &str,
+        execution_id: &str,
+    ) -> SandboxResult<()> {
+        let patch = json!({
+            "metadata": {
+                "annotations": {
+                    RUNTIME_THREAD_KEY_ANNOTATION: thread_key,
+                    RUNTIME_EXECUTION_ID_ANNOTATION: execution_id,
+                },
+            },
+        });
+        self.pods()
+            .patch(
+                id.as_str(),
+                &PatchParams::apply(&self.config.field_manager),
+                &Patch::Merge(&patch),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|err| map_kube_error("patch sandbox runtime context", err))
+    }
+
     async fn pause(&self, id: &SandboxId) -> SandboxResult<()> {
         self.patch_sandbox_merge(id, sandbox_pause_patch(jiff::Timestamp::now()))
             .await
@@ -629,6 +658,30 @@ fn build_agent_sandbox(
         volume_mounts.extend(tools::agent_volume_mounts_json(config.tools.as_ref()));
         volumes.extend(tools::volumes_json(config.tools.as_ref()));
     }
+    volume_mounts.push(json!({
+        "name": RUNTIME_CONTEXT_VOLUME,
+        "mountPath": RUNTIME_CONTEXT_MOUNT_PATH,
+        "readOnly": true,
+    }));
+    volumes.push(json!({
+        "name": RUNTIME_CONTEXT_VOLUME,
+        "downwardAPI": {
+            "items": [
+                {
+                    "path": "thread_key",
+                    "fieldRef": {
+                        "fieldPath": format!("metadata.annotations['{RUNTIME_THREAD_KEY_ANNOTATION}']"),
+                    },
+                },
+                {
+                    "path": "execution_id",
+                    "fieldRef": {
+                        "fieldPath": format!("metadata.annotations['{RUNTIME_EXECUTION_ID_ANNOTATION}']"),
+                    },
+                },
+            ],
+        },
+    }));
     insert_optional(
         &mut container,
         "volumeMounts",
@@ -877,7 +930,27 @@ mod tests {
         );
         assert_eq!(container.image.as_deref(), Some("centaur-agent:latest"));
         assert_eq!(container.stdin, Some(true));
-        assert_eq!(container.volume_mounts.as_ref().unwrap().len(), 2);
+        assert_eq!(container.volume_mounts.as_ref().unwrap().len(), 3);
+        assert!(
+            container
+                .volume_mounts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|mount| mount.name == RUNTIME_CONTEXT_VOLUME
+                    && mount.mount_path == RUNTIME_CONTEXT_MOUNT_PATH)
+        );
+        assert!(
+            sandbox
+                .spec
+                .pod_template
+                .spec
+                .volumes
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|volume| volume.name == RUNTIME_CONTEXT_VOLUME)
+        );
         assert!(container.resources.as_ref().unwrap().limits.is_some());
     }
 

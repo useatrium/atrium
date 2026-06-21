@@ -1,0 +1,29 @@
+{{- if and .Values.networkPolicy.enabled .Values.apiRs.enabled (eq .Values.apiRs.ironProxy.mode "disabled") }}
+# Fork addition (Atrium artifact capture): with iron-proxy DISABLED, api-rs does
+# not render a per-sandbox egress NetworkPolicy, and managed-by:api-rs sandboxes
+# match none of the other sandbox egress rules -- so default-deny blocks the
+# artifact-capture worker's POST to api-rs. Allow managed-by:api-rs -> api-rs:port.
+# (api-rs ingress already admits managed-by:api-rs on the same port; DNS is
+# covered by the allow-dns policy. When iron-proxy is enabled the per-sandbox
+# policy already grants this, so this template is gated to the disabled case.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "centaur.fullname" . }}-sandbox-egress-api-rs
+  labels:
+{{ include "centaur.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      centaur.ai/managed-by: api-rs
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "api-rs") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.apiRs.port }}
+{{- end }}

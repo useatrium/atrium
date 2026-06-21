@@ -10,8 +10,8 @@ use std::{
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{DefaultBodyLimit, MatchedPath, Path, Query, Request, State},
-    http::{HeaderMap, Method, StatusCode, Uri},
+    extract::{DefaultBodyLimit, MatchedPath, Multipart, Path, Query, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{
         IntoResponse, Response, Sse,
@@ -24,7 +24,7 @@ use centaur_session_core::ThreadKey;
 use centaur_session_runtime::{
     AnswerQuestionError, ExecuteSessionInput, HarnessConflictPolicy, SandboxRuntime, SessionRuntime,
 };
-use centaur_session_sqlx::PgSessionStore;
+use centaur_session_sqlx::{ArtifactCaptureInput, PgSessionStore};
 use centaur_telemetry::{
     PrometheusHandle, http_status_class, prometheus_handle, record_http_request_finished,
     record_http_request_started,
@@ -163,6 +163,15 @@ pub fn build_router_with_app_state(state: AppState) -> Router {
             post(answer_execution_question),
         )
         .route("/api/session/{thread_key}/events", get(stream_events))
+        .route("/agent/threads/{thread_key}/events", get(stream_events))
+        .route(
+            "/agent/executions/{execution_id}/artifacts",
+            post(capture_artifact).layer(DefaultBodyLimit::max(MAX_ARTIFACT_UPLOAD_BYTES)),
+        )
+        .route(
+            "/agent/executions/{execution_id}/artifacts/{artifact_ref}",
+            get(get_artifact),
+        )
         .route("/api/sandboxes/drain", post(drain_sandboxes))
         .route("/api/workflows/schedules", get(list_workflow_schedules))
         .route(
@@ -474,6 +483,242 @@ async fn stream_events(
         Ok(sse)
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Hard ceiling on a single artifact upload body. The sandbox-side worker
+/// soft-caps staged bytes far below this (1 MiB by default, manifest-only above
+/// that); this server-side limit bounds memory and Postgres growth regardless
+/// of what a buggy or hostile client sends.
+const MAX_ARTIFACT_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
+
+async fn capture_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(execution_id): Path<String>,
+    multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    enforce_artifact_api_key(&headers)?;
+    let thread_key = state.runtime()?.execution_thread_key(&execution_id).await?;
+    enforce_sandbox_thread_scope(&headers, &thread_key)?;
+    let input = parse_artifact_multipart(multipart).await?;
+    let result = state
+        .runtime()?
+        .capture_artifact(&thread_key, &execution_id, input)
+        .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "idempotent": result.event.is_none(),
+        "event_id": result.event.as_ref().map(|event| event.event_id),
+        "artifact": result.payload,
+    })))
+}
+
+async fn get_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((execution_id, artifact_ref)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    enforce_artifact_api_key(&headers)?;
+    let blob = state
+        .runtime()?
+        .get_artifact_blob(&execution_id, &artifact_ref)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("artifact not found".to_owned()))?;
+
+    let mut response = Body::from(blob.data).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&blob.mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    if let Ok(value) = HeaderValue::from_str(&blob.size_bytes.to_string()) {
+        headers.insert(header::CONTENT_LENGTH, value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&blob.sha256) {
+        headers.insert("x-artifact-sha256", value);
+    }
+    // Artifact bytes and their mime are sandbox-controlled, so never let a
+    // browser sniff or render them inline (e.g. a planted text/html artifact).
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment"),
+    );
+    Ok(response)
+}
+
+#[derive(Default)]
+struct ArtifactUploadParts {
+    path: Option<String>,
+    kind: Option<String>,
+    mime: Option<String>,
+    size_bytes: Option<i64>,
+    sha256: Option<String>,
+    data: Option<Vec<u8>>,
+}
+
+async fn parse_artifact_multipart(
+    mut multipart: Multipart,
+) -> Result<ArtifactCaptureInput, ApiError> {
+    let mut parts = ArtifactUploadParts::default();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| ApiError::BadRequest("invalid artifact multipart body".to_owned()))?
+    {
+        let Some(name) = field.name().map(str::to_owned) else {
+            continue;
+        };
+        match name.as_str() {
+            "path" => parts.path = Some(multipart_text(field).await?),
+            "kind" => parts.kind = Some(multipart_text(field).await?),
+            "mime" => parts.mime = Some(multipart_text(field).await?),
+            "size_bytes" => {
+                let text = multipart_text(field).await?;
+                parts.size_bytes = Some(text.parse::<i64>().map_err(|_| {
+                    ApiError::BadRequest("artifact size_bytes must be an integer".to_owned())
+                })?);
+            }
+            "sha256" => parts.sha256 = Some(multipart_text(field).await?),
+            "bytes" | "file" => {
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|_| ApiError::BadRequest("invalid artifact bytes part".to_owned()))?;
+                parts.data = Some(bytes.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    let path = required_part(parts.path, "path")?;
+    let kind = required_part(parts.kind, "kind")?;
+    if !matches!(kind.as_str(), "created" | "modified" | "deleted") {
+        return Err(ApiError::BadRequest(
+            "artifact kind must be created, modified, or deleted".to_owned(),
+        ));
+    }
+    let mime = required_part(parts.mime, "mime")?;
+    let size_bytes = parts
+        .size_bytes
+        .ok_or_else(|| ApiError::BadRequest("missing artifact field size_bytes".to_owned()))?;
+    if size_bytes < 0 {
+        return Err(ApiError::BadRequest(
+            "artifact size_bytes must be non-negative".to_owned(),
+        ));
+    }
+    let sha256 = required_part(parts.sha256, "sha256")?.to_ascii_lowercase();
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest(
+            "artifact sha256 must be a 64-character hex digest".to_owned(),
+        ));
+    }
+    if let Some(data) = parts.data.as_ref() {
+        if data.len() as i64 != size_bytes {
+            return Err(ApiError::BadRequest(
+                "artifact bytes length does not match size_bytes".to_owned(),
+            ));
+        }
+        // Verify the content hash rather than trusting the client's claim, so
+        // `ref`/`x-artifact-sha256` and the dedupe key are integrity-backed.
+        let computed = hex::encode(Sha256::digest(data));
+        if computed != sha256 {
+            return Err(ApiError::BadRequest(
+                "artifact sha256 does not match uploaded bytes".to_owned(),
+            ));
+        }
+    }
+
+    Ok(ArtifactCaptureInput {
+        path,
+        kind,
+        mime,
+        size_bytes,
+        sha256,
+        data: parts.data,
+    })
+}
+
+async fn multipart_text(field: axum::extract::multipart::Field<'_>) -> Result<String, ApiError> {
+    field
+        .text()
+        .await
+        .map_err(|_| ApiError::BadRequest("invalid artifact text field".to_owned()))
+}
+
+fn required_part(value: Option<String>, name: &str) -> Result<String, ApiError> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::BadRequest(format!("missing artifact field {name}")))
+}
+
+fn enforce_artifact_api_key(headers: &HeaderMap) -> Result<(), ApiError> {
+    let Some(actual) = presented_api_key(headers) else {
+        return Err(ApiError::Unauthorized("missing API key".to_owned()));
+    };
+    let expected = configured_artifact_api_keys();
+    if expected.is_empty() {
+        return Err(ApiError::Unauthorized(
+            "artifact API key is not configured".to_owned(),
+        ));
+    }
+    if expected
+        .iter()
+        .any(|key| constant_time_eq(actual.as_bytes(), key.as_bytes()))
+    {
+        return Ok(());
+    }
+    Err(ApiError::Unauthorized("invalid API key".to_owned()))
+}
+
+fn presented_api_key(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = header_value(headers, "x-api-key") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    let value = header_value(headers, "Authorization")?;
+    let trimmed = value.trim();
+    let token = trimmed
+        .strip_prefix("Bearer ")
+        .or_else(|| trimmed.strip_prefix("bearer "))
+        .unwrap_or(trimmed)
+        .trim();
+    (!token.is_empty()).then(|| token.to_owned())
+}
+
+fn configured_artifact_api_keys() -> Vec<String> {
+    // Dedicated, narrowly-scoped credential ONLY. Deliberately does not accept
+    // the broad control-plane key (CENTAUR_API_KEY) or bot keys: a leaked
+    // artifact key must not reach other control-plane routes, and sandboxes are
+    // handed this key — never a control-plane key.
+    env::var("ARTIFACT_CAPTURE_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .collect()
+}
+
+fn enforce_sandbox_thread_scope(
+    headers: &HeaderMap,
+    thread_key: &ThreadKey,
+) -> Result<(), ApiError> {
+    match header_value(headers, "x-centaur-thread-key") {
+        Some(value) if value.trim() == thread_key.as_str() => Ok(()),
+        Some(_) => Err(ApiError::Unauthorized(
+            "API key is not scoped to this thread".to_owned(),
+        )),
+        None => Err(ApiError::Unauthorized(
+            "missing sandbox thread scope".to_owned(),
+        )),
+    }
 }
 
 async fn create_workflow_run(
