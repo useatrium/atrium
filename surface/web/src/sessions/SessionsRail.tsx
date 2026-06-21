@@ -15,7 +15,7 @@ function groupSessions(sessions: Session[]): Group[] {
   const active: Session[] = [];
   const recent: Session[] = [];
   for (const s of sessions) {
-    if (s.pendingQuestion) needsYou.push(s);
+    if (s.pendingQuestion || s.providerAuthRequired) needsYou.push(s);
     else if (isTerminalSessionStatus(s.status)) recent.push(s);
     else active.push(s);
   }

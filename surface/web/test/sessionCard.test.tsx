@@ -113,6 +113,27 @@ describe('session card transitions across session.* events', () => {
     expect(screen.getByText(/harness crashed/)).toBeTruthy();
   });
 
+  it('shows needs auth when Claude auth is required', () => {
+    let s = spawned(loadedState());
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(102, 'session.provider_auth_required', {
+        sessionId: 'sess-1',
+        provider: 'claude-code',
+        userId: spawner.id,
+        reason: 'invalid_token',
+        message: 'Claude Code authentication failed.',
+        at: new Date().toISOString(),
+      }),
+    });
+    render(cardFor(s));
+    expect(screen.getByText('needs auth')).toBeTruthy();
+    expect(s.sessions['sess-1']!.providerAuthRequired).toMatchObject({
+      provider: 'claude-code',
+      reason: 'invalid_token',
+    });
+  });
+
   it('shows the current driver in the subtitle when it differs from the spawner', () => {
     const bob = { id: 'u-bob', handle: 'bob', displayName: 'Bob' };
     let s = spawned(loadedState());

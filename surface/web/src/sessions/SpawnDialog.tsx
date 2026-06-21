@@ -4,6 +4,7 @@
 // Phase 4 work surfaces + side-effect gate (Centaur doesn't consume it yet).
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
+import type { ProviderCredentialStatus } from '../api';
 import { XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
@@ -22,17 +23,23 @@ export function SpawnDialog({
   channelName,
   onCancel,
   onSpawn,
+  providerStatuses,
+  onConnectProvider,
 }: {
   channelName: string;
   onCancel: () => void;
   onSpawn: (config: SpawnConfig) => void;
+  providerStatuses?: Record<string, ProviderCredentialStatus | undefined>;
+  onConnectProvider?: (provider: 'claude-code') => void;
 }) {
   const [task, setTask] = useState('');
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');
 
-  const canSpawn = task.trim().length > 0;
+  const claudeStatus = providerStatuses?.['claude-code'];
+  const claudeNeedsAuth = harness === 'claude-code' && claudeStatus?.connected !== true;
+  const canSpawn = task.trim().length > 0 && !claudeNeedsAuth;
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -111,6 +118,25 @@ export function SpawnDialog({
               ))}
             </select>
           </label>
+
+          {claudeNeedsAuth && (
+            <div
+              role="status"
+              className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg-body"
+            >
+              <div className="font-medium">Claude Code needs your subscription token.</div>
+              <div className="mt-1 text-2xs leading-relaxed text-fg-muted">
+                Run <span className="font-mono">claude setup-token</span>, then connect Claude here.
+              </div>
+              <button
+                type="button"
+                onClick={() => onConnectProvider?.('claude-code')}
+                className="mt-2 rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+              >
+                Connect Claude
+              </button>
+            </div>
+          )}
 
           <div className="flex gap-3">
             <label className="block flex-1">
