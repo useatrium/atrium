@@ -3057,6 +3057,12 @@ function rawSession(req: FastifyRequest): string | undefined {
         stagingDeleted = true;
 
         const ledger = new ArtifactLedger(pool);
+        // First version of a path is 'created', else 'modified' (mirrors the
+        // buffered write-back path; kind is cosmetic but should be accurate).
+        const prior = await pool.query(
+          `SELECT 1 FROM artifacts WHERE session_id = $1 AND path = $2 LIMIT 1`,
+          [id, path],
+        );
         const result = await ledger.commitVersion({
           sessionId: id,
           channelId,
@@ -3064,7 +3070,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           blobSha: sha,
           sizeBytes,
           mime,
-          kind: 'modified',
+          kind: prior.rows[0] ? 'modified' : 'created',
           mergeClass: 'immutable-data',
           author: `node:${id}`,
           ...(baseSeq == null ? {} : { baseSeq }),

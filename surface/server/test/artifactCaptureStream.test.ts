@@ -152,8 +152,8 @@ describe('internal streaming artifact capture', () => {
     expect(cap.statusCode).toBe(200);
     expect(cap.json()).toEqual({ seq: 1, status: 'normal' });
 
-    const version = await pool.query<{ blob_sha: string; size_bytes: number; s3_key: string | null }>(
-      `SELECT v.blob_sha, b.size_bytes, b.s3_key
+    const version = await pool.query<{ blob_sha: string; size_bytes: number; s3_key: string | null; kind: string }>(
+      `SELECT v.blob_sha, v.kind, b.size_bytes, b.s3_key
          FROM artifacts a
          JOIN artifact_versions v ON v.artifact_id = a.id
          JOIN cas_blobs b ON b.sha256 = v.blob_sha
@@ -164,6 +164,7 @@ describe('internal streaming artifact capture', () => {
       blob_sha: sha,
       size_bytes: body.byteLength,
       s3_key: casBlobKey(sha),
+      kind: 'created', // first version of this path is 'created', not 'modified'
     });
     expect(mockedS3.storage.objects.get(casBlobKey(sha))?.body).toEqual(body);
 
