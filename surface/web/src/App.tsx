@@ -6,6 +6,7 @@ import { Toasts } from './components/Toasts';
 import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
+import { clearDesktopSession } from './desktop';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
 
@@ -112,8 +113,12 @@ export function App() {
         workspace={workspace}
         initialSessionId={initialSessionId}
         onLogout={() => {
-          clearCache().finally(() => {
-            api.logout().finally(() => location.reload());
+          // logout() first (still holds the token), then drop the keychain
+          // session, then clear the cache and reload.
+          api.logout().catch(() => {}).finally(() => {
+            void clearDesktopSession().finally(() => {
+              clearCache().finally(() => location.reload());
+            });
           });
         }}
       />

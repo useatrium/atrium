@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from './api';
+import { captureDesktopLogin } from './desktop';
 import type { AuthMethods, UserRef } from '@atrium/surface-client';
 
 function friendlyLoginError(err: unknown): string {
@@ -54,8 +55,9 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     setBusy(true);
     setError(null);
     try {
-      const { user } = await api.verifyEmailCode(email.trim(), code.trim());
-      onLogin(user);
+      const result = await api.verifyEmailCode(email.trim(), code.trim());
+      await captureDesktopLogin(result);
+      onLogin(result.user);
     } catch (err) {
       setError(friendlyLoginError(err));
     } finally {
@@ -70,8 +72,9 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     try {
       // Blank display name = server keeps the existing one (or defaults to
       // the handle for brand-new users) — re-logins don't rewrite history.
-      const { user } = await api.login(handle.trim(), displayName.trim());
-      onLogin(user);
+      const result = await api.login(handle.trim(), displayName.trim());
+      await captureDesktopLogin(result);
+      onLogin(result.user);
     } catch (err) {
       setError(friendlyLoginError(err));
     } finally {

@@ -10,6 +10,14 @@ export const config = {
     process.env.SESSION_SECRET ??
     'atrium-dev-secret-change-me',
   sessionCookie: 'atrium_session',
+  // Cross-origin allowlist for non-same-origin clients (the Electron desktop
+  // shell loads from app://atrium and calls this server with a bearer token).
+  // Comma-separated; token auth carries no cookies, so this never enables
+  // credentialed CORS. The web SPA is same-origin and never triggers it.
+  corsOrigins: (process.env.ATRIUM_CORS_ORIGINS ?? 'app://atrium')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   authOpen: (process.env.AUTH_OPEN ?? '1') !== '0',
   authDevCodes: (process.env.AUTH_DEV_CODES ?? '0') === '1',
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
