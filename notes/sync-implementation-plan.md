@@ -1,5 +1,34 @@
 # Agent workspace sync — full implementation plan (both halves)
 
+> **BUILD LOG (2026-06-20) — what's implemented + verified so far.** Atrium
+> `feat/sync-c1`: **Phase 1** gap-free change-feed + per-path sync-state (mig 034);
+> **Phase 2** delete-vs-edit-as-conflict + resolve + conflict-aware serve + scope +
+> `ConflictSurface`/banner/skew + live `useConflicts` hook wired into SessionPane +
+> WorkDrawer Conflicts tab (visual-proven via dev-browser); **Phase 3** git+ledger
+> file API + `FilesSurface` (WorkDrawer Files tab). **Server 271 / web 135 green.**
+> Centaur `feat/sync-node`: `centaur-node-sync` crate — overlay classifier, openat2
+> hardening, torn-read, echo-suppression, inbound adopt decision, capture/inbound
+> orchestration (**29 cargo tests**); Linux fs reader; Helm node-sync DaemonSet +
+> provisioning example.
+>
+> **REAL-NODE VALIDATION (kind `centaur`, live overlay, 2026-06-20) — C-verify PASS:**
+> built the scanner as a real aarch64-linux binary, mounted a real overlay on the
+> node, and exercised it end-to-end:
+> - capture: modify→`Upsert`(copy-up), delete→`Delete`(read the char-0:0 whiteout),
+>   create→`Upsert`, rename→`Upsert`+`Delete` (overlay chose delete+create — the
+>   documented #16 fallback; no redirect xattr), symlink→`SymlinkMeta` (never followed);
+> - **openat2 `NO_SYMLINKS` BLOCKS `leak→/etc/shadow` with ELOOP** (#1, on real Linux);
+>   a regular file reads through;
+> - inbound inverse-write: node writes v6 through `merged` (atomic temp+rename, agent
+>   uid 1001/664) → the agent reading `merged` sees v6, upper carries it (closes the
+>   C-verify residual). The k8s `Bidirectional`→`HostToContainer` linchpin was
+>   POC-confirmed a prior session; reaffirmed by these mechanics.
+>
+> **Remaining:** the live distributed e2e (agent pod + DaemonSet + a deployed Atrium
+> wired by HTTP), hydration-manifest→lower materialization (Phase 5 I/O), the node
+> daemon binary + image, `/atrium` projection + WIP patch-artifact (Phase 7),
+> Playwright two-actor conflict e2e. Mechanisms are proven; the rest is integration.
+
 > **Status: IMPLEMENTATION PLAN (2026-06-20).** Turns the settled design
 > (`agent-sync-design.md` §1–9 + §8B's 20 resolutions) and the lane sketch
 > (`inbound-sync-build-plan.md`) into an executable, phased, test-gated build across
