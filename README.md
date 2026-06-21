@@ -66,8 +66,9 @@ a **#general** channel.
 
 - **Places** are channels and threads: the durable, named, human side of the app.
 - **Sessions** are units of agent work. A session is more like a pull request than a
-  chat room: you start one from a thread, watch it run, hand off control, link to it
-  from anywhere, and it posts its result and a summary back when it's done.
+  chat room: you start one from a thread, watch it run, steer it across as many turns
+  as it takes, hand off control, link to it from anywhere, and it posts its result and
+  a summary back when it's done. (It even reopens for another turn when someone replies.)
 - **Artifacts** are the files agents produce (docs, datasets, notebooks, images).
   Every version is kept, and when two edits collide both are saved rather than one
   being lost.
@@ -86,16 +87,19 @@ Four layers do four different jobs. They're easy to mix up, so here's each one:
 | Layer | What it is | What it does |
 |---|---|---|
 | **Atrium** | the product in this repo: the web and mobile apps plus the server | Keeps **all the data that lasts**: the message log, every file version, the database, and file storage. This is what the team uses. |
-| **Centaur** | the engine that runs the agents ([paradigmxyz/centaur](https://github.com/paradigmxyz/centaur), MIT) | Starts a locked-down, throwaway sandbox, runs one turn of an agent, and streams the results back. Keeps **nothing** permanently. |
+| **Centaur** | the engine that runs the agents ([paradigmxyz/centaur](https://github.com/paradigmxyz/centaur), MIT) | Starts a locked-down, throwaway sandbox and runs the agent a turn at a time, streaming results back. Each turn is a clean sandbox; the conversation persists in Atrium, so a session keeps going across turns. Keeps **nothing** permanently. |
 | **Harness** | the agent program inside the sandbox | The "hands": it reads the task, runs tools, and edits files. Atrium doesn't care which one you use (**Claude Code**, **Codex**, **amp**, and so on). |
 | **Model** | the AI model the harness talks to | The "brain" (Claude, GPT, and so on). You can swap it per session. Requests pass through a proxy that adds the credentials, so **API keys never enter the sandbox**. |
 
 In short: Atrium keeps the data and runs the experience, Centaur runs the agents
-safely, and the harness and model plug into Centaur. A single turn goes:
+safely, and the harness and model plug into Centaur. Each turn goes:
 
 > **Atrium** starts a **session** → **Centaur** runs a **harness** in a sandbox →
 > the harness asks a **model** → results stream back and any new files are copied
 > out → **Atrium** saves them and shows the team.
+
+A session is a sequence of these turns: you can steer a running agent, answer its
+questions, and send follow-ups — and a finished session reopens when someone replies.
 
 Because the sandbox lets nothing connect into it, a small program on the host
 machine (the **node daemon**) does the copying in both directions:
