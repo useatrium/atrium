@@ -53,6 +53,15 @@ export interface AuthMethods {
   google: boolean;
 }
 
+export interface ProviderCredentialStatus {
+  provider: 'claude-code';
+  connected: boolean;
+  status: 'connected' | 'needs_auth';
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
 export type Api = ReturnType<typeof createApi>;
 
 export interface ListSessionsOptions {
@@ -114,6 +123,17 @@ export function createApi(opts: ApiOptions = {}) {
       }),
     /** `prefs` is absent on servers that predate the user-prefs migration. */
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
+    providerCredentials: () =>
+      req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
+    connectClaudeCode: (token: string) =>
+      req<{ provider: ProviderCredentialStatus }>('/api/me/provider-credentials/claude-code', {
+        method: 'PUT',
+        body: JSON.stringify({ token }),
+      }),
+    disconnectClaudeCode: () =>
+      req<{ ok: true }>('/api/me/provider-credentials/claude-code', {
+        method: 'DELETE',
+      }),
     /** Partial update; server merges over stored prefs and fans the full
      * normalized result out to all of the user's sockets via {type:'prefs'}. */
     patchPrefs: (patch: Partial<UserPrefs>, op: OpOptions = {}) =>

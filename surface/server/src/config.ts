@@ -5,6 +5,10 @@ export const config = {
   host: process.env.HOST ?? '127.0.0.1',
   // Prototype-grade: dev default secret; override in any real deployment.
   sessionSecret: process.env.SESSION_SECRET ?? 'atrium-dev-secret-change-me',
+  providerCredentialSecret:
+    process.env.PROVIDER_CREDENTIAL_SECRET ??
+    process.env.SESSION_SECRET ??
+    'atrium-dev-secret-change-me',
   sessionCookie: 'atrium_session',
   authOpen: (process.env.AUTH_OPEN ?? '1') !== '0',
   authDevCodes: (process.env.AUTH_DEV_CODES ?? '0') === '1',

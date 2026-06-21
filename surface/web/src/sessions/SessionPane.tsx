@@ -24,7 +24,7 @@ import {
   type ToolCallItem,
   type UserMessageItem,
 } from '@atrium/centaur-client';
-import { ApiError } from '../api';
+import { ApiError, type ProviderCredentialStatus } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
@@ -57,6 +57,7 @@ import {
   type SessionAnswerProposal,
   type SessionQuestionAnswerSummary,
   type SessionQuestionEvent,
+  type SessionProviderAuthRequired,
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
@@ -78,6 +79,8 @@ export function SessionPane({
   onCancelSession = async () => {},
   failedCancel = false,
   onClearFailedCancel = () => {},
+  providerCredentials,
+  onConnectProvider,
   layout = 'split',
   onToggleFocus,
 }: {
@@ -101,6 +104,8 @@ export function SessionPane({
   onCancelSession?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
+  providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
+  onConnectProvider?: (provider: 'claude-code') => void;
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
@@ -208,6 +213,7 @@ export function SessionPane({
     return userId;
   };
   const driverName = nameFor(driverId);
+  const providerAuthOwnerName = nameFor(session.providerAuthRequired?.userId ?? null);
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
   const steerAuthor = nameFor(session.spawnedBy);
@@ -507,6 +513,16 @@ export function SessionPane({
             Ignore
           </button>
         </div>
+      )}
+
+      {session.providerAuthRequired && !displayTerminal && (
+        <ProviderAuthBanner
+          required={session.providerAuthRequired}
+          isOwner={session.providerAuthRequired.userId === me.id}
+          ownerName={providerAuthOwnerName}
+          connected={providerCredentials?.[session.providerAuthRequired.provider]?.connected === true}
+          onConnect={() => onConnectProvider?.(session.providerAuthRequired!.provider)}
+        />
       )}
 
       {pendingQuestion && !displayTerminal && (
@@ -849,6 +865,51 @@ export function SessionPane({
         </>
       )}
     </aside>
+  );
+}
+
+function ProviderAuthBanner({
+  required,
+  isOwner,
+  ownerName,
+  connected,
+  onConnect,
+}: {
+  required: SessionProviderAuthRequired;
+  isOwner: boolean;
+  ownerName: string;
+  connected: boolean;
+  onConnect: () => void;
+}) {
+  return (
+    <div
+      data-testid="provider-auth-banner"
+      role="region"
+      aria-label="Claude Code authentication required"
+      className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-warning/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-warning-text">
+          needs auth
+        </span>
+        <span className="min-w-0 flex-1 text-fg-body">
+          {isOwner
+            ? connected
+              ? 'Claude is connected. Send a steer to retry this session.'
+              : required.message
+            : `Waiting for ${ownerName} to reconnect Claude Code.`}
+        </span>
+        {isOwner && (
+          <button
+            type="button"
+            onClick={onConnect}
+            className="rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+          >
+            {connected ? 'Reconnect' : 'Connect Claude'}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -13,6 +13,7 @@ import {
   type Artifact,
   type ArtifactBytes,
   type CentaurEventFrame,
+  type ExecuteResponse,
   type FileChange,
   type QuestionPrompt,
   type SessionItem,
@@ -32,6 +33,14 @@ import {
 } from './events.js';
 import type { WsHub } from './hub.js';
 import { sendQuestionPush } from './push.js';
+import {
+  CLAUDE_CODE_PROVIDER,
+  ProviderCredentials,
+  claudeAuthRequired,
+  claudeExecutionEnvironment,
+  isClaudeAuthFailureText,
+  type ProviderAuthRequiredJson,
+} from './provider-credentials.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -52,6 +61,7 @@ export interface SessionJson {
   suggestions: SessionSuggestionJson[];
   answerProposals: SessionAnswerProposalJson[];
   pendingQuestion: SessionPendingQuestionJson | null;
+  providerAuthRequired: ProviderAuthRequiredJson | null;
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
@@ -220,6 +230,7 @@ export interface SessionRunsOptions {
   autoResume?: boolean;
   questionRenotifyMinutes?: number;
   questionPushFetchImpl?: typeof fetch;
+  providerCredentials?: ProviderCredentials;
 }
 
 export interface SessionCreateResult {
@@ -252,6 +263,8 @@ interface SessionRow {
   centaur_message_attempt: number;
   centaur_message_id: string | null;
   pending_question: unknown | null;
+  provider_credential_user_id: string | null;
+  provider_auth_required: unknown | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -340,6 +353,7 @@ export class SessionRuns {
   private readonly autoResume: boolean;
   private readonly questionRenotifyMinutes: number;
   private readonly questionPushFetchImpl?: typeof fetch;
+  private readonly providerCredentials: ProviderCredentials;
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly questionRenotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -373,6 +387,8 @@ export class SessionRuns {
     this.questionRenotifyMinutes =
       options.questionRenotifyMinutes ?? config.questionRenotifyMinutes;
     this.questionPushFetchImpl = options.questionPushFetchImpl;
+    this.providerCredentials =
+      options.providerCredentials ?? new ProviderCredentials(this.pool, config.providerCredentialSecret);
   }
 
   async createSession(args: {
@@ -414,6 +430,7 @@ export class SessionRuns {
     const harness = args.harness ?? this.harness;
     const repo = normalizeGitMeta(args.repo);
     const branch = normalizeGitMeta(args.branch);
+    const providerCredentialUserId = harness === CLAUDE_CODE_PROVIDER ? args.user.id : null;
     const channel = await getChannel(client, args.channelId);
     if (!channel) {
       throw new DomainError(404, 'channel_not_found', 'channel not found');
@@ -421,16 +438,26 @@ export class SessionRuns {
     if (args.threadRootEventId != null) {
       await assertThreadRoot(client, args.channelId, args.threadRootEventId);
     }
+    if (providerCredentialUserId) {
+      const token = await this.providerCredentials.getClaudeToken(providerCredentialUserId, client);
+      if (!token) {
+        throw new DomainError(
+          409,
+          'provider_auth_required',
+          'Connect Claude Code before starting a Claude session',
+        );
+      }
+    }
     const conflictClause = args.clientSpawnId
       ? `ON CONFLICT (spawned_by, client_spawn_id) WHERE client_spawn_id IS NOT NULL DO NOTHING`
       : '';
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch,
-         title, status, spawned_by, driver_id, client_spawn_id
+         title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id
        )
        -- driver_id starts as the spawner ($9 used for both spawned_by + driver_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10, $11)
        ${conflictClause}
        RETURNING *`,
       [
@@ -444,6 +471,7 @@ export class SessionRuns {
         title,
         args.user.id,
         args.clientSpawnId ?? null,
+        providerCredentialUserId,
       ],
     );
     let row = inserted.rows[0];
@@ -909,7 +937,18 @@ export class SessionRuns {
   async postUserMessage(id: string, userId: string, text: string): Promise<void> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriver(id, userId);
-    await this.postUserMessageOnce(row, userId, text, true);
+    try {
+      await this.postUserMessageOnce(row, userId, text, true);
+    } catch (err) {
+      if (err instanceof DomainError && err.code === 'provider_auth_required') {
+        await this.markProviderAuthRequired(
+          id,
+          'missing_token',
+          'Reconnect Claude Code before continuing this session.',
+        ).catch(() => {});
+      }
+      throw err;
+    }
     this.startTailer(id);
   }
 
@@ -1084,7 +1123,7 @@ export class SessionRuns {
     // only for boot resume (startSession), which posts no message.
     await client.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
     const executeId = await this.reserveExecuteId(row.id, client);
-    const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, {
+    const exec = await this.executeWithProviderEnvironment(row, generation, {
       executeId,
       inputLines: [userInputLine(text)],
     });
@@ -1092,6 +1131,7 @@ export class SessionRuns {
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
            completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END,
+           provider_auth_required = NULL,
            centaur_execute_id = NULL,
            centaur_message_id = NULL
        WHERE id = $2`,
@@ -1111,6 +1151,35 @@ export class SessionRuns {
       questionId,
       answers,
     );
+  }
+
+  private async executeWithProviderEnvironment(
+    row: SessionRow,
+    generation: number,
+    opts: { executeId?: string; inputLines?: string[] },
+  ): Promise<ExecuteResponse> {
+    const environment = await this.providerEnvironmentFor(row);
+    return this.centaur.execute(row.centaur_thread_key, generation, row.harness, {
+      ...opts,
+      ...(environment ? { environment } : {}),
+    });
+  }
+
+  private async providerEnvironmentFor(
+    row: SessionRow,
+  ): Promise<Record<string, string> | undefined> {
+    if (row.harness !== CLAUDE_CODE_PROVIDER) return undefined;
+    const ownerId = row.provider_credential_user_id;
+    if (!ownerId) return undefined;
+    const token = await this.providerCredentials.getClaudeToken(ownerId);
+    if (!token) {
+      throw new DomainError(
+        409,
+        'provider_auth_required',
+        'Reconnect Claude Code before continuing this session',
+      );
+    }
+    return claudeExecutionEnvironment(token);
   }
 
   async clearStalePendingQuestion(id: string, questionId: string): Promise<void> {
@@ -1575,7 +1644,7 @@ export class SessionRuns {
       if (!row) return;
       generation = row.assignment_generation ?? generation;
       const executeId = await this.reserveExecuteId(id);
-      const exec = await this.centaur.execute(row.centaur_thread_key, generation, row.harness, {
+      const exec = await this.executeWithProviderEnvironment(row, generation, {
         executeId,
         inputLines: task == null ? [] : [userInputLine(task)],
       });
@@ -1588,6 +1657,14 @@ export class SessionRuns {
       }
       this.startTailer(id);
     } catch (err) {
+      if (err instanceof DomainError && err.code === 'provider_auth_required') {
+        await this.markProviderAuthRequired(
+          id,
+          'missing_token',
+          'Reconnect Claude Code before continuing this session.',
+        ).catch(() => {});
+        return;
+      }
       console.error('session start failed', { id, err });
       await this.updateStatus(id, 'failed').catch(() => {});
     }
@@ -1746,6 +1823,15 @@ export class SessionRuns {
     const status = normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
       const resultText = typeof frame.data.result_text === 'string' ? frame.data.result_text : null;
+      if (status === 'failed' && isClaudeAuthFailureText(resultText)) {
+        await this.markProviderAuthRequired(
+          id,
+          'invalid_token',
+          'Claude Code authentication failed. Reconnect Claude to continue.',
+          frame.event_id,
+        );
+        return;
+      }
       await this.completeSession(id, status, resultText, frame.event_id);
     } else {
       await this.updateStatus(id, status);
@@ -1832,6 +1918,112 @@ export class SessionRuns {
     });
     if (cleared) this.cancelScheduledQuestionRenotify(id);
     if (event) this.hub.publishEvent(event);
+  }
+
+  async clearClaudeAuthRequired(userId: string): Promise<void> {
+    const events = await withTx(this.pool, async (client) => {
+      const res = await client.query<SessionRow>(
+        `SELECT *
+         FROM sessions
+         WHERE provider_credential_user_id = $1
+           AND provider_auth_required->>'provider' = $2
+         FOR UPDATE`,
+        [userId, CLAUDE_CODE_PROVIDER],
+      );
+      const out: WireEvent[] = [];
+      for (const row of res.rows) {
+        const updated = await client.query<SessionRow>(
+          `UPDATE sessions
+           SET provider_auth_required = NULL
+           WHERE id = $1
+           RETURNING *`,
+          [row.id],
+        );
+        const next = updated.rows[0];
+        if (!next) continue;
+        out.push(
+          await appendEvent(client, {
+            workspaceId: next.workspace_id,
+            channelId: next.channel_id,
+            threadRootEventId: next.thread_root_event_id,
+            type: 'session.provider_auth_resolved',
+            actorId: userId,
+            payload: { sessionId: next.id, provider: CLAUDE_CODE_PROVIDER, by: userId },
+          }),
+        );
+      }
+      return out;
+    });
+    for (const event of events) this.hub.publishEvent(event);
+  }
+
+  async markClaudeAuthMissing(id: string): Promise<void> {
+    await this.markProviderAuthRequired(
+      id,
+      'missing_token',
+      'Reconnect Claude Code before continuing this session.',
+    );
+  }
+
+  private async markProviderAuthRequired(
+    id: string,
+    reason: ProviderAuthRequiredJson['reason'],
+    message: string,
+    lastEventId = 0,
+  ): Promise<void> {
+    let rowToRelease: SessionRow | null = null;
+    const events = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      if (!row || row.harness !== CLAUDE_CODE_PROVIDER || TERMINAL_STATUSES.has(row.status)) return [];
+      const ownerId = row.provider_credential_user_id ?? row.spawned_by;
+      const pending = parsePendingQuestion(row.pending_question);
+      const required = claudeAuthRequired(ownerId, reason, message);
+      const updated = await client.query<SessionRow>(
+        `UPDATE sessions
+         SET provider_auth_required = $1,
+             status = CASE WHEN status = 'spawning' THEN 'queued' ELSE status END,
+             current_execution_id = NULL,
+             pending_question = NULL,
+             last_event_id = GREATEST(last_event_id, $2)
+         WHERE id = $3
+         RETURNING *`,
+        [JSON.stringify(required), lastEventId, id],
+      );
+      const next = updated.rows[0]!;
+      await this.providerCredentials.markClaudeAuthRequired(ownerId, message, client);
+      rowToRelease = next;
+      const authEvent = await appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.provider_auth_required',
+        actorId: ownerId,
+        payload: { sessionId: id, ...required },
+      });
+      if (!pending) return [authEvent];
+      const resolvedEvent = await appendEvent(client, {
+        workspaceId: next.workspace_id,
+        channelId: next.channel_id,
+        threadRootEventId: next.thread_root_event_id,
+        type: 'session.question_resolved',
+        actorId: next.spawned_by,
+        payload: { sessionId: id, questionId: pending.questionId, reason: 'cancelled' },
+      });
+      return [authEvent, resolvedEvent];
+    });
+    for (const event of events) this.hub.publishEvent(event);
+    if (events.some((event) => event.type === 'session.question_resolved')) {
+      this.cancelScheduledQuestionRenotify(id);
+    }
+    const releaseRow = rowToRelease as SessionRow | null;
+    if (releaseRow && releaseRow.assignment_generation != null) {
+      await this.centaur
+        .release(releaseRow.centaur_thread_key, `rel-${id}-auth-${Date.now()}`, true)
+        .catch((err) => {
+          console.warn('session release after Claude auth failure failed', { id, err });
+        });
+    }
   }
 
   private async updateStatus(id: string, status: SessionStatus): Promise<void> {
@@ -2048,6 +2240,7 @@ export class SessionRuns {
       `UPDATE sessions
        SET current_execution_id = COALESCE($1, current_execution_id),
            assignment_generation = $2,
+           provider_auth_required = NULL,
            centaur_execute_id = CASE WHEN $1::text IS NULL THEN centaur_execute_id ELSE NULL END,
            centaur_message_id = CASE WHEN $1::text IS NULL THEN centaur_message_id ELSE NULL END
        WHERE id = $3
@@ -2421,6 +2614,7 @@ function toJson(
     suggestions: seatInfo.suggestions ?? [],
     answerProposals: seatInfo.answerProposals ?? [],
     pendingQuestion: parsePendingQuestion(row.pending_question),
+    providerAuthRequired: parseProviderAuthRequired(row.provider_auth_required),
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,
@@ -2535,6 +2729,30 @@ function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null
     turnId: raw.turnId,
     questions,
     eventId,
+  };
+}
+
+function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (raw.provider !== CLAUDE_CODE_PROVIDER) return null;
+  if (typeof raw.userId !== 'string') return null;
+  if (
+    raw.reason !== 'missing_token' &&
+    raw.reason !== 'invalid_token' &&
+    raw.reason !== 'auth_error'
+  ) {
+    return null;
+  }
+  return {
+    provider: CLAUDE_CODE_PROVIDER,
+    userId: raw.userId,
+    reason: raw.reason,
+    message:
+      typeof raw.message === 'string' && raw.message.trim()
+        ? raw.message
+        : 'Reconnect Claude Code to continue this session.',
+    at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
   };
 }
 

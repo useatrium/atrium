@@ -55,6 +55,14 @@ export interface SessionPendingQuestion {
   eventId?: number;
 }
 
+export interface SessionProviderAuthRequired {
+  provider: 'claude-code';
+  userId: string;
+  reason: 'missing_token' | 'invalid_token' | 'auth_error';
+  message: string;
+  at: string;
+}
+
 export type QuestionResolutionReason = 'answered' | 'cancelled' | 'empty';
 
 export interface SessionQuestionAnswerSummary {
@@ -151,6 +159,7 @@ export interface SessionWire {
   /** Pending HITL answer proposals (Phase 2; absent on older payloads). */
   answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
+  providerAuthRequired?: SessionProviderAuthRequired | null;
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -198,6 +207,7 @@ export interface Session {
   /** HITL answer proposals folded from session.answer_proposal_* events. */
   answerProposals: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
+  providerAuthRequired?: SessionProviderAuthRequired | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
   /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
@@ -296,6 +306,7 @@ export function sessionFromWire(w: SessionWire): Session {
     suggestions: [...(w.suggestions ?? [])],
     answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
+    providerAuthRequired: parseProviderAuthRequired(w.providerAuthRequired),
     questionEvents: [],
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
@@ -335,6 +346,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     answerProposals:
       live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
     pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
+    providerAuthRequired: live.providerAuthRequired ?? resp.providerAuthRequired ?? null,
     questionEvents:
       (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
     seatEvents: live.seatEvents.length > 0 ? live.seatEvents : resp.seatEvents,
@@ -372,6 +384,7 @@ export function applySessionEvent(
       suggestions: [],
       answerProposals: [],
       pendingQuestion: null,
+      providerAuthRequired: null,
       questionEvents: [],
       seatEvents: [],
       costUsd: 0,
@@ -410,8 +423,28 @@ export function applySessionEvent(
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,
         pendingQuestion: null,
+        providerAuthRequired: null,
       },
     };
+  }
+
+  if (ev.type === 'session.provider_auth_required') {
+    const required = parseProviderAuthRequired(p);
+    if (!required) return sessions;
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        providerAuthRequired: required,
+        pendingQuestion: null,
+        status: prev.status === 'spawning' ? 'queued' : prev.status,
+      },
+    };
+  }
+
+  if (ev.type === 'session.provider_auth_resolved') {
+    if (p.provider !== 'claude-code') return sessions;
+    return { ...sessions, [sessionId]: { ...prev, providerAuthRequired: null } };
   }
 
   if (ev.type === 'session.question_requested') {
@@ -682,6 +715,30 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
       };
     })
     .filter((q): q is QuestionPrompt => q !== null);
+}
+
+function parseProviderAuthRequired(value: unknown): SessionProviderAuthRequired | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (raw.provider !== 'claude-code') return null;
+  if (typeof raw.userId !== 'string') return null;
+  if (
+    raw.reason !== 'missing_token' &&
+    raw.reason !== 'invalid_token' &&
+    raw.reason !== 'auth_error'
+  ) {
+    return null;
+  }
+  return {
+    provider: 'claude-code',
+    userId: raw.userId,
+    reason: raw.reason,
+    message:
+      typeof raw.message === 'string' && raw.message.trim()
+        ? raw.message
+        : 'Reconnect Claude Code to continue this session.',
+    at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
+  };
 }
 
 function parseQuestionAnswerSummaries(value: unknown): SessionQuestionAnswerSummary[] {

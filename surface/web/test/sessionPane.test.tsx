@@ -66,6 +66,43 @@ async function renderPaneWithB() {
 }
 
 describe('session pane folds the B_tooltest stream', () => {
+  it('renders a Claude auth-required banner for the credential owner', () => {
+    const onConnect = vi.fn();
+    render(
+      <SessionPane
+        session={bSession({
+          providerAuthRequired: {
+            provider: 'claude-code',
+            userId: me.id,
+            reason: 'invalid_token',
+            message: 'Claude Code authentication failed.',
+            at: new Date().toISOString(),
+          },
+        })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        providerCredentials={{
+          'claude-code': {
+            provider: 'claude-code',
+            connected: false,
+            status: 'needs_auth',
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        }}
+        onConnectProvider={onConnect}
+      />,
+    );
+
+    expect(screen.getByTestId('provider-auth-banner')).toBeTruthy();
+    expect(screen.getByText('needs auth')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Claude' }));
+    expect(onConnect).toHaveBeenCalledWith('claude-code');
+  });
+
   it('renders one Bash tool card with the roundtrip result, completed status', async () => {
     await renderPaneWithB();
 

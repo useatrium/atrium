@@ -61,6 +61,7 @@ import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
 import { CentaurApiError } from '@atrium/centaur-client';
+import { ProviderCredentials } from './provider-credentials.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -135,7 +136,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const secret = deps.sessionSecret ?? config.sessionSecret;
   const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
   const emailFetch = deps.emailFetch;
-  const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
+  const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
+  const sessionRuns = new SessionRuns(pool, hub, {
+    ...(deps.sessionRuns ?? {}),
+    providerCredentials,
+  });
   const calls =
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
   const voip = deps.voip ?? getVoipSender(config);
@@ -841,6 +846,32 @@ function rawSession(req: FastifyRequest): string | undefined {
       user.id,
     ]);
     return { user, prefs: normalizePrefs(res.rows[0]?.prefs) };
+  });
+
+  app.get('/api/me/provider-credentials', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return { providers: await providerCredentials.list(user.id) };
+  });
+
+  app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { token?: unknown };
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    if (!token) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
+    }
+    const provider = await providerCredentials.upsertClaudeToken(user.id, token);
+    await sessionRuns.clearClaudeAuthRequired(user.id);
+    return { provider };
+  });
+
+  app.delete('/api/me/provider-credentials/claude-code', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    await providerCredentials.deleteClaudeToken(user.id);
+    return { ok: true };
   });
 
   app.post('/auth/logout', async (req, reply) => {
@@ -2833,19 +2864,26 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.steer',
-      body: { sessionId: id, text },
-      fn: async (client) => {
-        await sessionRuns.postUserMessageInTx(client, id, user.id, text);
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        sessionRuns.afterPostUserMessage(id);
-      },
-    });
+    try {
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.steer',
+        body: { sessionId: id, text },
+        fn: async (client) => {
+          await sessionRuns.postUserMessageInTx(client, id, user.id, text);
+          return { ok: true as const };
+        },
+        onApplied: () => {
+          sessionRuns.afterPostUserMessage(id);
+        },
+      });
+    } catch (err) {
+      if (err instanceof DomainError && err.code === 'provider_auth_required') {
+        await sessionRuns.markClaudeAuthMissing(id).catch(() => {});
+      }
+      throw err;
+    }
     return reply.code(202).send({ ok: true });
   });
 

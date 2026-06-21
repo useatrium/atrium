@@ -54,4 +54,34 @@ describe('SpawnDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancel).toHaveBeenCalled();
   });
+
+  it('requires a connected Claude credential for Claude Code', () => {
+    const onConnect = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{
+          'claude-code': {
+            provider: 'claude-code',
+            connected: false,
+            status: 'needs_auth',
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        }}
+        onConnectProvider={onConnect}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'use claude' },
+    });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-code' } });
+
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Claude' }));
+    expect(onConnect).toHaveBeenCalledWith('claude-code');
+  });
 });

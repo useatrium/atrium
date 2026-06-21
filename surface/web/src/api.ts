@@ -4,6 +4,6 @@
 import { createApi } from '@atrium/surface-client';
 
 export { ApiError } from '@atrium/surface-client';
-export type { Workspace, Channel } from '@atrium/surface-client';
+export type { Workspace, Channel, ProviderCredentialStatus } from '@atrium/surface-client';
 
 export const api = createApi();
