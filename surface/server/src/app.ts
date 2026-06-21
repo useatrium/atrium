@@ -52,6 +52,7 @@ import { sendLoginCode } from './email.js';
 import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut, uploadObject } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact } from './artifact-writeback.js';
+import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
@@ -2297,6 +2298,41 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
     if (!bytes.body) return reply.send(Buffer.alloc(0));
     return reply.send(Readable.fromWeb(bytes.body));
+  });
+
+  // C1 inbound-sync source: the gap-free, egress-pollable change-feed the Centaur
+  // node daemon polls for advances on this session's hydrated paths. `since` is an
+  // opaque cursor token "<xid>.<id>"; omit it to start from the beginning. See
+  // migration 034 for the gap-free (xid, id)-below-xmin-horizon semantics.
+  app.get('/api/sessions/:id/artifacts/changes', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { since?: string; limit?: string };
+
+    let cursor: ChangeCursor = CHANGE_CURSOR_ZERO;
+    if (typeof q.since === 'string' && q.since.length > 0) {
+      const m = /^(\d+)\.(\d+)$/.exec(q.since);
+      if (!m) {
+        return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
+      }
+      cursor = { xid: m[1]!, id: m[2]! };
+    }
+    let limit = 500;
+    if (typeof q.limit === 'string') {
+      const n = Number(q.limit);
+      if (!Number.isInteger(n) || n < 1 || n > 5000) {
+        return reply.code(400).send({ error: 'bad_query', message: 'limit must be 1..5000' });
+      }
+      limit = n;
+    }
+
+    const ledger = new ArtifactLedger(pool);
+    const page = await ledger.changesSince(id, cursor, limit);
+    return reply.send({
+      rows: page.rows,
+      next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
+    });
   });
 
   app.get('/api/sessions/:id/stream', async (req, reply) => {

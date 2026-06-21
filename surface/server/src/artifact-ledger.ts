@@ -43,6 +43,43 @@ export interface ChangedArtifact {
   kind: VersionKind;
 }
 
+/** Gap-free change-feed cursor: (inserting-txn-id, row-id) in commit order.
+ * Both are stringified — `xid8` and `bigint id` can exceed JS's safe integer. */
+export interface ChangeCursor {
+  xid: string;
+  id: string;
+}
+
+export const CHANGE_CURSOR_ZERO: ChangeCursor = { xid: '0', id: '0' };
+
+/** One row of the egress-pollable change-feed (`artifact_changes`). */
+export interface ChangeRow {
+  id: string;
+  path: string;
+  seq: number;
+  baseSeq: number | null;
+  sha: string | null;
+  status: VersionStatus;
+  kind: VersionKind;
+  author: string;
+  /** agent | human | node-merge — node-merge is the echo gate (§8B #2). */
+  origin: string;
+}
+
+export interface ChangeFeedPage {
+  rows: ChangeRow[];
+  nextCursor: ChangeCursor;
+}
+
+/** Per-path sync-state — current base + byte-origin for one container's working
+ * copy of one path (the "one root" record, §8A takeaway #1 / §8B #2). */
+export interface SyncState {
+  baseSeq: number;
+  baseSha: string | null;
+  upperSha: string | null;
+  appliedRemoteSeq: number | null;
+}
+
 export interface CommitVersionParams {
   sessionId: string;
   channelId: string;
@@ -232,6 +269,100 @@ export class ArtifactLedger {
       [sessionId, sinceIso],
     );
     return res.rows;
+  }
+
+  // === gap-free change-feed (C1 inbound source; §8B #7) ====================
+
+  /**
+   * Egress-pollable, resumable, GAP-FREE feed of version commits for a session,
+   * in commit order, after `cursor`. See migration 034 for why the cursor is
+   * (xid, id) watermarked below the snapshot xmin horizon rather than max(id):
+   * a slow concurrent txn can make a lower id visible after a higher one, which a
+   * max(id) cursor drops forever. Only rows whose inserting txn has fully drained
+   * (xid < xmin horizon) are returned, ordered by (xid, id), so nothing is ever
+   * skipped. `nextCursor` is the last row's (xid, id), or the input cursor when
+   * the page is empty.
+   */
+  async changesSince(
+    sessionId: string,
+    cursor: ChangeCursor = CHANGE_CURSOR_ZERO,
+    limit = 500,
+  ): Promise<ChangeFeedPage> {
+    const res = await this.pool.query<{
+      id: string;
+      xid: string;
+      path: string;
+      seq: number;
+      base_seq: number | null;
+      sha: string | null;
+      status: VersionStatus;
+      kind: VersionKind;
+      author: string;
+      origin: string;
+    }>(
+      `SELECT id::text AS id, xid::text AS xid, path, seq, base_seq, sha, status, kind, author, origin
+         FROM artifact_changes
+        WHERE session_id = $1
+          AND xid < pg_snapshot_xmin(pg_current_snapshot())
+          AND (xid, id) > ($2::xid8, $3::bigint)
+        ORDER BY xid, id
+        LIMIT $4`,
+      [sessionId, cursor.xid, cursor.id, limit],
+    );
+    const rows: ChangeRow[] = res.rows.map((r) => ({
+      id: r.id,
+      path: r.path,
+      seq: r.seq,
+      baseSeq: r.base_seq,
+      sha: r.sha,
+      status: r.status,
+      kind: r.kind,
+      author: r.author,
+      origin: r.origin,
+    }));
+    const last = res.rows[res.rows.length - 1];
+    const nextCursor: ChangeCursor = last ? { xid: last.xid, id: last.id } : cursor;
+    return { rows, nextCursor };
+  }
+
+  // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
+
+  async getSyncState(sessionId: string, path: string): Promise<SyncState | null> {
+    const res = await this.pool.query<{
+      base_seq: number;
+      base_sha: string | null;
+      upper_sha: string | null;
+      applied_remote_seq: number | null;
+    }>(
+      `SELECT base_seq, base_sha, upper_sha, applied_remote_seq
+         FROM artifact_sync_state WHERE session_id = $1 AND path = $2`,
+      [sessionId, path],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+      baseSeq: row.base_seq,
+      baseSha: row.base_sha,
+      upperSha: row.upper_sha,
+      appliedRemoteSeq: row.applied_remote_seq,
+    };
+  }
+
+  /** Upsert the per-path sync-state. Used at hydration (base_seq), on capture
+   * (upper_sha), and after a node-side adopt (applied_remote_seq + advance base). */
+  async upsertSyncState(sessionId: string, path: string, state: SyncState): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO artifact_sync_state
+         (session_id, path, base_seq, base_sha, upper_sha, applied_remote_seq, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       ON CONFLICT (session_id, path) DO UPDATE
+         SET base_seq = EXCLUDED.base_seq,
+             base_sha = EXCLUDED.base_sha,
+             upper_sha = EXCLUDED.upper_sha,
+             applied_remote_seq = EXCLUDED.applied_remote_seq,
+             updated_at = now()`,
+      [sessionId, path, state.baseSeq, state.baseSha, state.upperSha, state.appliedRemoteSeq],
+    );
   }
 
   // === the orchestrated write (capture-bridge + clean write-back) ==========
