@@ -26,6 +26,7 @@ import {
 } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
+import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { Composer } from '../components/Composer';
 import {
@@ -122,6 +123,14 @@ export function SessionPane({
   );
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
+  // Live conflict feed (A3): polls the ledger change-feed for status=conflict
+  // versions and hydrates their both-sides detail for the Conflicts tab.
+  // Inert under unit tests (which assert exact global-fetch call counts); fully
+  // live in dev/prod. The hook itself is covered in useConflicts.test.tsx.
+  const { conflicts, resolve: resolveConflict } = useConflicts(session.id, {
+    enabled: import.meta.env.MODE !== 'test',
+  });
+  const conflictsN = conflicts.length;
 
   // Work drawer (Phase 4): one tabbed surface over Changes + Side-effects, with
   // a peek→pin ladder. `workTab` null = closed; `workPinned` docks it beside the
@@ -525,6 +534,18 @@ export function SessionPane({
         </div>
       )}
 
+      {conflictsN > 0 && (
+        <button
+          data-testid="conflicts-strip"
+          onClick={() => onStrip('conflicts')}
+          aria-expanded={workTab === 'conflicts'}
+          className="flex shrink-0 items-center gap-2 border-b border-danger-edge bg-danger-surface px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90"
+        >
+          <span className="font-semibold uppercase tracking-wider">Conflicts</span>
+          <span className="tabular-nums">· {conflictsN}</span>
+          <span className="ml-auto opacity-80">{workTab === 'conflicts' ? 'Hide' : 'Resolve'}</span>
+        </button>
+      )}
       {changedFileCount > 0 && (
         <button
           data-testid="changes-strip"
@@ -581,6 +602,9 @@ export function SessionPane({
             hasDanger={sideEffectsDanger}
             artifacts={artifacts}
             artifactCount={artifactsN}
+            conflicts={conflicts}
+            conflictCount={conflictsN}
+            onResolveConflict={resolveConflict}
             sessionId={session.id}
             tab={workTab}
             onTab={setWorkTab}
@@ -697,6 +721,9 @@ export function SessionPane({
               hasDanger={sideEffectsDanger}
               artifacts={artifacts}
               artifactCount={artifactsN}
+              conflicts={conflicts}
+              conflictCount={conflictsN}
+              onResolveConflict={resolveConflict}
               sessionId={session.id}
               tab={workTab}
               onTab={setWorkTab}
