@@ -16,6 +16,7 @@
 pub mod adopt;
 pub mod echo;
 pub mod overlay;
+pub mod runtime;
 pub mod safety;
 pub mod tornread;
 

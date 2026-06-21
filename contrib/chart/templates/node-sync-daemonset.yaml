@@ -1,0 +1,77 @@
+{{- /*
+Node-sync DaemonSet (Track C4): one privileged scanner per node. It reads each
+session's overlay `upper` from the node-local hostPath (O(changes) scan), captures
+changes direct to Atrium S3, and runs the inbound adopt (write-through-`merged`).
+Gated off by default — enable per cluster once the node-sync image is published.
+Multi-tenant note: gate this on VM-per-tenant (one node = one tenant) so the
+per-node scanner is structurally per-tenant (§8B #19).
+*/ -}}
+{{- if .Values.nodeSync.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" . "component" "node-sync") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" . "component" "node-sync") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "node-sync") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "node-sync") | nindent 8 }}
+    spec:
+      # Privileged: it reads agent-owned files + interprets overlay encoding (rdev,
+      # trusted.overlay.* xattrs need CAP_SYS_ADMIN) and writes through `merged`.
+      hostPID: true
+      serviceAccountName: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+      containers:
+        - name: node-sync
+          image: "{{ .Values.nodeSync.image.repository }}:{{ .Values.nodeSync.image.tag }}"
+          imagePullPolicy: {{ .Values.nodeSync.image.pullPolicy }}
+          args: ["--overlays-root", "/var/lib/centaur/overlays", "--interval", "{{ .Values.nodeSync.scanIntervalSeconds }}"]
+          securityContext:
+            privileged: true              # overlay xattr reads + write-through-merged
+            # Steady-state scan IAM is narrowed to session/tenant prefixes (#19);
+            # seccomp/AppArmor profiles are applied at the node level.
+          env:
+            - name: ATRIUM_BASE_URL
+              value: {{ .Values.nodeSync.atriumBaseUrl | quote }}
+            - name: ATRIUM_CAPTURE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nodeSync.apiKeySecret.name | quote }}
+                  key: {{ .Values.nodeSync.apiKeySecret.key | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            # The session-keyed persistent uppers live here (one dir per session).
+            # mountPropagation HostToContainer so newly-provisioned overlays appear.
+            - name: overlays
+              mountPath: /var/lib/centaur/overlays
+              mountPropagation: HostToContainer
+            # The node-local CAS cache (reflinked into lowers; immutable 0444).
+            - name: cas-cache
+              mountPath: /var/lib/centaur/cas
+      volumes:
+        - name: overlays
+          hostPath:
+            path: /var/lib/centaur/overlays
+            type: DirectoryOrCreate
+        - name: cas-cache
+          hostPath:
+            path: /var/lib/centaur/cas
+            type: DirectoryOrCreate
+      tolerations:
+        - operator: Exists                 # run on every node, incl. tainted ones
+{{- end }}

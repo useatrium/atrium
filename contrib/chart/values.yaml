@@ -416,3 +416,23 @@ containerSecurityContext:
   capabilities:
     drop:
       - ALL
+
+# Node-sync (Track C4): the privileged per-node overlay scanner + inbound merger.
+# Disabled by default; enable per cluster once the node-sync image is published
+# AND VM-per-tenant isolation is in place (the scanner reads every pod's upper on
+# its node — §8B #19). See centaur-node-sync crate + agent-sync-design.md.
+nodeSync:
+  enabled: false
+  image:
+    repository: centaur-node-sync
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Interval (floor) scan of each upper; node-side fanotify adds sub-second
+  # latency on top (the agent could never run it; the node is privileged).
+  scanIntervalSeconds: 2
+  # Atrium is reached egress-only; the node is trusted infra (not the sandbox),
+  # so it bypasses the per-sandbox egress NetworkPolicy → big files go direct to S3.
+  atriumBaseUrl: "http://atrium-server.atrium.svc:8080"
+  apiKeySecret:
+    name: centaur-infra-env
+    key: ARTIFACT_CAPTURE_API_KEY
