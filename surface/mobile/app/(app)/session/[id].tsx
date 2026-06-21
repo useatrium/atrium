@@ -307,14 +307,23 @@ function MobileQuestionBanner({
 }: {
   pending: { questionId: string; questions: QuestionPrompt[] };
   isDriver: boolean;
-  values: Record<string, string>;
-  setValue: (id: string, value: string) => void;
+  values: Record<string, QuestionDraftValue>;
+  setValue: (id: string, value: QuestionDraftValue) => void;
   submitting: boolean;
   error: string | null;
   onSubmit: () => void;
 }) {
   const { colors } = useTheme();
-  const complete = pending.questions.every((q) => (values[q.id] ?? '').trim().length > 0);
+  const complete = pending.questions.every((q) => answerValuesForPrompt(q, values[q.id]).length > 0);
+  const toggleOption = (q: QuestionPrompt, label: string) => {
+    const current = answerArrayValue(values[q.id]);
+    setValue(
+      q.id,
+      current.includes(label)
+        ? current.filter((selected) => selected !== label)
+        : [...current, label],
+    );
+  };
   return (
     <View
       style={{
@@ -340,15 +349,18 @@ function MobileQuestionBanner({
           {q.options?.length ? (
             <View style={{ gap: 6 }}>
               {q.options.map((option) => {
-                const selected = values[q.id] === option.label;
+                const current = values[q.id];
+                const selected = q.multiSelect
+                  ? Array.isArray(current) && current.includes(option.label)
+                  : current === option.label;
                 return (
                   <Pressable
-                    accessibilityRole="radio"
+                    accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
                     accessibilityLabel={`${option.label}. ${option.description}`}
-                    accessibilityState={{ selected, disabled: !isDriver || submitting }}
+                    accessibilityState={{ checked: selected, disabled: !isDriver || submitting }}
                     key={option.label}
                     disabled={!isDriver || submitting}
-                    onPress={() => setValue(q.id, option.label)}
+                    onPress={() => (q.multiSelect ? toggleOption(q, option.label) : setValue(q.id, option.label))}
                     style={{
                       borderWidth: 1,
                       borderColor: selected ? colors.warning : colors.border,
@@ -364,6 +376,22 @@ function MobileQuestionBanner({
                     <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
                       {option.description}
                     </Text>
+                    {option.preview ? (
+                      <Text
+                        style={{
+                          marginTop: 6,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          borderRadius: radius.sm,
+                          padding: space.sm,
+                          color: colors.textSecondary,
+                          fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+                          fontSize: font.xs,
+                        }}
+                      >
+                        {option.preview}
+                      </Text>
+                    ) : null}
                   </Pressable>
                 );
               })}
@@ -371,7 +399,7 @@ function MobileQuestionBanner({
           ) : (
             <TextInput
               accessibilityLabel={`Answer for ${q.header}`}
-              value={values[q.id] ?? ''}
+              value={answerTextValue(values[q.id])}
               onChangeText={(value) => setValue(q.id, value)}
               editable={isDriver && !submitting}
               secureTextEntry={q.isSecret === true}
@@ -420,6 +448,24 @@ function MobileQuestionBanner({
   );
 }
 
+type QuestionDraftValue = string | string[];
+
+function answerValuesForPrompt(q: QuestionPrompt, value: QuestionDraftValue | undefined): string[] {
+  if (q.options?.length && q.multiSelect) {
+    return answerArrayValue(value).filter((answer) => answer.trim().length > 0);
+  }
+  const trimmed = answerTextValue(value).trim();
+  return trimmed ? [trimmed] : [];
+}
+
+function answerArrayValue(value: QuestionDraftValue | undefined): string[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function answerTextValue(value: QuestionDraftValue | undefined): string {
+  return typeof value === 'string' ? value : '';
+}
+
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
@@ -433,7 +479,7 @@ export default function SessionScreen() {
   const [loading, setLoading] = useState(false);
   const [steerText, setSteerText] = useState('');
   const [steerError, setSteerError] = useState<string | null>(null);
-  const [questionValues, setQuestionValues] = useState<Record<string, string>>({});
+  const [questionValues, setQuestionValues] = useState<Record<string, QuestionDraftValue>>({});
   const [questionSubmitting, setQuestionSubmitting] = useState(false);
   const [questionCleared, setQuestionCleared] = useState<string | null>(null);
   const [questionError, setQuestionError] = useState<string | null>(null);
@@ -545,7 +591,9 @@ export default function SessionScreen() {
   const answerQuestion = () => {
     if (!id || !pendingQuestion) return;
     const answers: Record<string, { answers: string[] }> = {};
-    for (const q of pendingQuestion.questions) answers[q.id] = { answers: [questionValues[q.id]!.trim()] };
+    for (const q of pendingQuestion.questions) {
+      answers[q.id] = { answers: answerValuesForPrompt(q, questionValues[q.id]) };
+    }
     setQuestionSubmitting(true);
     setQuestionError(null);
     chat

@@ -89,7 +89,7 @@ Four layers do four different jobs. They're easy to mix up, so here's each one:
 | **Atrium** | the product in this repo: the web and mobile apps plus the server | Keeps **all the data that lasts**: the message log, every file version, the database, and file storage. This is what the team uses. |
 | **Centaur** | the engine that runs the agents ([paradigmxyz/centaur](https://github.com/paradigmxyz/centaur), MIT) | Starts a locked-down, throwaway sandbox and runs the agent a turn at a time, streaming results back. Each turn is a clean sandbox; the conversation persists in Atrium, so a session keeps going across turns. Keeps **nothing** permanently. |
 | **Harness** | the agent program inside the sandbox | The "hands": it reads the task, runs tools, and edits files. Atrium doesn't care which one you use (**Claude Code**, **Codex**, **amp**, and so on). |
-| **Model** | the AI model the harness talks to | The "brain" (Claude, GPT, and so on). You can swap it per session. Requests pass through a proxy that adds the credentials, so **API keys never enter the sandbox**. |
+| **Model** | the AI model the harness talks to | The "brain" (Claude, GPT, and so on). You can swap it per session. Billing and login follow the credentials the harness actually uses. |
 
 In short: Atrium keeps the data and runs the experience, Centaur runs the agents
 safely, and the harness and model plug into Centaur. Each turn goes:
@@ -100,6 +100,23 @@ safely, and the harness and model plug into Centaur. Each turn goes:
 
 A session is a sequence of these turns: you can steer a running agent, answer its
 questions, and send follow-ups — and a finished session reopens when someone replies.
+
+### Models, login, and billing
+
+Atrium does not bill for model usage itself. The harness and Centaur deployment
+choose the model and credentials for each run. When a user has connected a
+supported subscription login, Atrium sends that credential with the session and
+the harness uses subscription auth. If no subscription login is connected, Atrium
+still starts the session and lets the harness fall back to the deployment's
+default auth, which is often an API key.
+
+That means billing follows the active login path: connected subscription logins
+use the user's provider subscription or workspace entitlement; API-key fallback
+uses the configured API account and normal usage billing. The web app currently
+has subscription-login connectors for **Codex** and **Claude Code**; other
+harnesses use their Centaur/default configuration until a connector is added.
+Treat connected provider credentials like passwords: Atrium stores them encrypted
+and only injects them into the sandbox for the session that needs them.
 
 Because the sandbox lets nothing connect into it, a small program on the host
 machine (the **node daemon**) does the copying in both directions:

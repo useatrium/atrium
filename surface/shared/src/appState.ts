@@ -507,6 +507,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             spawnerName: action.session.spawnerName ?? existing?.spawnerName,
             driverName: action.session.driverName ?? existing?.driverName,
             pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
+            providerAuthRequired:
+              action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
             questionEvents:
               (action.session.questionEvents?.length ?? 0) > 0
                 ? action.session.questionEvents

@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ApiError, api, type Channel, type Workspace } from './api';
+import {
+  ApiError,
+  api,
+  type Channel,
+  type ProviderCredentialProvider,
+  type ProviderCredentialStatus,
+  type Workspace,
+} from './api';
+import { isDesktop, desktopWsUrl } from './desktop';
 import {
   DurableOpQueue,
   appReducer,
@@ -38,6 +46,8 @@ import {
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
+import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
+import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
 import { LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
@@ -543,6 +553,7 @@ export function Chat({
           pendingSeatRequests: [],
           suggestions: [],
           answerProposals: [],
+          providerAuthRequired: null,
           seatEvents: [],
           costUsd: 0,
           resultText: null,
@@ -700,6 +711,57 @@ export function Chat({
   const [focused, setFocused] = useState(false);
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [providerCredentials, setProviderCredentials] = useState<
+    Record<string, ProviderCredentialStatus | undefined>
+  >({});
+  const [providerDialog, setProviderDialog] = useState<ProviderCredentialProvider | null>(null);
+
+  const loadProviderCredentials = useCallback(async () => {
+    try {
+      const { providers } = await api.providerCredentials();
+      setProviderCredentials(Object.fromEntries(providers.map((p) => [p.provider, p])));
+    } catch (err) {
+      console.warn('failed to load provider credentials', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProviderCredentials();
+  }, [loadProviderCredentials]);
+
+  const saveClaudeToken = useCallback(
+    async (token: string) => {
+      const { provider } = await api.connectClaudeCode(token);
+      setProviderCredentials((prev) => ({ ...prev, [provider.provider]: provider }));
+      await loadProviderCredentials();
+    },
+    [loadProviderCredentials],
+  );
+
+  const saveCodexAuthJson = useCallback(
+    async (authJson: string) => {
+      const { provider } = await api.connectCodex(authJson);
+      setProviderCredentials((prev) => ({ ...prev, [provider.provider]: provider }));
+      await loadProviderCredentials();
+    },
+    [loadProviderCredentials],
+  );
+
+  const disconnectClaude = useCallback(async () => {
+    await api.disconnectClaudeCode();
+    setProviderCredentials((prev) => ({
+      ...prev,
+      'claude-code': disconnectedProviderStatus('claude-code'),
+    }));
+  }, []);
+
+  const disconnectCodex = useCallback(async () => {
+    await api.disconnectCodex();
+    setProviderCredentials((prev) => ({
+      ...prev,
+      codex: disconnectedProviderStatus('codex'),
+    }));
+  }, []);
 
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
   useEffect(() => {
@@ -937,6 +999,9 @@ export function Chat({
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
     state.activeChannelId,
+    // Desktop shell: connect to the absolute server origin with a bearer token
+    // in the query string. Browser: undefined → same-origin /ws (unchanged).
+    isDesktop ? { url: () => desktopWsUrl() ?? '' } : undefined,
   );
 
   const lastTypingSentRef = useRef(0);
@@ -1148,13 +1213,14 @@ export function Chat({
     threadRootEventId?: number,
     opts?: { harness?: string; repo?: string; branch?: string },
   ) => {
+    const harness = opts?.harness?.trim() || 'codex';
     const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
     const payload: SessionSpawnPayload = {
       channelId,
       task,
       clientSpawnId,
       threadRootEventId,
-      harness: opts?.harness?.trim() || 'codex',
+      harness,
       ...(opts?.repo?.trim() ? { repo: opts.repo.trim() } : {}),
       ...(opts?.branch?.trim() ? { branch: opts.branch.trim() } : {}),
       createdAt: new Date().toISOString(),
@@ -1634,6 +1700,8 @@ export function Chat({
           onStartDm={startDm}
           onOpenSession={openSession}
           sessionEventSeq={sessionEventSeq}
+          providerCredentials={providerCredentials}
+          onConnectProvider={setProviderDialog}
           onLogout={onLogout}
         />
 
@@ -1892,6 +1960,8 @@ export function Chat({
           onCancelSession={cancelSession}
           failedCancel={failedCancels[paneSession.id] === true}
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
+          providerCredentials={providerCredentials}
+          onConnectProvider={setProviderDialog}
         />
       ) : state.openSessionId ? (
         <aside
@@ -1991,10 +2061,43 @@ export function Chat({
           }
           onCancel={() => setSpawnOpen(false)}
           onSpawn={startConfiguredSession}
+          providerStatuses={providerCredentials}
+          onConnectProvider={setProviderDialog}
+        />
+      )}
+
+      {providerDialog === 'claude-code' && (
+        <ClaudeConnectDialog
+          status={providerCredentials['claude-code']}
+          onCancel={() => setProviderDialog(null)}
+          onSave={saveClaudeToken}
+          onDisconnect={disconnectClaude}
+        />
+      )}
+
+      {providerDialog === 'codex' && (
+        <CodexConnectDialog
+          status={providerCredentials.codex}
+          onCancel={() => setProviderDialog(null)}
+          onSave={saveCodexAuthJson}
+          onDisconnect={disconnectCodex}
         />
       )}
     </div>
   );
+}
+
+function disconnectedProviderStatus(
+  provider: ProviderCredentialProvider,
+): ProviderCredentialStatus {
+  return {
+    provider,
+    connected: false,
+    status: 'needs_auth',
+    lastValidatedAt: null,
+    lastError: null,
+    updatedAt: null,
+  };
 }
 
 /** Fixed-height "X is typing…" line — always present so the layout never shifts. */

@@ -3,9 +3,10 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { basename } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -49,10 +50,28 @@ import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
 import { sendLoginCode } from './email.js';
-import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, presignPut, uploadObject } from './s3.js';
+import {
+  copyObject,
+  deleteObject,
+  ensureBucket,
+  getObjectBytes,
+  headObject,
+  presignGet,
+  presignPut,
+  uploadObject,
+  uploadObjectStream,
+} from './s3.js';
+import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
-import { ArtifactLedger, type ChangeCursor, CHANGE_CURSOR_ZERO } from './artifact-ledger.js';
+import {
+  ArtifactLedger,
+  casBlobKey,
+  type ChangeCursor,
+  CHANGE_CURSOR_ZERO,
+  type CommitVersionGroupFile,
+} from './artifact-ledger.js';
+import { classifyScope, userCanReadScope, type ArtifactScope } from './artifact-scope.js';
 import { loadConflictDetail } from './artifact-conflict.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
@@ -61,6 +80,7 @@ import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
 import { CentaurApiError } from '@atrium/centaur-client';
+import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -129,13 +149,22 @@ function parseBaseSeq(value: string | undefined): number | null | false {
   return Number.isSafeInteger(n) && n > 0 ? n : false;
 }
 
+function isReadableStream(value: unknown): value is Readable {
+  const candidate = value as { pipe?: unknown } | null;
+  return candidate != null && typeof candidate.pipe === 'function';
+}
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
   const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
   const emailFetch = deps.emailFetch;
-  const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
+  const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
+  const sessionRuns = new SessionRuns(pool, hub, {
+    ...(deps.sessionRuns ?? {}),
+    providerCredentials,
+  });
   const calls =
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
   const voip = deps.voip ?? getVoipSender(config);
@@ -841,6 +870,57 @@ function rawSession(req: FastifyRequest): string | undefined {
       user.id,
     ]);
     return { user, prefs: normalizePrefs(res.rows[0]?.prefs) };
+  });
+
+  app.get('/api/me/provider-credentials', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return { providers: await providerCredentials.list(user.id) };
+  });
+
+  app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { token?: unknown };
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    if (!token) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
+    }
+    const provider = await providerCredentials.upsertClaudeToken(user.id, token);
+    await sessionRuns.clearClaudeAuthRequired(user.id);
+    return { provider };
+  });
+
+  app.put('/api/me/provider-credentials/codex', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { authJson?: unknown };
+    const authJson = typeof body.authJson === 'string' ? body.authJson.trim() : '';
+    if (!authJson) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Codex auth.json required' });
+    }
+    try {
+      const provider = await providerCredentials.upsertCodexAuthJson(user.id, authJson);
+      await sessionRuns.clearProviderAuthRequired(user.id, CODEX_PROVIDER);
+      return { provider };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid Codex auth.json';
+      return reply.code(400).send({ error: 'bad_request', message });
+    }
+  });
+
+  app.delete('/api/me/provider-credentials/claude-code', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    await providerCredentials.deleteClaudeToken(user.id);
+    return { ok: true };
+  });
+
+  app.delete('/api/me/provider-credentials/codex', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    await providerCredentials.deleteCodexAuthJson(user.id);
+    return { ok: true };
   });
 
   app.post('/auth/logout', async (req, reply) => {
@@ -2199,7 +2279,12 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    return { record: await sessionRuns.getSessionRecord(id) };
+    const record = await sessionRuns.getSessionRecord(id);
+    // === ACL scope enforcement (#4) ===
+    record.artifacts = record.artifacts
+      .filter((artifact) => userCanReadScope(classifyScope(artifact.path)))
+      .map((artifact) => ({ ...artifact, scope: classifyScope(artifact.path) }));
+    return { record };
   });
 
   // Serve a captured artifact's bytes — unblocks the Artifacts gallery, which
@@ -2216,6 +2301,15 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id, artifactId } = req.params as { id: string; artifactId: string };
+    // === ACL scope enforcement (#4) ===
+    const meta = await pool.query<{ path: string }>(
+      `SELECT path FROM session_artifacts WHERE session_id = $1 AND id = $2`,
+      [id, artifactId],
+    );
+    let scope = meta.rows[0] ? classifyScope(meta.rows[0].path) : null;
+    if (scope && !userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
     try {
       plan = await sessionRuns.getArtifactServePlan(id, artifactId);
@@ -2235,16 +2329,25 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw err;
     }
     if (plan.kind === 'redirect') {
+      // === ACL scope enforcement (#4) ===
+      reply.header('X-Artifact-Scope', scope ?? 'workspace');
       // Durable bytes in atrium's store: short-lived presigned redirect (the
       // presign carries the inline/attachment Content-Disposition). Matches the
       // file-serve route's 302-to-S3 pattern.
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
+    // === ACL scope enforcement (#4) ===
+    scope ??= classifyScope(artifact.path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     const mime = artifact.mime || 'application/octet-stream';
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
     reply.header('Content-Type', mime);
+    // === ACL scope enforcement (#4) ===
+    reply.header('X-Artifact-Scope', scope);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header(
       'Content-Disposition',
@@ -2262,7 +2365,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     const gitPrefix = normalizeFilesGitPrefix(process.env.GIT_PREFIX ?? 'repo/');
     const gitSource = createGitSource(process.env.GIT_REPO_ROOT);
 
-    type UnifiedFileRow = { path: string; backing: 'git' | 'ledger'; type: 'file' | 'dir' };
+    type UnifiedFileRow = { path: string; backing: 'git' | 'ledger'; type: 'file' | 'dir'; scope?: ArtifactScope };
 
     function normalizeFilesGitPrefix(value: string): string {
       const trimmed = value.trim();
@@ -2300,6 +2403,9 @@ function rawSession(req: FastifyRequest): string | undefined {
       const prefix = dir.length > 0 ? `${dir}/` : '';
       const rows = new Map<string, UnifiedFileRow>();
       for (const item of scope) {
+        // === ACL scope enforcement (#4) ===
+        const artifactScope = classifyScope(item.path);
+        if (!userCanReadScope(artifactScope)) continue;
         if (item.kind === 'deleted') continue;
         if (resolveBacking(item.path, { gitPrefix }).backing !== 'ledger') continue;
         if (!item.path.startsWith(prefix)) continue;
@@ -2308,7 +2414,8 @@ function rawSession(req: FastifyRequest): string | undefined {
         const slash = rest.indexOf('/');
         const path = slash < 0 ? item.path : `${prefix}${rest.slice(0, slash)}`;
         const type = slash < 0 ? 'file' : 'dir';
-        if (!rows.has(path) || type === 'dir') rows.set(path, { path, backing: 'ledger', type });
+        const scope = type === 'dir' ? classifyScope(`${path}/`) : artifactScope;
+        if (!rows.has(path) || type === 'dir') rows.set(path, { path, backing: 'ledger', type, scope });
       }
       return [...rows.values()];
     }
@@ -2402,6 +2509,11 @@ function rawSession(req: FastifyRequest): string | undefined {
         }
 
         const resolved = resolveBacking(path, { gitPrefix });
+        // === ACL scope enforcement (#4) ===
+        const scope = classifyScope(resolved.relPath);
+        if (resolved.backing === 'ledger' && !userCanReadScope(scope)) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
         if (resolved.backing === 'git') {
           if (!gitSource.isConfigured()) {
             return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
@@ -2416,7 +2528,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           }
         }
 
-        return reply.send({ backing: 'ledger', entries: await ledgerHistory(id, resolved.relPath) });
+        return reply.send({ backing: 'ledger', scope, entries: await ledgerHistory(id, resolved.relPath) });
       });
 
       // Read content by backing: git files inline; ledger files via the
@@ -2431,6 +2543,10 @@ function rawSession(req: FastifyRequest): string | undefined {
           return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
         }
         const resolved = resolveBacking(path, { gitPrefix });
+        // === ACL scope enforcement (#4) ===
+        if (resolved.backing === 'ledger' && !userCanReadScope(classifyScope(resolved.relPath))) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
         if (resolved.backing === 'git') {
           if (!gitSource.isConfigured()) {
             return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
@@ -2514,6 +2630,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (typeof path !== 'string' || path.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
     }
+    // === ACL scope enforcement (#4) ===
+    const scope = classifyScope(path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     const at = q.at ?? 'latest';
     // Conflict-aware serve (§8B #5): for the default `latest`, serve the newest
     // status='normal' version (never the conflict-marker bytes) and flag an
@@ -2550,6 +2671,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw err;
     }
     if (plan.kind === 'redirect') {
+      // === ACL scope enforcement (#4) ===
+      reply.header('X-Artifact-Scope', scope);
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
@@ -2557,6 +2680,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
     reply.header('Content-Type', mime);
+    // === ACL scope enforcement (#4) ===
+    reply.header('X-Artifact-Scope', scope);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header(
       'Content-Disposition',
@@ -2596,8 +2721,12 @@ function rawSession(req: FastifyRequest): string | undefined {
 
     const ledger = new ArtifactLedger(pool);
     const page = await ledger.changesSince(id, cursor, limit);
+    // === ACL scope enforcement (#4) ===
+    const rows = page.rows
+      .map((row) => ({ ...row, scope: classifyScope(row.path) }))
+      .filter((row) => userCanReadScope(row.scope));
     return reply.send({
-      rows: page.rows,
+      rows,
       next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
     });
   });
@@ -2610,6 +2739,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     const path = (req.query as { path?: string }).path;
     if (typeof path !== 'string' || path.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    // === ACL scope enforcement (#4) ===
+    if (!userCanReadScope(classifyScope(path))) {
+      return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
     }
     const detail = await loadConflictDetail(pool, { getObjectBytes }, id, path);
     if (!detail) {
@@ -2676,7 +2809,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     const { id } = req.params as { id: string };
     const ledger = new ArtifactLedger(pool);
     const paths = await ledger.sessionScope(id);
-    return reply.send({ sessionId: id, scope: 'session', paths });
+    // === ACL scope enforcement (#4) ===
+    const scopedPaths = paths
+      .map((path) => ({ ...path, scope: classifyScope(path.path) }))
+      .filter((path) => userCanReadScope(path.scope));
+    return reply.send({ sessionId: id, scope: 'session', paths: scopedPaths });
   });
 
   // === /atrium chat projection ===
@@ -2843,6 +2980,222 @@ function rawSession(req: FastifyRequest): string | undefined {
     });
   });
 
+  // === H8 streaming capture ===
+  await app.register(async (captureStream) => {
+    captureStream.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    captureStream.post('/api/internal/sessions/:id/artifacts/capture-stream', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const path = (req.query as { path?: string }).path;
+      if (typeof path !== 'string' || path.length === 0 || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
+      }
+      const sess = await pool.query<{ channel_id: string }>(
+        `SELECT channel_id FROM sessions WHERE id = $1`,
+        [id],
+      );
+      const channelId = sess.rows[0]?.channel_id;
+      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+
+      const mime = normalizeMime(firstHeader(req.headers['content-type']));
+      const source = isReadableStream(req.body) ? req.body : Readable.from(Buffer.alloc(0));
+      const stagingKey = `cas-staging/${randomBytes(16).toString('hex')}`;
+      let stagingDeleted = false;
+      try {
+        const hash = createHash('sha256');
+        let sizeBytes = 0;
+        const hashingStream = new Transform({
+          transform(chunk, encoding, callback) {
+            const bytes = Buffer.isBuffer(chunk)
+              ? chunk
+              : typeof chunk === 'string'
+                ? Buffer.from(chunk, encoding)
+                : Buffer.from(chunk as Uint8Array);
+            hash.update(bytes);
+            sizeBytes += bytes.byteLength;
+            callback(null, chunk);
+          },
+        });
+        const upload = uploadObjectStream(stagingKey, hashingStream, mime);
+        await Promise.all([pipeline(source, hashingStream), upload]);
+
+        const sha = hash.digest('hex');
+        const finalKey = casBlobKey(sha);
+        await copyObject(stagingKey, finalKey);
+        await deleteObject(stagingKey);
+        stagingDeleted = true;
+
+        const ledger = new ArtifactLedger(pool);
+        const result = await ledger.commitVersion({
+          sessionId: id,
+          channelId,
+          path,
+          blobSha: sha,
+          sizeBytes,
+          mime,
+          kind: 'modified',
+          mergeClass: 'immutable-data',
+          author: `node:${id}`,
+          ...(baseSeq == null ? {} : { baseSeq }),
+        });
+        if (!result.ok) {
+          // Large streamed files are immutable-class; stale OCC is rebased by the node daemon.
+          return reply.code(409).send({ error: 'stale_base', latestSeq: result.latestSeq, baseSeq: result.baseSeq });
+        }
+        await ledger.stampBlobS3Key(sha, finalKey);
+        return reply.send({ seq: result.seq, status: 'normal' });
+      } finally {
+        if (!stagingDeleted) {
+          await deleteObject(stagingKey).catch(() => {});
+        }
+      }
+    });
+  });
+
+  // Harness-resume (rollout-JSONL): capture the harness CLI transcript snapshot
+  // (the daemon PUTs it each turn) + serve it back for cold-start restore. Stored
+  // outside the artifact ledger — internal harness state, not a user work product.
+  app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const t = await loadHarnessTranscript(pool, { getObjectBytes }, id, harness);
+    if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
+    reply.header('Content-Type', 'application/x-ndjson');
+    reply.header('X-Transcript-Sha256', t.sha256);
+    return reply.send(t.bytes);
+  });
+
+  await app.register(async (ht) => {
+    ht.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    ht.put('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const harness = (req.query as { harness?: string }).harness ?? '';
+      if (!isHarness(harness)) {
+        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+      }
+      const sess = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1`, [id]);
+      if (!sess.rows[0]) return reply.code(404).send({ error: 'session_not_found' });
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (bytes.length === 0) {
+        return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
+      }
+      const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, id, harness, bytes);
+      return reply.send({ size_bytes: size, sha256 });
+    });
+  });
+
+  // === H10 commit-group additions ===
+  app.post('/api/internal/sessions/:id/artifacts/commit-group', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      group_id?: unknown;
+      files?: unknown;
+    };
+    const badManifest = (message: string) => reply.code(400).send({ error: 'bad_manifest', message });
+    if (typeof body.group_id !== 'string' || body.group_id.length === 0) {
+      return badManifest('group_id is required');
+    }
+    if (!Array.isArray(body.files) || body.files.length === 0) {
+      return badManifest('files must be a non-empty array');
+    }
+    const files: CommitVersionGroupFile[] = [];
+    const seenPaths = new Set<string>();
+    for (const raw of body.files) {
+      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return badManifest('each file must be an object');
+      }
+      const file = raw as {
+        path?: unknown;
+        blob_sha?: unknown;
+        size_bytes?: unknown;
+        mime?: unknown;
+        base_seq?: unknown;
+        kind?: unknown;
+        merge_class?: unknown;
+      };
+      if (typeof file.path !== 'string' || file.path.length === 0 || file.path.includes('..')) {
+        return badManifest('valid path required');
+      }
+      if (seenPaths.has(file.path)) return badManifest('duplicate path');
+      seenPaths.add(file.path);
+      if (file.kind !== 'created' && file.kind !== 'modified' && file.kind !== 'deleted') {
+        return badManifest('kind must be created, modified, or deleted');
+      }
+      const blobSha = file.blob_sha;
+      if (file.kind === 'deleted') {
+        if (blobSha !== null) return badManifest('deleted files must use blob_sha null');
+      } else if (typeof blobSha !== 'string' || blobSha.length === 0) {
+        return badManifest('created and modified files require blob_sha');
+      }
+      if (!Number.isSafeInteger(file.size_bytes) || (file.size_bytes as number) < 0) {
+        return badManifest('size_bytes must be a non-negative integer');
+      }
+      if (typeof file.mime !== 'string' || file.mime.length === 0) {
+        return badManifest('mime is required');
+      }
+      let baseSeq: number | null | undefined;
+      if (file.base_seq === null || file.base_seq === undefined) {
+        baseSeq = file.base_seq;
+      } else if (Number.isSafeInteger(file.base_seq) && (file.base_seq as number) > 0) {
+        baseSeq = file.base_seq as number;
+      } else {
+        return badManifest('base_seq must be a positive integer or null');
+      }
+      let mergeClass: CommitVersionGroupFile['mergeClass'];
+      if (file.merge_class !== undefined) {
+        if (
+          file.merge_class !== 'immutable-data' &&
+          file.merge_class !== 'mergeable-doc' &&
+          file.merge_class !== 'derived-output'
+        ) {
+          return badManifest('merge_class is invalid');
+        }
+        mergeClass = file.merge_class;
+      }
+      files.push({
+        path: file.path,
+        blobSha: file.kind === 'deleted' ? null : blobSha as string,
+        sizeBytes: file.size_bytes as number,
+        mime: normalizeMime(file.mime),
+        baseSeq,
+        kind: file.kind,
+        ...(mergeClass === undefined ? {} : { mergeClass }),
+      });
+    }
+
+    const sess = await pool.query<{ channel_id: string }>(
+      `SELECT channel_id FROM sessions WHERE id = $1`,
+      [id],
+    );
+    const channelId = sess.rows[0]?.channel_id;
+    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+    const result = await new ArtifactLedger(pool).commitVersionGroup({
+      sessionId: id,
+      channelId,
+      groupId: body.group_id,
+      author: `node:${id}`,
+      files,
+    });
+    if (!result.ok) return reply.code(409).send(result);
+    return reply.send(result);
+  });
+
   app.get('/api/sessions/:id/stream', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
@@ -2893,19 +3246,26 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.steer',
-      body: { sessionId: id, text },
-      fn: async (client) => {
-        await sessionRuns.postUserMessageInTx(client, id, user.id, text);
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        sessionRuns.afterPostUserMessage(id);
-      },
-    });
+    try {
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.steer',
+        body: { sessionId: id, text },
+        fn: async (client) => {
+          await sessionRuns.postUserMessageInTx(client, id, user.id, text);
+          return { ok: true as const };
+        },
+        onApplied: () => {
+          sessionRuns.afterPostUserMessage(id);
+        },
+      });
+    } catch (err) {
+      if (err instanceof DomainError && err.code === 'provider_auth_required') {
+        await sessionRuns.markClaudeAuthMissing(id).catch(() => {});
+      }
+      throw err;
+    }
     return reply.code(202).send({ ok: true });
   });
 

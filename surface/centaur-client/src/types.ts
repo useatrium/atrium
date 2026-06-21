@@ -244,12 +244,15 @@ export interface ResultObserved extends ObservationBase {
 export interface QuestionOption {
   label: string;
   description: string;
+  preview?: string;
+  previewFormat?: "markdown" | "html";
 }
 
 export interface QuestionPrompt {
   id: string;
   header: string;
   question: string;
+  multiSelect?: boolean;
   isOther?: boolean;
   isSecret?: boolean;
   options?: QuestionOption[];

@@ -610,7 +610,7 @@ const MESSAGE_SELECT = `
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.provider_auth_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
@@ -718,7 +718,7 @@ export async function listThreadMessages(
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);

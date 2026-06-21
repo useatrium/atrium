@@ -7,9 +7,25 @@ import { SpawnDialog } from '../src/sessions/SpawnDialog';
 
 afterEach(cleanup);
 
+const connectedCodex = {
+  provider: 'codex' as const,
+  connected: true,
+  status: 'connected' as const,
+  lastValidatedAt: new Date().toISOString(),
+  lastError: null,
+  updatedAt: new Date().toISOString(),
+};
+
 describe('SpawnDialog', () => {
   it('disables submit until a task is entered', () => {
-    render(<SpawnDialog channelName="#general" onCancel={() => {}} onSpawn={() => {}} />);
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{ codex: connectedCodex }}
+      />,
+    );
     const submit = screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
@@ -20,7 +36,14 @@ describe('SpawnDialog', () => {
 
   it('emits task + harness + trimmed repo/branch', () => {
     const onSpawn = vi.fn();
-    render(<SpawnDialog channelName="#general" onCancel={() => {}} onSpawn={onSpawn} />);
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+      />,
+    );
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
       target: { value: '  ship it  ' },
     });
@@ -40,7 +63,14 @@ describe('SpawnDialog', () => {
 
   it('omits repo/branch when blank', () => {
     const onSpawn = vi.fn();
-    render(<SpawnDialog channelName="#general" onCancel={() => {}} onSpawn={onSpawn} />);
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+      />,
+    );
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
       target: { value: 'do a thing' },
     });
@@ -50,8 +80,75 @@ describe('SpawnDialog', () => {
 
   it('cancels via the Cancel button', () => {
     const onCancel = vi.fn();
-    render(<SpawnDialog channelName="#general" onCancel={onCancel} onSpawn={() => {}} />);
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={onCancel}
+        onSpawn={() => {}}
+        providerStatuses={{ codex: connectedCodex }}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancel).toHaveBeenCalled();
+  });
+
+  it('offers Claude subscription connection without blocking Claude Code', () => {
+    const onConnect = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{
+          codex: connectedCodex,
+          'claude-code': {
+            provider: 'claude-code',
+            connected: false,
+            status: 'needs_auth',
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        }}
+        onConnectProvider={onConnect}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'use claude' },
+    });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-code' } });
+
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Claude' }));
+    expect(onConnect).toHaveBeenCalledWith('claude-code');
+  });
+
+  it('offers Codex subscription connection without blocking Codex', () => {
+    const onConnect = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{
+          codex: {
+            provider: 'codex',
+            connected: false,
+            status: 'needs_auth',
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        }}
+        onConnectProvider={onConnect}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'use codex' },
+    });
+
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Codex' }));
+    expect(onConnect).toHaveBeenCalledWith('codex');
   });
 });

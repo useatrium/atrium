@@ -2,6 +2,7 @@
 // so everything except ensureBucket works even when the store is down.
 
 import {
+  CopyObjectCommand,
   CreateBucketCommand,
   DeleteObjectCommand,
   GetObjectCommand,
@@ -10,7 +11,9 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { Readable } from 'node:stream';
 import { config } from './config.js';
 
 const client = new S3Client({
@@ -77,6 +80,36 @@ export async function uploadObject(
       ContentType: contentType,
     }),
   );
+}
+
+export async function uploadObjectStream(
+  key: string,
+  stream: Readable,
+  contentType: string,
+): Promise<void> {
+  await new Upload({
+    client,
+    params: {
+      Bucket: config.s3Bucket,
+      Key: key,
+      Body: stream,
+      ContentType: contentType,
+    },
+  }).done();
+}
+
+export async function copyObject(srcKey: string, destKey: string): Promise<void> {
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: config.s3Bucket,
+      Key: destKey,
+      CopySource: `${config.s3Bucket}/${encodeCopySourceKey(srcKey)}`,
+    }),
+  );
+}
+
+function encodeCopySourceKey(key: string): string {
+  return key.split('/').map(encodeURIComponent).join('/');
 }
 
 // === voice additions ===
