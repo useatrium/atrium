@@ -332,6 +332,7 @@ export function Sidebar({
             const level = c.muted || active ? false : unread[c.id] ?? false;
             const label = channelLabel(c, me.id);
             const partner = dmPartner(c, me.id);
+            const avatarName = partner?.displayName ?? label;
             return (
               <li key={c.id} className="group flex items-center">
                 <button
@@ -346,7 +347,7 @@ export function Sidebar({
                           : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                   }`}
                 >
-                  <Avatar name={label} seed={partner?.id ?? c.id} size={16} />
+                  <Avatar name={avatarName} seed={partner?.id ?? c.id} size={16} />
                   <span className="truncate">{label}</span>
                   {unreadBadge(c.id, active)}
                 </button>
