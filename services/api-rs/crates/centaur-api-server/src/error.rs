@@ -18,6 +18,8 @@ pub enum ApiError {
     Unauthorized(String),
     #[error("{0}")]
     NotFound(String),
+    #[error("{message}")]
+    Conflict { code: &'static str, message: String },
     #[error("{0}")]
     MethodNotAllowed(String),
     #[error("{0}")]
@@ -48,6 +50,7 @@ impl IntoResponse for ApiError {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -88,6 +91,9 @@ impl IntoResponse for ApiError {
         // Structured conflict details let clients (e.g. the slackbot) recover by
         // retrying with the session's existing harness instead of parsing the
         // human-readable message.
+        if let Self::Conflict { code, .. } = &self {
+            body["code"] = json!(code);
+        }
         if let Self::Runtime(SessionRuntimeError::Store(SessionStoreError::HarnessConflict {
             existing,
             requested,

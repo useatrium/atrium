@@ -170,6 +170,27 @@ describe("CentaurClient", () => {
     );
   });
 
+  it("posts the expected answerExecutionQuestion payload", async () => {
+    const client = new CentaurClient({
+      apiUrl: "http://api.local",
+      apiKey: "test-key",
+    });
+    const postMock = vi.spyOn(client.http, "post").mockResolvedValue({ data: { ok: true } });
+
+    await client.answerExecutionQuestion("exe:123", {
+      questionId: "item-1",
+      answers: { choice: { answers: ["Yes"] } },
+    });
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/agent/executions/exe%3A123/answer",
+      {
+        question_id: "item-1",
+        answers: { choice: { answers: ["Yes"] } },
+      },
+    );
+  });
+
   it("posts the expected final-delivery payloads", async () => {
     const client = new CentaurClient({
       apiUrl: "http://api.local",

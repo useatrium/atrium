@@ -114,6 +114,11 @@ export interface StreamEvent {
   data: Record<string, unknown>;
 }
 
+export interface AnswerExecutionQuestionOptions {
+  questionId: string;
+  answers: Record<string, { answers: string[] }>;
+}
+
 export class CentaurClient {
   readonly http: AxiosInstance;
   private log?: { info: Function; warn: Function; error: Function };
@@ -322,6 +327,17 @@ export class CentaurClient {
 
   async cancelExecution(executionId: string) {
     const { data } = await this.http.post(`/agent/executions/${encodeURIComponent(executionId)}/cancel`);
+    return data as Record<string, unknown>;
+  }
+
+  async answerExecutionQuestion(
+    executionId: string,
+    opts: AnswerExecutionQuestionOptions,
+  ) {
+    const { data } = await this.http.post(`/agent/executions/${encodeURIComponent(executionId)}/answer`, {
+      question_id: opts.questionId,
+      answers: opts.answers,
+    });
     return data as Record<string, unknown>;
   }
 

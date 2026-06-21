@@ -1,8 +1,9 @@
 use std::env;
 use std::io::{self, BufRead, Write};
 use std::process::{Child, ChildStdin, Command as ProcessCommand, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
+use std::time::Duration;
 
 use codex_app_server_protocol::UserInput;
 use serde_json::{Value, json};
@@ -10,6 +11,8 @@ use serde_json::{Value, json};
 use crate::server::{BlocksCommand, BlocksState, parse_blocks_line_with_state, write_blocks_error};
 use crate::util::write_value;
 use crate::{AppServerRuntime, HarnessServerError, Result};
+
+const ACTIVE_TURN_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Copy)]
 pub struct CodexHarnessServer {
@@ -137,8 +140,8 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
     )?;
     codex.read_response_or_forward(initialize_id, &mut stdout)?;
 
-    let stdin = io::stdin();
-    for raw in stdin.lock().lines() {
+    let input_rx = spawn_stdin_reader();
+    while let Ok(raw) = input_rx.recv() {
         let line = raw?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -167,6 +170,8 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
                     (model, model_provider),
                     provider,
                     reasoning,
+                    &input_rx,
+                    &mut blocks_state,
                 ) {
                     let fallback_thread_id = thread_id.as_deref().unwrap_or("codex");
                     eprintln!("Codex blocks turn failed: {error:#}");
@@ -177,6 +182,9 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
                 eprintln!(
                     "Codex blocks interrupt ignored: no active stdin reader while a turn runs"
                 );
+            }
+            Ok(BlocksCommand::QuestionAnswer { question_id, .. }) => {
+                eprintln!("question_answer ignored: no pending question {question_id}");
             }
             Ok(BlocksCommand::AttachmentChunk) => {}
             Err(error) => {
@@ -194,6 +202,20 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
     Ok(())
 }
 
+fn spawn_stdin_reader() -> Receiver<io::Result<String>> {
+    let (input_tx, input_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for raw in stdin.lock().lines() {
+            let should_stop = raw.is_err();
+            if input_tx.send(raw).is_err() || should_stop {
+                break;
+            }
+        }
+    });
+    input_rx
+}
+
 fn run_codex_user_turn<W: Write>(
     codex: &mut CodexJsonRpcChild,
     stdout: &mut W,
@@ -205,6 +227,8 @@ fn run_codex_user_turn<W: Write>(
     model_and_provider: (Option<String>, String),
     requested_provider: Option<String>,
     reasoning: Option<String>,
+    input_rx: &Receiver<io::Result<String>>,
+    blocks_state: &mut BlocksState,
 ) -> Result<()> {
     let (model, model_provider) = model_and_provider;
     if thread_id.is_none() {
@@ -262,7 +286,14 @@ fn run_codex_user_turn<W: Write>(
             HarnessServerError::Protocol("turn/start response missing turn.id".to_string())
         })?
         .to_string();
-    codex.read_until_turn_terminal(stdout, thread_id.as_deref().unwrap_or_default(), &turn_id)
+    codex.read_until_turn_terminal(
+        stdout,
+        thread_id.as_deref().unwrap_or_default(),
+        &turn_id,
+        input_rx,
+        blocks_state,
+        request_id,
+    )
 }
 
 fn start_or_resume_thread<W: Write>(
@@ -386,6 +417,13 @@ impl CodexJsonRpcChild {
         }))
     }
 
+    fn send_response(&mut self, id: &Value, result: Value) -> Result<()> {
+        self.write_value(&json!({
+            "id": id,
+            "result": result,
+        }))
+    }
+
     fn write_value(&mut self, value: &Value) -> Result<()> {
         serde_json::to_writer(&mut self.stdin, value)?;
         self.stdin.write_all(b"\n")?;
@@ -423,18 +461,104 @@ impl CodexJsonRpcChild {
         stdout: &mut W,
         thread_id: &str,
         turn_id: &str,
+        input_rx: &Receiver<io::Result<String>>,
+        blocks_state: &mut BlocksState,
+        request_id: &mut i64,
     ) -> Result<()> {
         loop {
-            let value = self.read_value()?;
+            self.drain_active_turn_input(
+                stdout,
+                thread_id,
+                turn_id,
+                input_rx,
+                blocks_state,
+                request_id,
+            )?;
+
+            let Some(value) = self.read_value_timeout(ACTIVE_TURN_POLL_INTERVAL)? else {
+                continue;
+            };
             if is_server_request(&value) {
-                self.send_error_response(&value)?;
+                handle_server_request(self, stdout, blocks_state, turn_id, &value)?;
+                continue;
+            }
+            if response_id(&value).is_some() {
+                if let Some(error) = value.get("error") {
+                    eprintln!("Codex app-server active-turn request failed: {error}");
+                }
                 continue;
             }
             if notification_method(&value).is_some() {
+                if maybe_handle_server_request_resolved(stdout, blocks_state, &value)? {
+                    continue;
+                }
                 let terminal = is_terminal_notification(&value, thread_id, turn_id);
                 write_value(stdout, &value)?;
                 if terminal {
+                    emit_questions_resolved(stdout, blocks_state, "empty")?;
                     break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn drain_active_turn_input<W: Write>(
+        &mut self,
+        stdout: &mut W,
+        thread_id: &str,
+        turn_id: &str,
+        input_rx: &Receiver<io::Result<String>>,
+        blocks_state: &mut BlocksState,
+        request_id: &mut i64,
+    ) -> Result<()> {
+        while let Ok(raw) = input_rx.try_recv() {
+            let line = raw?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            match parse_blocks_line_with_state(trimmed, blocks_state) {
+                Ok(BlocksCommand::User {
+                    input,
+                    client_user_message_id: _,
+                    model,
+                    reasoning,
+                }) => {
+                    if model.is_some() || reasoning.is_some() {
+                        eprintln!("Codex blocks active steering ignored model/reasoning overrides");
+                    }
+                    self.send_request(
+                        next_request_id(request_id),
+                        "turn/steer",
+                        json!({
+                            "threadId": thread_id,
+                            "expectedTurnId": turn_id,
+                            "input": input,
+                        }),
+                    )?;
+                }
+                Ok(BlocksCommand::QuestionAnswer {
+                    question_id,
+                    answers,
+                }) => {
+                    answer_pending_question(self, stdout, blocks_state, &question_id, answers)?;
+                }
+                Ok(BlocksCommand::Interrupt) => {
+                    self.send_request(
+                        next_request_id(request_id),
+                        "turn/interrupt",
+                        json!({
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        }),
+                    )?;
+                    emit_questions_resolved(stdout, blocks_state, "cancelled")?;
+                }
+                Ok(BlocksCommand::AttachmentChunk) => {}
+                Err(error) => {
+                    eprintln!("invalid Codex blocks input during active turn: {error:#}");
+                    write_blocks_error(stdout, thread_id, turn_id, error.to_string())?;
                 }
             }
         }
@@ -455,6 +579,24 @@ impl CodexJsonRpcChild {
                 continue;
             }
             return Ok(serde_json::from_str(trimmed)?);
+        }
+    }
+
+    fn read_value_timeout(&mut self, timeout: Duration) -> Result<Option<Value>> {
+        loop {
+            let line = match self.stdout.recv_timeout(timeout) {
+                Ok(line) => line?,
+                Err(RecvTimeoutError::Timeout) => return Ok(None),
+                Err(RecvTimeoutError::Disconnected) => {
+                    let status = self.child.wait()?;
+                    return Err(HarnessServerError::CodexExited { status });
+                }
+            };
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            return Ok(Some(serde_json::from_str(trimmed)?));
         }
     }
 }
@@ -498,6 +640,116 @@ fn is_terminal_notification(value: &Value, thread_id: &str, turn_id: &str) -> bo
         Some("error") => true,
         _ => false,
     }
+}
+
+fn handle_server_request<W: Write>(
+    codex: &mut CodexJsonRpcChild,
+    stdout: &mut W,
+    blocks_state: &mut BlocksState,
+    current_turn_id: &str,
+    request: &Value,
+) -> Result<()> {
+    let Some("item/tool/requestUserInput") = request.get("method").and_then(Value::as_str) else {
+        return codex.send_error_response(request);
+    };
+
+    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
+    let params = request.get("params").unwrap_or(&Value::Null);
+    let Some(question_id) = string_field(params, &["itemId", "item_id"]) else {
+        return codex.send_response(&request_id, json!({"answers": {}}));
+    };
+    let turn_id = string_field(params, &["turnId", "turn_id"]).unwrap_or(current_turn_id);
+    let questions = params
+        .get("questions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    blocks_state.insert_pending_question(question_id.to_owned(), request_id, turn_id.to_owned());
+    write_value(
+        stdout,
+        &json!({
+            "type": "question_requested",
+            "question_id": question_id,
+            "turn_id": turn_id,
+            "questions": questions,
+        }),
+    )
+}
+
+fn maybe_handle_server_request_resolved<W: Write>(
+    stdout: &mut W,
+    blocks_state: &mut BlocksState,
+    value: &Value,
+) -> Result<bool> {
+    let Some("serverRequest/resolved") = notification_method(value) else {
+        return Ok(false);
+    };
+    let Some(request_id) = value.pointer("/params/requestId") else {
+        return Ok(true);
+    };
+    if let Some((question_id, _pending)) =
+        blocks_state.take_pending_question_by_request_id(request_id)
+    {
+        write_question_resolved(stdout, &question_id, "empty")?;
+    }
+    Ok(true)
+}
+
+fn answer_pending_question<W: Write>(
+    codex: &mut CodexJsonRpcChild,
+    stdout: &mut W,
+    blocks_state: &mut BlocksState,
+    question_id: &str,
+    answers: Value,
+) -> Result<()> {
+    let Some(pending) = blocks_state.take_pending_question(question_id) else {
+        eprintln!("question_answer dropped: no pending question {question_id}");
+        return Ok(());
+    };
+    let response_answers = if answers.is_object() {
+        answers
+    } else {
+        json!({})
+    };
+    codex.send_response(&pending.request_id, json!({"answers": response_answers}))?;
+    write_question_resolved(stdout, question_id, "answered")
+}
+
+fn emit_questions_resolved<W: Write>(
+    stdout: &mut W,
+    blocks_state: &mut BlocksState,
+    reason: &str,
+) -> Result<()> {
+    for question_id in blocks_state.pending_question_ids() {
+        if blocks_state.take_pending_question(&question_id).is_some() {
+            write_question_resolved(stdout, &question_id, reason)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_question_resolved<W: Write>(
+    stdout: &mut W,
+    question_id: &str,
+    reason: &str,
+) -> Result<()> {
+    write_value(
+        stdout,
+        &json!({
+            "type": "question_resolved",
+            "question_id": question_id,
+            "reason": reason,
+        }),
+    )
+}
+
+fn string_field<'a>(value: &'a Value, fields: &[&str]) -> Option<&'a str> {
+    fields
+        .iter()
+        .find_map(|field| value.get(*field).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn next_request_id(request_id: &mut i64) -> i64 {

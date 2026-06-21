@@ -427,6 +427,102 @@ fn fake_codex_blocks_mode_spawns_app_server_and_translates_user_blocks() {
 }
 
 #[test]
+fn fake_codex_blocks_mode_relays_request_user_input_answers() {
+    let fake_codex = temp_path("fake-codex-hitl.sh");
+    let fake_codex_log = temp_path("fake-codex-hitl-requests.jsonl");
+    let script = fake_codex_hitl_app_server_script(&fake_codex_log);
+    std::fs::write(&fake_codex, script).expect("write fake codex script");
+    let mut permissions = std::fs::metadata(&fake_codex)
+        .expect("fake codex metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_codex, permissions).expect("chmod fake codex script");
+
+    let mut bridge = BridgeProcess::spawn_harness_blocks(
+        Harness::Codex,
+        None,
+        Some((
+            "CODEX_BIN",
+            fake_codex.to_str().expect("utf-8 fake codex path"),
+        )),
+    );
+    bridge.send(json!({
+        "type": "user",
+        "thread_key": "slack:C123:123.456",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "ask me"}],
+        },
+    }));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut saw_question = false;
+    let mut saw_answered = false;
+    let mut saw_completed = false;
+    while !saw_completed {
+        let value = bridge.read_any_json(deadline);
+        match value.get("type").and_then(Value::as_str) {
+            Some("question_requested") => {
+                saw_question = true;
+                assert_eq!(
+                    value.get("question_id").and_then(Value::as_str),
+                    Some("q-1")
+                );
+                assert_eq!(value.get("turn_id").and_then(Value::as_str), Some("turn-1"));
+                bridge.send(json!({
+                    "type": "question_answer",
+                    "question_id": "q-1",
+                    "answers": {
+                        "choice": {"answers": ["A"]},
+                    },
+                }));
+            }
+            Some("question_resolved") => {
+                saw_answered = true;
+                assert_eq!(
+                    value.get("question_id").and_then(Value::as_str),
+                    Some("q-1")
+                );
+                assert_eq!(
+                    value.get("reason").and_then(Value::as_str),
+                    Some("answered")
+                );
+            }
+            _ => {
+                if value.get("method").and_then(Value::as_str) == Some("turn/completed") {
+                    saw_completed = true;
+                }
+            }
+        }
+    }
+    bridge.finish_successfully();
+
+    assert!(saw_question, "blocks mode should emit question_requested");
+    assert!(
+        saw_answered,
+        "blocks mode should emit question_resolved(answered)"
+    );
+    let requests = std::fs::read_to_string(&fake_codex_log).expect("read fake codex request log");
+    let values: Vec<Value> = requests
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("fake codex JSON"))
+        .collect();
+    assert!(
+        values.iter().any(|value| {
+            value.get("id").and_then(Value::as_str) == Some("ask-1")
+                && value
+                    .pointer("/result/answers/choice/answers/0")
+                    .and_then(Value::as_str)
+                    == Some("A")
+        }),
+        "Codex did not receive the question answer response; log={values:?}"
+    );
+
+    let _ = std::fs::remove_file(fake_codex);
+    let _ = std::fs::remove_file(fake_codex_log);
+}
+
+#[test]
 fn fake_codex_blocks_mode_forwards_reasoning_as_turn_start_effort() {
     let fake_codex = temp_path("fake-codex-effort.sh");
     let fake_codex_log = temp_path("fake-codex-effort-requests.jsonl");
@@ -1141,6 +1237,14 @@ impl BridgeProcess {
     }
 
     fn read_json(&mut self, deadline: Instant) -> Value {
+        self.read_value(deadline, true)
+    }
+
+    fn read_any_json(&mut self, deadline: Instant) -> Value {
+        self.read_value(deadline, false)
+    }
+
+    fn read_value(&mut self, deadline: Instant, validate_jsonrpc: bool) -> Value {
         loop {
             let now = Instant::now();
             assert!(now < deadline, "timed out waiting for app-server stdout");
@@ -1153,7 +1257,9 @@ impl BridgeProcess {
                     self.stdout_lines.push(line.clone());
                     let value: Value =
                         serde_json::from_str(line.trim()).expect("valid JSON stdout line");
-                    validate_jsonrpc_value(&value);
+                    if validate_jsonrpc {
+                        validate_jsonrpc_value(&value);
+                    }
                     return value;
                 }
                 Ok(Err(error)) => panic!("read app-server stdout: {error}"),
@@ -1647,6 +1753,63 @@ while IFS= read -r line; do
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"codex blocks"}}'
       printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"answer-1","text":"codex blocks","phase":null,"memoryCitation":null},"completedAtMs":2}}'
       printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[{"type":"agentMessage","id":"answer-1","text":"codex blocks","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":1}}}'
+      ;;
+    *)
+      printf '%s\n' "unexpected request: $line" >&2
+      exit 65
+      ;;
+  esac
+done
+"#,
+    );
+    script
+}
+
+fn fake_codex_hitl_app_server_script(log_path: &Path) -> String {
+    let mut script = String::new();
+    script.push_str("#!/bin/sh\n");
+    script.push_str("log=");
+    script.push_str(&shell_quote(log_path));
+    script.push_str(
+        r#"
+touch "$log"
+if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "--help" ]; then
+  printf '%s\n' '--listen stdio://'
+  exit 0
+fi
+if [ "${1:-}" != "app-server" ]; then
+  printf '%s\n' 'expected app-server command' >&2
+  exit 64
+fi
+
+request_id() {
+  printf '%s' "$1" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p'
+}
+
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      id=$(request_id "$line")
+      printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$id"
+      ;;
+    *'"method":"thread/start"'*)
+      id=$(request_id "$line")
+      printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+      ;;
+    *'"method":"turn/start"'*)
+      id=$(request_id "$line")
+      printf '{"id":%s,"result":{"turn":{"id":"turn-1"}}}\n' "$id"
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1,"completedAt":null,"durationMs":null}}}'
+      printf '%s\n' '{"id":"ask-1","method":"item/tool/requestUserInput","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"q-1","questions":[{"id":"choice","label":"Pick one","kind":"choice","choices":["A","B"]}]}}'
+      if ! IFS= read -r answer_line; then
+        printf '%s\n' 'expected requestUserInput response' >&2
+        exit 66
+      fi
+      printf '%s\n' "$answer_line" >> "$log"
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"answered"}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"answer-1","text":"answered","phase":null,"memoryCitation":null},"completedAtMs":2}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[{"type":"agentMessage","id":"answer-1","text":"answered","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":1}}}'
       ;;
     *)
       printf '%s\n' "unexpected request: $line" >&2

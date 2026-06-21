@@ -342,9 +342,34 @@ export type ServerNotification =
     }
   | { method: "item/reasoning/textDelta"; params: ReasoningTextDeltaNotification };
 
+export interface QuestionRequestedStreamData {
+  type: "question_requested";
+  question_id: string;
+  turn_id?: string;
+  questions?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface QuestionResolvedStreamData {
+  type: "question_resolved";
+  question_id: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export type QuestionStreamData =
+  | QuestionRequestedStreamData
+  | QuestionResolvedStreamData;
+
+export type RustSessionStreamData =
+  | QuestionStreamData
+  | Record<string, unknown>
+  | string
+  | null;
+
 export type RustSessionStreamEvent = {
   eventId?: number;
   eventKind?: string;
   event?: string;
-  data?: unknown;
+  data?: RustSessionStreamData;
 };

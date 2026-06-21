@@ -284,6 +284,33 @@ impl PgSessionStore {
         row.map(TryInto::try_into).transpose()
     }
 
+    pub async fn get_execution(
+        &self,
+        execution_id: &str,
+    ) -> Result<SessionExecution, SessionStoreError> {
+        self.get_execution_optional(execution_id)
+            .await?
+            .ok_or_else(|| SessionStoreError::Sqlx(sqlx::Error::RowNotFound))
+    }
+
+    pub async fn get_execution_optional(
+        &self,
+        execution_id: &str,
+    ) -> Result<Option<SessionExecution>, SessionStoreError> {
+        let row = sqlx::query_as::<_, SessionExecutionRow>(
+            r#"
+            select execution_id, idempotency_key, thread_key, status, metadata, error, created_at, updated_at, started_at, completed_at
+            from session_executions
+            where execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(TryInto::try_into).transpose()
+    }
+
     pub async fn mark_execution_running(
         &self,
         execution_id: &str,
@@ -428,6 +455,35 @@ impl PgSessionStore {
             return Ok(None);
         };
         self.set_session_status(&row.thread_key, SessionStatus::Failed)
+            .await?;
+        row.try_into().map(Some)
+    }
+
+    pub async fn cancel_execution_if_active(
+        &self,
+        execution_id: &str,
+        reason: &str,
+    ) -> Result<Option<SessionExecution>, SessionStoreError> {
+        let row = sqlx::query_as::<_, SessionExecutionRow>(
+            r#"
+            update session_executions
+            set status = $2, error = $3, completed_at = coalesce(completed_at, now()), updated_at = now()
+            where execution_id = $1 and status in ($4, $5)
+            returning execution_id, idempotency_key, thread_key, status, metadata, error, created_at, updated_at, started_at, completed_at
+            "#,
+        )
+        .bind(execution_id)
+        .bind(ExecutionStatus::Cancelled.as_ref())
+        .bind(reason)
+        .bind(ExecutionStatus::Queued.as_ref())
+        .bind(ExecutionStatus::Running.as_ref())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        self.set_session_status(&row.thread_key, SessionStatus::Idle)
             .await?;
         row.try_into().map(Some)
     }

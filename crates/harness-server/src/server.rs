@@ -116,6 +116,9 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
             Ok(BlocksCommand::Interrupt) => {
                 eprintln!("blocks interrupt ignored: no active stdin reader while a turn runs");
             }
+            Ok(BlocksCommand::QuestionAnswer { question_id, .. }) => {
+                eprintln!("question_answer ignored: no pending question {question_id}");
+            }
             Ok(BlocksCommand::AttachmentChunk) => {}
             Err(error) => {
                 eprintln!("invalid blocks input: {error:#}");
@@ -204,6 +207,10 @@ pub(crate) enum BlocksCommand {
         provider: Option<String>,
         reasoning: Option<String>,
     },
+    QuestionAnswer {
+        question_id: String,
+        answers: Value,
+    },
     Interrupt,
     AttachmentChunk,
 }
@@ -212,6 +219,56 @@ pub(crate) enum BlocksCommand {
 pub(crate) struct BlocksState {
     uploads: HashMap<String, StagedAttachment>,
     staged: HashMap<String, StagedAttachment>,
+    pending_questions: HashMap<String, PendingQuestion>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingQuestion {
+    pub request_id: Value,
+    request_id_key: String,
+    _turn_id: String,
+}
+
+impl BlocksState {
+    pub(crate) fn insert_pending_question(
+        &mut self,
+        question_id: String,
+        request_id: Value,
+        turn_id: String,
+    ) {
+        self.pending_questions.insert(
+            question_id,
+            PendingQuestion {
+                request_id_key: request_id_key(&request_id),
+                request_id,
+                _turn_id: turn_id,
+            },
+        );
+    }
+
+    pub(crate) fn take_pending_question(&mut self, question_id: &str) -> Option<PendingQuestion> {
+        self.pending_questions.remove(question_id)
+    }
+
+    pub(crate) fn take_pending_question_by_request_id(
+        &mut self,
+        request_id: &Value,
+    ) -> Option<(String, PendingQuestion)> {
+        let request_id_key = request_id_key(request_id);
+        let question_id = self
+            .pending_questions
+            .iter()
+            .find_map(|(question_id, pending)| {
+                (pending.request_id_key == request_id_key).then(|| question_id.clone())
+            })?;
+        self.pending_questions
+            .remove(&question_id)
+            .map(|pending| (question_id, pending))
+    }
+
+    pub(crate) fn pending_question_ids(&self) -> Vec<String> {
+        self.pending_questions.keys().cloned().collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +308,10 @@ struct BlocksLine {
     final_chunk: bool,
     #[serde(rename = "dataBase64", default)]
     data_base64: Option<String>,
+    #[serde(rename = "question_id", default)]
+    question_id: Option<String>,
+    #[serde(default)]
+    answers: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -355,6 +416,17 @@ pub(crate) fn parse_blocks_line_with_state(
                     .reasoning
                     .map(|reasoning| reasoning.trim().to_owned())
                     .filter(|reasoning| !reasoning.is_empty()),
+            })
+        }
+        "question_answer" => {
+            let question_id = non_empty(parsed.question_id.as_deref()).ok_or_else(|| {
+                HarnessServerError::InvalidBlocksInput {
+                    message: "question_answer missing question_id".to_string(),
+                }
+            })?;
+            Ok(BlocksCommand::QuestionAnswer {
+                question_id: question_id.to_string(),
+                answers: parsed.answers.unwrap_or_else(|| json!({})),
             })
         }
         "attachment.chunk" => {
@@ -622,6 +694,16 @@ fn is_image_attachment(attachment_type: Option<&str>, mime_type: Option<&str>) -
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn request_id_key(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 fn handle_request<H: HarnessServer, W: Write>(

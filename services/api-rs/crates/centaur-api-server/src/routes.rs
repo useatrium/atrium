@@ -22,7 +22,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose};
 use centaur_session_core::ThreadKey;
 use centaur_session_runtime::{
-    ExecuteSessionInput, HarnessConflictPolicy, SandboxRuntime, SessionRuntime,
+    AnswerQuestionError, ExecuteSessionInput, HarnessConflictPolicy, SandboxRuntime, SessionRuntime,
 };
 use centaur_session_sqlx::PgSessionStore;
 use centaur_telemetry::{
@@ -43,7 +43,8 @@ use tracing::Span;
 use crate::{
     ApiError,
     types::{
-        AppendMessagesRequest, AppendMessagesResponse, CreateSessionRequest, CreateSessionResponse,
+        AnswerQuestionRequest, AnswerQuestionResponse, AppendMessagesRequest,
+        AppendMessagesResponse, CancelSessionResponse, CreateSessionRequest, CreateSessionResponse,
         EmitWorkflowEventRequest, EventsQuery, ExecuteSessionRequest, ExecuteSessionResponse,
         ListWorkflowRunsQuery, OnHarnessConflict, SessionContextResponse, SessionSseEvent,
         SlackThreadContext, stream_error_sse,
@@ -155,6 +156,11 @@ pub fn build_router_with_app_state(state: AppState) -> Router {
         .route(
             "/api/session/{thread_key}/execute",
             post(execute_session).layer(DefaultBodyLimit::disable()),
+        )
+        .route("/api/session/{thread_key}/cancel", post(cancel_session))
+        .route(
+            "/api/session/{thread_key}/executions/{execution_id}/answer",
+            post(answer_execution_question),
         )
         .route("/api/session/{thread_key}/events", get(stream_events))
         .route("/api/sandboxes/drain", post(drain_sandboxes))
@@ -376,6 +382,61 @@ async fn drain_sandboxes(State(state): State<AppState>) -> Result<Json<Value>, A
         "stopped": report.stopped,
         "failed": failed,
     })))
+}
+
+async fn cancel_session(
+    State(state): State<AppState>,
+    Path(raw_thread_key): Path<String>,
+) -> Result<Json<CancelSessionResponse>, ApiError> {
+    let thread_key = ThreadKey::try_from(raw_thread_key)?;
+    let outcome = state.runtime()?.cancel_session(&thread_key).await?;
+    Ok(Json(CancelSessionResponse {
+        ok: outcome.stop_error.is_none(),
+        cancelled: outcome.cancelled,
+        execution_id: outcome.execution_id,
+        stopped_sandbox_id: outcome.stopped_sandbox_id,
+        stop_error: outcome.stop_error,
+    }))
+}
+
+async fn answer_execution_question(
+    State(state): State<AppState>,
+    Path((raw_thread_key, execution_id)): Path<(String, String)>,
+    Json(request): Json<AnswerQuestionRequest>,
+) -> Result<Json<AnswerQuestionResponse>, ApiError> {
+    let thread_key = ThreadKey::try_from(raw_thread_key)?;
+    let question_id = request.question_id.trim();
+    if question_id.is_empty() {
+        return Err(ApiError::BadRequest("question_id is required".to_owned()));
+    }
+    let outcome = state
+        .runtime()?
+        .answer_execution_question(&thread_key, &execution_id, question_id, request.answers)
+        .await
+        .map_err(answer_question_error)?;
+    Ok(Json(AnswerQuestionResponse {
+        ok: true,
+        execution_id: outcome.execution_id,
+        thread_key: outcome.thread_key,
+        status: outcome.status,
+    }))
+}
+
+fn answer_question_error(error: AnswerQuestionError) -> ApiError {
+    match error {
+        AnswerQuestionError::ExecutionNotFound => {
+            ApiError::NotFound("Execution not found".to_owned())
+        }
+        AnswerQuestionError::ExecutionNotRunning => ApiError::Conflict {
+            code: "EXECUTION_NOT_RUNNING",
+            message: "Execution is not running".to_owned(),
+        },
+        AnswerQuestionError::QuestionNotPending => ApiError::Conflict {
+            code: "QUESTION_NOT_PENDING",
+            message: "Question is not pending".to_owned(),
+        },
+        AnswerQuestionError::Runtime(error) => ApiError::Runtime(error),
+    }
 }
 
 async fn stream_events(

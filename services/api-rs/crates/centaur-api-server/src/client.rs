@@ -7,8 +7,8 @@ use reqwest::{Client as HttpClient, StatusCode};
 use thiserror::Error;
 
 use crate::types::{
-    AppendMessagesRequest, AppendMessagesResponse, CreateSessionRequest, ExecuteSessionRequest,
-    ExecuteSessionResponse,
+    AnswerQuestionRequest, AnswerQuestionResponse, AppendMessagesRequest, AppendMessagesResponse,
+    CancelSessionResponse, CreateSessionRequest, ExecuteSessionRequest, ExecuteSessionResponse,
 };
 
 #[derive(Clone, Debug)]
@@ -57,6 +57,31 @@ impl CentaurClient {
     ) -> Result<ExecuteSessionResponse, ClientError> {
         self.post_json(
             &format!("{}/execute", self.session_url(thread_key)),
+            &request,
+        )
+        .await
+    }
+
+    pub async fn cancel_session(
+        &self,
+        thread_key: &ThreadKey,
+    ) -> Result<CancelSessionResponse, ClientError> {
+        self.post_json(&format!("{}/cancel", self.session_url(thread_key)), &())
+            .await
+    }
+
+    pub async fn answer_question(
+        &self,
+        thread_key: &ThreadKey,
+        execution_id: &str,
+        request: AnswerQuestionRequest,
+    ) -> Result<AnswerQuestionResponse, ClientError> {
+        self.post_json(
+            &format!(
+                "{}/executions/{}/answer",
+                self.session_url(thread_key),
+                urlencoding::encode(execution_id)
+            ),
             &request,
         )
         .await
