@@ -7,7 +7,7 @@ import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
-import { SLUG_TAB, type WorkTab } from './sessions/WorkDrawer';
+import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
 function sessionIdFromPath(pathname: string): string | null {
@@ -17,7 +17,7 @@ function sessionIdFromPath(pathname: string): string | null {
 
 /** /s/:id/work/:slug — the Detach rung: a single work surface in its own tab.
  * Returns null for an unknown slug so we fall back to the normal app shell. */
-export function workRouteFromPath(pathname: string): { sessionId: string; tab: WorkTab } | null {
+export function workRouteFromPath(pathname: string): { sessionId: string; tab: ActiveWorkTab } | null {
   const m = /^\/s\/([^/]+)\/work\/([^/]+)$/.exec(pathname);
   if (!m) return null;
   const tab = SLUG_TAB[m[2]!];

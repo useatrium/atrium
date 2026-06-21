@@ -1,5 +1,5 @@
 // Work drawer (Phase 4) — one tabbed surface consolidating the session's work
-// products (Changes · Side-effects · Artifacts) behind a single peek→pin→detach
+// products (What changed · What it ran · Browse files) behind a single peek→pin→detach
 // ladder. Opened from the summary strips; tabs switch without closing. Peek =
 // overlay over the transcript; pinned = a persistent side pane the transcript
 // reflows beside (single swappable slot — the DevTools dock model); detach =
@@ -7,36 +7,38 @@
 
 import type { Artifact, FileChange, SideEffect } from '@atrium/centaur-client';
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
-import { ArtifactsSurface } from './ArtifactsSurface';
-import { ChangesSurface } from './ChangesSurface';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { FilesSurface } from './FilesSurface';
+import { WhatChangedSurface } from './WhatChangedSurface';
 
-export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts' | 'files';
+export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'files' | 'artifacts';
+export type ActiveWorkTab = Exclude<WorkTab, 'artifacts'>;
+
+export function normalizeWorkTab(tab: WorkTab): ActiveWorkTab {
+  return tab === 'artifacts' ? 'changes' : tab;
+}
 
 // URL-friendly slugs for the detach route (/s/:id/work/:slug). Kept here next to
 // WorkTab so the drawer's detach link and App's route parser stay in lockstep.
-export const TAB_SLUG: Record<WorkTab, string> = {
+export const TAB_SLUG: Record<ActiveWorkTab, string> = {
   conflicts: 'conflicts',
   changes: 'changes',
   sideEffects: 'side-effects',
-  artifacts: 'artifacts',
   files: 'files',
 };
-export const SLUG_TAB: Record<string, WorkTab> = {
+export const SLUG_TAB: Record<string, ActiveWorkTab> = {
   conflicts: 'conflicts',
   changes: 'changes',
   'side-effects': 'sideEffects',
-  artifacts: 'artifacts',
+  artifacts: 'changes',
   files: 'files',
 };
-export const TAB_LABEL: Record<WorkTab, string> = {
+export const TAB_LABEL: Record<ActiveWorkTab, string> = {
   conflicts: 'Conflicts',
-  files: 'Files',
-  changes: 'Changes',
-  sideEffects: 'Side-effects',
-  artifacts: 'Artifacts',
+  changes: 'What changed',
+  sideEffects: 'What it ran',
+  files: 'Browse files',
 };
 
 function Tab({
@@ -107,7 +109,7 @@ export function WorkDrawer({
   onResolveConflict?: (artifactId: string, choice: ResolveChoice) => void | Promise<void>;
   sessionId: string;
   tab: WorkTab;
-  onTab: (tab: WorkTab) => void;
+  onTab: (tab: ActiveWorkTab) => void;
   pinned: boolean;
   onTogglePin: () => void;
   /** Whether the pin control is offered (mobile/peek-only ceilings hide it). */
@@ -119,18 +121,21 @@ export function WorkDrawer({
 }) {
   // Only non-empty surfaces get a tab; if the active tab emptied out (or never
   // had content), fall back to the first available one.
-  const counted: { key: WorkTab; label: string; count?: number; danger?: boolean }[] = [
+  const combinedChangeCount = changedFileCount + artifactCount;
+  const counted: { key: ActiveWorkTab; label: string; count?: number; danger?: boolean }[] = [
     // Conflicts lead — an unresolved collision is the most action-worthy surface.
-    { key: 'conflicts', label: 'Conflicts', count: conflictCount, danger: true },
-    { key: 'changes', label: 'Changes', count: changedFileCount },
-    { key: 'sideEffects', label: 'Side-effects', count: sideEffectCount, danger: hasDanger },
-    { key: 'artifacts', label: 'Artifacts', count: artifactCount },
+    { key: 'conflicts', label: TAB_LABEL.conflicts, count: conflictCount, danger: true },
+    { key: 'changes', label: TAB_LABEL.changes, count: combinedChangeCount },
+    { key: 'sideEffects', label: TAB_LABEL.sideEffects, count: sideEffectCount, danger: hasDanger },
   ];
   // Files is always available (it browses the whole git+ledger tree, count-less).
   const available = counted
     .filter((t) => (t.count ?? 0) > 0)
-    .concat([{ key: 'files', label: 'Files' }]);
-  const active: WorkTab = available.some((t) => t.key === tab) ? tab : available[0]?.key ?? tab;
+    .concat([{ key: 'files', label: TAB_LABEL.files }]);
+  const normalizedTab = normalizeWorkTab(tab);
+  const active: ActiveWorkTab = available.some((t) => t.key === normalizedTab)
+    ? normalizedTab
+    : available[0]?.key ?? normalizedTab;
 
   return (
     <div
@@ -204,12 +209,16 @@ export function WorkDrawer({
       ) : active === 'files' ? (
         <FilesSurface sessionId={sessionId} onClose={onClose} embedded />
       ) : active === 'changes' ? (
-        <ChangesSurface changes={changes} onClose={onClose} embedded />
+        <WhatChangedSurface
+          changes={changes}
+          artifacts={artifacts}
+          sessionId={sessionId}
+          onClose={onClose}
+          embedded
+        />
       ) : active === 'sideEffects' ? (
         <SideEffectsSurface effects={effects} onClose={onClose} embedded />
-      ) : (
-        <ArtifactsSurface artifacts={artifacts} sessionId={sessionId} onClose={onClose} embedded />
-      )}
+      ) : null}
     </div>
   );
 }

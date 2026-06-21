@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// WorkDrawer: one tabbed surface over Changes + Side-effects with a pin control.
+// WorkDrawer: one tabbed surface over What changed + What it ran with a pin control.
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -43,12 +43,12 @@ describe('WorkDrawer', () => {
   it('renders a tab per non-empty surface, with counts', () => {
     renderDrawer();
     const tabs = screen.getAllByRole('tab');
-    // changes + side-effects + the always-present Files tab.
+    // what-changed + what-it-ran + the always-present Browse files tab.
     expect(tabs).toHaveLength(3);
-    expect(screen.getByRole('tab', { name: /Changes/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /Side-effects/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /Files/ })).toBeTruthy();
-    // Changes tab is active → shows the file row, not the command.
+    expect(screen.getByRole('tab', { name: /What changed/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /What it ran/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    // What changed tab is active → shows the file row, not the command.
     expect(screen.getByText('src/a.ts')).toBeTruthy();
     expect(screen.queryByText('npm install')).toBeNull();
   });
@@ -56,13 +56,13 @@ describe('WorkDrawer', () => {
   it('omits the tab for an empty surface (but keeps the always-present Files tab)', () => {
     renderDrawer({ effects: [], sideEffectCount: 0 });
     expect(screen.getAllByRole('tab')).toHaveLength(2); // changes + files
-    expect(screen.queryByRole('tab', { name: /Side-effects/ })).toBeNull();
-    expect(screen.getByRole('tab', { name: /Files/ })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: /What it ran/ })).toBeNull();
+    expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
   });
 
-  it('clicking the Side-effects tab calls onTab', () => {
+  it('clicking the What it ran tab calls onTab', () => {
     const props = renderDrawer();
-    fireEvent.click(screen.getByRole('tab', { name: /Side-effects/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /What it ran/ }));
     expect(props.onTab).toHaveBeenCalledWith('sideEffects');
   });
 
@@ -134,24 +134,23 @@ describe('WorkDrawer', () => {
 
   it('falls back to the available tab when the active one is empty', () => {
     renderDrawer({ changes: [], changedFileCount: 0, tab: 'changes' });
-    // tab=changes but no changes → renders the side-effects body.
+    // tab=changes but no changes → renders the what-it-ran body.
     expect(screen.getByText('npm install')).toBeTruthy();
   });
 
-  it('shows an Artifacts tab + gallery when artifacts exist', () => {
-    const props = renderDrawer({
+  it('shows artifacts in the combined What changed surface when artifacts exist', () => {
+    renderDrawer({
       artifacts: [art({ id: 'a1', path: '/tmp/chart.png' })],
       artifactCount: 1,
       tab: 'artifacts',
     });
-    expect(screen.getAllByRole('tab')).toHaveLength(4); // changes + side-effects + artifacts + files
-    expect(screen.getByRole('tab', { name: /Artifacts/ })).toBeTruthy();
-    // Artifacts tab active → the gallery tile shows the filename.
+    expect(screen.getAllByRole('tab')).toHaveLength(3); // what changed + what it ran + browse files
+    expect(screen.queryByRole('tab', { name: /Artifacts/ })).toBeNull();
+    expect(screen.getByRole('tab', { name: /What changed/ }).getAttribute('aria-selected')).toBe('true');
+    // Back-compat tab=artifacts normalizes to What changed, where the gallery tile shows the filename.
+    expect(screen.getByText('Created artifacts')).toBeTruthy();
     expect(screen.getByTestId('artifact-tile')).toBeTruthy();
     expect(screen.getByText('chart.png')).toBeTruthy();
-    // Clicking the Changes tab switches.
-    fireEvent.click(screen.getByRole('tab', { name: /Changes/ }));
-    expect(props.onTab).toHaveBeenCalledWith('changes');
   });
 
   it('pin toggle is aria-pressed by state and calls onTogglePin', () => {
@@ -181,7 +180,7 @@ describe('WorkDrawer', () => {
 
   it('detaches the active surface to its own tab (/s/:id/work/:slug)', () => {
     renderDrawer({ sessionId: 's-9', tab: 'changes' });
-    const detach = screen.getByRole('link', { name: /open changes in a new tab/i });
+    const detach = screen.getByRole('link', { name: /open what changed in a new tab/i });
     expect(detach.getAttribute('href')).toBe('/s/s-9/work/changes');
     expect(detach.getAttribute('target')).toBe('_blank');
     expect(detach.getAttribute('rel')).toContain('noopener');
@@ -189,7 +188,7 @@ describe('WorkDrawer', () => {
 
   it('the detach link uses the URL-safe slug for the active tab', () => {
     renderDrawer({ tab: 'sideEffects' });
-    const detach = screen.getByRole('link', { name: /open side-effects in a new tab/i });
+    const detach = screen.getByRole('link', { name: /open what it ran in a new tab/i });
     expect(detach.getAttribute('href')).toBe('/s/s-1/work/side-effects');
   });
 

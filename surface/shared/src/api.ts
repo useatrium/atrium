@@ -49,8 +49,9 @@ export interface ApiOptions {
 
 export interface AuthMethods {
   open: boolean;
-  email: true;
+  email: boolean;
   google: boolean;
+  calls: boolean;
 }
 
 export type ProviderCredentialProvider = 'claude-code' | 'codex';

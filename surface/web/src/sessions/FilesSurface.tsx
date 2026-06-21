@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { ChevronRightIcon, FileIcon, XIcon } from '../components/icons';
 import { VersionSkewBadge } from './ConflictSurface';
+import { EmptyState } from './EmptyState';
 
 type Backing = 'git' | 'ledger';
 type FileType = 'file' | 'dir';
@@ -200,6 +201,7 @@ export function FilesSurface({
     [rows],
   );
   const selectedReadOnlyRepo = selected?.backing === 'git';
+  const rowsEmpty = !rowsLoading && !rowsError && sortedRows.length === 0;
 
   const loadContent = useCallback(
     async (row: FileRow) => {
@@ -321,8 +323,11 @@ export function FilesSurface({
             {rowsError}
           </div>
         )}
-        {!rowsLoading && !rowsError && sortedRows.length === 0 && (
-          <div className="px-3 py-2 text-2xs text-fg-muted">No files</div>
+        {rowsEmpty && (
+          <EmptyState
+            title="No files"
+            hint="The agent's workspace files will appear here once it writes some."
+          />
         )}
         {!rowsLoading &&
           !rowsError &&
@@ -455,18 +460,18 @@ export function FilesSurface({
     <div
       data-testid="files-surface"
       role="dialog"
-      aria-label="Files"
+      aria-label="Browse files"
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
         <h3 className="text-xs font-semibold text-fg">
-          Files <span className="tabular-nums text-fg-muted">· {rows.length}</span>
+          Browse files <span className="tabular-nums text-fg-muted">· {rows.length}</span>
         </h3>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close files"
+          aria-label="Close browse files"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
         >
           <XIcon size={15} />

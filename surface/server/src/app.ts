@@ -49,7 +49,7 @@ import {
 import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
-import { sendLoginCode } from './email.js';
+import { emailDeliveryConfigured, sendLoginCode } from './email.js';
 import {
   copyObject,
   deleteObject,
@@ -79,8 +79,9 @@ import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
-import { CentaurApiError } from '@atrium/centaur-client';
+import { CentaurApiError, CentaurClient } from '@atrium/centaur-client';
 import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
+import { DemoCentaurClient } from './demo-centaur.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -161,8 +162,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
   const emailFetch = deps.emailFetch;
   const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
+  const sessionRunOptions = deps.sessionRuns ?? {};
+  const centaur =
+    sessionRunOptions.centaur ??
+    new CentaurClient({
+      baseUrl: sessionRunOptions.baseUrl ?? config.centaurBaseUrl,
+      apiKey: sessionRunOptions.apiKey ?? config.centaurApiKey,
+    });
   const sessionRuns = new SessionRuns(pool, hub, {
-    ...(deps.sessionRuns ?? {}),
+    ...sessionRunOptions,
+    centaur: new DemoCentaurClient(centaur),
     providerCredentials,
   });
   const calls =
@@ -626,11 +635,28 @@ function rawSession(req: FastifyRequest): string | undefined {
   // Auth
   // -------------------------------------------------------------------------
 
-  app.get('/auth/methods', async () => ({
-    open: config.authOpen,
-    email: true,
-    google: googleEnabled(),
-  }));
+  app.get('/auth/methods', async () => {
+    // First-run capability honesty: only advertise email when a user can
+    // actually obtain a code — either dev-codes echo it in the response, or a
+    // real (resend) transport delivers it. Plain "log" mode writes the code to
+    // the server log only, so we don't offer it (the handle path leads instead).
+    const emailUsable =
+      config.authDevCodes ||
+      (config.emailMode === 'resend' &&
+        emailDeliveryConfigured({
+          mode: config.emailMode,
+          from: config.emailFrom,
+          resendApiKey: config.resendApiKey,
+        }));
+
+    return {
+      open: config.authOpen,
+      email: emailUsable,
+      google: googleEnabled(),
+      // First-run capability honesty: LiveKit-less installs cannot start calls.
+      calls: calls !== null,
+    };
+  });
 
   app.post(
     '/auth/email/request',

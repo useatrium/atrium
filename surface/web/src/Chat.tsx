@@ -79,6 +79,7 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
 const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
+const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 
 type VoiceSendMeta = Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
 type VoiceMsgSendPayload = MsgSendPayload & {
@@ -87,6 +88,12 @@ type VoiceMsgSendPayload = MsgSendPayload & {
 
 function fallbackUser(id: string): UserRef {
   return { id, handle: id, displayName: id };
+}
+
+function isMobileViewportNow(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
+    : false;
 }
 
 function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
@@ -146,6 +153,7 @@ export function Chat({
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const calls = useCall(me, state.channels);
+  const [callsAvailable, setCallsAvailable] = useState(false);
   const stateRef = useRef(state);
   stateRef.current = state;
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
@@ -177,6 +185,19 @@ export function Chat({
     void eventCache.saveSyncCursor(cursor).catch((err: unknown) => {
       console.warn('failed to cache sync cursor', err);
     });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .authMethods()
+      .then((methods) => {
+        if (!cancelled) setCallsAvailable(methods.calls === true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const invalidateAuth = useCallback(() => {
@@ -709,8 +730,11 @@ export function Chat({
   // Layout-grammar focus flag (see the derived `view` below). Kept up here so the
   // permalink effect can set it; the invariant is `focused` ⇒ a session is open.
   const [focused, setFocused] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [demoStarting, setDemoStarting] = useState(false);
   const [providerCredentials, setProviderCredentials] = useState<
     Record<string, ProviderCredentialStatus | undefined>
   >({});
@@ -728,6 +752,15 @@ export function Chat({
   useEffect(() => {
     void loadProviderCredentials();
   }, [loadProviderCredentials]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const sync = () => setIsMobileViewport(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
 
   const saveClaudeToken = useCallback(
     async (token: string) => {
@@ -1605,13 +1638,17 @@ export function Chat({
         return;
       }
       if (e.key !== 'Escape' || switcherOpen) return;
+      if (isSidebarOpen) {
+        setIsSidebarOpen(false);
+        return;
+      }
       const s = stateRef.current;
       if (s.openSessionId) dispatch({ type: 'close-session' });
       else if (s.openThreadRootId != null) dispatch({ type: 'close-thread' });
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [switcherOpen]);
+  }, [isSidebarOpen, switcherOpen]);
 
   // ---- unread badge in the tab title ----
   const unreadCount = Object.values(state.unread).filter(Boolean).length;
@@ -1660,6 +1697,53 @@ export function Chat({
     touchedDraftKeysRef.current.add(key);
   }, []);
 
+  const putTextInComposer = useCallback(
+    (text: string) => {
+      if (!activeDraftKey) return;
+      markDraftTouched(activeDraftKey);
+      setDrafts((prev) => ({ ...prev, [activeDraftKey]: text }));
+      void saveDraft(activeDraftKey, text);
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message input"]');
+        if (!el) return;
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        setter?.call(el, text);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.focus();
+        el.setSelectionRange(text.length, text.length);
+      });
+    },
+    [activeDraftKey, markDraftTouched, saveDraft],
+  );
+
+  const startDemoSession = useCallback(async () => {
+    if (!active || demoStarting) return;
+    setDemoStarting(true);
+    try {
+      const { session: wire } = await sessionsApi.create({
+        channelId: active.id,
+        task: 'Demo — watch an agent work',
+        harness: 'demo',
+        clientSpawnId: `demo-${randomId()}`,
+        opId: randomId(),
+      });
+      const session = sessionFromWire(wire);
+      dispatch({ type: 'session-upsert', session });
+      openSession(session.id);
+    } catch (err) {
+      onApiError(err);
+      if (!(err instanceof ApiError && err.status === 401)) {
+        showErrorToast("Couldn't start the demo agent.");
+      }
+    } finally {
+      setDemoStarting(false);
+    }
+  }, [active, demoStarting, onApiError]);
+
+  const openProviderConnect = useCallback(() => {
+    setProviderDialog(providerCredentials.codex?.connected ? 'claude-code' : 'codex');
+  }, [providerCredentials.codex?.connected]);
+
   const enqueueDraft = useCallback(
     (key: string, text: string) => {
       markDraftTouched(key);
@@ -1684,6 +1768,7 @@ export function Chat({
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
+  const sessionPaneLayout: SessionView = isMobileViewport ? 'focus' : focused ? 'focus' : 'split';
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -1694,21 +1779,43 @@ export function Chat({
         unread={state.unread}
         me={me}
         wsStatus={state.wsStatus}
-        onSelect={selectChannel}
+        onSelect={(channelId) => {
+          selectChannel(channelId);
+          setIsSidebarOpen(false);
+        }}
         onSetMute={setMute}
-          onCreateChannel={createChannel}
-          onStartDm={startDm}
-          onOpenSession={openSession}
-          sessionEventSeq={sessionEventSeq}
-          providerCredentials={providerCredentials}
-          onConnectProvider={setProviderDialog}
-          onLogout={onLogout}
-        />
+        onCreateChannel={createChannel}
+        onStartDm={startDm}
+        onOpenSession={(sessionId) => {
+          openSession(sessionId);
+          setIsSidebarOpen(false);
+        }}
+        sessionEventSeq={sessionEventSeq}
+        providerCredentials={providerCredentials}
+        onConnectProvider={setProviderDialog}
+        onLogout={onLogout}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
 
       {view !== 'focus' && (
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge px-4">
-          <h1 className="flex items-center gap-1.5 text-sm font-bold text-fg">
+        <main
+          className={`${state.openSessionId ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}
+        >
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4">
+            <button
+              type="button"
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="Open navigation"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-edge bg-surface-raised/40 text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:hidden"
+            >
+              <span className="flex flex-col gap-1" aria-hidden="true">
+                <span className="block h-px w-4 bg-current" />
+                <span className="block h-px w-4 bg-current" />
+                <span className="block h-px w-4 bg-current" />
+              </span>
+            </button>
+            <h1 className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none">
             {active?.kind === 'dm' || active?.kind === 'gdm' ? (
               <>
                 <Avatar
@@ -1720,10 +1827,10 @@ export function Chat({
               </>
             ) : (
               <>
-                <span className="mr-0.5 text-fg-muted">
+                <span className="mr-0.5 shrink-0 text-fg-muted">
                   {active?.kind === 'private' ? <LockIcon size={14} /> : '#'}
                 </span>
-                {active?.name ?? '…'}
+                <span className="truncate">{active?.name ?? '…'}</span>
               </>
             )}
           </h1>
@@ -1805,26 +1912,48 @@ export function Chat({
           <button
             onClick={() => setSpawnOpen(true)}
             disabled={!active}
-            title="Start an agent session"
-            aria-label="Start an agent session"
-            className="ml-auto inline-flex items-center gap-1 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
+            title="New agent"
+            aria-label="New agent"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted md:ml-auto"
           >
             <PlusIcon size={14} />
-            <span className="hidden sm:inline">Session</span>
+            <span className="hidden sm:inline">New agent</span>
           </button>
-          {state.openSessionId && <ViewToggle view={view} hasSession onSetView={setView} />}
+          {state.openSessionId && (
+            <div className="hidden md:flex">
+              <ViewToggle view={view} hasSession onSetView={setView} />
+            </div>
+          )}
+          {/* Calls unconfigured: keep the phone visible but grayed with a setup
+              hint (tooltip + click), so the feature is discoverable instead of
+              hidden — rather than a dead button that fails on click. */}
           <button
-            onClick={() => active && void calls.startCall(active.id)}
-            disabled={!active || calls.starting || calls.activeCall != null}
+            onClick={() => {
+              if (!callsAvailable) {
+                showErrorToast(
+                  'Voice calls aren’t set up. Configure LiveKit (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) to enable calls.',
+                );
+                return;
+              }
+              if (active) void calls.startCall(active.id);
+            }}
+            disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
+            aria-disabled={!callsAvailable || undefined}
             title={
-              calls.activeCall
-                ? 'Already in a call'
-                : calls.starting
-                  ? 'Starting call…'
-                  : 'Start voice call'
+              !callsAvailable
+                ? 'Voice calls aren’t set up — configure LiveKit to enable'
+                : calls.activeCall
+                  ? 'Already in a call'
+                  : calls.starting
+                    ? 'Starting call…'
+                    : 'Start voice call'
             }
-            aria-label="Start voice call"
-            className="rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
+            aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
+            className={
+              callsAvailable
+                ? 'rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
+                : 'rounded-md border border-edge bg-surface-raised/20 px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
+            }
           >
             <PhoneIcon size={15} />
           </button>
@@ -1833,14 +1962,14 @@ export function Chat({
             className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             <SearchIcon size={14} />
-            <span>Search</span>
-            <kbd className="rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted">
+            <span className="hidden sm:inline">Search</span>
+            <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
               ⌘K
             </kbd>
           </button>
           {presentUsers.length > 0 && (
             <div
-              className="flex items-center gap-2"
+              className="hidden items-center gap-2 md:flex"
               title="Viewing this channel right now"
             >
               <div className="flex -space-x-1.5">
@@ -1906,6 +2035,11 @@ export function Chat({
           onLoadEarlier={loadEarlier}
           onOpenThread={openThread}
           onOpenSession={openSession}
+          onRunDemoAgent={active ? startDemoSession : undefined}
+          demoAgentBusy={demoStarting}
+          onInsertAgentCommand={() => putTextInComposer('@agent ')}
+          onSayHello={() => putTextInComposer('Hello!')}
+          onConnectProvider={openProviderConnect}
           onRetry={retry}
           onEdit={editMessage}
           onDelete={removeMessage}
@@ -1913,7 +2047,7 @@ export function Chat({
           unreadDividerAfterId={unreadDividerAfterId}
         />
 
-        {active && (
+        {active && !state.openSessionId && (
           <>
             <TypingLine typing={typing} />
             <Composer
@@ -1947,7 +2081,7 @@ export function Chat({
           key={paneSession.id} // full reset (stream, seat anchors, tool state) per session
           session={paneSession}
           me={me}
-          layout={focused ? 'focus' : 'split'}
+          layout={sessionPaneLayout}
           onToggleFocus={() => setFocused((f) => !f)}
           watchers={paneWatchers}
           typers={Object.values(sessionTyping[paneSession.id] ?? {}).map((t) => t.user)}
@@ -1966,7 +2100,7 @@ export function Chat({
       ) : state.openSessionId ? (
         <aside
           className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
-            focused ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
+            isMobileViewport || focused ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
           }`}
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
@@ -2000,38 +2134,42 @@ export function Chat({
           )}
         </aside>
       ) : openThreadRoot && active ? (
-        <ThreadPanel
-          root={openThreadRoot}
-          replies={threadReplies}
-          loaded={threadLoaded}
-          sessions={state.sessions}
-          spectators={spectators}
-          meId={me.id}
-          meHandle={me.handle}
-          onClose={() => dispatch({ type: 'close-thread' })}
-          onSend={(text, attachments, attachmentRefs, voice) =>
-            send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
-          }
-          queueUpload={queueUpload}
-          onOpenSession={openSession}
-          onRetry={retry}
-          onEdit={editMessage}
-          onDelete={removeMessage}
-          onReact={reactToMessage}
-          draftKey={threadDraftKey}
-          initialDraft={drafts[threadDraftKey] ?? ''}
-          onDraftChange={saveDraft}
-          onDraftPersisted={enqueueDraft}
-          onDraftTouched={markDraftTouched}
-        />
+        <div className="hidden md:contents">
+          <ThreadPanel
+            root={openThreadRoot}
+            replies={threadReplies}
+            loaded={threadLoaded}
+            sessions={state.sessions}
+            spectators={spectators}
+            meId={me.id}
+            meHandle={me.handle}
+            onClose={() => dispatch({ type: 'close-thread' })}
+            onSend={(text, attachments, attachmentRefs, voice) =>
+              send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
+            }
+            queueUpload={queueUpload}
+            onOpenSession={openSession}
+            onRetry={retry}
+            onEdit={editMessage}
+            onDelete={removeMessage}
+            onReact={reactToMessage}
+            draftKey={threadDraftKey}
+            initialDraft={drafts[threadDraftKey] ?? ''}
+            onDraftChange={saveDraft}
+            onDraftPersisted={enqueueDraft}
+            onDraftTouched={markDraftTouched}
+          />
+        </div>
       ) : (
         active &&
         hasChannelSessions && (
-          <SessionsRail
-            channelId={active.id}
-            sessions={state.sessions}
-            onOpenSession={openSession}
-          />
+          <div className="hidden md:contents">
+            <SessionsRail
+              channelId={active.id}
+              sessions={state.sessions}
+              onOpenSession={openSession}
+            />
+          </div>
         )
       )}
 
