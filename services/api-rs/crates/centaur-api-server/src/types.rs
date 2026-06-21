@@ -3,6 +3,7 @@ use centaur_session_core::{HarnessType, Session, SessionEvent, SessionMessageInp
 use centaur_session_runtime::SESSION_OUTPUT_LINE_EVENT;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,6 +62,8 @@ pub struct AppendMessagesResponse {
 pub struct ExecuteSessionRequest {
     pub idempotency_key: Option<String>,
     pub metadata: Option<Value>,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
     #[serde(default)]
     pub input_lines: Vec<String>,
     pub idle_timeout_ms: Option<u64>,

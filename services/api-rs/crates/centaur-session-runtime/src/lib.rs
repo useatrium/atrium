@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -42,6 +42,7 @@ const EVENT_STREAM_SAFETY_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const STEERING_STARTUP_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const STEERING_STARTUP_RETRY_TIMEOUT: Duration = Duration::from_secs(15);
 const COMPONENT_SESSION_RUNTIME: &str = "session_runtime";
+const CLAUDE_CODE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 type SandboxSpecFactory = Arc<dyn Fn(&ThreadKey, &str, &HarnessType) -> SandboxSpec + Send + Sync>;
 type SessionInputSink = FramedWrite<SandboxWrite, LinesCodec>;
@@ -158,6 +159,7 @@ impl From<SessionStoreError> for AnswerQuestionError {
 pub struct ExecuteSessionInput {
     pub idempotency_key: Option<String>,
     pub metadata: Option<Value>,
+    pub environment: BTreeMap<String, String>,
     pub input_lines: Vec<String>,
     pub idle_timeout_ms: Option<u64>,
     pub max_duration_ms: Option<u64>,
@@ -844,6 +846,7 @@ impl SessionRuntime {
         let ExecuteSessionInput {
             idempotency_key,
             metadata,
+            environment,
             input_lines,
             idle_timeout_ms,
             max_duration_ms,
@@ -877,6 +880,7 @@ impl SessionRuntime {
             let session = self.store.get_session(thread_key).await?;
             let harness_label = session.harness_type.to_string();
             validate_input_lines(&input_lines)?;
+            let environment = validate_execution_environment(&session.harness_type, environment)?;
             let (idle_timeout, max_duration) = duration_options(idle_timeout_ms, max_duration_ms)?;
 
             let execution = self
@@ -970,6 +974,7 @@ impl SessionRuntime {
                     session.sandbox_id.as_deref(),
                     session.iron_control_principal.as_deref(),
                     &execution.execution_id,
+                    &environment,
                 )
                 .await
             {
@@ -1337,6 +1342,7 @@ impl SessionRuntime {
         existing_sandbox_id: Option<&str>,
         iron_control_principal: Option<&str>,
         execution_id: &str,
+        environment: &[(String, String)],
     ) -> Result<String, SessionRuntimeError> {
         let span = info_span!(
             "centaur.api_rs.sandbox.ensure",
@@ -1488,7 +1494,11 @@ impl SessionRuntime {
             if !warm_harness_matches && self.warm_pool.is_some() {
                 record_sandbox_warm_pool_claim("harness_mismatch");
             }
-            if let Some(warm_pool) = self.warm_pool.as_ref().filter(|_| warm_harness_matches) {
+            if let Some(warm_pool) = self
+                .warm_pool
+                .as_ref()
+                .filter(|_| warm_harness_matches && environment.is_empty())
+            {
                 match warm_pool
                     .claim(thread_key.as_str(), iron_control_principal)
                     .await
@@ -1547,6 +1557,9 @@ impl SessionRuntime {
 
             let mut spec =
                 (self.sandbox_runtime.spec_factory)(thread_key, execution_id, harness_type);
+            for (name, value) in environment {
+                spec = spec.env(name.clone(), value.clone());
+            }
             if let Some(principal) = iron_control_principal {
                 spec.iron_control_principal = Some(principal.to_owned());
             }
@@ -3949,6 +3962,35 @@ fn validate_input_lines(lines: &[String]) -> Result<(), SessionRuntimeError> {
     Ok(())
 }
 
+fn validate_execution_environment(
+    harness_type: &HarnessType,
+    environment: BTreeMap<String, String>,
+) -> Result<Vec<(String, String)>, SessionRuntimeError> {
+    if environment.is_empty() {
+        return Ok(Vec::new());
+    }
+    if harness_type != &HarnessType::ClaudeCode {
+        return Err(SessionRuntimeError::BadRequest(
+            "execution environment is only supported for claudecode sessions".to_owned(),
+        ));
+    }
+    let mut allowed = Vec::new();
+    for (name, value) in environment {
+        if name != CLAUDE_CODE_OAUTH_TOKEN_ENV {
+            return Err(SessionRuntimeError::BadRequest(format!(
+                "unsupported execution environment variable: {name}"
+            )));
+        }
+        if value.is_empty() {
+            return Err(SessionRuntimeError::BadRequest(format!(
+                "execution environment variable {name} must not be empty"
+            )));
+        }
+        allowed.push((name, value));
+    }
+    Ok(allowed)
+}
+
 fn stdout_pump_error_message(error: &LinesCodecError) -> String {
     match error {
         LinesCodecError::MaxLineLengthExceeded => {
@@ -4548,6 +4590,43 @@ mod tests {
         assert!(!should_attach_session_pipe(&SandboxStatus::Unknown(
             "other".to_owned()
         )));
+    }
+
+    #[test]
+    fn execution_environment_allows_only_claude_oauth_token_for_claudecode() {
+        let allowed = validate_execution_environment(
+            &HarnessType::ClaudeCode,
+            BTreeMap::from([(
+                CLAUDE_CODE_OAUTH_TOKEN_ENV.to_owned(),
+                "oauth-token".to_owned(),
+            )]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            allowed,
+            vec![(
+                CLAUDE_CODE_OAUTH_TOKEN_ENV.to_owned(),
+                "oauth-token".to_owned()
+            )]
+        );
+        assert!(
+            validate_execution_environment(
+                &HarnessType::ClaudeCode,
+                BTreeMap::from([("OPENAI_API_KEY".to_owned(), "secret".to_owned())]),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_execution_environment(
+                &HarnessType::Codex,
+                BTreeMap::from([(
+                    CLAUDE_CODE_OAUTH_TOKEN_ENV.to_owned(),
+                    "oauth-token".to_owned()
+                )]),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -5375,6 +5454,7 @@ mod adoption_tests {
                     ExecuteSessionInput {
                         idempotency_key: None,
                         metadata: None,
+                        environment: BTreeMap::new(),
                         input_lines: vec![
                             json!({
                                 "type": "user",

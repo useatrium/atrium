@@ -355,6 +355,7 @@ async fn execute_session(
             ExecuteSessionInput {
                 idempotency_key: request.idempotency_key,
                 metadata: request.metadata,
+                environment: request.environment,
                 input_lines: request.input_lines,
                 idle_timeout_ms: request.idle_timeout_ms,
                 max_duration_ms: request.max_duration_ms,

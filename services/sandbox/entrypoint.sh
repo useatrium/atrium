@@ -424,6 +424,16 @@ if [ "${1:-}" = "harness-server" ] && [ "${2:-}" = "amp" ] && [ -f "$TARGET_PROM
     ln -s "$(basename "$TARGET_PROMPT")" "$WORKSPACE_DIR/AGENT.md"
 fi
 
+if [ "${1:-}" = "harness-server" ] && [ "${2:-}" = "claude-code" ]; then
+    case "${CENTAUR_CLAUDE_SDK_BRIDGE:-1}" in
+        0|false|False|FALSE|no|No|NO|off|Off|OFF)
+            ;;
+        *)
+            export CENTAUR_CLAUDE_APP_BRIDGE_COMMAND="${CENTAUR_CLAUDE_APP_BRIDGE_COMMAND:-/usr/local/bin/claude-sdk-bridge}"
+            ;;
+    esac
+fi
+
 # Codex reads its auth file when the app server starts. Complete this before
 # signaling readiness, otherwise warm pods can be claimed with no auth loaded.
 # Skipped under access_token mode — that path relies on the chatgpt auth.json

@@ -523,6 +523,296 @@ fn fake_codex_blocks_mode_relays_request_user_input_answers() {
 }
 
 #[test]
+fn fake_claude_blocks_mode_relays_sdk_question_answers() {
+    let fake_claude = temp_path("fake-claude-hitl.sh");
+    let fake_claude_log = temp_path("fake-claude-hitl-stdin.jsonl");
+    let script = fake_claude_hitl_bridge_script(&fake_claude_log);
+    std::fs::write(&fake_claude, script).expect("write fake claude script");
+    let mut permissions = std::fs::metadata(&fake_claude)
+        .expect("fake claude metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_claude, permissions).expect("chmod fake claude script");
+
+    let mut bridge = BridgeProcess::spawn_harness_blocks(
+        Harness::ClaudeCode,
+        Some(shell_quote(&fake_claude)),
+        None,
+    );
+    bridge.send(json!({
+        "type": "user",
+        "thread_key": "slack:C123:123.456",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "ask me"}],
+        },
+    }));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut saw_question = false;
+    let mut saw_answered = false;
+    let mut saw_completed = false;
+    while !saw_completed {
+        let value = bridge.read_any_json(deadline);
+        match value.get("type").and_then(Value::as_str) {
+            Some("question_requested") => {
+                saw_question = true;
+                assert_eq!(
+                    value.get("question_id").and_then(Value::as_str),
+                    Some("toolu_ask")
+                );
+                assert_eq!(
+                    value
+                        .pointer("/questions/0/multiSelect")
+                        .and_then(Value::as_bool),
+                    Some(true)
+                );
+                assert_eq!(
+                    value
+                        .pointer("/questions/0/options/0/previewFormat")
+                        .and_then(Value::as_str),
+                    Some("markdown")
+                );
+                bridge.send(json!({
+                    "type": "question_answer",
+                    "question_id": "toolu_ask",
+                    "answers": {
+                        "question-1": {"answers": ["Summary", "Timeline"]},
+                    },
+                }));
+            }
+            Some("question_resolved") => {
+                saw_answered = true;
+                assert_eq!(
+                    value.get("question_id").and_then(Value::as_str),
+                    Some("toolu_ask")
+                );
+                assert_eq!(
+                    value.get("reason").and_then(Value::as_str),
+                    Some("answered")
+                );
+            }
+            _ => {
+                if value.get("method").and_then(Value::as_str) == Some("turn/completed") {
+                    saw_completed = true;
+                }
+            }
+        }
+    }
+    bridge.finish_successfully();
+
+    assert!(saw_question, "Claude bridge should emit question_requested");
+    assert!(
+        saw_answered,
+        "Claude bridge should emit question_resolved(answered)"
+    );
+    let stdin_log = std::fs::read_to_string(&fake_claude_log).expect("read fake claude stdin log");
+    let values: Vec<Value> = stdin_log
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("fake claude stdin JSON"))
+        .collect();
+    assert!(
+        values.iter().any(|value| {
+            value.get("type").and_then(Value::as_str) == Some("question_answer")
+                && value
+                    .pointer("/answers/question-1/answers/0")
+                    .and_then(Value::as_str)
+                    == Some("Summary")
+                && value
+                    .pointer("/answers/question-1/answers/1")
+                    .and_then(Value::as_str)
+                    == Some("Timeline")
+        }),
+        "Claude bridge did not receive the question answer; log={values:?}"
+    );
+
+    let _ = std::fs::remove_file(fake_claude);
+    let _ = std::fs::remove_file(fake_claude_log);
+}
+
+#[test]
+fn claude_sdk_bridge_maps_ask_user_question_with_fake_sdk() {
+    let fake_sdk = temp_path("fake-claude-agent-sdk").with_extension("mjs");
+    std::fs::write(&fake_sdk, fake_claude_agent_sdk_module_script())
+        .expect("write fake SDK module");
+
+    let bridge_script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("services/sandbox/claude-sdk-bridge.mjs");
+    let session_id = Uuid::new_v4().to_string();
+    let mut command = Command::new("node");
+    command
+        .arg(bridge_script)
+        .env("CLAUDE_AGENT_SDK_MODULE", &fake_sdk)
+        .env("CLAUDE_ASK_USER_PREVIEW_FORMAT", "html")
+        .env("CENTAUR_CLAUDE_MODEL", "fake-model")
+        .env("CENTAUR_CLAUDE_SESSION_ID", &session_id)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut bridge = BridgeProcess::spawn_command(command);
+
+    bridge.send(json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "ask me"}],
+        },
+    }));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut saw_question = false;
+    let mut saw_answer_text = false;
+    let mut saw_result = false;
+    while !saw_result {
+        let value = bridge.read_any_json(deadline);
+        match value.get("type").and_then(Value::as_str) {
+            Some("question_requested") => {
+                saw_question = true;
+                assert_eq!(
+                    value.get("question_id").and_then(Value::as_str),
+                    Some("toolu_sdk")
+                );
+                assert_eq!(
+                    value
+                        .pointer("/questions/0/multiSelect")
+                        .and_then(Value::as_bool),
+                    Some(true)
+                );
+                assert_eq!(
+                    value
+                        .pointer("/questions/0/options/0/previewFormat")
+                        .and_then(Value::as_str),
+                    Some("html")
+                );
+                bridge.send(json!({
+                    "type": "question_answer",
+                    "question_id": "toolu_sdk",
+                    "answers": {
+                        "question-1": {"answers": ["Summary", "Timeline"]},
+                    },
+                }));
+            }
+            Some("assistant") => {
+                let text = value
+                    .pointer("/message/content/0/text")
+                    .and_then(Value::as_str);
+                if text == Some("Summary, Timeline") {
+                    saw_answer_text = true;
+                }
+            }
+            Some("result") => {
+                saw_result = true;
+            }
+            _ => {}
+        }
+    }
+    bridge.finish_successfully();
+
+    assert!(saw_question, "bridge should emit question_requested");
+    assert!(
+        saw_answer_text,
+        "bridge should pass selected labels back to the SDK"
+    );
+    let _ = std::fs::remove_file(fake_sdk);
+}
+
+#[test]
+fn claude_blocks_mode_uses_sdk_bridge_for_hitl_questions() {
+    let fake_sdk = temp_path("fake-claude-agent-sdk-harness").with_extension("mjs");
+    std::fs::write(&fake_sdk, fake_claude_agent_sdk_module_script())
+        .expect("write fake SDK module");
+    let bridge_script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("services/sandbox/claude-sdk-bridge.mjs");
+
+    let mut bridge = BridgeProcess::spawn_harness_blocks_envs(
+        Harness::ClaudeCode,
+        Some(format!("node {}", shell_quote(&bridge_script))),
+        None,
+        &[
+            (
+                "CLAUDE_AGENT_SDK_MODULE",
+                fake_sdk.to_str().expect("utf-8 fake SDK path"),
+            ),
+            ("CLAUDE_ASK_USER_PREVIEW_FORMAT", "html"),
+            ("CLAUDE_MODEL", "fake-model"),
+        ],
+    );
+    bridge.send(json!({
+        "type": "user",
+        "thread_key": "slack:C123:123.456",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "ask me"}],
+        },
+    }));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut saw_question = false;
+    let mut saw_answered = false;
+    let mut saw_agent_text = false;
+    let mut saw_completed = false;
+    while !saw_completed {
+        let value = bridge.read_any_json(deadline);
+        match value.get("type").and_then(Value::as_str) {
+            Some("question_requested") => {
+                saw_question = true;
+                assert_eq!(
+                    value.get("question_id").and_then(Value::as_str),
+                    Some("toolu_sdk")
+                );
+                assert_eq!(
+                    value
+                        .pointer("/questions/0/options/0/previewFormat")
+                        .and_then(Value::as_str),
+                    Some("html")
+                );
+                bridge.send(json!({
+                    "type": "question_answer",
+                    "question_id": "toolu_sdk",
+                    "answers": {
+                        "question-1": {"answers": ["Summary", "Timeline"]},
+                    },
+                }));
+            }
+            Some("question_resolved") => {
+                saw_answered = true;
+                assert_eq!(
+                    value.get("reason").and_then(Value::as_str),
+                    Some("answered")
+                );
+            }
+            _ => {
+                if value.get("method").and_then(Value::as_str) == Some("item/completed")
+                    && value.pointer("/params/item/type").and_then(Value::as_str)
+                        == Some("agentMessage")
+                    && value.pointer("/params/item/text").and_then(Value::as_str)
+                        == Some("Summary, Timeline")
+                {
+                    saw_agent_text = true;
+                }
+                if value.get("method").and_then(Value::as_str) == Some("turn/completed") {
+                    saw_completed = true;
+                }
+            }
+        }
+    }
+    bridge.finish_successfully();
+
+    assert!(saw_question, "SDK bridge should emit question_requested");
+    assert!(
+        saw_answered,
+        "harness should resolve the question as answered"
+    );
+    assert!(
+        saw_agent_text,
+        "Claude answer should include the labels selected through the GUI path"
+    );
+    let _ = std::fs::remove_file(fake_sdk);
+}
+
+#[test]
 fn fake_codex_blocks_mode_forwards_reasoning_as_turn_start_effort() {
     let fake_codex = temp_path("fake-codex-effort.sh");
     let fake_codex_log = temp_path("fake-codex-effort-requests.jsonl");
@@ -1462,7 +1752,7 @@ fn run_native_anthropic(harness: Harness, prompt: &str, timeout: Duration) -> Na
                     .get("is_partial")
                     .and_then(Value::as_bool)
                     .is_some_and(|partial| !partial)
-                    || !value.get("is_partial").is_some()
+                    || value.get("is_partial").is_none()
                 {
                     run.final_assistant_text = assistant_text_from_message(&value["message"]);
                 }
@@ -1820,6 +2110,104 @@ done
 "#,
     );
     script
+}
+
+fn fake_claude_hitl_bridge_script(log_path: &Path) -> String {
+    let mut script = String::new();
+    script.push_str("#!/bin/sh\n");
+    script.push_str("log=");
+    script.push_str(&shell_quote(log_path));
+    script.push_str(
+        r#"
+touch "$log"
+if ! IFS= read -r user_line; then
+  printf '%s\n' 'expected user input' >&2
+  exit 66
+fi
+printf '%s\n' "$user_line" >> "$log"
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session"}'
+printf '%s\n' '{"type":"question_requested","question_id":"toolu_ask","turn_id":"turn-1","questions":[{"id":"question-1","header":"Sections","question":"Which sections should be visible?","multiSelect":true,"options":[{"label":"Summary","description":"Show a brief overview.","preview":"ASCII SUMMARY","previewFormat":"markdown"},{"label":"Timeline","description":"Show recent activity.","preview":"<div>Timeline</div>","previewFormat":"html"}]}]}'
+if ! IFS= read -r answer_line; then
+  printf '%s\n' 'expected question_answer input' >&2
+  exit 67
+fi
+printf '%s\n' "$answer_line" >> "$log"
+printf '%s\n' '{"type":"assistant","is_partial":true,"message":{"id":"msg_1","content":[{"type":"text","text":"answered"}]}}'
+printf '%s\n' '{"type":"assistant","is_partial":false,"message":{"id":"msg_1","content":[{"type":"text","text":"answered"}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","result":"answered"}'
+"#,
+    );
+    script
+}
+
+fn fake_claude_agent_sdk_module_script() -> &'static str {
+    r#"
+export function query({ prompt, options }) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      let sawUser = false;
+      for await (const message of prompt) {
+        if (message.type === "user" && message.message?.role === "user") {
+          sawUser = true;
+        }
+      }
+      if (!sawUser) {
+        throw new Error("prompt did not include a user message");
+      }
+      if (options.model !== "fake-model") {
+        throw new Error(`expected fake-model, got ${options.model}`);
+      }
+      if (!options.sessionId) {
+        throw new Error("expected sessionId on first query");
+      }
+      if (options.permissionMode !== "bypassPermissions" || !options.allowDangerouslySkipPermissions) {
+        throw new Error("expected bypass permission options");
+      }
+      if (options.toolConfig?.askUserQuestion?.previewFormat !== "html") {
+        throw new Error("expected HTML preview format");
+      }
+
+      yield { type: "system", subtype: "init", session_id: "sdk-session" };
+      const permission = await options.canUseTool(
+        "AskUserQuestion",
+        {
+          questions: [
+            {
+              question: "Which sections should be visible?",
+              header: "Sections",
+              multiSelect: true,
+              options: [
+                { label: "Summary", description: "Show a brief overview.", preview: "<div>Summary</div>" },
+                { label: "Timeline", description: "Show recent activity.", preview: "<div>Timeline</div>" }
+              ]
+            }
+          ]
+        },
+        { toolUseID: "toolu_sdk", signal: new AbortController().signal }
+      );
+
+      yield {
+        type: "assistant",
+        session_id: "sdk-session",
+        message: {
+          id: "msg_sdk",
+          stop_reason: "end_turn",
+          content: [
+            { type: "text", text: permission.updatedInput.answers["Which sections should be visible?"] }
+          ]
+        }
+      };
+      yield {
+        type: "result",
+        subtype: "success",
+        result: "done",
+        is_error: false,
+        session_id: "sdk-session"
+      };
+    }
+  };
+}
+"#
 }
 
 fn temp_path(name: &str) -> PathBuf {

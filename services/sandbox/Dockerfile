@@ -61,7 +61,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN useradd -m -s /bin/bash -u 1001 agent \
     && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/agent
 
-ARG CLAUDE_CODE_VERSION=2.1.154
+ARG CLAUDE_CODE_VERSION=2.1.185
+ARG CLAUDE_AGENT_SDK_VERSION=0.3.185
 ARG CODEX_VERSION=0.139.0
 ARG PI_CODING_AGENT_VERSION=0.67.2
 ARG NUSHELL_VERSION=0.112.2
@@ -106,6 +107,7 @@ RUN set -eux; \
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g --prefer-online --force \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "@anthropic-ai/claude-agent-sdk@${CLAUDE_AGENT_SDK_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
       "@mariozechner/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
       "pnpm@${PNPM_VERSION}" \
@@ -212,6 +214,7 @@ COPY --link --chmod=644 services/sandbox/claude-credentials.json /etc/centaur/cl
 COPY --link --chmod=755 services/sandbox/md2docx.py /usr/local/bin/md2docx
 COPY --link --chmod=755 services/workflow-python/workflow_host.py /usr/local/bin/workflow-host
 COPY --link --chmod=755 services/sandbox/git-branch.sh /usr/local/bin/git-branch
+COPY --link --chmod=755 services/sandbox/claude-sdk-bridge.mjs /usr/local/bin/claude-sdk-bridge
 COPY --link --chmod=755 services/sandbox/install_tool_shims.py /usr/local/bin/install-tool-shims
 COPY --link --chmod=755 services/sandbox/entrypoint.sh /entrypoint.sh
 

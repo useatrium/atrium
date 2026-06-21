@@ -157,25 +157,34 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
                 reasoning,
             }) => {
                 let model = model.or_else(|| config.default_model());
-                let model_provider =
-                    config.model_provider_for(provider.as_deref(), model.as_deref());
-                if let Err(error) = run_codex_user_turn(
-                    &mut codex,
-                    &mut stdout,
-                    &mut request_id,
-                    &mut thread_id,
-                    &mut thread_provider,
+                let turn = CodexTurnInput {
                     input,
                     client_user_message_id,
-                    (model, model_provider),
-                    provider,
+                    model_provider: config
+                        .model_provider_for(provider.as_deref(), model.as_deref()),
+                    requested_provider: provider,
+                    model,
                     reasoning,
-                    &input_rx,
-                    &mut blocks_state,
-                ) {
-                    let fallback_thread_id = thread_id.as_deref().unwrap_or("codex");
+                };
+                let mut turn_ctx = CodexBlocksTurn {
+                    codex: &mut codex,
+                    stdout: &mut stdout,
+                    request_id: &mut request_id,
+                    thread_id: &mut thread_id,
+                    thread_provider: &mut thread_provider,
+                    input_rx: &input_rx,
+                    blocks_state: &mut blocks_state,
+                };
+                if let Err(error) = run_codex_user_turn(&mut turn_ctx, turn) {
+                    let fallback_thread_id =
+                        turn_ctx.thread_id.as_deref().unwrap_or("codex").to_string();
                     eprintln!("Codex blocks turn failed: {error:#}");
-                    write_blocks_error(&mut stdout, fallback_thread_id, "turn", error.to_string())?;
+                    write_blocks_error(
+                        turn_ctx.stdout,
+                        &fallback_thread_id,
+                        "turn",
+                        error.to_string(),
+                    )?;
                 }
             }
             Ok(BlocksCommand::Interrupt) => {
@@ -216,32 +225,41 @@ fn spawn_stdin_reader() -> Receiver<io::Result<String>> {
     input_rx
 }
 
-fn run_codex_user_turn<W: Write>(
-    codex: &mut CodexJsonRpcChild,
-    stdout: &mut W,
-    request_id: &mut i64,
-    thread_id: &mut Option<String>,
-    thread_provider: &mut Option<String>,
+struct CodexBlocksTurn<'a, W: Write> {
+    codex: &'a mut CodexJsonRpcChild,
+    stdout: &'a mut W,
+    request_id: &'a mut i64,
+    thread_id: &'a mut Option<String>,
+    thread_provider: &'a mut Option<String>,
+    input_rx: &'a Receiver<io::Result<String>>,
+    blocks_state: &'a mut BlocksState,
+}
+
+struct CodexTurnInput {
     input: Vec<UserInput>,
     client_user_message_id: Option<String>,
-    model_and_provider: (Option<String>, String),
+    model: Option<String>,
+    model_provider: String,
     requested_provider: Option<String>,
     reasoning: Option<String>,
-    input_rx: &Receiver<io::Result<String>>,
-    blocks_state: &mut BlocksState,
+}
+
+fn run_codex_user_turn<W: Write>(
+    ctx: &mut CodexBlocksTurn<'_, W>,
+    turn: CodexTurnInput,
 ) -> Result<()> {
-    let (model, model_provider) = model_and_provider;
-    if thread_id.is_none() {
-        *thread_id = Some(start_or_resume_thread(
-            codex,
-            stdout,
-            request_id,
-            &model_provider,
+    if ctx.thread_id.is_none() {
+        *ctx.thread_id = Some(start_or_resume_thread(
+            ctx.codex,
+            ctx.stdout,
+            ctx.request_id,
+            &turn.model_provider,
         )?);
-        *thread_provider = Some(model_provider.clone());
-    } else if let (Some(requested), Some(pinned)) =
-        (requested_provider.as_deref(), thread_provider.as_deref())
-        && requested != pinned
+        *ctx.thread_provider = Some(turn.model_provider.clone());
+    } else if let (Some(requested), Some(pinned)) = (
+        turn.requested_provider.as_deref(),
+        ctx.thread_provider.as_deref(),
+    ) && requested != pinned
     {
         // codex pins the provider at thread start, so an explicit mid-thread
         // override (e.g. a later `--bedrock`) cannot take effect. Surface it
@@ -254,31 +272,35 @@ fn run_codex_user_turn<W: Write>(
              (provider is fixed at thread start; start a new thread to switch providers)"
         );
     }
-    let current_thread_id = thread_id
+    let current_thread_id = ctx
+        .thread_id
         .as_ref()
         .expect("thread id was initialized")
         .clone();
 
     let mut params = json!({
         "threadId": current_thread_id,
-        "input": input,
+        "input": turn.input,
     });
-    if let Some(client_user_message_id) = client_user_message_id {
+    if let Some(client_user_message_id) = turn.client_user_message_id {
         params["clientUserMessageId"] = Value::String(client_user_message_id);
     }
-    if let Some(model) = model {
+    if let Some(model) = turn.model {
         params["model"] = Value::String(model);
     }
     // Per-turn reasoning effort (codex `turn/start.effort`), parsed from the
     // `-rsn` message flag. Values match codex's ReasoningEffort enum
     // (none|minimal|low|medium|high|xhigh); validation happens upstream.
-    if let Some(reasoning) = reasoning {
+    if let Some(reasoning) = turn.reasoning {
         params["effort"] = Value::String(reasoning);
     }
 
-    let turn_request_id = next_request_id(request_id);
-    codex.send_request(turn_request_id, "turn/start", params)?;
-    let result = codex.read_response_or_forward(turn_request_id, stdout)?;
+    let turn_request_id = next_request_id(ctx.request_id);
+    ctx.codex
+        .send_request(turn_request_id, "turn/start", params)?;
+    let result = ctx
+        .codex
+        .read_response_or_forward(turn_request_id, ctx.stdout)?;
     let turn_id = result
         .pointer("/turn/id")
         .and_then(Value::as_str)
@@ -286,13 +308,13 @@ fn run_codex_user_turn<W: Write>(
             HarnessServerError::Protocol("turn/start response missing turn.id".to_string())
         })?
         .to_string();
-    codex.read_until_turn_terminal(
-        stdout,
-        thread_id.as_deref().unwrap_or_default(),
+    ctx.codex.read_until_turn_terminal(
+        ctx.stdout,
+        ctx.thread_id.as_deref().unwrap_or_default(),
         &turn_id,
-        input_rx,
-        blocks_state,
-        request_id,
+        ctx.input_rx,
+        ctx.blocks_state,
+        ctx.request_id,
     )
 }
 
@@ -523,10 +545,13 @@ impl CodexJsonRpcChild {
                     input,
                     client_user_message_id: _,
                     model,
+                    provider,
                     reasoning,
                 }) => {
-                    if model.is_some() || reasoning.is_some() {
-                        eprintln!("Codex blocks active steering ignored model/reasoning overrides");
+                    if model.is_some() || provider.is_some() || reasoning.is_some() {
+                        eprintln!(
+                            "Codex blocks active steering ignored model/provider/reasoning overrides"
+                        );
                     }
                     self.send_request(
                         next_request_id(request_id),

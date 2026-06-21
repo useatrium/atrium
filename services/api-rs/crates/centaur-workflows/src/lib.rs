@@ -3201,6 +3201,7 @@ async fn run_agent_session_turn(
             ExecuteSessionInput {
                 idempotency_key: Some(execution_idempotency_key),
                 metadata: Some(execution_metadata),
+                environment: BTreeMap::new(),
                 input_lines: vec![serde_json::to_string(&json!({
                     "type": "user",
                     "message": {

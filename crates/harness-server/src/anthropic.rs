@@ -30,6 +30,7 @@ pub enum AnthropicStreamEvent {
         #[serde(default)]
         is_error: bool,
         error: Option<Value>,
+        errors: Option<Vec<String>>,
         message: Option<String>,
     },
     Error {
@@ -226,9 +227,10 @@ impl AnthropicEventNormalizer {
                 result,
                 is_error,
                 error,
+                errors,
                 message,
             } => NormalizedEvent::Result {
-                error: result_error_text(subtype, is_error, error, message, result),
+                error: result_error_text(subtype, is_error, error, errors, message, result),
             },
             AnthropicStreamEvent::Error {
                 error,
@@ -370,6 +372,7 @@ fn result_error_text(
     subtype: Option<String>,
     is_error: bool,
     error: Option<Value>,
+    errors: Option<Vec<String>>,
     message: Option<String>,
     result: Option<String>,
 ) -> Option<String> {
@@ -378,6 +381,17 @@ fn result_error_text(
         .is_some_and(|subtype| !matches!(subtype, "" | "success"));
     if is_error || subtype_is_error {
         event_error_text(error, message, result)
+            .or_else(|| {
+                errors
+                    .map(|errors| {
+                        errors
+                            .into_iter()
+                            .filter(|error| !error.trim().is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .filter(|errors| !errors.is_empty())
+            })
             .or_else(|| Some("harness reported an error".to_string()))
     } else {
         None

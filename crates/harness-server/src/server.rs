@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
 use std::time::Duration;
 
 use base64::Engine;
@@ -74,13 +75,13 @@ pub fn run_validate_jsonrpc() -> Result<()> {
 }
 
 pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()> {
-    let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     let mut state = initial_blocks_thread_state(harness)?;
     let mut blocks_state = BlocksState::default();
     let (_request_tx, request_rx) = mpsc::channel();
+    let input_rx = spawn_blocks_stdin_reader();
 
-    for raw in stdin.lock().lines() {
+    while let Ok(raw) = input_rx.recv() {
         let line = raw?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -108,6 +109,10 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                     client_user_message_id,
                     &mut stdout,
                     &request_rx,
+                    Some(ActiveBlocksInput {
+                        input_rx: &input_rx,
+                        blocks_state: &mut blocks_state,
+                    }),
                 ) {
                     eprintln!("blocks turn failed: {error:#}");
                     write_blocks_error(&mut stdout, &state.id, "turn", error.to_string())?;
@@ -128,6 +133,20 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
     }
 
     Ok(())
+}
+
+fn spawn_blocks_stdin_reader() -> Receiver<io::Result<String>> {
+    let (input_tx, input_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for raw in stdin.lock().lines() {
+            let should_stop = raw.is_err();
+            if input_tx.send(raw).is_err() || should_stop {
+                break;
+            }
+        }
+    });
+    input_rx
 }
 
 pub(crate) fn run_app_server<H: HarnessServer>(harness: &H) -> Result<()> {
@@ -184,17 +203,21 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
     client_user_message_id: Option<String>,
     stdout: &mut W,
     request_rx: &Receiver<JSONRPCRequest>,
+    active_blocks: Option<ActiveBlocksInput<'_>>,
 ) -> Result<()> {
     let turn_id = format!("turn-{}", Uuid::new_v4().simple());
     let mut normalizer = normalizer_for(harness, state, &turn_id);
     run_normalized_turn(
         harness,
         state,
-        &input,
-        client_user_message_id,
-        &mut normalizer,
-        stdout,
-        request_rx,
+        TurnRunContext {
+            input: &input,
+            client_user_message_id,
+            normalizer: &mut normalizer,
+            stdout,
+            request_rx,
+            active_blocks,
+        },
     )
 }
 
@@ -276,6 +299,20 @@ struct StagedAttachment {
     path: PathBuf,
     mime_type: Option<String>,
     attachment_type: Option<String>,
+}
+
+struct ActiveBlocksInput<'a> {
+    input_rx: &'a Receiver<io::Result<String>>,
+    blocks_state: &'a mut BlocksState,
+}
+
+struct TurnRunContext<'a, W: Write> {
+    input: &'a [UserInput],
+    client_user_message_id: Option<String>,
+    normalizer: &'a mut CodexTurnNormalizer,
+    stdout: &'a mut W,
+    request_rx: &'a Receiver<JSONRPCRequest>,
+    active_blocks: Option<ActiveBlocksInput<'a>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -495,17 +532,17 @@ fn attachment_block_to_user_input(
     }
 
     if let Some(staged_attachment_id) = non_empty(block.staged_attachment_id.as_deref()) {
-        if let Some(staged) = state.staged.get(staged_attachment_id) {
-            if staged.path.exists() {
-                return Ok(local_file_inputs(
-                    &staged.path,
+        if let Some(staged) = state.staged.get(staged_attachment_id)
+            && staged.path.exists()
+        {
+            return Ok(local_file_inputs(
+                &staged.path,
+                staged.mime_type.as_deref().or(mime_type),
+                is_image_attachment(
+                    staged.attachment_type.as_deref(),
                     staged.mime_type.as_deref().or(mime_type),
-                    is_image_attachment(
-                        staged.attachment_type.as_deref(),
-                        staged.mime_type.as_deref().or(mime_type),
-                    ),
-                ));
-            }
+                ),
+            ));
         }
         return Ok(vec![UserInput::Text {
             text: format!("[Attachment was not staged successfully: {name}]"),
@@ -574,10 +611,10 @@ fn handle_attachment_chunk(parsed: BlocksLine, state: &mut BlocksState) -> Resul
         file.write_all(&bytes)?;
     }
 
-    if parsed.final_chunk {
-        if let Some(upload) = state.uploads.remove(attachment_id) {
-            state.staged.insert(attachment_id.to_string(), upload);
-        }
+    if parsed.final_chunk
+        && let Some(upload) = state.uploads.remove(attachment_id)
+    {
+        state.staged.insert(attachment_id.to_string(), upload);
     }
 
     Ok(())
@@ -781,7 +818,7 @@ fn handle_request<H: HarnessServer, W: Write>(
                 .get_mut(&thread_id)
                 .expect("thread state inserted or existed");
             apply_resume_overrides(state, &params)?;
-            let normalizer = normalizer_for(harness, &state, "turn-placeholder");
+            let normalizer = normalizer_for(harness, state, "turn-placeholder");
             let mut thread = normalizer.thread_snapshot()?;
             if !params.exclude_turns {
                 thread.turns = state.completed_turns.clone();
@@ -831,11 +868,14 @@ fn handle_request<H: HarnessServer, W: Write>(
             run_normalized_turn(
                 harness,
                 state,
-                &params.input,
-                params.client_user_message_id.clone(),
-                &mut normalizer,
-                stdout,
-                request_rx,
+                TurnRunContext {
+                    input: &params.input,
+                    client_user_message_id: params.client_user_message_id.clone(),
+                    normalizer: &mut normalizer,
+                    stdout,
+                    request_rx,
+                    active_blocks: None,
+                },
             )
         }
         "turn/interrupt" => {
@@ -1006,26 +1046,28 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
 fn run_normalized_turn<H: HarnessServer, W: Write>(
     harness: &H,
     state: &mut ThreadState,
-    input: &[UserInput],
-    client_user_message_id: Option<String>,
-    normalizer: &mut CodexTurnNormalizer,
-    stdout: &mut W,
-    request_rx: &Receiver<JSONRPCRequest>,
+    mut ctx: TurnRunContext<'_, W>,
 ) -> Result<()> {
-    for notification in normalizer.start_notifications(!state.thread_started_sent)? {
+    for notification in ctx
+        .normalizer
+        .start_notifications(!state.thread_started_sent)?
+    {
         if matches!(notification, ServerNotification::ThreadStarted(_)) {
             state.thread_started_sent = true;
         }
-        write_value(stdout, &notification_to_wire_value(&notification)?)?;
+        write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
     }
-    for notification in normalizer.emit_user_message(client_user_message_id, input.to_vec())? {
-        write_value(stdout, &notification_to_wire_value(&notification)?)?;
+    for notification in ctx
+        .normalizer
+        .emit_user_message(ctx.client_user_message_id.take(), ctx.input.to_vec())?
+    {
+        write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
     }
 
-    match run_harness_turn(harness, state, input, normalizer, stdout, request_rx) {
+    match run_harness_turn(harness, state, &mut ctx) {
         Ok(Some(turn)) => state.completed_turns.push(turn),
         Ok(None) => {}
-        Err(error) => finish_turn_with_error(state, normalizer, stdout, error)?,
+        Err(error) => finish_turn_with_error(state, ctx.normalizer, ctx.stdout, error)?,
     }
     Ok(())
 }
@@ -1055,25 +1097,34 @@ fn finish_turn_with_error<W: Write>(
 fn run_harness_turn<H: HarnessServer, W: Write>(
     harness: &H,
     state: &mut ThreadState,
-    input: &[UserInput],
-    normalizer: &mut CodexTurnNormalizer,
-    stdout: &mut W,
-    request_rx: &Receiver<JSONRPCRequest>,
+    ctx: &mut TurnRunContext<'_, W>,
 ) -> Result<Option<codex_app_server_protocol::Turn>> {
     ensure_harness_process(harness, state)?;
     let process = state
         .process
         .as_mut()
         .ok_or(HarnessServerError::HarnessStdinUnavailable)?;
-    process.stdin.write_all(&harness.stdin_for_turn(input)?)?;
+    process
+        .stdin
+        .write_all(&harness.stdin_for_turn(ctx.input)?)?;
     process.stdin.flush()?;
 
     let mut last_session_id = state.harness_session_id.clone();
     let mut event_normalizer = H::EventNormalizer::default();
     let mut completed_turn = None;
     loop {
-        while let Ok(request) = request_rx.try_recv() {
-            handle_active_turn_request(harness, process, normalizer, request, stdout)?;
+        while let Ok(request) = ctx.request_rx.try_recv() {
+            handle_active_turn_request(harness, process, ctx.normalizer, request, ctx.stdout)?;
+        }
+        if let Some(active_blocks) = ctx.active_blocks.as_mut() {
+            drain_active_blocks_input(
+                harness,
+                process,
+                ctx.normalizer,
+                ctx.stdout,
+                &state.id,
+                active_blocks,
+            )?;
         }
 
         let line = match process.stdout.recv_timeout(Duration::from_millis(50)) {
@@ -1092,6 +1143,11 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
         if trimmed.is_empty() {
             continue;
         }
+        if let Some(active_blocks) = ctx.active_blocks.as_mut()
+            && handle_harness_control_output(trimmed, ctx.stdout, active_blocks.blocks_state)?
+        {
+            continue;
+        }
         let event = harness.parse_stdout_line(trimmed)?;
         let normalized_events = harness.normalize_events(&mut event_normalizer, event)?;
         let mut terminal = false;
@@ -1100,19 +1156,19 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
                 last_session_id = Some(session_id.to_string());
                 state.harness_session_id = Some(session_id.to_string());
             }
-            for notification in normalizer.process_event(&normalized)? {
-                write_value(stdout, &notification_to_wire_value(&notification)?)?;
+            for notification in ctx.normalizer.process_event(&normalized)? {
+                write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
             }
             terminal |= normalized.is_terminal()
                 || (harness.finish_turn_on_assistant_end_turn()
                     && normalized.is_assistant_end_turn());
         }
         if terminal {
-            if let Some(notification) = normalizer.finish_turn(None)? {
+            if let Some(notification) = ctx.normalizer.finish_turn(None)? {
                 if let ServerNotification::TurnCompleted(completed) = &notification {
                     completed_turn = Some(completed.turn.clone());
                 }
-                write_value(stdout, &notification_to_wire_value(&notification)?)?;
+                write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
             }
             break;
         }
@@ -1121,13 +1177,163 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
     if let Some(session_id) = last_session_id {
         state.harness_session_id = Some(session_id);
     }
-    if let Some(notification) = normalizer.finish_turn(None)? {
+    if let Some(notification) = ctx.normalizer.finish_turn(None)? {
         if let ServerNotification::TurnCompleted(completed) = &notification {
             completed_turn = Some(completed.turn.clone());
         }
-        write_value(stdout, &notification_to_wire_value(&notification)?)?;
+        write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
     }
     Ok(completed_turn)
+}
+
+fn drain_active_blocks_input<H: HarnessServer, W: Write>(
+    harness: &H,
+    process: &mut HarnessChild,
+    normalizer: &mut CodexTurnNormalizer,
+    stdout: &mut W,
+    thread_id: &str,
+    active_blocks: &mut ActiveBlocksInput<'_>,
+) -> Result<()> {
+    while let Ok(raw) = active_blocks.input_rx.try_recv() {
+        let line = raw?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match parse_blocks_line_with_state(trimmed, active_blocks.blocks_state) {
+            Ok(BlocksCommand::User {
+                input,
+                client_user_message_id,
+                model,
+                provider,
+                reasoning,
+            }) => {
+                if model.is_some() || provider.is_some() || reasoning.is_some() {
+                    eprintln!("blocks active steering ignored model/provider/reasoning overrides");
+                }
+                process.stdin.write_all(&harness.stdin_for_steer(&input)?)?;
+                process.stdin.flush()?;
+                for notification in normalizer.emit_user_message(client_user_message_id, input)? {
+                    write_value(stdout, &notification_to_wire_value(&notification)?)?;
+                }
+            }
+            Ok(BlocksCommand::QuestionAnswer {
+                question_id,
+                answers,
+            }) => {
+                if active_blocks
+                    .blocks_state
+                    .take_pending_question(&question_id)
+                    .is_none()
+                {
+                    eprintln!("question_answer dropped: no pending question {question_id}");
+                    continue;
+                }
+                write_child_value(
+                    process,
+                    &json!({
+                        "type": "question_answer",
+                        "question_id": question_id,
+                        "answers": if answers.is_object() { answers } else { json!({}) },
+                    }),
+                )?;
+                write_question_resolved(stdout, &question_id, "answered")?;
+            }
+            Ok(BlocksCommand::Interrupt) => {
+                write_child_value(process, &json!({"type": "interrupt"}))?;
+                emit_questions_resolved(stdout, active_blocks.blocks_state, "cancelled")?;
+            }
+            Ok(BlocksCommand::AttachmentChunk) => {}
+            Err(error) => {
+                eprintln!("invalid blocks input during active turn: {error:#}");
+                write_blocks_error(stdout, thread_id, normalizer.turn_id(), error.to_string())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_harness_control_output<W: Write>(
+    line: &str,
+    stdout: &mut W,
+    blocks_state: &mut BlocksState,
+) -> Result<bool> {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return Ok(false);
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some("question_requested") => {
+            let question_id = value
+                .get("question_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    HarnessServerError::Protocol(
+                        "question_requested missing question_id".to_string(),
+                    )
+                })?;
+            let turn_id = value
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .unwrap_or("turn");
+            blocks_state.insert_pending_question(
+                question_id.to_string(),
+                Value::Null,
+                turn_id.to_string(),
+            );
+            write_value(stdout, &value)?;
+            Ok(true)
+        }
+        Some("question_resolved") => {
+            let question_id = value
+                .get("question_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    HarnessServerError::Protocol(
+                        "question_resolved missing question_id".to_string(),
+                    )
+                })?;
+            if blocks_state.take_pending_question(question_id).is_some() {
+                write_value(stdout, &value)?;
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn write_child_value(process: &mut HarnessChild, value: &Value) -> Result<()> {
+    serde_json::to_writer(&mut process.stdin, value)?;
+    process.stdin.write_all(b"\n")?;
+    process.stdin.flush()?;
+    Ok(())
+}
+
+fn emit_questions_resolved<W: Write>(
+    stdout: &mut W,
+    blocks_state: &mut BlocksState,
+    reason: &str,
+) -> Result<()> {
+    for question_id in blocks_state.pending_question_ids() {
+        if blocks_state.take_pending_question(&question_id).is_some() {
+            write_question_resolved(stdout, &question_id, reason)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_question_resolved<W: Write>(
+    stdout: &mut W,
+    question_id: &str,
+    reason: &str,
+) -> Result<()> {
+    write_value(
+        stdout,
+        &json!({
+            "type": "question_resolved",
+            "question_id": question_id,
+            "reason": reason,
+        }),
+    )
 }
 
 fn ensure_harness_process<H: HarnessServer>(harness: &H, state: &mut ThreadState) -> Result<()> {

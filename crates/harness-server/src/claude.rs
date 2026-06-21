@@ -202,11 +202,9 @@ impl HarnessServer for ClaudeCodeHarness {
         "claude-code"
     }
 
-    /// Empty when no explicit override exists: the model is owned by the
-    /// in-image harness config (harness/claude/settings.json), mirroring how
-    /// codex reads harness/codex/config.toml. An empty model means
-    /// `command_for_turn` omits `--model` so the CLI falls through to
-    /// settings.json.
+    /// Empty when no explicit override exists: the model is owned by Claude Code
+    /// defaults or by deployment-provided Claude settings. An empty model means
+    /// `command_for_turn` omits `--model` so the CLI/SDK chooses its default.
     fn default_model(&self) -> String {
         env::var("CLAUDE_MODEL").unwrap_or_default()
     }
@@ -216,7 +214,13 @@ impl HarnessServer for ClaudeCodeHarness {
     }
 
     fn command_for_turn(&self, state: &ThreadState) -> ProcessCommand {
-        if let Some(command) = command_from_override("CENTAUR_CLAUDE_APP_BRIDGE_COMMAND") {
+        if let Some(mut command) = command_from_override("CENTAUR_CLAUDE_APP_BRIDGE_COMMAND") {
+            command.env("CENTAUR_CLAUDE_MODEL", &state.model);
+            command.env("CENTAUR_CLAUDE_MODEL_PROVIDER", &state.model_provider);
+            command.env("CENTAUR_CLAUDE_SESSION_ID", &state.id);
+            if let Some(session_id) = &state.harness_session_id {
+                command.env("CENTAUR_CLAUDE_RESUME_SESSION_ID", session_id);
+            }
             return command;
         }
 

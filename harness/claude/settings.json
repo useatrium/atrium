@@ -1,5 +1,4 @@
 {
-  "model": "claude-fable-5",
   "permissions": {
     "defaultMode": "bypassPermissions",
     "additionalDirectories": [

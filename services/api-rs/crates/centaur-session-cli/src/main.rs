@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{collections::BTreeMap, str::FromStr};
 
 use centaur_api_server::{
     client::{CentaurClient, SseEvent as ApiSseEvent, SseEventStream},
@@ -243,6 +243,7 @@ pub(crate) async fn execute_input_lines(
                 metadata: Some(json!({
                     "source": "centaur-session-cli",
                 })),
+                environment: BTreeMap::new(),
                 input_lines,
                 idle_timeout_ms: Some(idle_timeout_ms),
                 max_duration_ms: Some(max_duration_ms),
