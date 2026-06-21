@@ -42,7 +42,7 @@ export async function sweepUnreferencedBlobs(
        FROM cas_blobs b
       WHERE b.created_at < now() - ($1::double precision * interval '1 millisecond')
         AND NOT EXISTS (
-          SELECT 1 FROM artifact_versions v WHERE v.blob_sha = b.sha256
+          SELECT 1 FROM artifact_blob_refs r WHERE r.sha = b.sha256
         )
       ORDER BY b.created_at ASC
       LIMIT $2`,
