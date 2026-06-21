@@ -195,5 +195,6 @@ version-control system handles conflicts.)
 
 - **Architecture walkthrough:** https://gbasin.github.io/atrium-architecture/
 - **Agent engine:** [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (MIT)
+- **Contributing:** branch and PR/merge flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **License:** MIT, see [LICENSE](LICENSE).
 - Build plan and per-phase scorecards in `PLAN.md`; running log in `JOURNAL.md`.
