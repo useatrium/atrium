@@ -74,8 +74,15 @@ node-side** fetch/stage/adopt + the **hydration manifest** (the genuinely new, b
 - **C-project — `/atrium` context projection** (§2A): node maintains the read-only context
   tree (chat + sibling transcripts + artifacts view) as **append-tail** (no merge/quiesce),
   one shared copy per node, reflinked into pods. Steers ride the normal message stream.
-- **C-verify — 10-min POC** the inbound write direction (node-writes-`merged` → agent-reads;
-  the POC proved the inverse). Gate C-merge on this.
+- **C-verify — pre-build POC gate** (expanded by the 2026-06-20 adversarial review,
+  `agent-sync-design.md` §8A). On the kind/centaur-image harness, prove all five before
+  C-merge: (a) **inverse write** node-writes-`merged` → agent-reads; (b) **symlink-escape
+  blocked** — agent symlink under `upper`, scanner with `openat2(RESOLVE_BENEATH|
+  NO_SYMLINKS|NO_MAGICLINKS|NO_XDEV)` refuses to follow it; (c) **no echo loop** —
+  node-injected write is NOT re-captured (per-path-state / base-advance suppresses it);
+  (d) **ownership** — root-written file chown'd so the uid-1001 agent reads+overwrites it;
+  (e) **write race** — atomic temp+rename + per-path lease holds under a concurrent agent
+  write. **Gate C-merge on all five.**
 
 ## 4. Sequencing
 

@@ -399,6 +399,51 @@ resolution is a product decision (stay deleted vs resurrect); resurrect = adopte
   **Files surface** over both. The only *remaining* work is building that unified surface
   (git-backed source + git-commit write-back) — an Atrium UI task, not a design open.
 
+## 8A. Open issues & risks — adversarial review (2026-06-20)
+
+Two independent adversarial passes — an in-house critique + a **codex** pass (codex runtime
+was available this time; both converged on ~12 of these, codex added the security-flavored
+ones). Prioritized; CRITICALs **gate** the inbound node-write decision (§4) and the node-scan
+(Track C4) before build. Provenance: **[B]** both, **[C]** codex-only, **[I]** in-house-only.
+
+| # | Sev | Issue | Fix direction | Src |
+|---|-----|-------|---------------|-----|
+| 1 | **CRIT** | **Symlink/path escape** — agent symlinks `proj-x/leak→/etc/shadow`; the privileged host scanner follows it → exfil to S3 | `openat2(RESOLVE_BENEATH\|NO_SYMLINKS\|NO_MAGICLINKS\|NO_XDEV)` + `O_NOFOLLOW` + `fstat`→regular-files-only; symlinks stored as metadata, never followed | C |
+| 2 | **CRIT** | **Echo loop + stale base** — node write-through-`merged` re-captured as an agent edit; `base_seq` is startup-only, never advanced after adopt → false conflicts | **per-path state record** `{base_seq, base_sha, upper_sha, applied_remote_seq}` + origin journal; node-merge IS the ledger txn, then apply bytes idempotently (fixes both) | B |
+| 3 | **CRIT** | **Node-write race + ownership** — advisory quiesce is TOCTOU; root-written files unwritable by the uid-1001 agent | per-path **write-lease** (harness blocks artifact writes in the window) + atomic temp+rename + chown-to-agent | B |
+| 4 | **CRIT** | **`/atrium` shared-per-node leaks channel/DM ACLs** — one shared tree bypasses per-pod ACL | per-ACL-group projection / server-side ACL behind the `atrium` tool; shared-per-node only for the *common* slice | B |
+| 5 | MAJ | Conflict-`latest` markers → naive re-save silently clears the conflict | conflict-aware read (serve last-clean + a `conflicted` flag); resolve only via API against the conflict seq | B |
+| 6 | MAJ | Append-tail wrong for chat (edits/deletes/redactions persist → secret re-disclosure) | re-rendered "current" view + raw-event jsonl; transcripts stay append-tail | B |
+| 7 | MAJ | Change-feed `since=<seq>` ambiguous (`seq` is per-artifact) | global outbox id / WAL-LSN cursor (`artifact_changes(id bigserial,…)`) | C |
+| 8 | MAJ | GC deletes conflict-jsonb side-blobs (mark-sweep marks only `blob_sha`) | normalize all blob refs to rows; GC honors unresolved conflicts + leases + outbox lag | C |
+| 9 | MAJ | Upload↔commit non-atomic (read 404s / orphans) | `pending_blob` + conditional-create + verify-`HEAD` → then advance `latest` | C |
+| 10 | MAJ | Cold-start hydration stampede (~4s@10k, ~40s@50k; lazy/manifest unbuilt) | tree-manifest + node CAS cache in v1; eager-size cap + admission backpressure | B |
+| 11 | MAJ | No backpressure → `upper` ENOSPC under fast writers | dirty-byte budgets, lag metrics, harness backpressure, bounded upload queue | C |
+| 12 | MAJ | metacopy=off copy-up amplification on large lower files | route large/append-heavy files out of the overlay artifact ns | B |
+| 13 | MAJ | No atomic multi-file snapshot (inconsistent coupled sets) | commit-group / tree-manifest snapshot boundary; hydrate by snapshot id | B |
+| 14 | MAJ | `/workspace` (frozen lower) vs `/atrium/artifacts` (latest) version skew | seq labels on both views; hide dup-latest for paths already in `/workspace` | B |
+| 15 | MOD | Open FDs / watchers hide node writes from running tools | process-level invalidation on adopt (signal reopen/restart) | C |
+| 16 | MOD | Rename fidelity (redirect xattr unreadable in POC) | downgrade to delete/create until proven; mount `redirect_dir=on`; test long paths | B |
+| 17 | MOD | Persistent-upper node-affinity + non-identical-lower remount | Local PV + required node affinity; **fail-closed** on lower/manifest hash mismatch | B |
+| 18 | MOD | reflink assumes XFS/btrfs (ext4→hardlink corrupts the shared lower) | require reflink FS at node admission; immutable hash-verified CAS cache; lower mounted RO | C |
+| 19 | MOD | DaemonSet TCB / single-point-of-compromise per node | gate multi-tenant on VM-per-tenant; narrow scanner IAM to session prefixes; seccomp/AppArmor; split setup-privilege from steady-state scan | B |
+| 20 | MOD | "Native large-file path" lacks multipart/backpressure (a 20 GB read blocks the node) | streaming multipart + size caps + per-node concurrency before claiming C3 closed | B |
+
+**Two highest-leverage takeaways:**
+1. **One root behind #2 / #3 / #5:** there is no single source of truth for *current base +
+   byte-origin per path in the `upper`*. A per-path mutable state record
+   (`current_base_seq` / `base_sha` / `upper_sha` / `applied_remote_seq`) + treating the node
+   merge as the ledger-writing transaction (then idempotent byte-apply) fixes echo-loop +
+   base-advance + conflict-clear **together**. Highest-value design change.
+2. **Security was the in-house blind spot:** #1 (symlink escape) + scanner-IAM/seccomp
+   narrowing (#19) must gate the privileged node component — a privileged *host* process
+   resolving agent-controlled paths is the scariest surface in the design.
+
+**Status:** CRITICALs #1–#4 are pre-build gates for §4 / Track C4. Research + POC underway
+(openat2 / overlayfs / reflink facts; symlink-escape + node-write + echo-loop POC on the
+centaur image). Open product calls: ACL-projection model (#4), conflict-read semantics (#5),
+chat-projection form (#6), and which issues are v1-blocking vs deferred.
+
 ## 9. Relationship to other docs
 
 - `cas-ledger-build-plan.md` Track C4 — the outbound/capture half + the overlay
