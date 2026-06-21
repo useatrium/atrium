@@ -63,6 +63,29 @@ describe('WorkDrawer', () => {
     expect(props.onTab).toHaveBeenCalledWith('sideEffects');
   });
 
+  it('surfaces a Conflicts tab + the resolution UI when conflicts exist', () => {
+    const onResolveConflict = vi.fn();
+    const conflict = {
+      artifactId: 'art-9',
+      path: 'proj-x/plan.md',
+      kind: 'diff3',
+      conflictSeq: 6,
+      baseSeq: 4,
+      base: { sha: 'b', text: 'a\nb\n' },
+      left: { label: 'theirs', author: 'human:alice', sha: 'l', text: 'a\nLEFT\n' },
+      right: { label: 'yours', author: 'agent:s1', sha: 'r', text: 'a\nRIGHT\n' },
+      markers: '<<<<<<<\nLEFT\n=======\nRIGHT\n>>>>>>>\n',
+    };
+    renderDrawer({ conflicts: [conflict], conflictCount: 1, onResolveConflict, tab: 'conflicts' as WorkTab });
+    // Conflicts leads the tab order (most action-worthy).
+    expect(screen.getByRole('tab', { name: /Conflicts/ })).toBeTruthy();
+    // Embedded body shows both sides + the resolution actions (no dialog header).
+    expect(screen.getByText('theirs')).toBeTruthy();
+    expect(screen.getByText('yours')).toBeTruthy();
+    fireEvent.click(screen.getByText('Keep theirs'));
+    expect(onResolveConflict).toHaveBeenCalledWith('art-9', { kind: 'left' });
+  });
+
   it('shows the active tab body and switches with the tab prop', () => {
     const { rerender } = render(
       <WorkDrawer

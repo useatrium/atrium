@@ -10,22 +10,26 @@ import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '..
 import { ArtifactsSurface } from './ArtifactsSurface';
 import { ChangesSurface } from './ChangesSurface';
 import { SideEffectsSurface } from './SideEffectsSurface';
+import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 
-export type WorkTab = 'changes' | 'sideEffects' | 'artifacts';
+export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
 
 // URL-friendly slugs for the detach route (/s/:id/work/:slug). Kept here next to
 // WorkTab so the drawer's detach link and App's route parser stay in lockstep.
 export const TAB_SLUG: Record<WorkTab, string> = {
+  conflicts: 'conflicts',
   changes: 'changes',
   sideEffects: 'side-effects',
   artifacts: 'artifacts',
 };
 export const SLUG_TAB: Record<string, WorkTab> = {
+  conflicts: 'conflicts',
   changes: 'changes',
   'side-effects': 'sideEffects',
   artifacts: 'artifacts',
 };
 export const TAB_LABEL: Record<WorkTab, string> = {
+  conflicts: 'Conflicts',
   changes: 'Changes',
   sideEffects: 'Side-effects',
   artifacts: 'Artifacts',
@@ -71,6 +75,9 @@ export function WorkDrawer({
   hasDanger,
   artifacts,
   artifactCount,
+  conflicts = [],
+  conflictCount = 0,
+  onResolveConflict,
   sessionId,
   tab,
   onTab,
@@ -87,6 +94,10 @@ export function WorkDrawer({
   hasDanger: boolean;
   artifacts: Artifact[];
   artifactCount: number;
+  /** Unresolved conflicts (A3). Optional — absent surfaces hide the tab. */
+  conflicts?: ArtifactConflict[];
+  conflictCount?: number;
+  onResolveConflict?: (artifactId: string, choice: ResolveChoice) => void | Promise<void>;
   sessionId: string;
   tab: WorkTab;
   onTab: (tab: WorkTab) => void;
@@ -103,6 +114,8 @@ export function WorkDrawer({
   // had content), fall back to the first available one.
   const available = (
     [
+      // Conflicts lead — an unresolved collision is the most action-worthy surface.
+      { key: 'conflicts' as const, label: 'Conflicts', count: conflictCount, danger: true },
       { key: 'changes' as const, label: 'Changes', count: changedFileCount },
       { key: 'sideEffects' as const, label: 'Side-effects', count: sideEffectCount, danger: hasDanger },
       { key: 'artifacts' as const, label: 'Artifacts', count: artifactCount },
@@ -170,7 +183,16 @@ export function WorkDrawer({
           <XIcon size={15} />
         </button>
       </header>
-      {active === 'changes' ? (
+      {active === 'conflicts' ? (
+        conflicts[0] ? (
+          <ConflictSurface
+            conflict={conflicts[0]}
+            onResolve={(choice) => onResolveConflict?.(conflicts[0]!.artifactId, choice)}
+            onClose={onClose}
+            embedded
+          />
+        ) : null
+      ) : active === 'changes' ? (
         <ChangesSurface changes={changes} onClose={onClose} embedded />
       ) : active === 'sideEffects' ? (
         <SideEffectsSurface effects={effects} onClose={onClose} embedded />
