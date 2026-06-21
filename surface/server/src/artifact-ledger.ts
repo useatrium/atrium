@@ -275,54 +275,72 @@ export class ArtifactLedger {
 
   /**
    * Egress-pollable, resumable, GAP-FREE feed of version commits for a session,
-   * in commit order, after `cursor`. See migration 034 for why the cursor is
-   * (xid, id) watermarked below the snapshot xmin horizon rather than max(id):
-   * a slow concurrent txn can make a lower id visible after a higher one, which a
-   * max(id) cursor drops forever. Only rows whose inserting txn has fully drained
-   * (xid < xmin horizon) are returned, ordered by (xid, id), so nothing is ever
-   * skipped. `nextCursor` is the last row's (xid, id), or the input cursor when
-   * the page is empty.
+   * in commit order, after `cursor`. The cursor is (xid, id): bigserial id alone
+   * is unsafe because it is assigned at INSERT but visible at COMMIT, so a slow
+   * concurrent txn can make a lower id visible after a higher one — a max(id)
+   * cursor drops that row forever (§8B #7).
+   *
+   * Gap-freeness needs to withhold a committed row while a SAME-SESSION writer
+   * with a possibly-lower (xid, id) is still in flight. We get that with a
+   * per-session advisory lock (migration 035): writers hold it SHARED for their
+   * txn; here we try to take it EXCLUSIVE, non-blocking. If a writer is mid-flight
+   * the try fails and we withhold the whole page (cursor unchanged — nothing is
+   * skipped). On success no writer can interleave for the read, so the snapshot
+   * sees every committed row in (xid, id) order. Unlike the old cluster-global
+   * `xid < pg_snapshot_xmin(...)` horizon, unrelated transactions take no lock and
+   * never stall the feed. `nextCursor` is the last row's (xid, id), or the input
+   * cursor when the page is empty (or withheld).
    */
   async changesSince(
     sessionId: string,
     cursor: ChangeCursor = CHANGE_CURSOR_ZERO,
     limit = 500,
   ): Promise<ChangeFeedPage> {
-    const res = await this.pool.query<{
-      id: string;
-      xid: string;
-      path: string;
-      seq: number;
-      base_seq: number | null;
-      sha: string | null;
-      status: VersionStatus;
-      kind: VersionKind;
-      author: string;
-      origin: string;
-    }>(
-      `SELECT id::text AS id, xid::text AS xid, path, seq, base_seq, sha, status, kind, author, origin
-         FROM artifact_changes
-        WHERE session_id = $1
-          AND xid < pg_snapshot_xmin(pg_current_snapshot())
-          AND (xid, id) > ($2::xid8, $3::bigint)
-        ORDER BY xid, id
-        LIMIT $4`,
-      [sessionId, cursor.xid, cursor.id, limit],
-    );
-    const rows: ChangeRow[] = res.rows.map((r) => ({
-      id: r.id,
-      path: r.path,
-      seq: r.seq,
-      baseSeq: r.base_seq,
-      sha: r.sha,
-      status: r.status,
-      kind: r.kind,
-      author: r.author,
-      origin: r.origin,
-    }));
-    const last = res.rows[res.rows.length - 1];
-    const nextCursor: ChangeCursor = last ? { xid: last.xid, id: last.id } : cursor;
-    return { rows, nextCursor };
+    return withTx(this.pool, async (client) => {
+      const lock = await client.query<{ got: boolean }>(
+        `SELECT pg_try_advisory_xact_lock(
+                  hashtextextended('artifact_changes:' || $1::text, 0)) AS got`,
+        [sessionId],
+      );
+      if (!lock.rows[0]?.got) {
+        // A same-session writer is mid-flight; withhold so nothing is skipped.
+        return { rows: [], nextCursor: cursor };
+      }
+      const res = await client.query<{
+        id: string;
+        xid: string;
+        path: string;
+        seq: number;
+        base_seq: number | null;
+        sha: string | null;
+        status: VersionStatus;
+        kind: VersionKind;
+        author: string;
+        origin: string;
+      }>(
+        `SELECT id::text AS id, xid::text AS xid, path, seq, base_seq, sha, status, kind, author, origin
+           FROM artifact_changes
+          WHERE session_id = $1
+            AND (xid, id) > ($2::xid8, $3::bigint)
+          ORDER BY xid, id
+          LIMIT $4`,
+        [sessionId, cursor.xid, cursor.id, limit],
+      );
+      const rows: ChangeRow[] = res.rows.map((r) => ({
+        id: r.id,
+        path: r.path,
+        seq: r.seq,
+        baseSeq: r.base_seq,
+        sha: r.sha,
+        status: r.status,
+        kind: r.kind,
+        author: r.author,
+        origin: r.origin,
+      }));
+      const last = res.rows[res.rows.length - 1];
+      const nextCursor: ChangeCursor = last ? { xid: last.xid, id: last.id } : cursor;
+      return { rows, nextCursor };
+    });
   }
 
   // === conflict-aware serve resolution (§8B #5) ===========================
