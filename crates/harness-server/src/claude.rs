@@ -202,11 +202,9 @@ impl HarnessServer for ClaudeCodeHarness {
         "claude-code"
     }
 
-    /// Empty when no explicit override exists: the model is owned by the
-    /// in-image harness config (harness/claude/settings.json), mirroring how
-    /// codex reads harness/codex/config.toml. An empty model means
-    /// `command_for_turn` omits `--model` so the CLI falls through to
-    /// settings.json.
+    /// Empty when no explicit override exists: the model is owned by Claude Code
+    /// defaults or by deployment-provided Claude settings. An empty model means
+    /// `command_for_turn` omits `--model` so the CLI/SDK chooses its default.
     fn default_model(&self) -> String {
         env::var("CLAUDE_MODEL").unwrap_or_default()
     }
