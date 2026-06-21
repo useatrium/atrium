@@ -2692,6 +2692,79 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.send({ sessionId: id, scope: 'session', paths });
   });
 
+  // === /atrium chat projection ===
+  app.get('/api/sessions/:id/atrium/chat', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { channel?: unknown; thread?: unknown };
+    const channelId = typeof q.channel === 'string' ? q.channel.trim() : '';
+    if (channelId.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'channel is required' });
+    }
+    const session = await pool.query<{ channel_id: string }>(
+      'SELECT channel_id FROM sessions WHERE id = $1',
+      [id],
+    );
+    if (session.rows[0]?.channel_id !== channelId) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+
+    const rawThread = q.thread;
+    let events: WireEvent[] = [];
+    let title = channelId;
+    if (rawThread == null || rawThread === '') {
+      let beforeId: number | undefined;
+      for (let pageCount = 0; pageCount < 5; pageCount++) {
+        const page = await listChannelMessages(pool, {
+          channelId,
+          limit: 200,
+          ...(beforeId === undefined ? {} : { beforeId }),
+        });
+        events = [...page.events, ...events];
+        if (!page.hasMore || page.events.length === 0) break;
+        beforeId = page.events[0]!.id;
+      }
+    } else if (typeof rawThread === 'string') {
+      const threadRootEventId = Number(rawThread.trim());
+      if (!Number.isSafeInteger(threadRootEventId) || threadRootEventId <= 0) {
+        return reply
+          .code(400)
+          .send({ error: 'bad_query', message: 'thread must be a positive event id' });
+      }
+      const root = await pool.query<{ channel_id: string | null }>(
+        `SELECT channel_id
+         FROM events
+         WHERE id = $1 AND type IN ('message.posted', 'session.spawned')`,
+        [threadRootEventId],
+      );
+      if (root.rows[0]?.channel_id !== channelId) {
+        return reply.code(404).send({ error: 'thread_not_found', message: 'thread not found' });
+      }
+      events = (await listThreadMessages(pool, { rootEventId: threadRootEventId })).events;
+      title = `${channelId}/${threadRootEventId}`;
+    } else {
+      return reply
+        .code(400)
+        .send({ error: 'bad_query', message: 'thread must be a positive event id' });
+    }
+
+    const messages = events.filter(
+      (event) =>
+        event.type === 'message.posted' &&
+        event.channelId === channelId &&
+        event.payload.deleted !== true,
+    );
+    const lines = [`# ${title}`, ''];
+    for (const event of messages) {
+      const author = event.author?.displayName ?? event.author?.handle ?? event.actorId ?? 'unknown';
+      const tag = event.payload.edited === true ? ' (edited)' : '';
+      const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+      lines.push(`**${author}**${tag}: ${text}`);
+    }
+    return reply.send({ markdown: `${lines.join('\n')}\n`, messageCount: messages.length });
+  });
+
   // === internal node-sync ingestion (x-api-key; the node daemon is trusted infra,
   // not a cookie-bearing user). Reuses the shipped write-back + serve + change-feed.
   const requireCaptureKey = (req: FastifyRequest, reply: FastifyReply): boolean => {
