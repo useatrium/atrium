@@ -2692,6 +2692,97 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.send({ sessionId: id, scope: 'session', paths });
   });
 
+  // === internal node-sync ingestion (x-api-key; the node daemon is trusted infra,
+  // not a cookie-bearing user). Reuses the shipped write-back + serve + change-feed.
+  const requireCaptureKey = (req: FastifyRequest, reply: FastifyReply): boolean => {
+    const key = firstHeader(req.headers['x-api-key']);
+    if (!config.artifactCaptureApiKey || key !== config.artifactCaptureApiKey) {
+      reply.code(401).send({ error: 'unauthorized', message: 'x-api-key required' });
+      return false;
+    }
+    return true;
+  };
+
+  // Poll the gap-free change-feed (the daemon's inbound trigger).
+  app.get('/api/internal/sessions/:id/artifacts/changes', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { since?: string; limit?: string };
+    let cursor: ChangeCursor = CHANGE_CURSOR_ZERO;
+    if (typeof q.since === 'string' && q.since.length > 0) {
+      const m = /^(\d+)\.(\d+)$/.exec(q.since);
+      if (!m) return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
+      cursor = { xid: m[1]!, id: m[2]! };
+    }
+    const page = await new ArtifactLedger(pool).changesSince(id, cursor, 500);
+    return reply.send({ rows: page.rows, next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}` });
+  });
+
+  // Fetch a specific version's bytes (the daemon's inbound adopt fetch). Ledger
+  // blobs are offloaded to S3 in this path, so we serve straight from the store.
+  app.get('/api/internal/sessions/:id/artifacts/raw', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string; seq?: string };
+    if (typeof q.path !== 'string' || q.path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    const ref = typeof q.seq === 'string' && /^\d+$/.test(q.seq) ? { seq: Number(q.seq) } : { pointer: 'latest' };
+    const v = await new ArtifactLedger(pool).resolveVersion(id, q.path, ref);
+    if (!v || v.kind === 'deleted' || !v.s3Key) {
+      return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
+    }
+    const bytes = await getObjectBytes(v.s3Key);
+    reply.header('Content-Type', v.mime || 'application/octet-stream');
+    reply.header('X-Artifact-Seq', String(v.seq));
+    return reply.send(bytes);
+  });
+
+  // Capture a change (the daemon's node-scan output). x-api-key + raw body.
+  await app.register(async (capture) => {
+    capture.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    capture.post('/api/internal/sessions/:id/artifacts/capture', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const path = (req.query as { path?: string }).path;
+      if (typeof path !== 'string' || path.length === 0 || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
+      }
+      const sess = await pool.query<{ channel_id: string }>(
+        `SELECT channel_id FROM sessions WHERE id = $1`,
+        [id],
+      );
+      const channelId = sess.rows[0]?.channel_id;
+      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+      const isDelete = firstHeader(req.headers['x-artifact-delete']) === 'true';
+      const author = `node:${id}`;
+      const result = isDelete
+        ? await writeBackDelete({ pool, channelId, sessionId: id, path, author, ...(baseSeq == null ? {} : { baseSeq }) })
+        : await writeBackArtifact({
+            pool,
+            storage: { uploadObject, getObjectBytes },
+            channelId,
+            sessionId: id,
+            path,
+            bytes: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+            mime: normalizeMime(firstHeader(req.headers['content-type'])),
+            author,
+            ...(baseSeq == null ? {} : { baseSeq }),
+          });
+      if (!result.ok) return reply.code(409).send({ error: result.reason });
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
   app.get('/api/sessions/:id/stream', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
