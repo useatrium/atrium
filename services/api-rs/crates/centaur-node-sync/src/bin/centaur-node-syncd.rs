@@ -14,7 +14,9 @@
 //!      NODE_SYNC_STATE
 //!      (default /var/lib/centaur/sync-state/<session>.json),
 //!      NODE_SYNC_INTERVAL_SECS (2).
-//! Flags: --once (hydrate if needed + one capture + one inbound sweep, then exit).
+//! Flags: --once (hydrate if needed + one capture + one inbound sweep, then exit),
+//!        --interval <secs> (overrides NODE_SYNC_INTERVAL_SECS),
+//!        --overlays-root <path> (chart contract; per-session env still required).
 
 #[cfg(target_os = "linux")]
 fn main() {
@@ -24,12 +26,91 @@ fn main() {
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
         AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, harness_transcript_sweep,
-        inbound_sweep, sha_hex,
+        inbound_sweep, partition_entries_by_lane, sha_hex,
     };
     use centaur_node_sync::state::DaemonState;
     use std::path::{Path, PathBuf};
 
-    let once = std::env::args().any(|a| a == "--once");
+    #[derive(Default)]
+    struct DaemonArgs {
+        once: bool,
+        interval_secs: Option<u64>,
+        overlays_root: Option<PathBuf>,
+    }
+
+    fn parse_args() -> Result<DaemonArgs, String> {
+        let mut parsed = DaemonArgs::default();
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--once" => parsed.once = true,
+                "--interval" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| "--interval requires a seconds value".to_string())?;
+                    parsed.interval_secs = Some(value.parse::<u64>().map_err(|_| {
+                        format!(
+                            "--interval requires an unsigned integer seconds value, got {value}"
+                        )
+                    })?);
+                }
+                "--overlays-root" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| "--overlays-root requires a path value".to_string())?;
+                    if value.trim().is_empty() {
+                        return Err("--overlays-root requires a non-empty path value".to_string());
+                    }
+                    parsed.overlays_root = Some(PathBuf::from(value));
+                }
+                _ => {
+                    return Err(format!(
+                        "unknown argument {arg}; supported flags: --once, --interval <secs>, --overlays-root <path>"
+                    ));
+                }
+            }
+        }
+        Ok(parsed)
+    }
+
+    fn fail_config(missing: &[String], overlays_root: Option<&Path>) -> ! {
+        let overlays_note = match overlays_root {
+            Some(root) => format!(
+                "; --overlays-root={} was parsed, but node-level fan-out is not implemented in this binary",
+                root.display()
+            ),
+            None => "; --overlays-root was not provided".to_string(),
+        };
+        eprintln!(
+            "centaur-node-syncd configuration error: missing {}. Required per-session env: ATRIUM_BASE_URL, ATRIUM_CAPTURE_API_KEY, NODE_SYNC_SESSION, NODE_SYNC_UPPER, NODE_SYNC_MERGED{}. The Helm DaemonSet must be paired with runtime-injected per-session NODE_SYNC_* env, or replaced by a node-level supervisor.",
+            missing.join(", "),
+            overlays_note
+        );
+        std::process::exit(2);
+    }
+
+    fn harness_lane_homes(configured_harness_home: &str) -> Vec<PathBuf> {
+        let mut homes = vec![
+            PathBuf::from(HarnessTranscriptKind::Claude.default_home_rel()),
+            PathBuf::from(HarnessTranscriptKind::Codex.default_home_rel()),
+        ];
+        if !configured_harness_home.is_empty() {
+            let configured = PathBuf::from(configured_harness_home);
+            if !homes.iter().any(|home| home == &configured) {
+                homes.push(configured);
+            }
+        }
+        homes
+    }
+
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("centaur-node-syncd argument error: {error}");
+            std::process::exit(2);
+        }
+    };
+    let once = args.once;
     let env = |k: &str| std::env::var(k).unwrap_or_default();
     let base_url = env("ATRIUM_BASE_URL");
     let api_key = env("ATRIUM_CAPTURE_API_KEY");
@@ -37,8 +118,10 @@ fn main() {
     let harness = HarnessTranscriptKind::parse(&env("NODE_SYNC_HARNESS"));
     let harness_thread_id = env("NODE_SYNC_HARNESS_THREAD_ID");
     let harness_home = env("NODE_SYNC_HARNESS_HOME");
-    let upper = PathBuf::from(env("NODE_SYNC_UPPER"));
-    let merged = PathBuf::from(env("NODE_SYNC_MERGED"));
+    let upper_env = env("NODE_SYNC_UPPER");
+    let merged_env = env("NODE_SYNC_MERGED");
+    let upper = PathBuf::from(&upper_env);
+    let merged = PathBuf::from(&merged_env);
     // Optional: a repo working tree whose uncommitted WIP we snapshot to the ledger
     // (pure-read git diff, H6/§5A). Empty = no WIP capture.
     let repo = env("NODE_SYNC_REPO");
@@ -50,7 +133,9 @@ fn main() {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "repo".to_string())
     };
-    let interval = env("NODE_SYNC_INTERVAL_SECS").parse::<u64>().unwrap_or(2);
+    let interval = args
+        .interval_secs
+        .unwrap_or_else(|| env("NODE_SYNC_INTERVAL_SECS").parse::<u64>().unwrap_or(2));
     // Per-session upper dirty-byte budget (#11). Default 2 GiB; the harness pauses
     // the agent before ENOSPC when crossed.
     let budget = centaur_node_sync::backpressure::Budget {
@@ -66,10 +151,26 @@ fn main() {
             PathBuf::from(s)
         }
     };
-    if base_url.is_empty() || session.is_empty() || upper.as_os_str().is_empty() {
-        eprintln!("missing ATRIUM_BASE_URL / NODE_SYNC_SESSION / NODE_SYNC_UPPER");
-        std::process::exit(2);
+    let mut missing = Vec::new();
+    if base_url.is_empty() {
+        missing.push("ATRIUM_BASE_URL".to_string());
     }
+    if api_key.is_empty() {
+        missing.push("ATRIUM_CAPTURE_API_KEY".to_string());
+    }
+    if session.is_empty() {
+        missing.push("NODE_SYNC_SESSION".to_string());
+    }
+    if upper_env.is_empty() {
+        missing.push("NODE_SYNC_UPPER".to_string());
+    }
+    if merged_env.is_empty() {
+        missing.push("NODE_SYNC_MERGED".to_string());
+    }
+    if !missing.is_empty() {
+        fail_config(&missing, args.overlays_root.as_deref());
+    }
+    let harness_lane_homes = harness_lane_homes(&harness_home);
 
     struct HardenedReader {
         upper: PathBuf,
@@ -281,6 +382,14 @@ fn main() {
                 let reader = HardenedReader {
                     upper: upper.clone(),
                 };
+                let partitioned = partition_entries_by_lane(&entries, &harness_lane_homes);
+                eprintln!(
+                    "entry lanes: artifact={}, harness_state={}, denied_dropped={}, total={}",
+                    partitioned.artifact_entries.len(),
+                    partitioned.harness_entries.len(),
+                    partitioned.denied_count,
+                    entries.len()
+                );
                 let base_seqs = state.base_seqs();
                 let large = std::env::var("NODE_SYNC_LARGE_FILE_BYTES")
                     .ok()
@@ -304,8 +413,14 @@ fn main() {
                         budget.headroom(dirty)
                     );
                 }
-                let out =
-                    capture_sweep(&entries, &base_seqs, &reader, &mut echo, &mut client, large);
+                let out = capture_sweep(
+                    &partitioned.artifact_entries,
+                    &base_seqs,
+                    &reader,
+                    &mut echo,
+                    &mut client,
+                    large,
+                );
                 for (path, seq, sha) in out.captured.iter().chain(out.streamed.iter()) {
                     state.sync_to(path, *seq, Some(sha.clone()), false);
                 }
@@ -336,7 +451,7 @@ fn main() {
                 };
                 for (harness, harness_home) in harnesses {
                     let out = harness_transcript_sweep(
-                        &entries,
+                        &partitioned.harness_entries,
                         &reader,
                         &mut client,
                         harness,

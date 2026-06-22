@@ -148,6 +148,110 @@ pub struct CaptureOutcome {
 /// budget. 8 MiB keeps the common case (notes/code/configs) on the simple path.
 pub const DEFAULT_LARGE_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
+/// Lane for an upper-dir entry. The artifact lane (workspace work-product) and
+/// the harness-state lane (Codex/Claude exact-resume) must never mix: harness
+/// homes carry auth tokens, credentials, and config that must NOT become artifacts.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EntryLane {
+    Artifact,
+    HarnessState,
+    Denied,
+}
+
+#[derive(Debug, Default)]
+pub struct PartitionedEntries {
+    pub artifact_entries: Vec<RawEntry>,
+    pub harness_entries: Vec<RawEntry>,
+    pub denied_count: usize,
+}
+
+pub fn classify_entry(rel_path: &Path, harness_homes: &[PathBuf]) -> EntryLane {
+    let Some(path_components) = normalized_path_components(rel_path) else {
+        return EntryLane::Denied;
+    };
+    if is_denied_path(&path_components) {
+        return EntryLane::Denied;
+    }
+    if harness_homes
+        .iter()
+        .any(|home| starts_with_normalized_components(&path_components, home))
+    {
+        return EntryLane::HarnessState;
+    }
+    EntryLane::Artifact
+}
+
+pub fn partition_entries_by_lane(
+    entries: &[RawEntry],
+    harness_homes: &[PathBuf],
+) -> PartitionedEntries {
+    let mut partitioned = PartitionedEntries::default();
+    for entry in entries {
+        match classify_entry(&entry.rel_path, harness_homes) {
+            EntryLane::Artifact => partitioned.artifact_entries.push(entry.clone()),
+            EntryLane::HarnessState => partitioned.harness_entries.push(entry.clone()),
+            EntryLane::Denied => partitioned.denied_count += 1,
+        }
+    }
+    partitioned
+}
+
+fn normalized_path_components(path: &Path) -> Option<Vec<String>> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => {
+                components.push(value.to_string_lossy().to_ascii_lowercase());
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    (!components.is_empty()).then_some(components)
+}
+
+fn starts_with_normalized_components(path_components: &[String], home: &Path) -> bool {
+    let Some(home_components) = normalized_path_components(home) else {
+        return false;
+    };
+    path_components.len() >= home_components.len()
+        && path_components
+            .iter()
+            .zip(home_components.iter())
+            .all(|(path, home)| path == home)
+}
+
+fn is_denied_path(components: &[String]) -> bool {
+    if components
+        .iter()
+        .any(|component| component == ".ssh" || component == ".aws")
+    {
+        return true;
+    }
+    if components
+        .iter()
+        .any(|component| component.contains("credentials"))
+    {
+        return true;
+    }
+    let Some(file_name) = components.last() else {
+        return true;
+    };
+    matches!(
+        file_name.as_str(),
+        "auth.json"
+            | ".netrc"
+            | ".git-credentials"
+            | "id_rsa"
+            | "id_dsa"
+            | "id_ecdsa"
+            | "id_ed25519"
+    ) || file_name.ends_with(".pem")
+        || file_name.ends_with(".key")
+}
+
 #[derive(Debug, Default)]
 pub struct HarnessTranscriptOutcome {
     pub captured: Option<(PathBuf, usize)>,
@@ -539,6 +643,115 @@ mod tests {
             size: 0,
             xattrs: vec![],
         }
+    }
+
+    #[test]
+    fn classify_entry_routes_harness_home_entries_to_harness_state() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        assert_eq!(
+            classify_entry(Path::new(".claude/projects/x/transcript.jsonl"), &homes),
+            EntryLane::HarnessState
+        );
+        assert_eq!(
+            classify_entry(Path::new(".codex/sessions/y/rollout.jsonl"), &homes),
+            EntryLane::HarnessState
+        );
+    }
+
+    #[test]
+    fn classify_entry_denies_sensitive_paths_regardless_of_location() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+        for path in [
+            ".codex/auth.json",
+            ".claude/.credentials.json",
+            "proj/secrets/id_rsa",
+            "proj/secrets/cert.pem",
+            "proj/secrets/signing.key",
+            ".aws/credentials",
+            ".git-credentials",
+            ".ssh/id_ed25519",
+        ] {
+            assert_eq!(
+                classify_entry(Path::new(path), &homes),
+                EntryLane::Denied,
+                "{path} should be denied"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_entry_routes_workspace_files_to_artifacts() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        assert_eq!(
+            classify_entry(Path::new("proj-x/note.md"), &homes),
+            EntryLane::Artifact
+        );
+        assert_eq!(
+            classify_entry(Path::new("src/app.ts"), &homes),
+            EntryLane::Artifact
+        );
+    }
+
+    #[test]
+    fn partition_entries_by_lane_keeps_harness_and_denied_paths_out_of_capture_sweep() {
+        let entries = vec![
+            reg("proj-x/note.md"),
+            reg("src/app.ts"),
+            reg(".codex/sessions/y/rollout.jsonl"),
+            reg(".claude/projects/x/transcript.jsonl"),
+            reg(".codex/auth.json"),
+            reg(".ssh/id_ed25519"),
+        ];
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+        let partitioned = partition_entries_by_lane(&entries, &homes);
+        let artifact_paths: Vec<&Path> = partitioned
+            .artifact_entries
+            .iter()
+            .map(|entry| entry.rel_path.as_path())
+            .collect();
+
+        assert_eq!(
+            artifact_paths,
+            vec![Path::new("proj-x/note.md"), Path::new("src/app.ts")]
+        );
+        assert_eq!(partitioned.harness_entries.len(), 2);
+        assert_eq!(partitioned.denied_count, 2);
+
+        let mut files = HashMap::new();
+        files.insert(PathBuf::from("proj-x/note.md"), b"note".to_vec());
+        files.insert(PathBuf::from("src/app.ts"), b"code".to_vec());
+        let reader = MapReader(files);
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &partitioned.artifact_entries,
+            &HashMap::new(),
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+        assert!(out.errors.is_empty());
+
+        let captured_paths: Vec<&str> = client
+            .captures
+            .iter()
+            .map(|(path, _seq)| path.as_str())
+            .collect();
+        assert_eq!(captured_paths, vec!["proj-x/note.md", "src/app.ts"]);
+        assert!(
+            captured_paths
+                .iter()
+                .all(|path| !path.starts_with(".codex") && !path.starts_with(".claude"))
+        );
+        assert!(
+            captured_paths
+                .iter()
+                .all(|path| !path.contains("auth.json") && !path.contains(".ssh"))
+        );
     }
 
     #[test]

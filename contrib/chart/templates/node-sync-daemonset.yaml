@@ -37,6 +37,9 @@ spec:
         - name: node-sync
           image: "{{ .Values.nodeSync.image.repository }}:{{ .Values.nodeSync.image.tag }}"
           imagePullPolicy: {{ .Values.nodeSync.image.pullPolicy }}
+          # Contract: the binary honors --interval/--overlays-root, but each running
+          # process is still per-session. The runtime must inject NODE_SYNC_SESSION,
+          # NODE_SYNC_UPPER, and NODE_SYNC_MERGED; otherwise the daemon exits non-zero.
           args: ["--overlays-root", "/var/lib/centaur/overlays", "--interval", "{{ .Values.nodeSync.scanIntervalSeconds }}"]
           securityContext:
             privileged: true              # overlay xattr reads + write-through-merged
