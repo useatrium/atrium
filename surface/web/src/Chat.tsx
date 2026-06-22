@@ -85,6 +85,9 @@ type VoiceSendMeta = Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
 type VoiceMsgSendPayload = MsgSendPayload & {
   voice?: Pick<VoiceMeta, 'durationMs' | 'waveform'>;
 };
+type EnqueueOpOptions = {
+  onStored?: () => void;
+};
 
 function fallbackUser(id: string): UserRef {
   return { id, handle: id, displayName: id };
@@ -345,9 +348,10 @@ export function Chat({
   );
 
   const enqueueOp = useCallback(
-    async <T extends OpType>(input: EnqueueOpInput<T>) => {
+    async <T extends OpType>(input: EnqueueOpInput<T>, options?: EnqueueOpOptions) => {
       const op = await opQueue.enqueue(input);
       if (op) {
+        options?.onStored?.();
         opQueue.nudge();
         markQueueNudged();
         broadcastQueueNudge();
@@ -1259,17 +1263,22 @@ export function Chat({
       createdAt: new Date().toISOString(),
     };
     const pending = pendingSpawnFromPayload(payload);
-    dispatch({
-      type: 'session-spawn-pending',
-      channelId,
-      message: pending.message,
-      session: pending.session,
-    });
-    void enqueueOp({
-      opId: randomId(),
-      opType: 'session.spawn',
-      payload,
-    }).catch(() => {
+    void enqueueOp(
+      {
+        opId: randomId(),
+        opType: 'session.spawn',
+        payload,
+      },
+      {
+        onStored: () =>
+          dispatch({
+            type: 'session-spawn-pending',
+            channelId,
+            message: pending.message,
+            session: pending.session,
+          }),
+      },
+    ).catch(() => {
       dispatch({ type: 'session-spawn-failed', channelId, tempId: clientSpawnId });
       showErrorToast("Couldn't queue the agent session.");
     });
@@ -1336,7 +1345,6 @@ export function Chat({
           }
         : {}),
     };
-    dispatch({ type: 'send-pending', channelId, message });
     const payload: VoiceMsgSendPayload = {
       channelId,
       text,
@@ -1349,11 +1357,16 @@ export function Chat({
         ? { voice: { durationMs: voice.durationMs, ...(voice.waveform ? { waveform: voice.waveform } : {}) } }
         : {}),
     };
-    void enqueueOp({
-      opId: randomId(),
-      opType: 'msg.send',
-      payload: payload as MsgSendPayload,
-    }).catch(() => {
+    void enqueueOp(
+      {
+        opId: randomId(),
+        opType: 'msg.send',
+        payload: payload as MsgSendPayload,
+      },
+      {
+        onStored: () => dispatch({ type: 'send-pending', channelId, message }),
+      },
+    ).catch(() => {
       dispatch({ type: 'send-failed', channelId, clientMsgId });
       showErrorToast("Couldn't queue the message.");
     });
@@ -1361,20 +1374,26 @@ export function Chat({
 
   const editMessage = async (m: ChatMessage, text: string): Promise<void> => {
     if (m.id == null) return;
+    const eventId = m.id;
     const opId = randomId();
-    dispatch({
-      type: 'edit-overlay-pending',
-      channelId: m.channelId,
-      opId,
-      targetEventId: m.id,
-      text,
-    });
     try {
-      await enqueueOp({
-        opId,
-        opType: 'msg.edit',
-        payload: { channelId: m.channelId, eventId: m.id, text },
-      });
+      await enqueueOp(
+        {
+          opId,
+          opType: 'msg.edit',
+          payload: { channelId: m.channelId, eventId, text },
+        },
+        {
+          onStored: () =>
+            dispatch({
+              type: 'edit-overlay-pending',
+              channelId: m.channelId,
+              opId,
+              targetEventId: eventId,
+              text,
+            }),
+        },
+      );
     } catch {
       dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
       showErrorToast("Couldn't queue the edit.");
@@ -1383,19 +1402,25 @@ export function Chat({
 
   const removeMessage = async (m: ChatMessage): Promise<void> => {
     if (m.id == null) return;
+    const eventId = m.id;
     const opId = randomId();
-    dispatch({
-      type: 'delete-overlay-pending',
-      channelId: m.channelId,
-      opId,
-      targetEventId: m.id,
-    });
     try {
-      await enqueueOp({
-        opId,
-        opType: 'msg.delete',
-        payload: { channelId: m.channelId, eventId: m.id },
-      });
+      await enqueueOp(
+        {
+          opId,
+          opType: 'msg.delete',
+          payload: { channelId: m.channelId, eventId },
+        },
+        {
+          onStored: () =>
+            dispatch({
+              type: 'delete-overlay-pending',
+              channelId: m.channelId,
+              opId,
+              targetEventId: eventId,
+            }),
+        },
+      );
     } catch {
       dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
       showErrorToast("Couldn't queue the delete.");
@@ -1404,27 +1429,33 @@ export function Chat({
 
   const reactToMessage = async (m: ChatMessage, emoji: string): Promise<void> => {
     if (m.id == null) return;
+    const eventId = m.id;
     const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
     const action = mine ? 'remove' : 'add';
     const opId = randomId();
     const payload: ReactionSetPayload = {
       channelId: m.channelId,
-      eventId: m.id,
+      eventId,
       emoji,
       action,
       userId: me.id,
     };
-    dispatch({
-      type: 'reaction-overlay-pending',
-      channelId: m.channelId,
-      opId,
-      targetEventId: m.id,
-      emoji,
-      userId: me.id,
-      action,
-    });
     try {
-      await enqueueOp({ opId, opType: 'reaction.set', payload });
+      await enqueueOp(
+        { opId, opType: 'reaction.set', payload },
+        {
+          onStored: () =>
+            dispatch({
+              type: 'reaction-overlay-pending',
+              channelId: m.channelId,
+              opId,
+              targetEventId: eventId,
+              emoji,
+              userId: me.id,
+              action,
+            }),
+        },
+      );
     } catch {
       dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
       showErrorToast("Couldn't queue the reaction.");

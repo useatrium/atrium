@@ -22,6 +22,7 @@ import {
   WEB_DIST,
 } from './config.js';
 import { clearSession, loadSession, saveSession, type DesktopSession } from './session.js';
+import { setupAutoUpdate } from './updater.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).
@@ -210,6 +211,7 @@ app.whenReady().then(() => {
   wireIpc();
   createWindow();
   createTray();
+  setupAutoUpdate();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

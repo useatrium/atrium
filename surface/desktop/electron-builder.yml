@@ -20,8 +20,14 @@ extraResources:
 
 mac:
   category: public.app-category.productivity
+  icon: build/icon.png
   target:
     - target: dmg
+      arch:
+        - arm64
+    # zip is what electron-updater consumes on macOS (the dmg is for the manual
+    # first download). The .app inside is already signed + notarized.
+    - target: zip
       arch:
         - arm64
   hardenedRuntime: true
@@ -32,8 +38,21 @@ mac:
     NSMicrophoneUsageDescription: Atrium uses your microphone for voice messages and calls.
     NSCameraUsageDescription: Atrium uses your camera for video calls.
 
-# Notarization is enabled by setting APPLE_API_KEY / APPLE_API_KEY_ID /
-# APPLE_API_ISSUER in the environment at build time (App Store Connect key).
-# Without them (and without a Developer ID cert) the build is unsigned.
+# The .app is signed + notarized by electron-builder when APPLE_API_KEY /
+# APPLE_API_KEY_ID / APPLE_API_ISSUER are set (App Store Connect key). The
+# afterAllArtifactBuild hook additionally signs + notarizes + staples the .dmg
+# wrapper itself, so `pnpm run package:mac` yields a fully-sealed dmg in one
+# command. Without creds, the build is unsigned.
+afterAllArtifactBuild: build/notarize-dmg.cjs
+
+# Update feed for electron-updater (see surface/desktop/README.md → Auto-update).
+# The source repo is PRIVATE: for real distribution, point `repo` at a dedicated
+# PUBLIC releases repo (e.g. atrium-releases) so the app needs no embedded token.
+# `repo: atrium` here works for a personal self-test (run the app with GH_TOKEN set).
+publish:
+  provider: github
+  owner: gbasin
+  repo: atrium
+
 dmg:
   title: Atrium
