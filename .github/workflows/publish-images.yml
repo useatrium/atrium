@@ -37,6 +37,12 @@ env:
   RUST_BUILD_PROFILE: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && 'debug' || 'release' }}
 
 jobs:
+  disabled-in-fork:
+    if: github.repository != 'paradigmxyz/centaur'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Publish Images is disabled outside paradigmxyz/centaur."
+
   # Build each image with Depot's hosted builders, push by digest, and hand
   # the digests to the merge job below which assembles the multi-arch manifest.
   # arm64 is only built on pushes to main and release tags — PR and manual
