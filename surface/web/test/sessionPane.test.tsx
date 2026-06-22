@@ -50,6 +50,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -133,10 +134,11 @@ describe('session pane folds the B_tooltest stream', () => {
   it('reconnects from the last folded event id on stream error', async () => {
     const es = await renderPaneWithB();
     expect(FakeEventSource.instances).toHaveLength(1);
+    vi.useFakeTimers();
     // terminal state reached → an error must NOT trigger a reconnect loop
     await act(async () => {
       es.error();
-      await new Promise((r) => setTimeout(r, 1100));
+      await vi.advanceTimersByTimeAsync(1000);
     });
     expect(FakeEventSource.instances).toHaveLength(1);
   });
@@ -151,9 +153,10 @@ describe('session pane folds the B_tooltest stream', () => {
       await new Promise((r) => setTimeout(r, 60));
     });
     const lastSeen = Math.max(...firstHalf.map((f) => f.event_id));
+    vi.useFakeTimers();
     await act(async () => {
       es.error();
-      await new Promise((r) => setTimeout(r, 1100));
+      await vi.advanceTimersByTimeAsync(1000);
     });
     expect(FakeEventSource.instances).toHaveLength(2);
     expect(FakeEventSource.last().url).toBe(
