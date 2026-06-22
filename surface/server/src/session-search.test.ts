@@ -232,6 +232,43 @@ describe('searchSessionRecords', () => {
       searchSessionRecords(pool, { query: 'sprocket', userId: fx.userId }),
     ).resolves.toHaveLength(1);
   });
+
+  it('shows private session records to a channel member (opt-in via membership)', async () => {
+    const { channel } = await createChannel(pool, {
+      workspaceId: fx.workspaceId,
+      name: 'secret-member',
+      actorId: fx.userId,
+      private: true,
+    });
+    const sessionId = await insertSession({
+      channelId: channel.id,
+      workspaceId: fx.workspaceId,
+      spawnedBy: fx.userId,
+      title: 'Private grommet session',
+    });
+    await insertRecord({
+      sessionId,
+      seq: 0,
+      kind: 'message',
+      actor: 'user',
+      viewTier: 'lean',
+      text: 'Private grommet finding.',
+      ts: '2026-01-05T00:00:00.000Z',
+    });
+    const carolId = await insertUser('carol', 'Carol');
+    // a non-member sees nothing…
+    await expect(
+      searchSessionRecords(pool, { query: 'grommet', userId: carolId }),
+    ).resolves.toEqual([]);
+    // …but adding her to the private channel opts her in.
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
+      channel.id,
+      carolId,
+    ]);
+    await expect(
+      searchSessionRecords(pool, { query: 'grommet', userId: carolId }),
+    ).resolves.toHaveLength(1);
+  });
 });
 
 describe('GET /api/search/sessions', () => {

@@ -104,6 +104,10 @@ export default function AppLayout() {
           options={{ title: 'Search', presentation: 'modal' }}
         />
         <Stack.Screen
+          name="session-search"
+          options={{ title: 'Search sessions', presentation: 'modal' }}
+        />
+        <Stack.Screen
           name="new-dm"
           options={{ title: 'New message', presentation: 'modal' }}
         />
