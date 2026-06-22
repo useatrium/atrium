@@ -1,9 +1,10 @@
 //! Per-session sidecar manifests for the node-sync daemon fan-out path.
 //!
-//! A privileged provisioner writes `<overlays-root>/.sessions/<session>.json`.
+//! A manifest-writer init writes `<overlays-root>/.sessions/<session>.json`.
 //! The per-node daemon scans direct child directories of `<overlays-root>` and
 //! only runs sessions that have a readable sidecar manifest.
 
+use crate::overlay_mount::DEFAULT_AGENT_UID;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -18,6 +19,12 @@ pub struct SessionManifest {
     pub harness_home: String,
     #[serde(default)]
     pub repo: String,
+    #[serde(default = "default_agent_uid")]
+    pub agent_uid: u32,
+}
+
+fn default_agent_uid() -> u32 {
+    DEFAULT_AGENT_UID
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +158,7 @@ mod tests {
             harness_thread_id: "thread-123".to_string(),
             harness_home: ".claude".to_string(),
             repo: "/workspace/repo".to_string(),
+            agent_uid: 1001,
         };
 
         let value = serde_json::to_value(&manifest).unwrap();
@@ -160,6 +168,7 @@ mod tests {
         assert_eq!(value["harness_thread_id"], "thread-123");
         assert_eq!(value["harness_home"], ".claude");
         assert_eq!(value["repo"], "/workspace/repo");
+        assert_eq!(value["agent_uid"], 1001);
 
         let round_trip: SessionManifest = serde_json::from_value(value).unwrap();
         assert_eq!(round_trip, manifest);
@@ -174,6 +183,7 @@ mod tests {
             harness_thread_id: String::new(),
             harness_home: String::new(),
             repo: String::new(),
+            agent_uid: 1001,
         };
 
         let value = serde_json::to_value(&manifest).unwrap();
@@ -200,6 +210,7 @@ mod tests {
                 harness_thread_id: String::new(),
                 harness_home: String::new(),
                 repo: String::new(),
+                agent_uid: 1001,
             },
         )
         .unwrap();

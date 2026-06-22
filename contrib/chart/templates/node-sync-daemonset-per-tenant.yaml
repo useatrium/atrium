@@ -66,13 +66,37 @@ spec:
           volumeMounts:
             - name: overlays
               mountPath: /var/lib/centaur/overlays/{{ $tenant.id }}
-              mountPropagation: HostToContainer
+            - name: overlay-work
+              mountPath: /var/lib/centaur/overlays/overlay-work
+            - name: overlay-lower
+              mountPath: /var/lib/centaur/overlays/overlay-lower
+            - name: repos
+              mountPath: /var/lib/centaur/repos
+            - name: merged
+              mountPath: /run/centaur/merged
+              mountPropagation: Bidirectional
             - name: cas-cache
               mountPath: /var/lib/centaur/cas
       volumes:
         - name: overlays
           hostPath:
             path: /var/lib/centaur/overlays/{{ $tenant.id }}
+            type: DirectoryOrCreate
+        - name: overlay-work
+          hostPath:
+            path: /var/lib/centaur/overlays/overlay-work
+            type: DirectoryOrCreate
+        - name: overlay-lower
+          hostPath:
+            path: /var/lib/centaur/overlays/overlay-lower
+            type: DirectoryOrCreate
+        - name: repos
+          hostPath:
+            path: /var/lib/centaur/repos
+            type: DirectoryOrCreate
+        - name: merged
+          hostPath:
+            path: /run/centaur/merged
             type: DirectoryOrCreate
         - name: cas-cache
           hostPath:

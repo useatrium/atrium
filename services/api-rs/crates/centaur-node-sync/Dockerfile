@@ -8,8 +8,8 @@ COPY . .
 RUN cargo build --release -p centaur-node-sync --bins
 
 FROM debian:bookworm-slim
-# The daemon needs coreutils + libc (dynamically linked) + CA certs for egress TLS.
-# provision-overlay shells out to mount(8) from the privileged init container.
+# The daemon needs coreutils + libc (dynamically linked), mount(8)/umount(8) for
+# daemon-owned overlay lifecycle, and CA certs for egress TLS.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates mount \
   && rm -rf /var/lib/apt/lists/*

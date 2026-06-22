@@ -1,9 +1,8 @@
 //! Per-session overlay provisioning for agent sandboxes.
 //!
-//! The privileged init container runs the node-sync image's `provision-overlay`
-//! binary. It mounts the host root that owns the session upper/work/lower trees
-//! with Bidirectional propagation, then the hardened agent receives the merged
-//! workspace mount with HostToContainer propagation.
+//! Option A: the node-sync daemon owns the overlay mount on the node. The agent
+//! pod only writes the session manifest, waits for the daemon's ready marker,
+//! then receives the merged workspace mount with HostToContainer propagation.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +15,8 @@ const DEFAULT_ATRIUM_ROOT: &str = "/var/lib/centaur/atrium";
 const DEFAULT_WORKSPACE_MOUNT_PATH: &str = "/workspace";
 const DEFAULT_ATRIUM_MOUNT_PATH: &str = "/atrium";
 const DEFAULT_AGENT_UID: u32 = 1001;
+const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
+const READINESS_TIMEOUT_SECS: u64 = 120;
 
 const SESSION_UPPER_VOLUME: &str = "session-upper";
 const WORKSPACE_VOLUME: &str = "workspace";
@@ -88,12 +89,13 @@ impl OverlayMetadata {
     }
 }
 
-pub(crate) fn overlay_init_container_json(
+pub(crate) fn overlay_manifest_init_container_json(
     overlay: &OverlayConfig,
     session: &str,
     metadata: &OverlayMetadata,
 ) -> Value {
     let mut args = vec![
+        "--manifest-only".to_owned(),
         "--session".to_owned(),
         session.to_owned(),
         "--overlays-root".to_owned(),
@@ -117,23 +119,52 @@ pub(crate) fn overlay_init_container_json(
     push_optional_arg(&mut args, "--repo", metadata.repo.as_deref());
 
     json!({
-        "name": "overlay-setup",
+        "name": "overlay-manifest-writer",
         "image": overlay.image,
         "command": ["/usr/local/bin/provision-overlay"],
         "args": args,
         "securityContext": {
-            "privileged": true,
+            "privileged": false,
+            "allowPrivilegeEscalation": false,
+            "capabilities": {
+                "drop": ["ALL"],
+            },
+            "seccompProfile": {
+                "type": "RuntimeDefault",
+            },
         },
         "volumeMounts": [
             {
                 "name": SESSION_UPPER_VOLUME,
-                "mountPath": overlays_host_root(overlay),
-                "mountPropagation": "Bidirectional",
+                "mountPath": path_string(&overlay.overlays_root),
             },
+        ],
+    })
+}
+
+pub(crate) fn overlay_readiness_init_container_json(
+    overlay: &OverlayConfig,
+    session: &str,
+) -> Value {
+    json!({
+        "name": "overlay-readiness-wait",
+        "image": overlay.image,
+        "command": ["/bin/sh", "-ceu", readiness_wait_script(overlay, session)],
+        "securityContext": {
+            "privileged": false,
+            "allowPrivilegeEscalation": false,
+            "capabilities": {
+                "drop": ["ALL"],
+            },
+            "seccompProfile": {
+                "type": "RuntimeDefault",
+            },
+        },
+        "volumeMounts": [
             {
                 "name": WORKSPACE_VOLUME,
                 "mountPath": merged_session_path(overlay, session),
-                "mountPropagation": "Bidirectional",
+                "mountPropagation": "HostToContainer",
             },
         ],
     })
@@ -144,7 +175,7 @@ pub(crate) fn overlay_volumes_json(overlay: &OverlayConfig, session: &str) -> Ve
         json!({
             "name": SESSION_UPPER_VOLUME,
             "hostPath": {
-                "path": overlays_host_root(overlay),
+                "path": path_string(&overlay.overlays_root),
                 "type": "DirectoryOrCreate",
             },
         }),
@@ -184,6 +215,21 @@ pub(crate) fn atrium_volume_json(session: &str) -> Value {
     })
 }
 
+fn readiness_wait_script(overlay: &OverlayConfig, session: &str) -> String {
+    let marker = Path::new(&merged_session_path(overlay, session)).join(READY_MARKER_FILE);
+    format!(
+        "marker={marker:?}\n\
+         deadline=$(( $(date +%s) + {READINESS_TIMEOUT_SECS} ))\n\
+         while [ ! -f \"$marker\" ]; do\n\
+         \tif [ \"$(date +%s)\" -ge \"$deadline\" ]; then\n\
+         \t\techo \"timed out waiting for $marker\" >&2\n\
+         \t\texit 1\n\
+         \tfi\n\
+         \tsleep 1\n\
+         done\n"
+    )
+}
+
 fn push_optional_arg(args: &mut Vec<String>, flag: &str, value: Option<&str>) {
     if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
         args.push(flag.to_owned());
@@ -205,16 +251,6 @@ fn supported_provisioner_harness(value: &str) -> Option<String> {
         "codex" | "claude" | "claude-code" | "claudecode" => Some(value.trim().to_owned()),
         _ => None,
     }
-}
-
-fn overlays_host_root(overlay: &OverlayConfig) -> String {
-    overlay
-        .overlays_root
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(&overlay.overlays_root)
-        .display()
-        .to_string()
 }
 
 fn merged_session_path(overlay: &OverlayConfig, session: &str) -> String {

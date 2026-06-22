@@ -35,6 +35,9 @@ mod linux_daemon {
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
     use centaur_node_sync::materialize_once;
+    use centaur_node_sync::overlay_mount::{
+        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
+    };
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
         AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, harness_transcript_sweep,
@@ -301,6 +304,7 @@ mod linux_daemon {
         let lease = LeaseGate::new();
         let mut states: HashMap<String, DaemonState> = HashMap::new();
         let mut echoes: HashMap<String, EchoGuard> = HashMap::new();
+        let mut mounted_overlays: HashMap<String, OverlayMountPlan> = HashMap::new();
 
         loop {
             match discover_sessions(&overlays_root) {
@@ -313,10 +317,34 @@ mod linux_daemon {
                         .iter()
                         .map(|session| session.session.clone())
                         .collect();
+                    cleanup_removed_overlays(&active, &mut mounted_overlays);
                     states.retain(|session, _| active.contains(session));
                     echoes.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
+                        let plan = match plan_overlay_mount(
+                            &overlays_root,
+                            &discovered.session,
+                            &discovered.manifest.merged,
+                            &discovered.manifest.repo,
+                            None,
+                        ) {
+                            Ok(plan) => plan,
+                            Err(e) => {
+                                eprintln!("session {}: overlay plan: {e}", discovered.session);
+                                continue;
+                            }
+                        };
+                        let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid))
+                        {
+                            Ok(plan) => plan,
+                            Err(e) => {
+                                eprintln!("session {}: overlay mount: {e}", discovered.session);
+                                continue;
+                            }
+                        };
+                        mounted_overlays.insert(discovered.session.clone(), mounted);
+
                         let session = session_config_from_discovered(&discovered);
                         let state = states
                             .entry(session.session.clone())
@@ -334,6 +362,24 @@ mod linux_daemon {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+        }
+    }
+
+    fn cleanup_removed_overlays(
+        active: &HashSet<String>,
+        mounted_overlays: &mut HashMap<String, OverlayMountPlan>,
+    ) {
+        let removed = mounted_overlays
+            .keys()
+            .filter(|session| !active.contains(*session))
+            .cloned()
+            .collect::<Vec<_>>();
+        for session in removed {
+            if let Some(plan) = mounted_overlays.remove(&session)
+                && let Err(e) = unmount_overlay(&plan)
+            {
+                eprintln!("session {session}: overlay unmount: {e}");
+            }
         }
     }
 
@@ -509,6 +555,10 @@ mod linux_daemon {
     ) {
         match fs_linux::read_upper_entries(&session.upper) {
             Ok(entries) => {
+                let entries = entries
+                    .into_iter()
+                    .filter(|entry| entry.rel_path.as_path() != Path::new(READY_MARKER_FILE))
+                    .collect::<Vec<_>>();
                 let reader = HardenedReader {
                     upper: session.upper.clone(),
                 };

@@ -72,9 +72,9 @@ pub struct AgentSandboxConfig {
     /// git-clones the tools repo into the agent's `/app/tools`, and `TOOL_DIRS`
     /// is set so the agent's shim installer finds them.
     pub tools: Option<ToolsConfig>,
-    /// When set, every sandbox gets a privileged `overlay-setup` init container
-    /// that mounts the per-session overlay workspace on the node before the
-    /// hardened agent container starts.
+    /// When set, every sandbox writes an overlay manifest, waits for the
+    /// node-sync daemon's ready marker, and mounts the daemon-owned workspace
+    /// into the hardened agent container.
     pub overlay: Option<OverlayConfig>,
     /// In-cluster OTLP collector (e.g. Laminar) the sandbox exports harness
     /// traces to directly. The per-sandbox egress NetworkPolicy denies all
@@ -673,6 +673,7 @@ fn build_agent_sandbox(
     if let Some(overlay) = &config.overlay {
         let agent_uid = agent_run_as_user(&container).unwrap_or(overlay.agent_uid);
         let metadata = overlay::OverlayMetadata::from_sandbox_spec(spec, agent_uid);
+        container["workingDir"] = json!(overlay.workspace_mount_path.clone());
         volume_mounts.push(overlay::overlay_agent_volume_mount_json(
             overlay,
             id.as_str(),
@@ -680,10 +681,14 @@ fn build_agent_sandbox(
         volume_mounts.push(overlay::atrium_agent_volume_mount_json());
         volumes.extend(overlay::overlay_volumes_json(overlay, id.as_str()));
         volumes.push(overlay::atrium_volume_json(id.as_str()));
-        init_containers.push(overlay::overlay_init_container_json(
+        init_containers.push(overlay::overlay_manifest_init_container_json(
             overlay,
             id.as_str(),
             &metadata,
+        ));
+        init_containers.push(overlay::overlay_readiness_init_container_json(
+            overlay,
+            id.as_str(),
         ));
     }
     volume_mounts.push(json!({
@@ -1041,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_enabled_renders_privileged_setup_and_workspace_mount() {
+    fn overlay_enabled_renders_manifest_wait_and_workspace_mount() {
         let spec = SandboxSpec::new("centaur-agent:latest")
             .label("centaur.ai/harness", "codex")
             .env("CENTAUR_RESUME_THREAD_ID", "thread-1")
@@ -1053,24 +1058,38 @@ mod tests {
 
         let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
         let pod_spec = &sandbox.spec.pod_template.spec;
-        let overlay_setup = pod_spec
-            .init_containers
-            .as_ref()
-            .unwrap()
+        let init_containers = pod_spec.init_containers.as_ref().unwrap();
+        assert!(
+            init_containers
+                .iter()
+                .all(|container| container.name != "overlay-setup")
+        );
+        assert!(init_containers.iter().all(|container| {
+            container
+                .security_context
+                .as_ref()
+                .and_then(|context| context.privileged)
+                != Some(true)
+        }));
+        let manifest_writer = init_containers
             .iter()
-            .find(|container| container.name == "overlay-setup")
-            .expect("overlay-setup init container");
+            .find(|container| container.name == "overlay-manifest-writer")
+            .expect("overlay-manifest-writer init container");
+        let readiness_wait = init_containers
+            .iter()
+            .find(|container| container.name == "overlay-readiness-wait")
+            .expect("overlay-readiness-wait init container");
 
         assert_eq!(
-            overlay_setup.command.as_ref().unwrap(),
+            manifest_writer.command.as_ref().unwrap(),
             &vec!["/usr/local/bin/provision-overlay".to_owned()]
         );
         assert_eq!(
-            overlay_setup.image.as_deref(),
+            manifest_writer.image.as_deref(),
             Some("centaur-node-sync:test")
         );
         assert_eq!(
-            overlay_setup
+            manifest_writer
                 .args
                 .as_ref()
                 .unwrap()
@@ -1078,6 +1097,7 @@ mod tests {
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             vec![
+                "--manifest-only",
                 "--session",
                 "asbx-test",
                 "--overlays-root",
@@ -1097,22 +1117,39 @@ mod tests {
             ]
         );
         assert_eq!(
-            overlay_setup
+            manifest_writer
                 .security_context
                 .as_ref()
                 .and_then(|context| context.privileged),
-            Some(true)
+            Some(false)
         );
-        let init_mounts = overlay_setup.volume_mounts.as_ref().unwrap();
-        assert!(init_mounts.iter().any(|mount| {
+        let manifest_mounts = manifest_writer.volume_mounts.as_ref().unwrap();
+        assert!(manifest_mounts.iter().any(|mount| {
             mount.name == "session-upper"
-                && mount.mount_path == "/var/lib/centaur"
-                && mount.mount_propagation.as_deref() == Some("Bidirectional")
+                && mount.mount_path == "/var/lib/centaur/overlays"
+                && mount.mount_propagation.is_none()
         }));
-        assert!(init_mounts.iter().any(|mount| {
+
+        assert_eq!(
+            readiness_wait.image.as_deref(),
+            Some("centaur-node-sync:test")
+        );
+        assert_eq!(
+            readiness_wait
+                .security_context
+                .as_ref()
+                .and_then(|context| context.privileged),
+            Some(false)
+        );
+        let readiness_command = readiness_wait.command.as_ref().unwrap().join(" ");
+        assert!(
+            readiness_command.contains("/run/centaur/merged/asbx-test/.centaur-workspace-ready")
+        );
+        let readiness_mounts = readiness_wait.volume_mounts.as_ref().unwrap();
+        assert!(readiness_mounts.iter().any(|mount| {
             mount.name == "workspace"
                 && mount.mount_path == "/run/centaur/merged/asbx-test"
-                && mount.mount_propagation.as_deref() == Some("Bidirectional")
+                && mount.mount_propagation.as_deref() == Some("HostToContainer")
         }));
 
         let volumes = pod_spec.volumes.as_ref().unwrap();
@@ -1121,7 +1158,7 @@ mod tests {
             .find(|volume| volume.name == "session-upper")
             .expect("session-upper volume");
         let session_upper_host_path = session_upper.host_path.as_ref().unwrap();
-        assert_eq!(session_upper_host_path.path, "/var/lib/centaur");
+        assert_eq!(session_upper_host_path.path, "/var/lib/centaur/overlays");
         assert_eq!(
             session_upper_host_path.r#type.as_deref(),
             Some("DirectoryOrCreate")
@@ -1138,6 +1175,10 @@ mod tests {
         );
 
         let agent_mounts = pod_spec.containers[0].volume_mounts.as_ref().unwrap();
+        assert_eq!(
+            pod_spec.containers[0].working_dir.as_deref(),
+            Some("/workspace")
+        );
         assert!(agent_mounts.iter().any(|mount| {
             mount.name == "workspace"
                 && mount.mount_path == "/workspace"
@@ -1189,7 +1230,9 @@ mod tests {
                 .as_ref()
                 .map(|containers| containers
                     .iter()
-                    .all(|container| container.name != "overlay-setup"))
+                    .all(|container| container.name != "overlay-setup"
+                        && container.name != "overlay-manifest-writer"
+                        && container.name != "overlay-readiness-wait"))
                 .unwrap_or(true)
         );
         assert!(

@@ -4,11 +4,11 @@
 # drive the real capture→adopt round-trip through it. This closes the gap between the
 # unit/overlay-syscall proofs and "it runs as the shipped pod".
 #
-# NOT-VALIDATED-ON-MACOS: the load-bearing mechanic — the privileged init container's
-# overlay mount propagating to the node (mountPropagation: Bidirectional) and the
-# hardened agent seeing it via HostToContainer — requires a real Linux kernel +
-# multi-process node setup. It cannot run on Docker Desktop. Run on a real cluster or
-# a GHA ubuntu runner with kind. See notes/sync-hardening-plan.md + agent-sync-design.md.
+# NOT-VALIDATED-ON-MACOS: the load-bearing mechanic — the privileged node-sync
+# DaemonSet mounts the overlay on the node and the hardened agent sees it via
+# HostToContainer — requires a real Linux kernel + multi-process node setup. It
+# cannot run on Docker Desktop. Run on a real cluster or a GHA ubuntu runner with
+# kind. See notes/sync-hardening-plan.md + agent-sync-design.md.
 set -euo pipefail
 
 NS="${NS:-centaur}"
@@ -124,7 +124,7 @@ helm upgrade --install centaur "${HERE}/../../../../../contrib/chart" \
 echo "==> [3/7] wait for the node-sync DaemonSet pod to be Ready"
 kubectl -n "${NS}" rollout status ds -l app.kubernetes.io/component=node-sync --timeout=180s
 
-echo "==> [4/7] provision a fixture-lower session overlay on the node + seed an agent edit"
+echo "==> [4/7] write a fixture-lower session manifest and wait for daemon-owned overlay"
 kubectl -n "${NS}" delete pod "${AGENT_POD}" --ignore-not-found --wait=true
 kubectl -n "${NS}" apply -f - <<YAML
 apiVersion: v1
@@ -137,29 +137,56 @@ spec:
   automountServiceAccountToken: false
   terminationGracePeriodSeconds: 1
   volumes:
-    - name: session-upper
+    - name: overlays-root
       hostPath:
-        path: /var/lib/centaur
+        path: /var/lib/centaur/overlays
         type: DirectoryOrCreate
     - name: workspace
       hostPath:
         path: /run/centaur/merged/${SESSION}
         type: DirectoryOrCreate
   initContainers:
-    - name: overlay-setup
+    - name: overlay-manifest-writer
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
       command: ["/usr/local/bin/provision-overlay"]
-      args: ["--session", "${SESSION}"]
+      args: ["--manifest-only", "--session", "${SESSION}", "--agent-uid", "1001"]
       securityContext:
-        privileged: true
+        privileged: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
       volumeMounts:
-        - name: session-upper
-          mountPath: /var/lib/centaur
-          mountPropagation: Bidirectional
+        - name: overlays-root
+          mountPath: /var/lib/centaur/overlays
+    - name: overlay-readiness-wait
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-ceu"]
+      args:
+        - |
+          marker="/run/centaur/merged/${SESSION}/.centaur-workspace-ready"
+          deadline=\$(( \$(date +%s) + 120 ))
+          while [ ! -f "\${marker}" ]; do
+            if [ "\$(date +%s)" -ge "\${deadline}" ]; then
+              echo "timed out waiting for \${marker}" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      volumeMounts:
         - name: workspace
           mountPath: /run/centaur/merged/${SESSION}
-          mountPropagation: Bidirectional
+          mountPropagation: HostToContainer
   containers:
     - name: agent
       image: ${IMAGE}
@@ -177,19 +204,22 @@ spec:
         - name: workspace
           mountPath: /workspace
           mountPropagation: HostToContainer
+      workingDir: /workspace
 YAML
 kubectl -n "${NS}" wait --for=condition=Ready "pod/${AGENT_POD}" --timeout=180s
 
-# --- mountPropagation diagnostics (the linchpin: init Bidirectional -> node -> agent
+# --- mountPropagation diagnostics (the linchpin: daemon Bidirectional -> node -> agent
 #     HostToContainer). Dump before asserting so a failure shows exactly which hop broke.
-echo "--- DIAG: provision-overlay (init) log ---"
-kubectl -n "${NS}" logs "${AGENT_POD}" -c overlay-setup 2>&1 || true
+echo "--- DIAG: provision-overlay manifest-writer log ---"
+kubectl -n "${NS}" logs "${AGENT_POD}" -c overlay-manifest-writer 2>&1 || true
+echo "--- DIAG: readiness wait log ---"
+kubectl -n "${NS}" logs "${AGENT_POD}" -c overlay-readiness-wait 2>&1 || true
 echo "--- DIAG: agent view (id, /workspace, mounts) ---"
 kubectl -n "${NS}" exec "${AGENT_POD}" -c agent -- /bin/sh -c \
   'id; echo "ls -la /workspace:"; ls -la /workspace 2>&1; echo "overlay mounts:"; grep -E "centaur|overlay" /proc/mounts 2>&1 || true' || true
 echo "--- DIAG: node view (mounts + dirs on ${KIND_CLUSTER}-control-plane) ---"
 docker exec "${KIND_CLUSTER}-control-plane" sh -c \
-  'echo "node overlay/centaur mounts:"; (grep -E "centaur|overlay" /proc/mounts || true); echo "ls /var/lib/centaur/overlays:"; ls -la /var/lib/centaur/overlays 2>&1 || true; echo "ls /run/centaur/merged/'"${SESSION}"':"; ls -la "/run/centaur/merged/'"${SESSION}"'" 2>&1 || true' || true
+  'echo "node overlay/centaur mounts:"; (grep -E "centaur|overlay" /proc/mounts || true); echo "ls /var/lib/centaur/overlays:"; ls -la /var/lib/centaur/overlays 2>&1 || true; echo "manifest:"; cat "/var/lib/centaur/overlays/.sessions/'"${SESSION}"'.json" 2>&1 || true; echo "ls /run/centaur/merged/'"${SESSION}"':"; ls -la "/run/centaur/merged/'"${SESSION}"'" 2>&1 || true' || true
 
 # Tolerant write: keep going to surface the capture assertion + failure diagnostics even
 # if the agent can't write /workspace (e.g. overlay didn't propagate).
@@ -223,9 +253,13 @@ spec:
   automountServiceAccountToken: false
   terminationGracePeriodSeconds: 1
   volumes:
-    - name: session-upper
+    - name: overlays-root
       hostPath:
-        path: /var/lib/centaur
+        path: /var/lib/centaur/overlays
+        type: DirectoryOrCreate
+    - name: repos-root
+      hostPath:
+        path: /var/lib/centaur/repos
         type: DirectoryOrCreate
     - name: workspace
       hostPath:
@@ -247,22 +281,49 @@ spec:
           chmod 0644 "\${repo}/README.md" "\${repo}/src/lib.rs"
           ls -la "\${repo}" "\${repo}/src"
       volumeMounts:
-        - name: session-upper
-          mountPath: /var/lib/centaur
-    - name: overlay-setup
+        - name: repos-root
+          mountPath: /var/lib/centaur/repos
+    - name: overlay-manifest-writer
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
       command: ["/usr/local/bin/provision-overlay"]
-      args: ["--session", "${REPO_SESSION}", "--repo", "/var/lib/centaur/repos/${REPO_SESSION}"]
+      args: ["--manifest-only", "--session", "${REPO_SESSION}", "--repo", "/var/lib/centaur/repos/${REPO_SESSION}", "--agent-uid", "1001"]
       securityContext:
-        privileged: true
+        privileged: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
       volumeMounts:
-        - name: session-upper
-          mountPath: /var/lib/centaur
-          mountPropagation: Bidirectional
+        - name: overlays-root
+          mountPath: /var/lib/centaur/overlays
+    - name: overlay-readiness-wait
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-ceu"]
+      args:
+        - |
+          marker="/run/centaur/merged/${REPO_SESSION}/.centaur-workspace-ready"
+          deadline=\$(( \$(date +%s) + 120 ))
+          while [ ! -f "\${marker}" ]; do
+            if [ "\$(date +%s)" -ge "\${deadline}" ]; then
+              echo "timed out waiting for \${marker}" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      volumeMounts:
         - name: workspace
           mountPath: /run/centaur/merged/${REPO_SESSION}
-          mountPropagation: Bidirectional
+          mountPropagation: HostToContainer
   containers:
     - name: agent
       image: ${IMAGE}
@@ -280,19 +341,22 @@ spec:
         - name: workspace
           mountPath: /workspace
           mountPropagation: HostToContainer
+      workingDir: /workspace
 YAML
 kubectl -n "${NS}" wait --for=condition=Ready "pod/${REPO_AGENT_POD}" --timeout=180s
 
 echo "--- DIAG: repo seed log ---"
 kubectl -n "${NS}" logs "${REPO_AGENT_POD}" -c repo-seed 2>&1 || true
-echo "--- DIAG: repo provision-overlay (init) log ---"
-kubectl -n "${NS}" logs "${REPO_AGENT_POD}" -c overlay-setup 2>&1 || true
+echo "--- DIAG: repo provision-overlay manifest-writer log ---"
+kubectl -n "${NS}" logs "${REPO_AGENT_POD}" -c overlay-manifest-writer 2>&1 || true
+echo "--- DIAG: repo readiness wait log ---"
+kubectl -n "${NS}" logs "${REPO_AGENT_POD}" -c overlay-readiness-wait 2>&1 || true
 echo "--- DIAG: repo agent view (id, /workspace, mounts) ---"
 kubectl -n "${NS}" exec "${REPO_AGENT_POD}" -c agent -- /bin/sh -c \
   'id; echo "ls -la /workspace:"; ls -la /workspace 2>&1; echo "ls -la /workspace/src:"; ls -la /workspace/src 2>&1 || true; echo "overlay mounts:"; grep -E "centaur|overlay" /proc/mounts 2>&1 || true' || true
 echo "--- DIAG: repo node view (repo, upper, merged on ${KIND_CLUSTER}-control-plane) ---"
 docker exec "${KIND_CLUSTER}-control-plane" sh -c \
-  'echo "repo lower:"; ls -la "/var/lib/centaur/repos/'"${REPO_SESSION}"'" "/var/lib/centaur/repos/'"${REPO_SESSION}"'/src" 2>&1 || true; echo "upper:"; find "/var/lib/centaur/overlays/'"${REPO_SESSION}"'" -maxdepth 2 -mindepth 1 -print 2>&1 || true; echo "merged:"; ls -la "/run/centaur/merged/'"${REPO_SESSION}"'" 2>&1 || true' || true
+  'echo "repo lower:"; ls -la "/var/lib/centaur/repos/'"${REPO_SESSION}"'" "/var/lib/centaur/repos/'"${REPO_SESSION}"'/src" 2>&1 || true; echo "manifest:"; cat "/var/lib/centaur/overlays/.sessions/'"${REPO_SESSION}"'.json" 2>&1 || true; echo "upper:"; find "/var/lib/centaur/overlays/'"${REPO_SESSION}"'" -maxdepth 2 -mindepth 1 -print 2>&1 || true; echo "merged:"; ls -la "/run/centaur/merged/'"${REPO_SESSION}"'" 2>&1 || true' || true
 
 kubectl -n "${NS}" exec "${REPO_AGENT_POD}" -c agent -- /bin/sh -ceu '
   grep -q "repo lower readme" /workspace/README.md
