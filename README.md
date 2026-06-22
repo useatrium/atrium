@@ -215,6 +215,8 @@ version-control system handles conflicts.)
 ## Links
 
 - **Architecture walkthrough:** https://gbasin.github.io/atrium-architecture/
+- **UI surfaces:** the screens and how they compose — [notes/surfaces.md](notes/surfaces.md).
+- **Desktop app:** build, signing, and auto-update — [surface/desktop/README.md](surface/desktop/README.md).
 - **Agent engine:** [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (MIT)
 - **Contributing:** branch and PR/merge flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **License:** MIT, see [LICENSE](LICENSE).
