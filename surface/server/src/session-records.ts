@@ -13,7 +13,7 @@ import {
   type ToolCallItem,
 } from '@atrium/centaur-client';
 import { isTerminalExecutionStatus } from '@atrium/centaur-client';
-import type { Db } from './db.js';
+import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 
 export type SessionRecordKind =
@@ -58,6 +58,7 @@ interface MutableProjectionState {
   driver: SessionRecordDriver | null;
   fallbackTs: Date;
   records: SessionRecord[];
+  dirtySeqs: Set<number>;
   openAmpTextIndex: number | null;
   toolRecordById: Map<string, number>;
   lastToolRecordIndex: number | null;
@@ -75,18 +76,32 @@ const REDACTED = '[redacted]';
 const MAX_TEXT_EXCERPT = 4000;
 const MAX_META_EXCERPT = 2000;
 
+const GOOGLE_API_KEY_RE = /\bAIza[A-Za-z0-9_-]{20,}\b/g;
 const OPENAI_SECRET_RE = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g;
 const GITHUB_SECRET_RE = /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g;
+const GITHUB_FINE_GRAINED_SECRET_RE = /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g;
 const SLACK_SECRET_RE = /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g;
+const SLACK_APP_SECRET_RE = /\bxapp-[A-Za-z0-9-]{10,}\b/g;
 const AWS_ACCESS_KEY_RE = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
+const STRIPE_LIVE_SECRET_RE = /\b(?:sk|rk)_live_[A-Za-z0-9]{10,}\b/g;
+const NPM_SECRET_RE = /\bnpm_[A-Za-z0-9]{20,}\b/g;
+const GITLAB_PAT_RE = /\bglpat-[A-Za-z0-9_-]{20,}\b/g;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]{10,}/gi;
+const BASIC_AUTH_RE = /\b(Authorization\s*:\s*Basic\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
 const PRIVATE_KEY_RE =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
 const ASSIGNMENT_SECRET_RE =
-  /\b(password|passwd|api[_-]?key|secret|token|access[_-]?token|refresh[_-]?token)\b(\s*[:=]\s*)(["']?)([^\s"'`,;&]+)/gi;
+  /\b(password|passwd|api[_-]?key|private[_-]?key|client[_-]?secret|secret|token|access[_-]?token|refresh[_-]?token)\b(\s*[:=]\s*)(["']?)([^\s"'`,;&]+)/gi;
+const HEX_KEY_ASSIGNMENT_RE =
+  /\b(private[_-]?key|secret|token|api[_-]?key|access[_-]?token)(\s*[:=]\s*)(["']?)0x[A-Fa-f0-9]{32,}\3/gi;
 const HEX_ENTROPY_RE = /\b[A-Fa-f0-9]{32,}\b/g;
 const BASE64_ENTROPY_RE = /\b[A-Za-z0-9+/_-]{40,}={0,2}\b/g;
+
+// The session runner should call releaseSessionProjectionState when a session
+// reaches a terminal state; until then this cache is bounded by active sessions.
+const sessionProjectionStates = new Map<string, MutableProjectionState>();
+const sessionProjectionLocks = new Map<string, Promise<unknown>>();
 
 const CODEX_FILE_KIND: Record<string, 'add' | 'update' | 'delete'> = {
   add: 'add',
@@ -123,11 +138,22 @@ export function redactText(text: string): string {
   let out = text;
   out = out.replace(PRIVATE_KEY_RE, REDACTED);
   out = out.replace(BEARER_RE, `Bearer ${REDACTED}`);
+  out = out.replace(BASIC_AUTH_RE, (_match, prefix: string) => `${prefix}${REDACTED}`);
+  out = out.replace(
+    HEX_KEY_ASSIGNMENT_RE,
+    (_match, key: string, sep: string, quote: string) => `${key}${sep}${quote}${REDACTED}${quote}`,
+  );
   out = out.replace(JWT_RE, REDACTED);
+  out = out.replace(GOOGLE_API_KEY_RE, REDACTED);
   out = out.replace(OPENAI_SECRET_RE, REDACTED);
+  out = out.replace(STRIPE_LIVE_SECRET_RE, REDACTED);
+  out = out.replace(GITHUB_FINE_GRAINED_SECRET_RE, REDACTED);
   out = out.replace(GITHUB_SECRET_RE, REDACTED);
   out = out.replace(SLACK_SECRET_RE, REDACTED);
+  out = out.replace(SLACK_APP_SECRET_RE, REDACTED);
   out = out.replace(AWS_ACCESS_KEY_RE, REDACTED);
+  out = out.replace(NPM_SECRET_RE, REDACTED);
+  out = out.replace(GITLAB_PAT_RE, REDACTED);
   out = out.replace(
     ASSIGNMENT_SECRET_RE,
     (_match, key: string, sep: string, quote: string) => `${key}${sep}${quote}${REDACTED}${quote}`,
@@ -147,16 +173,7 @@ export function projectFrames(
   frames: CentaurEventFrame[],
   opts: ProjectFramesOptions = {},
 ): SessionRecord[] {
-  const state: MutableProjectionState = {
-    sessionId: opts.sessionId ?? '',
-    driver: opts.driver ?? null,
-    fallbackTs: coerceDate(opts.fallbackTs) ?? new Date(0),
-    records: [],
-    openAmpTextIndex: null,
-    toolRecordById: new Map(),
-    lastToolRecordIndex: null,
-    questionRecordById: new Map(),
-  };
+  const state = createProjectionState(opts);
 
   for (const frame of frames) {
     projectFrame(state, frame);
@@ -165,46 +182,251 @@ export function projectFrames(
   return state.records;
 }
 
+export function releaseSessionProjectionState(sessionId: string): void {
+  sessionProjectionStates.delete(sessionId);
+}
+
+export async function projectSessionIncremental(
+  pool: Db,
+  sessionId: string,
+  opts: Omit<ProjectFramesOptions, 'sessionId'> = {},
+): Promise<{ projected: number; total: number }> {
+  return runSessionProjectionLocked(sessionId, () =>
+    projectSessionIncrementalUnlocked(pool, sessionId, opts),
+  );
+}
+
 export async function rebuildSessionRecords(
   pool: Db,
   sessionId: string,
   opts: Omit<ProjectFramesOptions, 'sessionId'> = {},
 ): Promise<number> {
-  return withTx(pool, async (client) => {
-    const rows = await client.query<{ frame: CentaurEventFrame; created_at: Date }>(
+  releaseSessionProjectionState(sessionId);
+  try {
+    return await withTx(pool, async (client) => {
+      const rows = await client.query<{
+        frame: CentaurEventFrame;
+        centaur_event_id: number;
+        created_at: Date;
+      }>(
+        `SELECT frame, centaur_event_id, created_at
+         FROM session_events
+         WHERE session_id = $1
+         ORDER BY centaur_event_id ASC`,
+        [sessionId],
+      );
+      const frames = rows.rows.map(
+        (row) => ({ ...row.frame, created_at: row.created_at }) as RawFrameWithTs,
+      ) as CentaurEventFrame[];
+      const records = projectFrames(frames, { ...opts, sessionId });
+      const maxEventId =
+        rows.rows.length > 0 ? rows.rows[rows.rows.length - 1]!.centaur_event_id : null;
+
+      await client.query('DELETE FROM session_records WHERE session_id = $1', [sessionId]);
+      for (const record of records) {
+        await insertSessionRecord(client, record);
+      }
+      if (maxEventId === null) {
+        await client.query('DELETE FROM session_projection_state WHERE session_id = $1', [
+          sessionId,
+        ]);
+      } else {
+        await upsertProjectionCursor(client, sessionId, maxEventId);
+      }
+      return records.length;
+    });
+  } finally {
+    releaseSessionProjectionState(sessionId);
+  }
+}
+
+async function projectSessionIncrementalUnlocked(
+  pool: Db,
+  sessionId: string,
+  opts: Omit<ProjectFramesOptions, 'sessionId'>,
+): Promise<{ projected: number; total: number }> {
+  let state: MutableProjectionState | null = null;
+  try {
+    const seeded = await getOrHydrateProjectionState(pool, sessionId, opts);
+    state = seeded.state;
+    const cursor = seeded.cursor;
+
+    const rows = await pool.query<{
+      frame: CentaurEventFrame;
+      centaur_event_id: number;
+      created_at: Date;
+    }>(
+      `SELECT frame, centaur_event_id, created_at
+       FROM session_events
+       WHERE session_id = $1
+         AND centaur_event_id > $2
+       ORDER BY centaur_event_id ASC`,
+      [sessionId, cursor],
+    );
+
+    let maxEventId = cursor;
+    for (const row of rows.rows) {
+      maxEventId = row.centaur_event_id;
+      projectFrame(state, { ...row.frame, created_at: row.created_at } as RawFrameWithTs);
+    }
+
+    const dirtySeqs = [...state.dirtySeqs].sort((a, b) => a - b);
+    const projected = dirtySeqs.length;
+    if (projected > 0 || maxEventId !== cursor) {
+      await withTx(pool, async (client) => {
+        for (const seq of dirtySeqs) {
+          const record = state!.records[seq];
+          if (record) await upsertSessionRecord(client, record);
+        }
+        if (maxEventId > 0) {
+          await upsertProjectionCursor(client, sessionId, maxEventId);
+        }
+      });
+      state.dirtySeqs.clear();
+    }
+
+    return { projected, total: state.records.length };
+  } catch (err) {
+    // Projection mutates the cached state before the DB write. If the write fails,
+    // discard the cache so the next attempt hydrates from the durable cursor.
+    releaseSessionProjectionState(sessionId);
+    throw err;
+  }
+}
+
+async function getOrHydrateProjectionState(
+  pool: Db,
+  sessionId: string,
+  opts: Omit<ProjectFramesOptions, 'sessionId'>,
+): Promise<{ state: MutableProjectionState; cursor: number }> {
+  const cursor = await readProjectionCursor(pool, sessionId);
+  const cached = sessionProjectionStates.get(sessionId);
+  if (cached) {
+    if (!cached.driver && opts.driver) cached.driver = opts.driver;
+    return { state: cached, cursor };
+  }
+
+  const state = createProjectionState({ ...opts, sessionId });
+  if (cursor > 0) {
+    const rows = await pool.query<{ frame: CentaurEventFrame; created_at: Date }>(
       `SELECT frame, created_at
        FROM session_events
        WHERE session_id = $1
+         AND centaur_event_id <= $2
        ORDER BY centaur_event_id ASC`,
-      [sessionId],
+      [sessionId, cursor],
     );
-    const frames = rows.rows.map(
-      (row) => ({ ...row.frame, created_at: row.created_at }) as RawFrameWithTs,
-    ) as CentaurEventFrame[];
-    const records = projectFrames(frames, { ...opts, sessionId });
-
-    await client.query('DELETE FROM session_records WHERE session_id = $1', [sessionId]);
-    for (const record of records) {
-      await client.query(
-        `INSERT INTO session_records
-           (session_id, event_id, seq, kind, actor, driver, view_tier, text, meta, ts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          sessionId,
-          record.eventId,
-          record.seq,
-          record.kind,
-          record.actor,
-          record.driver,
-          record.viewTier,
-          record.text,
-          JSON.stringify(record.meta),
-          record.ts,
-        ],
-      );
+    for (const row of rows.rows) {
+      projectFrame(state, { ...row.frame, created_at: row.created_at } as RawFrameWithTs);
     }
-    return records.length;
-  });
+  }
+
+  sessionProjectionStates.set(sessionId, state);
+  return { state, cursor };
+}
+
+function createProjectionState(opts: ProjectFramesOptions = {}): MutableProjectionState {
+  return {
+    sessionId: opts.sessionId ?? '',
+    driver: opts.driver ?? null,
+    fallbackTs: coerceDate(opts.fallbackTs) ?? new Date(0),
+    records: [],
+    dirtySeqs: new Set(),
+    openAmpTextIndex: null,
+    toolRecordById: new Map(),
+    lastToolRecordIndex: null,
+    questionRecordById: new Map(),
+  };
+}
+
+async function runSessionProjectionLocked<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = sessionProjectionLocks.get(sessionId) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(fn);
+  sessionProjectionLocks.set(sessionId, run);
+  try {
+    return await run;
+  } finally {
+    if (sessionProjectionLocks.get(sessionId) === run) {
+      sessionProjectionLocks.delete(sessionId);
+    }
+  }
+}
+
+async function readProjectionCursor(pool: Db, sessionId: string): Promise<number> {
+  const row = await pool.query<{ last_event_id: number }>(
+    `SELECT last_event_id
+     FROM session_projection_state
+     WHERE session_id = $1`,
+    [sessionId],
+  );
+  return row.rows[0]?.last_event_id ?? 0;
+}
+
+async function insertSessionRecord(client: DbClient, record: SessionRecord): Promise<void> {
+  await client.query(
+    `INSERT INTO session_records
+       (session_id, event_id, seq, kind, actor, driver, view_tier, text, meta, ts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      record.sessionId,
+      record.eventId,
+      record.seq,
+      record.kind,
+      record.actor,
+      record.driver,
+      record.viewTier,
+      record.text,
+      JSON.stringify(record.meta),
+      record.ts,
+    ],
+  );
+}
+
+async function upsertSessionRecord(client: DbClient, record: SessionRecord): Promise<void> {
+  await client.query(
+    `INSERT INTO session_records
+       (session_id, event_id, seq, kind, actor, driver, view_tier, text, meta, ts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (session_id, seq) DO UPDATE SET
+       event_id = EXCLUDED.event_id,
+       kind = EXCLUDED.kind,
+       actor = EXCLUDED.actor,
+       driver = EXCLUDED.driver,
+       view_tier = EXCLUDED.view_tier,
+       text = EXCLUDED.text,
+       meta = EXCLUDED.meta,
+       ts = EXCLUDED.ts`,
+    [
+      record.sessionId,
+      record.eventId,
+      record.seq,
+      record.kind,
+      record.actor,
+      record.driver,
+      record.viewTier,
+      record.text,
+      JSON.stringify(record.meta),
+      record.ts,
+    ],
+  );
+}
+
+async function upsertProjectionCursor(
+  client: DbClient,
+  sessionId: string,
+  lastEventId: number,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO session_projection_state (session_id, last_event_id)
+     VALUES ($1, $2)
+     ON CONFLICT (session_id) DO UPDATE SET
+       last_event_id = EXCLUDED.last_event_id,
+       updated_at = now()`,
+    [sessionId, lastEventId],
+  );
 }
 
 function projectFrame(state: MutableProjectionState, frame: CentaurEventFrame): void {
@@ -350,11 +572,33 @@ function projectAmpAssistant(
   ts: Date,
   driver: SessionRecordDriver | null,
 ): void {
+  const reasoningText = event.message.content
+    .filter(isReasoningBlock)
+    .map(reasoningTextFromBlock)
+    .filter(Boolean)
+    .join('');
   const text = event.message.content
     .filter(isTextBlock)
     .map((block) => block.text)
     .join('');
   const toolBlocks = event.message.content.filter(isToolUseBlock);
+
+  if (reasoningText) {
+    pushRecord(state, {
+      eventId,
+      ts,
+      kind: 'reasoning',
+      actor: 'agent',
+      driver,
+      viewTier: 'full',
+      text: reasoningText,
+      meta: compactJsonObject({
+        uuid: event.uuid,
+        messageId: event.message.id,
+        sourceEventIds: [eventId],
+      }),
+    });
+  }
 
   if (text) {
     if (event.uuid) {
@@ -771,6 +1015,7 @@ function pushRecord(
     meta: redactMeta(input.meta ?? {}),
     ts: input.ts,
   });
+  state.dirtySeqs.add(index);
   return index;
 }
 
@@ -787,6 +1032,7 @@ function updateRecord(
     ...(updates.text !== undefined ? { text: redactText(updates.text) } : {}),
     ...(updates.meta !== undefined ? { meta: redactMeta(updates.meta) } : {}),
   };
+  state.dirtySeqs.add(index);
 }
 
 function normalizeRawEvent(event: AmpRawEvent): AmpRawEvent {
@@ -1094,6 +1340,14 @@ function isTextBlock(block: { type: string }): block is { type: 'text'; text: st
   return block.type === 'text' && typeof (block as { text?: unknown }).text === 'string';
 }
 
+function isReasoningBlock(block: { type: string }): block is { type: string } & JsonObject {
+  return block.type === 'thinking' || block.type === 'reasoning';
+}
+
+function reasoningTextFromBlock(block: { type: string } & JsonObject): string {
+  return stringField(block, 'thinking') ?? stringField(block, 'text') ?? '';
+}
+
 function isToolUseBlock(block: { type: string }): block is AnthropicToolUseBlock {
   return block.type === 'tool_use';
 }
@@ -1117,6 +1371,7 @@ function excerpt(text: string, max: number): string {
 
 function redactEntropyMatches(text: string, pattern: RegExp, minEntropy: number): string {
   return text.replace(pattern, (candidate) => {
+    if (/^0x[A-Fa-f0-9]{32,}$/i.test(candidate)) return candidate;
     const normalized = candidate.replace(/=+$/g, '');
     return shannonEntropy(normalized) >= minEntropy ? REDACTED : candidate;
   });

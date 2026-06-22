@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
-import { projectFrames, redactText } from './session-records.js';
+import type pg from 'pg';
+import {
+  projectFrames,
+  projectSessionIncremental,
+  rebuildSessionRecords,
+  redactText,
+  releaseSessionProjectionState,
+} from './session-records.js';
+import { createTestPool, seedFixture, truncateAll, type Fixture } from '../test/helpers.js';
 
 describe('redactText', () => {
   it('redacts common token shapes and high-entropy strings', () => {
@@ -13,6 +22,45 @@ describe('redactText', () => {
         '-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----',
       ),
     ).toBe('[redacted]');
+  });
+
+  it('redacts a broader secret corpus without catching benign look-alikes', () => {
+    const redactedCases: Array<[string, string]> = [
+      ['google', 'AIzaSyD9Fq3Qp8Z1xY2wV4uT6sR8qP0nM5bK7cL9'],
+      ['slack bot', 'xoxb-123456789012-abcdefghijklmnop'],
+      ['slack user', 'xoxp-123456789012-abcdefghijklmnop'],
+      ['slack app', 'xapp-1-A1234567890-abcdefghijklmnop'],
+      ['stripe secret', 'sk_live_51NxYZaBcDeFgHiJkLmNoPqRsTuVwXyZ'],
+      ['stripe restricted', 'rk_live_51NxYZaBcDeFgHiJkLmNoPqRsTuVwXyZ'],
+      ['github fine-grained', 'github_pat_11AA22BB33CC44DD55EE66FF77GG88HH'],
+      ['npm', 'npm_abcdEFGH1234ijklMNOP5678qrstUVWX'],
+      ['gitlab', 'glpat-abcdEFGH1234ijklMNOP5678'],
+      ['basic auth', 'Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='],
+      ['0x private key', 'private_key=0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'],
+    ];
+
+    for (const [label, secret] of redactedCases) {
+      expect(redactText(secret), label).toContain('[redacted]');
+      expect(redactText(secret), label).not.toContain(secret);
+    }
+
+    expect(redactText('google-ish AIza-short-value')).toBe('google-ish AIza-short-value');
+    expect(redactText('docs mention github_pat_format only')).toBe(
+      'docs mention github_pat_format only',
+    );
+    expect(redactText('ticket glpat-short stays visible')).toBe(
+      'ticket glpat-short stays visible',
+    );
+    expect(
+      redactText(
+        'transaction 0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      ),
+    ).toBe('transaction 0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+    // Authorization headers are deliberately redacted by context even when the
+    // credential payload could be a low-entropy test fixture.
+    expect(redactText('Authorization: Basic dGVzdDp0ZXN0')).toBe(
+      'Authorization: Basic [redacted]',
+    );
   });
 });
 
@@ -185,4 +233,333 @@ describe('projectFrames', () => {
     expect(toolCall?.text).toContain('Tool: WebFetch');
     expect(toolCall?.text).toContain('Fetched docs');
   });
+
+  it('projects Claude-normalized thinking, tool use/results, and assistant text', () => {
+    const frames: CentaurEventFrame[] = [
+      {
+        event: 'amp_raw_event',
+        event_id: 1,
+        data: {
+          type: 'assistant',
+          uuid: 'thinking-msg',
+          message: {
+            id: 'msg-thinking',
+            role: 'assistant',
+            type: 'message',
+            content: [{ type: 'thinking', thinking: 'I should inspect the tool output.' }],
+          },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 2,
+        data: {
+          type: 'assistant',
+          uuid: 'tool-msg',
+          message: {
+            id: 'msg-tool',
+            role: 'assistant',
+            type: 'message',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-claude-1',
+                name: 'Read',
+                input: { file_path: 'surface/server/src/session-records.ts' },
+              },
+            ],
+          },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 3,
+        data: {
+          type: 'tool',
+          content: [
+            {
+              tool_use_id: 'tool-claude-1',
+              content: 'read session-records.ts',
+              is_error: false,
+            },
+          ],
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 4,
+        data: {
+          type: 'assistant',
+          uuid: 'final-msg',
+          message: {
+            id: 'msg-final',
+            role: 'assistant',
+            type: 'message',
+            content: [{ type: 'text', text: 'Projection is ready.' }],
+          },
+        },
+      },
+    ];
+
+    const records = projectFrames(frames, { driver: 'claude' });
+
+    expect(records.map((record) => [record.kind, record.viewTier, record.actor])).toEqual([
+      ['reasoning', 'full', 'agent'],
+      ['tool_call', 'full', 'agent'],
+      ['message', 'lean', 'agent'],
+    ]);
+    expect(records[0]?.text).toBe('I should inspect the tool output.');
+    expect(records[1]?.text).toContain('Tool: Read');
+    expect(records[1]?.text).toContain('read session-records.ts');
+    expect(records[2]?.text).toBe('Projection is ready.');
+  });
 });
+
+describe('projectSessionIncremental', () => {
+  let pool: pg.Pool;
+  let fx: Fixture;
+
+  beforeAll(async () => {
+    pool = await createTestPool();
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  beforeEach(async () => {
+    await truncateAll(pool);
+    fx = await seedFixture(pool);
+  });
+
+  it('matches a full rebuild after three incremental batches', async () => {
+    const fullSessionId = await insertSession(pool, fx);
+    const incrementalSessionId = await insertSession(pool, fx);
+    const frames = incrementalEquivalenceFrames();
+
+    try {
+      await insertSessionEvents(pool, fullSessionId, frames);
+      await rebuildSessionRecords(pool, fullSessionId, { driver: 'claude' });
+
+      await insertSessionEvents(pool, incrementalSessionId, frames.slice(0, 3));
+      expect(await projectSessionIncremental(pool, incrementalSessionId, { driver: 'claude' })).toEqual({
+        projected: 3,
+        total: 3,
+      });
+
+      await insertSessionEvents(pool, incrementalSessionId, frames.slice(3, 6));
+      expect(await projectSessionIncremental(pool, incrementalSessionId, { driver: 'claude' })).toEqual({
+        projected: 3,
+        total: 4,
+      });
+
+      await insertSessionEvents(pool, incrementalSessionId, frames.slice(6));
+      expect(await projectSessionIncremental(pool, incrementalSessionId, { driver: 'claude' })).toEqual({
+        projected: 3,
+        total: 5,
+      });
+
+      expect(await readProjectedRows(pool, incrementalSessionId)).toEqual(
+        await readProjectedRows(pool, fullSessionId),
+      );
+
+      const cursor = await pool.query<{ last_event_id: number }>(
+        'SELECT last_event_id FROM session_projection_state WHERE session_id = $1',
+        [incrementalSessionId],
+      );
+      expect(cursor.rows[0]?.last_event_id).toBe(9);
+    } finally {
+      releaseSessionProjectionState(fullSessionId);
+      releaseSessionProjectionState(incrementalSessionId);
+    }
+  });
+});
+
+async function insertSession(pool: pg.Pool, fx: Fixture): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO sessions
+       (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by)
+     VALUES ($1, $2, $3, 'claude', 'Session record projection', 'running', $4)
+     RETURNING id`,
+    [fx.workspaceId, fx.channelId, `projection-test:${randomUUID()}`, fx.userId],
+  );
+  return res.rows[0]!.id;
+}
+
+async function insertSessionEvents(
+  pool: pg.Pool,
+  sessionId: string,
+  frames: CentaurEventFrame[],
+): Promise<void> {
+  for (const frame of frames) {
+    await pool.query(
+      `INSERT INTO session_events
+         (session_id, centaur_event_id, event_kind, frame, created_at)
+       VALUES ($1, $2, $3, $4, $5::timestamptz)`,
+      [
+        sessionId,
+        frame.event_id,
+        frame.event,
+        JSON.stringify(frame),
+        `2026-01-01T00:00:${String(frame.event_id).padStart(2, '0')}.000Z`,
+      ],
+    );
+  }
+}
+
+async function readProjectedRows(pool: pg.Pool, sessionId: string): Promise<unknown[]> {
+  const rows = await pool.query<{
+    eventId: number;
+    seq: number;
+    kind: string;
+    actor: string;
+    driver: string | null;
+    viewTier: string;
+    text: string;
+    meta: Record<string, unknown>;
+    ts: Date;
+  }>(
+    `SELECT event_id AS "eventId",
+            seq,
+            kind,
+            actor,
+            driver,
+            view_tier AS "viewTier",
+            text,
+            meta,
+            ts
+     FROM session_records
+     WHERE session_id = $1
+     ORDER BY seq ASC`,
+    [sessionId],
+  );
+  return rows.rows.map((row) => ({ ...row, ts: row.ts.toISOString() }));
+}
+
+function incrementalEquivalenceFrames(): CentaurEventFrame[] {
+  return [
+    {
+      event: 'amp_raw_event',
+      event_id: 1,
+      data: {
+        type: 'item.completed',
+        item: { id: 'user-1', type: 'userMessage', text: 'Please inspect the projection.' },
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 2,
+      data: {
+        type: 'assistant',
+        message: {
+          id: 'streaming-message',
+          role: 'assistant',
+          type: 'message',
+          content: [{ type: 'text', text: 'Draft ' }],
+        },
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 3,
+      data: {
+        type: 'assistant',
+        uuid: 'tool-msg',
+        message: {
+          id: 'tool-message',
+          role: 'assistant',
+          type: 'message',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'Read',
+              input: { file_path: 'surface/server/src/session-records.ts' },
+            },
+          ],
+        },
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 4,
+      data: {
+        type: 'assistant',
+        message: {
+          id: 'streaming-message',
+          role: 'assistant',
+          type: 'message',
+          content: [{ type: 'text', text: 'answer' }],
+        },
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 5,
+      data: {
+        type: 'tool',
+        content: [
+          {
+            tool_use_id: 'tool-1',
+            content: 'read projector source',
+            is_error: false,
+          },
+        ],
+      },
+    },
+    {
+      event: 'question_requested',
+      event_id: 6,
+      data: {
+        type: 'question_requested',
+        question_id: 'q-1',
+        turn_id: 'turn-1',
+        questions: [
+          {
+            id: 'choice',
+            header: 'Scope',
+            question: 'Proceed with incremental projection?',
+            options: [{ label: 'Yes', description: 'Apply the scoped change.' }],
+          },
+        ],
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 7,
+      data: {
+        type: 'assistant',
+        uuid: 'final-message',
+        message: {
+          id: 'streaming-message',
+          role: 'assistant',
+          type: 'message',
+          content: [{ type: 'text', text: 'Final answer.' }],
+        },
+      },
+    },
+    {
+      event: 'question_resolved',
+      event_id: 8,
+      data: {
+        type: 'question_resolved',
+        question_id: 'q-1',
+        reason: 'answered',
+      },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 9,
+      data: {
+        type: 'assistant',
+        uuid: 'thinking-msg',
+        message: {
+          id: 'thinking-message',
+          role: 'assistant',
+          type: 'message',
+          content: [{ type: 'thinking', thinking: 'The dirty rows should be upserted.' }],
+        },
+      },
+    },
+  ];
+}
