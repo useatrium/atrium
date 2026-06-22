@@ -25,6 +25,11 @@ mac:
     - target: dmg
       arch:
         - arm64
+    # zip is what electron-updater consumes on macOS (the dmg is for the manual
+    # first download). The .app inside is already signed + notarized.
+    - target: zip
+      arch:
+        - arm64
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
@@ -39,6 +44,14 @@ mac:
 # wrapper itself, so `pnpm run package:mac` yields a fully-sealed dmg in one
 # command. Without creds, the build is unsigned.
 afterAllArtifactBuild: build/notarize-dmg.cjs
+
+# Update feed for electron-updater. The baked app-update.yml points the installed
+# app at this repo's GitHub Releases; publish a release with
+# `electron-builder --mac --publish always` (needs GH_TOKEN).
+publish:
+  provider: github
+  owner: gbasin
+  repo: atrium
 
 dmg:
   title: Atrium
