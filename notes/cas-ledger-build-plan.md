@@ -615,6 +615,12 @@ reversed two earlier calls. **These supersede the narrower models above.**
 
 ### 10.1 Identity = workspace-scoped, path-prefix scoping (supersedes `(session,path)` / `(channel,name)`)
 
+> **UPDATE 2026-06-22 (design session): the DEFAULT below is FLIPPED to private-by-default.**
+> Agent-UX won: a naive `report.md` must never collide with strangers' files, so the agent's
+> bare working dir is **private** and sharing is the deliberate act of writing into `shared/`.
+> The `(workspace, fullpath)` identity is unchanged; only the *default scope* flips. Canonical:
+> `notes/shared-workspace-build-spec.md` §0.3. (Original §10.1 text below kept for lineage.)
+
 Default is **shared across the whole Atrium workspace** — sessions share artifacts
 *across channels*, not just within one. The identity key is effectively
 **`(workspace, fullpath)`**; session/channel tags are **not** the key (kept only as
