@@ -22,7 +22,8 @@ import {
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { projectAndEmitChange } from './session-record-changefeed.js';
+import { releaseSessionProjectionState } from './session-records.js';
+import { projectIncrementalAndEmit } from './session-record-changefeed.js';
 import { ArtifactLedger, casBlobKey, type MergeClass, type VersionRef } from './artifact-ledger.js';
 import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
 import {
@@ -1719,6 +1720,7 @@ export class SessionRuns {
     let pendingLastEventId = lastEventId;
     let frameCountSinceFlush = 0;
     let lastFlushAt = Date.now();
+    let lastProjectAt = 0;
     try {
       for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
         executionId: row.current_execution_id,
@@ -1731,6 +1733,10 @@ export class SessionRuns {
         frameCountSinceFlush += 1;
         await this.mirrorFrame(id, frame);
         await this.foldFrame(id, frame);
+        if (isCompletedItemFrame(frame) && Date.now() - lastProjectAt >= 4000) {
+          lastProjectAt = Date.now();
+          await projectIncrementalAndEmit(this.pool, id).catch(() => {});
+        }
         if (frameCountSinceFlush >= 25 || Date.now() - lastFlushAt >= 2000) {
           await this.persistLastEventId(id, pendingLastEventId);
           frameCountSinceFlush = 0;
@@ -1738,14 +1744,16 @@ export class SessionRuns {
         }
       }
       await this.persistLastEventId(id, pendingLastEventId);
-      // The execution's frames are now fully mirrored — (re)project them into
-      // searchable session_records and emit a change-feed row so the /atrium
-      // materializer refreshes. Best-effort: never fail the tailer. (#72 P3)
       if (!controller.signal.aborted) {
-        await projectAndEmitChange(this.pool, id).catch(() => {});
+        await projectIncrementalAndEmit(this.pool, id)
+          .catch(() => {})
+          .finally(() => releaseSessionProjectionState(id));
       }
     } catch {
       if (!controller.signal.aborted) {
+        await projectIncrementalAndEmit(this.pool, id)
+          .catch(() => {})
+          .finally(() => releaseSessionProjectionState(id));
         await this.updateStatus(id, 'failed').catch(() => {});
       }
     }
@@ -2873,4 +2881,10 @@ function summarizeAnswers(
       count: answerValues.length,
     };
   });
+}
+
+export function isCompletedItemFrame(frame: CentaurEventFrame): boolean {
+  if (frame.event !== 'amp_raw_event') return false;
+  const raw = frame.data as { type?: unknown; method?: unknown };
+  return raw.type === 'item.completed' || raw.method === 'item/completed';
 }

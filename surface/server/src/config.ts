@@ -24,6 +24,7 @@ export const config = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   authOpen: (process.env.AUTH_OPEN ?? '1') !== '0',
+  fullViewEnabled: (process.env.ATRIUM_FULL_VIEW ?? '0') === '1',
   authDevCodes: (process.env.AUTH_DEV_CODES ?? '0') === '1',
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',

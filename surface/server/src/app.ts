@@ -346,6 +346,21 @@ function rawSession(req: FastifyRequest): string | undefined {
     return req.user;
   }
 
+  /** Full/raw view requires the deployment flag AND a per-user grant. Looked up
+   * (not carried on UserRef) so raw_access never leaks into embedded user objects. */
+  async function canViewFull(userId: string): Promise<boolean> {
+    if (!config.fullViewEnabled) return false;
+    const res = await pool.query<{ raw_access: boolean }>(
+      `SELECT raw_access FROM users WHERE id = $1`,
+      [userId],
+    );
+    return res.rows[0]?.raw_access === true;
+  }
+
+  function fullViewForbidden(reply: FastifyReply) {
+    return reply.code(403).send({ error: 'full_view_forbidden' });
+  }
+
   function optionalOpId(body: unknown): string | undefined {
     if (!isPlainObject(body) || body.opId == null) return undefined;
     if (!isUuid(body.opId)) {
@@ -1747,6 +1762,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (limit !== undefined && !Number.isFinite(limit)) {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
     }
+    const full = q.full === '1';
+    if (full && !(await canViewFull(user.id))) {
+      return fullViewForbidden(reply);
+    }
     const kinds = q.kinds
       ?.split(',')
       .map((kind) => kind.trim())
@@ -1756,7 +1775,7 @@ function rawSession(req: FastifyRequest): string | undefined {
         query,
         userId: user.id,
         kinds: kinds && kinds.length > 0 ? kinds : undefined,
-        full: q.full === '1',
+        full,
         limit,
       }),
     };
@@ -2979,9 +2998,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     reply: FastifyReply,
     tier: 'lean' | 'full',
     render: AtriumMarkdownRenderer,
+    requireFullView = false,
   ) {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
+    if (requireFullView && !(await canViewFull(user.id))) return fullViewForbidden(reply);
     const { id } = req.params as { id: string };
     const projection = await import('./atrium-session-projection.js');
     const records = await projection.loadSessionRecords(pool, id, tier);
@@ -2996,8 +3017,12 @@ function rawSession(req: FastifyRequest): string | undefined {
   );
 
   app.get('/api/sessions/:id/atrium/full', async (req, reply) =>
-    sendAtriumMarkdown(req, reply, 'full', (projection, records) =>
-      projection.renderFullMarkdown(records),
+    sendAtriumMarkdown(
+      req,
+      reply,
+      'full',
+      (projection, records) => projection.renderFullMarkdown(records),
+      true,
     ),
   );
 
@@ -3036,12 +3061,22 @@ function rawSession(req: FastifyRequest): string | undefined {
   app.get('/api/sessions/:id/atrium/events', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
+    if (!(await canViewFull(user.id))) return fullViewForbidden(reply);
     const { id } = req.params as { id: string };
     const { loadSessionRecords, renderEventsJsonl } = await import(
       './atrium-session-projection.js'
     );
     const records = await loadSessionRecords(pool, id, 'full');
     return reply.type('application/jsonl; charset=utf-8').send(renderEventsJsonl(records));
+  });
+
+  app.post('/api/sessions/:id/atrium/reproject', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const { projectAndEmitChange } = await import('./session-record-changefeed.js');
+    const projected = await projectAndEmitChange(pool, id);
+    return reply.send({ projected });
   });
 
   app.get('/api/atrium/changes', async (req, reply) => {
@@ -3109,17 +3144,24 @@ function rawSession(req: FastifyRequest): string | undefined {
   async function resolveViewer(
     viewerId: string,
     reply: FastifyReply,
-  ): Promise<string | null> {
-    const res = await pool.query<{ spawned_by: string }>(
-      `SELECT spawned_by FROM sessions WHERE id = $1`,
+  ): Promise<UserRef | null> {
+    const res = await pool.query<{
+      id: string;
+      handle: string;
+      display_name: string;
+    }>(
+      `SELECT u.id, u.handle, u.display_name
+       FROM sessions s
+       JOIN users u ON u.id = s.spawned_by
+       WHERE s.id = $1`,
       [viewerId],
     );
-    const viewerUserId = res.rows[0]?.spawned_by;
-    if (!viewerUserId) {
+    const user = res.rows[0];
+    if (!user) {
       reply.code(404).send({ error: 'viewer_not_found', message: 'viewer session not found' });
       return null;
     }
-    return viewerUserId;
+    return { id: user.id, handle: user.handle, displayName: user.display_name };
   }
 
   app.get('/api/internal/sessions/:viewerId/atrium/changes', async (req, reply) => {
@@ -3146,11 +3188,11 @@ function rawSession(req: FastifyRequest): string | undefined {
       limit = n;
     }
 
-    const viewerUserId = await resolveViewer(viewerId, reply);
-    if (!viewerUserId) return;
+    const viewerUser = await resolveViewer(viewerId, reply);
+    if (!viewerUser) return;
 
     const page = await changefeed.sessionRecordChangesSince(pool, {
-      userId: viewerUserId,
+      userId: viewerUser.id,
       cursor,
       limit,
     });
@@ -3167,10 +3209,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       targetId: string;
       doc: string;
     };
-    const viewerUserId = await resolveViewer(viewerId, reply);
-    if (!viewerUserId) return;
+    const viewerUser = await resolveViewer(viewerId, reply);
+    if (!viewerUser) return;
 
-    if (!(await sessionRuns.userCanAccessSession(targetId, viewerUserId))) {
+    if (!(await sessionRuns.userCanAccessSession(targetId, viewerUser.id))) {
       return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
     }
 
@@ -3183,6 +3225,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           .send(projection.renderTranscriptMarkdown(records));
       }
       case 'full': {
+        if (!(await canViewFull(viewerUser.id))) return fullViewForbidden(reply);
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
         return reply
           .type('text/markdown; charset=utf-8')
@@ -3216,6 +3259,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           .send(projection.renderChangesMarkdown(records));
       }
       case 'events': {
+        if (!(await canViewFull(viewerUser.id))) return fullViewForbidden(reply);
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
         return reply
           .type('application/jsonl; charset=utf-8')

@@ -1,4 +1,5 @@
 import type { Db } from './db.js';
+import { config } from './config.js';
 import { workspaceMemberExists } from './membership.js';
 import type {
   SessionRecordActor,
@@ -53,6 +54,7 @@ export async function searchSessionRecords(
 ): Promise<SessionRecordHit[]> {
   const limit = Math.min(Math.max(args.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   const kinds = args.kinds && args.kinds.length > 0 ? args.kinds : null;
+  const includeFull = Boolean(args.full) && (await canViewFullSearchTier(pool, args.userId));
   const res = await pool.query<SessionRecordHitRow>(
     `SELECT sr.session_id,
             s.title AS session_title,
@@ -76,7 +78,7 @@ export async function searchSessionRecords(
             OR s.spawned_by = $2)
      ORDER BY sr.ts DESC, sr.seq DESC
      LIMIT $5`,
-    [args.query, args.userId, kinds, Boolean(args.full), limit],
+    [args.query, args.userId, kinds, includeFull, limit],
   );
   return res.rows.map((row) => ({
     sessionId: row.session_id,
@@ -92,6 +94,15 @@ export async function searchSessionRecords(
     excerpt: excerpt(row.text),
     ts: row.ts.toISOString(),
   }));
+}
+
+async function canViewFullSearchTier(pool: Db, userId: string): Promise<boolean> {
+  if (!config.fullViewEnabled) return false;
+  const res = await pool.query<{ raw_access: boolean }>(
+    `SELECT raw_access FROM users WHERE id = $1`,
+    [userId],
+  );
+  return res.rows[0]?.raw_access === true;
 }
 
 function excerpt(text: string): string {
