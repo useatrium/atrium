@@ -413,5 +413,37 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ action, ...opts, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
+    // === session-search additions (#72) ===
+    searchSessions: (opts: { q: string; kinds?: string[]; full?: boolean; limit?: number }) => {
+      const q = new URLSearchParams({ q: opts.q, full: opts.full ? '1' : '0' });
+      if (opts.kinds && opts.kinds.length > 0) q.set('kinds', opts.kinds.join(','));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      return req<{
+        results: {
+          sessionId: string;
+          sessionTitle: string | null;
+          channelId: string | null;
+          channelName: string | null;
+          eventId: number;
+          seq: number;
+          kind:
+            | 'message'
+            | 'command'
+            | 'file_change'
+            | 'artifact'
+            | 'question'
+            | 'reasoning'
+            | 'plan'
+            | 'tool_call'
+            | 'usage'
+            | 'status';
+          actor: 'user' | 'agent' | 'system';
+          driver: 'claude' | 'codex' | null;
+          viewTier: 'lean' | 'full';
+          excerpt: string;
+          ts: string;
+        }[];
+      }>(`/api/search/sessions?${q.toString()}`);
+    },
   };
 }

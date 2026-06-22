@@ -63,6 +63,7 @@ import {
 } from './s3.js';
 import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import { searchSessionRecords } from './session-search.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import {
   ArtifactLedger,
@@ -1731,6 +1732,34 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
     }
     return { results: await searchMessages(pool, { query, userId: user.id, limit }) };
+  });
+
+  // === session-search additions (#72) ===
+  app.get('/api/search/sessions', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const q = req.query as { q?: string; kinds?: string; full?: string; limit?: string };
+    const query = String(q.q ?? '').trim();
+    if (query.length < 2) {
+      return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
+    }
+    const limit = q.limit ? Number(q.limit) : undefined;
+    if (limit !== undefined && !Number.isFinite(limit)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
+    }
+    const kinds = q.kinds
+      ?.split(',')
+      .map((kind) => kind.trim())
+      .filter((kind) => kind.length > 0);
+    return {
+      results: await searchSessionRecords(pool, {
+        query,
+        userId: user.id,
+        kinds: kinds && kinds.length > 0 ? kinds : undefined,
+        full: q.full === '1',
+        limit,
+      }),
+    };
   });
 
   app.get('/api/threads/:rootEventId/messages', async (req, reply) => {
