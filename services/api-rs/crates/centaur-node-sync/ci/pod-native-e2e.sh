@@ -119,16 +119,6 @@ helm upgrade --install centaur "${HERE}/../../../../../contrib/chart" \
   --set nodeSync.scanIntervalSeconds=1 \
   --set "nodeSync.atriumBaseUrl=http://${CAPTURE_SINK}.${NS}.svc.cluster.local:5678"
 
-# The checked-in chart passes --overlays-root/--interval, but this binary currently
-# consumes one session through NODE_SYNC_* env vars. Patch the fixture DaemonSet so
-# the shipped pod scans the same upper that provision-overlay creates.
-kubectl -n "${NS}" set env daemonset -l app.kubernetes.io/component=node-sync \
-  "NODE_SYNC_SESSION=${SESSION}" \
-  "NODE_SYNC_UPPER=/var/lib/centaur/overlays/${SESSION}" \
-  "NODE_SYNC_MERGED=/run/centaur/merged/${SESSION}" \
-  "NODE_SYNC_INTERVAL_SECS=1" \
-  "NODE_SYNC_STATE=/var/lib/centaur/sync-state/${SESSION}.json"
-
 echo "==> [3/6] wait for the node-sync DaemonSet pod to be Ready"
 kubectl -n "${NS}" rollout status ds -l app.kubernetes.io/component=node-sync --timeout=180s
 

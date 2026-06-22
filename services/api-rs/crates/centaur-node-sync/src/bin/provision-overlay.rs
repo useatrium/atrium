@@ -1,9 +1,17 @@
-//! provision-overlay — fixture-grade per-session overlay setup for C4 e2e pods.
+//! provision-overlay — per-session overlay setup for C4 e2e pods and production.
 //!
-//! This is intentionally small: it prepares the host-backed upper the node-sync
-//! daemon scans, creates a seed lower, and mounts the merged workspace using the
-//! same overlay options as ci/overlay-validation.sh.
+//! Contract:
+//! `provision-overlay --session <id> [--overlays-root /var/lib/centaur/overlays]
+//!   [--merged-root /run/centaur/merged] [--lower <dir>] [--harness <kind>]
+//!   [--harness-thread-id <id>] [--harness-home <path>] [--repo <url-or-path>]
+//!   [--agent-uid <uid>]`
+//!
+//! It prepares the host-backed upper the node-sync daemon scans, creates a seed
+//! lower, mounts the merged workspace using the same overlay options as
+//! ci/overlay-validation.sh, and always writes the node-sync sidecar manifest at
+//! `<overlays-root>/.sessions/<session>.json`.
 
+use centaur_node_sync::session_manifest::{SessionManifest, normalize_harness, write_manifest};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -14,6 +22,11 @@ struct Config {
     overlays_root: PathBuf,
     merged_root: PathBuf,
     lower: Option<PathBuf>,
+    harness: Option<String>,
+    harness_thread_id: String,
+    harness_home: String,
+    repo: String,
+    agent_uid: Option<u32>,
 }
 
 fn main() {
@@ -45,11 +58,27 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&merged)
         .map_err(|e| format!("create merged {}: {e}", merged.display()))?;
 
-    // Fixture-grade: the overlay's merged root inherits the UPPER dir's permissions, so
-    // make the upper world-writable. Without this the hardened agent (runAsUser 1001)
-    // gets "Permission denied" creating files in /workspace. Production will instead chown
-    // the upper to the agent uid (or use fsGroup) rather than 0o777.
-    set_dir_mode(&upper, 0o777)?;
+    match cfg.agent_uid {
+        Some(uid) => chown_dir_owner(&upper, uid)?,
+        None => {
+            // Fixture-grade: the overlay's merged root inherits the UPPER dir's permissions,
+            // so make the upper world-writable. Without this the hardened agent (runAsUser
+            // 1001) gets "Permission denied" creating files in /workspace.
+            set_dir_mode(&upper, 0o777)?;
+        }
+    }
+
+    write_manifest(
+        &cfg.overlays_root,
+        &SessionManifest {
+            session: cfg.session.clone(),
+            merged: merged.clone(),
+            harness: cfg.harness.clone(),
+            harness_thread_id: cfg.harness_thread_id.clone(),
+            harness_home: cfg.harness_home.clone(),
+            repo: cfg.repo.clone(),
+        },
+    )?;
 
     seed_lower(&lower)?;
 
@@ -103,6 +132,11 @@ where
     let mut overlays_root = PathBuf::from("/var/lib/centaur/overlays");
     let mut merged_root = PathBuf::from("/run/centaur/merged");
     let mut lower = None;
+    let mut harness = None;
+    let mut harness_thread_id = String::new();
+    let mut harness_home = String::new();
+    let mut repo = String::new();
+    let mut agent_uid = None;
 
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
@@ -122,6 +156,25 @@ where
             "--lower" => {
                 lower = Some(PathBuf::from(next_value(&mut iter, "--lower")?));
             }
+            "--harness" => {
+                let value = next_value(&mut iter, "--harness")?;
+                harness = normalize_harness(&value)?;
+            }
+            "--harness-thread-id" => {
+                harness_thread_id = next_value(&mut iter, "--harness-thread-id")?;
+            }
+            "--harness-home" => {
+                harness_home = next_value(&mut iter, "--harness-home")?;
+            }
+            "--repo" => {
+                repo = next_value(&mut iter, "--repo")?;
+            }
+            "--agent-uid" => {
+                let value = next_value(&mut iter, "--agent-uid")?;
+                agent_uid = Some(value.parse::<u32>().map_err(|_| {
+                    format!("--agent-uid requires an unsigned integer, got {value:?}")
+                })?);
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -135,6 +188,11 @@ where
         overlays_root,
         merged_root,
         lower,
+        harness,
+        harness_thread_id,
+        harness_home,
+        repo,
+        agent_uid,
     })
 }
 
@@ -147,7 +205,7 @@ fn next_value(iter: &mut impl Iterator<Item = OsString>, flag: &str) -> Result<S
 
 fn print_help() {
     println!(
-        "usage: provision-overlay --session <ID> [--overlays-root PATH] [--merged-root PATH] [--lower PATH]"
+        "usage: provision-overlay --session <ID> [--overlays-root PATH] [--merged-root PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--repo URL_OR_PATH] [--agent-uid UID]"
     );
 }
 
@@ -223,6 +281,17 @@ fn set_dir_mode(dir: &Path, mode: u32) -> Result<(), String> {
 
 #[cfg(not(unix))]
 fn set_dir_mode(_dir: &Path, _mode: u32) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn chown_dir_owner(dir: &Path, uid: u32) -> Result<(), String> {
+    use std::os::unix::fs::chown;
+    chown(dir, Some(uid), Some(uid)).map_err(|e| format!("chown {} to {uid}: {e}", dir.display()))
+}
+
+#[cfg(not(unix))]
+fn chown_dir_owner(_dir: &Path, _uid: u32) -> Result<(), String> {
     Ok(())
 }
 
