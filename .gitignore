@@ -1,5 +1,5 @@
 .centaur-local/
-phase0/results/*.jsonl
+notes/build-history/phase0/results/*.jsonl
 node_modules/
 .env
 .env.local
@@ -7,4 +7,4 @@ dist/
 __pycache__/
 .DS_Store
 infra/iron-proxy-trust/fw-ca.crt
-phase2/e2e/artifacts/
+notes/build-history/phase2/e2e/artifacts/
