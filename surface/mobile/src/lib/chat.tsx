@@ -153,6 +153,10 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 const ATTACHMENT_DIR = 'queued-attachments';
 
+type EnqueueOpOptions = {
+  onStored?: () => void;
+};
+
 type MobileMsgSendPayload = MsgSendPayload & {
   voice?: VoiceSendMeta;
 };
@@ -403,9 +407,13 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
 
   const enqueueOp = useCallback(
-    async <T extends OpType>(input: EnqueueOpInput<T>): Promise<QueuedOp | null> => {
+    async <T extends OpType>(
+      input: EnqueueOpInput<T>,
+      options?: EnqueueOpOptions,
+    ): Promise<QueuedOp | null> => {
       const op = await opQueue.enqueue(input);
       if (op) {
+        options?.onStored?.();
         opQueue.nudge();
         markQueueNudged();
       }
@@ -1083,12 +1091,22 @@ export function ChatProvider({ session, children }: { session: Session; children
         createdAt: now,
       };
       const pending = pendingSpawnFromPayload(payload);
-      dispatch({ type: 'session-spawn-pending', channelId, message: pending.message, session: pending.session });
-      void enqueueOp({
-        opId: randomId(),
-        opType: 'session.spawn',
-        payload,
-      }).catch((err: unknown) => {
+      void enqueueOp(
+        {
+          opId: randomId(),
+          opType: 'session.spawn',
+          payload,
+        },
+        {
+          onStored: () =>
+            dispatch({
+              type: 'session-spawn-pending',
+              channelId,
+              message: pending.message,
+              session: pending.session,
+            }),
+        },
+      ).catch((err: unknown) => {
         onApiError(err);
         dispatch({ type: 'session-spawn-failed', channelId, tempId });
       });
@@ -1145,7 +1163,6 @@ export function ChatProvider({ session, children }: { session: Session; children
             }
           : {}),
       };
-      dispatch({ type: 'send-pending', channelId, message });
       const payload: MobileMsgSendPayload = {
         clientMsgId,
         channelId,
@@ -1156,11 +1173,16 @@ export function ChatProvider({ session, children }: { session: Session; children
         createdAt,
         voice,
       };
-      void enqueueOp({
-        opId: randomId(),
-        opType: 'msg.send',
-        payload,
-      }).catch((err: unknown) => {
+      void enqueueOp(
+        {
+          opId: randomId(),
+          opType: 'msg.send',
+          payload,
+        },
+        {
+          onStored: () => dispatch({ type: 'send-pending', channelId, message }),
+        },
+      ).catch((err: unknown) => {
         onApiError(err);
         dispatch({ type: 'send-failed', channelId, clientMsgId });
         Alert.alert('Action failed', "Couldn't queue the message.");
@@ -1202,20 +1224,26 @@ export function ChatProvider({ session, children }: { session: Session; children
   const editMessage = useCallback(
     async (m: ChatMessage, text: string): Promise<void> => {
       if (m.id == null) return;
+      const eventId = m.id;
       const opId = randomId();
-      dispatch({
-        type: 'edit-overlay-pending',
-        channelId: m.channelId,
-        opId,
-        targetEventId: m.id,
-        text,
-      });
       try {
-        await enqueueOp({
-          opId,
-          opType: 'msg.edit',
-          payload: { channelId: m.channelId, eventId: m.id, text },
-        });
+        await enqueueOp(
+          {
+            opId,
+            opType: 'msg.edit',
+            payload: { channelId: m.channelId, eventId, text },
+          },
+          {
+            onStored: () =>
+              dispatch({
+                type: 'edit-overlay-pending',
+                channelId: m.channelId,
+                opId,
+                targetEventId: eventId,
+                text,
+              }),
+          },
+        );
       } catch (err) {
         dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
         reportActionError(err, "Couldn't queue the edit.");
@@ -1227,19 +1255,25 @@ export function ChatProvider({ session, children }: { session: Session; children
   const deleteMessage = useCallback(
     async (m: ChatMessage): Promise<void> => {
       if (m.id == null) return;
+      const eventId = m.id;
       const opId = randomId();
-      dispatch({
-        type: 'delete-overlay-pending',
-        channelId: m.channelId,
-        opId,
-        targetEventId: m.id,
-      });
       try {
-        await enqueueOp({
-          opId,
-          opType: 'msg.delete',
-          payload: { channelId: m.channelId, eventId: m.id },
-        });
+        await enqueueOp(
+          {
+            opId,
+            opType: 'msg.delete',
+            payload: { channelId: m.channelId, eventId },
+          },
+          {
+            onStored: () =>
+              dispatch({
+                type: 'delete-overlay-pending',
+                channelId: m.channelId,
+                opId,
+                targetEventId: eventId,
+              }),
+          },
+        );
       } catch (err) {
         dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
         reportActionError(err, "Couldn't queue the delete.");
@@ -1251,24 +1285,30 @@ export function ChatProvider({ session, children }: { session: Session; children
   const react = useCallback(
     async (m: ChatMessage, emoji: string): Promise<void> => {
       if (m.id == null) return;
+      const eventId = m.id;
       const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
       const action = mine ? 'remove' : 'add';
       const opId = randomId();
-      dispatch({
-        type: 'reaction-overlay-pending',
-        channelId: m.channelId,
-        opId,
-        targetEventId: m.id,
-        emoji,
-        userId: me.id,
-        action,
-      });
       try {
-        await enqueueOp({
-          opId,
-          opType: 'reaction.set',
-          payload: { channelId: m.channelId, eventId: m.id, emoji, action, userId: me.id },
-        });
+        await enqueueOp(
+          {
+            opId,
+            opType: 'reaction.set',
+            payload: { channelId: m.channelId, eventId, emoji, action, userId: me.id },
+          },
+          {
+            onStored: () =>
+              dispatch({
+                type: 'reaction-overlay-pending',
+                channelId: m.channelId,
+                opId,
+                targetEventId: eventId,
+                emoji,
+                userId: me.id,
+                action,
+              }),
+          },
+        );
       } catch (err) {
         dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
         reportActionError(err, "Couldn't queue the reaction.");
