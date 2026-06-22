@@ -161,6 +161,105 @@ compliance umbrella).
 
 ---
 
+## 2.5 Bandwidth & data-flow economics (co-locate the byte-movers)
+
+The three-plane split only stays cheap if you're disciplined about *where bytes cross
+a billed boundary*. Splitting planes by **function** is fine; splitting the **high-volume
+byte paths** across providers/regions is what bleeds money and adds lag.
+
+### The byte flows (and which are heavy)
+
+| Flow | Path | Volume | Boundary cost |
+|------|------|--------|---------------|
+| Artifact capture (ingest) | Centaur pod → node-sync → **Atrium server** → S3 | **Heavy, bursty** (build outputs, edits) | Today *relayed through Atrium* → bytes hit the network twice |
+| Artifact read / view / edit | client ↔ Atrium (metadata) + client ↔ S3 (presigned GET) | **Heavy** (the browse-heavy surface UX) | Object-store **egress to the user** |
+| Search / list | client → Atrium → Postgres → JSON | Light (text/metadata) | Negligible |
+| Watch an agent live | Centaur → Atrium → browser (WS fan-out ×N watchers) | Medium, continuous | Cluster→Atrium, then ×N viewers |
+| Inbound sync (hydrate) | S3/Atrium → node → sandbox | Medium | Into the cluster |
+| LLM calls | sandbox → iron-proxy → Anthropic/OpenAI | Medium-heavy cumulatively (long contexts + tool output) | Cluster → model provider (**unavoidable**) |
+| Voice media | client ↔ LiveKit SFU (UDP) | Heavy during calls | Its own path; never touches Atrium/S3 |
+
+Two flows dominate the bill: **artifact capture** (Atrium relays it, so bytes traverse
+the network twice) and **artifact reads** (the surface is browse-heavy, served from the
+object store).
+
+### The cost asymmetry you're billed on
+
+- **Hyperscalers:** ingress free, **egress-to-internet expensive** ($0.05–0.09/GB),
+  **cross-AZ/cross-region metered** (~$0.01–0.02/GB *each way*).
+- **Hetzner/OVH:** egress is **flat / effectively free** (Hetzner ~20 TB/mo included per
+  box, then ~€1/TB).
+- **Cloudflare R2 / Backblaze B2:** **zero egress.**
+- → The *same* workload can swing **10–100×** on cost purely by where bytes leave from.
+
+### Two failure modes to avoid
+
+1. **The relay tax (capture).** With `node → Atrium → S3`, if cluster, Atrium, and the
+   bucket sit in three different providers, each captured byte pays egress leaving the
+   cluster, gets pushed through Atrium's NIC, *and* may pay again into the bucket. On a
+   workspace producing tens of GB/day of artifacts, this is the silent killer.
+2. **The serve-egress tax (reads).** Artifacts serve straight from the object store via
+   presigned GET. Put that bucket on AWS S3 and one busy workspace reading ~100 GB/day is
+   **~$270/mo in read egress alone**; on R2/B2 it's **$0**.
+
+### The governing principle
+
+**Co-locate the byte-movers; let only two things cross a billed boundary.**
+
+- Keep **Centaur cluster + Atrium server + object store + Postgres in the same
+  region/provider, ideally one private network.** Then capture ingest, the serve origin,
+  and DB queries are all intra-LAN / free. *This is the single most important infra
+  decision in this doc.*
+- The only flows that *should* cross a boundary are the two you can't avoid: **client
+  traffic** (the user is wherever they are) and **LLM egress** (the model lives at the
+  provider).
+- **Pick a zero/low-egress object store (R2, B2, or Hetzner object storage)** so the
+  read-heavy path is cheap *even when the user is far*, and front it with a **CDN** so
+  distant reads also *feel* fast.
+- Put the cluster **in the model provider's region (US)** for low LLM RTT; lean on
+  **prompt caching** to cut repeated-context bytes.
+
+This is the caveat to "mix providers freely" (§0): mix across planes for *latency/feature*
+reasons, but never split the heavy internal byte path across billed boundaries.
+
+### How it *feels* (latency), per interaction
+
+- **Search / list:** Atrium↔Postgres RTT only — co-located = snappy; split DB across a
+  region = the whole app feels sluggish.
+- **Open / preview an artifact:** client→S3 RTT + object size — CDN-fronted bucket = fast
+  anywhere; one far region, no CDN = slow for distant users on big files.
+- **Edit / save:** client→Atrium + Atrium→S3 + ledger write — co-located second hop is a
+  LAN round-trip; split adds cross-region RTT to *every* save.
+- **Watch an agent live:** Centaur→Atrium→browser — cluster far from Atrium = laggy
+  transcript; same region = real-time.
+- **Capture lands:** node→Atrium→S3 — all co-located = sub-second; scattered = each write
+  eats cross-region RTT.
+
+### What softens it
+
+- **CAS dedup:** artifacts are content-addressed (sha256) — unchanged/identical bytes
+  aren't re-uploaded or re-stored, so capture volume is far below "every file every turn."
+  Reflink on the node cuts local copies too.
+- **Direct-to-S3 capture (future):** the planned node/sandbox → S3 presigned PUT removes
+  the relay tax on large files (Atrium leaves the byte path). Prioritize as capture grows.
+- **Prompt caching** cuts LLM egress for repeated context.
+
+### Per topology
+
+- **T2 (our cloud):** trivially solved — cluster + Atrium + bucket + PG in **one
+  Hetzner/OVH region/private net**. Internal flows ride included bandwidth; only client +
+  LLM egress leave, and Hetzner egress is ~free anyway. This is *why* bare metal wins the
+  cost center: the bandwidth problem mostly disappears.
+- **T4 (BYO-VPC):** also clean — everything's in the customer's own VPC, so internal flows
+  are intra-VPC (watch AWS cross-AZ ~$0.01/GB each way; pin to one AZ or eat it for HA).
+  Only client + LLM egress leave *their* account, on *their* bill — another reason BYO is
+  the easy enterprise path.
+- **The expensive anti-pattern:** Atrium on a PaaS in cloud X, bucket on AWS S3 in cloud
+  Y, cluster on bare metal Z. Now every capture and every read crosses a metered boundary.
+  Don't.
+
+---
+
 ## 3. Deployment topologies (the actual "ways to ship it")
 
 Five packagings, mapped to segment:
@@ -218,9 +317,102 @@ absorb burden for faster growth / a more durable AI-era business. Here's the spr
 | **Sell-the-infra / license** (T3/T4/T5) | Annual license + support + managed-hosting fee | High ACV, durable enterprise revenue, customer eats compute | Higher-touch sales, slower; needs packaging + support muscle |
 | **Open-core** (wraps all of the above) | Free core + paid enterprise tier + hosting | Adoption flywheel feeds the paid funnel | Must keep a crisp open/paid line (§6) |
 
-**Recommended blend:** per-seat (+ metered compute) for T2 startups; license + managed
-+ support for T3/T4 enterprise; open-core as the umbrella. This literally *is* "both 1
-and 2," and it's the standard durable infra-company shape.
+**Recommended blend:** flat platform fee + metered usage for T2 startups (see below);
+license + managed + support for T3/T4 enterprise; open-core as the umbrella. This
+literally *is* "both 1 and 2," and it's the standard durable infra-company shape.
+
+### Pricing structure (the bill the customer sees) — go simpler than per-seat
+
+**Recommendation: a flat platform fee *per company* + generous included allowances +
+metered overage on the real cost drivers (compute + data) — not per-human-seat.** Two
+self-serve tiers (~$99 / ~$999/mo) + enterprise-custom.
+
+**Why flat-fee beats per-seat *for Atrium specifically*:**
+- **Per-seat taxes your growth loop.** The product bet (README) is that people *watch and
+  join each other's sessions*. Charging per human seat penalizes inviting watchers — the
+  exact viral/collaboration behavior you want to encourage. And a 5-human startup may run
+  50 agents: human seats *undercount both the value and the cost*.
+- **The cost is compute + data, not humans.** Flat fee + metered usage makes price track
+  cost (the §2.5 "co-locate + meter" principle). You never eat a heavy user on a flat
+  per-seat plan; a light user isn't overcharged.
+- **Simplicity = land speed.** "$99 for the whole company" is frictionless, expensable,
+  self-serve, no seat true-ups. Pure PLG on-ramp. Expansion comes from *usage growth +
+  tier-up*, not seat-counting — and agent-hours scale with value delivered, so usage-based
+  expansion is well-aligned.
+
+**The guardrails (without these, it backfires):**
+- **Bake generous included allowances into each tier** so the *median* customer never
+  sees a usage bill — that's what keeps the "simple" promise. Only genuinely heavy users
+  meter into overage.
+- **Offer BYO-LLM-key.** You already have the mechanism (iron-proxy credential injection,
+  §1/§7). Letting customers attach their own Anthropic/OpenAI key moves the largest, most
+  volatile cost (LLM tokens) *off your books entirely* — then your "compute" meter is just
+  *your* infra (agent-hours), which is cheap+predictable on bare metal. This is the single
+  biggest bill-shock and margin de-risk.
+- **Spend caps + budgets + alerts** — don't reintroduce the anxiety the simple price
+  removed.
+- **Gate the tier by value + enterprise features, not arbitrary limits.** $99 = self-serve
+  startup (multi-tenant cloud, community support, modest allowance); $999 = growing team
+  (SSO/RBAC, bigger allowance, priority support); enterprise = custom (T3/T4 license /
+  BYO-VPC). Consider a **free tier** (one workspace, capped usage) to pull the open-source
+  crowd onto hosted.
+
+**Maps cleanly to topologies:** flat-fee + metering is the **T2** bill. For **T4/T5
+(BYO-VPC / self-host)** the customer already pays their own compute+data *in their own
+account*, so you charge a **platform license** (flat annual or capacity-based) + support —
+you don't (and often can't) meter their usage. So: *meter the SaaS tier, license the
+self-host tier.* Both coexist.
+
+**Dependency / caveat:** metered overage needs **usage metering + a billing engine**
+(Stripe metered, or Orb / Metronome / Lago) — flagged in §9 as not-built. Ship the flat
+tiers first (easy); add metering once you have unit-economics data to size allowances. The
+exact $99/$999 numbers and allowance sizes are a **hypothesis to validate against real
+cost-per-workspace**, not a pre-data commitment.
+
+#### SETTLED: BYOK for LLMs — and what that changes
+
+LLM is **always the customer's own key** (injected via iron-proxy; never enters the
+sandbox). That means LLM cost/risk is permanently off our books — and it reframes the
+whole business:
+
+- **We are a platform/SaaS, not a compute reseller.** Our COGS per workspace collapses to
+  cheap infra (~$0.02–0.05/agent-hr compute, cents of storage, free egress on bare metal).
+  The *binding* cost is **fixed** — the standing fleet + the ops/support/on-call team —
+  not per-workspace variable cost. So the model is fixed-cost-coverage + CAC payback, and
+  per-customer gross margin is near-100% past breakeven. **Watch support-cost-per-customer,
+  not infra.**
+- **The two cost-aligned usage meters are STORAGE + COMPUTE (Centaur/k8s) — meter both.**
+  These are literally our only COGS once LLM is BYOK, so usage-pricing them is structurally
+  margin-safe (you can never lose money on a heavy user) and fits the "sell the infra"
+  identity. Earlier "don't meter compute" was wrong — it assumed cost-pass-through. With a
+  normal cloud markup (~5–10× over the ~$0.05/agent-hr floor → ~$0.25–0.50/agent-hr), metered
+  agent-hours are *real* revenue: a heavy 1,000-hr/mo workspace pays $300–500/mo in compute
+  alone. **Unit = wall-clock sandbox-hours** (a session's sandbox lifetime — the simplest,
+  most defensible unit given idle-wait + overcommit), naturally **bounded by the existing
+  reaper** (idle 3h / 3-day max), which also caps runaway bills.
+- **But wrap usage in a base envelope, don't bill from dollar-zero.** Pure usage-from-zero
+  on compute reintroduces the two things to avoid: **bill-shock** (an overnight run spikes
+  the invoice — small startups hate this) and a **tax on the behavior you want** (every
+  agent-hour costing money makes teams ration agents, the opposite of the engagement/lock-in
+  you're after). So: a flat base fee that **includes a generous compute + storage envelope**
+  (the median Light/Active workspace never sees a usage line), then **metered overage** above
+  it, plus budgets/caps/alerts. This is the standard modern infra-SaaS shape (Vercel /
+  Supabase / Neon / Render). Storage is the cleaner of the two meters — it grows monotonically,
+  *is* the lock-in, and metering it doesn't discourage anything you want.
+- **Layer value capture on top of cost-aligned usage:** (1) **governance** (SSO/RBAC/audit/
+  isolation) = the enterprise feature gate, highest-margin and most defensible, usage-independent;
+  (2) **MCP connectors / integrations** (the moat); (3) the **LLM-spend-governance add-on**
+  below. **Seats are optional and now a pure GTM choice** — the only reason to avoid per-seat
+  (eating compute) is gone; if used, keep agents and read-only watchers/guests free so the
+  collaboration loop isn't taxed. Usage (storage+compute) protects margin; governance +
+  integrations capture the value that compute cost-plus under-prices.
+- **Capture the LLM *value* axis without the LLM cost:** since we proxy the customer's key,
+  offer **LLM spend governance/observability** as a paid add-on — per-team token visibility,
+  budgets/caps, model routing, policy (FinOps for agent spend, à la an AI gateway). Real
+  value on the biggest spend line, zero token cost to us.
+- **Reinforces self-host + enterprise.** In T4 (BYO-VPC) the customer already brings infra
+  *and* LLM key — so we charge software license + support only. With BYOK, both T2 and T4
+  are clean software/support-margin businesses with no LLM exposure either way.
 
 **The AI-world durability argument (why this is the resilient bet):**
 - **Compute is commoditizing.** LLM inference is an API call; agent-hours are k8s pods.
@@ -326,5 +518,141 @@ This is currently a gap, but it's the highest-leverage build for the durability 
   in an odd region pays an LLM-RTT tax. Consider Bedrock-in-region for those cases.
 - **Relicensing window:** decide the open/paid line and any source-available license
   *before* broad external contribution.
+
+---
+
+## 10. T2 unit economics (Hetzner bare-metal, mid-2026 prices)
+
+A concrete cost model for the managed multi-tenant tier, built from confirmed pricing
+(observed 2026-06-22). **The punchline: infra is almost free relative to the price; the
+entire economic question is LLM token cost.** That's *why* the §5 structure (flat fee +
+BYO-key + metered overage) is correct.
+
+### Confirmed input prices
+
+- **Compute (the cost center).** ⚠️ **Hetzner ran a 2.5–4× price hike on 2026-06-15** —
+  the old "~€119/mo AX102" boxes are no longer orderable. Current right-sized box:
+  **AX162-2 — EPYC 9454P, 48 physical cores / 96 threads, 256 GB DDR5, 2× 1.92 TB NVMe,
+  €842.30/mo (~$910) + €419 setup**. The **AX162-1** (128 GB) is €612/mo. **Dedicated
+  egress is unlimited and free on the default 1 Gbit/s port** — the decisive advantage.
+  (Hetzner *Cloud* CCX is ~2× pricier per physical core and meters egress at €1/TB after
+  20–60 TB; use dedicated.) OVH Advance/Scale is comparable, unmetered but 500 Mbps
+  floor. Post-hike ratio: **~$19/physical-core-mo, ~$3.5/GB-RAM-mo** on Hetzner dedicated
+  — still ~6–8× cheaper than a hyperscaler VM (~$58/vCPU-mo), and Hetzner free egress vs
+  AWS ~$0.05–0.09/GB is a **50–90× egress gap**.
+- **Object store.** R2 $15/TB-mo (free egress) or B2 $6.95/TB-mo (free egress ≤3× stored).
+  Per-workspace artifact storage is single-digit GB after CAS dedup → cents/mo.
+- **Postgres.** Neon ~$80/mo always-on (or <$20 scale-to-zero) / RDS ~$128/mo Single-AZ —
+  but in T2 this is *one shared cluster across all tenants*, so per-workspace it's cents.
+- **LLM (Anthropic).** Opus 4.8 $5/$25, Sonnet 4.6 $3/$15, Haiku 4.5 $1/$5 per 1M tokens.
+  Prompt-cache read ≈ 0.1× input; write 1.25–2×.
+
+### The packing math (agent-hours per box)
+
+Agent sandboxes are **~2 vCPU / 4 GB and mostly idle** — each turn is seconds of local
+work then 10s–minutes blocked on the LLM round-trip. So CPU is heavily overcommittable
+(3×+); RAM is the binding constraint. On an AX162-2 (256 GB): ~**64 concurrent sandboxes**
+at 4 GB (≈128 at 2 GB). Fully packed 24/7 that's ~46K sandbox-hours/mo → **$0.02/agent-hour**;
+at a realistic ~40% average utilization, **≈$0.05/agent-hour of pure infra cost**.
+
+Because sessions are short-lived (reaper kills idle at 3h, 3-day max) and most workspaces
+have **zero** active sandboxes at any moment, one ~$910/mo box serves a *lot* of small
+startups. Sketch: 200 small startups, ~20% with an active session at any time, ~0.5
+concurrent sandbox each → ~20 concurrent sandboxes → fits on **one box** → **~$4.50/
+workspace/mo infra**. The shared warm pool (a handful of pre-warmed pods) and shared
+PG/server overhead add a few dollars more.
+
+### Cost per workspace per month — three profiles
+
+| Profile | Agent-hrs/mo | Infra (compute+storage+overhead) | LLM if **BYO-key** | LLM if **pass-through** (Opus-heavy) |
+|---|---|---|---|---|
+| **Light** (5 ppl, ~20 hrs) | 20 | ~$6 | **$0 to us** | ~$40–120 |
+| **Active** (15 ppl, ~200 hrs) | 200 | ~$20 | **$0 to us** | ~$400–1,200 |
+| **Heavy** (~1,000 hrs) | 1,000 | ~$60 | **$0 to us** | ~$2,000–7,000 |
+
+LLM is **$1–7/agent-hour** (Opus, continuous, with caching) — **20–140× the ~$0.05/agent-hour
+infra cost**. That single ratio is the whole pricing argument.
+
+### What it means for the $99 / $999 tiers
+
+- **With BYO-LLM-key, $99/company is margin-positive even for an *active* team** (~$20
+  cost → ~80% gross margin), and infra only bites at very heavy agent-hour volume — exactly
+  where the $999 tier or metered overage kicks in. The platform fee comfortably covers
+  infra + overhead; you're effectively selling the *workspace*, not the compute.
+- **Without BYO-key (you pass LLM through), you MUST meter it** — a flat $99 with unlimited
+  Opus would be underwater on a single power user within days. So: bake an included
+  agent-hour / token allowance into each tier sized to the *median* user (Light/Active sit
+  inside it), meter overage, and offer BYO-key to make the variable cost vanish.
+- **Sizing the allowance:** at ~$0.05/agent-hour infra + a chosen LLM markup, a $99 tier
+  can include generously on infra (hundreds of agent-hours) and gate on *LLM spend* (or
+  push it to BYO-key). The exact allowance needs the metering you don't have yet — treat
+  these numbers as a starting hypothesis, instrument real cost-per-workspace, then set it.
+
+### Caveats / things to verify
+
+- **Hetzner price hike is fresh (7 days old) and verified** — model with NEW prices; the
+  cheaper pre-hike figures are not orderable. The `-Ltd` limited tier (~€317/mo AX162-1)
+  exists but availability fluctuates.
+- **Hetzner Object Storage overage rate** couldn't be pinned to a primary source — prefer
+  R2/B2 for the bucket anyway (free egress, no 64 KB min-object penalty, not EU-only).
+- **Overcommit ratio is the swing factor** — the $0.02–0.05/agent-hour figure assumes
+  agents idle-wait on the LLM (true today). A compute-heavy workload (local builds, test
+  suites) lowers packing density and raises infra cost/agent-hour; measure on real traffic.
+- **EU-only data residency** on Hetzner — fine for the cost floor, but US/other-region
+  startups may want a US box (still cheap; OVH/Latitude have US metal) and clusters should
+  sit in the **LLM provider's region** to avoid the RTT tax (§2.5).
+
+---
+
+## 11. Reference tier table (BYOK world — starting hypothesis)
+
+> Numbers are a **starting hypothesis** to validate against real cost-per-workspace once
+> metering exists (§9), not a commitment. Design logic: the *included envelope* is sized so
+> the **median** workspace never sees a usage line; **overage is margin-safe at any volume**;
+> value capture rides **governance + integrations**, not headcount. LLM is always **BYOK**
+> (customer's key via iron-proxy — off our books).
+
+| | **Free** | **Team — $99/mo** | **Business — $999/mo** | **Enterprise — custom** |
+|---|---|---|---|---|
+| Target | OSS / evaluators / solo | small startups | growing / multi-team | regulated / large |
+| Members | up to 5 | unlimited¹ | unlimited¹ | unlimited¹ |
+| Agents & watchers/guests | free | free | free | free |
+| Workspaces | 1 | 1–3 | unlimited | unlimited |
+| Included compute (wall-clock **sandbox-hrs/mo**) | 25 | 500 | 5,000 | custom / BYO-infra |
+| Included storage | 10 GB | 100 GB | 1 TB | custom |
+| Retention | 30 days | keep everything | keep everything | custom + legal hold |
+| MCP / warehouse connectors | 1 | 5 | unlimited | unlimited + governed |
+| Compute overage | — (hard cap) | ~$0.30 / sandbox-hr | ~$0.25 / sandbox-hr | volume / BYO |
+| Storage overage | — (hard cap) | ~$0.05 / GB-mo | ~$0.04 / GB-mo | volume / BYO |
+| Budgets / caps / alerts | basic | yes | yes | yes |
+| LLM-spend governance (over BYOK key) | view-only | basic budgets | full (caps/routing/policy) | full + audit |
+| SSO / SCIM | — | — | SSO | SSO + SCIM |
+| RBAC / audit-log export | — | basic roles | yes | yes + retention policy |
+| Isolation | shared multi-tenant | shared multi-tenant | shared (microVM opt-in) | VM-per-tenant / BYO-VPC / on-prem |
+| Hosting topology (§3) | T2 | T2 | T2 (+ T3 add-on) | T3 / T4 / T5 |
+| Support | community | standard | priority | SLA + named contact |
+
+¹ **Members are never metered** — seats are not a pricing lever (§5). You pay for *resources*
+(storage/compute) and *capabilities* (governance/integrations), not headcount; agents and
+read-only watchers/guests are always free so the collaboration loop isn't taxed.
+
+**Why these envelopes (grounded in §10):**
+- A $99 Team's *full* 500 sandbox-hrs cost us ≈ 500 × $0.05 = **$25 compute** + ~$1.50 storage
+  + overhead → **~70% gross margin even at full envelope use**; the "Active" 15-person profile
+  (~200 hrs) sits well inside it, so the median workspace **never meters**.
+- A $999 Business's *full* 5,000 sandbox-hrs ≈ **$250 compute** + ~$15 storage → ~70% margin;
+  5,000 hrs/mo ≈ seven agents running continuously, so only genuinely heavy teams approach it.
+- Overage is marked up ~5–6× the $0.05 floor → **margin-safe at any volume**; a workspace that
+  doubles its compute pays you, it never costs you. The reaper (idle 3h / 3-day max) bounds
+  runaway sandbox-hours automatically.
+- Free tier (25 hrs / 10 GB) costs us **~$1.50/mo** — a pure funnel + data-gravity hook.
+
+**What carries expansion (NDR):** storage growing under "keep everything", crossing compute
+envelopes into overage, adding connectors, and upgrading for governance (SSO/RBAC/isolation)
+— the *workspace getting more valuable*, never headcount being taxed.
+
+**Open knobs to set with real data:** exact envelope sizes + overage unit prices; which tier
+gets microVM isolation; whether LLM-spend-governance is bundled into Business or sold as an
+add-on; and whether to add an annual-commit discount (typical 15–20%) for Business/Enterprise.
 </content>
 </invoke>
