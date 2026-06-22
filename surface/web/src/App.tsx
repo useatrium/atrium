@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { ApiError, api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { Login } from './Login';
@@ -93,7 +93,7 @@ export function App() {
   }, [me, workspace]);
 
   // Toasts mount at the root so even login-screen failures surface.
-  let body;
+  let body: ReactNode;
   if (!checked) body = <div className="h-dvh bg-surface" />;
   else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)

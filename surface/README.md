@@ -45,14 +45,20 @@ Open http://localhost:5173. First boot auto-creates workspace **atrium** with
 Useful:
 
 ```bash
+pnpm lint          # Biome lint, error diagnostics only
 pnpm test          # vitest: server (needs Postgres up) + web reducer tests
 pnpm typecheck     # tsc both packages
+pnpm check         # lint + typecheck + tests
 pnpm ws-smoke      # end-to-end WS proof + latency (needs `pnpm dev` running)
 node scripts/ws-smoke.mjs 50            # bigger sample
 BASE_URL=http://localhost:5173 node scripts/ws-smoke.mjs   # through the Vite proxy
 ```
 
 Env (all have dev defaults): `DATABASE_URL`, `PORT` (3001), `SESSION_SECRET`.
+Server tests create one Postgres database per Vitest worker, derived from
+`ATRIUM_TEST_DB` or `atrium_test` by default. Use `ATRIUM_TEST_DB` to avoid
+collisions between concurrent worktrees and `ATRIUM_TEST_WORKERS` to tune
+parallelism.
 
 ## Two-browsers manual test script
 

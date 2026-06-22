@@ -66,6 +66,11 @@ jobs:
         working-directory: surface
         run: pnpm install --frozen-lockfile
 
+      - name: Lint surface workspace
+        working-directory: surface
+        timeout-minutes: 2
+        run: pnpm lint
+
       - name: Typecheck surface workspace
         working-directory: surface
         timeout-minutes: 4
@@ -83,39 +88,13 @@ jobs:
         working-directory: surface
         run: pnpm --filter @atrium/web build
 
-      # Server tests dominate the suite (~31s of ~34s) because every file
-      # shares one Postgres database serially (vitest.config.ts). The helper
-      # creates the database named by ATRIUM_TEST_DB on demand, so three vitest
-      # shards on three databases run concurrently (max shard ~16s), with the
-      # non-server suites alongside. Each stream logs to its own file and is
-      # replayed sequentially so failures stay attributable.
+      # The workspace root's test script recurses into packages, so exclude it
+      # explicitly. Server tests are parallel-safe because each Vitest worker
+      # gets its own Postgres database.
       - name: Test surface workspace
         working-directory: surface
         timeout-minutes: 6
-        shell: bash
-        run: |
-          set -uo pipefail
-          # '!atrium-surface' matters: a bare '!@atrium/server' filter selects
-          # the workspace root too, whose test script is `pnpm -r test` — which
-          # recursively re-runs every suite (server included) without filters.
-          pnpm --filter '!@atrium/server' --filter '!atrium-surface' -r test > /tmp/test-rest.log 2>&1 &
-          rest_pid=$!
-          shard_pids=()
-          for i in 1 2 3; do
-            (cd server && ATRIUM_TEST_DB="atrium_test_shard_${i}" pnpm vitest run --shard="${i}/3") \
-              > "/tmp/test-server-${i}.log" 2>&1 &
-            shard_pids+=("$!")
-          done
-          status=0
-          wait "$rest_pid" || status=1
-          echo "===== non-server suites ====="
-          cat /tmp/test-rest.log
-          for i in 1 2 3; do
-            wait "${shard_pids[$((i - 1))]}" || status=1
-            echo "===== server shard ${i}/3 ====="
-            cat "/tmp/test-server-${i}.log"
-          done
-          exit "$status"
+        run: pnpm --filter '!atrium-surface' -r test
 
       # No browser-install step: the Playwright container already has Chromium.
       # Per-step timeout so a webServer/teardown hang is killed fast and

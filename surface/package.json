@@ -10,12 +10,16 @@
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"pnpm --filter @atrium/server dev\" \"pnpm --filter @atrium/web dev\"",
     "e2e": "pnpm --filter @atrium/e2e e2e",
+    "lint": "biome lint . --diagnostic-level=error",
+    "lint:fix": "biome lint --write .",
     "migrate": "pnpm --filter @atrium/server migrate",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
     "ws-smoke": "node scripts/ws-smoke.mjs"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.0",
     "concurrently": "^9.1.2",
     "ws": "^8.18.0"
   },

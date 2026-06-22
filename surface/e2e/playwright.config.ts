@@ -44,6 +44,7 @@ export default defineConfig({
         E2E_WEB_PORT: String(webPort),
         PORT: String(serverPort),
         LOG_LEVEL: process.env.LOG_LEVEL ?? 'warn',
+        ATRIUM_RATE_LIMIT: '0',
       },
     },
     {
