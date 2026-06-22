@@ -63,7 +63,9 @@ export function VoiceRecorder({
   };
 
   const stopStream = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current?.getTracks().forEach((track) => {
+      track.stop();
+    });
     streamRef.current = null;
     void audioContextRef.current?.close().catch(() => {});
     audioContextRef.current = null;
@@ -192,7 +194,9 @@ export function VoiceRecorder({
     if (phase === 'recording') {
       const recorder = mediaRecorderRef.current;
       cancelledRef.current = true;
-      recorder?.stream.getTracks().forEach((track) => track.stop());
+      recorder?.stream.getTracks().forEach((track) => {
+        track.stop();
+      });
       if (recorder && recorder.state !== 'inactive') recorder.stop();
     }
     stopTimers();

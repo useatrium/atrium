@@ -5,34 +5,73 @@ import { createChannel, createWorkspace } from '../src/events.js';
 import { addWorkspaceMember } from '../src/membership.js';
 
 const ADMIN_URL = process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium';
-// Overridable so parallel checkouts (worktrees/CI shards) don't truncate each
-// other's fixtures mid-test. Identifier-safe names only — it's interpolated
-// into CREATE DATABASE.
-const TEST_DB = /^[a-z0-9_]{1,40}$/.test(process.env.ATRIUM_TEST_DB ?? '')
+const DB_NAME_RE = /^[a-z0-9_]{1,40}$/;
+const TEST_DB_BASE = DB_NAME_RE.test(process.env.ATRIUM_TEST_DB ?? '')
   ? process.env.ATRIUM_TEST_DB!
   : 'atrium_test';
+const VITEST_POOL_ID = /^\d{1,3}$/.test(process.env.VITEST_POOL_ID ?? '') ? process.env.VITEST_POOL_ID! : null;
+const TEST_DB = testDatabaseName(TEST_DB_BASE, VITEST_POOL_ID);
+const TEMPLATE_DB = testDatabaseName(TEST_DB_BASE, 'template');
+const TEST_DB_SETUP_LOCK = 727272;
+
+function testDatabaseName(base: string, poolId: string | null): string {
+  if (!poolId) return base;
+
+  const suffix = `_w${poolId}`;
+  return `${base.slice(0, 40 - suffix.length)}${suffix}`;
+}
 
 /** Create (once) and migrate the dedicated test database. */
 export async function createTestPool(): Promise<pg.Pool> {
-  const admin = new pg.Pool({ connectionString: ADMIN_URL });
-  const exists = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [TEST_DB]);
-  if (!exists.rowCount) {
-    await admin.query(`CREATE DATABASE ${TEST_DB}`);
-  }
-  await admin.end();
+  await ensureTestDatabase();
   const testUrl = ADMIN_URL.replace(/\/[^/]*$/, `/${TEST_DB}`);
   const pool = createPool(testUrl);
   await runMigrations(pool);
   return pool;
 }
 
+async function ensureTestDatabase(): Promise<void> {
+  const admin = new pg.Pool({ connectionString: ADMIN_URL });
+  try {
+    if (!VITEST_POOL_ID) {
+      await ensureDatabase(admin, TEST_DB);
+      return;
+    }
+
+    await admin.query('SELECT pg_advisory_lock($1)', [TEST_DB_SETUP_LOCK]);
+    try {
+      await ensureDatabase(admin, TEMPLATE_DB);
+      const templateUrl = ADMIN_URL.replace(/\/[^/]*$/, `/${TEMPLATE_DB}`);
+      const templatePool = createPool(templateUrl);
+      try {
+        await runMigrations(templatePool);
+      } finally {
+        await templatePool.end();
+      }
+      await ensureDatabase(admin, TEST_DB, TEMPLATE_DB);
+    } finally {
+      await admin.query('SELECT pg_advisory_unlock($1)', [TEST_DB_SETUP_LOCK]).catch(() => {});
+    }
+  } finally {
+    await admin.end();
+  }
+}
+
+async function ensureDatabase(admin: pg.Pool, dbName: string, templateDb?: string): Promise<void> {
+  const exists = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
+  if (exists.rowCount) return;
+
+  try {
+    await admin.query(templateDb ? `CREATE DATABASE ${dbName} TEMPLATE ${templateDb}` : `CREATE DATABASE ${dbName}`);
+  } catch (err) {
+    if ((err as { code?: string })?.code !== '42P04') throw err;
+  }
+}
+
 /**
- * Retry a query on a Postgres deadlock (40P01). The CI runs several vitest
- * files concurrently against one database, so a TRUNCATE (AccessExclusiveLock)
- * can cross-lock another file's in-flight DML (RowExclusiveLock) and Postgres
- * aborts one transaction as the victim. The reset below is idempotent, so
- * retrying the victim once the other transaction drains is safe and clears the
- * flake (#43). Exported so other concurrent truncate/reset helpers can reuse it.
+ * Retry a query on a Postgres deadlock (40P01). Test files now get
+ * worker-scoped databases, but the reset below is idempotent and this remains
+ * a cheap guard for any in-file concurrent setup/teardown.
  */
 export async function withDeadlockRetry<T>(fn: () => Promise<T>, attempts = 6): Promise<T> {
   for (let attempt = 1; ; attempt++) {
