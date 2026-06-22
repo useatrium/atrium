@@ -8,18 +8,12 @@ import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
 import { clearDesktopSession } from './desktop';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
-import { SessionSearch } from './sessions/SessionSearch';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
 
 /** /s/:id — session permalink; opens the app with that session's pane open. */
 function sessionIdFromPath(pathname: string): string | null {
   const m = /^\/s\/([^/]+)$/.exec(pathname);
   return m?.[1] ?? null;
-}
-
-/** /search — full-viewport session-record search (#72). */
-function isSearchRoute(pathname: string): boolean {
-  return pathname === '/search';
 }
 
 /** /s/:id/work/:slug — the Detach rung: a single work surface in its own tab.
@@ -33,7 +27,6 @@ export function workRouteFromPath(pathname: string): { sessionId: string; tab: A
 
 export function App() {
   const [workRoute] = useState(() => workRouteFromPath(location.pathname));
-  const [searchRoute] = useState(() => isSearchRoute(location.pathname));
   const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -109,10 +102,6 @@ export function App() {
         Loading workspace…
       </div>
     );
-  else if (searchRoute)
-    // /search — full-viewport session-record search; opening a hit deep-links to
-    // that session's permalink (#72).
-    body = <SessionSearch onOpenSession={(id) => { location.href = `/s/${id}`; }} />;
   else if (workRoute)
     // Detached work surface in its own tab — a focused, full-viewport view of one
     // surface, no channel shell (it folds the same live stream as the in-app pane).

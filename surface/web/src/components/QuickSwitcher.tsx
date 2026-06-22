@@ -10,9 +10,11 @@ interface MessageHit {
   channelName: string;
 }
 
+type SessionRecordHit = Awaited<ReturnType<typeof api.searchSessions>>['results'][number];
+
 /**
- * ⌘K launcher: type to filter channels and search messages in one list.
- * Arrows move across both sections, Enter activates.
+ * ⌘K launcher: type to filter channels, messages, and sessions in one list.
+ * Arrows move across all sections, Enter activates.
  */
 export function QuickSwitcher({
   channels,
@@ -20,6 +22,7 @@ export function QuickSwitcher({
   meId,
   onSelect,
   onJumpToMessage,
+  onOpenSession = () => {},
   onClose,
 }: {
   channels: Channel[];
@@ -27,12 +30,15 @@ export function QuickSwitcher({
   meId: string;
   onSelect: (channelId: string) => void;
   onJumpToMessage: (event: WireEvent) => void;
+  onOpenSession?: (sessionId: string) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const [hits, setHits] = useState<MessageHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [sessionHits, setSessionHits] = useState<SessionRecordHit[]>([]);
+  const [searchingSessions, setSearchingSessions] = useState(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listboxId = 'quick-switcher-results';
@@ -65,8 +71,27 @@ export function QuickSwitcher({
     return () => clearTimeout(t);
   }, [query]);
 
-  const total = channelMatches.length + hits.length;
-  const selected = Math.min(index, Math.max(0, total - 1));
+  // Debounced session search once the query is meaningful.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setSessionHits([]);
+      setSearchingSessions(false);
+      return;
+    }
+    setSearchingSessions(true);
+    const t = setTimeout(() => {
+      api
+        .searchSessions({ q, limit: 6 })
+        .then(({ results }) => setSessionHits(results))
+        .catch(() => setSessionHits([]))
+        .finally(() => setSearchingSessions(false));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const total = channelMatches.length + hits.length + sessionHits.length;
+  const selected = total > 0 ? Math.min(Math.max(index, 0), total - 1) : 0;
   const activeOptionId = total > 0 ? `quick-switcher-option-${selected}` : undefined;
 
   useDialog({
@@ -76,15 +101,28 @@ export function QuickSwitcher({
     onClose,
   });
 
+  const openSessionHit = (hit: SessionRecordHit) => {
+    onOpenSession(hit.sessionId);
+    onClose();
+  };
+
   const activate = (i: number) => {
     if (i < channelMatches.length) {
       const c = channelMatches[i];
       if (c) onSelect(c.id);
       return;
     }
-    const hit = hits[i - channelMatches.length];
-    if (hit) onJumpToMessage(hit.event);
+    const messageIndex = i - channelMatches.length;
+    if (messageIndex < hits.length) {
+      const hit = hits[messageIndex];
+      if (hit) onJumpToMessage(hit.event);
+      return;
+    }
+    const hit = sessionHits[messageIndex - hits.length];
+    if (hit) openSessionHit(hit);
   };
+
+  const sessionKindLabel = (kind: SessionRecordHit['kind']) => kind.replace(/_/g, ' ');
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
@@ -92,15 +130,18 @@ export function QuickSwitcher({
       onClose();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setIndex((i) => Math.min(i + 1, total - 1));
+      setIndex((i) => (total > 0 ? Math.min(i + 1, total - 1) : 0));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setIndex((i) => Math.max(i - 1, 0));
+      setIndex((i) => (total > 0 ? Math.max(i - 1, 0) : 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
       activate(selected);
     }
   };
+
+  const messageOffset = channelMatches.length;
+  const sessionOffset = channelMatches.length + hits.length;
 
   return (
     <div
@@ -108,7 +149,7 @@ export function QuickSwitcher({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Jump to channel or search messages"
+      aria-label="Jump to channel, message, or session"
     >
       <div
         ref={dialogRef}
@@ -123,7 +164,7 @@ export function QuickSwitcher({
           aria-expanded={total > 0}
           aria-controls={listboxId}
           aria-activedescendant={activeOptionId}
-          placeholder="Jump to channel or search messages…"
+          placeholder="Jump to channel, message, or session…"
           onChange={(e) => {
             setQuery(e.target.value);
             setIndex(0);
@@ -173,7 +214,7 @@ export function QuickSwitcher({
               )}
               <ul role="presentation">
                 {hits.map((h, j) => {
-                  const i = channelMatches.length + j;
+                  const i = messageOffset + j;
                   const text = typeof h.event.payload?.text === 'string' ? h.event.payload.text : '';
                   return (
                     <li
@@ -196,6 +237,53 @@ export function QuickSwitcher({
                         <span className="tabular-nums">{formatTime(h.event.createdAt)}</span>
                       </div>
                       <div className="truncate text-sm text-fg-body">{text}</div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <div className="flex items-center gap-2 px-3 pb-1 pt-2">
+                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
+                  Sessions
+                </span>
+                {searchingSessions && <span className="text-3xs text-fg-faint">searching…</span>}
+              </div>
+              {!searchingSessions && sessionHits.length === 0 && (
+                <div className="px-3 py-2 text-xs text-fg-muted">No matching sessions</div>
+              )}
+              <ul role="presentation">
+                {sessionHits.map((hit, j) => {
+                  const i = sessionOffset + j;
+                  return (
+                    <li
+                      key={`${hit.sessionId}-${hit.eventId}-${hit.seq}`}
+                      id={`quick-switcher-option-${i}`}
+                      role="option"
+                      aria-selected={i === selected}
+                      tabIndex={-1}
+                      onClick={() => openSessionHit(hit)}
+                      onMouseEnter={() => setIndex(i)}
+                      className={`cursor-pointer px-3 py-1.5 text-left ${
+                        i === selected ? 'bg-accent/20' : ''
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-baseline gap-1.5 text-2xs text-fg-muted">
+                        <span className="inline-flex shrink-0 rounded-full bg-surface-overlay/80 px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-tertiary">
+                          {sessionKindLabel(hit.kind)}
+                        </span>
+                        <span className="truncate text-fg-tertiary">
+                          {hit.sessionTitle ?? hit.sessionId}
+                        </span>
+                        {hit.channelName && (
+                          <>
+                            <span>·</span>
+                            <span className="shrink-0">#{hit.channelName}</span>
+                          </>
+                        )}
+                        <span>·</span>
+                        <span className="shrink-0 tabular-nums">{formatTime(hit.ts)}</span>
+                      </div>
+                      <div className="truncate text-sm text-fg-body">{hit.excerpt}</div>
                     </li>
                   );
                 })}
