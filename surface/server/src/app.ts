@@ -84,9 +84,11 @@ import { CentaurApiError, CentaurClient } from '@atrium/centaur-client';
 import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 
+type AppUserRef = UserRef & { rawAccess: boolean };
+
 declare module 'fastify' {
   interface FastifyRequest {
-    user: UserRef | null;
+    user: AppUserRef | null;
   }
   interface FastifyInstance {
     /** The session runtime, exposed so startup can drive the artifact offload
@@ -236,7 +238,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
 
-  async function userFromSession(raw: string | undefined | null): Promise<UserRef | null> {
+  async function userFromSession(raw: string | undefined | null): Promise<AppUserRef | null> {
     const sessionId = verifySession(raw, secret);
     if (!sessionId) return null;
     if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
@@ -244,9 +246,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       id: string;
       handle: string;
       display_name: string;
+      raw_access: boolean;
       expires_at: Date;
     }>(
-      `SELECT u.id, u.handle, u.display_name, s.expires_at
+      `SELECT u.id, u.handle, u.display_name, u.raw_access, s.expires_at
        FROM auth_sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = $1 AND s.expires_at > now()`,
       [sessionId],
@@ -261,7 +264,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         ])
         .catch(() => {});
     }
-    return { id: row.id, handle: row.handle, displayName: row.display_name };
+    return {
+      id: row.id,
+      handle: row.handle,
+      displayName: row.display_name,
+      rawAccess: row.raw_access,
+    };
   }
 
   /** Signed session value from the request: bearer header (native) or cookie (web). */
@@ -329,7 +337,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { durationMs, ...(waveform && waveform.length > 0 ? { waveform } : {}) };
   }
 
-  async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
+  async function userFromRequest(req: FastifyRequest): Promise<AppUserRef | null> {
     return userFromSession(rawSession(req));
   }
 
@@ -338,12 +346,20 @@ function rawSession(req: FastifyRequest): string | undefined {
     req.user = await userFromRequest(req);
   });
 
-  function requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null {
+  function requireUser(req: FastifyRequest, reply: FastifyReply): AppUserRef | null {
     if (!req.user) {
       reply.code(401).send({ error: 'unauthorized', message: 'login required' });
       return null;
     }
     return req.user;
+  }
+
+  function canViewFull(user: Pick<AppUserRef, 'rawAccess'>): boolean {
+    return config.fullViewEnabled && user.rawAccess;
+  }
+
+  function fullViewForbidden(reply: FastifyReply) {
+    return reply.code(403).send({ error: 'full_view_forbidden' });
   }
 
   function optionalOpId(body: unknown): string | undefined {
@@ -1747,6 +1763,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (limit !== undefined && !Number.isFinite(limit)) {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
     }
+    const full = q.full === '1';
+    if (full && !canViewFull(user)) {
+      return fullViewForbidden(reply);
+    }
     const kinds = q.kinds
       ?.split(',')
       .map((kind) => kind.trim())
@@ -1756,7 +1776,7 @@ function rawSession(req: FastifyRequest): string | undefined {
         query,
         userId: user.id,
         kinds: kinds && kinds.length > 0 ? kinds : undefined,
-        full: q.full === '1',
+        full,
         limit,
       }),
     };
@@ -2979,9 +2999,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     reply: FastifyReply,
     tier: 'lean' | 'full',
     render: AtriumMarkdownRenderer,
+    requireFullView = false,
   ) {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
+    if (requireFullView && !canViewFull(user)) return fullViewForbidden(reply);
     const { id } = req.params as { id: string };
     const projection = await import('./atrium-session-projection.js');
     const records = await projection.loadSessionRecords(pool, id, tier);
@@ -2996,8 +3018,12 @@ function rawSession(req: FastifyRequest): string | undefined {
   );
 
   app.get('/api/sessions/:id/atrium/full', async (req, reply) =>
-    sendAtriumMarkdown(req, reply, 'full', (projection, records) =>
-      projection.renderFullMarkdown(records),
+    sendAtriumMarkdown(
+      req,
+      reply,
+      'full',
+      (projection, records) => projection.renderFullMarkdown(records),
+      true,
     ),
   );
 
@@ -3036,12 +3062,22 @@ function rawSession(req: FastifyRequest): string | undefined {
   app.get('/api/sessions/:id/atrium/events', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
+    if (!canViewFull(user)) return fullViewForbidden(reply);
     const { id } = req.params as { id: string };
     const { loadSessionRecords, renderEventsJsonl } = await import(
       './atrium-session-projection.js'
     );
     const records = await loadSessionRecords(pool, id, 'full');
     return reply.type('application/jsonl; charset=utf-8').send(renderEventsJsonl(records));
+  });
+
+  app.post('/api/sessions/:id/atrium/reproject', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const { projectAndEmitChange } = await import('./session-record-changefeed.js');
+    const projected = await projectAndEmitChange(pool, id);
+    return reply.send({ projected });
   });
 
   app.get('/api/atrium/changes', async (req, reply) => {
@@ -3109,17 +3145,30 @@ function rawSession(req: FastifyRequest): string | undefined {
   async function resolveViewer(
     viewerId: string,
     reply: FastifyReply,
-  ): Promise<string | null> {
-    const res = await pool.query<{ spawned_by: string }>(
-      `SELECT spawned_by FROM sessions WHERE id = $1`,
+  ): Promise<AppUserRef | null> {
+    const res = await pool.query<{
+      id: string;
+      handle: string;
+      display_name: string;
+      raw_access: boolean;
+    }>(
+      `SELECT u.id, u.handle, u.display_name, u.raw_access
+       FROM sessions s
+       JOIN users u ON u.id = s.spawned_by
+       WHERE s.id = $1`,
       [viewerId],
     );
-    const viewerUserId = res.rows[0]?.spawned_by;
-    if (!viewerUserId) {
+    const user = res.rows[0];
+    if (!user) {
       reply.code(404).send({ error: 'viewer_not_found', message: 'viewer session not found' });
       return null;
     }
-    return viewerUserId;
+    return {
+      id: user.id,
+      handle: user.handle,
+      displayName: user.display_name,
+      rawAccess: user.raw_access,
+    };
   }
 
   app.get('/api/internal/sessions/:viewerId/atrium/changes', async (req, reply) => {
@@ -3146,11 +3195,11 @@ function rawSession(req: FastifyRequest): string | undefined {
       limit = n;
     }
 
-    const viewerUserId = await resolveViewer(viewerId, reply);
-    if (!viewerUserId) return;
+    const viewerUser = await resolveViewer(viewerId, reply);
+    if (!viewerUser) return;
 
     const page = await changefeed.sessionRecordChangesSince(pool, {
-      userId: viewerUserId,
+      userId: viewerUser.id,
       cursor,
       limit,
     });
@@ -3167,10 +3216,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       targetId: string;
       doc: string;
     };
-    const viewerUserId = await resolveViewer(viewerId, reply);
-    if (!viewerUserId) return;
+    const viewerUser = await resolveViewer(viewerId, reply);
+    if (!viewerUser) return;
 
-    if (!(await sessionRuns.userCanAccessSession(targetId, viewerUserId))) {
+    if (!(await sessionRuns.userCanAccessSession(targetId, viewerUser.id))) {
       return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
     }
 
@@ -3183,6 +3232,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           .send(projection.renderTranscriptMarkdown(records));
       }
       case 'full': {
+        if (!canViewFull(viewerUser)) return fullViewForbidden(reply);
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
         return reply
           .type('text/markdown; charset=utf-8')
@@ -3216,6 +3266,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           .send(projection.renderChangesMarkdown(records));
       }
       case 'events': {
+        if (!canViewFull(viewerUser)) return fullViewForbidden(reply);
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
         return reply
           .type('application/jsonl; charset=utf-8')
@@ -3539,7 +3590,7 @@ function rawSession(req: FastifyRequest): string | undefined {
   async function requireSessionAccess(
     req: FastifyRequest,
     reply: FastifyReply,
-  ): Promise<UserRef | null> {
+  ): Promise<AppUserRef | null> {
     const user = requireUser(req, reply);
     if (!user) return null;
     const { id } = req.params as { id: string };

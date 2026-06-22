@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from './app.js';
+import { config } from './config.js';
 import { createChannel } from './events.js';
 import { WsHub } from './hub.js';
 import { searchSessionRecords } from './session-search.js';
@@ -10,6 +11,7 @@ import { createTestPool, seedFixture, truncateAll, type Fixture } from '../test/
 let pool: pg.Pool;
 let fx: Fixture;
 let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+const originalFullViewEnabled = config.fullViewEnabled;
 
 beforeAll(async () => {
   pool = await createTestPool();
@@ -27,6 +29,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await app?.close();
   app = null;
+  config.fullViewEnabled = originalFullViewEnabled;
 });
 
 async function startApp() {
@@ -56,6 +59,10 @@ async function insertUser(handle: string, displayName = handle): Promise<string>
     [handle, displayName],
   );
   return res.rows[0]!.id;
+}
+
+async function grantRawAccess(userId: string): Promise<void> {
+  await pool.query(`UPDATE users SET raw_access = true WHERE id = $1`, [userId]);
 }
 
 async function insertSession(args: {
@@ -166,6 +173,8 @@ describe('searchSessionRecords', () => {
   });
 
   it('includes full-only records when requested', async () => {
+    config.fullViewEnabled = true;
+    await grantRawAccess(fx.userId);
     await seedSprocketSession();
 
     const results = await searchSessionRecords(pool, {
@@ -178,6 +187,8 @@ describe('searchSessionRecords', () => {
   });
 
   it('filters matches by record kind', async () => {
+    config.fullViewEnabled = true;
+    await grantRawAccess(fx.userId);
     await seedSprocketSession();
 
     const results = await searchSessionRecords(pool, {
@@ -239,5 +250,50 @@ describe('GET /api/search/sessions', () => {
       error: 'bad_query',
       message: 'query must be at least 2 chars',
     });
+  });
+
+  it('forbids full search without the full-view gate but keeps lean search available', async () => {
+    await seedSprocketSession();
+    const current = await startApp();
+    const cookie = await login('alice', 'Alice');
+
+    const full = await current.inject({
+      method: 'GET',
+      url: '/api/search/sessions?q=sprocket&full=1',
+      headers: { cookie },
+    });
+    expect(full.statusCode).toBe(403);
+    expect(full.json()).toEqual({ error: 'full_view_forbidden' });
+
+    const lean = await current.inject({
+      method: 'GET',
+      url: '/api/search/sessions?q=sprocket&full=0',
+      headers: { cookie },
+    });
+    expect(lean.statusCode).toBe(200);
+    expect(lean.json<{ results: { kind: string }[] }>().results.map((hit) => hit.kind)).toEqual([
+      'command',
+      'message',
+    ]);
+  });
+
+  it('allows full search when the flag is enabled and the user has raw access', async () => {
+    config.fullViewEnabled = true;
+    await grantRawAccess(fx.userId);
+    await seedSprocketSession();
+    const current = await startApp();
+    const cookie = await login('alice', 'Alice');
+
+    const full = await current.inject({
+      method: 'GET',
+      url: '/api/search/sessions?q=sprocket&full=1',
+      headers: { cookie },
+    });
+    expect(full.statusCode).toBe(200);
+    expect(full.json<{ results: { kind: string }[] }>().results.map((hit) => hit.kind)).toEqual([
+      'command',
+      'reasoning',
+      'message',
+    ]);
   });
 });

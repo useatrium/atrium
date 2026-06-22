@@ -1,7 +1,7 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { workspaceMemberExists } from './membership.js';
-import { rebuildSessionRecords } from './session-records.js';
+import { projectSessionIncremental, rebuildSessionRecords } from './session-records.js';
 
 export interface SessionRecordChangeCursor {
   xid: string;
@@ -67,6 +67,14 @@ export async function projectAndEmitChange(pool: Db, sessionId: string): Promise
   const count = await rebuildSessionRecords(pool, sessionId);
   await emitSessionRecordChange(pool, sessionId, count);
   return count;
+}
+
+export async function projectIncrementalAndEmit(pool: Db, sessionId: string): Promise<number> {
+  const result = await projectSessionIncremental(pool, sessionId);
+  if (result.projected > 0) {
+    await emitSessionRecordChange(pool, sessionId, result.projected);
+  }
+  return result.projected;
 }
 
 export async function sessionRecordChangesSince(
