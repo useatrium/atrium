@@ -44,7 +44,10 @@ async function main() {
     });
   }, 24 * 60 * 60 * 1000);
   filePrune.unref?.();
-  const app = await buildApp({ pool, hub, stt: sttWorker });
+  const rateLimit = config.rateLimitEnabled
+    ? { max: config.rateLimitMax, loginMax: config.rateLimitLoginMax }
+    : false;
+  const app = await buildApp({ pool, hub, stt: sttWorker, rateLimit });
 
   // Single-instance background offload of captured artifact bytes into S3
   // (B1). Off by default; enable with ARTIFACT_OFFLOAD_ENABLED=1 once the

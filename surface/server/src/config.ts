@@ -1,3 +1,8 @@
+function positiveIntEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
 export const config = {
   databaseUrl:
     process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium',
@@ -30,6 +35,9 @@ export const config = {
     | 'resend',
   emailFrom: process.env.EMAIL_FROM ?? '',
   resendApiKey: process.env.RESEND_API_KEY ?? '',
+  rateLimitEnabled: process.env.ATRIUM_RATE_LIMIT !== '0',
+  rateLimitMax: positiveIntEnv('ATRIUM_RATE_LIMIT_MAX', 600),
+  rateLimitLoginMax: positiveIntEnv('ATRIUM_RATE_LIMIT_LOGIN_MAX', 30),
   maxMessageBytes: 8 * 1024,
   centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
   centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
