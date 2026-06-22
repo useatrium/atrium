@@ -411,6 +411,36 @@ durable cloud sink for `cass`** (it already has `sources` and `export`/`pages`).
 Local `cass` stays the fast on-machine search; Atrium becomes the team-wide,
 permanent, redacted archive that `cass` syncs into.
 
+## 9. Hosting & launching agent-built apps (artifact apps)
+
+**Current state.** Agents in Centaur sandboxes are no-ingress — they can't host
+anything. An artifact that is `.html` is force-`attachment` (download, never
+render) as XSS defense (`app.ts:2371`). No hosting concept exists.
+
+**The gap.** Agents produce *little tools/applets* (dashboards, viz, calculators)
+we want to hand to the team for ongoing use — and later to other agents. That
+needs a **publish → launch** path on top of the artifact ledger.
+
+**MVP cut (DECIDED 2026-06-22 with Gary).** **Static, client-side apps only**,
+**humans-lead** (Apps gallery + launch; agent-callable = v2), **private +
+sandboxed default**. Publish = freeze a named, pinned version of the files under
+`apps/<name>/` (the cheap half of a preview→promote ladder — for static there's
+*no uptime to manage*, durability is free once blobs hit S3; the ladder only
+becomes load-bearing for v2 dynamic apps). Served from an **isolated origin**
+(separate port dev / hostname prod) behind a short-lived **HMAC path grant**
+(generalizes `filesign.ts`), embedded in a **sandboxed iframe** (`sandbox` minus
+`allow-same-origin` → opaque origin → no Atrium cookie), with strict **CSP**
+(`connect-src 'none'` → v1 apps are self-contained, killing the CSRF/token
+surface). The grant lives in the URL **path** so relative asset loads inherit it.
+
+**Out of v1:** dynamic/server-backed apps (v2 tunnel-preview→deploy plane),
+agent-callable MCP tool registry (v2, reuses this spine), scoped-token data SDK
+(v1.1), prod multi-origin DNS/TLS (ops follow-up).
+
+**Full spec + agent-fanout build/test lanes:** `notes/artifact-apps-plan.md`
+(mig 041 + `app-registry.ts`/`appsign.ts`/`apps-origin.ts` + AppsSurface; F→A/B/C→D
+lanes; e2e + dev-browser isolation assertions).
+
 ---
 
 ## Gaps / extensions you didn't list but should consider
