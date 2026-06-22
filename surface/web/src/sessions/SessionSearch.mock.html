@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SessionSearch mock</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --surface: #09090b;
+        --surface-raised: #18181b;
+        --surface-overlay: #27272a;
+        --edge: #27272a;
+        --edge-strong: #3f3f46;
+        --fg: #f4f4f5;
+        --fg-body: #e4e4e7;
+        --fg-secondary: #d4d4d8;
+        --fg-tertiary: #a1a1aa;
+        --fg-muted: #8f8f98;
+        --fg-faint: #52525b;
+        --accent: #4f46e5;
+        --accent-hover: #6366f1;
+        --accent-text: #818cf8;
+        --accent-text-strong: #a5b4fc;
+        --accent-border: #4338ca;
+        --danger-text: #fca5a5;
+        --warning-text: #fcd34d;
+        --success-text: #6ee7b7;
+        --info-text: #7dd3fc;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--surface);
+        color: var(--fg-body);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Helvetica Neue",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      section[aria-labelledby="session-search-title"] {
+        display: flex;
+        min-height: 100vh;
+        flex-direction: column;
+        background: var(--surface);
+      }
+
+      header {
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--edge);
+        background: rgb(9 9 11 / 0.8);
+        padding: 0.75rem 1rem;
+      }
+
+      header > div {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      header > div > div:first-child {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      h2,
+      h3 {
+        margin: 0;
+      }
+
+      h2 {
+        color: var(--fg);
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+
+      h2 + div {
+        margin-top: 0.125rem;
+        color: var(--fg-muted);
+        font-size: 0.75rem;
+      }
+
+      header > div > div:first-child > div:last-child {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      header > div > div:first-child span {
+        white-space: nowrap;
+      }
+
+      .rounded-full {
+        border-radius: 9999px;
+      }
+
+      .rounded-md {
+        border-radius: 0.375rem;
+      }
+
+      .rounded-lg {
+        border-radius: 0.5rem;
+      }
+
+      [role="switch"] {
+        position: relative;
+        display: inline-flex;
+        height: 1.5rem;
+        width: 2.75rem;
+        flex-shrink: 0;
+        align-items: center;
+        border: 1px solid var(--accent-border);
+        border-radius: 9999px;
+        background: var(--accent);
+        padding: 0;
+      }
+
+      [role="switch"] span {
+        display: block;
+        width: 1rem;
+        height: 1rem;
+        transform: translateX(1.25rem);
+        border-radius: 9999px;
+        background: var(--fg);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+      }
+
+      .relative {
+        position: relative;
+      }
+
+      .relative svg {
+        position: absolute;
+        left: 0.75rem;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--fg-muted);
+      }
+
+      input[type="search"] {
+        width: 100%;
+        height: 2.5rem;
+        border: 1px solid var(--edge-strong);
+        border-radius: 0.375rem;
+        background: var(--surface-raised);
+        color: var(--fg);
+        padding: 0 0.75rem 0 2.25rem;
+        outline: none;
+      }
+
+      input[type="search"]::placeholder {
+        color: var(--fg-muted);
+      }
+
+      [aria-label="Kind filters"] {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.375rem;
+      }
+
+      [aria-label="Kind filters"] button {
+        border: 1px solid var(--accent-border);
+        border-radius: 9999px;
+        background: rgb(79 70 229 / 0.2);
+        color: var(--accent-text-strong);
+        padding: 0.25rem 0.625rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+
+      section[aria-labelledby="session-search-title"] > div:last-child {
+        min-height: 0;
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.75rem 1rem;
+      }
+
+      .space-y-2 > * + * {
+        margin-top: 0.5rem;
+      }
+
+      .space-y-3 > * + * {
+        margin-top: 0.75rem;
+      }
+
+      .results-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding-inline: 0.25rem;
+      }
+
+      .results-label span:first-child {
+        color: var(--fg-muted);
+        font-size: 0.625rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .results-label span:last-child {
+        color: var(--fg-faint);
+        font-size: 0.625rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      [role="group"] {
+        overflow: hidden;
+        border: 1px solid var(--edge);
+        border-radius: 0.5rem;
+        background: rgb(24 24 27 / 0.7);
+      }
+
+      [role="group"] > div:first-child {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        border-bottom: 1px solid var(--edge);
+        padding: 0.5rem 0.75rem;
+      }
+
+      h3 {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--fg);
+        font-size: 0.875rem;
+        font-weight: 600;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      h3 + span {
+        flex-shrink: 0;
+        color: var(--fg-muted);
+        font-size: 0.6875rem;
+      }
+
+      .hit-count {
+        margin-left: auto;
+        color: var(--fg-faint);
+        font-size: 0.625rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      li + li {
+        border-top: 1px solid var(--edge);
+      }
+
+      [role="option"] {
+        display: grid;
+        width: 100%;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.25rem 0.75rem;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+      }
+
+      [role="option"][aria-selected="true"] {
+        background: rgb(79 70 229 / 0.2);
+      }
+
+      [role="option"]:not([aria-selected="true"]):hover {
+        background: rgb(39 39 42 / 0.6);
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.375rem;
+        margin-bottom: 0.25rem;
+        color: var(--fg-muted);
+        font-size: 0.6875rem;
+      }
+
+      .kind {
+        display: inline-flex;
+        flex-shrink: 0;
+        border-radius: 9999px;
+        padding: 0.125rem 0.5rem;
+        font-size: 0.625rem;
+        font-weight: 600;
+        letter-spacing: 0.025em;
+        line-height: 0.875rem;
+        text-transform: uppercase;
+      }
+
+      .message {
+        background: rgb(99 102 241 / 0.15);
+        color: var(--accent-text-strong);
+      }
+
+      .command {
+        background: rgb(14 165 233 / 0.15);
+        color: var(--info-text);
+      }
+
+      .file_change {
+        background: rgb(16 185 129 / 0.15);
+        color: var(--success-text);
+      }
+
+      .artifact {
+        background: rgb(245 158 11 / 0.15);
+        color: var(--warning-text);
+      }
+
+      .question {
+        background: rgb(248 113 113 / 0.15);
+        color: var(--danger-text);
+      }
+
+      .reasoning,
+      .tool_call {
+        background: rgb(39 39 42 / 0.8);
+        color: var(--fg-tertiary);
+      }
+
+      .excerpt {
+        color: var(--fg-body);
+        display: -webkit-box;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .time {
+        color: var(--fg-muted);
+        font-size: 0.6875rem;
+        font-variant-numeric: tabular-nums;
+        padding-top: 0.125rem;
+      }
+
+      .mode-pill {
+        border: 1px solid var(--edge);
+        background: var(--surface-raised);
+        color: var(--fg-muted);
+        padding: 0.125rem 0.5rem;
+        font-size: 0.625rem;
+        font-weight: 600;
+        letter-spacing: 0.025em;
+        text-transform: uppercase;
+      }
+
+      @media (max-width: 640px) {
+        header > div > div:first-child {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        [role="option"] {
+          grid-template-columns: 1fr;
+        }
+
+        .time {
+          padding-top: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section
+      aria-labelledby="session-search-title"
+      class="flex min-h-0 flex-1 flex-col bg-surface text-fg-body"
+    >
+      <header class="shrink-0 border-b border-edge bg-surface/80 px-4 py-3">
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <h2 id="session-search-title" class="text-sm font-semibold text-fg">
+                Session search
+              </h2>
+              <div class="mt-0.5 text-xs text-fg-muted">Full transcript tier</div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span
+                class="mode-pill rounded-full border border-edge bg-surface-raised px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-muted"
+              >
+                full
+              </span>
+              <span id="session-search-full-toggle" class="text-xs font-medium text-fg-secondary">
+                Include reasoning & tools
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked="true"
+                aria-labelledby="session-search-full-toggle"
+                class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors border-accent-border bg-accent"
+              >
+                <span class="size-4 rounded-full bg-fg shadow-sm transition-transform translate-x-5"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="relative">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted"
+            >
+              <circle cx="11" cy="11" r="8"></circle>
+              <path d="m21 21-4.3-4.3"></path>
+            </svg>
+            <input
+              type="search"
+              value="migration"
+              aria-label="Search session records"
+              aria-controls="session-search-results"
+              class="h-10 w-full rounded-md border border-edge-strong bg-surface-raised pl-9 pr-3 text-sm text-fg placeholder-fg-muted outline-none transition-colors focus:border-accent-border"
+            />
+          </div>
+
+          <div class="flex flex-wrap gap-1.5" aria-label="Kind filters">
+            <button type="button" aria-pressed="true">message</button>
+            <button type="button" aria-pressed="true">command</button>
+            <button type="button" aria-pressed="true">file change</button>
+            <button type="button" aria-pressed="true">artifact</button>
+            <button type="button" aria-pressed="true">question</button>
+            <button type="button" aria-pressed="true">reasoning</button>
+            <button type="button" aria-pressed="true">plan</button>
+            <button type="button" aria-pressed="true">tool call</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div class="space-y-2">
+          <div class="results-label flex items-center gap-2 px-1">
+            <span class="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Results</span>
+            <span class="text-3xs tabular-nums text-fg-faint">7</span>
+          </div>
+
+          <div
+            id="session-search-results"
+            role="listbox"
+            aria-label="Session search results"
+            aria-busy="false"
+            class="space-y-3"
+          >
+            <section
+              role="group"
+              aria-labelledby="session-search-alpha"
+              class="overflow-hidden rounded-lg border border-edge bg-surface-raised/70"
+            >
+              <div class="flex items-baseline gap-2 border-b border-edge px-3 py-2">
+                <h3 id="session-search-alpha" class="min-w-0 truncate text-sm font-semibold text-fg">
+                  Index migration validation
+                </h3>
+                <span class="shrink-0 text-2xs text-fg-muted">#infra</span>
+                <span class="hit-count ml-auto text-3xs tabular-nums text-fg-faint">4</span>
+              </div>
+
+              <ul role="presentation" class="divide-y divide-edge">
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="true"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind message">message</span>
+                        <span>user</span>
+                        <span>·</span>
+                        <span>lean</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">Can you confirm whether the migration search path includes archived session messages?</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">10:42 AM</div>
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors hover:bg-surface-overlay/60 focus:bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind command">command</span>
+                        <span>agent · codex</span>
+                        <span>·</span>
+                        <span>lean</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">pnpm --filter @atrium/server test searchSessions.indexer.test.ts</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">10:45 AM</div>
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors hover:bg-surface-overlay/60 focus:bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind reasoning">reasoning</span>
+                        <span>agent · codex</span>
+                        <span>·</span>
+                        <span>full</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">The index is scoped by workspace first, then session id, so the channel filter only narrows display metadata.</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">10:46 AM</div>
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors hover:bg-surface-overlay/60 focus:bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind file_change">file change</span>
+                        <span>agent · codex</span>
+                        <span>·</span>
+                        <span>lean</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">surface/server/src/search/sessions.ts updated the migration cursor and fixture coverage.</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">10:49 AM</div>
+                  </button>
+                </li>
+              </ul>
+            </section>
+
+            <section
+              role="group"
+              aria-labelledby="session-search-beta"
+              class="overflow-hidden rounded-lg border border-edge bg-surface-raised/70"
+            >
+              <div class="flex items-baseline gap-2 border-b border-edge px-3 py-2">
+                <h3 id="session-search-beta" class="min-w-0 truncate text-sm font-semibold text-fg">
+                  Session record UI payoff
+                </h3>
+                <span class="shrink-0 text-2xs text-fg-muted">#product</span>
+                <span class="hit-count ml-auto text-3xs tabular-nums text-fg-faint">3</span>
+              </div>
+
+              <ul role="presentation" class="divide-y divide-edge">
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors hover:bg-surface-overlay/60 focus:bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind artifact">artifact</span>
+                        <span>agent · claude</span>
+                        <span>·</span>
+                        <span>lean</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">Wrote SessionSearch.mock.html so the search surface can be checked without the live endpoint.</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">11:08 AM</div>
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors hover:bg-surface-overlay/60 focus:bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind question">question</span>
+                        <span>agent · claude</span>
+                        <span>·</span>
+                        <span>lean</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">Should the orchestrator open the session pane directly from a search hit, or preserve current split state?</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">11:11 AM</div>
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    class="group/hit grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2 text-left transition-colors hover:bg-surface-overlay/60 focus:bg-accent/20"
+                  >
+                    <div class="min-w-0">
+                      <div class="meta mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+                        <span class="kind tool_call">tool call</span>
+                        <span>agent · claude</span>
+                        <span>·</span>
+                        <span>full</span>
+                      </div>
+                      <div class="excerpt line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-fg-body">api.searchSessions({ q: "migration", kinds: ["message", "command"], full: true, limit: 40 })</div>
+                    </div>
+                    <div class="time pt-0.5 text-2xs tabular-nums text-fg-muted">11:12 AM</div>
+                  </button>
+                </li>
+              </ul>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>
