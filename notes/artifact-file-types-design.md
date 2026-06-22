@@ -137,4 +137,25 @@ Fast-follow on borrow-plan Phase A (search) + Phase C (memory). Each sub-phase s
 
 ---
 
-*Grounded in: `surface/server/{migrations/006,024,031,033,036, src/artifact-ledger.ts, artifact-writeback.ts, session-runs.ts (mergeClassForMime ~2606), session-search.ts, stt/*, app.ts (serve ~2374/2698/3231)}` and `surface/web/src/sessions/{ArtifactsSurface,fileChangeView,ConflictSurface,FilesSurface}.tsx` + `components/MessageRow.tsx`, mapped 2026-06-22.*
+## 10. PREREQUISITE (verified 2026-06-22): the artifact ledger is **not** a shared workspace yet
+
+The product intent (Gary) is a **single shared workspace** where humans can drop files and agents read **and edit** them like any artifact. A code-verified trace shows that premise does **not** hold today — and the gap is deeper than "uploads vs. artifacts." The ledger is a set of **per-session silos**:
+
+- **Identity = `(session_id, path)`, `session_id NOT NULL`**, cascade-deleted with the session (`033_artifact_ledger.sql:26-35`). Every read/write/serve/hydration path filters by a single `session_id`.
+- **No cross-session/channel/workspace visibility.** No route lists artifacts by channel or workspace; two sessions in the same channel can't see each other's files. `channel_id` is stored only for access-gating + an unbuilt "future channel-shared promotion" (migration comment).
+- **Agent edit of another session's file forks it** — `resolveOrCreateArtifactLocked` keys on the current session, so the write mints a new `(session_id, path)` row, not a new version (`artifact-ledger.ts:207-224`).
+- **`PUT /api/channels/:channelId/artifacts` is session-bound** despite the name — it requires a `session` param (`app.ts:2081-2091`).
+- **No human "add file to workspace" flow.** `FilesSurface` only *edits* agent-created paths (`FilesSurface.tsx:328-330`); human uploads go to the `files` attachment table, invisible to agents.
+- **Live mount:** the Atrium-side source (change-feed `034`, sync-state, `hydration-scope`) exists and is tested; the consumer node daemon is the out-of-repo Centaur crate.
+
+**The keystone change = workspace-scoped artifact identity** — `(workspace/channel, path)` instead of `(session_id, path)`. This is the `(workspace, fullpath)` identity already decided in [[agent-data-architecture]] (and the inbound-sync C1 line). Once it lands, the rest reuses existing machinery:
+1. **Shared hydration** — union session-own + workspace/channel-shared sets (today `WHERE session_id = $1` only: `artifact-ledger.ts:505-516`).
+2. **Shared write** — agent/human edits resolve to the *same* artifact → new version. The diff3 conflict engine (`mergeStaleWrite`, `ConflictSurface`) already handles concurrent human/agent edits; it needs the shared identity to fire against, and it's gated to text today (binaries default `immutable-data` → hard-conflict — ties to §3 `media_kind`).
+3. **Human on-ramp** — upload/add-file → ledger at a workspace path, `author: human:<uid>` (write-back plumbing exists; drop the session requirement).
+4. **Live mount** — wire the (out-of-repo) node daemon to stage shared changes into the container.
+
+**Sequencing implication:** this prerequisite is *upstream* of most of this file-types doc — there's limited value making files agent-readable/editable while each is a per-session silo. The `(workspace, fullpath)` identity work (already on the arch roadmap) should land first or alongside F0/F1. The earlier keying debate (§9.5) is subsumed: **attachments** stay in `files` (immutable chat context); **shared workspace files** are artifacts, and the real prerequisite is workspace-scoping the ledger, not byte-keying.
+
+---
+
+*Grounded in: `surface/server/{migrations/006,024,031,033,034,036, src/artifact-ledger.ts, artifact-writeback.ts, session-runs.ts (mergeClassForMime ~2606, capture ~1810), session-search.ts, stt/*, app.ts (serve ~2374/2698/3231, channel write-back ~2065, hydration ~2880)}` and `surface/web/src/sessions/{ArtifactsSurface,fileChangeView,ConflictSurface,FilesSurface}.tsx` + `components/MessageRow.tsx`, mapped 2026-06-22.*
