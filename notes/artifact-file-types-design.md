@@ -137,22 +137,30 @@ Fast-follow on borrow-plan Phase A (search) + Phase C (memory). Each sub-phase s
 
 ---
 
-## 10. PREREQUISITE (verified 2026-06-22): the artifact ledger is **not** a shared workspace yet
+## 10. PREREQUISITE (verified 2026-06-22, BOTH repos): the shared `/workspace` is the committed design but is **not built**
 
-The product intent (Gary) is a **single shared workspace** where humans can drop files and agents read **and edit** them like any artifact. A code-verified trace shows that premise does **not** hold today — and the gap is deeper than "uploads vs. artifacts." The ledger is a set of **per-session silos**:
+The product intent (Gary) is a **single shared workspace** where humans can drop files and agents read **and edit** them like any artifact — and per `agent-sync-design.md` §2A (*"visibility = workspace-wide by default"*) that **is** the decided design direction. But a code-verified trace of **both Atrium and Centaur** shows it is **not implemented on either side** today; each agent's `/workspace` is strictly its own session's files. This is "build this," not "wrong direction" — but it's a sizeable cross-repo build, not a small on-ramp.
+
+**Atrium side** — the ledger is a set of **per-session silos**:
 
 - **Identity = `(session_id, path)`, `session_id NOT NULL`**, cascade-deleted with the session (`033_artifact_ledger.sql:26-35`). Every read/write/serve/hydration path filters by a single `session_id`.
 - **No cross-session/channel/workspace visibility.** No route lists artifacts by channel or workspace; two sessions in the same channel can't see each other's files. `channel_id` is stored only for access-gating + an unbuilt "future channel-shared promotion" (migration comment).
 - **Agent edit of another session's file forks it** — `resolveOrCreateArtifactLocked` keys on the current session, so the write mints a new `(session_id, path)` row, not a new version (`artifact-ledger.ts:207-224`).
 - **`PUT /api/channels/:channelId/artifacts` is session-bound** despite the name — it requires a `session` param (`app.ts:2081-2091`).
 - **No human "add file to workspace" flow.** `FilesSurface` only *edits* agent-created paths (`FilesSurface.tsx:328-330`); human uploads go to the `files` attachment table, invisible to agents.
-- **Live mount:** the Atrium-side source (change-feed `034`, sync-state, `hydration-scope`) exists and is tested; the consumer node daemon is the out-of-repo Centaur crate.
+- **Live mount:** the Atrium-side source (change-feed `034`, sync-state, `hydration-scope`) exists and is tested.
 
-**The keystone change = workspace-scoped artifact identity** — `(workspace/channel, path)` instead of `(session_id, path)`. This is the `(workspace, fullpath)` identity already decided in [[agent-data-architecture]] (and the inbound-sync C1 line). Once it lands, the rest reuses existing machinery:
-1. **Shared hydration** — union session-own + workspace/channel-shared sets (today `WHERE session_id = $1` only: `artifact-ledger.ts:505-516`).
-2. **Shared write** — agent/human edits resolve to the *same* artifact → new version. The diff3 conflict engine (`mergeStaleWrite`, `ConflictSurface`) already handles concurrent human/agent edits; it needs the shared identity to fire against, and it's gated to text today (binaries default `immutable-data` → hard-conflict — ties to §3 `media_kind`).
-3. **Human on-ramp** — upload/add-file → ledger at a workspace path, `author: human:<uid>` (write-back plumbing exists; drop the session requirement).
-4. **Live mount** — wire the (out-of-repo) node daemon to stage shared changes into the container.
+**Centaur side** (verified in `~/Code/centaur`, branch `main` @ `0bb0adb`) — also strictly single-session, and the inbound/overlay half is largely unbuilt:
+- The `centaur-node-sync` daemon's HTTP client hardcodes `…/api/internal/sessions/{session_id}{suffix}`; hydration **drains one session's change-feed** — no subscription set, no workspace/channel source.
+- The **live api-rs sandbox controller mounts `/workspace` as a plain per-pod EmptyDir** (`centaur-sandbox-agent-k8s/src/lib.rs:902`) — the overlay isn't mounted in the live path; `provision-overlay` isn't even built. (The overlay/capture mechanism is validated only in a kind-cluster e2e, not the production controller.)
+- The **per-node multi-session DaemonSet is designed but not wired** — the binary parses only `--once` and ignores the `--overlays-root`/`--interval` the manifest passes; `nodeSync.enabled: false`.
+- Capture is per-session with echo-suppression (not fan-out); nothing pulls human chat uploads (`files`) into `/workspace`.
+
+**The keystone = workspace-scoped artifact identity, and it's a cross-repo build.** Make artifacts `(workspace/channel, path)` instead of `(session_id, path)` — the `(workspace, fullpath)` identity already decided in [[agent-data-architecture]] (and the inbound-sync C1 line). Then:
+1. **Atrium — shared identity + feeds** — union session-own + workspace/channel-shared sets (today `WHERE session_id = $1` only: `artifact-ledger.ts:505-516`); workspace/channel-level change-feed + hydration endpoints.
+2. **Atrium — shared write** — agent/human edits resolve to the *same* artifact → new version. The diff3 conflict engine (`mergeStaleWrite`, `ConflictSurface`) already handles concurrent human/agent edits; it needs the shared identity to fire against, and it's gated to text today (binaries default `immutable-data` → hard-conflict — ties to §3 `media_kind`).
+3. **Atrium — human on-ramp** — upload/add-file → ledger at a workspace path, `author: human:<uid>` (write-back plumbing exists; drop the session requirement).
+4. **Centaur — subscription-set hydration + live overlay** — pull the workspace-shared paths (not one session's feed); actually mount the overlay in the live controller; wire the multi-session node daemon (the flags it currently ignores) + inbound adopt.
 
 **Sequencing implication:** this prerequisite is *upstream* of most of this file-types doc — there's limited value making files agent-readable/editable while each is a per-session silo. The `(workspace, fullpath)` identity work (already on the arch roadmap) should land first or alongside F0/F1. The earlier keying debate (§9.5) is subsumed: **attachments** stay in `files` (immutable chat context); **shared workspace files** are artifacts, and the real prerequisite is workspace-scoping the ledger, not byte-keying.
 
