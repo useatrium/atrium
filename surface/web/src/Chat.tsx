@@ -2217,6 +2217,10 @@ export function Chat({
             setSwitcherOpen(false);
             void jumpToMessage(event);
           }}
+          onOpenSession={(sessionId) => {
+            openSession(sessionId);
+            setSwitcherOpen(false);
+          }}
           onClose={() => setSwitcherOpen(false)}
         />
       )}
