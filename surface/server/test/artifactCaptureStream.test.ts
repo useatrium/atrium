@@ -179,9 +179,7 @@ describe('internal streaming artifact capture', () => {
     const rawBody = Buffer.from(raw.rawPayload);
     expect(rawBody.byteLength).toBe(body.byteLength);
     expect(rawBody.equals(body)).toBe(true);
-    // Streaming a multi-MB body through CAS + mocked S3 runs ~60s on loaded CI
-    // runners, right at the boundary; give it headroom so it doesn't flake.
-  }, 120_000);
+  });
 
   it('accepts a body larger than maxUploadBytes', async () => {
     const sid = await session();
