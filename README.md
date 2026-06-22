@@ -86,7 +86,7 @@ Four layers do four different jobs. They're easy to mix up, so here's each one:
 
 | Layer | What it is | What it does |
 |---|---|---|
-| **Atrium** | the product in this repo: the web and mobile apps plus the server | Keeps **all the data that lasts**: the message log, every file version, the database, and file storage. This is what the team uses. |
+| **Atrium** | the product in this repo: the web, desktop, and mobile apps plus the server | Keeps **all the data that lasts**: the message log, every file version, the database, and file storage. This is what the team uses. |
 | **Centaur** | the engine that runs the agents ([paradigmxyz/centaur](https://github.com/paradigmxyz/centaur), MIT) | Starts a locked-down, throwaway sandbox and runs the agent a turn at a time, streaming results back. Each turn is a clean sandbox; the conversation persists in Atrium, so a session keeps going across turns. Keeps **nothing** permanently. |
 | **Harness** | the agent program inside the sandbox | The "hands": it reads the task, runs tools, and edits files. Atrium doesn't care which one you use (**Claude Code**, **Codex**, **amp**, and so on). |
 | **Model** | the AI model the harness talks to | The "brain" (Claude, GPT, and so on). You can swap it per session. Billing and login follow the credentials the harness actually uses. |
@@ -122,7 +122,7 @@ Because the sandbox lets nothing connect into it, a small program on the host
 machine (the **node daemon**) does the copying in both directions:
 
 ```
-                    Humans  (web · mobile)
+                 Humans  (web · desktop · mobile)
                          │  REST + live updates
        ┌─────────────────▼───────────────────────────┐
        │                Atrium Server                   │
@@ -206,7 +206,7 @@ version-control system handles conflicts.)
 
 | Path | What's there |
 |---|---|
-| `surface/` | the product: `server/` (Node + TypeScript, Fastify, Postgres), `web/` (Vite + React + Tailwind), `mobile/` (Expo), `shared/`, plus tests and deploy config. |
+| `surface/` | the product: `server/` (Node + TypeScript, Fastify, Postgres), `web/` (Vite + React + Tailwind), `desktop/` (Electron shell around `web/` — signed + notarized macOS build), `mobile/` (Expo), `shared/`, plus tests and deploy config. |
 | `infra/` | local cluster, a stand-in model server for testing, and deployment setup. |
 | `notes/` | design docs, build plans, and decisions. |
 | `notes/build-history/` | archived test suites and scorecards (phase0–phase5) from each build phase. |
