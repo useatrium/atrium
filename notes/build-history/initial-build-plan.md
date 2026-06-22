@@ -40,7 +40,7 @@ entire event pipeline reproducibly; one real-model confirmation run pending an A
 - [x] Observed event schema documented (`notes/build-history/phase0/results/event-schema.md`) ✅
 
 **GATE RESULT: GO** — 18/18 checks across A/B/C/D. See notes/build-history/phase0/results/report.md and
-JOURNAL.md 2026-06-10 for the proxy/TLS route that made the mock-LLM path work.
+notes/build-history/initial-build-journal.md 2026-06-10 for the proxy/TLS route that made the mock-LLM path work.
 
 **Kill criteria:** events too coarse for live pane rendering OR infra TTFT > 10s →
 patch upstream or reconsider foundation.

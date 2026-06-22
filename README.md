@@ -209,8 +209,7 @@ version-control system handles conflicts.)
 | `surface/` | the product: `server/` (Node + TypeScript, Fastify, Postgres), `web/` (Vite + React + Tailwind), `desktop/` (Electron shell around `web/` — signed + notarized macOS build), `mobile/` (Expo), `shared/`, plus tests and deploy config. |
 | `infra/` | local cluster, a stand-in model server for testing, and deployment setup. |
 | `notes/` | design docs, build plans, and decisions. |
-| `notes/build-history/` | archived test suites and scorecards (phase0–phase5) from each build phase. |
-| `PLAN.md` · `JOURNAL.md` | the build plan and a running log of the work. |
+| `notes/build-history/` | archived initial build plan, journal, test suites, and scorecards from the phase0–phase5 buildout. |
 
 ## Links
 
@@ -220,4 +219,4 @@ version-control system handles conflicts.)
 - **Agent engine:** [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (MIT)
 - **Contributing:** branch and PR/merge flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **License:** MIT, see [LICENSE](LICENSE).
-- Build plan and per-phase scorecards in `PLAN.md`; running log in `JOURNAL.md`.
+- Archived initial build history: [plan](notes/build-history/initial-build-plan.md), [journal](notes/build-history/initial-build-journal.md), and phase scorecards in [notes/build-history/](notes/build-history/).

@@ -18,7 +18,7 @@ the surface toward inbox/review-queue.
 
 ## Deploy recipe (current: local kind; for a team, move to a small box)
 
-1. Cluster + Centaur: see JOURNAL 2026-06-10 setup entry (kind + helm recipe).
+1. Cluster + Centaur: see notes/build-history/initial-build-journal.md 2026-06-10 setup entry (kind + helm recipe).
    For a team box: k3s on a VPS/Mac-mini per centaur's mac-mini-setup.mdx, same
    helm values (`infra/values.local.yaml`), images via `just build` + import.
 2. **Real LLM (required for real dogfood):** `ANTHROPIC_API_KEY=sk-ant-… ./infra/use-real-anthropic.sh`
@@ -63,7 +63,7 @@ ownership).
 ## Known prototype limits going into dogfood
 
 - Workspace credentials for agents (per-user credential re-binding = future
-  iron-proxy work; documented in JOURNAL upstream-findings).
+  iron-proxy work; documented in notes/build-history/initial-build-journal.md upstream findings).
 - Single-process WS hub; in-memory unread (restart loses unread state).
 - Handle-based auth; no E2EE; deploy inside a trusted network.
 - Mock LLM until a real key is provided (sessions complete instantly and

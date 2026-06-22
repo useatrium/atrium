@@ -64,7 +64,7 @@ Status: **working end-to-end**, verified 2026-06-10 on this machine.
 ## Latency
 
 p50 send→WS-deliver ≈ **7.5ms** localhost through the Vite proxy (p95 11.8ms,
-n=50). The PLAN budget is p50 < 150ms send→render; render adds one React commit
+n=50). The initial build plan budget is p50 < 150ms send→render; render adds one React commit
 on top of delivery, so there is roughly 140ms of headroom locally. Not yet
 measured over a real network.
 

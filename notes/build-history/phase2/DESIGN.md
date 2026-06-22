@@ -1,14 +1,14 @@
 # Phase 2 — Sessions: Design
 
 How agent sessions attach to Places. Builds on: surface/ (Phase 1 chat),
-packages/centaur-client (typed client + reducer), phase0/results/event-schema.md
+packages/centaur-client (typed client + reducer), notes/build-history/phase0/results/event-schema.md
 (stream contract).
 
 ## Principles
 
 1. **The browser never holds a Centaur credential.** The surface server is the
    only Centaur API client; browsers get a proxied, auth-checked stream.
-2. **Sessions are PR-like objects, not rooms** (see PLAN.md ontology). A session
+2. **Sessions are PR-like objects, not rooms** (see notes/build-history/initial-build-plan.md ontology). A session
    is spawned *from* a thread, linkable from anywhere, and reports back.
 3. **Everything user-visible is an event** in the surface event log (provenance),
    while high-frequency agent frames stay in Centaur's durable store —
@@ -74,7 +74,7 @@ Phase 0 test D — this is free.)
   snapshot cursor — replay determinism makes this safe; >200-frame transcripts
   render incrementally (virtualized list).
 
-## Pane UI (quality bar from PLAN)
+## Pane UI (quality bar from initial build plan)
 
 Header: status chip · title · spawner → driver · spectators · cost ticker ·
 elapsed · "open thread" link. Body: streamed text (token-level, per Phase-0
@@ -97,7 +97,7 @@ Workspace members: may view any session card + open any pane (the provenance
 bet — default-visible). Spawner: may steer/cancel. Cancel = POST
 /api/sessions/:id/cancel → Centaur execution cancel + release.
 
-## Done-when (restating PLAN gate)
+## Done-when (restating initial build plan gate)
 
 - Spawner + 2 spectators see identical live state (same last_event_id)
 - Reload mid-session recovers full transcript

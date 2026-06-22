@@ -1,8 +1,8 @@
 // Phase-2 gate e2e: spawner + spectators see identical live state; reload
 // recovers; permalink works for a late joiner; steer-after-completion works.
-// Requires the full stack running (see JOURNAL): web :5173 -> server :3001 ->
+// Requires the full stack running (see notes/build-history/initial-build-journal.md): web :5173 -> server :3001 ->
 // Centaur port-forward :18000 -> kind cluster with llm-mock.
-// Run: node phase2/e2e/multispectator.mjs
+// Run: node notes/build-history/phase2/e2e/multispectator.mjs
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
 
