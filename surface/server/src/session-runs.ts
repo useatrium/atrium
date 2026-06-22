@@ -22,6 +22,7 @@ import {
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { projectAndEmitChange } from './session-record-changefeed.js';
 import { ArtifactLedger, casBlobKey, type MergeClass, type VersionRef } from './artifact-ledger.js';
 import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
 import {
@@ -1737,6 +1738,12 @@ export class SessionRuns {
         }
       }
       await this.persistLastEventId(id, pendingLastEventId);
+      // The execution's frames are now fully mirrored — (re)project them into
+      // searchable session_records and emit a change-feed row so the /atrium
+      // materializer refreshes. Best-effort: never fail the tailer. (#72 P3)
+      if (!controller.signal.aborted) {
+        await projectAndEmitChange(this.pool, id).catch(() => {});
+      }
     } catch {
       if (!controller.signal.aborted) {
         await this.updateStatus(id, 'failed').catch(() => {});
