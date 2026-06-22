@@ -20,6 +20,7 @@ extraResources:
 
 mac:
   category: public.app-category.productivity
+  icon: build/icon.png
   target:
     - target: dmg
       arch:
@@ -32,8 +33,12 @@ mac:
     NSMicrophoneUsageDescription: Atrium uses your microphone for voice messages and calls.
     NSCameraUsageDescription: Atrium uses your camera for video calls.
 
-# Notarization is enabled by setting APPLE_API_KEY / APPLE_API_KEY_ID /
-# APPLE_API_ISSUER in the environment at build time (App Store Connect key).
-# Without them (and without a Developer ID cert) the build is unsigned.
+# The .app is signed + notarized by electron-builder when APPLE_API_KEY /
+# APPLE_API_KEY_ID / APPLE_API_ISSUER are set (App Store Connect key). The
+# afterAllArtifactBuild hook additionally signs + notarizes + staples the .dmg
+# wrapper itself, so `pnpm run package:mac` yields a fully-sealed dmg in one
+# command. Without creds, the build is unsigned.
+afterAllArtifactBuild: build/notarize-dmg.cjs
+
 dmg:
   title: Atrium
