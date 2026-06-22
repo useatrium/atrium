@@ -154,24 +154,25 @@ describe('ArtifactLedger foundation', () => {
     expect(await ledger.resolveVersion(sessionId, 'report.md', { pointer: 'official' })).toBeNull();
   });
 
-  it('keeps per-session identity distinct (no cross-session collision)', async () => {
+  it('shares workspace identity across sessions at the same path', async () => {
     const otherSession = await seedSession();
-    await capture('report.md', 'a'.repeat(64), 'created');
-    // same path, different session -> a separate chain at seq 1
+    const first = await capture('shared/report.md', 'a'.repeat(64), 'created');
+    expect(first).toMatchObject({ ok: true, seq: 1 });
+    if (!first.ok) throw new Error('expected first commit to succeed');
     const other = await ledger.commitVersion({
       sessionId: otherSession,
       channelId: fx.channelId,
-      path: 'report.md',
+      path: 'shared/report.md',
       blobSha: 'b'.repeat(64),
       sizeBytes: 10,
       mime: 'text/markdown',
       author: `agent:${otherSession}`,
       kind: 'created',
     });
-    expect(other).toMatchObject({ ok: true, seq: 1 });
-    const a = await ledger.resolveVersion(sessionId, 'report.md', { pointer: 'latest' });
-    const b = await ledger.resolveVersion(otherSession, 'report.md', { pointer: 'latest' });
-    expect(a?.blobSha).toBe('a'.repeat(64));
+    expect(other).toMatchObject({ ok: true, seq: 2, artifactId: first.artifactId });
+    const a = await ledger.resolveVersion(sessionId, 'shared/report.md', { pointer: 'latest' });
+    const b = await ledger.resolveVersion(otherSession, 'shared/report.md', { pointer: 'latest' });
+    expect(a?.blobSha).toBe('b'.repeat(64));
     expect(b?.blobSha).toBe('b'.repeat(64));
   });
 

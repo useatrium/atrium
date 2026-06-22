@@ -157,8 +157,8 @@ describe('internal streaming artifact capture', () => {
          FROM artifacts a
          JOIN artifact_versions v ON v.artifact_id = a.id
          JOIN cas_blobs b ON b.sha256 = v.blob_sha
-        WHERE a.session_id = $1 AND a.path = $2`,
-      [sid, 'large/blob.bin'],
+        WHERE a.workspace_id = $1 AND a.path = $2`,
+      [fx.workspaceId, 'large/blob.bin'],
     );
     expect(version.rows[0]).toEqual({
       blob_sha: sha,

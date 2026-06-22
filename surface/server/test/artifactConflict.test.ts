@@ -53,8 +53,8 @@ function write(path: string, text: string, baseSeq?: number, mergeable = false) 
 
 /** Force the artifact's merge_class (write-back creates 'immutable-data'). */
 async function setMergeClass(path: string, cls: string) {
-  await pool.query(`UPDATE artifacts SET merge_class = $3 WHERE session_id = $1 AND path = $2`, [
-    sessionId,
+  await pool.query(`UPDATE artifacts SET merge_class = $3 WHERE workspace_id = $1 AND path = $2`, [
+    fx.workspaceId,
     path,
     cls,
   ]);
@@ -194,13 +194,13 @@ describe('diff3 content conflict detail', () => {
 
 describe('hydration scope (A4)', () => {
   it('lists the session artifact paths with latest seq', async () => {
-    await write('a.md', 'x');
-    await write('b.md', 'y');
-    await write('a.md', 'x2', 1);
+    await write('shared/a.md', 'x');
+    await write('shared/b.md', 'y');
+    await write('shared/a.md', 'x2', 1);
     const scope = await ledger.sessionScope(sessionId);
     expect(scope).toEqual([
-      { path: 'a.md', latestSeq: 2, kind: 'modified' },
-      { path: 'b.md', latestSeq: 1, kind: 'created' },
+      { path: 'shared/a.md', latestSeq: 2, kind: 'modified' },
+      { path: 'shared/b.md', latestSeq: 1, kind: 'created' },
     ]);
   });
 

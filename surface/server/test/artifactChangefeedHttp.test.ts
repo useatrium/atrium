@@ -73,8 +73,8 @@ describe('GET /api/sessions/:id/artifacts/changes', () => {
   it('returns rows + a resumable cursor for an accessible session', async () => {
     const cookie = await loginCookie();
     const sid = await insertSession();
-    await commit(sid, 'a.md', 'a'.repeat(64), 'created');
-    await commit(sid, 'a.md', 'b'.repeat(64), 'modified');
+    await commit(sid, 'shared/a.md', 'a'.repeat(64), 'created');
+    await commit(sid, 'shared/a.md', 'b'.repeat(64), 'modified');
 
     const res = await app.inject({
       method: 'GET',

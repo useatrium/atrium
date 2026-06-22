@@ -2373,10 +2373,13 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     const record = await sessionRuns.getSessionRecord(id);
-    // === ACL scope enforcement (#4) ===
-    record.artifacts = record.artifacts
-      .filter((artifact) => userCanReadScope(classifyScope(artifact.path)))
-      .map((artifact) => ({ ...artifact, scope: classifyScope(artifact.path) }));
+    // Own-session work-product record: annotate scope but DON'T filter — the
+    // session owns these artifacts (private-vs-shared is a cross-session concern;
+    // a session always sees its own files, including bare/private-scoped paths).
+    record.artifacts = record.artifacts.map((artifact) => ({
+      ...artifact,
+      scope: classifyScope(artifact.path),
+    }));
     return { record };
   });
 
@@ -2394,15 +2397,17 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id, artifactId } = req.params as { id: string; artifactId: string };
-    // === ACL scope enforcement (#4) ===
+    // The artifact is owned by THIS session (keyed by session_id), and
+    // requireSessionAccess already gated channel membership — so the member may
+    // read it regardless of path scope. Under the workspace-scoped model,
+    // private-vs-shared is a CROSS-session / listing concern, not an own-session
+    // read gate (that gate would now 404 a session's own bare-path files). scope
+    // is computed only for the X-Artifact-Scope header.
     const meta = await pool.query<{ path: string }>(
       `SELECT path FROM session_artifacts WHERE session_id = $1 AND id = $2`,
       [id, artifactId],
     );
     let scope = meta.rows[0] ? classifyScope(meta.rows[0].path) : null;
-    if (scope && !userCanReadScope(scope)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
     let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
     try {
       plan = await sessionRuns.getArtifactServePlan(id, artifactId);
@@ -2430,11 +2435,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
-    // === ACL scope enforcement (#4) ===
-    scope ??= classifyScope(artifact.path);
-    if (!userCanReadScope(scope)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
+    scope ??= classifyScope(artifact.path); // own-session artifact; scope is for the header only
     const mime = artifact.mime || 'application/octet-stream';
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
