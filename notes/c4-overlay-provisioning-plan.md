@@ -5,6 +5,34 @@
 > Companion docs: [`sync-validation-gaps.md`](./sync-validation-gaps.md),
 > [`cas-ledger-build-plan.md`](./cas-ledger-build-plan.md) (TRACK C4 + §10.7b),
 > [`agent-data-architecture.md`] memory.
+>
+> ## SHIPPED (gbasin/centaur `main`, 2026-06-22)
+> Landed as 4 reviewed, CI-green PRs (squash, no branch protection on the fork):
+> - **#1 Phase 1** — `provision-overlay` (fixture) + pod-native e2e; **the mountPropagation
+>   linchpin is validated in kind-on-GHA** (init `Bidirectional` → node → agent
+>   `HostToContainer`; daemon captured 2 upserts + 1 delete). The hard, never-before-validated part.
+> - **#4 Phase 2A** — multi-session daemon fan-out (`--overlays-root`) + sidecar manifest
+>   (`<overlays-root>/.sessions/<session>.json`); per-session state/error isolation + GC; production
+>   `provision-overlay` (writes manifest, chowns upper to `--agent-uid`). Linux build + multi-session
+>   e2e green.
+> - **#5 Phase 2B** — gated privileged `overlay-setup` init wired into `build_agent_sandbox`
+>   (+ `overlay.rs`, `AgentSandboxConfig.overlay`, `--sandbox-overlay-provisioning` flag /
+>   `nodeSync.overlayProvisioning.enabled` chart value). Default OFF (byte-identical render unless
+>   opted in); 81 crate tests.
+> - **#6 Phase 4** — dedicated GitHub-hosted `node-sync image` workflow builds + pushes
+>   `ghcr.io/<repo>/centaur-node-sync:latest` (Depot pipeline doesn't run on the fork). No creds.
+>
+> **A cluster can now run C4** via `nodeSync.enabled=true` + `nodeSync.overlayProvisioning.enabled=true`.
+>
+> ### Remaining — needs a REAL cluster (not the kind fixture):
+> - **Deep integration**: make the agent's actual working dir *be* the overlay merged (reconcile with
+>   the existing git-clone workspace flow) + a real **repo-RO lower** (today `provision-overlay` seeds a
+>   lower). The gated controller renders the mount; it does not yet replace the agent's real workspace.
+> - **Live-session end-to-end** on a real cluster: spawn → agent writes → captured → Atrium ledger →
+>   MinIO. The kind fixture proves the mechanism, not the full session-spawn path.
+> - **Phase 3**: #63 large-file live wire, #64 commit-group outbound producer.
+> - **Cutover**: disable the in-agent poll once C4 is live + parity-checked (secret-scan / MIME filter).
+> - **arm64** image (workflow is amd64-only); multi-node / per-tenant isolation (#65).
 
 ## 0. The correction this plan exists to fix
 
