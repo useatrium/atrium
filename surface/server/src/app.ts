@@ -3105,6 +3105,127 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.send({ rows: page.rows, next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}` });
   });
 
+  // === /atrium internal node-facing routes (#72 P5a) ===
+  async function resolveViewer(
+    viewerId: string,
+    reply: FastifyReply,
+  ): Promise<string | null> {
+    const res = await pool.query<{ spawned_by: string }>(
+      `SELECT spawned_by FROM sessions WHERE id = $1`,
+      [viewerId],
+    );
+    const viewerUserId = res.rows[0]?.spawned_by;
+    if (!viewerUserId) {
+      reply.code(404).send({ error: 'viewer_not_found', message: 'viewer session not found' });
+      return null;
+    }
+    return viewerUserId;
+  }
+
+  app.get('/api/internal/sessions/:viewerId/atrium/changes', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { viewerId } = req.params as { viewerId: string };
+    const q = req.query as { since?: string; limit?: string };
+    const changefeed = await import('./session-record-changefeed.js');
+
+    let cursor = changefeed.SESSION_RECORD_CHANGE_CURSOR_ZERO;
+    if (typeof q.since === 'string' && q.since.length > 0) {
+      const m = /^(\d+)\.(\d+)$/.exec(q.since);
+      if (!m) {
+        return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
+      }
+      cursor = { xid: m[1]!, id: m[2]! };
+    }
+
+    let limit = 500;
+    if (typeof q.limit === 'string') {
+      const n = Number(q.limit);
+      if (!Number.isInteger(n) || n < 1 || n > 5000) {
+        return reply.code(400).send({ error: 'bad_query', message: 'limit must be 1..5000' });
+      }
+      limit = n;
+    }
+
+    const viewerUserId = await resolveViewer(viewerId, reply);
+    if (!viewerUserId) return;
+
+    const page = await changefeed.sessionRecordChangesSince(pool, {
+      userId: viewerUserId,
+      cursor,
+      limit,
+    });
+    return reply.send({
+      rows: page.rows,
+      next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
+    });
+  });
+
+  app.get('/api/internal/sessions/:viewerId/atrium/sessions/:targetId/:doc', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { viewerId, targetId, doc } = req.params as {
+      viewerId: string;
+      targetId: string;
+      doc: string;
+    };
+    const viewerUserId = await resolveViewer(viewerId, reply);
+    if (!viewerUserId) return;
+
+    if (!(await sessionRuns.userCanAccessSession(targetId, viewerUserId))) {
+      return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    }
+
+    const projection = await import('./atrium-session-projection.js');
+    switch (doc) {
+      case 'transcript': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'lean');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(projection.renderTranscriptMarkdown(records));
+      }
+      case 'full': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(projection.renderFullMarkdown(records));
+      }
+      case 'summary': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'full');
+        const meta = await projection.buildSessionMeta(pool, targetId);
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(projection.renderSummaryMarkdown(records, meta));
+      }
+      case 'meta':
+        return reply.type('application/json').send(await projection.buildSessionMeta(pool, targetId));
+      case 'tools': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(projection.renderToolsMarkdown(records));
+      }
+      case 'artifacts': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'lean');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(projection.renderArtifactsMarkdown(records));
+      }
+      case 'changes-doc': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(projection.renderChangesMarkdown(records));
+      }
+      case 'events': {
+        const records = await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('application/jsonl; charset=utf-8')
+          .send(projection.renderEventsJsonl(records));
+      }
+      default:
+        return reply.code(404).send({ error: 'doc_not_found', message: 'atrium doc not found' });
+    }
+  });
+
   // Fetch a specific version's bytes (the daemon's inbound adopt fetch). Ledger
   // blobs are offloaded to S3 in this path, so we serve straight from the store.
   app.get('/api/internal/sessions/:id/artifacts/raw', async (req, reply) => {
