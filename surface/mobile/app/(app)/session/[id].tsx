@@ -14,6 +14,7 @@ import {
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
+  ApiError,
   formatCost,
   formatElapsed,
   formatTime,
@@ -49,6 +50,9 @@ import { WorkStrips, type WorkStripItem } from '../../../src/components/work/Wor
 import { TurnsSheet } from '../../../src/components/work/TurnsSheet';
 import { TurnCard } from '../../../src/components/work/TurnCard';
 import { deriveTurns } from '../../../src/components/work/turns';
+import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
+import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip';
+import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -373,9 +377,9 @@ function MobileQuestionBanner({
                   <Pressable
                     accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
                     accessibilityLabel={`${option.label}. ${option.description}`}
-                    accessibilityState={{ checked: selected, disabled: !isDriver || submitting }}
+                    accessibilityState={{ checked: selected, disabled: submitting }}
                     key={option.label}
-                    disabled={!isDriver || submitting}
+                    disabled={submitting}
                     onPress={() => (q.multiSelect ? toggleOption(q, option.label) : setValue(q.id, option.label))}
                     style={{
                       borderWidth: 1,
@@ -383,7 +387,7 @@ function MobileQuestionBanner({
                       backgroundColor: selected ? colors.accentBg : colors.bgElevated,
                       borderRadius: radius.sm,
                       padding: space.sm,
-                      opacity: !isDriver || submitting ? 0.6 : 1,
+                      opacity: submitting ? 0.6 : 1,
                     }}
                   >
                     <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
@@ -417,7 +421,7 @@ function MobileQuestionBanner({
               accessibilityLabel={`Answer for ${q.header}`}
               value={answerTextValue(values[q.id])}
               onChangeText={(value) => setValue(q.id, value)}
-              editable={isDriver && !submitting}
+              editable={!submitting}
               secureTextEntry={q.isSecret === true}
               placeholder="Answer"
               placeholderTextColor={colors.textFaint}
@@ -438,28 +442,30 @@ function MobileQuestionBanner({
           {error}
         </Text>
       ) : null}
-      {isDriver ? (
-        <Pressable
-          onPress={onSubmit}
-          disabled={!complete || submitting}
-          style={{
-            alignSelf: 'flex-start',
-            borderRadius: radius.md,
-            backgroundColor: complete ? colors.warning : colors.bgElevated,
-            paddingHorizontal: space.md,
-            paddingVertical: space.sm,
-            opacity: submitting ? 0.6 : 1,
-          }}
-        >
-          <Text style={{ color: complete ? colors.onAccent : colors.textFaint, fontSize: font.sm, fontWeight: '900' }}>
-            {submitting ? 'Answering...' : 'Submit answer'}
-          </Text>
-        </Pressable>
-      ) : (
-        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-          Waiting for the driver to answer.
+      <Pressable
+        onPress={onSubmit}
+        disabled={!complete || submitting}
+        accessibilityRole="button"
+        accessibilityLabel={isDriver ? 'Submit answer' : 'Propose answer'}
+        style={{
+          alignSelf: 'flex-start',
+          borderRadius: radius.md,
+          backgroundColor: complete ? colors.warning : colors.bgElevated,
+          paddingHorizontal: space.md,
+          paddingVertical: space.sm,
+          opacity: submitting ? 0.6 : 1,
+        }}
+      >
+        <Text style={{ color: complete ? colors.onAccent : colors.textFaint, fontSize: font.sm, fontWeight: '900' }}>
+          {isDriver
+            ? submitting
+              ? 'Answering...'
+              : 'Submit answer'
+            : submitting
+              ? 'Proposing...'
+              : 'Propose answer'}
         </Text>
-      )}
+      </Pressable>
     </View>
   );
 }
@@ -502,6 +508,9 @@ export default function SessionScreen() {
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
   const [workTab, setWorkTab] = useState<string | null>(null);
   const [turnsOpen, setTurnsOpen] = useState(false);
+  const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
+  const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
+  const [suggestText, setSuggestText] = useState('');
   const scrollRef = useRef<ScrollView>(null);
   const stickRef = useRef(true);
   // Transcript item y-offsets (captured via onLayout) so the Turns▾ sheet can
@@ -625,6 +634,27 @@ export default function SessionScreen() {
     [questionEvents],
   );
 
+  // Control loop (Phase 4 parity): seat hand-off, suggestion queue, answer
+  // proposals — read off the WS-folded entity (mergeSpawnResponse keeps the live
+  // arrays). Core steering already works; this is the collaborative layer.
+  const driverId = session ? sessionDriverId(session) : null;
+  const driverName = session?.driverName ?? 'the driver';
+  const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter(
+    (r) => !ignoredSeatRequests.has(r.userId),
+  );
+  const firstSeatRequest = visibleSeatRequests[0] ?? null;
+  const iRequestedSeat = (session?.pendingSeatRequests ?? []).some((r) => r.userId === me.id);
+  const seatFooterMode: 'request' | 'take' | 'confirm' | 'waiting' = iRequestedSeat
+    ? 'waiting'
+    : seatAsk === 'confirm-take'
+      ? 'confirm'
+      : driverId != null
+        ? 'request'
+        : 'take';
+  const proposalsForQuestion = (session?.answerProposals ?? []).filter(
+    (p) => p.status === 'pending' && p.questionId === pendingQuestion?.questionId,
+  );
+
   useEffect(() => {
     setQuestionValues({});
     setQuestionSubmitting(false);
@@ -691,6 +721,66 @@ export default function SessionScreen() {
       .then(() => setQuestionCleared(pendingQuestion.questionId))
       .catch(() => setQuestionError("Answer didn't send. Try again."))
       .finally(() => setQuestionSubmitting(false));
+  };
+
+  // Spectator proposes an answer (vs the driver answering directly).
+  const proposeAnswer = () => {
+    if (!id || !pendingQuestion) return;
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const q of pendingQuestion.questions) {
+      answers[q.id] = { answers: answerValuesForPrompt(q, questionValues[q.id]) };
+    }
+    setQuestionSubmitting(true);
+    setQuestionError(null);
+    api
+      .proposeAnswer(id, pendingQuestion.questionId, answers)
+      .then(() => setQuestionCleared(pendingQuestion.questionId))
+      .catch(() => setQuestionError("Proposal didn't send. Try again."))
+      .finally(() => setQuestionSubmitting(false));
+  };
+
+  // Seat hand-off. Take is two-step (confirm) and falls back to a request on 409.
+  const requestSeatAction = () => {
+    if (id) api.requestSeat(id).catch(() => {});
+  };
+  const takeSeatAction = () => {
+    if (!id) return;
+    setSeatAsk('idle');
+    api.takeSeat(id).catch((err) => {
+      if (err instanceof ApiError && err.status === 409) api.requestSeat(id).catch(() => {});
+    });
+  };
+  const grantSeatAction = (userId: string) => {
+    if (id) api.grantSeat(id, userId).catch(() => {});
+  };
+  const ignoreSeatRequest = (userId: string) =>
+    setIgnoredSeatRequests((prev) => {
+      const next = new Set(prev);
+      next.add(userId);
+      return next;
+    });
+
+  // Suggestion queue.
+  const resolveSuggestionAction = (
+    suggestionId: string,
+    action: 'send' | 'dismiss',
+    opts?: { text?: string; note?: string },
+  ) => {
+    if (id) api.resolveSuggestion(id, suggestionId, action, opts ?? {}).catch(() => {});
+  };
+  const sendSuggestion = () => {
+    const text = suggestText.trim();
+    if (!id || !text) return;
+    setSuggestText('');
+    api.createSuggestion(id, text).catch(() => {});
+  };
+
+  // Answer proposals (driver-side resolution).
+  const submitProposal = (proposalId: string) => {
+    if (id) api.resolveAnswerProposal(id, proposalId, 'submit').catch(() => {});
+  };
+  const dismissProposal = (proposalId: string, note?: string) => {
+    if (id) api.resolveAnswerProposal(id, proposalId, 'dismiss', note ? { note } : {}).catch(() => {});
   };
 
   const headerSubtitle = useMemo(() => {
@@ -841,7 +931,16 @@ export default function SessionScreen() {
               }}
               submitting={questionSubmitting}
               error={questionError}
-              onSubmit={answerQuestion}
+              onSubmit={isDriver ? answerQuestion : proposeAnswer}
+            />
+          ) : null}
+
+          {isDriver && pendingQuestion && !terminal && proposalsForQuestion.length > 0 ? (
+            <AnswerProposals
+              proposals={proposalsForQuestion}
+              prompts={pendingQuestion.questions}
+              onSubmit={submitProposal}
+              onDismiss={dismissProposal}
             />
           ) : null}
 
@@ -921,6 +1020,22 @@ export default function SessionScreen() {
           </View>
         ) : null}
 
+        {!terminal && isDriver && firstSeatRequest ? (
+          <SeatRequestBanner
+            requesterName={firstSeatRequest.displayName}
+            onGrant={() => grantSeatAction(firstSeatRequest.userId)}
+            onIgnore={() => ignoreSeatRequest(firstSeatRequest.userId)}
+          />
+        ) : null}
+
+        <SuggestionsStrip
+          suggestions={session.suggestions}
+          isDriver={isDriver}
+          onSend={(sid) => resolveSuggestionAction(sid, 'send')}
+          onEditSend={(sid, text) => resolveSuggestionAction(sid, 'send', { text })}
+          onDismiss={(sid, note) => resolveSuggestionAction(sid, 'dismiss', note ? { note } : undefined)}
+        />
+
         {terminal ? (
           <View style={{ borderTopWidth: 1, borderTopColor: colors.border, padding: space.sm }}>
             <Text style={{ color: colors.textMuted, fontSize: font.xs, textAlign: 'center' }}>
@@ -977,11 +1092,64 @@ export default function SessionScreen() {
             </Pressable>
           </View>
         ) : (
-          <View style={{ borderTopWidth: 1, borderTopColor: colors.border, padding: space.sm }}>
-            <Text style={{ color: colors.textMuted, fontSize: font.xs, textAlign: 'center' }}>
-              Spectating. Only the driver can steer this session.
-            </Text>
-          </View>
+          <>
+            <SeatFooter
+              mode={seatFooterMode}
+              driverName={driverName}
+              onRequest={requestSeatAction}
+              onTake={() => setSeatAsk('confirm-take')}
+              onConfirmTake={takeSeatAction}
+              onCancelTake={() => setSeatAsk('idle')}
+            />
+            <View
+              style={{
+                borderTopWidth: 1,
+                borderTopColor: colors.border,
+                backgroundColor: colors.bg,
+                padding: space.sm,
+                flexDirection: 'row',
+                alignItems: 'flex-end',
+                gap: space.sm,
+              }}
+            >
+              <TextInput
+                value={suggestText}
+                onChangeText={setSuggestText}
+                placeholder={`Suggest a message — ${driverName} decides`}
+                placeholderTextColor={colors.textFaint}
+                multiline
+                style={{
+                  flex: 1,
+                  minHeight: 38,
+                  maxHeight: 110,
+                  borderRadius: radius.md,
+                  backgroundColor: colors.bgInput,
+                  color: colors.text,
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.sm,
+                  fontSize: font.md,
+                }}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send suggestion"
+                accessibilityState={{ disabled: !suggestText.trim() }}
+                onPress={sendSuggestion}
+                disabled={!suggestText.trim()}
+                style={{
+                  borderRadius: radius.md,
+                  backgroundColor: suggestText.trim() ? colors.accent : colors.bgElevated,
+                  paddingHorizontal: space.md,
+                  minHeight: 44,
+                  minWidth: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>Send</Text>
+              </Pressable>
+            </View>
+          </>
         )}
       </KeyboardAvoidingView>
 
