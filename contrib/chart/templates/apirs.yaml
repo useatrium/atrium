@@ -208,6 +208,12 @@ spec:
             # Sandboxes call back into this control plane via the in-cluster Service.
             - name: SESSION_SANDBOX_CENTAUR_API_URL
               value: {{ printf "http://%s:%v" $apiRsName .Values.apiRs.port | quote }}
+{{- if .Values.nodeSync.overlayProvisioning.enabled }}
+            - name: CENTAUR_SANDBOX_OVERLAY_PROVISIONING
+              value: "true"
+            - name: CENTAUR_SANDBOX_OVERLAY_NODE_SYNC_IMAGE
+              value: {{ printf "%s:%s" .Values.nodeSync.image.repository .Values.nodeSync.image.tag | quote }}
+{{- end }}
 {{- if $reposPath }}
             - name: REPOS_PATH
               value: {{ $reposPath | quote }}

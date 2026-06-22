@@ -27,10 +27,12 @@ use tokio::time::{Instant, sleep};
 
 pub use generated::agents_x_k8s_io as crd;
 pub use iron_proxy::IronProxyConfig;
+pub use overlay::OverlayConfig;
 pub use tools::{GitHubTokenRef, ToolSource, ToolsConfig};
 
 pub mod generated;
 mod iron_proxy;
+mod overlay;
 mod tools;
 
 const BACKEND_NAME: &str = "agent-sandbox-k8s";
@@ -70,6 +72,10 @@ pub struct AgentSandboxConfig {
     /// git-clones the tools repo into the agent's `/app/tools`, and `TOOL_DIRS`
     /// is set so the agent's shim installer finds them.
     pub tools: Option<ToolsConfig>,
+    /// When set, every sandbox gets a privileged `overlay-setup` init container
+    /// that mounts the per-session overlay workspace on the node before the
+    /// hardened agent container starts.
+    pub overlay: Option<OverlayConfig>,
     /// In-cluster OTLP collector (e.g. Laminar) the sandbox exports harness
     /// traces to directly. The per-sandbox egress NetworkPolicy denies all
     /// destinations except the proxy/control plane, so without this rule the
@@ -115,6 +121,7 @@ impl AgentSandboxConfig {
             iron_proxy: None,
             iron_control: None,
             tools: None,
+            overlay: None,
             otlp_egress: None,
             ready_timeout: Duration::from_secs(60),
         }
@@ -137,6 +144,11 @@ impl AgentSandboxConfig {
 
     pub fn tools(mut self, tools: ToolsConfig) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    pub fn overlay(mut self, overlay: OverlayConfig) -> Self {
+        self.overlay = Some(overlay);
         self
     }
 }
@@ -658,6 +670,20 @@ fn build_agent_sandbox(
         volume_mounts.extend(tools::agent_volume_mounts_json(config.tools.as_ref()));
         volumes.extend(tools::volumes_json(config.tools.as_ref()));
     }
+    if let Some(overlay) = &config.overlay {
+        let agent_uid = agent_run_as_user(&container).unwrap_or(overlay.agent_uid);
+        let metadata = overlay::OverlayMetadata::from_sandbox_spec(spec, agent_uid);
+        volume_mounts.push(overlay::overlay_agent_volume_mount_json(
+            overlay,
+            id.as_str(),
+        ));
+        volumes.extend(overlay::overlay_volumes_json(overlay, id.as_str()));
+        init_containers.push(overlay::overlay_init_container_json(
+            overlay,
+            id.as_str(),
+            &metadata,
+        ));
+    }
     volume_mounts.push(json!({
         "name": RUNTIME_CONTEXT_VOLUME,
         "mountPath": RUNTIME_CONTEXT_MOUNT_PATH,
@@ -818,6 +844,14 @@ fn resources_json(spec: &SandboxSpec) -> Option<Value> {
         limits.insert("memory".to_owned(), json!(format!("{memory_bytes}")));
     }
     (!limits.is_empty()).then(|| json!({ "limits": limits }))
+}
+
+fn agent_run_as_user(container: &Value) -> Option<u32> {
+    container
+        .get("securityContext")
+        .and_then(|security_context| security_context.get("runAsUser"))
+        .and_then(Value::as_u64)
+        .and_then(|uid| u32::try_from(uid).ok())
 }
 
 fn state_volume_claim_json(state_volume: &StateVolumeConfig) -> Vec<Value> {
@@ -1002,6 +1036,166 @@ mod tests {
                 .iter()
                 .any(|mount| mount.name == "firewall-ca")
         );
+    }
+
+    #[test]
+    fn overlay_enabled_renders_privileged_setup_and_workspace_mount() {
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .label("centaur.ai/harness", "codex")
+            .env("CENTAUR_RESUME_THREAD_ID", "thread-1")
+            .env("CODEX_HOME", "/home/agent/.codex")
+            .env("AGENT_REPO", "gbasin/centaur");
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.agent_uid = 4242;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay);
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        let overlay_setup = pod_spec
+            .init_containers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|container| container.name == "overlay-setup")
+            .expect("overlay-setup init container");
+
+        assert_eq!(
+            overlay_setup.command.as_ref().unwrap(),
+            &vec!["/usr/local/bin/provision-overlay".to_owned()]
+        );
+        assert_eq!(
+            overlay_setup.image.as_deref(),
+            Some("centaur-node-sync:test")
+        );
+        assert_eq!(
+            overlay_setup
+                .args
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "--session",
+                "asbx-test",
+                "--overlays-root",
+                "/var/lib/centaur/overlays",
+                "--merged-root",
+                "/run/centaur/merged",
+                "--agent-uid",
+                "4242",
+                "--harness",
+                "codex",
+                "--harness-thread-id",
+                "thread-1",
+                "--harness-home",
+                "/home/agent/.codex",
+                "--repo",
+                "gbasin/centaur",
+            ]
+        );
+        assert_eq!(
+            overlay_setup
+                .security_context
+                .as_ref()
+                .and_then(|context| context.privileged),
+            Some(true)
+        );
+        let init_mounts = overlay_setup.volume_mounts.as_ref().unwrap();
+        assert!(init_mounts.iter().any(|mount| {
+            mount.name == "session-upper"
+                && mount.mount_path == "/var/lib/centaur"
+                && mount.mount_propagation.as_deref() == Some("Bidirectional")
+        }));
+        assert!(init_mounts.iter().any(|mount| {
+            mount.name == "workspace"
+                && mount.mount_path == "/run/centaur/merged/asbx-test"
+                && mount.mount_propagation.as_deref() == Some("Bidirectional")
+        }));
+
+        let volumes = pod_spec.volumes.as_ref().unwrap();
+        let session_upper = volumes
+            .iter()
+            .find(|volume| volume.name == "session-upper")
+            .expect("session-upper volume");
+        let session_upper_host_path = session_upper.host_path.as_ref().unwrap();
+        assert_eq!(session_upper_host_path.path, "/var/lib/centaur");
+        assert_eq!(
+            session_upper_host_path.r#type.as_deref(),
+            Some("DirectoryOrCreate")
+        );
+        let workspace = volumes
+            .iter()
+            .find(|volume| volume.name == "workspace")
+            .expect("workspace volume");
+        let workspace_host_path = workspace.host_path.as_ref().unwrap();
+        assert_eq!(workspace_host_path.path, "/run/centaur/merged/asbx-test");
+        assert_eq!(
+            workspace_host_path.r#type.as_deref(),
+            Some("DirectoryOrCreate")
+        );
+
+        let agent_mounts = pod_spec.containers[0].volume_mounts.as_ref().unwrap();
+        assert!(agent_mounts.iter().any(|mount| {
+            mount.name == "workspace"
+                && mount.mount_path == "/workspace"
+                && mount.mount_propagation.as_deref() == Some("HostToContainer")
+        }));
+    }
+
+    #[test]
+    fn overlay_disabled_renders_no_overlay_wiring() {
+        let spec = SandboxSpec::new("centaur-agent:latest");
+        let config = AgentSandboxConfig::new("centaur");
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        assert!(
+            pod_spec
+                .init_containers
+                .as_ref()
+                .map(|containers| containers
+                    .iter()
+                    .all(|container| container.name != "overlay-setup"))
+                .unwrap_or(true)
+        );
+        assert!(
+            pod_spec
+                .volumes
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|volume| volume.name != "session-upper" && volume.name != "workspace")
+        );
+        assert!(
+            pod_spec.containers[0]
+                .volume_mounts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|mount| mount.name != "workspace" && mount.mount_propagation.is_none())
+        );
+    }
+
+    #[test]
+    fn overlay_agent_uid_prefers_agent_run_as_user_when_present() {
+        assert_eq!(
+            agent_run_as_user(&serde_json::json!({
+                "securityContext": {
+                    "runAsUser": 2002,
+                },
+            })),
+            Some(2002)
+        );
+        assert_eq!(
+            agent_run_as_user(&serde_json::json!({
+                "securityContext": {
+                    "runAsUser": u64::from(u32::MAX) + 1,
+                },
+            })),
+            None
+        );
+        assert_eq!(agent_run_as_user(&serde_json::json!({})), None);
     }
 
     #[test]

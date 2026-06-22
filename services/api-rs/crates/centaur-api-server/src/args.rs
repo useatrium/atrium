@@ -21,7 +21,7 @@ use centaur_iron_proxy::{
 };
 use centaur_sandbox_agent_k8s::{
     AgentSandboxBackend, AgentSandboxConfig, GitHubTokenRef, IronControlSettings, IronProxyConfig,
-    OtlpEgressTarget, ToolSource, ToolsConfig,
+    OtlpEgressTarget, OverlayConfig, ToolSource, ToolsConfig,
 };
 use centaur_sandbox_core::{Mount, MountKind, SandboxSpec};
 use centaur_sandbox_local::LocalSandboxBackend;
@@ -40,6 +40,7 @@ use crate::{
 };
 
 const SANDBOX_REPOS_MOUNT_PATH: &str = "/home/agent/github";
+const DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE: &str = "centaur-node-sync:latest";
 
 /// OTLP env always forwarded from the api-rs process into codex sandboxes,
 /// mirroring the Python control plane's `_SANDBOX_PASSTHROUGH_ENV_KEYS`. The
@@ -506,6 +507,18 @@ struct SandboxArgs {
     )]
     ready_timeout_secs: u64,
     #[arg(
+        long = "sandbox-overlay-provisioning",
+        env = "CENTAUR_SANDBOX_OVERLAY_PROVISIONING",
+        default_value_t = false,
+        action = clap::ArgAction::Set
+    )]
+    overlay_provisioning: bool,
+    #[arg(
+        long = "sandbox-overlay-node-sync-image",
+        env = "CENTAUR_SANDBOX_OVERLAY_NODE_SYNC_IMAGE"
+    )]
+    overlay_node_sync_image: Option<String>,
+    #[arg(
         long = "session-sandbox-warm-pool-size",
         env = "SESSION_SANDBOX_WARM_POOL_SIZE",
         default_value_t = 0
@@ -838,6 +851,15 @@ impl SandboxArgs {
                 .join(":");
         }
         "/opt/centaur/workflows".to_owned()
+    }
+
+    fn overlay_config(&self) -> Option<OverlayConfig> {
+        if !self.overlay_provisioning {
+            return None;
+        }
+        let image = clean_optional_value(self.overlay_node_sync_image.as_deref())
+            .unwrap_or_else(|| DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE.to_owned());
+        Some(OverlayConfig::new(image))
     }
 
     fn default_workflow_host_path(&self) -> String {
@@ -1298,6 +1320,7 @@ impl TryFrom<&SandboxArgs> for AgentSandboxConfig {
         }
         config.iron_control = args.iron_control.settings();
         config.tools = args.tools_source.to_config();
+        config.overlay = args.overlay_config();
         // Direct harness OTLP export (codex usage/cost spans) needs a hole in
         // the per-sandbox egress NetworkPolicy; derived from the sandbox's own
         // OTLP endpoint env so there is a single source of truth.
@@ -2030,6 +2053,36 @@ mod tests {
         );
         assert_eq!(config.ready_timeout, Duration::from_secs(42));
         assert!(config.iron_proxy.is_none());
+        assert!(config.overlay.is_none());
+    }
+
+    #[test]
+    fn overlay_config_read_from_flags_only_when_enabled() {
+        let args = Args::try_parse_from([
+            "centaur-api-server",
+            "--database-url",
+            "postgres://postgres:postgres@localhost/centaur",
+            "--session-sandbox-backend",
+            "agent-k8s",
+            "--kubernetes-sandbox-iron-proxy-mode",
+            "disabled",
+            "--sandbox-overlay-provisioning",
+            "true",
+            "--sandbox-overlay-node-sync-image",
+            "centaur-node-sync:test",
+        ])
+        .unwrap();
+
+        let config = AgentSandboxConfig::try_from(&args.sandbox).unwrap();
+        let overlay = config.overlay.expect("overlay should be Some");
+        assert_eq!(overlay.image, "centaur-node-sync:test");
+        assert_eq!(
+            overlay.overlays_root,
+            PathBuf::from("/var/lib/centaur/overlays")
+        );
+        assert_eq!(overlay.merged_root, PathBuf::from("/run/centaur/merged"));
+        assert_eq!(overlay.agent_uid, 1001);
+        assert_eq!(overlay.workspace_mount_path, "/workspace");
     }
 
     #[test]

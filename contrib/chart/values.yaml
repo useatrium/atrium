@@ -439,6 +439,8 @@ containerSecurityContext:
 # its node — §8B #19). See centaur-node-sync crate + agent-sync-design.md.
 nodeSync:
   enabled: false
+  overlayProvisioning:
+    enabled: false
   image:
     repository: centaur-node-sync
     tag: latest
