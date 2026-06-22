@@ -6,7 +6,7 @@
 
 ## 1. The gap
 
-Atrium can already *store* any bytes — two byte stores, the **uploads** table (`files`, `006_files.sql`) and the **artifact CAS ledger** (`artifacts`/`artifact_versions`/`cas_blobs`, migs 031–038), both binary-safe end to end. What it can't do is **see inside** non-text files or **show** them:
+Atrium can already *store* any bytes — two byte stores, the **uploads** table (`files`, `006_files.sql`) and the **artifact CAS ledger** (`artifacts`/`artifact_versions`/`cas_blobs`, migs 031–038), both binary-safe end to end. **Verified 2026-06-22: they share one S3 bucket (`atrium-files`) and the thin `s3.ts` helper, but are otherwise two separate systems** — disjoint key prefixes (`<fileId>/<filename>` vs `cas/<sha>`), separate tables (no FK/JOIN/shared row), separate write paths (browser presigned-PUT vs server-side capture/offload), and **no crossover** (a chat upload never becomes an artifact and vice-versa). Uploads predate the CAS ledger by 25 migrations and model a different thing — a message-scoped, id-keyed human attachment — vs. the artifact ledger's content-addressed, path-identified, versioned, conflict-aware, Centaur-offloaded agent file. That asymmetry is real, so the file-types layer **unifies the *experience* (one `MediaObject` seam over both), not the metadata schemas** (see §9.5). What it can't do is **see inside** non-text files or **show** them:
 
 - **Agents are blind to binary content.** They get true raw bytes (`/api/sessions/:id/artifacts/by-path`, internal `…/raw`), but `/atrium` is text-metadata only and **nothing indexes file content** — a PDF spec or a screenshot a human dropped in is invisible to search (`session-search.ts` indexes only `session_records.text`) and to memory. An agent can't grep a PDF or "see" a screenshot.
 - **Humans get image-only previews.** The gallery (`ArtifactsSurface.tsx`) renders `image/*` as a thumbnail and **everything else as a grey type-label tile**; chat uploads (`MessageRow.tsx`) preview images inline and everything else as a download chip. No PDF/markdown/code/CSV/notebook rendering exists (no preview libs are even installed). `FilesSurface.tsx` blindly `response.text()`s every file — **a binary renders as mojibake and a save corrupts it** (a real bug today).
@@ -21,6 +21,7 @@ So: storage is solved; **comprehension, presentation, and discoverability of non
 
 1. **Agent-UX-first.** The win that matters most is making binary content *findable and readable* by agents (search + memory + `atrium cat`), because that unblocks real work ("read the design PDF", "what's in that screenshot"). Human preview is the close second.
 2. **Derive, don't demand** (the §6.1 principle, applied to bytes). The system extracts text/structure *from* the file; the agent/human never has to pre-annotate it.
+2b. **Default to the original contents** (DECIDED 2026-06-22). When an agent reads a file, the default is the *real bytes* handed to the (multimodal) model — not a lossy projection. Derived text is for **search/memory indexing** and as an **opt-in/fallback read** (`--text`, or when the model can't ingest the original), never the default read. This keeps the agent working from ground truth.
 3. **Reuse the byte plumbing.** CAS dedup, binary-safe serve, merge-class conflict gating, and the existing **STT extraction pipeline** are all load-bearing and correct — extend them, don't rebuild.
 4. **Two orthogonal axes, kept separate.** `merge_class` (conflict behavior — load-bearing for write-back) stays as-is. Add a *separate* `media_kind` axis (render/extract behavior). Don't overload one enum with two jobs.
 5. **Cost-aware extraction.** Cheap deterministic extractors run eagerly; LLM/OCR/vision extractors run lazily/opt-in. Dedup by content hash so identical bytes are never extracted twice.
@@ -38,10 +39,10 @@ One new axis (`media_kind`) + a derived `is_text` boolean, set at capture/upload
 | `text-prose` | md, txt | mergeable-doc | identity (already text) + frontmatter (§6.1) | text | markdown render | line diff |
 | `code` | .ts/.py/.rs/… | mergeable-doc | identity | text | syntax highlight | line diff (intra-line) |
 | `structured` | json, yaml, csv, toml, ipynb | **immutable** (diff3-unsafe) | flatten to searchable text | text (pretty) | json tree / csv table / **ipynb cells** | **structured diff** (cell/row/key) |
-| `document` | pdf, docx, pptx | immutable | text layer → OCR fallback | derived text (+`--raw` pages) | pdf.js / page render | text-layer diff (+page-render diff) |
-| `image` | png, jpg, svg, webp | immutable | OCR + optional vision caption | **raw bytes to vision model** (multimodal), else caption | thumbnail + zoom | side-by-side + onion-skin + pixel diff |
-| `audio` | wav, mp3, m4a | immutable | **transcription (reuse STT)** | transcript (+timestamps) | player + transcript | transcript diff |
-| `video` | mp4, mov | immutable | audio-track STT + keyframe caption | transcript | player + transcript + keyframes | transcript diff |
+| `document` | pdf, docx, pptx | immutable | text layer → OCR fallback | **original bytes** (multimodal); `--text` for derived; size-guarded | pdf.js / page render | text-layer diff (+page-render diff) |
+| `image` | png, jpg, svg, webp | immutable | OCR + optional vision caption | **original bytes** to vision model; caption only as fallback | thumbnail + zoom | side-by-side + onion-skin + pixel diff |
+| `audio` | wav, mp3, m4a | immutable | **transcription (reuse STT)** | transcript (pragmatic exception — raw not yet model-ingestible) | player + transcript | transcript diff |
+| `video` | mp4, mov | immutable | audio-track STT + keyframe caption | transcript (pragmatic exception) | player + transcript + keyframes | transcript diff |
 | `opaque` | zip, bin, exe, … | immutable | none | metadata only | metadata + download | "changed: N→M bytes, sha X→Y" |
 
 `merge_class` is unchanged for conflict purposes; `media_kind` drives rendering + extraction. The pair also fixes binary safety: `FilesSurface`/write-back branch on `is_text` instead of blindly decoding.
@@ -73,20 +74,20 @@ One new axis (`media_kind`) + a derived `is_text` boolean, set at capture/upload
 
 ## 5. Agent UX per type — the multimodal fork
 
-The crux. There are **two ways** an agent consumes a binary, and the right default differs by type:
+**DECIDED 2026-06-22: default to the original contents** (principle 2b). The agent reads the real file by default; derived text is opt-in (`--text`) or an automatic fallback only when the original isn't ingestible. There are two read modes, but the *default* is now fixed:
 
-1. **Derived text** — `atrium cat report.pdf` → extracted text + a typed header (`media_kind`, page count, "raw available", lang). Good for grep/reason; cheap on context.
-2. **Raw bytes to a multimodal model** — for images (and layout-sensitive PDFs), modern Claude ingests the actual pixels as a content block. Handing the *real image* to the model beats an OCR string for "what's wrong in this screenshot."
+1. **Original bytes (the default)** — hand the actual file to the (multimodal) model. For an image, the real pixels beat an OCR string; for a PDF, the actual document preserves layout/tables/figures. This is ground truth.
+2. **Derived text (opt-in / fallback)** — `--text` returns the extracted text + a typed header (`media_kind`, page count, lang). Used when the agent *wants* cheap grep-able text, or automatically when the model is non-multimodal.
 
-**`atrium cat <path>` (the in-sandbox typed CLI from §6.1) picks smartly, with overrides:**
-- `text-prose`/`code`/`structured` → bytes as text (structured pretty-printed).
-- `image` → **the image itself as a model content block** when the harness/model is multimodal; else the caption/OCR text. `--text` forces derived text; `--raw` forces bytes.
-- `document` (pdf) → derived text by default (PDFs are long); `--pages 3-5 --raw` returns rendered pages to a vision model for layout-sensitive cases.
-- `audio`/`video` → transcript text with timestamps; raw bytes rarely useful to the model.
-- **Guardrails:** large files return head + size + `--range` hint, never the whole blob; long derived text is paginated/summarized. The CLI returns *typed results* ("this is an image; caption=…; raw available"), not a byte firehose — directly the code-mode payoff (§6.1).
-- **Discovery first:** `atrium ls` shows `media_kind`, size, and whether derived text exists, so the agent knows what it's dealing with *before* fetching (avoids blindly catting a 50MB binary).
+**`atrium cat <path>` (the in-sandbox typed CLI from §6.1):**
+- `text-prose`/`code`/`structured` → original bytes as text (structured pretty-printed) — original == text here anyway.
+- `image` → **the image itself as a model content block** (default). `--text` → caption/OCR. Auto-falls-back to caption if the session model isn't multimodal.
+- `document` (pdf) → **the original document to the model** (default), size-guarded; `--text` → extracted text (cheap for long docs); `--pages 3-5` → a subset.
+- `audio`/`video` → transcript (pragmatic exception — current harnesses can't ingest raw media; revisit when they can).
+- **Guardrails (so "original by default" stays safe):** large files return head + size + a `--pages`/`--range` hint rather than dumping a 200-page PDF or 50MB blob into context; the CLI returns *typed results* ("this is an image, N bytes, original returned; --text for caption"), not a blind firehose — the code-mode payoff (§6.1).
+- **Discovery first:** `atrium ls` shows `media_kind`, size, and whether derived text exists, so the agent knows what it's dealing with *before* fetching.
 
-Net agent-UX shift: from "raw bytes you can't introspect" → "typed, searchable, summarizable file objects the agent can choose how to consume."
+Net agent-UX shift: from "raw bytes you can't introspect" → "typed file objects the agent reads as ground truth by default, with a cheap text projection one flag away."
 
 ---
 
@@ -125,11 +126,36 @@ Fast-follow on borrow-plan Phase A (search) + Phase C (memory). Each sub-phase s
 ## 9. Open questions
 
 1. **Eager/lazy boundary.** Confirm the cost line: cheap deterministic eager, LLM/OCR/vision lazy+opt-in? (My lean: yes.)
-2. **Multimodal default for `atrium cat image`.** Bytes-to-model by default (when multimodal) vs. caption-by-default? Depends on detecting harness/model multimodal support per session.
+2. ~~**Multimodal default for `atrium cat`.**~~ **RESOLVED 2026-06-22: default to the original contents** (principle 2b, §5). Derived text = index + opt-in/fallback only.
 3. **Notebooks (.ipynb).** Worth a real cell-level diff/render in v1 (notebooks are common in agent workflows), or treat as `structured`/json until F3?
 4. **Vision/OCR provider + budget.** Reuse the LLM-spend path; per-workspace opt-in flag? Which provider for OCR (tesseract local vs. hosted)?
-5. **Uploads ↔ artifacts unification.** Confirm we route `files` (uploads) through the same `media_kind`/extraction/preview layer — i.e. do uploads become CAS-keyed so `derived_text` dedups across both? (Strongly recommended; a human-dropped PDF must be agent-readable.)
+5. **Uploads ↔ artifacts unification — keying.** *(Refined 2026-06-22 after a code-verified trace of both paths.)* **Verified facts:** same bucket; disjoint key prefixes; separate tables with no FK/link; no crossover flow; uploads are id-keyed with opportunistic *per-uploader* dedup via an **already-present `content_hash` column** (`020_upload_content_hash.sql`), artifacts are sha-keyed/globally-dedup'd. The **experience unification is the valuable, non-negotiable part** (both `files` and `artifacts` flow through one `MediaObject` seam → same `media_kind`/extract/preview/`atrium cat`), and it's **separable from byte keying**. **The metadata schemas should stay separate** — they model different identity/lifecycle/auth (message-scoped immutable attachment vs. versioned conflict-aware path); merging them buys nothing and imports complexity. The byte-keying spectrum:
+   - **(B) Key `derived_text` by content hash** *(recommended — and mostly already in place)* — uploads already carry `content_hash`; key the `derived_text` table by sha so extraction/index dedups across both stores with **no byte migration**. *Caveat:* today's `content_hash` is client-supplied/trusted → server-verify it before relying on it for dedup (else a spoofed hash → wrong cached text). Cheap; this is the path.
+   - **(A) Full shared CAS blob store** *(optional, later)* — point `files.s3_key` at a `cas_blobs` row so upload *bytes* dedup cross-user and blob-GC has one reachability graph. Real but bounded; main friction = uploads use a presigned *client* PUT, so the server never sees the bytes to hash (needs verified client sha or server-side hash-on-PUT, forfeiting the direct-to-S3 fast path). Do only if upload dup/volume ever justifies it — low-value today (uploads are low-volume human drag-drops).
+   - **(C) Polymorphic source ref** — `derived_text(source_type, source_id)`, no hashing. Simplest, but no dedup; re-extract per object. Fallback if hash trust is a problem.
+   *Lean:* **(B)** — it's the cheapest path *and* the `content_hash` column already exists; (A) is a future storage optimization, not a prerequisite.
 
 ---
 
-*Grounded in: `surface/server/{migrations/006,024,031,033,036, src/artifact-ledger.ts, artifact-writeback.ts, session-runs.ts (mergeClassForMime ~2606), session-search.ts, stt/*, app.ts (serve ~2374/2698/3231)}` and `surface/web/src/sessions/{ArtifactsSurface,fileChangeView,ConflictSurface,FilesSurface}.tsx` + `components/MessageRow.tsx`, mapped 2026-06-22.*
+## 10. PREREQUISITE (verified 2026-06-22): the artifact ledger is **not** a shared workspace yet
+
+The product intent (Gary) is a **single shared workspace** where humans can drop files and agents read **and edit** them like any artifact. A code-verified trace shows that premise does **not** hold today — and the gap is deeper than "uploads vs. artifacts." The ledger is a set of **per-session silos**:
+
+- **Identity = `(session_id, path)`, `session_id NOT NULL`**, cascade-deleted with the session (`033_artifact_ledger.sql:26-35`). Every read/write/serve/hydration path filters by a single `session_id`.
+- **No cross-session/channel/workspace visibility.** No route lists artifacts by channel or workspace; two sessions in the same channel can't see each other's files. `channel_id` is stored only for access-gating + an unbuilt "future channel-shared promotion" (migration comment).
+- **Agent edit of another session's file forks it** — `resolveOrCreateArtifactLocked` keys on the current session, so the write mints a new `(session_id, path)` row, not a new version (`artifact-ledger.ts:207-224`).
+- **`PUT /api/channels/:channelId/artifacts` is session-bound** despite the name — it requires a `session` param (`app.ts:2081-2091`).
+- **No human "add file to workspace" flow.** `FilesSurface` only *edits* agent-created paths (`FilesSurface.tsx:328-330`); human uploads go to the `files` attachment table, invisible to agents.
+- **Live mount:** the Atrium-side source (change-feed `034`, sync-state, `hydration-scope`) exists and is tested; the consumer node daemon is the out-of-repo Centaur crate.
+
+**The keystone change = workspace-scoped artifact identity** — `(workspace/channel, path)` instead of `(session_id, path)`. This is the `(workspace, fullpath)` identity already decided in [[agent-data-architecture]] (and the inbound-sync C1 line). Once it lands, the rest reuses existing machinery:
+1. **Shared hydration** — union session-own + workspace/channel-shared sets (today `WHERE session_id = $1` only: `artifact-ledger.ts:505-516`).
+2. **Shared write** — agent/human edits resolve to the *same* artifact → new version. The diff3 conflict engine (`mergeStaleWrite`, `ConflictSurface`) already handles concurrent human/agent edits; it needs the shared identity to fire against, and it's gated to text today (binaries default `immutable-data` → hard-conflict — ties to §3 `media_kind`).
+3. **Human on-ramp** — upload/add-file → ledger at a workspace path, `author: human:<uid>` (write-back plumbing exists; drop the session requirement).
+4. **Live mount** — wire the (out-of-repo) node daemon to stage shared changes into the container.
+
+**Sequencing implication:** this prerequisite is *upstream* of most of this file-types doc — there's limited value making files agent-readable/editable while each is a per-session silo. The `(workspace, fullpath)` identity work (already on the arch roadmap) should land first or alongside F0/F1. The earlier keying debate (§9.5) is subsumed: **attachments** stay in `files` (immutable chat context); **shared workspace files** are artifacts, and the real prerequisite is workspace-scoping the ledger, not byte-keying.
+
+---
+
+*Grounded in: `surface/server/{migrations/006,024,031,033,034,036, src/artifact-ledger.ts, artifact-writeback.ts, session-runs.ts (mergeClassForMime ~2606, capture ~1810), session-search.ts, stt/*, app.ts (serve ~2374/2698/3231, channel write-back ~2065, hydration ~2880)}` and `surface/web/src/sessions/{ArtifactsSurface,fileChangeView,ConflictSurface,FilesSurface}.tsx` + `components/MessageRow.tsx`, mapped 2026-06-22.*
