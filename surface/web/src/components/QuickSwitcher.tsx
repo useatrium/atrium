@@ -249,7 +249,7 @@ export function QuickSwitcher({
                 {searchingSessions && <span className="text-3xs text-fg-faint">searching…</span>}
               </div>
               {!searchingSessions && sessionHits.length === 0 && (
-                <div className="px-3 py-2 text-xs text-fg-muted">No sessions match "{query}"</div>
+                <div className="px-3 py-2 text-xs text-fg-muted">No matching sessions</div>
               )}
               <ul role="presentation">
                 {sessionHits.map((hit, j) => {
