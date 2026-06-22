@@ -24,6 +24,7 @@
 | 6 | **Frontmatter-derived typed layer** on notes/artifacts (agent writes YAML frontmatter → system projects to queryable typed columns; *not* a def-id property API) | Data model | ★★ | ★★ | S–M | **Adapt** |
 | 7 | **Explicit share dialog + public links** (exception layer over channel-derived access) | Perms | ★ | ★★ | S–M | **Adopt (later)** |
 | 8 | Snippets (`;`, agent-instruction-aware) | UX | ★ | ★★ | S | **Adopt (cheap polish)** |
+| 9 | **Automations / scheduled agents → inbox** (surface Atrium's existing cron/loop into the inbox; daily brief / weekly recap) | UX | ★★ | ★★ | S–M | **Adopt (follow-up)** |
 | — | Universal "everything is a block" table | Data model | — | — | XL | **Reject** |
 | — | Universal EAV properties replacing hard columns | Data model | — | — | L | **Reject** |
 | — | Loro/CRDT co-edit on the agent write-path | Collab | ✗ regression | ★ | L | **Reject** (maybe opt-in human-prose fast-path only) |
@@ -187,7 +188,13 @@ Macro is, at its root, an email client + a Signal/Noise unified inbox; email is 
 
   *Net:* steal the **triage pattern** and keep the inbox **source-extensible**; treat email as a *tool/connector*, never as a built-in client. Decision logged in §5.4–5.5.
 
+### 6.4 Automations / scheduled agents (item 9 — follow-up, Gary +1'd 2026-06-22)
+
+Macro leans on Automations (scheduled agent runs → inbox: daily Signal brief, Friday recap). Atrium **already has** cron/loop/scheduled-agent primitives, so this is less "borrow new capability" and more "surface what exists into the inbox." Cheap, and it makes the inbox (item 5) feel alive rather than purely reactive. **Sequencing:** explicit follow-up *after* item 5 (the inbox is the delivery surface; build the destination first). Not a v1 blocker — parked by intent.
+
 ### 6.3 Other file types — agent-UX lens
+
+> **Now explored in depth in [`artifact-file-types-design.md`](./artifact-file-types-design.md)** (media-kind taxonomy, the derived-text pipeline reusing the STT worker, the multimodal `atrium cat` fork, per-type preview/diff, and an F0–F4 sequencing). Summary below.
 
 Macro models md/PDF/image/video/code/canvas as first-class block types. Atrium's artifacts are content-addressed blobs (*any* bytes) over the CAS ledger, with merge-class already gated (binaries=immutable/never-diff3; JSON/YAML/CSV/ipynb=whole-file conflict-state; code/md-prose=diff3-OK — [[agent-data-architecture]]). So Atrium can already *store* every type; the question is what agents can *do* with non-text ones.
 
