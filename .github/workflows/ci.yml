@@ -83,7 +83,7 @@ jobs:
 
   migration-order:
     name: Migration order
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: ${{ github.repository_owner == 'paradigmxyz' && 'depot-ubuntu-24.04-16' || 'ubuntu-latest' }}
     needs: ci_changes
     if: needs.ci_changes.outputs.migration_order == 'true'
     steps:
@@ -107,7 +107,7 @@ jobs:
 
   rust-api:
     name: Rust API fmt, clippy, and tests
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: ${{ github.repository_owner == 'paradigmxyz' && 'depot-ubuntu-24.04-16' || 'ubuntu-latest' }}
     needs: ci_changes
     if: needs.ci_changes.outputs.rust_api == 'true'
     services:
@@ -236,7 +236,7 @@ jobs:
 
   slackbotv2-tests:
     name: Slackbot v2 tests
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: ${{ github.repository_owner == 'paradigmxyz' && 'depot-ubuntu-24.04-16' || 'ubuntu-latest' }}
     needs: ci_changes
     if: needs.ci_changes.outputs.slackbotv2_tests == 'true'
     steps:
@@ -264,7 +264,7 @@ jobs:
 
   discordbot-checks:
     name: Discordbot typecheck and tests
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: ${{ github.repository_owner == 'paradigmxyz' && 'depot-ubuntu-24.04-16' || 'ubuntu-latest' }}
     needs: ci_changes
     if: needs.ci_changes.outputs.discordbot_checks == 'true'
     steps:
