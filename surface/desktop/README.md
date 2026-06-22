@@ -41,24 +41,51 @@ This builds the web bundle, signs + notarizes the `.app`, builds the `.dmg` and
 
 ## Auto-update
 
-The app uses `electron-updater` against this repo's **GitHub Releases**
-(configured under `publish:` in `electron-builder.yml`). A packaged app checks
-~10s after launch and every 6h, downloads new versions in the background,
-installs on quit, and shows a notification (click to restart-and-install now).
-It is a no-op in development.
+The app uses `electron-updater` against **GitHub Releases** (configured under
+`publish:` in `electron-builder.yml`). A packaged app checks ~10s after launch
+and every 6h, downloads new versions in the background, installs on quit, and
+shows a notification (click to restart-and-install now). No-op in development.
+macOS updates require a signed build — Squirrel.Mac verifies the signature.
 
-To ship an update:
+### Pick a feed (the source repo is private)
 
-1. Bump `version` in `package.json`.
-2. Publish a release (uploads the `.zip`, `.dmg`, and `latest-mac.yml` to a
-   GitHub release):
+`electron-updater` can't read a **private** repo's releases without a token, and
+a token must never be baked into a distributed app. So:
 
-   ```bash
-   GH_TOKEN=<github-token-with-repo-scope> \
-   APPLE_API_KEY=… APPLE_API_KEY_ID=… APPLE_API_ISSUER=… \
-     pnpm --filter @atrium/desktop exec electron-builder --mac --publish always
-   ```
+- **Distribution → a dedicated *public* releases repo.** Create e.g.
+  `gbasin/atrium-releases` (public), and set `publish.repo: atrium-releases` in
+  `electron-builder.yml`. Source stays private; the app reads public releases
+  with no embedded token.
+- **Personal self-test → the private repo.** Keep `publish.repo: atrium` and run
+  the installed app with `GH_TOKEN` in its environment so it can authenticate
+  (see below). Proves the mechanism; not a distribution path.
 
-Installed apps read `latest-mac.yml` from the release, download the new `.zip`,
-and update on next quit. macOS updates require the build to be signed (the
-notarized identity above) — Squirrel.Mac verifies the signature.
+### Publish a release
+
+```bash
+# token comes from the gh CLI login (repo scope) — no secret to paste
+GH_TOKEN=$(gh auth token) \
+APPLE_API_KEY=~/path/AuthKey_XXXX.p8 APPLE_API_KEY_ID=XXXX APPLE_API_ISSUER=<uuid> \
+  pnpm --filter @atrium/desktop exec electron-builder --mac --publish always
+```
+
+This signs + notarizes and uploads `.dmg`, `.zip`, `.blockmap`, and
+`latest-mac.yml` to a **draft** release tagged `v<version>`. electron-updater
+ignores drafts and prereleases, so **publish the release** (un-draft it) before
+expecting clients to see it:
+
+```bash
+gh release edit v0.1.0 -R gbasin/<releases-repo> --draft=false
+```
+
+### Verify end-to-end (needs two versions)
+
+One release can't test updating — the updater only fires when an *installed*
+build sees a *newer* release:
+
+1. Publish **v0.1.0**, un-draft it, install that `.dmg`, and launch the app.
+   (Private-repo self-test: launch with the token so it can read releases —
+   `GH_TOKEN=$(gh auth token) /Applications/Atrium.app/Contents/MacOS/Atrium`.)
+2. Bump `version` to **0.1.1** in `package.json`, publish again, un-draft.
+3. Within ~10s the running app finds v0.1.1, downloads it, and shows the
+   "update ready" notification; it installs on the next quit.

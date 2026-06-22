@@ -45,9 +45,10 @@ mac:
 # command. Without creds, the build is unsigned.
 afterAllArtifactBuild: build/notarize-dmg.cjs
 
-# Update feed for electron-updater. The baked app-update.yml points the installed
-# app at this repo's GitHub Releases; publish a release with
-# `electron-builder --mac --publish always` (needs GH_TOKEN).
+# Update feed for electron-updater (see surface/desktop/README.md → Auto-update).
+# The source repo is PRIVATE: for real distribution, point `repo` at a dedicated
+# PUBLIC releases repo (e.g. atrium-releases) so the app needs no embedded token.
+# `repo: atrium` here works for a personal self-test (run the app with GH_TOKEN set).
 publish:
   provider: github
   owner: gbasin
