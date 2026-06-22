@@ -75,7 +75,9 @@ export async function searchSessionRecords(
        AND ($3::text[] IS NULL OR sr.kind = ANY($3::text[]))
        AND ($4::boolean OR sr.view_tier = 'lean')
        AND ((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$2')})
-            OR s.spawned_by = $2)
+            OR s.spawned_by = $2
+            OR EXISTS (SELECT 1 FROM channel_members cm
+                       WHERE cm.channel_id = c.id AND cm.user_id = $2))
      ORDER BY sr.ts DESC, sr.seq DESC
      LIMIT $5`,
     [args.query, args.userId, kinds, includeFull, limit],
