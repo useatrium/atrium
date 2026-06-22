@@ -37,9 +37,9 @@ entire event pipeline reproducibly; one real-model confirmation run pending an A
 - [x] Transcript replay is deterministic (two full fetches identical) ✅
 - [x] Tool calls appear as distinct structured events (name, args, result) ✅ (obs.assistant_tool_use / obs.tool_result)
 - [x] Time from execute → first streamed event < 10s ✅ (TTFE 0.02s)
-- [x] Observed event schema documented (`phase0/results/event-schema.md`) ✅
+- [x] Observed event schema documented (`notes/build-history/phase0/results/event-schema.md`) ✅
 
-**GATE RESULT: GO** — 18/18 checks across A/B/C/D. See phase0/results/report.md and
+**GATE RESULT: GO** — 18/18 checks across A/B/C/D. See notes/build-history/phase0/results/report.md and
 JOURNAL.md 2026-06-10 for the proxy/TLS route that made the mock-LLM path work.
 
 **Kill criteria:** events too coarse for live pane rendering OR infra TTFT > 10s →
@@ -72,7 +72,7 @@ reload mid-session recovers transcript; completion card lands with working perma
 without jank; a non-spawner can explain what the agent did from the pane alone.
 
 **RESULT (2026-06-10): done-when ✅** — live e2e vs kind cluster 9/9
-(phase2/e2e/multispectator.mjs): spectators track spawner with worst token gap 1,
+(notes/build-history/phase2/e2e/multispectator.mjs): spectators track spawner with worst token gap 1,
 "2 watching" presence, mid-run reload catches up past pre-reload position, late
 joiner renders full transcript via permalink, steer-after-completion streams,
 live Bash tool card + TOOLCHAIN_OK. Perf: 500+ items at ~p95 9ms/frame (web
@@ -100,8 +100,8 @@ built (deferred).
 ## Phase 4 — Instrument + dogfood (2–4 wk usage; human part hands to Gary)
 
 **BUILDABLE HALF DONE (2026-06-10):** session_views durable spectate tracking +
-viewerCount shipped; metrics SQL from phase4/DOGFOOD.md tested against seeded
-data. Remaining: the human part — see phase4/DOGFOOD.md runbook + scorecard.
+viewerCount shipped; metrics SQL from notes/build-history/phase4/DOGFOOD.md tested against seeded
+data. Remaining: the human part — see notes/build-history/phase4/DOGFOOD.md runbook + scorecard.
 
 Metrics: sessions/day, % sessions viewed by non-spawner, spectate duration, organic
 take-overs, card→transcript clickthrough.

@@ -209,7 +209,7 @@ version-control system handles conflicts.)
 | `surface/` | the product: `server/` (Node + TypeScript, Fastify, Postgres), `web/` (Vite + React + Tailwind), `mobile/` (Expo), `shared/`, plus tests and deploy config. |
 | `infra/` | local cluster, a stand-in model server for testing, and deployment setup. |
 | `notes/` | design docs, build plans, and decisions. |
-| `phase0/`–`phase5/` | the test suites and scorecards from each build phase. |
+| `notes/build-history/` | archived test suites and scorecards (phase0–phase5) from each build phase. |
 | `PLAN.md` · `JOURNAL.md` | the build plan and a running log of the work. |
 
 ## Links

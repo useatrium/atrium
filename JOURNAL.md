@@ -40,7 +40,7 @@ kubectl v1.34, kind + helm + just installed via brew. No pre-existing k8s cluste
   (slackbot image optional since disabled), build+load `atrium-llm-mock:latest`
   from infra/llm-mock, `kubectl apply -f infra/llm-mock/k8s.yaml`, then deploy:
   `helm dependency update contrib/chart && helm upgrade --install centaur contrib/chart -n centaur --create-namespace -f contrib/chart/values.dev.yaml -f ~/Code/atrium/infra/values.local.yaml`
-- Probe suite: `python3 phase0/probe.py` (port-forwards API itself; see --help)
+- Probe suite: `python3 notes/build-history/phase0/probe.py` (port-forwards API itself; see --help)
 
 **Account-impact notes for Gary:** none so far. Considered and rejected using
 ~/.codex/auth.json refresh token for Codex access_token mode (broker would
@@ -85,7 +85,7 @@ subscription auth without 1Password.
 
 All 18 checks green (A/B/C 14/14 + D 4/4). Test D: API pod killed mid-SLOWSTREAM,
 execution still reached completed with full durable replay (last pre-kill id
-present). Event schema documented in phase0/results/event-schema.md — key
+present). Event schema documented in notes/build-history/phase0/results/event-schema.md — key
 finding: text streaming is PER-DELTA (1.005 events/model delta), so Phase-2
 panes can render true token streaming off the durable stream. Codex agent did
 the dump analysis (its sandbox could not write into the repo; doc written by
@@ -100,7 +100,7 @@ Day-of-use gate moves to Phase 4. Process note: use SCOPED git adds while
 parallel agents share this repo (a git add -A swept agent WIP into Phase-0
 commits; content verified identical at HEAD, no rewrite).
 
-Next: Phase 2 per phase2/DESIGN.md, split: codex → surface/server sessions
+Next: Phase 2 per notes/build-history/phase2/DESIGN.md, split: codex → surface/server sessions
 module (migration, SessionService, tailer, stream proxy); Claude agent →
 surface/web session card + pane; me → integration + live-cluster e2e.
 Both blocked on packages/centaur-client (codex task-mq8jugan-biywsm, in flight).
@@ -129,10 +129,10 @@ live verification + reload-recovery + perf bar (500-item scroll).
 Web pane agent delivered sessions UI (commit a1a3473, reviewed: stream hook is
 clean — rAF batching, resume-from-last-id, terminal guard). Live e2e 9/9 incl.
 the steer-after-completion edge I suspected would break (it does not). The
-mid-run-spectator screenshot in phase2/e2e/artifacts is the product thesis
+mid-run-spectator screenshot in notes/build-history/phase2/e2e/artifacts is the product thesis
 working: Bob watching Alice's live session next to #general.
 Stack recipe for e2e: pf 18000 + server 3001 (CENTAUR_* env) + web 5173, then
-`node phase2/e2e/multispectator.mjs`.
+`node notes/build-history/phase2/e2e/multispectator.mjs`.
 
 Next: Phase 3 (driver seat) — same split: codex=server seats, claude=web,
 me=review+live e2e. Contract: POST /api/sessions/:id/seat/{request,grant,take};
@@ -158,7 +158,7 @@ handle), server :3001, port-forward :18000. Restart recipe in this journal
 
 ## 2026-06-11 — Phase 5 sync engine SHIPPED (A–F, codex fleet, 6 merges)
 
-Charter: phase5/DESIGN.md (decisions block has Gary's four calls: full web
+Charter: notes/build-history/phase5/DESIGN.md (decisions block has Gary's four calls: full web
 parity, reactions clean break, fleet-per-phase, chaos harness as merge gate).
 All six phases merged to master in one day: A baee1d2, B d060665, C 8b85a68,
 D 9a40d44, F 0a00427, E fc04abd. Final state: 262 unit/integration tests +

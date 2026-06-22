@@ -29,7 +29,7 @@ export interface SessionStreamCallbacks {
   onError?: () => void;
 }
 
-/** Every event name the Centaur durable stream emits (phase0 event-schema.md). */
+/** Every event name the Centaur durable stream emits (notes/build-history/phase0/results/event-schema.md). */
 export const FRAME_EVENT_NAMES = [
   'execution_state',
   'execution_started',
