@@ -187,6 +187,7 @@ class FakeCentaur {
           assignment_generation: this.threadGenerations.get(threadKey) ?? 1,
           harness: metadata.harness,
           delivery: { platform: 'dev' },
+          ...(isRecord(body.environment) ? { environment: body.environment } : {}),
           ...(executeId ? { execute_id: executeId } : {}),
         };
         this.recordLegacy('POST', '/agent/execute', legacyBody, url.searchParams);
@@ -407,7 +408,46 @@ async function loginUser(
 }
 
 async function loginCookie(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {
-  return (await loginUser(app, 'alice', 'Alice')).cookie;
+  const { cookie } = await loginUser(app, 'alice', 'Alice');
+  await connectCodex(app, cookie);
+  return cookie;
+}
+
+async function connectClaude(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  cookie: string,
+  token = 'test-claude-oauth-token',
+): Promise<void> {
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/api/me/provider-credentials/claude-code',
+    headers: { cookie },
+    payload: { token },
+  });
+  expect(res.statusCode).toBe(200);
+}
+
+const TEST_CODEX_AUTH_JSON = JSON.stringify({
+  OPENAI_API_KEY: null,
+  auth_mode: 'chatgpt',
+  tokens: {
+    access_token: 'test-codex-access-token',
+    account_id: '00000000-0000-0000-0000-000000000000',
+  },
+});
+
+async function connectCodex(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  cookie: string,
+  authJson = TEST_CODEX_AUTH_JSON,
+): Promise<void> {
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/api/me/provider-credentials/codex',
+    headers: { cookie },
+    payload: { authJson },
+  });
+  expect(res.statusCode).toBe(200);
 }
 
 async function insertRunningSession(driverId = fx.userId): Promise<string> {
@@ -471,9 +511,20 @@ function questionRequestedFrame(eventId = 1) {
           id: 'choice',
           header: 'Decision',
           question: 'Which deployment path should I take?',
+          multiSelect: true,
           options: [
-            { label: 'Fast', description: 'Ship the smallest change' },
-            { label: 'Careful', description: 'Run the full suite first' },
+            {
+              label: 'Fast',
+              description: 'Ship the smallest change',
+              preview: 'FAST PATH',
+              previewFormat: 'markdown',
+            },
+            {
+              label: 'Careful',
+              description: 'Run the full suite first',
+              preview: '<div>Careful path</div>',
+              previewFormat: 'html',
+            },
           ],
         },
       ],
@@ -637,6 +688,7 @@ describe('Phase 2 sessions', () => {
     });
     await app.ready();
     const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
 
     const res = await app.inject({
       method: 'POST',
@@ -662,6 +714,159 @@ describe('Phase 2 sessions', () => {
       expect(fake.requests.some((r) => r.path === '/agent/message')).toBe(true);
       expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
     });
+    const execute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(execute?.body.environment).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-from-test' });
+    await app.close();
+  });
+
+  it('POST /api/sessions allows Claude Code without a subscription token', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    const execute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(execute?.body.environment).toBeUndefined();
+    await app.close();
+  });
+
+  it('POST /api/sessions allows Codex without auth JSON and injects it when connected', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie } = await loginUser(app, 'alice-codex', 'Alice Codex');
+
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'codex' },
+    });
+
+    expect(missing.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    const firstExecute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(firstExecute?.body.environment).toBeUndefined();
+
+    await connectCodex(app, cookie);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'codex' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.filter((r) => r.path === '/agent/execute')).toHaveLength(2);
+    });
+    const executes = fake.requests.filter((r) => r.path === '/agent/execute');
+    const execute = executes[executes.length - 1];
+    expect(execute?.body.environment).toEqual({ CODEX_AUTH_JSON: TEST_CODEX_AUTH_JSON });
+    await app.close();
+  });
+
+  it('rejects Codex auth JSON that contains an API key', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie } = await loginUser(app, 'alice-codex-bad', 'Alice Codex Bad');
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/me/provider-credentials/codex',
+      headers: { cookie },
+      payload: {
+        authJson: JSON.stringify({
+          OPENAI_API_KEY: 'sk-test',
+          auth_mode: 'chatgpt',
+          tokens: { access_token: 'test-codex-access-token' },
+        }),
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('OPENAI_API_KEY');
+    await app.close();
+  });
+
+  it('classifies Claude 401 output as provider auth required', async () => {
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 7,
+        data: {
+          type: 'execution.state',
+          status: 'failed',
+          result_text: 'Claude API Error: 401 Invalid bearer token',
+        },
+      },
+    ]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'token-that-will-expire');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'auth will fail', harness: 'claude-code' },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().session.id;
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        `SELECT status, provider_auth_required
+         FROM sessions
+         WHERE id = $1`,
+        [id],
+      );
+      expect(row.rows[0].status).toBe('queued');
+      expect(row.rows[0].provider_auth_required).toMatchObject({
+        provider: 'claude-code',
+        reason: 'invalid_token',
+      });
+      const provider = await pool.query(
+        `SELECT status, last_error
+         FROM user_provider_credentials
+         WHERE user_id = $1 AND provider = 'claude-code'`,
+        [row.rows[0].provider_auth_required.userId],
+      );
+      expect(provider.rows[0]).toMatchObject({
+        status: 'needs_auth',
+        last_error: 'Claude Code authentication failed. Reconnect Claude to continue.',
+      });
+      const completed = await pool.query(`SELECT 1 FROM events WHERE type = 'session.completed'`);
+      expect(completed.rowCount).toBe(0);
+      const authEvent = await pool.query(
+        `SELECT payload FROM events WHERE type = 'session.provider_auth_required'`,
+      );
+      expect(authEvent.rows[0].payload).toMatchObject({ sessionId: id, provider: 'claude-code' });
+    });
+    expect(fake.requests.some((r) => r.path.endsWith('/cancel'))).toBe(true);
     await app.close();
   });
 
@@ -921,6 +1126,112 @@ describe('Phase 2 sessions', () => {
         resultExcerpt: 'mirror complete',
       });
     });
+    await app.close();
+  });
+
+  it('GET /api/sessions/:id/stream replays mirrored history before tailing current execution', async () => {
+    const id = await insertSessionRow({ title: 'stream replay', status: 'running', currentExecutionId: 'exe_live' });
+    await pool.query(
+      `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
+       VALUES ($1, 10, 'amp_raw_event', $2), ($1, 20, 'execution_state', $3)`,
+      [
+        id,
+        {
+          event: 'amp_raw_event',
+          event_id: 10,
+          data: {
+            method: 'item/completed',
+            params: { item: { id: 'u-old', type: 'userMessage', text: 'old turn' } },
+          },
+        },
+        {
+          event: 'execution_state',
+          event_id: 20,
+          data: { type: 'execution.state', status: 'completed', result_text: 'old result' },
+        },
+      ],
+    );
+    fake.setFrames([
+      {
+        event: 'amp_raw_event',
+        event_id: 21,
+        data: {
+          method: 'item/completed',
+          params: { item: { id: 'u-live', type: 'userMessage', text: 'live turn' } },
+        },
+      },
+      {
+        event: 'execution_state',
+        event_id: 22,
+        data: { type: 'execution.state', status: 'completed', result_text: 'live result' },
+      },
+    ]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=0`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(fake.streamAfterIds.at(-1)).toBe(20);
+    expect(res.body.indexOf('old turn')).toBeLessThan(res.body.indexOf('old result'));
+    expect(res.body.indexOf('old result')).toBeLessThan(res.body.indexOf('live turn'));
+
+    await app.close();
+  });
+
+  it('GET /api/sessions/:id/stream closes after replay for a terminal session instead of tailing forever', async () => {
+    const id = await insertSessionRow({ title: 'terminal replay', status: 'completed', currentExecutionId: 'exe_done' });
+    await pool.query(
+      `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
+       VALUES ($1, 10, 'amp_raw_event', $2), ($1, 20, 'execution_state', $3)`,
+      [
+        id,
+        {
+          event: 'amp_raw_event',
+          event_id: 10,
+          data: {
+            method: 'item/completed',
+            params: { item: { id: 'u-old', type: 'userMessage', text: 'old turn' } },
+          },
+        },
+        {
+          event: 'execution_state',
+          event_id: 20,
+          data: { type: 'execution.state', status: 'completed', result_text: 'old result' },
+        },
+      ],
+    );
+    // No live frames: the fake's /events endpoint returns nothing for any
+    // after_event_id. If streamCentaurEvents tailed live here, tailEvents would
+    // reconnect-poll forever and this request would never resolve.
+    fake.setFrames([]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}/stream?after_event_id=0`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    // Mirror was replayed to the client...
+    expect(res.body).toContain('old turn');
+    expect(res.body).toContain('old result');
+    // ...but the live Centaur events endpoint was never tailed (it would hang on
+    // a terminal session whose terminal frame is already behind the cursor).
+    expect(fake.streamAfterIds).toHaveLength(0);
+
     await app.close();
   });
 
@@ -3099,17 +3410,19 @@ describe('Phase 2 sessions', () => {
       '/agent/executions/exe_fake/artifacts/blob-1',
     ]);
     expect(fake.artifactApiKeys).toEqual(['artifact-key']);
-    // Uploaded the bytes to the deterministic key with the reported mime.
-    const uploaded = s3.objects.get(`artifacts/${id}/art-1`);
+    // Uploaded the bytes to the content-addressed CAS key (cas/<first2>/<sha>)
+    // with the reported mime — the offload re-key for global dedup.
+    const casKey = `cas/ar/art-1-sha`; // casBlobKey('art-1-sha')
+    const uploaded = s3.objects.get(casKey);
     expect(uploaded).toBeDefined();
     expect(Buffer.from(uploaded!.body)).toEqual(Buffer.from(png));
     expect(uploaded!.contentType).toBe('image/png');
-    // The row is stamped offloaded with the s3_key.
+    // The row is stamped offloaded with the CAS s3_key.
     const row = await pool.query<{ s3_key: string | null; offloaded_at: Date | null }>(
       'SELECT s3_key, offloaded_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
       [id, 'art-1'],
     );
-    expect(row.rows[0]!.s3_key).toBe(`artifacts/${id}/art-1`);
+    expect(row.rows[0]!.s3_key).toBe(casKey);
     expect(row.rows[0]!.offloaded_at).not.toBeNull();
     await app.close();
   });
@@ -3236,7 +3549,7 @@ describe('Phase 2 sessions', () => {
       'SELECT s3_key, claimed_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
       [id, 'art-leased'],
     );
-    expect(row.rows[0]!.s3_key).toBe(`artifacts/${id}/art-leased`);
+    expect(row.rows[0]!.s3_key).toBe(`cas/ar/art-leased-sha`); // casBlobKey('art-leased-sha')
     expect(row.rows[0]!.claimed_at).toBeNull(); // lease cleared on success
     await app.close();
   });

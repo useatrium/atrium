@@ -9,6 +9,7 @@ import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
 import { deleteObject } from './s3.js';
 import { startArtifactOffloadWorker, type ArtifactOffloadWorker } from './artifact-offload.js';
+import { startArtifactGcWorker, type ArtifactGcWorker } from './artifact-ledger-gc.js';
 import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
 
@@ -53,9 +54,16 @@ async function main() {
     artifactOffload = startArtifactOffloadWorker({ sessionRuns: app.sessionRuns });
   }
 
+  // === gc additions ===
+  let artifactGc: ArtifactGcWorker | null = null;
+  if (config.artifactGcEnabled) {
+    artifactGc = startArtifactGcWorker({ pool, storage: { deleteObject } });
+  }
+
   const shutdown = async () => {
     sttWorker.stop();
     artifactOffload?.stop();
+    artifactGc?.stop();
     clearInterval(heartbeat);
     clearInterval(idempotencyPrune);
     clearInterval(filePrune);

@@ -63,7 +63,7 @@ describe('auth foundation', () => {
     await startApp(false);
     const res = await app.inject({ method: 'GET', url: '/auth/methods' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ open: false, email: true, google: false });
+    expect(res.json()).toEqual({ open: false, email: true, google: false, calls: false });
   });
 
   it('requests and verifies an email code', async () => {

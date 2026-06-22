@@ -66,6 +66,43 @@ async function renderPaneWithB() {
 }
 
 describe('session pane folds the B_tooltest stream', () => {
+  it('renders a Claude auth-required banner for the credential owner', () => {
+    const onConnect = vi.fn();
+    render(
+      <SessionPane
+        session={bSession({
+          providerAuthRequired: {
+            provider: 'claude-code',
+            userId: me.id,
+            reason: 'invalid_token',
+            message: 'Claude Code authentication failed.',
+            at: new Date().toISOString(),
+          },
+        })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        providerCredentials={{
+          'claude-code': {
+            provider: 'claude-code',
+            connected: false,
+            status: 'needs_auth',
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        }}
+        onConnectProvider={onConnect}
+      />,
+    );
+
+    expect(screen.getByTestId('provider-auth-banner')).toBeTruthy();
+    expect(screen.getByText('needs auth')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Claude' }));
+    expect(onConnect).toHaveBeenCalledWith('claude-code');
+  });
+
   it('renders one Bash tool card with the roundtrip result, completed status', async () => {
     await renderPaneWithB();
 
@@ -187,8 +224,8 @@ describe('driver seat', () => {
     let s = spawnedState();
     const { rerender } = render(paneFor(s));
 
-    // I spawned it → I hold the seat: enabled composer, "you have the seat".
-    const boxBefore = screen.getByPlaceholderText(/you have the seat/i);
+    // I spawned it → I hold the seat: enabled composer, steer placeholder.
+    const boxBefore = screen.getByPlaceholderText(/steer the agent/i);
     expect((boxBefore as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.getByTestId('driver-chip').textContent).toBe('driver: Me');
 
@@ -438,6 +475,62 @@ describe('answer proposals', () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({
       questionId: 'q1',
       answers: { choice: { answers: ['Fast'] } },
+    });
+  });
+
+  it('driver: supports Claude multi-select answers and option previews', async () => {
+    const onAnswerQuestion = vi.fn().mockResolvedValue(undefined);
+    const session = bSession({
+      driverId: me.id,
+      pendingQuestion: {
+        questionId: 'q-preview',
+        questions: [
+          {
+            id: 'sections',
+            header: 'Sections',
+            question: 'Which sections should be visible?',
+            multiSelect: true,
+            options: [
+              {
+                label: 'Summary',
+                description: 'Show the short overview.',
+                preview: '┌────────┐\n│Summary │\n└────────┘',
+                previewFormat: 'markdown',
+              },
+              {
+                label: 'Timeline',
+                description: 'Show recent activity.',
+                preview: '<div style="padding:8px;border:1px solid #ddd">Timeline</div>',
+                previewFormat: 'html',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={onAnswerQuestion}
+      />,
+    );
+
+    expect(screen.getByText('Show the short overview.')).toBeTruthy();
+    expect(screen.getByText(/┌────────┐/)).toBeTruthy();
+    const htmlPreview = screen.getByTitle('Timeline preview') as HTMLIFrameElement;
+    expect(htmlPreview.getAttribute('sandbox')).toBe('');
+    expect(htmlPreview.getAttribute('srcdoc')).toContain('Content-Security-Policy');
+
+    fireEvent.click(screen.getByText('Summary'));
+    fireEvent.click(screen.getByText('Timeline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+
+    await waitFor(() => expect(onAnswerQuestion).toHaveBeenCalledTimes(1));
+    expect(onAnswerQuestion).toHaveBeenCalledWith('s-b', 'q-preview', {
+      sections: { answers: ['Summary', 'Timeline'] },
     });
   });
 
@@ -751,9 +844,9 @@ describe('work drawer (Phase 4 consolidation)', () => {
 
     fireEvent.click(strip);
     const drawer = screen.getByTestId('work-drawer');
-    // Opened on the Side-effects tab — the classified command shows in the body.
+    // Opened on the What it ran tab — the classified command shows in the body.
     expect(within(drawer).getByText(/echo atrium-roundtrip-ok/)).toBeTruthy();
-    expect(within(drawer).getByRole('tab', { name: /Side-effects/ }).getAttribute('aria-selected')).toBe('true');
+    expect(within(drawer).getByRole('tab', { name: /What it ran/ }).getAttribute('aria-selected')).toBe('true');
 
     // Clicking the same strip again toggles the drawer closed.
     fireEvent.click(strip);
@@ -906,7 +999,7 @@ describe('artifacts surface (Phase 4)', () => {
     { event: 'execution_state', event_id: 3, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_a' } },
   ] as unknown as CentaurEventFrame[];
 
-  it('the artifacts strip opens the work drawer on the Artifacts tab gallery', async () => {
+  it('the artifacts strip opens the work drawer on the What changed tab gallery', async () => {
     render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
     const es = FakeEventSource.last();
     await act(async () => {
@@ -922,9 +1015,10 @@ describe('artifacts surface (Phase 4)', () => {
 
     fireEvent.click(strip);
     const drawer = screen.getByTestId('work-drawer');
-    expect(within(drawer).getByRole('tab', { name: /Artifacts/ }).getAttribute('aria-selected')).toBe('true');
-    // The gallery tile serves bytes via the session artifact route.
+    expect(within(drawer).getByRole('tab', { name: /What changed/ }).getAttribute('aria-selected')).toBe('true');
+    expect(within(drawer).getByText('Created artifacts')).toBeTruthy();
+    // The gallery tile serves bytes via the ledger by-path route (latest for the path).
     const img = within(drawer).getByRole('img') as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/art-1');
+    expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/by-path?path=%2Ftmp%2Fchart.png');
   });
 });

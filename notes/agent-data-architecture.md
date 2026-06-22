@@ -1,246 +1,324 @@
 # Agent Data Architecture — logs, artifacts, workspaces
 
-Status: **DRAFT / in progress** (started 2026-06-19). Conclusions are preliminary
-and still under discussion.
+Status: **DRAFT, architecture converged; store backing DECIDED (own CAS-ledger)**
+(updated 2026-06-19). Captures the research, explored ideas, discussion + Gary's
+feedback, and the working conclusions.
 
-This is the data/storage-layer deep-dive. It captures the research, the explored
-ideas, the discussion + Gary's feedback, the current implementation state, and
-working conclusions. Sister docs:
-- `agent-session-resume-and-storage-plan.md` — resume/sleep/harness strategy
-  (created 2026-06-16). Resume mechanics live there.
-- `harness-resume-workstream.md` — the harness-resume execution checklist + the
-  Codex/Claude resume POC results.
-- `artifacts-followups.md` — the artifact-capture build status (A1/A2/B1).
+Sister docs:
+- `spike-artifact-store.md` — the open lakeFS-vs-own-CAS-ledger spike (decides the
+  store backing).
+- `agent-session-resume-and-storage-plan.md` — resume/sleep/harness strategy.
+- `harness-resume-workstream.md` — harness-resume checklist + Codex/Claude POC.
+- `artifacts-followups.md` — current artifact-capture build (A1/A2/B1).
 - `data-lifecycle.md` — events/files/drafts retention.
 
-## Scope
+## Scope & framing
 
-How three different kinds of agent-session data should be stored, versioned, and
-made accessible:
-1. **Conversation/agent logs** — harness rollout transcripts + the Centaur event
-   stream.
-2. **Artifacts** — files produced/edited during a session (md, code, images,
-   data), **evolving and edited by both humans and agents**.
-3. **Code / dev workspaces** — the repo checkout the agent works in, inside
-   Centaur containers.
+How agent-session data is stored, versioned, and made accessible across **teams of
+humans + many agents working in parallel with human oversight**. Three shapes:
+(1) conversation/agent logs, (2) artifacts (files/datasets/reports/docs, **edited
+by both humans and agents**), (3) code/dev workspaces. Plus chat logs (already
+Postgres) and ergonomic corpus access for agents.
 
-Plus chat logs (already in Postgres) and the question of giving agents ergonomic
-filesystem access to the whole corpus.
+**Deprioritized:** instantly-forkable sessions (Morph/E2B/Firecracker/CRIU) —
+reference class only. Resume is **file-based** (proven by the harness-resume POC),
+so a "fork" = copy-JSONL + CoW-clone + `--resume`; memory-snapshot forking is a
+latency optimization, not a correctness requirement.
 
-**Out of scope / deprioritized:** instantly-forkable sessions. We researched the
-forkable-container class (Morph, E2B, Firecracker, CRIU) — it's a useful
-reference, not a near-term requirement (Gary, 2026-06-19). Captured below for
-record.
+## Decisions (Gary, 2026-06-18/19)
 
-## Requirements (Gary, 2026-06-19)
+- **Actively managed substrates: artifacts + collaborative docs.** Code =
+  coordinate around git (git-on-forge canonical; Atrium does NOT reinvent VCS).
+  Structured data = files-as-artifacts now (below); shared live DBs deferred/BYO.
+- **Capture = hybrid auto-detect → promote.**
+- **Agent-UX first; do NOT impose a commit/VCS workflow.** Ceremony-free write
+  path + a VCS-*shaped* queryable substrate underneath.
+- **Reconciliation = plain jj-style conflict-state** (both sides recorded, resolved
+  later). Human-byte-sticky override **parked** for now.
+- **Drop in-container jj as an engine** — use jj's *model* (content-addressing,
+  change-ids, conflict-as-state) in the durable store; don't run jj in the sandbox.
+- **CDC/chunk-dedup deferred** — not needed for v1; whole-object storage is fine;
+  may add later for large/churny media.
+- **Store backing = own CAS-ledger** (DECIDED by live spike 2026-06-19, 39–29 over
+  lakeFS; lakeFS lost on conflict-fit + ops + paywalled RBAC). Extend the existing
+  `session_artifacts` pipeline; ~900 LOC mostly-glue. See `spike-artifact-store.md`.
 
-- **Artifacts evolve and are edited by both humans and agents.** Not capture-only;
-  a human in the UI or an agent in a later turn must be able to edit an artifact,
-  and that becomes a new version. (This is the headline new requirement.)
-- **Agent logs and chat logs are appended to.** Chat logs are in Postgres already;
-  "might chat logs be modified?" — they are, but via append-only tombstone events
-  (edit/delete), original retained. Append-only is the right model.
-- **Code/dev workspaces live in Centaur containers.** Keep warm clones ready for
-  fast startup.
-- **Agents want easy filesystem affordances** to reach artifacts, chat history,
-  and even other agents' logs (cf. how Claude Code stores grep-able session
-  transcripts under `~/.claude/projects/<project>/<id>.jsonl`).
+## Revised decisions (2026-06-19, design pass after CAS-ledger v1)
 
-## The core data model
+A conversation after v1 landed settled the sharing / identity / notes / sync opens.
+Full record: `cas-ledger-build-plan.md` §10. Deltas to the design above:
 
-Three data shapes, three access patterns, three right answers — do **not** chase a
-single unifier.
+- **Identity = workspace-scoped, scope-as-path-prefix.** Artifacts are **shared
+  across the whole workspace by default** (sessions share *across channels*), so the
+  key is `(workspace, fullpath)` — session/channel are provenance, not the key.
+  Scope folds into a path prefix the filter reads: `scratch/<session>/`=private
+  (blind-append), `proj-x/`=topic/team (the realistic default altitude),
+  `shared/`/root=workspace-wide. Access follows scope; a default per-task working dir
+  keeps generic-name collisions structural, not accidental.
+- **Notes → artifact-canonical** (reverses the daily-driver chat-canonical-notes
+  model). Chat = input + view; agents edit notes as artifacts. The voice/mobile
+  braindump is preserved by an **append write-mode** → append-only log artifact
+  (never conflicts), distinct from the **edit mode** (conflict-state).
+- **Conflict model: jj-style state is what's BUILT** — conflicts are first-class
+  committable versions (`latest` advances, never blocks), *not* git-style blocking.
+  node-diff3 is just the merge algorithm. **CRDT is NOT the tracking model** (agents
+  emit file overwrites not CRDT ops; CRDT convergence ≠ correctness; it wants a live
+  connection, anti no-ingress). CRDT stays a narrow **opt-in human-editor
+  live-co-edit fast-path** committing back to the chain. (Firms up the prior
+  "CRDT only opt-in" line into a hard boundary.)
+- **diff3 gated by merge-class:** binaries → `immutable-data` (never diff3);
+  structured-serialized (JSON/YAML/CSV/`.ipynb`) → diff3-unsafe → whole-file
+  conflict-state; line-text (code, md prose) → diff3 OK.
+- **Code repos excluded from the shared-artifact pool** — code = coordinate around
+  git; a repo in two containers is git's to merge, never artifact-synced between
+  them. Filter excludes anything under a git working tree (extends the `.git/`-only
+  ignore); deliverables are written outside repo roots into the shared namespace.
+- **Mid-session inbound (C1) is IN SCOPE** (not "freshness=at-promote"): target is a
+  running agent seeing an edit within seconds; egress-poll daemon (floor) + stdin
+  poke (latency cut). Autonomous reconcile = **auto-rebase at a safe checkpoint**,
+  never hot-swap mid-write. Mechanism = **stdin directive over the attach pipe**,
+  NOT an outbound stream (see the corrected sync section below).
+- **Capture mechanism = DECIDED: overlay-upper node-scan** (2026-06-20, Gary:
+  "scalable/permanent, not an MVP"). The overlay model is **reinstated — with the
+  privilege relocated**: the *runtime* provisions a per-pod overlay (lower = base +
+  deps + repo RO; upper+work on a session-keyed persistent node volume; `merged` bind
+  into the hardened agent via `mountPropagation: Bidirectional`), and a **node
+  DaemonSet** (O(nodes)) scans each upper (O(changes)) — delete/rename fidelity, zero
+  agent footprint, direct-to-S3 large files. This supersedes both the dropped
+  *agent-mounts-overlay* (no caps) and the in-container poll/inotify (doesn't scale:
+  per-UID `max_user_watches`). Forces 4 commitments — repo-in-RO-lower, torn-read via
+  changed-during-read + `/proc`-fd gating (rsync/restic pattern), session-keyed
+  persistent upper (also upgrades resume), and the **`mountPropagation` linchpin**
+  (verify on a real Linux node before build). Multi-tenant blast radius →
+  **VM-per-tenant** (per-tenant node = per-tenant DaemonSet; hypervisor boundary, not
+  software policy). Full design: `cas-ledger-build-plan.md` **Track C4** (+ §10.7b).
 
-| Shape | Access pattern | Mutation | Right backing | Cheap-fork primitive |
-| --- | --- | --- | --- | --- |
-| Conversation/agent log | append, sequential replay | none (append-only) | Postgres `session_events` (+ cold rollout-JSONL blobs in S3) | DB branch (Neon-style) or copy the small JSONL |
-| Artifacts | random read; **edited** by humans+agents | **mutable, versioned** | S3 + content-addressed blobs + Postgres pointer/version ledger | copy the pointer set (blobs shared by hash) |
-| Workspace FS | constant POSIX read/write | mutable | CoW filesystem / warm clone in the container | CoW clone of the layer (overlayfs/ZFS) |
+## The core model
 
-### Append-only vs "I edited an .md" — the resolution
+Three shapes, three merge behaviors — don't unify into one consistency model.
 
-These are not in conflict once you separate **blobs** from **references**:
-- The **blob layer is immutable + content-addressed** (each save = a new sha256
-  blob, old retained). "Append-only" at the byte layer.
-- **Mutation lives in a pointer/ref** (`logical_path → current_blob + history`).
-  Editing the .md = hash new content → new blob → advance the pointer → old
-  version preserved.
+| Shape | Backing | Merge model |
+| --- | --- | --- |
+| Conversation/agent log | Postgres event log (+ rollout-JSONL blobs in S3) | append-only (no merge) |
+| Artifacts (incl. docs) | S3 content-addressed blobs + Merkle manifest + Postgres ledger | per-object **merge-class** |
+| Workspace FS | local overlay in the container; durable via capture | git (code) |
 
-This is exactly Git's object model: immutable content-addressed objects (blob /
-tree) + mutable refs. The right *data structure* is a content-addressed Merkle
-DAG; **S3 is just the blob backing under it**. "Better than S3?" conflates
-structure with backing — keep S3 as backing, put the CAS/version structure on top
-(cheap to build in Postgres).
+**Append-only vs "I edited an .md"** resolves as Git's model: immutable content-
+addressed blobs + mutable refs. An edit = new blob + advanced pointer; old version
+retained. "Aged-ness" = which pointer you followed (`latest`/`official`/pin). The
+right *data structure* is a content-addressed Merkle DAG; **S3 is just the backing.**
 
-## Current implementation state (audited 2026-06-19)
+**Per-object merge-class:** `immutable-data` (no merge — datasets, media),
+`mergeable-doc` (3-way, jj-style conflict-state; CRDT only for opt-in live co-edit),
+`derived-output` (regenerate-only; manual edit = anomaly).
 
-### Logs
-- **Centaur frames → Atrium `session_events`** (migration `027`): append-only
-  mirror, `PRIMARY KEY (session_id, centaur_event_id)`. This is the product
-  record / replay source. ✅
-- **Harness rollout JSONL** (Codex `$CODEX_HOME/sessions/.../rollout-*.jsonl`,
-  Claude `projects/.../<id>.jsonl`): **NOT captured anywhere — ephemeral sandbox
-  FS, lost on teardown.** ❌ This is the substrate harness-resume needs (proven by
-  the resume POCs). The frame mirror is *not* a byte-equivalent substitute.
-- **Chat logs** (`events` table): append-only; `message.edited` / `message.deleted`
-  are new tombstone events folded on read, original `message.posted` never
-  mutated. ✅ Correct model already.
+## Execution & capture (in-container)
 
-### Artifacts — a flat content-hashed capture log, not yet a Merkle/versioned store
-Pipeline (live, end-to-end verified locally; producer still unmerged):
+> **UPDATE 2026-06-20 — overlay REINSTATED at the runtime level (Track C4).** The
+> banner below dropped *agent-mounts-overlay* (correct: no caps in the sandbox). The
+> decided design relocates the privilege: the **runtime** provisions the overlay and
+> a **node DaemonSet scans the upper** — the agent never mounts and stays hardened.
+> The "free diff / upper-is-the-diff" intent below is therefore back on, just owned
+> by the node, not the agent. See `cas-ledger-build-plan.md` Track C4.
+>
+> **SUPERSEDED 2026-06-19 — the overlay was DROPPED.** The sandbox is non-root with
+> `drop:[ALL]` caps, so an overlay mount needs `CAP_SYS_ADMIN` (`EPERM`) and GKE-COS
+> blocks the userns escape. Today's workspace is a plain **`git clone --shared`**;
+> the "free diff" = `git status`/`git diff` over the session branch; capture is the
+> in-process 2.5 s watcher. The overlay description below is retained as original
+> design intent only. (See `cas-ledger-build-plan.md` §4/§5b.)
+
+**Execution FS = a real local overlay per agent** (NOT object-FUSE — FUSE dies on
+atomic rename, lock files, partial writes, fsync, many tiny files):
 ```
-sandbox file → Centaur artifact_capture.py worker (sha256 verify, size cap)
-  → api-rs POST /agent/executions/{id}/artifacts → artifact_blobs staging
-  → emits artifact.captured frame (incl. execution_id)
-  → Atrium mirrors into session_artifacts
-  → offload worker (claim-lease) fetches bytes from Centaur → uploads to S3/MinIO
-  → serve route GET /api/sessions/:id/artifacts/:artifactId
-       (302 presigned if offloaded, else proxy from Centaur)
+lowerdir = base image + deps + hydrated shared artifacts (read-only)
+upperdir = this agent's changes (private, writable)
+merged   = /workspace  ← agent edits here, full POSIX, no permission errors
 ```
-- S3 key = `artifacts/{session_id}/{artifact_id}`; `artifact_id` = **16-char
-  sha256 prefix**.
-- Atrium side (`session_artifacts` mig `031` + `032` lease, `artifact-offload.ts`,
-  serve route) is **merged on master**. Centaur producer (`artifact_blobs` mig
-  `1000`, capture routes) is **unmerged — integration worktree only.**
+A write to a shared artifact **copies-up** into the private upper (always
+succeeds → no EROFS); the shared base is never mutated; the change becomes a new
+version. The overlay gives the **diff for free** (upperdir = changed set; no
+whole-tree scan) and structurally excludes the base (deps/toolchains) from capture.
 
-What's MISSING vs the "evolving artifacts" requirement:
-- **No write-back / edit path.** Capture-only; zero PUT/POST. A human or agent
-  cannot edit an artifact and have it stored as a new version. ❌ (biggest gap)
-- **No mutable path→version pointer + version chain.** Editing a file just yields
-  another content-hashed row; no "current version of path X," no `version`
-  column. ❌
-- **No global CAS dedup.** Keys are session-scoped → identical content in two
-  sessions is stored twice. (Centaur staging dedups only within one execution.) ❌
-- **No tree/branch objects, no blob GC/ref-counting** (cascade-deletes only). ❌
+**In-container footprint = a sync daemon + git** (no jj engine):
+- watches the upper → captures (egress POST) on a heartbeat/checkpoint;
+- holds the outbound subscribe stream (invalidation);
+- lazy-pulls artifacts on access (egress GET);
+- `git` runs on top for the code shape (canonical to forge; `.git` ignored by
+  capture).
 
-So the current store is the **foundation layer** (hashed blobs in S3 + a capture
-ledger). To become the Merkle/versioned store the design calls for, it needs the
-**pointer/version layer** and the **bidirectional write path** on top.
+**Two tiers of "version" (granularity, not a dir):**
+- **Working history** — fine-grained checkpoint snapshots of the upper (autosave/
+  crash-safety/undo/Changes surface/resume). Abundant, dedup'd, GC'd hard. Not
+  user-facing.
+- **Promoted versions** — `v1/v2/v3` consumers pin. Promotion = **filter-pass at a
+  checkpoint** (no mandatory `/outputs` dir; the artifact-vs-junk filter is the
+  gate). Add a deliverable-scope/`official`-curation later only if filter-based
+  proves noisy.
 
-## Research findings
+**Commits are checkpoint-driven, not turn-driven** (turns run for days): working-
+history flushes on a **heartbeat** (~minute / idle / size-threshold); promoted
+versions fire on **semantic checkpoints** (plan-step, milestone, explicit, turn-
+end). Checkpoints double as resume/sleep + re-grounding points.
 
-### A. Forkable / CoW sandbox runtimes (reference class; deprioritized)
+**Basic flow needs zero agent cooperation** (auto-capture + filter-pass promote).
+The CLI/API is the *power tool* for intent (name, metadata, mark-official, pin,
+revert, diff, subscribe).
 
-Dividing line: forking a *running* sandbox = capturing memory+process state (hard);
-most vendors only do disk CoW or single-sandbox pause/resume.
+**Promote ≠ a VCS commit** — it's the coarser act of pushing a state out to the
+durable store as a versioned artifact, at the cadences above.
 
-| Platform | Forks running state (mem+disk)? | Mechanism | Latency | Note |
-| --- | --- | --- | --- | --- |
-| Morph / Infinibranch | yes (`branch(count=N)`) | full-VM snapshot + CoW (closed) | <250 ms | managed leader, opaque internals, tiny vendor |
-| E2B | yes | Firecracker + UFFD lazy paging + 4 KiB page dedup | unpublished | **OSS self-host blueprint**; = microVM runtime swap |
-| Firecracker (raw) | yes | snapshot/restore + UFFD CoW fan-out | restore <8 ms | primitive under E2B / Lambda SnapStart |
-| CRIU | yes (process tree) | checkpoint/restore, no hypervisor | ~2–5× faster than cold | only path that stays k8s/container-native; weaker isolation, GPU/socket caveats |
-| Daytona / Fly / Modal / Cloudflare | disk-only / building-blocks / restore-to-fresh / storage-side | — | — | not true live fork |
-| Disk CoW: overlayfs / ZFS clone / Btrfs / XFS reflink / dm-thin | n/a (disk only) | CoW FS | ZFS clone <1 s | what we have today via containerd+overlayfs |
+## Filtering (what gets captured/promoted)
 
-**Key takeaway (ties to our POC):** because harness resume is **file-based** (the
-transcript JSONL), we do NOT need memory-snapshot forking for *correctness*. A
-session fork = copy the JSONL + CoW-clone the workspace + `--resume`. Memory
-snapshots (Morph/Firecracker) only buy *cold-start latency* — a v2 perf upgrade,
-not a prerequisite. Our containerd+overlayfs stack gives disk CoW but zero
-memory/process fork; gaining the latter is a runtime swap (Firecracker) or CRIU.
+Layered, configurable per workspace mode (source-repo / data-analysis / codegen):
+- **Path/name globs (gitignore-style) — by location, the workhorse:** `.git/`,
+  `.jj/`, `node_modules/`, `.venv/`, `__pycache__/`, `dist/`, `build/`, `target/`,
+  `.cache/`, `*.o`, `*.pyc`, `*.class`, `.DS_Store`, editor swap.
+- **Type allow/deny — by what it is, the artifact-vs-junk nuance:** KEEP code, md,
+  png/jpg/svg/pdf, csv/parquet/json, notebooks; DROP junk-binaries (`.so/.whl/.a`).
+  Axis is **artifact-vs-junk, NOT binary-vs-text** (a PNG is a binary keeper).
+- **Secrets detector — orthogonal:** name/path deny + content entropy/key scan.
+- **Size = a routing signal, not a filter:** large media is kept but routed to
+  **CAS, not a VCS blob store**.
 
-### B. Data backings for logs + artifacts
+## Storage backing (S3-shaped, split in two)
 
-The grading axis: **metadata/pointer CoW** (cheap branching — nearly everyone)
-vs **data-blob dedup** (cheap large-file editing — almost no one).
+The single most important fact — confirmed by lakeFS and Dolt: **immutable
+content-addressed bytes + Merkle metadata → object store (S3/MinIO); mutable
+refs/branches/staging/ledger/index → a transactional DB (Postgres/DynamoDB).**
+Object stores have no atomic compare-and-set; refs can't live there. **lakeFS
+Graveler** (Merkle SSTable ranges/meta-ranges in S3 + refs in KV) is the closest
+battle-tested prior art — hence the spike.
 
-| Option | Edit model | Large files | Zero-copy branch | Verdict for us |
-| --- | --- | --- | --- | --- |
-| **S3 + CAS(sha256) + Postgres ledger** | new blob + repoint | 5 TB obj cap; multipart >100 MB | yes (copy pointer set) | **baseline + recommended**; reuses Postgres we run |
-| **lakeFS** (git-over-S3) | **full new object per edit — NO data dedup** | presigned to bucket | yes (true zero-copy) | great git UX, but storage amplifies on churn + self-run GC → not primary |
-| **Hugging Face Xet** (FastCDC) | **chunk-level dedup** (~64 KB) | excellent | n/a | only thing that makes editing big files cheap; no turnkey self-host (HF dep) |
-| **Dolt** (git-for-data) | row/cell versioning | not for files | yes | for rows, not md/binaries — wrong tool for artifacts |
-| **git / git-LFS** | whole-version copies | hard ceilings (100 MB / LFS 2–5 GB) | branch yes | skip for artifacts (the "git + large files" pain) |
-| **Neon** (Postgres CoW branching) | n/a (DB) | n/a | **yes, instant, pay-for-divergence** | best cheap-fork for the *log* if logs are in Postgres |
-| **JuiceFS** (POSIX over S3) | in-place (real POSIX) | chunked objects | `clone` = metadata-only CoW | best agent-grep mount; wants to own data+metadata layout (see below) |
-| **Iceberg / Delta** (table formats) | append + time-travel | Parquet on S3 | branches/tags / shallow clone | analytics-scale logs only; premature now |
-| **Diskless Kafka / tiered storage** | append | S3 segments | n/a | overkill until multi-consumer replay forces it |
+**Large media:** keep (artifact-vs-junk, not size); CAS + multipart (100MB switch,
+5GB single-PUT cap); pack chunks into ≤64MB blocks. **CDC dedup deferred to
+post-v1** (helps datasets/checkpoints 30–85%; ≈0 for re-encoded video/compressed;
+gate by type when added). Shard keys by high-cardinality prefix (S3 per-prefix
+write throttle + Merkle keyspace locality).
 
-### JuiceFS — the agent-filesystem-access question (Gary asked to go deeper)
+## Cross-container sync under no-ingress (the Centaur constraint)
 
-Real POSIX FS: **data → object store, metadata → engine (Redis/Postgres/TiKV).**
-Unlike s3fs/Mountpoint (sequential-write-only, no rename), it supports random
-writes, rename, locking, close-to-open consistency — agents `cat`/`grep`/`python`
-and edit in place. `juicefs clone` is metadata-only redirect-on-write → instant
-zero-copy subtree clone (FS analog of a Neon branch).
+Centaur sandboxes are **no-ingress** — nothing connects *into* them — so **all
+sync is sandbox-initiated egress**:
+- **Startup hydration:** sandbox GETs its workspace from the durable store.
+- **Capture/promote:** sandbox POSTs out to api-rs → durable store (built today:
+  A1 egress policy + B1 offload).
+- **Mid-session inbound** (human/other-agent edited a shared artifact): there is
+  **no push into the sandbox** —
+  - **lazy pull-on-access:** the daemon GETs the current version when the agent
+    reads it (covers most cases);
+  - **invalidation via a stdin directive (CORRECTED 2026-06-19):** there is **no**
+    held outbound subscribe stream — a running agent's only inbound channel is
+    **stdin over the k8s attach pipe**. So "X advanced under you" is a **new stdin
+    directive** (`{type:artifact.sync,path,sha}`) the control plane pushes, or
+    (primary) an **egress-poll daemon** polling a change-feed; then the daemon GETs
+    the bytes (egress). See `inbound-sync-spec.md`.
+- Reconciliation happens **at promote time in the durable ledger** (fork →
+  conflict-state). Agents never see each other's *uncommitted* edits (private
+  working copies). We **never hot-swap a file under a running agent** — notify, it
+  decides whether to rebase.
+- True simultaneous co-edit (rare) = **CRDT opt-in fast-path** (sync ops over a
+  connection, commit back to the chain) — separate mechanism.
 
-The catch: **JuiceFS wants to own the data+metadata layout** — its chunking +
-metadata engine is a different representation from our sha256-CAS + ledger. Can't
-have both canonical over the same bytes. Options:
-- (a) JuiceFS *is* the artifact store (its metadata engine = the ledger) — POSIX +
-  clone for free, but inherit its layout, lose custom CAS/version semantics.
-- (b) S3-CAS canonical; JuiceFS a **read-mostly projection** for agent grep; writes
-  go through the capture/version pipeline. Two systems + periodic sync.
-- (c) Skip JuiceFS; thin FUSE/CLI over our CAS API (`path→current-version`; reads
-  pull blobs, writes POST new versions). Most custom, one source of truth.
-Two realities: it needs a **metadata engine we run + monitor**; and **chat
-history/logs are in Postgres, not files**, so "grep the logs as files" needs a job
-that *materializes* transcripts as files under the mount (regardless of FS choice).
+**Honest gap:** capture-*out* is built; **mid-session inbound sync (pull-updated-
+artifacts-into-a-running-sandbox + the invalidation channel on the outbound
+stream) is NEW Centaur work.** Until it exists: hydrate-at-start + capture-out +
+reconcile-at-promote, with cross-container freshness = "you find out at your next
+promote." Build the live invalidation channel when better freshness is needed.
 
-**Lean:** don't make JuiceFS canonical (option b or c). Keep S3-CAS + Postgres the
-source of truth; add a read-mostly mount only when agents actually need corpus-wide
-grep. Off the critical path.
+## Off-the-shelf for the sync? (the question that started the jj thread)
 
-## Discussion & decisions (running log)
+No single off-the-shelf system does the *cross-container workspace sync* for this
+exact combination (**no-ingress + large binaries + versioned-with-merge + multi-
+shape + agent semantics**). The closest conceptual match — a continuous-sync VCS
+cloud backend (jj's) — is exactly the closed-source Google piece. No-ingress
+disqualifies most sync products (Syncthing/Mutagen/P2P need reachability; webhooks
+push the wrong way); only pull/egress-API models survive.
 
-- **2026-06-19 (Gary):** Don't need forkable sessions per se — useful reference
-  class only. Real needs = evolving/edited artifacts, append-only logs, warm
-  workspaces. → fork research captured but deprioritized.
-- **2026-06-19:** "New container resume" = the **same machinery as starting a
-  fresh container** (fresh-container resume: restore harness home + inject thread
-  id / `--resume`). Sleep just decides reattach-same-sandbox vs rebuild. Warm
-  clones = existing warm pool + base-image repo warming. → no separate mechanism.
-- **2026-06-19:** Chat logs already append-only w/ tombstones in Postgres — correct
-  as-is.
-- **2026-06-19:** Artifact store is foundation-only (capture log), not yet a
-  versioned/Merkle store; the edit/write-back path is the key gap.
+**Buyable per-piece:** versioned store over S3 with branch/merge → **lakeFS**
+(egress-API; caveats: whole-file merge, no CDC, run-it-yourself); code shape → git
+remotes (already); live doc co-edit → Yjs+provider; structured-data local-first →
+ElectricSQL/PowerSync; bulk hydrate/capture → rclone/Mountpoint. **Must build (the
+glue):** the egress-only capture daemon, the no-ingress invalidation channel, the
+artifact-vs-junk policy, promotion/lineage/freshness, and (later) CDC. The
+integration is the product.
 
-## Open decisions / questions
+## jj evaluation (used as a model, not run in-container)
 
-- **Artifact version model:** add a mutable `path → current_version` pointer +
-  version chain (or full Merkle tree)? Where does the pointer live (extend
-  `session_artifacts`, or a new table)?
-- **Write-back path:** how does a human (UI) or agent (next turn) edit an artifact?
-  New PUT endpoint → new blob → advance pointer; and how does the edit reach the
-  live sandbox workspace (push file in / next-turn sync)?
-- **Human+agent concurrent edits** of the same artifact — last-writer-wins,
-  optimistic version check, or collaborative-merge? (Smells like the chat
-  edit-event model could extend here.)
-- **Global CAS vs session-scoped keys:** move to content-only keys for dedup, or
-  keep session scoping for simpler access control / GC?
-- **Rollout-JSONL capture:** capture as a `rollout.segment` blob in the same S3
-  bucket (append-only namespace) — reuse the artifact byte channel, or a separate
-  path? (Unblocks harness-resume.)
-- **Agent FS access:** JuiceFS projection vs custom FUSE vs API-only; and the
-  "materialize Postgres logs as files" job.
-- **Where does this work get tracked** relative to `agent-session-resume-and-
-  storage-plan.md` — keep storage here, resume there.
+jj's model fits beautifully — working-copy auto-committed (no commit ceremony),
+anonymous commits, **stable change-ids**, **first-class conflicts (operations never
+block)**, op-log + undo. But:
+- "jj the whole workspace on S3 with binaries" is **not buildable off-the-shelf**:
+  the S3 backend + caching daemon AND the CDC large-file layer are Google's closed-
+  source pieces; no LFS/dedup; op-log grows per-command, not auto-GC'd; concurrent
+  invocations race into divergent op-heads; sub-1MiB build outputs auto-track.
+- And given a separate durable store + git-for-code + overlay-for-diff, **running
+  jj in the container is redundant** and adds op-GC/serialize/watchman tax.
 
-## Working conclusions (preliminary)
+**Verdict:** don't run jj. Adopt its *model* (content-addressing, change-ids,
+conflict-state) in the durable ledger; the agent's "explore all my artifacts"
+affordance = read-only mount + query API over the durable store, jj-*shaped* in
+semantics.
 
-1. **Keep the layered split** — logs in Postgres (`session_events`), artifacts in
-   S3-CAS + Postgres ledger, workspace in the container. Don't unify via lakeFS.
-2. **Evolve the artifact store from capture-log → versioned store:** add the
-   path→version pointer + a bidirectional write path. This is the main new build.
-3. **Capture the rollout JSONL** (reuse the artifact byte channel) to unblock
-   harness-resume; it's small.
-4. **Defer:** Xet/CDC (only for big churny files), JuiceFS mount (only for
-   corpus-wide agent grep), Neon (only for DB-level session branching),
-   Firecracker/Morph (only when warm-fork latency is the bottleneck).
+## Multi-actor synthesis (5 user-story clusters)
+
+Code repos / structured data / docs / artifact pipelines / oversight converged:
+1. **The merge problem is mostly a freshness/invalidation problem** — the danger is
+   the detached in-container cache with no invalidation channel.
+2. **One spine: the append-only event log** is the system of record (Atrium's
+   `session_events`). Sessions form a DAG (handoff + rewind branches).
+3. **Immutable content + explicit moveable pointers; runtime-captured provenance;
+   advisory push-based invalidation** (cascades staleness, never auto-regenerates).
+4. **Split consistency by path:** data plane eventual (staleness/provenance in-
+   band); control loop synchronous/idempotent (<2s steers/approvals/rewrites); one
+   small CRDT for the advisory coordination board.
+5. **Agent ergonomics:** local FS for execution; grep-mount + query/**subscribe**
+   over one access-controlled namespace; emit typed events out / drain one ordered
+   inbox in; humans and agents read the **same** projections, write the **same**
+   event families. Subscribe/push, not poll.
+
+## Recommended design (convergent)
+
+- **Execution:** local overlay per agent; edit freely, no ceremony, no EROFS.
+- **In-container:** a sync daemon (watch upper → egress capture; hold outbound
+  subscribe; lazy pull-on-access) + git for code. No jj engine.
+- **Capture:** watcher on the upper (free diff), checkpoint-driven, two-tier;
+  hybrid auto-detect→promote = filter-pass at checkpoints.
+- **Durable store:** content-addressed blobs + Merkle metadata → S3/MinIO; refs/
+  pointers/ledger/lineage/index → Postgres. **Backing = own CAS-ledger** (decided
+  2026-06-19) — extend `session_artifacts`; net-new = ledger tables + write-back
+  PUT + conflict-state/3-way (use a real diff3 lib) + lineage + multipart + GC.
+- **Sync:** egress-only (hydrate-GET, capture-POST, lazy-pull, invalidation via a
+  **stdin directive** / egress-poll daemon — *not* an outbound stream). Mid-session
+  inbound (C1) is **in scope** (target: running agent fresh within seconds).
+- **Media:** CAS + multipart (CDC deferred).
+- **GC:** mark-and-sweep + grace window from day one; expire dead session branches;
+  compact working-history.
+- **Search:** Postgres metadata → FTS → vector (gated); promoted artifacts only.
+- **Access:** API-first (provenance/freshness/subscribe/ACL spine); read-only
+  grep-mount as a fast-follow.
+- **Docs:** merge-class `mergeable-doc`, suggestion-then-approve default, event sync
+  (seconds); CRDT live-edit only as an opt-in fast-path committing back to the chain.
+- **Structured data:** SQLite/dataset *files* ride the artifact store now; shared
+  live DBs deferred/BYO.
+
+## Open items
+
+- ~~Store backing spike~~ — **RESOLVED: own CAS-ledger** (`spike-artifact-store.md`).
+- **Mid-session inbound sync (C1) — IN SCOPE (design pass 2026-06-19).** Egress-poll
+  daemon + **stdin-directive** invalidation (NOT an outbound stream); reconcile =
+  auto-rebase at a safe checkpoint. The gating item for live cross-container collab;
+  spec in `inbound-sync-spec.md`, decisions in `cas-ledger-build-plan.md` §10.
+- **CDC for large media** — deferred to post-v1.
+- **Human-byte-sticky reconciliation** — parked; revisit if jj-style proves
+  insufficient for human+agent doc collisions.
 
 ## Sources
 
-Forkable/CoW: Morph (cloud.morph.so/docs/.../branch, morph.so/blog/infinibranch),
-E2B (e2b.dev/docs/sandbox/snapshots, github.com/e2b-dev/infra), Modal
-(modal.com/blog/mem-snapshots), Fly (fly.io/docs/reference/suspend-resume),
-Firecracker snapshotting + UFFD (github.com/firecracker-microvm/firecracker docs;
-NSDI'20 arxiv 2005.12821), CRIU (criu.org).
-Data backings: S3 versioning/limits (docs.aws.amazon.com/AmazonS3), lakeFS
-(docs.lakefs.io/understand/how/versioning-internals, /understand/model),
-Dolt (dolthub.com/docs/architecture/storage-engine), Xet
-(huggingface.co/docs/hub/en/xet/deduplication, /blog/migrating-the-hub-to-xet;
-FastCDC USENIX ATC'16), git-LFS (docs.github.com/.../about-git-large-file-storage),
-Neon branching (neon.com/docs/introduction/branching), JuiceFS
-(juicefs.com/docs/community/guide/clone), Iceberg/Delta branching
-(apache.github.io/iceberg/docs/latest/branching, docs.databricks.com/.../clone).
+Forkable/CoW: Morph, E2B (github.com/e2b-dev/infra), Firecracker snapshotting,
+CRIU. Data backings: lakeFS Graveler (docs.lakefs.io/understand/how/versioning-
+internals), Dolt prolly-trees, Xet/FastCDC (huggingface.co/blog/from-files-to-
+chunks; USENIX ATC'16), Neon branching. S3 perf (docs.aws.amazon.com/AmazonS3),
+S3 PUT bench (topicpartition.io). jj: docs.jj-vcs.dev (architecture/roadmap/git-
+compatibility), jj-vcs/jj issues #80 (LFS)/#2865 (CDC)/#1841/#4545/#6830, LWN
+958468.

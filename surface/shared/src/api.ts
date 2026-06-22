@@ -49,8 +49,20 @@ export interface ApiOptions {
 
 export interface AuthMethods {
   open: boolean;
-  email: true;
+  email: boolean;
   google: boolean;
+  calls: boolean;
+}
+
+export type ProviderCredentialProvider = 'claude-code' | 'codex';
+
+export interface ProviderCredentialStatus {
+  provider: ProviderCredentialProvider;
+  connected: boolean;
+  status: 'connected' | 'needs_auth';
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
 }
 
 export type Api = ReturnType<typeof createApi>;
@@ -114,6 +126,26 @@ export function createApi(opts: ApiOptions = {}) {
       }),
     /** `prefs` is absent on servers that predate the user-prefs migration. */
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
+    providerCredentials: () =>
+      req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
+    connectClaudeCode: (token: string) =>
+      req<{ provider: ProviderCredentialStatus }>('/api/me/provider-credentials/claude-code', {
+        method: 'PUT',
+        body: JSON.stringify({ token }),
+      }),
+    connectCodex: (authJson: string) =>
+      req<{ provider: ProviderCredentialStatus }>('/api/me/provider-credentials/codex', {
+        method: 'PUT',
+        body: JSON.stringify({ authJson }),
+      }),
+    disconnectClaudeCode: () =>
+      req<{ ok: true }>('/api/me/provider-credentials/claude-code', {
+        method: 'DELETE',
+      }),
+    disconnectCodex: () =>
+      req<{ ok: true }>('/api/me/provider-credentials/codex', {
+        method: 'DELETE',
+      }),
     /** Partial update; server merges over stored prefs and fans the full
      * normalized result out to all of the user's sockets via {type:'prefs'}. */
     patchPrefs: (patch: Partial<UserPrefs>, op: OpOptions = {}) =>

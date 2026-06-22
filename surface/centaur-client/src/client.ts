@@ -68,6 +68,7 @@ export interface ExecuteOptions {
   executeId?: string;
   inputLines?: string[];
   metadata?: JsonObject;
+  environment?: Record<string, string>;
   idleTimeoutMs?: number;
   maxDurationMs?: number;
 }
@@ -176,6 +177,7 @@ export class CentaurClient {
       },
       input_lines: opts.inputLines ?? [],
     };
+    if (opts.environment !== undefined) body.environment = opts.environment;
     if (opts.idleTimeoutMs !== undefined) body.idle_timeout_ms = opts.idleTimeoutMs;
     if (opts.maxDurationMs !== undefined) body.max_duration_ms = opts.maxDurationMs;
     void generation;

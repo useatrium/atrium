@@ -58,7 +58,7 @@ describe('SideEffectsSurface', () => {
   it('closes via the header button', () => {
     const onClose = vi.fn();
     render(<SideEffectsSurface effects={[effect({})]} onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Close side-effects' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close what it ran' }));
     expect(onClose).toHaveBeenCalled();
   });
 });

@@ -18,6 +18,11 @@ export function Timeline({
   onLoadEarlier,
   onOpenThread,
   onOpenSession,
+  onRunDemoAgent,
+  demoAgentBusy,
+  onInsertAgentCommand,
+  onSayHello,
+  onConnectProvider,
   onRetry,
   onEdit,
   onDelete,
@@ -40,6 +45,11 @@ export function Timeline({
   onLoadEarlier: () => Promise<void>;
   onOpenThread: (rootEventId: number) => void;
   onOpenSession: (sessionId: string) => void;
+  onRunDemoAgent?: () => void;
+  demoAgentBusy?: boolean;
+  onInsertAgentCommand?: () => void;
+  onSayHello?: () => void;
+  onConnectProvider?: () => void;
   onRetry: (message: ChatMessage) => void;
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
@@ -121,15 +131,56 @@ export function Timeline({
       )}
       {!loaded && items.length === 0 && <TimelineSkeleton />}
       {loaded && items.length === 0 && (
-        <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-sm text-fg-muted">
-          <span>No messages yet. Say something.</span>
-          <span className="text-xs text-fg-faint">
-            Or type{' '}
-            <code className="rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-fg-tertiary">
-              @agent &lt;task&gt;
-            </code>{' '}
-            to put an agent on it.
-          </span>
+        <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+          <div className="w-full max-w-md rounded-lg border border-edge-strong bg-surface-raised/70 px-6 py-6 shadow-lg shadow-black/10">
+            <span className="sr-only">No messages yet.</span>
+            <div className="text-2xs font-semibold uppercase tracking-wider text-accent-text">
+              First run
+            </div>
+            <h2 className="mt-2 text-lg font-semibold text-fg">See an agent work</h2>
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-fg-muted">
+              Start a no-setup demo, watch the transcript stream live, then connect a provider for real tasks.
+            </p>
+            <div className="mt-5 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+              <button
+                type="button"
+                onClick={onRunDemoAgent}
+                disabled={!onRunDemoAgent || demoAgentBusy}
+                className="inline-flex h-9 items-center justify-center rounded-md bg-accent px-4 text-sm font-semibold text-on-accent shadow-sm transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+              >
+                {demoAgentBusy ? 'Starting demo…' : 'Run a demo agent'}
+              </button>
+              <button
+                type="button"
+                onClick={onInsertAgentCommand}
+                disabled={!onInsertAgentCommand}
+                className="inline-flex h-9 items-center justify-center rounded-md border border-edge-strong bg-surface px-3 text-sm font-medium text-fg-secondary transition-colors hover:bg-surface-overlay hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+              >
+                Insert <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">@agent</code>
+              </button>
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={onSayHello}
+                disabled={!onSayHello}
+                className="text-xs text-fg-faint hover:text-fg-muted hover:underline disabled:no-underline"
+              >
+                Say hello instead
+              </button>
+            </div>
+            {onConnectProvider && (
+              <div className="mt-5 border-t border-edge pt-4">
+                <button
+                  type="button"
+                  onClick={onConnectProvider}
+                  className="text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline"
+                >
+                  Connect a provider
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
       {items.map((item) => {

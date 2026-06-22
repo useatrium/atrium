@@ -26,9 +26,33 @@ export async function createTestPool(): Promise<pg.Pool> {
   return pool;
 }
 
+/**
+ * Retry a query on a Postgres deadlock (40P01). The CI runs several vitest
+ * files concurrently against one database, so a TRUNCATE (AccessExclusiveLock)
+ * can cross-lock another file's in-flight DML (RowExclusiveLock) and Postgres
+ * aborts one transaction as the victim. The reset below is idempotent, so
+ * retrying the victim once the other transaction drains is safe and clears the
+ * flake (#43). Exported so other concurrent truncate/reset helpers can reuse it.
+ */
+export async function withDeadlockRetry<T>(fn: () => Promise<T>, attempts = 6): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if ((err as { code?: string })?.code === '40P01' && attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 export async function truncateAll(pool: pg.Pool): Promise<void> {
-  await pool.query(
-    'TRUNCATE idempotency_keys, call_participants, calls, user_drafts, workspace_members, events, channels, workspaces, seat_requests, session_views, sessions, auth_sessions, login_codes, oauth_identities, users RESTART IDENTITY CASCADE',
+  await withDeadlockRetry(() =>
+    pool.query(
+      'TRUNCATE idempotency_keys, call_participants, calls, user_drafts, workspace_members, events, channels, workspaces, seat_requests, session_views, sessions, auth_sessions, login_codes, oauth_identities, users RESTART IDENTITY CASCADE',
+    ),
   );
 }
 

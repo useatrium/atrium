@@ -246,6 +246,7 @@ async function resetRound(): Promise<RoundContext> {
   const fx = await seedFixture(pool);
   const alice = await login('alice', 'Alice');
   const bob = await login('bob', 'Bob');
+  await connectCodex(alice.cookie);
   return { fx, alice, bob };
 }
 
@@ -257,6 +258,25 @@ async function login(handle: string, displayName: string): Promise<UserLogin> {
   });
   expect(res.statusCode).toBe(200);
   return { cookie: res.headers['set-cookie'] as string, user: res.json().user };
+}
+
+async function connectCodex(cookie: string): Promise<void> {
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/api/me/provider-credentials/codex',
+    headers: { cookie },
+    payload: {
+      authJson: JSON.stringify({
+        OPENAI_API_KEY: null,
+        auth_mode: 'chatgpt',
+        tokens: {
+          access_token: 'test-codex-access-token',
+          account_id: '00000000-0000-0000-0000-000000000000',
+        },
+      }),
+    },
+  });
+  expect(res.statusCode).toBe(200);
 }
 
 async function post(cookie: string, channelId: string, text: string) {

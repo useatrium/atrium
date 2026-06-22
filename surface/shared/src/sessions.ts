@@ -34,12 +34,15 @@ export interface SeatAuditEntry {
 export interface QuestionOption {
   label: string;
   description: string;
+  preview?: string;
+  previewFormat?: 'markdown' | 'html';
 }
 
 export interface QuestionPrompt {
   id: string;
   header: string;
   question: string;
+  multiSelect?: boolean;
   isOther?: boolean;
   isSecret?: boolean;
   options?: QuestionOption[];
@@ -50,6 +53,14 @@ export interface SessionPendingQuestion {
   turnId?: string;
   questions: QuestionPrompt[];
   eventId?: number;
+}
+
+export interface SessionProviderAuthRequired {
+  provider: 'claude-code' | 'codex';
+  userId: string;
+  reason: 'missing_token' | 'invalid_token' | 'auth_error';
+  message: string;
+  at: string;
 }
 
 export type QuestionResolutionReason = 'answered' | 'cancelled' | 'empty';
@@ -148,6 +159,7 @@ export interface SessionWire {
   /** Pending HITL answer proposals (Phase 2; absent on older payloads). */
   answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
+  providerAuthRequired?: SessionProviderAuthRequired | null;
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -195,6 +207,7 @@ export interface Session {
   /** HITL answer proposals folded from session.answer_proposal_* events. */
   answerProposals: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
+  providerAuthRequired?: SessionProviderAuthRequired | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
   /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
@@ -255,8 +268,12 @@ function statusRank(s: SessionStatus): number {
       return 1;
     case 'running':
       return 2;
-    default:
-      return 3; // terminal
+    case 'failed':
+      return 3;
+    case 'cancelled':
+      return 4;
+    case 'completed':
+      return 5;
   }
 }
 
@@ -293,6 +310,7 @@ export function sessionFromWire(w: SessionWire): Session {
     suggestions: [...(w.suggestions ?? [])],
     answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
+    providerAuthRequired: parseProviderAuthRequired(w.providerAuthRequired),
     questionEvents: [],
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
@@ -317,7 +335,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     // not echo repo/branch).
     repo: resp.repo ?? live.repo ?? null,
     branch: resp.branch ?? live.branch ?? null,
-    status: statusRank(live.status) >= statusRank(resp.status) ? live.status : resp.status,
+    status: maxSessionStatus(live.status, resp.status),
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
     completedAt: live.completedAt ?? resp.completedAt,
@@ -332,6 +350,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     answerProposals:
       live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
     pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
+    providerAuthRequired: live.providerAuthRequired ?? resp.providerAuthRequired ?? null,
     questionEvents:
       (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
     seatEvents: live.seatEvents.length > 0 ? live.seatEvents : resp.seatEvents,
@@ -369,6 +388,7 @@ export function applySessionEvent(
       suggestions: [],
       answerProposals: [],
       pendingQuestion: null,
+      providerAuthRequired: null,
       questionEvents: [],
       seatEvents: [],
       costUsd: 0,
@@ -390,25 +410,48 @@ export function applySessionEvent(
 
   if (ev.type === 'session.status_changed') {
     const status = asSessionStatus(p.status);
-    if (!status || status === prev.status) return sessions;
-    return { ...sessions, [sessionId]: { ...prev, status } };
+    if (!status) return sessions;
+    const nextStatus = maxSessionStatus(prev.status, status);
+    if (nextStatus === prev.status) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, status: nextStatus } };
   }
 
   if (ev.type === 'session.completed') {
     const status = asSessionStatus(p.status) ?? 'completed';
+    const nextStatus = maxSessionStatus(prev.status, status);
     const excerpt = typeof p.resultExcerpt === 'string' && p.resultExcerpt ? p.resultExcerpt : null;
     const permalink = typeof p.permalink === 'string' && p.permalink ? p.permalink : prev.permalink;
     return {
       ...sessions,
       [sessionId]: {
         ...prev,
-        status,
+        status: nextStatus,
         resultText: excerpt ?? prev.resultText,
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,
         pendingQuestion: null,
+        providerAuthRequired: null,
       },
     };
+  }
+
+  if (ev.type === 'session.provider_auth_required') {
+    const required = parseProviderAuthRequired(p);
+    if (!required) return sessions;
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        providerAuthRequired: required,
+        pendingQuestion: null,
+        status: prev.status === 'spawning' ? 'queued' : prev.status,
+      },
+    };
+  }
+
+  if (ev.type === 'session.provider_auth_resolved') {
+    if (p.provider !== 'claude-code' && p.provider !== 'codex') return sessions;
+    return { ...sessions, [sessionId]: { ...prev, providerAuthRequired: null } };
   }
 
   if (ev.type === 'session.question_requested') {
@@ -657,7 +700,14 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
               if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
               const o = option as Record<string, unknown>;
               if (typeof o.label !== 'string' || typeof o.description !== 'string') return null;
-              return { label: o.label, description: o.description };
+              const previewFormat =
+                o.previewFormat === 'markdown' || o.previewFormat === 'html' ? o.previewFormat : undefined;
+              return {
+                label: o.label,
+                description: o.description,
+                ...(typeof o.preview === 'string' ? { preview: o.preview } : {}),
+                ...(previewFormat ? { previewFormat } : {}),
+              };
             })
             .filter((option): option is QuestionOption => option !== null)
         : [];
@@ -665,12 +715,39 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
         id: raw.id,
         header: typeof raw.header === 'string' ? raw.header : 'Question',
         question: raw.question,
+        multiSelect: raw.multiSelect === true,
         isOther: raw.isOther === true,
         isSecret: raw.isSecret === true,
         options,
       };
     })
     .filter((q): q is QuestionPrompt => q !== null);
+}
+
+function parseProviderAuthRequired(value: unknown): SessionProviderAuthRequired | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (raw.provider !== 'claude-code' && raw.provider !== 'codex') return null;
+  if (typeof raw.userId !== 'string') return null;
+  if (
+    raw.reason !== 'missing_token' &&
+    raw.reason !== 'invalid_token' &&
+    raw.reason !== 'auth_error'
+  ) {
+    return null;
+  }
+  return {
+    provider: raw.provider,
+    userId: raw.userId,
+    reason: raw.reason,
+    message:
+      typeof raw.message === 'string' && raw.message.trim()
+        ? raw.message
+        : raw.provider === 'codex'
+          ? 'Reconnect Codex to continue this session.'
+          : 'Reconnect Claude Code to continue this session.',
+    at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
+  };
 }
 
 function parseQuestionAnswerSummaries(value: unknown): SessionQuestionAnswerSummary[] {

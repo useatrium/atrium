@@ -19,6 +19,11 @@ export function channelLabel(c: Channel, meId: string): string {
   return partner.id === meId ? `${partner.displayName} (you)` : partner.displayName;
 }
 
+/** Avatar source name without UI decorations such as "(you)". */
+export function channelAvatarName(c: Channel, meId: string): string {
+  return dmPartner(c, meId)?.displayName ?? channelLabel(c, meId);
+}
+
 function seedHue(seed: string): number {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;

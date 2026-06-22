@@ -5,7 +5,19 @@ export const config = {
   host: process.env.HOST ?? '127.0.0.1',
   // Prototype-grade: dev default secret; override in any real deployment.
   sessionSecret: process.env.SESSION_SECRET ?? 'atrium-dev-secret-change-me',
+  providerCredentialSecret:
+    process.env.PROVIDER_CREDENTIAL_SECRET ??
+    process.env.SESSION_SECRET ??
+    'atrium-dev-secret-change-me',
   sessionCookie: 'atrium_session',
+  // Cross-origin allowlist for non-same-origin clients (the Electron desktop
+  // shell loads from app://atrium and calls this server with a bearer token).
+  // Comma-separated; token auth carries no cookies, so this never enables
+  // credentialed CORS. The web SPA is same-origin and never triggers it.
+  corsOrigins: (process.env.ATRIUM_CORS_ORIGINS ?? 'app://atrium')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   authOpen: (process.env.AUTH_OPEN ?? '1') !== '0',
   authDevCodes: (process.env.AUTH_DEV_CODES ?? '0') === '1',
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
@@ -37,6 +49,11 @@ export const config = {
   // row's Centaur fetch + S3 upload; a worker that crashes mid-upload reclaims
   // the row after this window. Default 5 min.
   artifactOffloadClaimLeaseMs: Number(process.env.ARTIFACT_OFFLOAD_CLAIM_LEASE_MS ?? 300_000),
+  // === gc additions ===
+  artifactGcEnabled: process.env.ARTIFACT_GC_ENABLED === '1',
+  artifactGcIntervalMs: Number(process.env.ARTIFACT_GC_INTERVAL_MS ?? 300_000),
+  artifactGcGraceMs: Number(process.env.ARTIFACT_GC_GRACE_MS ?? 3_600_000),
+  artifactGcBatchSize: Number(process.env.ARTIFACT_GC_BATCH_SIZE ?? 50),
   // File uploads (MinIO in dev; any S3-compatible store in deployment).
   s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
   s3Bucket: process.env.S3_BUCKET ?? 'atrium-files',

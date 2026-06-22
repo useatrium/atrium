@@ -1,0 +1,63 @@
+# .sj-audit/config.yaml — Atrium audit config for the sj-audit skill.
+# Thin by design: pins how to stand Atrium up, log in, and where the source lives.
+# The agent discovers surfaces/routes/states live each run.
+
+name: Atrium
+description: >-
+  An open-source, self-hostable shared workspace where people and AI coding agents work
+  side by side — Slack-like chat + live agent sessions ("more like a pull request than a
+  chat room") + a versioned file/artifact ledger.
+
+source:
+  web: surface/web/src
+  mobile: surface/mobile
+  server: surface/server/src
+  docs: [surface/README.md, README.md]
+
+run:
+  mode: isolate                 # fresh worktree + fresh DB + free ports (won't collide with other agents)
+  launch: hooks/launch.sh       # prints BASE_URL= ; brings up an isolated server+web with the sessions mock
+  healthcheck: hooks/healthcheck.sh
+  attachUrl: http://localhost:3001   # the normal dev instance, used with --quick / mode: attach
+  defaultBranch: master
+
+# Atrium auto-provisions a user on dev-login, so "login" is a browser action, not a seed.
+login:
+  type: dev-login
+  steps:
+    - "on the login screen, expand the '▶ dev login' disclosure"
+    - "fill Handle = ana, Display name = Ana Park"
+    - "submit to enter the fresh workspace (#general)"
+
+personas:
+  # solo + lead are driven live (dev-login as a fresh user; the sessions mock provides agent surfaces).
+  - { key: solo, label: "solo self-hoster",   seed: "hooks/seed.sh solo" }
+  # a second human teammate can't be fabricated on a fresh single-user self-host -> reasoned from code.
+  - { key: teammate, label: "invited teammate", seed: "code-only" }
+  - { key: lead, label: "agent-curious lead",  seed: "hooks/seed.sh lead" }
+
+lenses: [steve-jobs, nielsen, dieter-rams, wcag]
+fanout: area-all-lenses
+maxAreas: 8
+
+modules:
+  hardData: true
+  adversarialVerify: true
+  coverage: true
+  exports: [github-issues, markdown, regression]
+
+matrix:
+  viewports: [{ name: desktop, w: 1440, h: 900 }, { name: tablet, w: 834, h: 1112 }, { name: mobile, w: 390, h: 844 }]
+  themes: [light, dark]
+  flags: [reduced-motion]
+
+report:
+  tokensFrom: auto              # extract --theme dark (Atrium's intended look) for on-brand mockups
+  host: tailscale               # bind to the Tailscale IP for private, tailnet-only hosting
+  port: 8088
+  livePrototypes: 3
+
+github:
+  repo:                         # leave blank to infer from the repo's origin
+  labels: [ux, sj-audit]
+  dryRun: true                  # set false to actually file issues

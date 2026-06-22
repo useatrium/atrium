@@ -1,0 +1,39 @@
+appId: com.atrium.desktop
+productName: Atrium
+copyright: Atrium
+
+directories:
+  output: release
+  buildResources: build
+
+# Main + preload bundles (electron-vite output) + manifest. The renderer (the
+# @atrium/web build) and the tray icon ship as unpacked extraResources so the
+# app:// file handler and nativeImage can read them outside the asar.
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: ../web/dist
+    to: web-dist
+  - from: resources
+    to: resources
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Atrium uses your microphone for voice messages and calls.
+    NSCameraUsageDescription: Atrium uses your camera for video calls.
+
+# Notarization is enabled by setting APPLE_API_KEY / APPLE_API_KEY_ID /
+# APPLE_API_ISSUER in the environment at build time (App Store Connect key).
+# Without them (and without a Developer ID cert) the build is unsigned.
+dmg:
+  title: Atrium

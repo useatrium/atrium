@@ -123,13 +123,35 @@ jobs:
       - name: Run Playwright e2e
         working-directory: surface
         timeout-minutes: 10
+        shell: bash
         env:
           # playwright.config.ts reads E2E_DATABASE_URL for the webServer (it
           # falls back to a localhost:5433 default otherwise). db-reset.mjs
           # creates/truncates this dedicated DB using the atrium DB on the same
           # Postgres service as admin.
           E2E_DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium_e2e
-        run: pnpm e2e
+          # Matches server/src/config.ts default; the in-step MinIO below.
+          S3_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          # Artifact write-back offloads blob bytes to S3, so the conflict e2e
+          # needs object storage. Run the current MinIO in-step rather than as a
+          # `services:` container: GitHub services can't supply minio/minio's
+          # required `server` command, and bitnami's MinIO images were removed
+          # from Docker Hub. Creds match config.ts defaults. The process is
+          # reaped when the step's shell exits.
+          curl -fsSLo "$RUNNER_TEMP/minio" https://dl.min.io/server/minio/release/linux-amd64/minio
+          curl -fsSLo "$RUNNER_TEMP/mc" https://dl.min.io/client/mc/release/linux-amd64/mc
+          chmod +x "$RUNNER_TEMP/minio" "$RUNNER_TEMP/mc"
+          MINIO_ROOT_USER=atrium MINIO_ROOT_PASSWORD=atrium-dev-secret \
+            "$RUNNER_TEMP/minio" server "$RUNNER_TEMP/minio-data" --address ':9000' \
+            > "$RUNNER_TEMP/minio.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && break
+            sleep 1
+          done
+          "$RUNNER_TEMP/mc" alias set ci http://127.0.0.1:9000 atrium atrium-dev-secret
+          "$RUNNER_TEMP/mc" mb --ignore-existing ci/atrium-files
+          pnpm e2e
 
       - name: Upload Playwright report
         if: failure()

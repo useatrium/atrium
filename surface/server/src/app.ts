@@ -3,9 +3,10 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { basename } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -48,16 +49,39 @@ import {
 import { WsHub } from './hub.js';
 import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers, sendMessagePush } from './push.js';
-import { sendLoginCode } from './email.js';
-import { deleteObject, ensureBucket, presignGet, presignPut } from './s3.js';
+import { emailDeliveryConfigured, sendLoginCode } from './email.js';
+import {
+  copyObject,
+  deleteObject,
+  ensureBucket,
+  getObjectBytes,
+  headObject,
+  presignGet,
+  presignPut,
+  uploadObject,
+  uploadObjectStream,
+} from './s3.js';
+import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
+import {
+  ArtifactLedger,
+  casBlobKey,
+  type ChangeCursor,
+  CHANGE_CURSOR_ZERO,
+  type CommitVersionGroupFile,
+} from './artifact-ledger.js';
+import { classifyScope, userCanReadScope, type ArtifactScope } from './artifact-scope.js';
+import { loadConflictDetail } from './artifact-conflict.js';
 import type { AttachmentMeta } from './events.js';
 import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
-import { CentaurApiError } from '@atrium/centaur-client';
+import { CentaurApiError, CentaurClient } from '@atrium/centaur-client';
+import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
+import { DemoCentaurClient } from './demo-centaur.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -111,13 +135,45 @@ function sanitizeFilename(name: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 255) : 'artifact';
 }
 
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function normalizeMime(value: string | undefined): string {
+  const mime = (value ?? '').split(';', 1)[0]!.trim().toLowerCase();
+  return /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime : 'application/octet-stream';
+}
+
+function parseBaseSeq(value: string | undefined): number | null | false {
+  if (value == null || value.trim() === '') return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : false;
+}
+
+function isReadableStream(value: unknown): value is Readable {
+  const candidate = value as { pipe?: unknown } | null;
+  return candidate != null && typeof candidate.pipe === 'function';
+}
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
   const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
   const emailFetch = deps.emailFetch;
-  const sessionRuns = new SessionRuns(pool, hub, deps.sessionRuns);
+  const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
+  const sessionRunOptions = deps.sessionRuns ?? {};
+  const centaur =
+    sessionRunOptions.centaur ??
+    new CentaurClient({
+      baseUrl: sessionRunOptions.baseUrl ?? config.centaurBaseUrl,
+      apiKey: sessionRunOptions.apiKey ?? config.centaurApiKey,
+    });
+  const sessionRuns = new SessionRuns(pool, hub, {
+    ...sessionRunOptions,
+    centaur: new DemoCentaurClient(centaur),
+    providerCredentials,
+  });
   const calls =
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
   const voip = deps.voip ?? getVoipSender(config);
@@ -140,6 +196,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }),
     });
   }
+
+  // CORS for allowlisted cross-origin clients (the Electron desktop shell at
+  // app://atrium uses an absolute origin + bearer token). The web SPA is
+  // same-origin and never sends an Origin header here. Token auth carries no
+  // cookies, so we echo only allowlisted origins and omit allow-credentials.
+  const corsOrigins = new Set(config.corsOrigins);
+  app.addHook('onRequest', async (req, reply) => {
+    const origin = req.headers.origin;
+    if (typeof origin !== 'string' || !corsOrigins.has(origin)) return;
+    reply.header('access-control-allow-origin', origin);
+    reply.header('vary', 'Origin');
+    reply.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    reply.header('access-control-allow-headers', 'authorization, content-type');
+    reply.header('access-control-max-age', '600');
+    if (req.method === 'OPTIONS') {
+      reply.code(204).send();
+      return reply;
+    }
+  });
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof DomainError) {
@@ -579,11 +654,28 @@ function rawSession(req: FastifyRequest): string | undefined {
   // Auth
   // -------------------------------------------------------------------------
 
-  app.get('/auth/methods', async () => ({
-    open: config.authOpen,
-    email: true,
-    google: googleEnabled(),
-  }));
+  app.get('/auth/methods', async () => {
+    // First-run capability honesty: only advertise email when a user can
+    // actually obtain a code — either dev-codes echo it in the response, or a
+    // real (resend) transport delivers it. Plain "log" mode writes the code to
+    // the server log only, so we don't offer it (the handle path leads instead).
+    const emailUsable =
+      config.authDevCodes ||
+      (config.emailMode === 'resend' &&
+        emailDeliveryConfigured({
+          mode: config.emailMode,
+          from: config.emailFrom,
+          resendApiKey: config.resendApiKey,
+        }));
+
+    return {
+      open: config.authOpen,
+      email: emailUsable,
+      google: googleEnabled(),
+      // First-run capability honesty: LiveKit-less installs cannot start calls.
+      calls: calls !== null,
+    };
+  });
 
   app.post(
     '/auth/email/request',
@@ -823,6 +915,57 @@ function rawSession(req: FastifyRequest): string | undefined {
       user.id,
     ]);
     return { user, prefs: normalizePrefs(res.rows[0]?.prefs) };
+  });
+
+  app.get('/api/me/provider-credentials', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return { providers: await providerCredentials.list(user.id) };
+  });
+
+  app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { token?: unknown };
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    if (!token) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
+    }
+    const provider = await providerCredentials.upsertClaudeToken(user.id, token);
+    await sessionRuns.clearClaudeAuthRequired(user.id);
+    return { provider };
+  });
+
+  app.put('/api/me/provider-credentials/codex', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { authJson?: unknown };
+    const authJson = typeof body.authJson === 'string' ? body.authJson.trim() : '';
+    if (!authJson) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Codex auth.json required' });
+    }
+    try {
+      const provider = await providerCredentials.upsertCodexAuthJson(user.id, authJson);
+      await sessionRuns.clearProviderAuthRequired(user.id, CODEX_PROVIDER);
+      return { provider };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid Codex auth.json';
+      return reply.code(400).send({ error: 'bad_request', message });
+    }
+  });
+
+  app.delete('/api/me/provider-credentials/claude-code', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    await providerCredentials.deleteClaudeToken(user.id);
+    return { ok: true };
+  });
+
+  app.delete('/api/me/provider-credentials/codex', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    await providerCredentials.deleteCodexAuthJson(user.id);
+    return { ok: true };
   });
 
   app.post('/auth/logout', async (req, reply) => {
@@ -1882,6 +2025,75 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.code(201).send({ fileId, uploadUrl, existing: false });
   });
 
+  // === writeback route ===
+  await app.register(async (writeback) => {
+    writeback.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+
+    writeback.put('/api/channels/:channelId/artifacts', async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const { channelId } = req.params as { channelId: string };
+      if (!(await canAccessChannel(pool, user.id, channelId))) {
+        return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+      }
+
+      const query = req.query as { path?: unknown; session?: unknown };
+      const headerPath = firstHeader(req.headers['x-artifact-path']);
+      const queryPath = typeof query.path === 'string' ? query.path.trim() : '';
+      const path = (queryPath || headerPath?.trim() || '').trim();
+      if (!path || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_request', message: 'valid artifact path required' });
+      }
+
+      const sessionId = typeof query.session === 'string' ? query.session.trim() : '';
+      if (!/^[0-9a-f-]{36}$/i.test(sessionId)) {
+        return reply.code(400).send({ error: 'bad_request', message: 'session query parameter required' });
+      }
+      const session = await pool.query<{ id: string }>(
+        `SELECT id FROM sessions WHERE id = $1 AND channel_id = $2`,
+        [sessionId, channelId],
+      );
+      if (!session.rows[0]) {
+        return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+      }
+
+      const body = Buffer.isBuffer(req.body)
+        ? req.body
+        : req.body instanceof Uint8Array
+          ? Buffer.from(req.body)
+          : Buffer.alloc(0);
+      const mime = normalizeMime(firstHeader(req.headers['content-type']));
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+
+      const result = await writeBackArtifact({
+        pool,
+        storage: { uploadObject, getObjectBytes, headObject },
+        channelId,
+        sessionId,
+        path,
+        bytes: body,
+        mime,
+        author: `human:${user.id}`,
+        ...(baseSeq == null ? {} : { baseSeq }),
+      });
+      if (!result.ok) {
+        return reply.code(409).send({
+          error: result.reason === 'stale_base' ? 'stale_base' : result.reason,
+          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+        });
+      }
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
   app.post('/api/uploads/:fileId/refresh', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
@@ -2112,7 +2324,12 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    return { record: await sessionRuns.getSessionRecord(id) };
+    const record = await sessionRuns.getSessionRecord(id);
+    // === ACL scope enforcement (#4) ===
+    record.artifacts = record.artifacts
+      .filter((artifact) => userCanReadScope(classifyScope(artifact.path)))
+      .map((artifact) => ({ ...artifact, scope: classifyScope(artifact.path) }));
+    return { record };
   });
 
   // Serve a captured artifact's bytes — unblocks the Artifacts gallery, which
@@ -2129,6 +2346,15 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id, artifactId } = req.params as { id: string; artifactId: string };
+    // === ACL scope enforcement (#4) ===
+    const meta = await pool.query<{ path: string }>(
+      `SELECT path FROM session_artifacts WHERE session_id = $1 AND id = $2`,
+      [id, artifactId],
+    );
+    let scope = meta.rows[0] ? classifyScope(meta.rows[0].path) : null;
+    if (scope && !userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
     try {
       plan = await sessionRuns.getArtifactServePlan(id, artifactId);
@@ -2148,16 +2374,25 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw err;
     }
     if (plan.kind === 'redirect') {
+      // === ACL scope enforcement (#4) ===
+      reply.header('X-Artifact-Scope', scope ?? 'workspace');
       // Durable bytes in atrium's store: short-lived presigned redirect (the
       // presign carries the inline/attachment Content-Disposition). Matches the
       // file-serve route's 302-to-S3 pattern.
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
+    // === ACL scope enforcement (#4) ===
+    scope ??= classifyScope(artifact.path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
     const mime = artifact.mime || 'application/octet-stream';
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';
     reply.header('Content-Type', mime);
+    // === ACL scope enforcement (#4) ===
+    reply.header('X-Artifact-Scope', scope);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header(
       'Content-Disposition',
@@ -2166,6 +2401,850 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
     if (!bytes.body) return reply.send(Buffer.alloc(0));
     return reply.send(Readable.fromWeb(bytes.body));
+  });
+
+  // === Phase 3 unified Files routes ===
+  {
+    const { createGitSource } = await import('./git-source.js');
+    const { resolveBacking } = await import('./file-resolver.js');
+    const gitPrefix = normalizeFilesGitPrefix(process.env.GIT_PREFIX ?? 'repo/');
+    const gitSource = createGitSource(process.env.GIT_REPO_ROOT);
+
+    type UnifiedFileRow = { path: string; backing: 'git' | 'ledger'; type: 'file' | 'dir'; scope?: ArtifactScope };
+
+    function normalizeFilesGitPrefix(value: string): string {
+      const trimmed = value.trim();
+      const prefix = trimmed.length > 0 ? trimmed : 'repo/';
+      return prefix.endsWith('/') ? prefix : `${prefix}/`;
+    }
+
+    function normalizeFilesDir(value: unknown): string | null {
+      if (value == null) return '';
+      if (typeof value !== 'string') return null;
+      const dir = value.trim();
+      if (dir.includes('\0') || dir.includes('..') || dir.startsWith('/')) return null;
+      return dir.replace(/\/+$/g, '');
+    }
+
+    function normalizeFilesPath(value: unknown): string | null {
+      if (typeof value !== 'string') return null;
+      const path = value.trim();
+      if (!path || path.includes('\0') || path.includes('..') || path.startsWith('/')) return null;
+      return path;
+    }
+
+    function gitRelDirForApiDir(dir: string): string | null {
+      const prefixRoot = gitPrefix.replace(/\/+$/g, '');
+      if (dir.length === 0) return '';
+      if (dir === prefixRoot) return '';
+      if (dir.startsWith(gitPrefix)) return dir.slice(gitPrefix.length).replace(/\/+$/g, '');
+      return null;
+    }
+
+    function ledgerRowsForDir(
+      scope: Array<{ path: string; latestSeq: number; kind: string }>,
+      dir: string,
+    ): UnifiedFileRow[] {
+      const prefix = dir.length > 0 ? `${dir}/` : '';
+      const rows = new Map<string, UnifiedFileRow>();
+      for (const item of scope) {
+        // === ACL scope enforcement (#4) ===
+        const artifactScope = classifyScope(item.path);
+        if (!userCanReadScope(artifactScope)) continue;
+        if (item.kind === 'deleted') continue;
+        if (resolveBacking(item.path, { gitPrefix }).backing !== 'ledger') continue;
+        if (!item.path.startsWith(prefix)) continue;
+        const rest = item.path.slice(prefix.length);
+        if (!rest) continue;
+        const slash = rest.indexOf('/');
+        const path = slash < 0 ? item.path : `${prefix}${rest.slice(0, slash)}`;
+        const type = slash < 0 ? 'file' : 'dir';
+        const scope = type === 'dir' ? classifyScope(`${path}/`) : artifactScope;
+        if (!rows.has(path) || type === 'dir') rows.set(path, { path, backing: 'ledger', type, scope });
+      }
+      return [...rows.values()];
+    }
+
+    function bodyBuffer(body: unknown): Buffer {
+      if (Buffer.isBuffer(body)) return body;
+      if (body instanceof Uint8Array) return Buffer.from(body);
+      return Buffer.alloc(0);
+    }
+
+    function unsafeGitPathError(err: unknown): boolean {
+      return err instanceof Error && err.message === 'unsafe git path';
+    }
+
+    function isoDate(value: Date | string): string {
+      return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+    }
+
+    async function ledgerHistory(sessionId: string, path: string) {
+      const res = await pool.query<{
+        seq: number;
+        blob_sha: string | null;
+        author: string;
+        kind: string;
+        status: string;
+        created_at: Date | string;
+      }>(
+        `SELECT v.seq, v.blob_sha, v.author, v.kind, v.status, v.created_at
+           FROM artifacts a
+           JOIN artifact_versions v ON v.artifact_id = a.id
+          WHERE a.session_id = $1 AND a.path = $2
+          ORDER BY v.seq DESC`,
+        [sessionId, path],
+      );
+      return res.rows.map((row) => ({
+        seq: row.seq,
+        sha: row.blob_sha,
+        author: row.author,
+        date: isoDate(row.created_at),
+        kind: row.kind,
+        status: row.status,
+      }));
+    }
+
+    async function sessionChannelId(sessionId: string): Promise<string | null> {
+      const res = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+      return res.rows[0]?.channel_id ?? null;
+    }
+
+    await app.register(async (filesScope) => {
+      filesScope.addContentTypeParser(
+        '*',
+        { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+        (_req, body, done) => done(null, body),
+      );
+
+      filesScope.get('/api/sessions/:id/files', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const dir = normalizeFilesDir((req.query as { dir?: unknown }).dir);
+        if (dir == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'dir must be a safe relative path' });
+        }
+
+        const ledger = new ArtifactLedger(pool);
+        const rows = ledgerRowsForDir(await ledger.sessionScope(id), dir);
+        const gitRelDir = gitRelDirForApiDir(dir);
+        if (gitRelDir != null && gitSource.isConfigured()) {
+          try {
+            const gitRows = await gitSource.listDir(gitRelDir);
+            rows.push(...gitRows.map((row) => ({ ...row, path: `${gitPrefix}${row.path}`, backing: 'git' as const })));
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'dir must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+        rows.sort((a, b) => a.path.localeCompare(b.path) || a.backing.localeCompare(b.backing));
+        return reply.send({ rows });
+      });
+
+      filesScope.get('/api/sessions/:id/files/history', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const path = normalizeFilesPath((req.query as { path?: unknown }).path);
+        if (path == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+        }
+
+        const resolved = resolveBacking(path, { gitPrefix });
+        // === ACL scope enforcement (#4) ===
+        const scope = classifyScope(resolved.relPath);
+        if (resolved.backing === 'ledger' && !userCanReadScope(scope)) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
+        if (resolved.backing === 'git') {
+          if (!gitSource.isConfigured()) {
+            return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
+          }
+          try {
+            return reply.send({ backing: 'git', entries: await gitSource.history(resolved.relPath) });
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'path must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+
+        return reply.send({ backing: 'ledger', scope, entries: await ledgerHistory(id, resolved.relPath) });
+      });
+
+      // Read content by backing: git files inline; ledger files via the
+      // conflict-aware by-path serve (redirect so the last-normal +
+      // X-Artifact-Conflicted semantics live in one place).
+      filesScope.get('/api/sessions/:id/files/content', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const path = normalizeFilesPath((req.query as { path?: unknown }).path);
+        if (path == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+        }
+        const resolved = resolveBacking(path, { gitPrefix });
+        // === ACL scope enforcement (#4) ===
+        if (resolved.backing === 'ledger' && !userCanReadScope(classifyScope(resolved.relPath))) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
+        if (resolved.backing === 'git') {
+          if (!gitSource.isConfigured()) {
+            return reply.code(404).send({ error: 'git_source_unconfigured', message: 'git source not configured' });
+          }
+          try {
+            const file = await gitSource.readFile(resolved.relPath);
+            if (!file) return reply.code(404).send({ error: 'not_found', message: 'file not found' });
+            reply.header('X-File-Backing', 'git');
+            reply.header('X-Git-Blob-Sha', file.sha);
+            reply.header('Content-Type', 'application/octet-stream');
+            return reply.send(file.bytes);
+          } catch (err) {
+            if (unsafeGitPathError(err)) {
+              return reply.code(400).send({ error: 'bad_query', message: 'path must be a safe relative path' });
+            }
+            throw err;
+          }
+        }
+        return reply.redirect(
+          `/api/sessions/${id}/artifacts/by-path?path=${encodeURIComponent(resolved.relPath)}`,
+          302,
+        );
+      });
+
+      filesScope.put('/api/sessions/:id/files', async (req, reply) => {
+        const user = await requireSessionAccess(req, reply);
+        if (!user) return;
+        const { id } = req.params as { id: string };
+        const path = normalizeFilesPath((req.query as { path?: unknown }).path);
+        if (path == null) {
+          return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+        }
+
+        const resolved = resolveBacking(path, { gitPrefix });
+        if (resolved.backing === 'git') {
+          return reply.code(405).send({
+            error: 'repo_read_only',
+            message: 'repo files are read-only in-app; steer the agent to change code',
+          });
+        }
+
+        const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+        if (baseSeq === false) {
+          return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+        }
+        const channelId = await sessionChannelId(id);
+        if (!channelId) {
+          return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+        }
+        const body = bodyBuffer(req.body);
+        const result = await writeBackArtifact({
+          pool,
+          storage: { uploadObject, getObjectBytes, headObject },
+          channelId,
+          sessionId: id,
+          path: resolved.relPath,
+          bytes: body,
+          mime: normalizeMime(firstHeader(req.headers['content-type'])),
+          author: `human:${user.id}`,
+          ...(baseSeq == null ? {} : { baseSeq }),
+        });
+        if (!result.ok) {
+          return reply.code(409).send({
+            error: result.reason === 'stale_base' ? 'stale_base' : result.reason,
+            ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+            ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+          });
+        }
+        return reply.send({ backing: 'ledger', seq: result.seq });
+      });
+    });
+  }
+
+  // === serve route ===
+  app.get('/api/sessions/:id/artifacts/by-path', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string; at?: string };
+    const path = q.path;
+    if (typeof path !== 'string' || path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    // === ACL scope enforcement (#4) ===
+    const scope = classifyScope(path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
+    const at = q.at ?? 'latest';
+    // Conflict-aware serve (§8B #5): for the default `latest`, serve the newest
+    // status='normal' version (never the conflict-marker bytes) and flag an
+    // unresolved conflict in headers so the UI can show a banner. Explicit `at`
+    // (a seq) is served verbatim for inspect/resolve flows.
+    let ref: { seq: number } | { pointer: string };
+    if (at === 'latest') {
+      const ledger = new ArtifactLedger(pool);
+      const res = await ledger.serveResolution(id, path);
+      if (!res || res.servedSeq == null) {
+        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      }
+      reply.header('X-Artifact-Seq', String(res.servedSeq));
+      reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
+      if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
+      ref = { seq: res.servedSeq };
+    } else {
+      ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
+    }
+    let plan: Awaited<ReturnType<typeof sessionRuns.getLedgerServePlan>>;
+    try {
+      plan = await sessionRuns.getLedgerServePlan(id, path, ref);
+    } catch (err) {
+      if (err instanceof CentaurApiError) {
+        if (err.status === 404) {
+          return reply
+            .code(410)
+            .send({ error: 'artifact_gone', message: 'artifact bytes are no longer available' });
+        }
+        return reply
+          .code(502)
+          .send({ error: 'artifact_upstream_error', message: 'failed to fetch artifact from Centaur' });
+      }
+      throw err;
+    }
+    if (plan.kind === 'redirect') {
+      // === ACL scope enforcement (#4) ===
+      reply.header('X-Artifact-Scope', scope);
+      return reply.redirect(plan.url, 302);
+    }
+    const { artifact, bytes } = plan;
+    const mime = artifact.mime || 'application/octet-stream';
+    const inline = mime.startsWith('image/');
+    const filename = basename(artifact.path) || 'artifact';
+    reply.header('Content-Type', mime);
+    // === ACL scope enforcement (#4) ===
+    reply.header('X-Artifact-Scope', scope);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename="${sanitizeFilename(filename)}"`,
+    );
+    if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
+    if (!bytes.body) return reply.send(Buffer.alloc(0));
+    return reply.send(Readable.fromWeb(bytes.body));
+  });
+
+  // C1 inbound-sync source: the gap-free, egress-pollable change-feed the Centaur
+  // node daemon polls for advances on this session's hydrated paths. `since` is an
+  // opaque cursor token "<xid>.<id>"; omit it to start from the beginning. See
+  // migration 034 for the gap-free (xid, id)-below-xmin-horizon semantics.
+  app.get('/api/sessions/:id/artifacts/changes', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { since?: string; limit?: string };
+
+    let cursor: ChangeCursor = CHANGE_CURSOR_ZERO;
+    if (typeof q.since === 'string' && q.since.length > 0) {
+      const m = /^(\d+)\.(\d+)$/.exec(q.since);
+      if (!m) {
+        return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
+      }
+      cursor = { xid: m[1]!, id: m[2]! };
+    }
+    let limit = 500;
+    if (typeof q.limit === 'string') {
+      const n = Number(q.limit);
+      if (!Number.isInteger(n) || n < 1 || n > 5000) {
+        return reply.code(400).send({ error: 'bad_query', message: 'limit must be 1..5000' });
+      }
+      limit = n;
+    }
+
+    const ledger = new ArtifactLedger(pool);
+    const page = await ledger.changesSince(id, cursor, limit);
+    // === ACL scope enforcement (#4) ===
+    const rows = page.rows
+      .map((row) => ({ ...row, scope: classifyScope(row.path) }))
+      .filter((row) => userCanReadScope(row.scope));
+    return reply.send({
+      rows,
+      next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
+    });
+  });
+
+  // Conflict detail (A3): the both-sides payload for the resolution UI.
+  app.get('/api/sessions/:id/artifacts/conflict', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const path = (req.query as { path?: string }).path;
+    if (typeof path !== 'string' || path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    // === ACL scope enforcement (#4) ===
+    if (!userCanReadScope(classifyScope(path))) {
+      return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
+    }
+    const detail = await loadConflictDetail(pool, { getObjectBytes }, id, path);
+    if (!detail) {
+      return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
+    }
+    return reply.send(detail);
+  });
+
+  // Resolve a conflict (A3): a write-back against the conflict seq advances
+  // `latest` to a normal version (jj-style resolution, never a blind overwrite).
+  // Body bytes = the resolved content; or { "delete": true } to stay-deleted.
+  app.register(async (resolveScope) => {
+    resolveScope.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    resolveScope.post('/api/sessions/:id/artifacts/:artifactId/resolve', async (req, reply) => {
+      const user = await requireSessionAccess(req, reply);
+      if (!user) return;
+      const { artifactId } = req.params as { artifactId: string };
+      const ledger = new ArtifactLedger(pool);
+      const art = await ledger.artifactById(artifactId);
+      if (!art) {
+        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      }
+      const conflict = await ledger.getConflict(art.sessionId, art.path);
+      if (!conflict) {
+        return reply.code(409).send({ error: 'no_conflict', message: 'artifact has no unresolved conflict' });
+      }
+      const stayDeleted = firstHeader(req.headers['x-artifact-delete']) === 'true';
+      const result = stayDeleted
+        ? await writeBackDelete({
+            pool,
+            channelId: art.channelId,
+            sessionId: art.sessionId,
+            path: art.path,
+            author: `human:${user.id}`,
+            baseSeq: conflict.conflictSeq,
+          })
+        : await writeBackArtifact({
+            pool,
+            storage: { uploadObject, getObjectBytes, headObject },
+            channelId: art.channelId,
+            sessionId: art.sessionId,
+            path: art.path,
+            bytes: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+            mime: normalizeMime(firstHeader(req.headers['content-type'])),
+            author: `human:${user.id}`,
+            baseSeq: conflict.conflictSeq,
+          });
+      if (!result.ok) {
+        return reply.code(409).send({ error: result.reason });
+      }
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
+  // Hydration scope (A4): the artifact paths this session subscribes + latest seq
+  // — the seed for the Centaur node's hydration manifest + subscription set.
+  app.get('/api/sessions/:id/hydration-scope', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const ledger = new ArtifactLedger(pool);
+    const paths = await ledger.sessionScope(id);
+    // === ACL scope enforcement (#4) ===
+    const scopedPaths = paths
+      .map((path) => ({ ...path, scope: classifyScope(path.path) }))
+      .filter((path) => userCanReadScope(path.scope));
+    return reply.send({ sessionId: id, scope: 'session', paths: scopedPaths });
+  });
+
+  // === /atrium chat projection ===
+  app.get('/api/sessions/:id/atrium/chat', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { channel?: unknown; thread?: unknown };
+    const channelId = typeof q.channel === 'string' ? q.channel.trim() : '';
+    if (channelId.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'channel is required' });
+    }
+    const session = await pool.query<{ channel_id: string }>(
+      'SELECT channel_id FROM sessions WHERE id = $1',
+      [id],
+    );
+    if (session.rows[0]?.channel_id !== channelId) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+
+    const rawThread = q.thread;
+    let events: WireEvent[] = [];
+    let title = channelId;
+    if (rawThread == null || rawThread === '') {
+      let beforeId: number | undefined;
+      for (let pageCount = 0; pageCount < 5; pageCount++) {
+        const page = await listChannelMessages(pool, {
+          channelId,
+          limit: 200,
+          ...(beforeId === undefined ? {} : { beforeId }),
+        });
+        events = [...page.events, ...events];
+        if (!page.hasMore || page.events.length === 0) break;
+        beforeId = page.events[0]!.id;
+      }
+    } else if (typeof rawThread === 'string') {
+      const threadRootEventId = Number(rawThread.trim());
+      if (!Number.isSafeInteger(threadRootEventId) || threadRootEventId <= 0) {
+        return reply
+          .code(400)
+          .send({ error: 'bad_query', message: 'thread must be a positive event id' });
+      }
+      const root = await pool.query<{ channel_id: string | null }>(
+        `SELECT channel_id
+         FROM events
+         WHERE id = $1 AND type IN ('message.posted', 'session.spawned')`,
+        [threadRootEventId],
+      );
+      if (root.rows[0]?.channel_id !== channelId) {
+        return reply.code(404).send({ error: 'thread_not_found', message: 'thread not found' });
+      }
+      events = (await listThreadMessages(pool, { rootEventId: threadRootEventId })).events;
+      title = `${channelId}/${threadRootEventId}`;
+    } else {
+      return reply
+        .code(400)
+        .send({ error: 'bad_query', message: 'thread must be a positive event id' });
+    }
+
+    const messages = events.filter(
+      (event) =>
+        event.type === 'message.posted' &&
+        event.channelId === channelId &&
+        event.payload.deleted !== true,
+    );
+    const lines = [`# ${title}`, ''];
+    for (const event of messages) {
+      const author = event.author?.displayName ?? event.author?.handle ?? event.actorId ?? 'unknown';
+      const tag = event.payload.edited === true ? ' (edited)' : '';
+      const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+      lines.push(`**${author}**${tag}: ${text}`);
+    }
+    return reply.send({ markdown: `${lines.join('\n')}\n`, messageCount: messages.length });
+  });
+
+  // === internal node-sync ingestion (x-api-key; the node daemon is trusted infra,
+  // not a cookie-bearing user). Reuses the shipped write-back + serve + change-feed.
+  const requireCaptureKey = (req: FastifyRequest, reply: FastifyReply): boolean => {
+    const key = firstHeader(req.headers['x-api-key']);
+    if (!config.artifactCaptureApiKey || key !== config.artifactCaptureApiKey) {
+      reply.code(401).send({ error: 'unauthorized', message: 'x-api-key required' });
+      return false;
+    }
+    return true;
+  };
+
+  // Poll the gap-free change-feed (the daemon's inbound trigger).
+  app.get('/api/internal/sessions/:id/artifacts/changes', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { since?: string; limit?: string };
+    let cursor: ChangeCursor = CHANGE_CURSOR_ZERO;
+    if (typeof q.since === 'string' && q.since.length > 0) {
+      const m = /^(\d+)\.(\d+)$/.exec(q.since);
+      if (!m) return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
+      cursor = { xid: m[1]!, id: m[2]! };
+    }
+    const page = await new ArtifactLedger(pool).changesSince(id, cursor, 500);
+    return reply.send({ rows: page.rows, next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}` });
+  });
+
+  // Fetch a specific version's bytes (the daemon's inbound adopt fetch). Ledger
+  // blobs are offloaded to S3 in this path, so we serve straight from the store.
+  app.get('/api/internal/sessions/:id/artifacts/raw', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string; seq?: string };
+    if (typeof q.path !== 'string' || q.path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    const ref = typeof q.seq === 'string' && /^\d+$/.test(q.seq) ? { seq: Number(q.seq) } : { pointer: 'latest' };
+    const v = await new ArtifactLedger(pool).resolveVersion(id, q.path, ref);
+    if (!v || v.kind === 'deleted' || !v.s3Key) {
+      return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
+    }
+    const bytes = await getObjectBytes(v.s3Key);
+    reply.header('Content-Type', v.mime || 'application/octet-stream');
+    reply.header('X-Artifact-Seq', String(v.seq));
+    return reply.send(bytes);
+  });
+
+  // Capture a change (the daemon's node-scan output). x-api-key + raw body.
+  await app.register(async (capture) => {
+    capture.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    capture.post('/api/internal/sessions/:id/artifacts/capture', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const path = (req.query as { path?: string }).path;
+      if (typeof path !== 'string' || path.length === 0 || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
+      }
+      const sess = await pool.query<{ channel_id: string }>(
+        `SELECT channel_id FROM sessions WHERE id = $1`,
+        [id],
+      );
+      const channelId = sess.rows[0]?.channel_id;
+      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+      const isDelete = firstHeader(req.headers['x-artifact-delete']) === 'true';
+      const author = `node:${id}`;
+      const result = isDelete
+        ? await writeBackDelete({ pool, channelId, sessionId: id, path, author, ...(baseSeq == null ? {} : { baseSeq }) })
+        : await writeBackArtifact({
+            pool,
+            storage: { uploadObject, getObjectBytes, headObject },
+            channelId,
+            sessionId: id,
+            path,
+            bytes: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+            mime: normalizeMime(firstHeader(req.headers['content-type'])),
+            author,
+            ...(baseSeq == null ? {} : { baseSeq }),
+          });
+      if (!result.ok) return reply.code(409).send({ error: result.reason });
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
+  // === H8 streaming capture ===
+  await app.register(async (captureStream) => {
+    captureStream.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    captureStream.post('/api/internal/sessions/:id/artifacts/capture-stream', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const path = (req.query as { path?: string }).path;
+      if (typeof path !== 'string' || path.length === 0 || path.includes('..')) {
+        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
+      }
+      const sess = await pool.query<{ channel_id: string }>(
+        `SELECT channel_id FROM sessions WHERE id = $1`,
+        [id],
+      );
+      const channelId = sess.rows[0]?.channel_id;
+      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+
+      const mime = normalizeMime(firstHeader(req.headers['content-type']));
+      const source = isReadableStream(req.body) ? req.body : Readable.from(Buffer.alloc(0));
+      const stagingKey = `cas-staging/${randomBytes(16).toString('hex')}`;
+      let stagingDeleted = false;
+      try {
+        const hash = createHash('sha256');
+        let sizeBytes = 0;
+        const hashingStream = new Transform({
+          transform(chunk, encoding, callback) {
+            const bytes = Buffer.isBuffer(chunk)
+              ? chunk
+              : typeof chunk === 'string'
+                ? Buffer.from(chunk, encoding)
+                : Buffer.from(chunk as Uint8Array);
+            hash.update(bytes);
+            sizeBytes += bytes.byteLength;
+            callback(null, chunk);
+          },
+        });
+        const upload = uploadObjectStream(stagingKey, hashingStream, mime);
+        await Promise.all([pipeline(source, hashingStream), upload]);
+
+        const sha = hash.digest('hex');
+        const finalKey = casBlobKey(sha);
+        await copyObject(stagingKey, finalKey);
+        await deleteObject(stagingKey);
+        stagingDeleted = true;
+
+        const ledger = new ArtifactLedger(pool);
+        // First version of a path is 'created', else 'modified' (mirrors the
+        // buffered write-back path; kind is cosmetic but should be accurate).
+        const prior = await pool.query(
+          `SELECT 1 FROM artifacts WHERE session_id = $1 AND path = $2 LIMIT 1`,
+          [id, path],
+        );
+        const result = await ledger.commitVersion({
+          sessionId: id,
+          channelId,
+          path,
+          blobSha: sha,
+          sizeBytes,
+          mime,
+          kind: prior.rows[0] ? 'modified' : 'created',
+          mergeClass: 'immutable-data',
+          author: `node:${id}`,
+          ...(baseSeq == null ? {} : { baseSeq }),
+        });
+        if (!result.ok) {
+          // Large streamed files are immutable-class; stale OCC is rebased by the node daemon.
+          return reply.code(409).send({ error: 'stale_base', latestSeq: result.latestSeq, baseSeq: result.baseSeq });
+        }
+        await ledger.stampBlobS3Key(sha, finalKey);
+        return reply.send({ seq: result.seq, status: 'normal' });
+      } finally {
+        if (!stagingDeleted) {
+          await deleteObject(stagingKey).catch(() => {});
+        }
+      }
+    });
+  });
+
+  // Harness-resume (rollout-JSONL): capture the harness CLI transcript snapshot
+  // (the daemon PUTs it each turn) + serve it back for cold-start restore. Stored
+  // outside the artifact ledger — internal harness state, not a user work product.
+  app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const t = await loadHarnessTranscript(pool, { getObjectBytes }, id, harness);
+    if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
+    reply.header('Content-Type', 'application/x-ndjson');
+    reply.header('X-Transcript-Sha256', t.sha256);
+    return reply.send(t.bytes);
+  });
+
+  await app.register(async (ht) => {
+    ht.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+    ht.put('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const harness = (req.query as { harness?: string }).harness ?? '';
+      if (!isHarness(harness)) {
+        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+      }
+      const sess = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1`, [id]);
+      if (!sess.rows[0]) return reply.code(404).send({ error: 'session_not_found' });
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (bytes.length === 0) {
+        return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
+      }
+      const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, id, harness, bytes);
+      return reply.send({ size_bytes: size, sha256 });
+    });
+  });
+
+  // === H10 commit-group additions ===
+  app.post('/api/internal/sessions/:id/artifacts/commit-group', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      group_id?: unknown;
+      files?: unknown;
+    };
+    const badManifest = (message: string) => reply.code(400).send({ error: 'bad_manifest', message });
+    if (typeof body.group_id !== 'string' || body.group_id.length === 0) {
+      return badManifest('group_id is required');
+    }
+    if (!Array.isArray(body.files) || body.files.length === 0) {
+      return badManifest('files must be a non-empty array');
+    }
+    const files: CommitVersionGroupFile[] = [];
+    const seenPaths = new Set<string>();
+    for (const raw of body.files) {
+      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return badManifest('each file must be an object');
+      }
+      const file = raw as {
+        path?: unknown;
+        blob_sha?: unknown;
+        size_bytes?: unknown;
+        mime?: unknown;
+        base_seq?: unknown;
+        kind?: unknown;
+        merge_class?: unknown;
+      };
+      if (typeof file.path !== 'string' || file.path.length === 0 || file.path.includes('..')) {
+        return badManifest('valid path required');
+      }
+      if (seenPaths.has(file.path)) return badManifest('duplicate path');
+      seenPaths.add(file.path);
+      if (file.kind !== 'created' && file.kind !== 'modified' && file.kind !== 'deleted') {
+        return badManifest('kind must be created, modified, or deleted');
+      }
+      const blobSha = file.blob_sha;
+      if (file.kind === 'deleted') {
+        if (blobSha !== null) return badManifest('deleted files must use blob_sha null');
+      } else if (typeof blobSha !== 'string' || blobSha.length === 0) {
+        return badManifest('created and modified files require blob_sha');
+      }
+      if (!Number.isSafeInteger(file.size_bytes) || (file.size_bytes as number) < 0) {
+        return badManifest('size_bytes must be a non-negative integer');
+      }
+      if (typeof file.mime !== 'string' || file.mime.length === 0) {
+        return badManifest('mime is required');
+      }
+      let baseSeq: number | null | undefined;
+      if (file.base_seq === null || file.base_seq === undefined) {
+        baseSeq = file.base_seq;
+      } else if (Number.isSafeInteger(file.base_seq) && (file.base_seq as number) > 0) {
+        baseSeq = file.base_seq as number;
+      } else {
+        return badManifest('base_seq must be a positive integer or null');
+      }
+      let mergeClass: CommitVersionGroupFile['mergeClass'];
+      if (file.merge_class !== undefined) {
+        if (
+          file.merge_class !== 'immutable-data' &&
+          file.merge_class !== 'mergeable-doc' &&
+          file.merge_class !== 'derived-output'
+        ) {
+          return badManifest('merge_class is invalid');
+        }
+        mergeClass = file.merge_class;
+      }
+      files.push({
+        path: file.path,
+        blobSha: file.kind === 'deleted' ? null : blobSha as string,
+        sizeBytes: file.size_bytes as number,
+        mime: normalizeMime(file.mime),
+        baseSeq,
+        kind: file.kind,
+        ...(mergeClass === undefined ? {} : { mergeClass }),
+      });
+    }
+
+    const sess = await pool.query<{ channel_id: string }>(
+      `SELECT channel_id FROM sessions WHERE id = $1`,
+      [id],
+    );
+    const channelId = sess.rows[0]?.channel_id;
+    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+
+    const result = await new ArtifactLedger(pool).commitVersionGroup({
+      sessionId: id,
+      channelId,
+      groupId: body.group_id,
+      author: `node:${id}`,
+      files,
+    });
+    if (!result.ok) return reply.code(409).send(result);
+    return reply.send(result);
   });
 
   app.get('/api/sessions/:id/stream', async (req, reply) => {
@@ -2218,19 +3297,26 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.steer',
-      body: { sessionId: id, text },
-      fn: async (client) => {
-        await sessionRuns.postUserMessageInTx(client, id, user.id, text);
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        sessionRuns.afterPostUserMessage(id);
-      },
-    });
+    try {
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.steer',
+        body: { sessionId: id, text },
+        fn: async (client) => {
+          await sessionRuns.postUserMessageInTx(client, id, user.id, text);
+          return { ok: true as const };
+        },
+        onApplied: () => {
+          sessionRuns.afterPostUserMessage(id);
+        },
+      });
+    } catch (err) {
+      if (err instanceof DomainError && err.code === 'provider_auth_required') {
+        await sessionRuns.markClaudeAuthMissing(id).catch(() => {});
+      }
+      throw err;
+    }
     return reply.code(202).send({ ok: true });
   });
 

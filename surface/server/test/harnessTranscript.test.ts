@@ -1,0 +1,142 @@
+// Harness-transcript internal endpoints (x-api-key): auth + validation, plus a
+// real PUT-to-GET round-trip against PG + MinIO (the daemon's capture/restore
+// contract for the rollout-JSONL resume project).
+import { randomUUID } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type pg from 'pg';
+import { buildApp } from '../src/app.js';
+import { ensureBucket } from '../src/s3.js';
+import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
+
+const KEY = process.env.ARTIFACT_CAPTURE_API_KEY ?? '';
+const haveKey = KEY.length > 0;
+
+let pool: pg.Pool;
+let fx: Fixture;
+let app: Awaited<ReturnType<typeof buildApp>>;
+let s3Up = false;
+
+beforeAll(async () => {
+  pool = await createTestPool();
+  try {
+    await ensureBucket();
+    s3Up = true;
+  } catch {
+    /* MinIO may be down; the round-trip test guards on this */
+  }
+});
+afterAll(async () => {
+  await pool.end();
+});
+beforeEach(async () => {
+  await pool.query('TRUNCATE harness_transcripts CASCADE');
+  await truncateAll(pool);
+  fx = await seedFixture(pool);
+  app = await buildApp({ pool, sessionRuns: { baseUrl: 'http://127.0.0.1:1', apiKey: 'test', autoResume: false } });
+  await app.ready();
+});
+afterEach(async () => {
+  await app.close();
+});
+
+async function session(): Promise<string> {
+  const r = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, title, status, spawned_by)
+     VALUES ($1,$2,$3,'ht','running',$4) RETURNING id`,
+    [fx.workspaceId, fx.channelId, `tk-${randomUUID()}`, fx.userId],
+  );
+  return r.rows[0]!.id;
+}
+
+describe('harness-transcript internal endpoints', () => {
+  it('requires the api key for PUT and GET', async () => {
+    const sid = await session();
+    const get = await app.inject({ method: 'GET', url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude` });
+    expect(get.statusCode).toBe(401);
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'content-type': 'application/x-ndjson' },
+      payload: '{}',
+    });
+    expect(put.statusCode).toBe(401);
+  });
+
+  it('rejects an unknown harness (400)', async () => {
+    const sid = await session();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=amp`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(res.statusCode).toBe(haveKey ? 400 : 401);
+  });
+
+  it('PUT to an unknown session is 404', async () => {
+    if (!haveKey) return;
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${randomUUID()}/harness-transcript?harness=codex`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/x-ndjson' },
+      payload: '{"a":1}\n',
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('GET is 404 before any capture', async () => {
+    if (!haveKey) return;
+    const sid = await session();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('captures a transcript and serves it back byte-for-byte (last-write-wins)', async () => {
+    if (!haveKey || !s3Up) return;
+    const sid = await session();
+    const body1 = '{"type":"user","text":"remember 42"}\n';
+    const put1 = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/x-ndjson' },
+      payload: body1,
+    });
+    expect(put1.statusCode).toBe(200);
+    expect(put1.json().size_bytes).toBe(Buffer.byteLength(body1));
+
+    const get1 = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(get1.statusCode).toBe(200);
+    expect(get1.body).toBe(body1);
+    expect(get1.headers['x-transcript-sha256']).toBe(put1.json().sha256);
+
+    // Second capture overwrites (full-snapshot, last-write-wins).
+    const body2 = body1 + '{"type":"assistant","text":"ok, 42"}\n';
+    await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/x-ndjson' },
+      payload: body2,
+    });
+    const get2 = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(get2.body).toBe(body2);
+
+    // Per-harness isolation: codex wasn't captured for this session.
+    const codex = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=codex`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(codex.statusCode).toBe(404);
+  });
+});
