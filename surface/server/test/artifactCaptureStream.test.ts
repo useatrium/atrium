@@ -166,7 +166,9 @@ describe('internal streaming artifact capture', () => {
       s3_key: casBlobKey(sha),
       kind: 'created', // first version of this path is 'created', not 'modified'
     });
-    expect(mockedS3.storage.objects.get(casBlobKey(sha))?.body).toEqual(body);
+    const stored = mockedS3.storage.objects.get(casBlobKey(sha))?.body;
+    expect(stored?.byteLength).toBe(body.byteLength);
+    expect(stored?.equals(body)).toBe(true);
 
     const raw = await app.inject({
       method: 'GET',
@@ -174,8 +176,12 @@ describe('internal streaming artifact capture', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(raw.statusCode).toBe(200);
-    expect(Buffer.from(raw.rawPayload)).toEqual(body);
-  }, 60_000); // real S3 multipart + copy + serve-back round-trip is slow in CI
+    const rawBody = Buffer.from(raw.rawPayload);
+    expect(rawBody.byteLength).toBe(body.byteLength);
+    expect(rawBody.equals(body)).toBe(true);
+    // Streaming a multi-MB body through CAS + mocked S3 runs ~60s on loaded CI
+    // runners, right at the boundary; give it headroom so it doesn't flake.
+  }, 120_000);
 
   it('accepts a body larger than maxUploadBytes', async () => {
     const sid = await session();
@@ -196,7 +202,7 @@ describe('internal streaming artifact capture', () => {
     expect(cap.statusCode).toBe(200);
     expect(cap.json()).toEqual({ seq: 1, status: 'normal' });
     expect(mockedS3.storage.objects.get(casBlobKey(sha))?.body.byteLength).toBe(body.byteLength);
-  }, 60_000); // 25 MiB multipart upload is slow in CI
+  });
 
   it('returns stale_base when base_seq is behind latest', async () => {
     const sid = await session();
