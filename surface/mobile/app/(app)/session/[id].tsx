@@ -486,7 +486,7 @@ export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
   const { colors, reduceMotion } = useTheme();
-  const { api, me, state, upsertSession } = chat;
+  const { api, me, state, upsertSession, setActiveSessionId } = chat;
   const { stream, connected } = useSessionStream(id ?? null);
   const headerHeight = useHeaderHeight();
   const cached = id ? (state.sessions[id] ?? null) : null;
@@ -512,6 +512,7 @@ export default function SessionScreen() {
     useCallback(() => {
       if (!id) return;
       let disposed = false;
+      setActiveSessionId(id); // subscribe the WS to this session's presence key
       setLoading(true);
       setLoadError(null);
       api
@@ -530,8 +531,9 @@ export default function SessionScreen() {
         });
       return () => {
         disposed = true;
+        setActiveSessionId(null);
       };
-    }, [api, id, upsertSession]),
+    }, [api, id, upsertSession, setActiveSessionId]),
   );
 
   const session = snapshot ? mergeSpawnResponse(cached ?? undefined, snapshot) : cached;

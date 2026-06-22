@@ -108,6 +108,9 @@ interface ChatContextValue {
   cancelSession: (sessionId: string) => Promise<void>;
   failedSessionCancels: Record<string, true>;
   clearFailedSessionCancel: (sessionId: string) => void;
+  /** Track the open session so the WS subscribes to its presence key (so
+   * control-loop events fold onto the entity). Set on focus, cleared on blur. */
+  setActiveSessionId: (sessionId: string | null) => void;
   createChannel: (name: string, isPrivate?: boolean) => Promise<Channel>;
   startDm: (userIds: string[]) => Promise<Channel>;
   channelMembers: (channelId: string) => Promise<UserRef[]>;
@@ -858,7 +861,15 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
   useEffect(() => setTyping({}), [state.activeChannelId]);
 
-  const wsKeys = useMemo(() => state.channels.map((c) => c.id), [state.channels]);
+  // Subscribe to the open session's presence key so its control-loop events
+  // (seat hand-off, suggestions, answer proposals) fold onto the entity —
+  // mirrors web's wsKeys. The session screen sets activeSessionId on focus.
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const wsKeys = useMemo(() => {
+    const keys = state.channels.map((c) => c.id);
+    if (activeSessionId) keys.push(`session:${activeSessionId}`);
+    return keys;
+  }, [state.channels, activeSessionId]);
   const wsUrl = useCallback(() => {
     const ws = serverUrl.replace(/^http/i, 'ws');
     return `${ws}/ws?token=${encodeURIComponent(token)}`;
@@ -1533,6 +1544,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       cancelSession,
       failedSessionCancels,
       clearFailedSessionCancel,
+      setActiveSessionId,
       createChannel,
       startDm,
       channelMembers,
@@ -1584,6 +1596,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       cancelSession,
       failedSessionCancels,
       clearFailedSessionCancel,
+      setActiveSessionId,
       createChannel,
       startDm,
       channelMembers,

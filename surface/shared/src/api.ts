@@ -358,5 +358,60 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
       }),
+    // Control loop (collaborative steering): seat hand-off, the suggestion queue,
+    // and answer proposals. Endpoints already exist server-side (web uses them);
+    // these expose them on the shared client so mobile can reach them too.
+    requestSeat: (id: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/seat/request`, {
+        method: 'POST',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
+      }),
+    grantSeat: (id: string, userId: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/seat/grant`, {
+        method: 'POST',
+        body: JSON.stringify({ userId, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    takeSeat: (id: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/seat/take`, {
+        method: 'POST',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
+      }),
+    createSuggestion: (id: string, text: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/suggestions`, {
+        method: 'POST',
+        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    resolveSuggestion: (
+      id: string,
+      suggestionId: string,
+      action: 'send' | 'dismiss',
+      opts: { text?: string; note?: string } = {},
+      op: OpOptions = {},
+    ) =>
+      req<{ ok: true }>(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ action, ...opts, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    proposeAnswer: (
+      id: string,
+      questionId: string,
+      answers: Record<string, { answers: string[] }>,
+      op: OpOptions = {},
+    ) =>
+      req<{ ok: true }>(`/api/sessions/${id}/question-proposals`, {
+        method: 'POST',
+        body: JSON.stringify({ questionId, answers, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    resolveAnswerProposal: (
+      id: string,
+      proposalId: string,
+      action: 'submit' | 'dismiss',
+      opts: { note?: string } = {},
+      op: OpOptions = {},
+    ) =>
+      req<{ ok: true }>(`/api/sessions/${id}/question-proposals/${proposalId}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ action, ...opts, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
   };
 }
