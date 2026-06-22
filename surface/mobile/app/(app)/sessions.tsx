@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Stack, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import {
   formatCost,
   isTerminalSessionStatus,
@@ -172,6 +173,17 @@ export default function SessionsScreen() {
         options={{
           title: 'Sessions',
           headerBackButtonDisplayMode: 'minimal',
+          headerRight: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Search sessions"
+              onPress={() => router.push('/session-search')}
+              hitSlop={8}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="search-outline" size={21} color={colors.textSecondary} />
+            </Pressable>
+          ),
         }}
       />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
