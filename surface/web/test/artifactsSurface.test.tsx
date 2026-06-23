@@ -87,7 +87,7 @@ describe('ArtifactsSurface', () => {
     expect(screen.queryByRole('img')).toBeNull();
     const tile = screen.getByTestId('artifact-tile');
     expect(within(tile).getByText('PDF')).toBeTruthy();
-    expect(within(tile).getByText(/not captured/)).toBeTruthy();
+    expect(within(tile).getByText(/too large to capture/i)).toBeTruthy();
   });
 
   it('closes via the header button (standalone)', () => {
