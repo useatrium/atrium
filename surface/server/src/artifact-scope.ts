@@ -1,9 +1,8 @@
 export type ArtifactScope = 'private' | 'topic' | 'workspace';
 
 export function classifyScope(path: string): ArtifactScope {
-  if (path.startsWith('scratch/')) return 'private';
-  if (path.startsWith('proj-x/') || path.startsWith('topic/')) return 'topic';
-  return 'workspace';
+  if (path.startsWith('shared/')) return 'workspace';
+  return 'private';
 }
 
 export function userCanReadScope(scope: ArtifactScope): boolean {

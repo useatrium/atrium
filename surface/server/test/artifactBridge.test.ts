@@ -135,8 +135,8 @@ describe('artifact capture bridge', () => {
       sizeBytes: 128,
     });
     const artifact = await pool.query<{ merge_class: string }>(
-      'SELECT merge_class FROM artifacts WHERE session_id = $1 AND path = $2',
-      [sessionId, 'reports/summary.md'],
+      'SELECT merge_class FROM artifacts WHERE workspace_id = $1 AND path = $2',
+      [fx.workspaceId, 'reports/summary.md'],
     );
     expect(artifact.rows[0]?.merge_class).toBe('mergeable-doc');
 

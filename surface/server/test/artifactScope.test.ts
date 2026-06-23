@@ -12,17 +12,14 @@ describe('artifact path scope classification', () => {
     expect(userCanReadScope('workspace')).toBe(true);
   });
 
-  it('classifies proj-x paths as topic', () => {
-    expect(classifyScope('proj-x/plan.md')).toBe('topic');
+  it('keeps topic scope readable if supplied by older callers', () => {
     expect(userCanReadScope('topic')).toBe(true);
   });
 
-  it('classifies topic paths as topic', () => {
-    expect(classifyScope('topic/thread.md')).toBe('topic');
-  });
-
-  it('defaults unknown paths to workspace', () => {
-    expect(classifyScope('out/chart.png')).toBe('workspace');
-    expect(classifyScope('scratch')).toBe('workspace');
+  it('defaults unknown paths to private', () => {
+    expect(classifyScope('out/chart.png')).toBe('private');
+    expect(classifyScope('proj-x/plan.md')).toBe('private');
+    expect(classifyScope('topic/thread.md')).toBe('private');
+    expect(classifyScope('scratch')).toBe('private');
   });
 });

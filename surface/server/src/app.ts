@@ -145,6 +145,109 @@ function normalizeMime(value: string | undefined): string {
   return /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime : 'application/octet-stream';
 }
 
+interface MessageAttachmentFileRow {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number | string;
+  width: number | null;
+  height: number | null;
+  s3_key: string;
+  content_hash: string | null;
+}
+
+function channelUploadSlug(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return slug.length > 0 ? slug : 'channel';
+}
+
+function uploadArtifactFilename(filename: string): string {
+  const base = basename(filename.replace(/\\/g, '/'));
+  if (!base || base === '.' || base === '..') return 'file';
+  const cleaned = sanitizeFilename(base);
+  return cleaned === '.' || cleaned === '..' ? 'file' : cleaned;
+}
+
+function uploadArtifactPath(channelName: string, filename: string, suffix: number): string {
+  if (suffix <= 1) return `shared/${channelUploadSlug(channelName)}/uploads/${filename}`;
+  const dot = filename.lastIndexOf('.');
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+  const ext = dot > 0 ? filename.slice(dot) : '';
+  return `shared/${channelUploadSlug(channelName)}/uploads/${stem} (${suffix})${ext}`;
+}
+
+async function latestArtifactBlobByWorkspacePath(
+  pool: Db,
+  workspaceId: string,
+  path: string,
+): Promise<{ artifactId: string; blobSha: string | null } | null> {
+  const res = await pool.query<{ id: string; blob_sha: string | null }>(
+    `SELECT a.id, v.blob_sha
+       FROM artifacts a
+       LEFT JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+       LEFT JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+      WHERE a.workspace_id = $1 AND a.path = $2`,
+    [workspaceId, path],
+  );
+  const row = res.rows[0];
+  return row ? { artifactId: row.id, blobSha: row.blob_sha } : null;
+}
+
+async function landingPathForUpload(
+  pool: Db,
+  params: { workspaceId: string; channelName: string; filename: string; blobSha: string },
+): Promise<string> {
+  const filename = uploadArtifactFilename(params.filename);
+  for (let suffix = 1; suffix <= 1000; suffix += 1) {
+    const path = uploadArtifactPath(params.channelName, filename, suffix);
+    const existing = await latestArtifactBlobByWorkspacePath(pool, params.workspaceId, path);
+    if (!existing || existing.blobSha === params.blobSha) return path;
+  }
+  throw new Error(`could not allocate upload artifact path for ${filename}`);
+}
+
+async function landUploadAttachmentAsArtifact(
+  pool: Db,
+  params: { channelId: string; userId: string; file: MessageAttachmentFileRow },
+): Promise<void> {
+  const channel = await pool.query<{ workspace_id: string; name: string }>(
+    'SELECT workspace_id, name FROM channels WHERE id = $1',
+    [params.channelId],
+  );
+  const channelRow = channel.rows[0];
+  if (!channelRow) throw new Error(`channel not found: ${params.channelId}`);
+
+  const blobSha = params.file.content_hash;
+  if (blobSha == null) throw new Error(`content_hash missing for file ${params.file.id}`);
+  const sizeBytes = Number(params.file.size_bytes);
+  await pool.query(
+    `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (sha256) DO NOTHING`,
+    [blobSha, params.file.s3_key, sizeBytes, params.file.content_type],
+  );
+
+  const path = await landingPathForUpload(pool, {
+    workspaceId: channelRow.workspace_id,
+    channelName: channelRow.name,
+    filename: params.file.filename,
+    blobSha,
+  });
+  await new ArtifactLedger(pool).commitUpload({
+    workspaceId: channelRow.workspace_id,
+    channelId: params.channelId,
+    path,
+    blobSha,
+    sizeBytes,
+    mime: params.file.content_type,
+    author: `human:${params.userId}`,
+  });
+}
+
 function parseBaseSeq(value: string | undefined): number | null | false {
   if (value == null || value.trim() === '') return null;
   const n = Number(value);
@@ -1824,16 +1927,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
     let attachments: AttachmentMeta[] | undefined;
+    let uploadAttachmentFiles: MessageAttachmentFileRow[] = [];
     if (attachmentIds.length > 0) {
-      const rows = await pool.query<{
-        id: string;
-        filename: string;
-        content_type: string;
-        size_bytes: string;
-        width: number | null;
-        height: number | null;
-      }>(
-        `SELECT id, filename, content_type, size_bytes, width, height
+      const rows = await pool.query<MessageAttachmentFileRow>(
+        `SELECT id, filename, content_type, size_bytes, width, height, s3_key, content_hash
          FROM files WHERE id = ANY($1::uuid[]) AND uploader_id = $2`,
         [attachmentIds, user.id],
       );
@@ -1842,8 +1939,9 @@ function rawSession(req: FastifyRequest): string | undefined {
           .code(400)
           .send({ error: 'bad_attachment', message: 'unknown or foreign attachment id' });
       }
-      attachments = attachmentIds.map((id) => {
-        const f = rows.rows.find((r) => r.id === id)!;
+      const fileById = new Map(rows.rows.map((row) => [row.id, row]));
+      uploadAttachmentFiles = attachmentIds.map((id) => fileById.get(id)!);
+      attachments = uploadAttachmentFiles.map((f) => {
         return {
           id: f.id,
           filename: f.filename,
@@ -1882,6 +1980,27 @@ function rawSession(req: FastifyRequest): string | undefined {
       voice,
     });
     hub.publishEvent(event);
+    for (const file of uploadAttachmentFiles) {
+      if (file.content_hash == null) {
+        app.log.warn(
+          { fileId: file.id, filename: file.filename },
+          'upload attachment artifact landing skipped: missing content_hash',
+        );
+        continue;
+      }
+      try {
+        await landUploadAttachmentAsArtifact(pool, {
+          channelId: body.channelId,
+          userId: user.id,
+          file,
+        });
+      } catch (err) {
+        app.log.warn(
+          { err, fileId: file.id, filename: file.filename },
+          'upload attachment artifact landing failed',
+        );
+      }
+    }
     if (voice) deps.stt?.enqueue();
     void sendMessagePush(pool, hub, event).catch((err) =>
       app.log.warn({ err }, 'push fanout failed'),
@@ -2373,10 +2492,13 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     const record = await sessionRuns.getSessionRecord(id);
-    // === ACL scope enforcement (#4) ===
-    record.artifacts = record.artifacts
-      .filter((artifact) => userCanReadScope(classifyScope(artifact.path)))
-      .map((artifact) => ({ ...artifact, scope: classifyScope(artifact.path) }));
+    // Own-session work-product record: annotate scope but DON'T filter — the
+    // session owns these artifacts (private-vs-shared is a cross-session concern;
+    // a session always sees its own files, including bare/private-scoped paths).
+    record.artifacts = record.artifacts.map((artifact) => ({
+      ...artifact,
+      scope: classifyScope(artifact.path),
+    }));
     return { record };
   });
 
@@ -2394,15 +2516,17 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id, artifactId } = req.params as { id: string; artifactId: string };
-    // === ACL scope enforcement (#4) ===
+    // The artifact is owned by THIS session (keyed by session_id), and
+    // requireSessionAccess already gated channel membership — so the member may
+    // read it regardless of path scope. Under the workspace-scoped model,
+    // private-vs-shared is a CROSS-session / listing concern, not an own-session
+    // read gate (that gate would now 404 a session's own bare-path files). scope
+    // is computed only for the X-Artifact-Scope header.
     const meta = await pool.query<{ path: string }>(
       `SELECT path FROM session_artifacts WHERE session_id = $1 AND id = $2`,
       [id, artifactId],
     );
     let scope = meta.rows[0] ? classifyScope(meta.rows[0].path) : null;
-    if (scope && !userCanReadScope(scope)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
     let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
     try {
       plan = await sessionRuns.getArtifactServePlan(id, artifactId);
@@ -2430,11 +2554,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.redirect(plan.url, 302);
     }
     const { artifact, bytes } = plan;
-    // === ACL scope enforcement (#4) ===
-    scope ??= classifyScope(artifact.path);
-    if (!userCanReadScope(scope)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
+    scope ??= classifyScope(artifact.path); // own-session artifact; scope is for the header only
     const mime = artifact.mime || 'application/octet-stream';
     const inline = mime.startsWith('image/');
     const filename = basename(artifact.path) || 'artifact';

@@ -49,8 +49,8 @@ async function versionCount(): Promise<number> {
     `SELECT count(*)::int AS n
        FROM artifact_versions v
        JOIN artifacts a ON a.id = v.artifact_id
-      WHERE a.session_id = $1`,
-    [sessionId],
+      WHERE a.workspace_id = $1`,
+    [fx.workspaceId],
   );
   return r.rows[0]!.n;
 }

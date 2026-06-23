@@ -80,6 +80,13 @@ construction):
 
 ## 2A. The agent's view — `/workspace` (work) + `/atrium` (read-only context)
 
+> **UPDATE 2026-06-22 (design session): layout refined for agent UX.** The agent works in a
+> **flat home** (`~`, private-by-default) with three obvious roots: `shared/` (files, editable),
+> `repos/<repo>/` (git, not artifact-synced), and **`context/`** (read-only — **renamed from
+> `/atrium`**, since "context" is self-evident to a no-context agent). Uploads auto-land in
+> `shared/<channel>/uploads/`. Canonical: `notes/shared-workspace-build-spec.md` §0.1–0.3.
+> (Original `/workspace`+`/atrium` framing below is the lineage; the *concepts* are unchanged.)
+
 The agent's whole filesystem, laid out for **agent UX** (it greps/cats a predictable tree;
 the no-ingress constraint stays out of its way). DECIDED 2026-06-20.
 

@@ -101,11 +101,12 @@ describe('artifact scope route enforcement', () => {
   it('404s a user read of a scratch artifact', async () => {
     const cookie = await loginCookie();
     const sid = await session();
-    await commit(sid, 'scratch/secret.md', 'private notes');
+    const path = `scratch/${sid}/secret.md`;
+    await commit(sid, path, 'private notes');
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/sessions/${sid}/artifacts/by-path?path=${encodeURIComponent('scratch/secret.md')}`,
+      url: `/api/sessions/${sid}/artifacts/by-path?path=${encodeURIComponent(path)}`,
       headers: { cookie },
     });
 
@@ -132,7 +133,7 @@ describe('artifact scope route enforcement', () => {
   it('omits private artifacts from the user-facing files listing', async () => {
     const cookie = await loginCookie();
     const sid = await session();
-    await commit(sid, 'scratch/secret.md', 'private notes');
+    await commit(sid, `scratch/${sid}/secret.md`, 'private notes');
     await commit(sid, 'shared/report.md', 'shared report body');
 
     const res = await app.inject({
@@ -150,9 +151,10 @@ describe('artifact scope route enforcement', () => {
   it.runIf(KEY.length > 0)('keeps the internal raw path able to read a scratch artifact', async () => {
     await ensureBucket();
     const sid = await session();
+    const path = `scratch/${sid}/secret.md`;
     const cap = await app.inject({
       method: 'POST',
-      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent('scratch/secret.md')}`,
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(path)}`,
       headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
       payload: 'private notes',
     });
@@ -160,7 +162,7 @@ describe('artifact scope route enforcement', () => {
 
     const raw = await app.inject({
       method: 'GET',
-      url: `/api/internal/sessions/${sid}/artifacts/raw?path=${encodeURIComponent('scratch/secret.md')}`,
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=${encodeURIComponent(path)}`,
       headers: { 'x-api-key': KEY },
     });
 
