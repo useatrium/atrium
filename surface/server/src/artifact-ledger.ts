@@ -100,9 +100,24 @@ export interface CommitVersionParams {
   conflict?: unknown;
 }
 
+export interface CommitUploadParams {
+  workspaceId: string;
+  channelId: string;
+  path: string;
+  blobSha: string;
+  sizeBytes: number;
+  mime: string;
+  author: string;
+}
+
 export type CommitVersionResult =
   | { ok: true; artifactId: string; seq: number; idempotent: boolean }
   | { ok: false; reason: 'stale_base'; artifactId: string; latestSeq: number; baseSeq: number };
+
+export interface CommitUploadResult {
+  artifactId: string;
+  seq: number;
+}
 
 export interface CommitVersionGroupFile {
   path: string;
@@ -149,6 +164,11 @@ class CommitGroupStaleBaseError extends Error {
  * keyspace spreads across S3 prefixes (write-throughput + Merkle locality). */
 export function casBlobKey(sha256: string): string {
   return `cas/${sha256.slice(0, 2)}/${sha256}`;
+}
+
+function mergeClassForMime(mime: string): MergeClass {
+  const normalized = (mime.split(';', 1)[0] ?? '').trim().toLowerCase();
+  return normalized.startsWith('text/') ? 'mergeable-doc' : 'immutable-data';
 }
 
 interface VersionRow {
@@ -233,6 +253,28 @@ export class ArtifactLedger {
     const locked = await client.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2 FOR UPDATE`,
       [workspaceId, params.path],
+    );
+    return locked.rows[0]!.id; // exists: the INSERT conflicted, so the row is there
+  }
+
+  /** Sessionless sibling for human-upload artifacts. Identity is still
+   * `(workspace_id, path)`; `session_id` stays NULL because no agent session
+   * authored the bytes. */
+  async resolveOrCreateArtifactByWorkspaceLocked(
+    client: DbClient,
+    params: { workspaceId: string; channelId: string; path: string; mergeClass: MergeClass },
+  ): Promise<string> {
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO artifacts (workspace_id, session_id, channel_id, path, merge_class)
+       VALUES ($1, NULL, $2, $3, $4)
+       ON CONFLICT (workspace_id, path) DO NOTHING
+       RETURNING id`,
+      [params.workspaceId, params.channelId, params.path, params.mergeClass],
+    );
+    if (inserted.rows[0]) return inserted.rows[0].id; // fresh row, locked by this tx
+    const locked = await client.query<{ id: string }>(
+      `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2 FOR UPDATE`,
+      [params.workspaceId, params.path],
     );
     return locked.rows[0]!.id; // exists: the INSERT conflicted, so the row is there
   }
@@ -647,6 +689,44 @@ export class ArtifactLedger {
       });
       await this.advancePointer(client, artifactId, 'latest', seq);
       return { ok: true, artifactId, seq, idempotent: false };
+    });
+  }
+
+  /**
+   * Commit a human upload directly into the workspace-scoped artifact ledger.
+   * Uploads have no session, so this resolves by `(workspace_id, path)`, writes
+   * a normal created/modified version, and treats identical latest bytes as an
+   * idempotent re-send.
+   */
+  async commitUpload(params: CommitUploadParams): Promise<CommitUploadResult> {
+    return withTx(this.pool, async (client) => {
+      await this.upsertBlob(client, {
+        sha256: params.blobSha,
+        sizeBytes: params.sizeBytes,
+        mime: params.mime,
+      });
+      const artifactId = await this.resolveOrCreateArtifactByWorkspaceLocked(client, {
+        workspaceId: params.workspaceId,
+        channelId: params.channelId,
+        path: params.path,
+        mergeClass: mergeClassForMime(params.mime),
+      });
+      const latest = await this.latestVersion(client, artifactId);
+      if (latest != null && latest.blobSha === params.blobSha) {
+        return { artifactId, seq: latest.seq };
+      }
+
+      const seq = latest == null ? 1 : latest.seq + 1;
+      await this.insertVersion(client, {
+        artifactId,
+        seq,
+        blobSha: params.blobSha,
+        baseSeq: latest?.seq ?? null,
+        author: params.author,
+        kind: latest == null ? 'created' : 'modified',
+      });
+      await this.advancePointer(client, artifactId, 'latest', seq);
+      return { artifactId, seq };
     });
   }
 
