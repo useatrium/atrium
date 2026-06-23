@@ -12,8 +12,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { formatTime, type WireEvent } from '@atrium/surface-client';
-import { useChat } from '../../src/lib/chat';
-import { font, radius, space, useTheme } from '../../src/lib/theme';
+import { useChat } from '../../../src/lib/chat';
+import { font, radius, space, useTheme } from '../../../src/lib/theme';
+import { MobileHeader } from '../../../src/components/MobileHeader';
 
 interface Result {
   event: WireEvent;
@@ -92,7 +93,9 @@ export default function Search() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, padding: space.lg, gap: space.md }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <MobileHeader title="Search" />
+      <View style={{ flex: 1, padding: space.lg, gap: space.md }}>
       <TextInput
         value={q}
         onChangeText={setQ}
@@ -112,7 +115,7 @@ export default function Search() {
         }}
       />
       {busy && <ActivityIndicator color={colors.textMuted} />}
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 96 }}>
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: space.lg }}>
         {!busy && q.trim().length < 2 && (
           <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
             Type at least 2 characters to search messages.
@@ -164,6 +167,7 @@ export default function Search() {
           );
         })}
       </ScrollView>
+      </View>
     </View>
   );
 }

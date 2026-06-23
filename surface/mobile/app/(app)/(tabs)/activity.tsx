@@ -3,16 +3,17 @@
 // reactions land here in a later increment once a server feed exists.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
-import { Stack, router } from 'expo-router';
+import { router } from 'expo-router';
 import {
   isTerminalSessionStatus,
   type Session,
   type SessionListItem,
   type SessionStatus,
 } from '@atrium/surface-client';
-import { useChat } from '../../src/lib/chat';
-import { font, space, useTheme, type Colors } from '../../src/lib/theme';
-import { ConnectionBanner } from '../../src/components/bits';
+import { useChat } from '../../../src/lib/chat';
+import { font, space, useTheme, type Colors } from '../../../src/lib/theme';
+import { ConnectionBanner } from '../../../src/components/bits';
+import { MobileHeader } from '../../../src/components/MobileHeader';
 
 interface DisplaySession extends SessionListItem {
   live?: Session;
@@ -117,7 +118,7 @@ export default function ActivityScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Stack.Screen options={{ title: 'Activity' }} />
+      <MobileHeader title="Activity" />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

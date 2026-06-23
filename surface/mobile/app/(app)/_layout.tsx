@@ -13,7 +13,6 @@ import {
 import { useTheme } from '../../src/lib/theme';
 import { NATIVE_CALL_UI } from '../../src/lib/nativeCallUi';
 import { GlobalCallUI } from '../../src/components/GlobalCallUI';
-import { GlassTabBar } from '../../src/components/GlassTabBar';
 
 // The tap that cold-started the app fires before any listener exists; track
 // what we've already routed so remounts don't re-navigate.
@@ -96,15 +95,11 @@ export default function AppLayout() {
             contentStyle: { backgroundColor: colors.bg },
           }}
         >
-        <Stack.Screen name="index" options={{ title: 'Chat' }} />
-        <Stack.Screen name="activity" options={{ title: 'Activity' }} />
+        {/* The tab group owns its own (glass) bar + per-tab headers. */}
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="channel/[id]" options={{ title: '' }} />
         <Stack.Screen name="session/[id]" options={{ title: '' }} />
         <Stack.Screen name="thread/[rootId]" options={{ title: 'Thread' }} />
-        <Stack.Screen
-          name="search"
-          options={{ title: 'Search', presentation: 'modal' }}
-        />
         <Stack.Screen
           name="session-search"
           options={{ title: 'Search sessions', presentation: 'modal' }}
@@ -119,9 +114,6 @@ export default function AppLayout() {
         />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
         </Stack>
-        {/* Floating glass tab bar (Chat · Agents · Activity · Search). Renders
-            only on the top-level tab routes; hides itself on detail/modal screens. */}
-        <GlassTabBar />
       </View>
     </ChatProvider>
   );
