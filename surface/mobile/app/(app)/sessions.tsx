@@ -291,6 +291,7 @@ export default function SessionsScreen() {
             )
           }
           contentContainerStyle={rows.length === 0 ? { flexGrow: 1 } : undefined}
+          ListFooterComponent={<View style={{ height: 96 }} />}
         />
       )}
       {error && rows.length > 0 && (

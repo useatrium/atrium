@@ -112,7 +112,7 @@ export default function Search() {
         }}
       />
       {busy && <ActivityIndicator color={colors.textMuted} />}
-      <ScrollView keyboardShouldPersistTaps="handled">
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 96 }}>
         {!busy && q.trim().length < 2 && (
           <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
             Type at least 2 characters to search messages.
