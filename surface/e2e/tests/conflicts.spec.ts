@@ -160,7 +160,11 @@ test('session conflicts drawer resolves a mergeable artifact conflict', async ({
     const generalId = await channelId(page.context().request, 'general');
     const title = unique('conflict-session');
     const seeded = await seedSession({ handle: aliceHandle, channelId: generalId, title });
-    const artifactPath = 'plan.md';
+    // Workspace-scoped identity: use a unique SHARED path. Conflicts are a
+    // shared-file phenomenon (private/scratch paths have no concurrent editors),
+    // and a fixed path would accumulate versions across runs/retries now that the
+    // ledger is keyed (workspace, path) rather than (session, path).
+    const artifactPath = `shared/${unique('plan')}.md`;
 
     const v1 = await writeArtifact(page.context().request, {
       channelId: generalId,
