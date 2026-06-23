@@ -264,8 +264,8 @@ body {
     sans-serif;
 }
 
-/* Visible keyboard focus on interactive controls (mouse clicks stay quiet). */
-:where(button, [role='button'], a, input, textarea, select):focus-visible {
+/* Visible keyboard focus on command controls. Form fields use local border focus states. */
+:where(button, [role='button'], a):focus-visible {
   outline: 2px solid var(--color-accent-text);
   outline-offset: 1px;
 }
