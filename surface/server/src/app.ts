@@ -3410,6 +3410,19 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.send(bytes);
   });
 
+  // Internal: the node's hydration manifest (the subscription set) — this
+  // session's workspace view (own `scratch/<session>/` + all `shared/`), each
+  // path with its latest seq. The node fetches this at provision time, pulls each
+  // path via `/artifacts/raw`, and materializes the overlay lower (5B-3
+  // hydrate_lower). Unlike the user-facing route it does NOT drop private scope:
+  // the node must hydrate the session's own scratch into its lower.
+  app.get('/api/internal/sessions/:id/hydration-scope', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const paths = await new ArtifactLedger(pool).sessionScope(id);
+    return reply.send({ sessionId: id, scope: 'session', paths });
+  });
+
   // Capture a change (the daemon's node-scan output). x-api-key + raw body.
   await app.register(async (capture) => {
     capture.addContentTypeParser(

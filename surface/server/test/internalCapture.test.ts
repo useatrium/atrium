@@ -54,6 +54,7 @@ describe('internal node-ingestion auth', () => {
     for (const url of [
       `/api/internal/sessions/${sid}/artifacts/changes`,
       `/api/internal/sessions/${sid}/artifacts/raw?path=a.md`,
+      `/api/internal/sessions/${sid}/hydration-scope`,
     ]) {
       const res = await app.inject({ method: 'GET', url });
       expect(res.statusCode).toBe(401);
@@ -83,7 +84,7 @@ describe.runIf(haveKey)('internal capture round-trip (PG + MinIO)', () => {
     const sid = await session();
     const cap = await app.inject({
       method: 'POST',
-      url: `/api/internal/sessions/${sid}/artifacts/capture?path=proj-x/a.md`,
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=shared/a.md`,
       headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
       payload: 'node captured this',
     });
@@ -96,11 +97,11 @@ describe.runIf(haveKey)('internal capture round-trip (PG + MinIO)', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(feed.statusCode).toBe(200);
-    expect(feed.json().rows.map((r: { path: string }) => r.path)).toContain('proj-x/a.md');
+    expect(feed.json().rows.map((r: { path: string }) => r.path)).toContain('shared/a.md');
 
     const raw = await app.inject({
       method: 'GET',
-      url: `/api/internal/sessions/${sid}/artifacts/raw?path=proj-x/a.md`,
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=shared/a.md`,
       headers: { 'x-api-key': KEY },
     });
     expect(raw.statusCode).toBe(200);
@@ -115,5 +116,27 @@ describe.runIf(haveKey)('internal capture round-trip (PG + MinIO)', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('hydration-scope returns the subscription set (own scratch + shared)', async () => {
+    const sid = await session();
+    for (const path of ['shared/note.md', `scratch/${sid}/local.md`]) {
+      const cap = await app.inject({
+        method: 'POST',
+        url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(path)}`,
+        headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
+        payload: 'x',
+      });
+      expect(cap.statusCode).toBe(200);
+    }
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/hydration-scope`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(res.statusCode).toBe(200);
+    const paths = (res.json().paths as Array<{ path: string }>).map((p) => p.path);
+    expect(paths).toContain('shared/note.md');
+    expect(paths).toContain(`scratch/${sid}/local.md`);
   });
 });
