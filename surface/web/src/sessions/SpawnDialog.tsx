@@ -121,48 +121,40 @@ export function SpawnDialog({
             </select>
           </label>
 
+          {/* Calm, neutral note (not a warning / live region): the default auth
+              already works; Connect is an opt-in upgrade, not an error. */}
           {claudeUsesDefaultAuth && (
-            <div
-              role="status"
-              className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg-body"
-            >
-              <div className="font-medium">Claude Code subscription auth is not connected.</div>
-              <div className="mt-1 text-2xs leading-relaxed text-fg-muted">
-                This session will use the default harness auth. Connect Claude to prefer subscription auth.
-              </div>
+            <div className="rounded-md border border-edge bg-surface px-3 py-2 text-2xs leading-relaxed text-fg-muted">
+              Using Atrium&rsquo;s default agent auth.{' '}
               <button
                 type="button"
                 onClick={() => onConnectProvider?.('claude-code')}
-                className="mt-2 rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+                className="font-medium text-accent-text hover:text-accent-text-strong hover:underline"
               >
                 Connect Claude
-              </button>
+              </button>{' '}
+              to run on your own subscription.
             </div>
           )}
 
           {codexUsesDefaultAuth && (
-            <div
-              role="status"
-              className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg-body"
-            >
-              <div className="font-medium">Codex subscription auth is not connected.</div>
-              <div className="mt-1 text-2xs leading-relaxed text-fg-muted">
-                This session will use the default harness auth. Connect Codex to prefer subscription auth.
-              </div>
+            <div className="rounded-md border border-edge bg-surface px-3 py-2 text-2xs leading-relaxed text-fg-muted">
+              Using Atrium&rsquo;s default agent auth.{' '}
               <button
                 type="button"
                 onClick={() => onConnectProvider?.('codex')}
-                className="mt-2 rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+                className="font-medium text-accent-text hover:text-accent-text-strong hover:underline"
               >
                 Connect Codex
-              </button>
+              </button>{' '}
+              to run on your own subscription.
             </div>
           )}
 
           <div className="flex gap-3">
             <label className="block flex-1">
               <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-                Repo <span className="font-normal normal-case text-fg-faint">· optional</span>
+                Repo <span className="font-normal normal-case text-fg-muted">· optional</span>
               </span>
               <input
                 value={repo}
@@ -173,7 +165,7 @@ export function SpawnDialog({
             </label>
             <label className="block flex-1">
               <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-                Branch <span className="font-normal normal-case text-fg-faint">· optional</span>
+                Branch <span className="font-normal normal-case text-fg-muted">· optional</span>
               </span>
               <input
                 value={branch}

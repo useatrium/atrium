@@ -331,8 +331,8 @@ export function Sidebar({
                   >
                     <Avatar name={u.displayName} seed={u.id} size={16} />
                     <span className="truncate">{u.displayName}</span>
-                    <span className="truncate text-fg-faint">@{u.handle}</span>
-                    {u.id === me.id && <span className="text-fg-faint">(you)</span>}
+                    <span className="truncate text-fg-muted">@{u.handle}</span>
+                    {u.id === me.id && <span className="text-fg-muted">(you)</span>}
                     {selectedDmIds.has(u.id) && <span className="ml-auto text-accent-text-strong">✓</span>}
                   </button>
                 </li>

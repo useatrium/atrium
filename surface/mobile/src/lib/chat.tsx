@@ -93,6 +93,8 @@ interface ChatContextValue {
     attachmentRefs?: AttachmentRef[],
     voice?: VoiceSendMeta,
   ) => void;
+  /** Spawn the zero-setup scripted demo agent into a channel (harness "demo"). */
+  startDemoSession: (channelId: string) => void;
   retry: (m: ChatMessage) => void;
   editMessage: (m: ChatMessage, text: string) => Promise<void>;
   deleteMessage: (m: ChatMessage) => Promise<void>;
@@ -1079,7 +1081,7 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   // ---- sending ----
   const spawnSession = useCallback(
-    (channelId: string, task: string, threadRootEventId?: number) => {
+    (channelId: string, task: string, threadRootEventId?: number, opts?: { harness?: string }) => {
       const tempId = `${PENDING_SESSION_PREFIX}${randomId()}`;
       const now = new Date().toISOString();
       const payload: SessionSpawnPayload = {
@@ -1087,7 +1089,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         task,
         clientSpawnId: tempId,
         threadRootEventId,
-        harness: 'codex',
+        harness: opts?.harness ?? 'codex',
         createdAt: now,
       };
       const pending = pendingSpawnFromPayload(payload);
@@ -1112,6 +1114,16 @@ export function ChatProvider({ session, children }: { session: Session; children
       });
     },
     [enqueueOp, onApiError, pendingSpawnFromPayload],
+  );
+
+  // Zero-setup demo: spawns the scripted `demo` harness (streams a short
+  // transcript with no provider required) so first-run mobile users can watch an
+  // agent work — the mobile analog of web's "Run a demo agent".
+  const startDemoSession = useCallback(
+    (channelId: string) => {
+      spawnSession(channelId, 'Demo — watch an agent work', undefined, { harness: 'demo' });
+    },
+    [spawnSession],
   );
 
   const send = useCallback(
@@ -1573,6 +1585,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       retryThread,
       threadErrors,
       send,
+      startDemoSession,
       retry,
       editMessage,
       deleteMessage,
@@ -1625,6 +1638,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       retryThread,
       threadErrors,
       send,
+      startDemoSession,
       retry,
       editMessage,
       deleteMessage,

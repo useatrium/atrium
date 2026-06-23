@@ -164,7 +164,7 @@ export function Timeline({
                 type="button"
                 onClick={onSayHello}
                 disabled={!onSayHello}
-                className="text-xs text-fg-faint hover:text-fg-muted hover:underline disabled:no-underline"
+                className="text-xs text-fg-tertiary hover:text-fg hover:underline disabled:no-underline"
               >
                 Say hello instead
               </button>

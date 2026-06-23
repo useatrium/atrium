@@ -78,7 +78,7 @@ function displayFields(item: DisplaySession) {
 }
 
 export default function SessionsScreen() {
-  const { api, state, queuedChangesCount } = useChat();
+  const { api, state, queuedChangesCount, startDemoSession } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -216,12 +216,81 @@ export default function SessionsScreen() {
                 </Text>
               </Pressable>
             ) : (
-              <View style={{ alignItems: 'center', padding: space.xl }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No sessions yet</Text>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+                {/* First-run hero: sell the agent (the mobile analog of web's
+                    "See an agent work / Run a demo agent" empty state). */}
+                <View
+                  style={{
+                    width: '100%',
+                    maxWidth: 340,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    backgroundColor: colors.bgElevated,
+                    borderRadius: radius.lg,
+                    padding: space.lg,
+                    alignItems: 'center',
+                    gap: space.sm,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: colors.accent,
+                      fontSize: font.xs,
+                      fontWeight: '700',
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    First run
+                  </Text>
+                  <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '700' }}>
+                    See an agent work
+                  </Text>
+                  <Text
+                    style={{
+                      color: colors.textSecondary,
+                      fontSize: font.sm,
+                      textAlign: 'center',
+                      lineHeight: 20,
+                    }}
+                  >
+                    A session is an agent taking a task — running tools, making changes, and streaming
+                    it back to you live. Start a 30-second demo to watch one work.
+                  </Text>
+                  {state.channels.length > 0 && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Run a demo agent"
+                      onPress={() => {
+                        const channelId = state.channels[0]?.id;
+                        if (!channelId) return;
+                        startDemoSession(channelId);
+                        router.push(`/channel/${channelId}`);
+                      }}
+                      style={({ pressed }) => ({
+                        marginTop: space.xs,
+                        backgroundColor: colors.accent,
+                        opacity: pressed ? 0.85 : 1,
+                        borderRadius: radius.md,
+                        paddingVertical: 10,
+                        paddingHorizontal: 18,
+                        minHeight: 44,
+                        justifyContent: 'center',
+                      })}
+                    >
+                      <Text style={{ color: '#fff', fontSize: font.sm, fontWeight: '700' }}>
+                        Run a demo agent
+                      </Text>
+                    </Pressable>
+                  )}
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+                    or type @agent &lt;task&gt; in any channel
+                  </Text>
+                </View>
               </View>
             )
           }
-          contentContainerStyle={rows.length === 0 ? { flex: 1 } : undefined}
+          contentContainerStyle={rows.length === 0 ? { flexGrow: 1 } : undefined}
         />
       )}
       {error && rows.length > 0 && (

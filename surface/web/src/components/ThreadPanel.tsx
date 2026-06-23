@@ -109,7 +109,7 @@ export function ThreadPanel({
         />
         <div className="my-2 flex items-center gap-2 px-4">
           <div className="h-px flex-1 bg-surface-overlay" />
-          <span className="text-3xs uppercase tracking-wide text-fg-faint">replies</span>
+          <span className="text-3xs uppercase tracking-wide text-fg-muted">replies</span>
           <div className="h-px flex-1 bg-surface-overlay" />
         </div>
         {items.map((item) =>

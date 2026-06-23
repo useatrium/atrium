@@ -172,7 +172,7 @@ export default function Login() {
                 autoCorrect={false}
                 keyboardType="url"
               />
-              <Text style={{ color: colors.textFaint, fontSize: font.xs, marginTop: 4 }}>
+              <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 4 }}>
                 Your Atrium server origin. On a real device, use your computer's LAN IP.
               </Text>
             </View>
