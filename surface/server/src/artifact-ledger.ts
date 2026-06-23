@@ -355,14 +355,17 @@ export class ArtifactLedger {
   ): Promise<ChangeFeedPage> {
     return withTx(this.pool, async (client) => {
       const { workspaceId } = await this.workspaceForSession(client, sessionId);
-      // TODO(lane-C): cross-session gap-freeness needs a per-workspace writer lock
+      // Per-WORKSPACE exclusive try-lock, matching the writer's shared lock
+      // (migration 043). Artifacts are workspace-shared, so gap-freeness must
+      // stall on any in-flight writer of THIS WORKSPACE's feed, not just this
+      // session's (§8B #7).
       const lock = await client.query<{ got: boolean }>(
         `SELECT pg_try_advisory_xact_lock(
                   hashtextextended('artifact_changes:' || $1::text, 0)) AS got`,
-        [sessionId],
+        [workspaceId],
       );
       if (!lock.rows[0]?.got) {
-        // A same-session writer is mid-flight; withhold so nothing is skipped.
+        // A same-workspace writer is mid-flight; withhold so nothing is skipped.
         return { rows: [], nextCursor: cursor };
       }
       const res = await client.query<{
