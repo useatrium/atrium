@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CentaurClient } from '@atrium/centaur-client';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
@@ -8,7 +8,69 @@ import { ensureBucket } from '../src/s3.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
-const KEY = process.env.ARTIFACT_CAPTURE_API_KEY ?? '';
+const mockedS3 = vi.hoisted(() => {
+  class FakeStorage {
+    readonly objects = new Map<string, { body: Buffer; contentType: string }>();
+
+    reset(): void {
+      this.objects.clear();
+    }
+
+    uploadObject = async (key: string, body: Buffer | Uint8Array, contentType: string): Promise<void> => {
+      this.objects.set(key, { body: Buffer.from(body), contentType });
+    };
+
+    uploadObjectStream = async (
+      key: string,
+      stream: NodeJS.ReadableStream,
+      contentType: string,
+    ): Promise<void> => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      this.objects.set(key, { body: Buffer.concat(chunks), contentType });
+    };
+
+    copyObject = async (srcKey: string, destKey: string): Promise<void> => {
+      const object = this.objects.get(srcKey);
+      if (!object) throw new Error(`missing object: ${srcKey}`);
+      this.objects.set(destKey, { body: Buffer.from(object.body), contentType: object.contentType });
+    };
+
+    deleteObject = async (key: string): Promise<void> => {
+      this.objects.delete(key);
+    };
+
+    getObjectBytes = async (key: string): Promise<Buffer> => {
+      const object = this.objects.get(key);
+      if (!object) throw new Error(`missing object: ${key}`);
+      return Buffer.from(object.body);
+    };
+
+    headObject = async (key: string): Promise<{ contentLength: number } | null> => {
+      const object = this.objects.get(key);
+      return object ? { contentLength: object.body.byteLength } : null;
+    };
+  }
+
+  return { storage: new FakeStorage() };
+});
+
+vi.mock('../src/s3.js', () => ({
+  copyObject: mockedS3.storage.copyObject,
+  deleteObject: mockedS3.storage.deleteObject,
+  downloadObject: async () => {},
+  ensureBucket: async () => {},
+  getObjectBytes: mockedS3.storage.getObjectBytes,
+  headObject: mockedS3.storage.headObject,
+  presignGet: async () => 'https://storage.local/get',
+  presignPut: async () => 'https://storage.local/put',
+  uploadObject: mockedS3.storage.uploadObject,
+  uploadObjectStream: mockedS3.storage.uploadObjectStream,
+}));
+
+const KEY = 'artifact-scope-route-test-key';
 
 let pool: pg.Pool;
 let fx: Fixture;
@@ -25,6 +87,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  mockedS3.storage.reset();
   await pool.query(
     'TRUNCATE artifact_changes, artifact_sync_state, cas_blobs, artifact_pointers, artifact_versions, artifacts CASCADE',
   );
@@ -32,6 +95,7 @@ beforeEach(async () => {
   fx = await seedFixture(pool);
   app = await buildApp({
     pool,
+    artifactCaptureApiKey: KEY,
     sessionRuns: {
       baseUrl: 'http://127.0.0.1:1',
       apiKey: 'test',
@@ -148,7 +212,7 @@ describe('artifact scope route enforcement', () => {
     expect(body.rows[0]?.scope).toBe('workspace');
   });
 
-  it.runIf(KEY.length > 0)('keeps the internal raw path able to read a scratch artifact', async () => {
+  it('keeps the internal raw path able to read a scratch artifact', async () => {
     await ensureBucket();
     const sid = await session();
     const path = `scratch/${sid}/secret.md`;

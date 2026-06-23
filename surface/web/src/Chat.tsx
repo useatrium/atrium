@@ -80,6 +80,7 @@ const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
 const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
+const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
 
 type VoiceSendMeta = Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
 type VoiceMsgSendPayload = MsgSendPayload & {
@@ -132,7 +133,7 @@ function createQueueLockProvider(): OpQueueLockProvider | undefined {
 
 function broadcastQueueNudge(): void {
   try {
-    localStorage.setItem(QUEUE_NUDGE_KEY, `${Date.now()}:${Math.random()}`);
+    window.localStorage.setItem(QUEUE_NUDGE_KEY, `${Date.now()}:${Math.random()}`);
   } catch {
     // Best-effort multi-tab wake-up only.
   }
@@ -1037,8 +1038,13 @@ export function Chat({
     },
     state.activeChannelId,
     // Desktop shell: connect to the absolute server origin with a bearer token
-    // in the query string. Browser: undefined → same-origin /ws (unchanged).
-    isDesktop ? { url: () => desktopWsUrl() ?? '' } : undefined,
+    // in the query string. E2E may pass a direct browser WS URL to avoid the
+    // Vite proxy; normal browsers keep same-origin /ws.
+    isDesktop
+      ? { url: () => desktopWsUrl() ?? '' }
+      : browserWsUrl
+        ? { url: browserWsUrl }
+        : undefined,
   );
 
   const lastTypingSentRef = useRef(0);
@@ -1139,21 +1145,31 @@ export function Chat({
   );
 
   useEffect(() => {
-    if (!active || state.timelines[active.id]?.loaded) return;
+    if (!active) return;
     const channelId = active.id;
+    const current = state.timelines[channelId];
+    const latestEventId = active.latestEventId ?? 0;
+    const needsInitialLoad = current?.loaded !== true;
+    const needsColdCounterRepair = current?.loaded === true && latestEventId > current.lastEventId;
+    if (!needsInitialLoad && !needsColdCounterRepair) return;
     api
       .messages(channelId, { limit: PAGE_SIZE })
       .then(({ events, hasMore }) => {
         // Skip if we lost access (kicked from a private channel) while the
         // fetch was in flight — avoids a ghost timeline.
         if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
-        dispatch({ type: 'history-loaded', channelId, events, hasMore });
+        dispatch({
+          type: needsColdCounterRepair ? 'history-reset' : 'history-loaded',
+          channelId,
+          events,
+          hasMore,
+        });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache history', err);
         });
       })
       .catch(onApiError);
-  }, [active?.id, onApiError]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active?.id, active?.latestEventId, onApiError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadEarlier = (): Promise<void> => {
     if (!active) return Promise.resolve();

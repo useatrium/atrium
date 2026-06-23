@@ -16,6 +16,14 @@ function wire(id: number, channelId = 'ch-1'): WireEvent {
   };
 }
 
+function modifier(id: number, targetEventId: number, type = 'message.edited'): WireEvent {
+  return {
+    ...wire(id),
+    type,
+    payload: { text: `edited ${targetEventId}`, target_event_id: targetEventId },
+  };
+}
+
 describe('cached timeline hydration', () => {
   it('repairs a cached timeline whose last event is behind the persisted cursor', async () => {
     const dispatch = vi.fn<(action: AppAction) => void>();
@@ -63,5 +71,29 @@ describe('cached timeline hydration', () => {
       events,
       hasMore: false,
     });
+  });
+
+  it('repairs cached modifier events whose target row is missing', async () => {
+    const dispatch = vi.fn<(action: AppAction) => void>();
+    const latest = { events: [wire(13), modifier(16, 13)], hasMore: false };
+    const fetchLatest = vi.fn(async () => latest);
+    const onRepaired = vi.fn();
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [modifier(15, 13, 'reaction.added'), modifier(16, 13)], hasMore: false } },
+      syncCursor: 16,
+      dispatch,
+      fetchLatest,
+      onRepaired,
+    });
+
+    expect(fetchLatest).toHaveBeenCalledWith('ch-1');
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'history-reset',
+      channelId: 'ch-1',
+      events: latest.events,
+      hasMore: latest.hasMore,
+    });
+    expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
   });
 });

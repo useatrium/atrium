@@ -45,7 +45,7 @@ function canUseDom(): boolean {
 function safeStore(prefs: UserPrefs): void {
   if (!canUseDom()) return;
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
   } catch {
     /* private-mode storage failures leave the in-memory pref active */
   }
@@ -75,7 +75,7 @@ function syncThemeColor(scheme: Scheme): void {
 export function loadPrefs(): UserPrefs {
   if (!canUseDom()) return DEFAULT_PREFS;
   try {
-    return normalizePrefs(JSON.parse(localStorage.getItem(PREFS_KEY) ?? 'null'));
+    return normalizePrefs(JSON.parse(window.localStorage.getItem(PREFS_KEY) ?? 'null'));
   } catch {
     return DEFAULT_PREFS;
   }

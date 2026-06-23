@@ -1,15 +1,74 @@
 // Internal node-ingestion endpoints (x-api-key): auth gating + a real
-// capture→changes→raw round-trip against PG + MinIO (the node daemon's contract).
-// Run with ARTIFACT_CAPTURE_API_KEY set (config reads it at import).
+// capture→changes→raw round-trip against PG + object storage (the node daemon's contract).
 import { randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
-import { ensureBucket } from '../src/s3.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
-const KEY = process.env.ARTIFACT_CAPTURE_API_KEY ?? '';
-const haveKey = KEY.length > 0;
+const mockedS3 = vi.hoisted(() => {
+  class FakeStorage {
+    readonly objects = new Map<string, { body: Buffer; contentType: string }>();
+
+    reset(): void {
+      this.objects.clear();
+    }
+
+    uploadObject = async (key: string, body: Buffer | Uint8Array, contentType: string): Promise<void> => {
+      this.objects.set(key, { body: Buffer.from(body), contentType });
+    };
+
+    uploadObjectStream = async (
+      key: string,
+      stream: NodeJS.ReadableStream,
+      contentType: string,
+    ): Promise<void> => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      this.objects.set(key, { body: Buffer.concat(chunks), contentType });
+    };
+
+    copyObject = async (srcKey: string, destKey: string): Promise<void> => {
+      const object = this.objects.get(srcKey);
+      if (!object) throw new Error(`missing object: ${srcKey}`);
+      this.objects.set(destKey, { body: Buffer.from(object.body), contentType: object.contentType });
+    };
+
+    deleteObject = async (key: string): Promise<void> => {
+      this.objects.delete(key);
+    };
+
+    getObjectBytes = async (key: string): Promise<Buffer> => {
+      const object = this.objects.get(key);
+      if (!object) throw new Error(`missing object: ${key}`);
+      return Buffer.from(object.body);
+    };
+
+    headObject = async (key: string): Promise<{ contentLength: number } | null> => {
+      const object = this.objects.get(key);
+      return object ? { contentLength: object.body.byteLength } : null;
+    };
+  }
+
+  return { storage: new FakeStorage() };
+});
+
+vi.mock('../src/s3.js', () => ({
+  copyObject: mockedS3.storage.copyObject,
+  deleteObject: mockedS3.storage.deleteObject,
+  downloadObject: async () => {},
+  ensureBucket: async () => {},
+  getObjectBytes: mockedS3.storage.getObjectBytes,
+  headObject: mockedS3.storage.headObject,
+  presignGet: async () => 'https://storage.local/get',
+  presignPut: async () => 'https://storage.local/put',
+  uploadObject: mockedS3.storage.uploadObject,
+  uploadObjectStream: mockedS3.storage.uploadObjectStream,
+}));
+
+const KEY = 'internal-capture-test-key';
 
 let pool: pg.Pool;
 let fx: Fixture;
@@ -17,22 +76,22 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 
 beforeAll(async () => {
   pool = await createTestPool();
-  try {
-    await ensureBucket();
-  } catch {
-    /* MinIO may be down; happy-path tests guard on that */
-  }
 });
 afterAll(async () => {
   await pool.end();
 });
 beforeEach(async () => {
+  mockedS3.storage.reset();
   await pool.query(
     'TRUNCATE artifact_changes, artifact_sync_state, cas_blobs, artifact_pointers, artifact_versions, artifacts CASCADE',
   );
   await truncateAll(pool);
   fx = await seedFixture(pool);
-  app = await buildApp({ pool, sessionRuns: { baseUrl: 'http://127.0.0.1:1', apiKey: 'test', autoResume: false } });
+  app = await buildApp({
+    pool,
+    artifactCaptureApiKey: KEY,
+    sessionRuns: { baseUrl: 'http://127.0.0.1:1', apiKey: 'test', autoResume: false },
+  });
   await app.ready();
 });
 afterEach(async () => {
@@ -79,7 +138,7 @@ describe('internal node-ingestion auth', () => {
   });
 });
 
-describe.runIf(haveKey)('internal capture round-trip (PG + MinIO)', () => {
+describe('internal capture round-trip (PG + object storage)', () => {
   it('captures a version, surfaces it in the feed, and serves it back raw', async () => {
     const sid = await session();
     const cap = await app.inject({

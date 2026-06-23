@@ -16,6 +16,33 @@ export function cachedTimelineNeedsCursorRepair(
   return syncCursor > 0 && cachedTimelineLastEventId(timeline) < syncCursor;
 }
 
+function targetEventId(event: WireEvent): number | null {
+  const value = event.payload?.target_event_id;
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+}
+
+function isRowEvent(type: string): boolean {
+  return (
+    type === 'message.posted' ||
+    type === 'session.spawned' ||
+    type === 'session.question_requested' ||
+    type === 'session.question_answered' ||
+    type === 'session.question_resolved'
+  );
+}
+
+export function cachedTimelineNeedsStructuralRepair(timeline: CachedTimeline): boolean {
+  const rowIds = new Set(
+    timeline.events
+      .filter((event) => event.threadRootEventId == null && isRowEvent(event.type))
+      .map((event) => event.id),
+  );
+  return timeline.events.some((event) => {
+    const targetId = targetEventId(event);
+    return targetId != null && !rowIds.has(targetId);
+  });
+}
+
 export async function hydrateCachedTimelines({
   timelines,
   syncCursor,
@@ -35,7 +62,10 @@ export async function hydrateCachedTimelines({
 }): Promise<void> {
   for (const [channelId, timeline] of Object.entries(timelines)) {
     if (isDisposed?.()) return;
-    if (!cachedTimelineNeedsCursorRepair(timeline, syncCursor)) {
+    if (
+      !cachedTimelineNeedsCursorRepair(timeline, syncCursor) &&
+      !cachedTimelineNeedsStructuralRepair(timeline)
+    ) {
       dispatch({
         type: 'history-loaded',
         channelId,

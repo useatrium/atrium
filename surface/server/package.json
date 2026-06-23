@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "migrate": "tsx src/migrate.ts",
-    "test": "vitest run",
+    "test": "LOG_LEVEL=error vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

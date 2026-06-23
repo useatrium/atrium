@@ -1,38 +1,69 @@
 // Harness-transcript internal endpoints (x-api-key): auth + validation, plus a
-// real PUT-to-GET round-trip against PG + MinIO (the daemon's capture/restore
-// contract for the rollout-JSONL resume project).
+// real PUT-to-GET round-trip against PG + object storage (the daemon's
+// capture/restore contract for the rollout-JSONL resume project).
 import { randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
-import { ensureBucket } from '../src/s3.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
-const KEY = process.env.ARTIFACT_CAPTURE_API_KEY ?? '';
-const haveKey = KEY.length > 0;
+const mockedS3 = vi.hoisted(() => {
+  class FakeStorage {
+    readonly objects = new Map<string, { body: Buffer; contentType: string }>();
+
+    reset(): void {
+      this.objects.clear();
+    }
+
+    uploadObject = async (key: string, body: Buffer | Uint8Array, contentType: string): Promise<void> => {
+      this.objects.set(key, { body: Buffer.from(body), contentType });
+    };
+
+    getObjectBytes = async (key: string): Promise<Buffer> => {
+      const object = this.objects.get(key);
+      if (!object) throw new Error(`missing object: ${key}`);
+      return Buffer.from(object.body);
+    };
+  }
+
+  return { storage: new FakeStorage() };
+});
+
+vi.mock('../src/s3.js', () => ({
+  copyObject: async () => {},
+  deleteObject: async () => {},
+  downloadObject: async () => {},
+  ensureBucket: async () => {},
+  getObjectBytes: mockedS3.storage.getObjectBytes,
+  headObject: async () => null,
+  presignGet: async () => 'https://storage.local/get',
+  presignPut: async () => 'https://storage.local/put',
+  uploadObject: mockedS3.storage.uploadObject,
+  uploadObjectStream: async () => {},
+}));
+
+const KEY = 'harness-transcript-test-key';
 
 let pool: pg.Pool;
 let fx: Fixture;
 let app: Awaited<ReturnType<typeof buildApp>>;
-let s3Up = false;
 
 beforeAll(async () => {
   pool = await createTestPool();
-  try {
-    await ensureBucket();
-    s3Up = true;
-  } catch {
-    /* MinIO may be down; the round-trip test guards on this */
-  }
 });
 afterAll(async () => {
   await pool.end();
 });
 beforeEach(async () => {
+  mockedS3.storage.reset();
   await pool.query('TRUNCATE harness_transcripts CASCADE');
   await truncateAll(pool);
   fx = await seedFixture(pool);
-  app = await buildApp({ pool, sessionRuns: { baseUrl: 'http://127.0.0.1:1', apiKey: 'test', autoResume: false } });
+  app = await buildApp({
+    pool,
+    artifactCaptureApiKey: KEY,
+    sessionRuns: { baseUrl: 'http://127.0.0.1:1', apiKey: 'test', autoResume: false },
+  });
   await app.ready();
 });
 afterEach(async () => {
@@ -69,11 +100,10 @@ describe('harness-transcript internal endpoints', () => {
       url: `/api/internal/sessions/${sid}/harness-transcript?harness=amp`,
       headers: { 'x-api-key': KEY },
     });
-    expect(res.statusCode).toBe(haveKey ? 400 : 401);
+    expect(res.statusCode).toBe(400);
   });
 
   it('PUT to an unknown session is 404', async () => {
-    if (!haveKey) return;
     const res = await app.inject({
       method: 'PUT',
       url: `/api/internal/sessions/${randomUUID()}/harness-transcript?harness=codex`,
@@ -84,7 +114,6 @@ describe('harness-transcript internal endpoints', () => {
   });
 
   it('GET is 404 before any capture', async () => {
-    if (!haveKey) return;
     const sid = await session();
     const res = await app.inject({
       method: 'GET',
@@ -95,7 +124,6 @@ describe('harness-transcript internal endpoints', () => {
   });
 
   it('captures a transcript and serves it back byte-for-byte (last-write-wins)', async () => {
-    if (!haveKey || !s3Up) return;
     const sid = await session();
     const body1 = '{"type":"user","text":"remember 42"}\n';
     const put1 = await app.inject({
