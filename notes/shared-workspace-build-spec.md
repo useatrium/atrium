@@ -1,6 +1,21 @@
 # Shared Workspace — workspace-scoped artifact identity (the keystone build spec)
 
-> **Status: 2026-06-22. SPEC — ready to build, not started.**
+> **Status: 2026-06-23. BUILT + LANDED end-to-end (both repos).**
+> Atrium `master`: workspace-scoped ledger re-key (mig `042`) + shared write + upload on-ramp
+> + per-workspace gap-free lock (mig `043`) + internal hydration-scope route w/ blob-sha —
+> PRs **#82** (`cd1352e`), **#83** (`e4b2e86`), **#84** (`2fc4cd0`). `gbasin/centaur` `main`:
+> 5B-3 `hydrate_lower` (**#12** `dc2825b`) + **live daemon hydration proven in a real kind
+> cluster** (**#13** `4039e0c`) — the `node-sync-pod-e2e` asserts the agent reads
+> `/workspace/shared/hydrated.md`. Hydration is gated default-OFF (`NODE_SYNC_HYDRATE_ARTIFACTS`
+> / `--hydrate-artifacts`). **Correction vs the original plan: the Centaur overlay work WAS
+> doable from the Mac** (the kind/k3s node is a Linux VM; local `kind-centaur` + the fork's
+> GHA-kind CI — how 5B-1/2/3 all landed). **Still genuinely remaining (future, not blocking):**
+> the agent-FS ergonomic rename (`~`/`shared`/`repos`/`context`), live-controller production
+> wiring (mount the overlay + enable hydration by default; today prod still uses the git-clone +
+> 2.5s in-agent poll), a full-Atrium (non-mock) hydration e2e, retiring the in-agent poll once
+> C4 is parity-checked, and reconciling the vestigial `runtime::hydrate_lower` with
+> `cas::hydrate_artifact_lower`. The §8 prod-data decisions remain confirm-before-prod-apply.
+>
 > Consolidates the decided-but-planless keystone surfaced by two threads:
 > the file-types `PREREQUISITE` finding (`artifact-file-types-design.md` §10, committed
 > `d745437`) and the C4 overlay-capture line (`c4-overlay-provisioning-plan.md`, 5B-1/5B-2
