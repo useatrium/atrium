@@ -171,11 +171,13 @@ export default function ChannelList() {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Stack.Screen
         options={{
-          title: 'Atrium',
+          // "Chat" tab. Sessions/Search now live in the bottom glass tab bar;
+          // "You/More" is the top-left avatar; the header keeps just compose.
+          title: 'Chat',
           headerLeft: () => (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Open settings"
+              accessibilityLabel="You — profile, connections, settings"
               onPress={() => router.push('/settings')}
               hitSlop={8}
             >
@@ -184,15 +186,8 @@ export default function ChannelList() {
           ),
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 2 }}>
-              <HeaderButton
-                icon="hardware-chip-outline"
-                label="Open sessions"
-                onPress={() => router.push('/sessions')}
-              />
-              <HeaderButton icon="search-outline" label="Search messages" onPress={() => router.push('/search')} />
+              <HeaderButton icon="create-outline" label="New channel" onPress={() => router.push('/new-channel')} />
               <HeaderButton icon="mail-outline" label="New direct message" onPress={() => router.push('/new-dm')} />
-              <HeaderButton icon="add-outline" label="New channel" onPress={() => router.push('/new-channel')} />
-              <HeaderButton icon="settings-outline" label="Open settings" onPress={() => router.push('/settings')} />
             </View>
           ),
         }}
@@ -239,7 +234,7 @@ export default function ChannelList() {
             </Text>
           );
         }}
-        ListFooterComponent={<View style={{ height: space.xl }} />}
+        ListFooterComponent={<View style={{ height: 96 }} />}
       />
     </View>
   );
