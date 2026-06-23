@@ -135,8 +135,11 @@ describe.runIf(haveKey)('internal capture round-trip (PG + MinIO)', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(res.statusCode).toBe(200);
-    const paths = (res.json().paths as Array<{ path: string }>).map((p) => p.path);
+    const entries = res.json().paths as Array<{ path: string; sha: string | null }>;
+    const paths = entries.map((p) => p.path);
     expect(paths).toContain('shared/note.md');
     expect(paths).toContain(`scratch/${sid}/local.md`);
+    // the node needs the blob sha to CAS-key the lower (5B-3 materialize_cached)
+    expect(entries.find((e) => e.path === 'shared/note.md')?.sha).toMatch(/^[0-9a-f]{64}$/);
   });
 });
