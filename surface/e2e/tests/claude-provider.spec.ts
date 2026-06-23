@@ -8,10 +8,10 @@ test('Claude Code spawn offers subscription auth without blocking default auth',
   await page.getByPlaceholder('What should the agent do?').fill('check claude provider wiring');
   await page.getByRole('combobox').selectOption('claude-code');
 
-  await expect(page.getByText('Claude Code subscription auth is not connected.')).toBeVisible();
-  await expect(
-    page.getByText('This session will use the default harness auth. Connect Claude to prefer subscription auth.'),
-  ).toBeVisible();
+  // Calm, neutral note (no longer a "not connected" warning): the default auth
+  // works and Connect is an opt-in upgrade. (Apostrophe is a typographic ’.)
+  await expect(page.getByText(/Using Atrium.s default agent auth\./)).toBeVisible();
+  await expect(page.getByText(/run on your own subscription/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start session' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Connect Claude' }).click();
