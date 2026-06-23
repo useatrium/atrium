@@ -6,27 +6,39 @@ const PREF_KEY = 'atrium:notifications';
 
 export type NotifyState = 'unsupported' | 'denied' | 'off' | 'on';
 
+function notificationApi(): typeof Notification | null {
+  return typeof window !== 'undefined' && typeof window.Notification !== 'undefined'
+    ? window.Notification
+    : null;
+}
+
 export function notificationState(): NotifyState {
-  if (typeof Notification === 'undefined') return 'unsupported';
-  if (Notification.permission === 'denied') return 'denied';
-  return Notification.permission === 'granted' && localStorage.getItem(PREF_KEY) === 'on'
-    ? 'on'
-    : 'off';
+  const NotificationApi = notificationApi();
+  if (!NotificationApi) return 'unsupported';
+  if (NotificationApi.permission === 'denied') return 'denied';
+  try {
+    return NotificationApi.permission === 'granted' && window.localStorage.getItem(PREF_KEY) === 'on'
+      ? 'on'
+      : 'off';
+  } catch {
+    return 'off';
+  }
 }
 
 /** Flip the pref, requesting browser permission on first enable. */
 export async function toggleNotifications(): Promise<NotifyState> {
-  if (typeof Notification === 'undefined') return 'unsupported';
+  const NotificationApi = notificationApi();
+  if (!NotificationApi) return 'unsupported';
   if (notificationState() === 'on') {
-    localStorage.setItem(PREF_KEY, 'off');
+    window.localStorage.setItem(PREF_KEY, 'off');
     return 'off';
   }
   const perm =
-    Notification.permission === 'granted'
+    NotificationApi.permission === 'granted'
       ? 'granted'
-      : await Notification.requestPermission();
+      : await NotificationApi.requestPermission();
   if (perm !== 'granted') return 'denied';
-  localStorage.setItem(PREF_KEY, 'on');
+  window.localStorage.setItem(PREF_KEY, 'on');
   return 'on';
 }
 
@@ -36,9 +48,10 @@ export function showNotification(
   tag: string,
   onClick: () => void,
 ): void {
-  if (notificationState() !== 'on' || !document.hidden) return;
+  const NotificationApi = notificationApi();
+  if (!NotificationApi || notificationState() !== 'on' || !window.document.hidden) return;
   try {
-    const n = new Notification(title, { body, tag, icon: '/favicon.svg' });
+    const n = new NotificationApi(title, { body, tag, icon: '/favicon.svg' });
     n.onclick = () => {
       window.focus();
       onClick();

@@ -7,6 +7,20 @@ export function unique(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+export function uniqueChannel(prefix: string): string {
+  const stem =
+    prefix
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^[^a-z0-9]+/, '')
+      .replace(/-+$/g, '')
+      .slice(0, 16) || 'room';
+  const suffix = `${Date.now().toString(36).slice(-6)}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+  return `${stem}-${suffix}`.slice(0, 32);
+}
+
 export async function login(page: Page, handle: string, displayName = handle): Promise<void> {
   await page.goto('/');
   // Handle sign-in is the primary path when AUTH_OPEN is on (the e2e default):
@@ -68,28 +82,32 @@ export function channelButton(page: Page, channelName: string) {
   return page.getByRole('button', { name: new RegExp(`^#?\\s*${channelName}(\\s|$|unread)`) });
 }
 
+function unreadMarker(page: Page, channelName: string) {
+  return channelButton(page, channelName).locator('span.sr-only').filter({ hasText: /^unread$/ });
+}
+
 // Unread/read state arrives either via a live WS event or — deterministically —
 // via the channel refetch on reload (channels carry latest/last-read cursors).
 // CI's runners are slow and the vite WS proxy can drop a socket under load, so
 // after a short live window we reload to force the deterministic path. The live
 // delivery itself is covered by the realtime test.
 export async function expectUnread(page: Page, channelName: string): Promise<void> {
-  const btn = channelButton(page, channelName);
+  const marker = unreadMarker(page, channelName);
   try {
-    await expect(btn).toContainText('unread', { timeout: 4000 });
+    await expect(marker).toHaveCount(1, { timeout: 4000 });
   } catch {
     await page.reload();
-    await expect(btn).toContainText('unread', { timeout: 20_000 });
+    await expect(marker).toHaveCount(1, { timeout: 20_000 });
   }
 }
 
 export async function expectRead(page: Page, channelName: string): Promise<void> {
-  const btn = channelButton(page, channelName);
+  const marker = unreadMarker(page, channelName);
   try {
-    await expect(btn).not.toContainText('unread', { timeout: 4000 });
+    await expect(marker).toHaveCount(0, { timeout: 4000 });
   } catch {
     await page.reload();
-    await expect(btn).not.toContainText('unread', { timeout: 20_000 });
+    await expect(marker).toHaveCount(0, { timeout: 20_000 });
   }
 }
 
@@ -110,6 +128,17 @@ export async function createChannel(ctx: APIRequestContext, name: string): Promi
   expect(res.ok()).toBeTruthy();
   const body = (await res.json()) as { channel: { id: string } };
   return body.channel.id;
+}
+
+export async function createTestChannel(prefix = 'room'): Promise<string> {
+  const setup = await apiAs(unique('setup'), 'Setup');
+  try {
+    const name = uniqueChannel(prefix);
+    await createChannel(setup, name);
+    return name;
+  } finally {
+    await setup.dispose();
+  }
 }
 
 export async function channels(ctx: APIRequestContext): Promise<Array<{ id: string; name: string }>> {

@@ -12,6 +12,7 @@
 			"!**/node_modules",
 			"!**/dist",
 			"!**/out",
+			"!desktop/release",
 			"!**/playwright-report",
 			"!**/test-results",
 			"!mobile/.expo"

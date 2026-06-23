@@ -4,7 +4,7 @@ import {
   apiAs,
   channelId,
   confirmedRowsWithText,
-  createChannel,
+  createTestChannel,
   expectRead,
   expectUnread,
   login,
@@ -217,15 +217,18 @@ test('login lands in #general; sent message appears', async ({ page }) => {
 });
 
 test('realtime: bob sees alice message appear without reload', async ({ browser }) => {
+  const room = await createTestChannel('realtime');
   const alice = await browser.newContext();
   const bob = await browser.newContext();
   const alicePage = await alice.newPage();
   const bobPage = await bob.newPage();
   await login(alicePage, unique('alice'), 'Alice');
   await login(bobPage, unique('bob'), 'Bob');
+  await openChannel(alicePage, room);
+  await openChannel(bobPage, room);
 
   const text = unique('realtime');
-  await sendMessage(alicePage, text);
+  await sendMessage(alicePage, text, room);
   await expect(bobPage.getByText(text, { exact: true })).toBeVisible();
 
   await alice.close();
@@ -233,10 +236,12 @@ test('realtime: bob sees alice message appear without reload', async ({ browser 
 });
 
 test('thread: reply in thread; root shows reply count', async ({ page }) => {
+  const room = await createTestChannel('thread');
   await login(page, unique('threader'), 'Threader');
+  await openChannel(page, room);
   const root = unique('thread-root');
   const reply = unique('thread-reply');
-  await sendMessage(page, root);
+  await sendMessage(page, root, room);
 
   const row = messageRow(page, root);
   await row.scrollIntoViewIfNeeded();
@@ -248,13 +253,15 @@ test('thread: reply in thread; root shows reply count', async ({ page }) => {
 
   await expect(page.getByText(reply, { exact: true })).toBeVisible();
   await page.getByLabel('Close thread').click();
-  await expect(page.getByRole('button', { name: '1 reply →' })).toBeVisible();
+  await expect(row.getByRole('button', { name: '1 reply →' })).toBeVisible();
 });
 
 test('reactions: toggle a reaction, chip count updates', async ({ page }) => {
+  const room = await createTestChannel('react');
   await login(page, unique('reactor'), 'Reactor');
+  await openChannel(page, room);
   const text = unique('reactable');
-  await sendMessage(page, text);
+  await sendMessage(page, text, room);
 
   const id = await messageId(page, text);
   const add = await page.context().request.post(`/api/messages/${id}/reactions`, {
@@ -270,10 +277,12 @@ test('reactions: toggle a reaction, chip count updates', async ({ page }) => {
 });
 
 test('edit and delete own message', async ({ page }) => {
+  const room = await createTestChannel('edit');
   await login(page, unique('editor'), 'Editor');
+  await openChannel(page, room);
   const original = unique('edit-me');
   const edited = unique('edited');
-  await sendMessage(page, original);
+  await sendMessage(page, original, room);
 
   const row = messageRow(page, original);
   await row.scrollIntoViewIfNeeded();
@@ -299,10 +308,7 @@ test('edit and delete own message', async ({ page }) => {
 test('unread badge: alice posts in a second channel; bob opens it and badge clears', async ({
   browser,
 }) => {
-  const setup = await apiAs(unique('setup'), 'Setup');
-  const second = unique('room').replace(/_/g, '-');
-  await createChannel(setup, second);
-  await setup.dispose();
+  const second = await createTestChannel('badge');
 
   const alice = await browser.newContext();
   const bob = await browser.newContext();
@@ -325,10 +331,7 @@ test('unread badge: alice posts in a second channel; bob opens it and badge clea
 test('cross-device read sync: reading in one context clears badge in the other', async ({
   browser,
 }) => {
-  const setup = await apiAs(unique('setup'), 'Setup');
-  const second = unique('sync-room').replace(/_/g, '-');
-  await createChannel(setup, second);
-  await setup.dispose();
+  const second = await createTestChannel('sync');
 
   const alice = await browser.newContext();
   const bobOne = await browser.newContext();
@@ -360,17 +363,19 @@ test('cross-device read sync: reading in one context clears badge in the other',
 });
 
 test('search (⌘K): find an old message and jump to it', async ({ page }) => {
+  const room = await createTestChannel('search');
   const handle = unique('searcher');
   const api = await apiAs(handle, 'Searcher');
-  const general = await channelId(api, 'general');
+  const searchChannel = await channelId(api, room);
   const old = unique('ancient-search-token');
-  await postMessage(api, general, old);
+  await postMessage(api, searchChannel, old);
   for (let i = 0; i < 55; i += 1) {
-    await postMessage(api, general, `${unique('newer-search-filler')} ${i}`);
+    await postMessage(api, searchChannel, `${unique('newer-search-filler')} ${i}`);
   }
   await api.dispose();
 
   await login(page, handle, 'Searcher');
+  await openChannel(page, room);
   await expect(page.getByText(old, { exact: true })).toHaveCount(0);
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   await page.getByLabel('Channel and message search').fill(old);
@@ -381,17 +386,20 @@ test('search (⌘K): find an old message and jump to it', async ({ page }) => {
 });
 
 test('offline send survives reload and confirms once', async ({ page, context }) => {
+  const room = await createTestChannel('offline-send');
   await login(page, unique('offline-sender'), 'Offline Sender');
   await warmOfflineShell(page);
+  await openChannel(page, room);
 
   const text = unique('offline-survives');
   await context.setOffline(true);
-  await mainComposer(page).fill(text);
-  await mainComposer(page).press('Enter');
+  await mainComposer(page, room).fill(text);
+  await mainComposer(page, room).press('Enter');
   await expect(timelineText(page, text)).toBeVisible();
   await expect(confirmedRowsWithText(page, text)).toHaveCount(0);
 
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await openChannel(page, room);
   await expect(timelineText(page, text)).toBeVisible();
   await expect(confirmedRowsWithText(page, text)).toHaveCount(0);
 
@@ -402,7 +410,9 @@ test('offline send survives reload and confirms once', async ({ page, context })
 });
 
 test('lost POST response retries with same client id and confirms once', async ({ page }) => {
+  const room = await createTestChannel('lost-response');
   await login(page, unique('lost-response'), 'Lost Response');
+  await openChannel(page, room);
 
   let dropped = false;
   let droppedStatus: number | null = null;
@@ -418,7 +428,7 @@ test('lost POST response retries with same client id and confirms once', async (
   });
 
   const text = unique('lost-response');
-  await sendMessage(page, text);
+  await sendMessage(page, text, room);
 
   await expect(confirmedRowsWithText(page, text)).toHaveCount(1, { timeout: 15_000 });
   await expect(timelineText(page, text)).toHaveCount(1);
@@ -430,6 +440,7 @@ test('lost POST response retries with same client id and confirms once', async (
 });
 
 test('same-context tabs send without duplicate messages or queue error toasts', async ({ browser }) => {
+  const room = await createTestChannel('tabs');
   const context = await browser.newContext();
   const firstPage = await context.newPage();
   const secondPage = await context.newPage();
@@ -437,14 +448,16 @@ test('same-context tabs send without duplicate messages or queue error toasts', 
   await secondPage.goto('/');
   await expect(secondPage.getByRole('heading', { name: '# general' })).toBeVisible();
   await expect(secondPage.getByRole('status', { name: 'connection: open' })).toBeVisible();
+  await openChannel(firstPage, room);
+  await openChannel(secondPage, room);
 
   const firstText = unique('tab-one');
   const secondText = unique('tab-two');
-  await mainComposer(firstPage).fill(firstText);
-  await mainComposer(secondPage).fill(secondText);
+  await mainComposer(firstPage, room).fill(firstText);
+  await mainComposer(secondPage, room).fill(secondText);
   await Promise.all([
-    mainComposer(firstPage).press('Enter'),
-    mainComposer(secondPage).press('Enter'),
+    mainComposer(firstPage, room).press('Enter'),
+    mainComposer(secondPage, room).press('Enter'),
   ]);
 
   for (const page of [firstPage, secondPage]) {
@@ -459,11 +472,14 @@ test('same-context tabs send without duplicate messages or queue error toasts', 
 });
 
 test('offline edit and reaction land and survive reload', async ({ page, context }) => {
+  const room = await createTestChannel('offline-edit');
   await login(page, unique('offline-editor'), 'Offline Editor');
+  await openChannel(page, room);
   const original = unique('offline-edit-original');
   const edited = unique('offline-edit-final');
-  await sendMessage(page, original);
+  await sendMessage(page, original, room);
   await expect(messageRow(page, original)).toBeVisible();
+  await expect(confirmedRowsWithText(page, original)).toHaveCount(1, { timeout: 15_000 });
 
   await context.setOffline(true);
   const originalRow = messageRow(page, original);
@@ -479,7 +495,7 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   await editedRow.hover();
   await editedRow.getByLabel('Add reaction').click({ force: true });
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  await expect(editedRow.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
   await context.setOffline(false);
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({ timeout: 15_000 });
@@ -492,33 +508,38 @@ test('offline edit and reaction land and survive reload', async ({ page, context
     timeout: 15_000,
   });
   await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
-  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  await expect(editedRow.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
   await page.reload();
+  await openChannel(page, room);
   await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
-  await expect(page.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  await expect(messageRow(page, edited).getByRole('button', { name: '👍 1, including you' })).toBeVisible();
   await expect(timelineText(page, original)).toHaveCount(0);
 });
 
 test('disconnect burst heals through sync without reload', async ({ browser }) => {
+  const room = await createTestChannel('burst');
   const alice = await browser.newContext();
   const bob = await browser.newContext();
   const alicePage = await alice.newPage();
   const bobPage = await bob.newPage();
   await login(alicePage, unique('oba'), 'Offline Burst Alice');
   await login(bobPage, unique('obb'), 'Offline Burst Bob');
+  await openChannel(alicePage, room);
+  await openChannel(bobPage, room);
 
   await alice.setOffline(true);
   const first = unique('burst-first');
   const editedFirst = unique('burst-first-edited');
   const second = unique('burst-second');
-  await sendMessage(bobPage, first);
+  await sendMessage(bobPage, first, room);
   const firstId = await messageId(bobPage, first);
   const edit = await bobPage.context().request.patch(`/api/messages/${firstId}`, {
     data: { text: editedFirst },
   });
   expect(edit.ok()).toBeTruthy();
-  await sendMessage(bobPage, second);
+  await sendMessage(bobPage, second, room);
+  await expect(confirmedRowsWithText(bobPage, second)).toHaveCount(1, { timeout: 15_000 });
   await expect(messageRow(bobPage, editedFirst)).toBeVisible();
 
   await alice.setOffline(false);
@@ -548,9 +569,11 @@ test('session question requested while disconnected heals without reload', async
   page,
   context,
 }) => {
+  const room = await createTestChannel('question');
   const handle = unique('question-offline');
   await login(page, handle, 'Question Offline');
-  const generalId = await channelId(page.context().request, 'general');
+  await openChannel(page, room);
+  const roomId = await channelId(page.context().request, room);
 
   await context.setOffline(true);
   // Chromium's Playwright offline emulation blocks traffic but does not fire
@@ -560,7 +583,7 @@ test('session question requested while disconnected heals without reload', async
     timeout: 15_000,
   });
   const title = unique('offline-question-session');
-  const injected = await injectQuestionRequested({ handle, channelId: generalId, title });
+  const injected = await injectQuestionRequested({ handle, channelId: roomId, title });
 
   await context.setOffline(false);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
@@ -583,11 +606,12 @@ test('session question requested while disconnected heals without reload', async
 test('session transcript stream resumes after disconnect without duplicating replayed frames', async ({
   page,
 }) => {
+  const room = await createTestChannel('stream');
   const handle = unique('stream-resume');
   await login(page, handle, 'Stream Resume');
-  const generalId = await channelId(page.context().request, 'general');
+  const roomId = await channelId(page.context().request, room);
   const title = unique('stream-transcript-session');
-  const injected = await injectTranscriptSession({ handle, channelId: generalId, title });
+  const injected = await injectTranscriptSession({ handle, channelId: roomId, title });
   const seenAfterIds: string[] = [];
   let requestCount = 0;
 

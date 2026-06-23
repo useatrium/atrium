@@ -145,34 +145,42 @@ export function useWs(
       idleTimer = null;
     };
 
-    const resetIdle = () => {
+    const resetIdle = (current: WebSocket) => {
       if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => ws?.close(), IDLE_TIMEOUT_MS);
+      idleTimer = setTimeout(() => {
+        if (socketRef.current === current) current.close();
+      }, IDLE_TIMEOUT_MS);
     };
 
     const connect = () => {
       if (disposed) return;
+      clearTimers();
       cbRef.current.onStatus('connecting');
       const url = urlRef.current;
       const target = typeof url === 'function' ? url() : url ?? defaultUrl();
-      ws = new WebSocket(target);
-      socketRef.current = ws;
+      const current = new WebSocket(target);
+      ws = current;
+      socketRef.current = current;
 
-      ws.onopen = () => {
+      current.onopen = () => {
+        if (disposed || socketRef.current !== current) return;
         attempt = 0;
         resetWsSequenceTracker(seqTracker);
         cbRef.current.onStatus('open');
-        ws!.send(JSON.stringify({ type: 'subscribe', channelIds: channelsRef.current }));
-        ws!.send(JSON.stringify({ type: 'focus', channelId: focusRef.current }));
+        current.send(JSON.stringify({ type: 'subscribe', channelIds: channelsRef.current }));
+        current.send(JSON.stringify({ type: 'focus', channelId: focusRef.current }));
         cbRef.current.onOpen();
-        resetIdle();
+        resetIdle(current);
         pingTimer = setInterval(() => {
-          if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+          if (socketRef.current === current && current.readyState === WebSocket.OPEN) {
+            current.send(JSON.stringify({ type: 'ping' }));
+          }
         }, PING_INTERVAL_MS);
       };
 
-      ws.onmessage = (e) => {
-        resetIdle();
+      current.onmessage = (e) => {
+        if (socketRef.current !== current) return;
+        resetIdle(current);
         let msg: {
           type?: string;
           event?: WireEvent;
@@ -213,9 +221,11 @@ export function useWs(
           cbRef.current.onPrefs?.(normalizePrefs(msg.prefs));
       };
 
-      ws.onclose = () => {
+      current.onclose = () => {
+        if (socketRef.current !== current) return;
         clearTimers();
         socketRef.current = null;
+        ws = null;
         if (disposed) return;
         cbRef.current.onStatus('closed');
         const backoff = Math.min(500 * 2 ** attempt, MAX_BACKOFF_MS);
@@ -224,7 +234,7 @@ export function useWs(
         reconnectTimer = setTimeout(connect, jitter);
       };
 
-      ws.onerror = () => ws?.close();
+      current.onerror = () => current.close();
     };
 
     // Foreground wake: skip any pending backoff, or probe a possibly-dead
@@ -239,15 +249,18 @@ export function useWs(
         connect();
         return;
       }
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      const current = socketRef.current;
+      if (current && current.readyState === WebSocket.OPEN) {
         try {
-          ws.send(JSON.stringify({ type: 'ping' }));
+          current.send(JSON.stringify({ type: 'ping' }));
         } catch {
-          ws.close();
+          current.close();
           return;
         }
         if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => ws?.close(), PROBE_TIMEOUT_MS);
+        idleTimer = setTimeout(() => {
+          if (socketRef.current === current) current.close();
+        }, PROBE_TIMEOUT_MS);
       }
     };
     const unWake = options.onWake?.(onWakeSignal);
@@ -259,7 +272,7 @@ export function useWs(
       if (disposed) return;
       clearTimers();
       cbRef.current.onStatus('closed');
-      ws?.close();
+      socketRef.current?.close();
     };
     const onOnlineSignal = () => {
       if (disposed) return;
@@ -270,12 +283,13 @@ export function useWs(
         connect();
         return;
       }
-      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      const current = socketRef.current;
+      if (!current || current.readyState === WebSocket.CLOSED || current.readyState === WebSocket.CLOSING) {
         attempt = 0;
         connect();
         return;
       }
-      if (ws.readyState === WebSocket.OPEN) cbRef.current.onOpen();
+      if (current.readyState === WebSocket.OPEN) cbRef.current.onOpen();
     };
     globalEvents.addEventListener?.('offline', onOfflineSignal);
     globalEvents.addEventListener?.('online', onOnlineSignal);

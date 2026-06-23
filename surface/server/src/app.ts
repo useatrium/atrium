@@ -117,6 +117,8 @@ export interface AppDeps {
   voip?: VoipPushSender;
   /** Injectable fetch for the email transport (tests mock Resend). */
   emailFetch?: typeof fetch;
+  /** Internal x-api-key override for tests; production reads config. */
+  artifactCaptureApiKey?: string;
 }
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
@@ -281,6 +283,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const calls =
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
   const voip = deps.voip ?? getVoipSender(config);
+  const artifactCaptureApiKey = deps.artifactCaptureApiKey ?? config.artifactCaptureApiKey;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   await app.register(fastifyCookie);
@@ -3238,7 +3241,7 @@ function rawSession(req: FastifyRequest): string | undefined {
   // not a cookie-bearing user). Reuses the shipped write-back + serve + change-feed.
   const requireCaptureKey = (req: FastifyRequest, reply: FastifyReply): boolean => {
     const key = firstHeader(req.headers['x-api-key']);
-    if (!config.artifactCaptureApiKey || key !== config.artifactCaptureApiKey) {
+    if (!artifactCaptureApiKey || key !== artifactCaptureApiKey) {
       reply.code(401).send({ error: 'unauthorized', message: 'x-api-key required' });
       return false;
     }

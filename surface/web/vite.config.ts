@@ -13,10 +13,32 @@ export default defineConfig({
     // source changes (bit us: codex transcript frames silently ignored).
     exclude: ['@atrium/centaur-client', '@atrium/surface-client'],
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/react') || id.includes('/node_modules/react-dom')) {
+            return 'react';
+          }
+          if (id.includes('/node_modules/livekit-client') || id.includes('/node_modules/@livekit/')) {
+            return 'livekit';
+          }
+          if (id.includes('/node_modules/')) return 'vendor';
+          return undefined;
+        },
+      },
+    },
+  },
   test: {
     // React must run its development build for act()/Testing Library, even if
     // the invoking shell exports NODE_ENV=production.
     env: { NODE_ENV: 'test' },
+    setupFiles: ['./test/setup.ts'],
+    environmentOptions: {
+      jsdom: {
+        url: 'http://localhost',
+      },
+    },
   },
   server: {
     port: 5173,
