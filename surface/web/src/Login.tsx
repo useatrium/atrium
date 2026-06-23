@@ -109,7 +109,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
             />
             <label htmlFor="login-display-name" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
               Display name{' '}
-              <span className="font-normal normal-case text-fg-faint">· optional</span>
+              <span className="font-normal normal-case text-fg-muted">· optional</span>
             </label>
             <input
               id="login-display-name"

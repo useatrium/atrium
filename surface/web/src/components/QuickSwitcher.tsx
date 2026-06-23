@@ -207,7 +207,7 @@ export function QuickSwitcher({
                 <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
                   Messages
                 </span>
-                {searching && <span className="text-3xs text-fg-faint">searching…</span>}
+                {searching && <span className="text-3xs text-fg-muted">searching…</span>}
               </div>
               {!searching && hits.length === 0 && (
                 <div className="px-3 py-2 text-xs text-fg-muted">No messages match "{query}"</div>
@@ -246,7 +246,7 @@ export function QuickSwitcher({
                 <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
                   Sessions
                 </span>
-                {searchingSessions && <span className="text-3xs text-fg-faint">searching…</span>}
+                {searchingSessions && <span className="text-3xs text-fg-muted">searching…</span>}
               </div>
               {!searchingSessions && sessionHits.length === 0 && (
                 <div className="px-3 py-2 text-xs text-fg-muted">No matching sessions</div>

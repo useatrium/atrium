@@ -236,7 +236,7 @@ export const MessageRow = memo(function MessageRow({
             </div>
           </div>
         ) : deleted ? (
-          <div className="text-sm italic leading-relaxed text-fg-faint">Message deleted</div>
+          <div className="text-sm italic leading-relaxed text-fg-muted">Message deleted</div>
         ) : m.voice ? (
           <VoiceMessage voice={m.voice} />
         ) : (

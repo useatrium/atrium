@@ -215,6 +215,7 @@ export default function ChannelScreen() {
       >
         <Timeline
           messages={timeline.main}
+          emptyLabel="No messages yet. Say hello — or type @agent <task> to put an agent on it."
           loaded={timeline.loaded}
           hasMoreBefore={timeline.hasMoreBefore}
           sessions={state.sessions}
