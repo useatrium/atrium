@@ -574,10 +574,12 @@ export class ArtifactLedger {
 
   /** Scope query (A4): the artifact paths a session subscribes, with their
    * current latest seq — the node's hydration/subscription set seed (§10.1). */
-  async sessionScope(sessionId: string): Promise<Array<{ path: string; latestSeq: number; kind: VersionKind }>> {
+  async sessionScope(
+    sessionId: string,
+  ): Promise<Array<{ path: string; latestSeq: number; kind: VersionKind; sha: string | null }>> {
     const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
-    const res = await this.pool.query<{ path: string; seq: number; kind: VersionKind }>(
-      `SELECT a.path, p.seq, v.kind
+    const res = await this.pool.query<{ path: string; seq: number; kind: VersionKind; sha: string | null }>(
+      `SELECT a.path, p.seq, v.kind, v.blob_sha AS sha
          FROM artifacts a
          JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
@@ -586,7 +588,7 @@ export class ArtifactLedger {
         ORDER BY a.path ASC`,
       [workspaceId, sessionId],
     );
-    return res.rows.map((r) => ({ path: r.path, latestSeq: r.seq, kind: r.kind }));
+    return res.rows.map((r) => ({ path: r.path, latestSeq: r.seq, kind: r.kind, sha: r.sha }));
   }
 
   // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
