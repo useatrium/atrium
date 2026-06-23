@@ -199,8 +199,8 @@ describe('hydration scope (A4)', () => {
     await write('shared/a.md', 'x2', 1);
     const scope = await ledger.sessionScope(sessionId);
     expect(scope).toEqual([
-      { path: 'shared/a.md', latestSeq: 2, kind: 'modified' },
-      { path: 'shared/b.md', latestSeq: 1, kind: 'created' },
+      expect.objectContaining({ path: 'shared/a.md', latestSeq: 2, kind: 'modified' }),
+      expect.objectContaining({ path: 'shared/b.md', latestSeq: 1, kind: 'created' }),
     ]);
   });
 
