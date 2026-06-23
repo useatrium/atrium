@@ -6,6 +6,21 @@
 > Grounded in a code sweep of both repos (file:line below). Companion:
 > [`c4-overlay-provisioning-plan.md`], [`shared-workspace-build-spec.md`], [[c4-overlay-capture-build]].
 
+## Decisions locked (2026-06-23, Gary)
+
+- **Next = decisions + cleanup only** — hold the production go-live (Phase 1); do design calls + cleanup now, gated.
+- **0e = do NOT capture repo source** ("git owns it"): exclude paths under a repo working tree from the
+  Artifact lane (deliverables live OUTSIDE repo roots, §10.7). **Reverses the 5B-2 e2e** (which captured a
+  file inside `foo/`) → that e2e is updated to capture *outside* the repo + assert *non*-capture inside.
+- **0c = keep `/tmp` + `/var/tmp`** as extra capture roots (implemented at go-live); **drop `~/outputs`**
+  (unused per the sweep; `~` is NOT scanned today — only the overlay upper `/workspace` is — and the future
+  flat-`~` layout would subsume it).
+- **Poll end-state = full delete after cutover** (no permanent fallback) — Phase 4 removes the poller +
+  entrypoint launch + Dockerfile copy + the orphaned Centaur `/agent/executions/{id}/artifacts` route + tests.
+- **Harness-transcript lane is the daemon's (see §5 correction)** — go-live validates it; cleanup keeps it.
+- **Cleanup now:** 0e repo-tree exclusion (+ e2e flip) and removing the vestigial `runtime::hydrate_lower`
+  (only test callers; live path is `cas::hydrate_artifact_lower`).
+
 ## 0. The two mechanisms today (grounded)
 
 | | Legacy in-agent poll | C4 node-sync daemon |
@@ -55,8 +70,21 @@ validating the real session-spawn path**, NOT "the mount is unproven."
    just: gate `CENTAUR_OVERLAY_ENABLED` (default off ⇒ byte-identical clone path); when on, **skip the clone**
    (repo is the RO lower, mounted by the daemon), `cd /workspace`, no forced branch. The controller's overlay
    wiring already exists, gated (5B-2 `--sandbox-overlay-provisioning`).
-5. **Resume is orthogonal** (`entrypoint.sh:457-526` restore runs before capture; different endpoint).
-   No blocker today; future inbound-sync hydration couples resume→artifacts (one-way), not the reverse.
+5. **Resume — RESTORE is orthogonal, CAPTURE is COUPLED (correction, 2026-06-23).** The entrypoint
+   *restore* (`:457-526`, GET `/harness-transcript`) is independent of the daemon. But per-turn transcript
+   *capture* is the DAEMON's job and its **sole** producer: `centaur-node-syncd.rs:700`
+   `harness_transcript_sweep` → `put_harness_transcript` → PUT `/harness-transcript` → S3 (`mig 037`,
+   `harness_transcripts` table) — a **separate lane/endpoint from the artifact ledger** (so it never pollutes
+   Files/the change-feed, per `harness-resume-build-plan.md`), but the **same producer**, gated by the same
+   `nodeSync.enabled`. The poll NEVER touches the transcript (zero refs). ⇒ daemon off (today) ⇒ nothing
+   captures the transcript per-turn ⇒ **cold-start resume has nothing fresh to pull** (resume isn't live in
+   prod yet). **Going live (Phase 1) turns on BOTH lanes** — Phase 1c must validate the harness-transcript
+   lane too, and Phase-4 cleanup must NEVER drop it.
+   **4-lane taxonomy** (corrects the earlier "captured vs never-synced" binary; `classify_entry` `runtime.rs:164`):
+   (a) **Artifact**→CAS ledger; (b) **HarnessTranscript**→S3 via `/harness-transcript` (the one resume JSONL,
+   SYNCED); (c) **HarnessState**→rest of `.claude`/`.codex` config/cache, NOT server-synced (persistent
+   `state/` volume only, warm restart); (d) **Denied**→auth/keys, never synced, iron-proxy re-injects. So part
+   of `.claude`/`.codex` (the transcript) IS designed to sync; "auth never an artifact" stays load-bearing.
 6. **Backward compat.** Non-overlay sandboxes must keep the poll until the overlay is the universal default —
    so the poll's removal is gated on the overlay being on everywhere.
 
@@ -114,7 +142,9 @@ validating the real session-spawn path**, NOT "the mount is unproven."
 5. Dir-coverage + junk-filter decisions made + documented (Phase 0b/0c).
 
 **Not blockers (corrected):** overlay mount validation (done in kind, #12/#13); **git commit/push/worktree on
-the overlay (VALIDATED §4)**; large-file handling (daemon streaming beats the 1 MiB cap); resume (orthogonal).
+the overlay (VALIDATED §4)**; large-file handling (daemon streaming beats the 1 MiB cap). **Resume is NOT a
+non-blocker — corrected (§5):** restore is orthogonal, but per-turn transcript *capture* is the daemon's lane
+(same `nodeSync.enabled` gate), so go-live must validate it and cleanup must keep it.
 
 ## 4. Validation log
 
