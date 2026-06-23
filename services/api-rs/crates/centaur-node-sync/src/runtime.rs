@@ -12,6 +12,7 @@ use crate::adopt::{AdoptAction, LocalState, RemoteChange, RemoteStatus, decide_a
 use crate::echo::EchoGuard;
 use crate::overlay::{OverlayOp, RawEntry};
 use crate::scan_to_ops;
+use crate::secret;
 
 /// What the node needs from Atrium (egress-only). Errors are stringly-typed here;
 /// the live impl maps HTTP failures into them.
@@ -150,6 +151,7 @@ pub struct CaptureOutcome {
     pub deleted: Vec<(String, u64)>,
     pub skipped_echo: Vec<String>,
     pub skipped_other: Vec<String>,
+    pub skipped_secret: usize,
     pub errors: Vec<(String, String)>,
 }
 
@@ -236,7 +238,7 @@ fn starts_with_normalized_components(path_components: &[String], home: &Path) ->
 fn is_denied_path(components: &[String]) -> bool {
     if components
         .iter()
-        .any(|component| component == ".ssh" || component == ".aws")
+        .any(|component| component == ".ssh" || component == ".aws" || component == ".git")
     {
         return true;
     }
@@ -260,6 +262,16 @@ fn is_denied_path(components: &[String]) -> bool {
             | "id_ed25519"
     ) || file_name.ends_with(".pem")
         || file_name.ends_with(".key")
+        || is_junk_binary_file(file_name)
+}
+
+fn is_junk_binary_file(file_name: &str) -> bool {
+    const JUNK_BINARY_EXTENSIONS: &[&str] = &[
+        ".o", ".a", ".so", ".dylib", ".dll", ".obj", ".class", ".pyc", ".pyo", ".exe",
+    ];
+    JUNK_BINARY_EXTENSIONS
+        .iter()
+        .any(|extension| file_name.ends_with(extension))
 }
 
 #[derive(Debug, Default)]
@@ -286,6 +298,7 @@ pub fn capture_sweep(
         deleted: vec![],
         skipped_echo: vec![],
         skipped_other: vec![],
+        skipped_secret: 0,
         errors: vec![],
     };
     let (ops, skipped) = scan_to_ops(entries);
@@ -298,6 +311,18 @@ pub fn capture_sweep(
                 let key = path.to_string_lossy().into_owned();
                 let base = base_seqs.get(&key).copied().unwrap_or(0);
                 if size > large_threshold {
+                    let sample = match read_secret_sample(reader, &path) {
+                        Ok(sample) => sample,
+                        Err(error) => {
+                            out.errors.push((key, error));
+                            continue;
+                        }
+                    };
+                    if secret::is_secret(&path, &sample) {
+                        out.skipped_secret += 1;
+                        eprintln!("skip: suspected secret {key}");
+                        continue;
+                    }
                     // Large file: stream it (constant memory, routed out of the
                     // dirty-byte budget). Echo-check via a streaming hash pass first
                     // so the node never re-captures its own (large) inbound write.
@@ -330,6 +355,12 @@ pub fn capture_sweep(
                     out.errors.push((key, "unreadable (torn/escaped)".into()));
                     continue;
                 };
+                let sample_len = bytes.len().min(secret::SECRET_SCAN_BYTES);
+                if secret::is_secret(&path, &bytes[..sample_len]) {
+                    out.skipped_secret += 1;
+                    eprintln!("skip: suspected secret {key}");
+                    continue;
+                }
                 let sha = sha_hex(&bytes);
                 if echo.is_echo(&path, &sha) {
                     out.skipped_echo.push(key);
@@ -355,6 +386,18 @@ pub fn capture_sweep(
         }
     }
     out
+}
+
+fn read_secret_sample(reader: &dyn UpperReader, path: &Path) -> Result<Vec<u8>, String> {
+    let Some(mut body) = reader.open_stream(path) else {
+        return Err("unreadable (torn/escaped)".into());
+    };
+    let mut sample = Vec::new();
+    let mut limited = (&mut *body).take(secret::SECRET_SCAN_BYTES as u64);
+    limited
+        .read_to_end(&mut sample)
+        .map_err(|error| format!("secret sample: {error}"))?;
+    Ok(sample)
 }
 
 pub fn locate_harness_transcript(
@@ -697,6 +740,43 @@ mod tests {
     }
 
     #[test]
+    fn classify_entry_denies_git_metadata_components() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        for path in [".git/index", "foo/.git/HEAD"] {
+            assert_eq!(
+                classify_entry(Path::new(path), &homes),
+                EntryLane::Denied,
+                "{path} should be denied"
+            );
+        }
+        for path in ["report.md", "src/main.rs"] {
+            assert_eq!(
+                classify_entry(Path::new(path), &homes),
+                EntryLane::Artifact,
+                "{path} should remain an artifact"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_entry_denies_binary_junk_extensions() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        assert_eq!(
+            classify_entry(Path::new("target/foo.o"), &homes),
+            EntryLane::Denied
+        );
+        for path in ["report.pdf", "data.csv", "notes.md"] {
+            assert_eq!(
+                classify_entry(Path::new(path), &homes),
+                EntryLane::Artifact,
+                "{path} should remain an artifact"
+            );
+        }
+    }
+
+    #[test]
     fn classify_entry_routes_workspace_files_to_artifacts() {
         let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
 
@@ -814,6 +894,35 @@ mod tests {
         );
         assert_eq!(out.skipped_echo.len(), 1);
         assert!(out.captured.is_empty()); // not re-captured
+    }
+
+    #[test]
+    fn capture_sweep_skips_suspected_secret_files() {
+        let entries = vec![reg("secrets.txt"), reg("report.md")];
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from("secrets.txt"),
+            b"ANTHROPIC_API_KEY=sk-ant-api03-placeholder".to_vec(),
+        );
+        files.insert(PathBuf::from("report.md"), b"# Report\n".to_vec());
+        let reader = MapReader(files);
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(out.skipped_secret, 1);
+        assert!(out.errors.is_empty());
+        assert_eq!(out.captured.len(), 1);
+        assert_eq!(out.captured[0].0, "report.md");
+        assert_eq!(client.captures, vec![("report.md".to_string(), 1)]);
     }
 
     #[test]
@@ -1144,6 +1253,32 @@ mod tests {
         assert_eq!(client.streamed[0].1, big);
         assert_eq!(client.streamed[0].2, 100);
         assert_eq!(client.buffered[0].1, small);
+    }
+
+    #[test]
+    fn capture_sweep_skips_suspected_secret_before_streaming_large_files() {
+        let big = b"AWS_SECRET_ACCESS_KEY=example\n".repeat(8);
+        let entries = vec![reg_sized("logs/big.log", big.len() as u64)];
+        let mut files = HashMap::new();
+        files.insert(PathBuf::from("logs/big.log"), big);
+        let reader = MapReader(files);
+        let mut echo = EchoGuard::new();
+        let mut client = StreamingFakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &reader,
+            &mut echo,
+            &mut client,
+            16,
+        );
+
+        assert_eq!(out.skipped_secret, 1);
+        assert!(out.captured.is_empty());
+        assert!(out.streamed.is_empty());
+        assert!(client.buffered.is_empty());
+        assert!(client.streamed.is_empty());
     }
 
     #[test]

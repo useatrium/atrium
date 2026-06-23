@@ -684,12 +684,13 @@ mod linux_daemon {
                     state.sync_to(path, *seq, Some(sha.clone()), false);
                 }
                 println!(
-                    "session {}: capture: {} upserts ({} streamed), {} deletes, {} echo-skipped, {} errors",
+                    "session {}: capture: {} upserts ({} streamed), {} deletes, {} echo-skipped, {} secret-skipped, {} errors",
                     session.session,
                     out.captured.len() + out.streamed.len(),
                     out.streamed.len(),
                     out.deleted.len(),
                     out.skipped_echo.len(),
+                    out.skipped_secret,
                     out.errors.len()
                 );
                 for (path, error) in &out.errors {

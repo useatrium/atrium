@@ -26,6 +26,7 @@ pub mod overlay_mount;
 pub mod quiesce;
 pub mod runtime;
 pub mod safety;
+pub mod secret;
 pub mod session_manifest;
 pub mod state;
 pub mod tornread;

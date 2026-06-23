@@ -16,6 +16,7 @@ repository.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+regex = "1"
 # Daemon HTTP client (egress-only to Atrium). ureq = minimal, blocking, no tokio —
 # keeps the node daemon light + fast to compile.
 ureq = { version = "2", features = ["json"] }
