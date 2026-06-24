@@ -1,6 +1,10 @@
 # In-agent artifact poll → C4 node-sync: cutover & cleanup plan
 
-> **Status: 2026-06-23. Phase 0 (parity + safe cleanup) LANDED, gated default-OFF; go-live = GO (Gary): complete the cutover on the flat-`~` layout — see [`flat-home-workspace-design.md`].** Goal: retire the legacy in-agent poller
+> **Status: 2026-06-24. FLAT-`~` IMPLEMENTATION LANDED + e2e-validated** (gbasin/centaur main #17–#22, gated
+> default-OFF — see [`flat-home-workspace-design.md`]). **Remaining = the STAGED PROD-OPS cutover** (flip default
+> `ARTIFACT_CAPTURE_ENABLED=0` once flat-home/overlay is the universal default + a parity bake, then delete the
+> in-pod poll — deleting it now would break capture for all non-flat-home pods). Phase 0 (parity + safe cleanup)
+> landed earlier. Goal: retire the legacy in-agent poller
 > (`centaur/services/sandbox/artifact_capture.py`) in favour of the C4 overlay-upper node-scan
 > (`centaur-node-sync` daemon), **without losing capture coverage or safety filters**.
 > Grounded in a code sweep of both repos (file:line below). Companion:
