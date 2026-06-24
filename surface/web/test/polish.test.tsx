@@ -458,7 +458,7 @@ describe('reactions', () => {
       threadRootEventId: null,
       type,
       actorId: by,
-      payload: { target_event_id: 1, emoji },
+      payload: { target: 'evt_1', emoji },
       createdAt: new Date().toISOString(),
       author: null,
     });

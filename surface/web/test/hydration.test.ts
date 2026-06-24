@@ -20,7 +20,7 @@ function modifier(id: number, targetEventId: number, type = 'message.edited'): W
   return {
     ...wire(id),
     type,
-    payload: { text: `edited ${targetEventId}`, target_event_id: targetEventId },
+    payload: { text: `edited ${targetEventId}`, target: `evt_${targetEventId}` },
   };
 }
 

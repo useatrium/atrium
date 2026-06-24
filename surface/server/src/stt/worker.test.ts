@@ -139,7 +139,7 @@ describe('SttWorker', () => {
       type: 'voice.transcribed',
       channelId: fx.channelId,
       payload: {
-        target_event_id: posted.id,
+        target: `evt_${posted.id}`,
         transcript: { status: 'done', text: 'hello from voice', lang: 'en' },
       },
     });

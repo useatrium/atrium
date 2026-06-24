@@ -1,4 +1,5 @@
 import type { AppAction, CachedTimeline, WireEvent } from '@atrium/surface-client';
+import { eventIdFromTarget } from '@atrium/surface-client/handle';
 
 interface LatestPage {
   events: WireEvent[];
@@ -17,8 +18,8 @@ export function cachedTimelineNeedsCursorRepair(
 }
 
 function targetEventId(event: WireEvent): number | null {
-  const value = event.payload?.target_event_id;
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+  const value = event.payload?.target;
+  return typeof value === 'string' ? eventIdFromTarget(value) : null;
 }
 
 function isRowEvent(type: string): boolean {

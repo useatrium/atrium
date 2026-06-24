@@ -116,15 +116,15 @@ describe('POST /api/voice/:fileId/retranscribe', () => {
     const event = await pool.query<{ type: string; payload: any }>(
       `SELECT type, payload
        FROM events
-       WHERE type = 'voice.transcribed' AND payload->>'target_event_id' = $1
+       WHERE type = 'voice.transcribed' AND payload->>'target' = $1
        ORDER BY id DESC
        LIMIT 1`,
-      [String(eventId)],
+      [`evt_${eventId}`],
     );
     expect(event.rows[0]).toMatchObject({
       type: 'voice.transcribed',
       payload: {
-        target_event_id: eventId,
+        target: `evt_${eventId}`,
         transcript: { status: 'pending' },
       },
     });

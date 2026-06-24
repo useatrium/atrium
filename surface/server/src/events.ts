@@ -382,7 +382,7 @@ export async function editMessageTx(
     threadRootEventId: t.thread_root_event_id,
     type: 'message.edited',
     actorId: args.actorId,
-    payload: { target_event_id: args.targetEventId, text: args.text },
+    payload: { target: encodeEventHandle(args.targetEventId), text: args.text },
   });
   return toWireEvent(await attachAuthor(client, ev));
 }
@@ -426,7 +426,7 @@ export async function deleteMessageTx(
     threadRootEventId: t.thread_root_event_id,
     type: 'message.deleted',
     actorId: args.actorId,
-    payload: { target_event_id: args.targetEventId },
+    payload: { target: encodeEventHandle(args.targetEventId) },
   });
   return toWireEvent(await attachAuthor(client, ev));
 }
@@ -487,14 +487,15 @@ export async function setReactionTx(
   if (!t || t.type !== 'message.posted') {
     throw new DomainError(404, 'message_not_found', 'message not found');
   }
+  const targetHandle = encodeEventHandle(args.targetEventId);
   const net = await client.query<{ net: string }>(
     `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0) AS net
      FROM events
      WHERE type IN ('reaction.added', 'reaction.removed')
-       AND (payload->>'target_event_id')::bigint = $1
+       AND payload->>'target' = $1
        AND actor_id = $2
        AND payload->>'emoji' = $3`,
-    [args.targetEventId, args.actorId, args.emoji],
+    [targetHandle, args.actorId, args.emoji],
   );
   const present = Number(net.rows[0]?.net ?? 0) > 0;
   if ((args.action === 'add' && present) || (args.action === 'remove' && !present)) {
@@ -506,7 +507,7 @@ export async function setReactionTx(
     threadRootEventId: t.thread_root_event_id,
     type: args.action === 'add' ? 'reaction.added' : 'reaction.removed',
     actorId: args.actorId,
-    payload: { target_event_id: args.targetEventId, emoji: args.emoji },
+    payload: { target: targetHandle, emoji: args.emoji },
   });
   return { event: toWireEvent(await attachAuthor(client, ev)), applied: true };
 }
@@ -540,7 +541,7 @@ export async function appendVoiceTranscribedEventTx(
     threadRootEventId: t.thread_root_event_id,
     type: 'voice.transcribed',
     actorId: null,
-    payload: { target_event_id: args.targetEventId, transcript },
+    payload: { target: encodeEventHandle(args.targetEventId), transcript },
   });
 }
 
@@ -570,14 +571,14 @@ const MESSAGE_SELECT = `
       AND NOT EXISTS (
         SELECT 1 FROM events d
         WHERE d.type = 'message.deleted'
-          AND (d.payload->>'target_event_id')::bigint = x.id
+          AND d.payload->>'target' = ('evt_' || x.id::text)
       )
   ) r ON e.thread_root_event_id IS NULL
   LEFT JOIN LATERAL (
     SELECT x.payload->>'text' AS text
     FROM events x
     WHERE x.type = 'message.edited'
-      AND (x.payload->>'target_event_id')::bigint = e.id
+      AND x.payload->>'target' = ('evt_' || e.id::text)
     ORDER BY x.id DESC
     LIMIT 1
   ) edit ON true
@@ -585,7 +586,7 @@ const MESSAGE_SELECT = `
     SELECT x.id
     FROM events x
     WHERE x.type = 'message.deleted'
-      AND (x.payload->>'target_event_id')::bigint = e.id
+      AND x.payload->>'target' = ('evt_' || e.id::text)
     LIMIT 1
   ) del ON true
   LEFT JOIN LATERAL (
@@ -598,7 +599,7 @@ const MESSAGE_SELECT = `
                MIN(x.id) AS first_id
         FROM events x
         WHERE x.type IN ('reaction.added', 'reaction.removed')
-          AND (x.payload->>'target_event_id')::bigint = e.id
+          AND x.payload->>'target' = ('evt_' || e.id::text)
         GROUP BY x.actor_id, x.payload->>'emoji'
       ) n
       WHERE n.net > 0
@@ -821,7 +822,7 @@ export async function searchMessages(
   const res = await pool.query<EventDbRow & { channel_name: string }>(
     `WITH hits AS (
        SELECT DISTINCT CASE WHEN x.type = 'message.posted' THEN x.id
-                            ELSE (x.payload->>'target_event_id')::bigint END AS msg_id
+                            ELSE substring(x.payload->>'target' FROM 5)::bigint END AS msg_id
        FROM events x
        WHERE x.type IN ('message.posted', 'message.edited')
          AND to_tsvector('english', coalesce(x.payload->>'text', ''))

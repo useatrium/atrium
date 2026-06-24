@@ -96,7 +96,7 @@ describe('channel message pagination', () => {
     await pool.query(
       `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
        VALUES ($1, $2, 'message.edited', $3, $4)`,
-      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ target_event_id: m.id, text: 'edited!' })],
+      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ target: `evt_${m.id}`, text: 'edited!' })],
     );
     const page = await listChannelMessages(pool, { channelId: fx.channelId });
     const row = page.events.find((e) => e.id === m.id)!;

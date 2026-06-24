@@ -40,7 +40,7 @@ function transcribed(id: number, targetEventId: number): WireEvent {
     threadRootEventId: null,
     type: 'voice.transcribed',
     actorId: null,
-    payload: { target_event_id: targetEventId, transcript: { status: 'done', text: 'hello world', lang: 'en' } },
+    payload: { target: `evt_${targetEventId}`, transcript: { status: 'done', text: 'hello world', lang: 'en' } },
     createdAt: '2026-06-13T00:00:01.000Z',
     author: null,
   };

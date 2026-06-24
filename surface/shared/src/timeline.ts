@@ -1,5 +1,7 @@
 // Pure client-side timeline state. No React imports — unit tested directly.
 
+import { eventIdFromTarget } from './handle';
+
 export interface UserRef {
   id: string;
   handle: string;
@@ -649,7 +651,12 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
   if (t.seenIds.has(ev.id)) return bumpLastEvent(t, ev.id);
 
   if (ev.type === 'message.edited' || ev.type === 'message.deleted') {
-    const targetId = Number((ev.payload ?? {}).target_event_id);
+    const p = ev.payload ?? {};
+    const targetId = typeof p.target === 'string' ? eventIdFromTarget(p.target) : null;
+    const seenIds = new Set(t.seenIds).add(ev.id);
+    if (targetId == null) {
+      return bumpLastEvent({ ...t, seenIds }, ev.id);
+    }
     const fold = (list: ChatMessage[]) =>
       list.map((m) => {
         if (m.id !== targetId) return m;
@@ -669,7 +676,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     }
     return bumpLastEvent(
       reconcileLocalOverlays(
-        { ...t, main, threads, seenIds: new Set(t.seenIds).add(ev.id) },
+        { ...t, main, threads, seenIds },
         ev,
         targetId,
       ),
@@ -679,11 +686,11 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
 
   if (ev.type === 'reaction.added' || ev.type === 'reaction.removed') {
     const p = ev.payload ?? {};
-    const targetId = Number(p.target_event_id);
+    const targetId = typeof p.target === 'string' ? eventIdFromTarget(p.target) : null;
     const emoji = typeof p.emoji === 'string' ? p.emoji : '';
     const uid = ev.actorId;
     const seenIds = new Set(t.seenIds).add(ev.id);
-    if (!emoji || !uid || !Number.isFinite(targetId)) {
+    if (!emoji || !uid || targetId == null) {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const add = ev.type === 'reaction.added';
@@ -699,10 +706,10 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
 
   if (ev.type === 'voice.transcribed') {
     const p = ev.payload ?? {};
-    const targetId = Number(p.target_event_id);
+    const targetId = typeof p.target === 'string' ? eventIdFromTarget(p.target) : null;
     const seenIds = new Set(t.seenIds).add(ev.id);
     const transcript = parseTranscript(p.transcript);
-    if (!Number.isFinite(targetId) || !transcript) {
+    if (targetId == null || !transcript) {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const fold = (list: ChatMessage[]) =>

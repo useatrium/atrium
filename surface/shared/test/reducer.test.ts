@@ -215,7 +215,7 @@ describe('history pagination merge', () => {
     const edit: WireEvent = {
       ...wire(8, ''),
       type: 'message.edited',
-      payload: { target_event_id: 5, text: 'edited!' },
+      payload: { target: 'evt_5', text: 'edited!' },
     };
     t = applyEvent(t, edit);
     expect(t.main[0]!.text).toBe('edited!');
@@ -231,12 +231,12 @@ describe('history pagination merge', () => {
     const posted = wire(3, 'original');
     const orders: Array<[WireEvent, WireEvent]> = [
       [
-        { ...wire(4, ''), type: 'reaction.added', payload: { emoji: '👍', target_event_id: 3 } },
-        { ...wire(5, ''), type: 'message.edited', payload: { target_event_id: 3, text: 'edited!' } },
+        { ...wire(4, ''), type: 'reaction.added', payload: { emoji: '👍', target: 'evt_3' } },
+        { ...wire(5, ''), type: 'message.edited', payload: { target: 'evt_3', text: 'edited!' } },
       ],
       [
-        { ...wire(4, ''), type: 'message.edited', payload: { target_event_id: 3, text: 'edited!' } },
-        { ...wire(5, ''), type: 'reaction.added', payload: { emoji: '👍', target_event_id: 3 } },
+        { ...wire(4, ''), type: 'message.edited', payload: { target: 'evt_3', text: 'edited!' } },
+        { ...wire(5, ''), type: 'reaction.added', payload: { emoji: '👍', target: 'evt_3' } },
       ],
     ];
     for (const [first, second] of orders) {
@@ -254,7 +254,7 @@ describe('history pagination merge', () => {
       emptyTimeline,
       [
         wire(3, 'doomed'),
-        { ...wire(4, ''), type: 'message.deleted', payload: { target_event_id: 3 } },
+        { ...wire(4, ''), type: 'message.deleted', payload: { target: 'evt_3' } },
       ],
       { hasMoreBefore: false },
     );
@@ -370,7 +370,7 @@ describe('optimistic edit/delete/reaction overlays', () => {
       event: {
         ...wire(8, ''),
         type: 'message.edited',
-        payload: { target_event_id: 5, text: 'local edit' },
+        payload: { target: 'evt_5', text: 'local edit' },
       },
     });
     expect(state.timelines[CH]!.main[0]!.text).toBe('local edit');
@@ -432,7 +432,7 @@ describe('optimistic edit/delete/reaction overlays', () => {
         ...wire(6, ''),
         type: 'reaction.added',
         actorId: bob.id,
-        payload: { target_event_id: 5, emoji: '👍' },
+        payload: { target: 'evt_5', emoji: '👍' },
       },
     });
     state = appReducer(state, {
