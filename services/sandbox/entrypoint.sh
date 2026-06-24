@@ -5,6 +5,13 @@ HOME_DIR="$(eval echo ~)"
 FIREWALL_HOSTNAME="${FIREWALL_HOST:-firewall}"
 STATE_DIR="${CENTAUR_STATE_DIR:-$HOME_DIR/state}"
 
+flat_home_enabled() {
+    case "${CENTAUR_FLAT_HOME:-0}" in
+        1|true|True|TRUE|yes|Yes|YES|on|On|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 append_tool_dirs() {
     if [ -z "${1:-}" ]; then
         return
@@ -49,7 +56,7 @@ if [ -n "${TOOL_DIRS:-}" ]; then
     install-tool-shims || echo "warning: failed to install Centaur tool CLI shims" >&2
 fi
 
-if [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
+if ! flat_home_enabled && [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
     mkdir -p "$STATE_DIR/workspace" "$STATE_DIR/uploads" "$STATE_DIR/branches" "$STATE_DIR/codex" "$STATE_DIR/claude"
     rm -rf "$HOME_DIR/.codex" "$HOME_DIR/.claude" "$HOME_DIR/uploads" "$HOME_DIR/branches"
     ln -s "$STATE_DIR/codex" "$HOME_DIR/.codex"
@@ -367,7 +374,9 @@ EOF
 # 5B-1: When node-sync is enabled, /workspace is a daemon-provisioned
 # merged overlay whose lower checkout is already at the base ref. Keep this
 # default-OFF so the legacy git clone/bootstrap path remains unchanged.
-if [ "${CENTAUR_OVERLAY_ENABLED:-0}" = "1" ] \
+if flat_home_enabled; then
+    WORKSPACE_DIR="$HOME_DIR"
+elif [ "${CENTAUR_OVERLAY_ENABLED:-0}" = "1" ] \
     || [ "${CENTAUR_OVERLAY_ENABLED:-0}" = "true" ] \
     || [ "${CENTAUR_OVERLAY_ENABLED:-0}" = "True" ] \
     || [ "${CENTAUR_OVERLAY_ENABLED:-0}" = "TRUE" ]; then
@@ -480,11 +489,16 @@ restore_harness_transcript() {
         harness="${2:-}"
     fi
 
-    local atrium_harness target_path
+    local atrium_harness claude_project_key target_path
     case "$harness" in
         claude|claude-code|claudecode)
             atrium_harness="claude"
-            target_path="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}/projects/-home-agent-workspace/${CENTAUR_RESUME_THREAD_ID:-${CENTAUR_THREAD_KEY:-}}.jsonl"
+            if flat_home_enabled; then
+                claude_project_key="-home-agent"
+            else
+                claude_project_key="-home-agent-workspace"
+            fi
+            target_path="${CLAUDE_CONFIG_DIR:-$HOME_DIR/.claude}/projects/${claude_project_key}/${CENTAUR_RESUME_THREAD_ID:-${CENTAUR_THREAD_KEY:-}}.jsonl"
             ;;
         codex)
             atrium_harness="codex"
@@ -543,19 +557,21 @@ restore_harness_transcript "$@"
 # Runs in-process rather than as a second container so it sees the exact /tmp
 # and workspace filesystem the harness writes to. Logs stay out of stdout,
 # which is reserved for the harness protocol.
-case "${ARTIFACT_CAPTURE_ENABLED:-1}" in
-    0|false|False|FALSE|no|No|NO|off|Off|OFF)
-        ;;
-    *)
-        if [ -n "${CENTAUR_API_URL:-}" ] && [ -n "${CENTAUR_API_KEY:-}" ]; then
-            mkdir -p "$HOME_DIR/outputs"
-            export ARTIFACT_CAPTURE_DIRS="${ARTIFACT_CAPTURE_DIRS:-$WORKSPACE_DIR:/tmp:$HOME_DIR/outputs:/var/tmp}"
-            artifact-capture > /tmp/artifact-capture.log 2>&1 &
-        else
-            echo "artifact capture disabled: missing CENTAUR_API_URL or sandbox token" >&2
-        fi
-        ;;
-esac
+if ! flat_home_enabled; then
+    case "${ARTIFACT_CAPTURE_ENABLED:-1}" in
+        0|false|False|FALSE|no|No|NO|off|Off|OFF)
+            ;;
+        *)
+            if [ -n "${CENTAUR_API_URL:-}" ] && [ -n "${CENTAUR_API_KEY:-}" ]; then
+                mkdir -p "$HOME_DIR/outputs"
+                export ARTIFACT_CAPTURE_DIRS="${ARTIFACT_CAPTURE_DIRS:-$WORKSPACE_DIR:/tmp:$HOME_DIR/outputs:/var/tmp}"
+                artifact-capture > /tmp/artifact-capture.log 2>&1 &
+            else
+                echo "artifact capture disabled: missing CENTAUR_API_URL or sandbox token" >&2
+            fi
+            ;;
+    esac
+fi
 
 # Wait for the tool-server sidecar before signalling readiness, so the harness
 # doesn't issue its first tool call before the server is listening.
