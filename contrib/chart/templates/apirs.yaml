@@ -211,6 +211,8 @@ spec:
 {{- if .Values.nodeSync.overlayProvisioning.enabled }}
             - name: CENTAUR_SANDBOX_OVERLAY_PROVISIONING
               value: "true"
+            - name: CENTAUR_SANDBOX_OVERLAY_FLAT_HOME
+              value: {{ .Values.nodeSync.overlayProvisioning.flatHome | quote }}
             - name: CENTAUR_SANDBOX_OVERLAY_NODE_SYNC_IMAGE
               value: {{ printf "%s:%s" .Values.nodeSync.image.repository .Values.nodeSync.image.tag | quote }}
 {{- end }}

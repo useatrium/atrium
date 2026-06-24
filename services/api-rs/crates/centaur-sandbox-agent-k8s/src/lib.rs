@@ -638,6 +638,12 @@ fn build_agent_sandbox(
             upsert_env(&mut agent_env, &name, value);
         }
     }
+    if let Some(overlay) = &config.overlay {
+        upsert_env(&mut agent_env, "CENTAUR_OVERLAY_ENABLED", "1".to_string());
+        if overlay.flat_home {
+            upsert_env(&mut agent_env, "CENTAUR_FLAT_HOME", "1".to_string());
+        }
+    }
     insert_optional(
         &mut container,
         "env",
@@ -1256,6 +1262,62 @@ mod tests {
     }
 
     #[test]
+    fn overlay_env_flags_match_overlay_mode() {
+        let spec = SandboxSpec::new("centaur-agent:latest");
+
+        let mut flat_overlay = OverlayConfig::new("centaur-node-sync:test");
+        flat_overlay.flat_home = true;
+        let flat_home = build_agent_sandbox(
+            &SandboxId::new("asbx-flat-home"),
+            &spec,
+            &AgentSandboxConfig::new("centaur").overlay(flat_overlay),
+        )
+        .unwrap();
+        let flat_home_container = &flat_home.spec.pod_template.spec.containers[0];
+        assert_eq!(
+            container_env_value(flat_home_container, "CENTAUR_OVERLAY_ENABLED"),
+            Some("1".to_owned())
+        );
+        assert_eq!(
+            container_env_value(flat_home_container, "CENTAUR_FLAT_HOME"),
+            Some("1".to_owned())
+        );
+
+        let overlay_workspace = build_agent_sandbox(
+            &SandboxId::new("asbx-workspace"),
+            &spec,
+            &AgentSandboxConfig::new("centaur")
+                .overlay(OverlayConfig::new("centaur-node-sync:test")),
+        )
+        .unwrap();
+        let overlay_workspace_container = &overlay_workspace.spec.pod_template.spec.containers[0];
+        assert_eq!(
+            container_env_value(overlay_workspace_container, "CENTAUR_OVERLAY_ENABLED"),
+            Some("1".to_owned())
+        );
+        assert_eq!(
+            container_env_value(overlay_workspace_container, "CENTAUR_FLAT_HOME"),
+            None
+        );
+
+        let no_overlay = build_agent_sandbox(
+            &SandboxId::new("asbx-no-overlay"),
+            &spec,
+            &AgentSandboxConfig::new("centaur"),
+        )
+        .unwrap();
+        let no_overlay_container = &no_overlay.spec.pod_template.spec.containers[0];
+        assert_eq!(
+            container_env_value(no_overlay_container, "CENTAUR_OVERLAY_ENABLED"),
+            None
+        );
+        assert_eq!(
+            container_env_value(no_overlay_container, "CENTAUR_FLAT_HOME"),
+            None
+        );
+    }
+
+    #[test]
     fn overlay_manifest_writer_threads_multi_repo_json() {
         let repos_json = r#"[{"repo":"acme/foo","ref":"main"},{"repo":"acme/bar","subdir":"bar"}]"#;
         let spec = SandboxSpec::new("centaur-agent:latest").env("AGENT_REPOS_JSON", repos_json);
@@ -1340,6 +1402,15 @@ mod tests {
             None
         );
         assert_eq!(agent_run_as_user(&serde_json::json!({})), None);
+    }
+
+    fn container_env_value(container: &impl serde::Serialize, name: &str) -> Option<String> {
+        let container = serde_json::to_value(container).ok()?;
+        container.get("env")?.as_array()?.iter().find_map(|env| {
+            (env.get("name")?.as_str()? == name)
+                .then(|| env.get("value")?.as_str().map(ToOwned::to_owned))
+                .flatten()
+        })
     }
 
     #[test]

@@ -240,7 +240,6 @@ COPY --link --chmod=755 services/sandbox/md2docx.py /usr/local/bin/md2docx
 COPY --link --chmod=755 services/workflow-python/workflow_host.py /usr/local/bin/workflow-host
 COPY --link --chmod=755 services/sandbox/git-branch.sh /usr/local/bin/git-branch
 COPY --link --chmod=755 services/sandbox/claude-sdk-bridge.mjs /usr/local/bin/claude-sdk-bridge
-COPY --link --chmod=755 services/sandbox/artifact_capture.py /usr/local/bin/artifact-capture
 COPY --link --chmod=755 services/sandbox/install_tool_shims.py /usr/local/bin/install-tool-shims
 COPY --link --chmod=755 services/sandbox/entrypoint.sh /entrypoint.sh
 

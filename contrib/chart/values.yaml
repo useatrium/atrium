@@ -434,13 +434,15 @@ containerSecurityContext:
       - ALL
 
 # Node-sync (Track C4): the privileged per-node overlay scanner + inbound merger.
-# Disabled by default; enable per cluster once the node-sync image is published
-# AND VM-per-tenant isolation is in place (the scanner reads every pod's upper on
+# Enabled by default for the flat-~ agent filesystem; VM-per-tenant isolation can
+# be enabled per cluster once validated (the scanner reads every pod's upper on
 # its node — §8B #19). See centaur-node-sync crate + agent-sync-design.md.
 nodeSync:
-  enabled: false
+  enabled: true
   overlayProvisioning:
-    enabled: false
+    enabled: true
+    # flat-~ agent FS: home IS the workspace
+    flatHome: true
   image:
     repository: centaur-node-sync
     tag: latest
