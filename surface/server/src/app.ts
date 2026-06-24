@@ -64,6 +64,7 @@ import {
 import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { searchSessionRecords } from './session-search.js';
+import { resolveEntry, tryDecodeHandle } from './entries.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import {
   ArtifactLedger,
@@ -1838,6 +1839,20 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(400).send({ error: 'bad_query', message: 'use before_id or after_id, not both' });
     }
     return listChannelMessages(pool, { channelId: id, beforeId, afterId, limit });
+  });
+
+  app.get('/api/entries/:handle', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { handle } = req.params as { handle: string };
+    if (!tryDecodeHandle(handle)) {
+      return reply.code(400).send({ error: 'bad_handle' });
+    }
+    const entry = await resolveEntry(pool, handle, user.id);
+    if (!entry) {
+      return reply.code(404).send({ error: 'entry_not_found' });
+    }
+    return entry;
   });
 
   app.get('/api/search', async (req, reply) => {

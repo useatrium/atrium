@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   displayPath,
   fileChangeFromToolCall,
@@ -36,6 +37,7 @@ export interface SessionRecord {
   sessionId: string;
   eventId: number;
   seq: number;
+  entryUid: string;
   kind: SessionRecordKind;
   actor: SessionRecordActor;
   driver: SessionRecordDriver | null;
@@ -75,6 +77,7 @@ type RawFrameWithTs = CentaurEventFrame & {
 const REDACTED = '[redacted]';
 const MAX_TEXT_EXCERPT = 4000;
 const MAX_META_EXCERPT = 2000;
+const ENTRY_UID_FALLBACK_ORDINAL_META = '__entryUidFallbackOrdinal';
 
 const GOOGLE_API_KEY_RE = /\bAIza[A-Za-z0-9_-]{20,}\b/g;
 const OPENAI_SECRET_RE = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g;
@@ -368,12 +371,13 @@ async function readProjectionCursor(pool: Db, sessionId: string): Promise<number
 async function insertSessionRecord(client: DbClient, record: SessionRecord): Promise<void> {
   await client.query(
     `INSERT INTO session_records
-       (session_id, event_id, seq, kind, actor, driver, view_tier, text, meta, ts)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       record.sessionId,
       record.eventId,
       record.seq,
+      record.entryUid,
       record.kind,
       record.actor,
       record.driver,
@@ -388,8 +392,8 @@ async function insertSessionRecord(client: DbClient, record: SessionRecord): Pro
 async function upsertSessionRecord(client: DbClient, record: SessionRecord): Promise<void> {
   await client.query(
     `INSERT INTO session_records
-       (session_id, event_id, seq, kind, actor, driver, view_tier, text, meta, ts)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (session_id, seq) DO UPDATE SET
        event_id = EXCLUDED.event_id,
        kind = EXCLUDED.kind,
@@ -403,6 +407,7 @@ async function upsertSessionRecord(client: DbClient, record: SessionRecord): Pro
       record.sessionId,
       record.eventId,
       record.seq,
+      record.entryUid,
       record.kind,
       record.actor,
       record.driver,
@@ -996,27 +1001,104 @@ function upsertQuestionRecord(
 
 function pushRecord(
   state: MutableProjectionState,
-  input: Omit<SessionRecord, 'sessionId' | 'seq' | 'text' | 'meta' | 'driver'> & {
+  input: Omit<SessionRecord, 'sessionId' | 'seq' | 'entryUid' | 'text' | 'meta' | 'driver'> & {
     text: string;
     meta?: JsonObject;
     driver?: SessionRecordDriver | null;
   },
 ): number {
   const index = state.records.length;
+  const rawMeta = input.meta ?? {};
+  const meta = redactMeta(rawMeta);
+  const { entryUid } = deriveEntryUid(
+    {
+      ...rawMeta,
+      [ENTRY_UID_FALLBACK_ORDINAL_META]: fallbackOrdinalForSourceEvent(state, rawMeta),
+    },
+    input.kind,
+  );
   state.records.push({
     sessionId: state.sessionId,
     eventId: input.eventId,
     seq: index,
+    entryUid,
     kind: input.kind,
     actor: input.actor,
     driver: input.driver ?? state.driver,
     viewTier: input.viewTier,
     text: redactText(input.text),
-    meta: redactMeta(input.meta ?? {}),
+    meta,
     ts: input.ts,
   });
   state.dirtySeqs.add(index);
   return index;
+}
+
+export type EntryUidSource = 'tu' | 'msg' | 'item' | 'q' | 'fb';
+
+export function deriveEntryUid(
+  meta: JsonObject,
+  kind: SessionRecordKind,
+): { entryUid: string; source: EntryUidSource } {
+  const toolUseId = stringFromMeta(meta, 'tool_use_id') ?? stringFromMeta(meta, 'toolUseId');
+  if (toolUseId) return entryUidFromRawKey('tu', toolUseId);
+
+  const messageKey = stringFromMeta(meta, 'messageId') ?? stringFromMeta(meta, 'uuid');
+  if (messageKey) {
+    return entryUidFromRawKey('msg', kind === 'message' ? messageKey : `${kind}|${messageKey}`);
+  }
+
+  const itemId = stringFromMeta(meta, 'itemId');
+  if (itemId) {
+    const changeIndex = meta.changeIndex;
+    const rawKey =
+      typeof changeIndex === 'string' || typeof changeIndex === 'number'
+        ? `change|${itemId}|${changeIndex}`
+        : itemId;
+    return entryUidFromRawKey('item', rawKey);
+  }
+
+  const questionId = stringFromMeta(meta, 'questionId');
+  if (questionId) return entryUidFromRawKey('q', questionId);
+
+  return entryUidFromRawKey(
+    'fb',
+    `${sourceEventKey(meta) ?? 'unknown'}|${kind}|${fallbackOrdinalFromMeta(meta)}`,
+  );
+}
+
+function entryUidFromRawKey(
+  source: EntryUidSource,
+  rawKeyString: string,
+): { entryUid: string; source: EntryUidSource } {
+  const digest = createHash('sha256')
+    .update(`${source}|${rawKeyString}`)
+    .digest('hex')
+    .slice(0, 24);
+  return { entryUid: `${source}_${digest}`, source };
+}
+
+function fallbackOrdinalForSourceEvent(state: MutableProjectionState, meta: JsonObject): number {
+  const key = sourceEventKey(meta);
+  if (key === null) return 0;
+
+  let ordinal = 0;
+  for (const record of state.records) {
+    if (sourceEventKey(record.meta) === key) ordinal += 1;
+  }
+  return ordinal;
+}
+
+function fallbackOrdinalFromMeta(meta: JsonObject): number {
+  const ordinal = meta[ENTRY_UID_FALLBACK_ORDINAL_META];
+  return typeof ordinal === 'number' && Number.isFinite(ordinal) ? ordinal : 0;
+}
+
+function sourceEventKey(meta: JsonObject): string | null {
+  if (!Array.isArray(meta.sourceEventIds)) return null;
+  const first = meta.sourceEventIds[0];
+  if (typeof first !== 'string' && typeof first !== 'number') return null;
+  return String(first);
 }
 
 function updateRecord(
