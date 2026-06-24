@@ -3,14 +3,15 @@
 
 import { useCallback, useMemo } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
-import { Stack, router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { channelAvatarName, channelLabel, dmPartner, type Channel } from '@atrium/surface-client';
-import { useChat } from '../../src/lib/chat';
-import { font, space, useTheme } from '../../src/lib/theme';
-import { Avatar } from '../../src/components/Avatar';
-import { ConnectionBanner, UnreadBadge } from '../../src/components/bits';
+import { useChat } from '../../../src/lib/chat';
+import { font, space, useTheme } from '../../../src/lib/theme';
+import { Avatar } from '../../../src/components/Avatar';
+import { ConnectionBanner, UnreadBadge } from '../../../src/components/bits';
+import { MobileHeader } from '../../../src/components/MobileHeader';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -169,28 +170,14 @@ export default function ChannelList() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Stack.Screen
-        options={{
-          // "Chat" tab. Sessions/Search now live in the bottom glass tab bar;
-          // "You/More" is the top-left avatar; the header keeps just compose.
-          title: 'Chat',
-          headerLeft: () => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="You — profile, connections, settings"
-              onPress={() => router.push('/settings')}
-              hitSlop={8}
-            >
-              <Avatar name={me.displayName} seed={me.id} size={28} />
-            </Pressable>
-          ),
-          headerRight: () => (
-            <View style={{ flexDirection: 'row', gap: 2 }}>
-              <HeaderButton icon="create-outline" label="New channel" onPress={() => router.push('/new-channel')} />
-              <HeaderButton icon="mail-outline" label="New direct message" onPress={() => router.push('/new-dm')} />
-            </View>
-          ),
-        }}
+      <MobileHeader
+        title="Chat"
+        right={
+          <>
+            <HeaderButton icon="create-outline" label="New channel" onPress={() => router.push('/new-channel')} />
+            <HeaderButton icon="mail-outline" label="New direct message" onPress={() => router.push('/new-dm')} />
+          </>
+        }
       />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
       <FlatList
@@ -234,7 +221,7 @@ export default function ChannelList() {
             </Text>
           );
         }}
-        ListFooterComponent={<View style={{ height: 96 }} />}
+        ListFooterComponent={<View style={{ height: space.xl }} />}
       />
     </View>
   );

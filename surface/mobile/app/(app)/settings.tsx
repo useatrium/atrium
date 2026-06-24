@@ -1,13 +1,26 @@
-import { ScrollView, Pressable, Switch, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  Pressable,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import Constants from 'expo-constants';
 import { Stack } from 'expo-router';
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   ACCENTS,
   FONT_SCALES,
   type Accent,
   type FontScale,
   type MotionPref,
+  type ProviderCredentialProvider,
+  type ProviderCredentialStatus,
   type ThemeMode,
 } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
@@ -33,6 +46,51 @@ const motionOptions: { value: MotionPref; label: string }[] = [
 ];
 
 const fontLabels = ['S', 'M', 'L', 'XL'] as const;
+
+const providerConfigs: Record<
+  ProviderCredentialProvider,
+  {
+    title: string;
+    fieldLabel: string;
+    hint: string;
+    placeholder: string;
+    multiline: boolean;
+  }
+> = {
+  'claude-code': {
+    title: 'Claude Code',
+    fieldLabel: 'Token',
+    hint: 'Run claude setup-token and paste the token here.',
+    placeholder: 'Paste Claude token',
+    multiline: false,
+  },
+  codex: {
+    title: 'Codex',
+    fieldLabel: 'Auth JSON',
+    hint: 'Paste the contents of ~/.codex/auth.json.',
+    placeholder: '{"auth_mode":"chatgpt","tokens":{...}}',
+    multiline: true,
+  },
+};
+
+const providers: ProviderCredentialProvider[] = ['claude-code', 'codex'];
+
+function disconnectedProviderStatus(
+  provider: ProviderCredentialProvider,
+): ProviderCredentialStatus {
+  return {
+    provider,
+    connected: false,
+    status: 'needs_auth',
+    lastValidatedAt: null,
+    lastError: null,
+    updatedAt: null,
+  };
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
 
 function SectionLabel({ children }: { children: string }) {
   const { colors } = useTheme();
@@ -70,11 +128,403 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
         paddingVertical: space.sm,
       }}
     >
-      <Text maxFontSizeMultiplier={2} style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
+      <Text
+        maxFontSizeMultiplier={2}
+        style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}
+      >
         {label}
       </Text>
       {children}
     </View>
+  );
+}
+
+function ProviderConnectionRow({
+  provider,
+  status,
+  loading,
+  busy,
+  onConnect,
+  onDisconnect,
+}: {
+  provider: ProviderCredentialProvider;
+  status?: ProviderCredentialStatus;
+  loading: boolean;
+  busy: boolean;
+  onConnect: (provider: ProviderCredentialProvider) => void;
+  onDisconnect: (provider: ProviderCredentialProvider) => void;
+}) {
+  const { colors } = useTheme();
+  const config = providerConfigs[provider];
+  const connected = status?.connected === true;
+  const statusLabel = loading ? 'Checking...' : connected ? 'Connected \u2713' : 'Not connected';
+  const actionLabel = connected ? 'Disconnect' : 'Connect';
+
+  return (
+    <Row label={config.title}>
+      <View
+        style={{
+          alignItems: 'center',
+          flexDirection: 'row',
+          flexShrink: 1,
+          gap: space.sm,
+          justifyContent: 'flex-end',
+        }}
+      >
+        <View
+          accessible
+          accessibilityLabel={`${config.title} ${statusLabel}`}
+          style={{ alignItems: 'center', flexDirection: 'row', gap: 6, maxWidth: 126 }}
+        >
+          <View
+            style={{
+              backgroundColor: connected ? colors.online : colors.textFaint,
+              borderRadius: 4,
+              height: 8,
+              opacity: connected ? 1 : 0.55,
+              width: 8,
+            }}
+          />
+          <Text
+            maxFontSizeMultiplier={2}
+            numberOfLines={1}
+            style={{ color: connected ? colors.textSecondary : colors.textMuted, fontSize: font.sm }}
+          >
+            {statusLabel}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${actionLabel} ${config.title}`}
+          accessibilityState={{ disabled: busy }}
+          disabled={busy}
+          onPress={() => (connected ? onDisconnect(provider) : onConnect(provider))}
+          style={({ pressed }) => ({
+            alignItems: 'center',
+            backgroundColor: connected ? 'transparent' : colors.accent,
+            borderColor: connected ? colors.border : colors.accent,
+            borderRadius: radius.md,
+            borderWidth: 1,
+            justifyContent: 'center',
+            minHeight: 36,
+            minWidth: 88,
+            opacity: busy ? 0.55 : pressed ? 0.85 : 1,
+            paddingHorizontal: space.md,
+          })}
+        >
+          {busy ? (
+            <ActivityIndicator color={connected ? colors.textMuted : colors.onAccent} />
+          ) : (
+            <Text
+              maxFontSizeMultiplier={2}
+              numberOfLines={1}
+              style={{
+                color: connected ? colors.textSecondary : colors.onAccent,
+                fontSize: font.sm,
+                fontWeight: '800',
+              }}
+            >
+              {actionLabel}
+            </Text>
+          )}
+        </Pressable>
+      </View>
+    </Row>
+  );
+}
+
+function ConnectProviderSheet({
+  provider,
+  status,
+  value,
+  busy,
+  error,
+  onChangeValue,
+  onClose,
+  onDisconnect,
+  onSubmit,
+}: {
+  provider: ProviderCredentialProvider | null;
+  status?: ProviderCredentialStatus;
+  value: string;
+  busy: boolean;
+  error: string | null;
+  onChangeValue: (value: string) => void;
+  onClose: () => void;
+  onDisconnect: () => void;
+  onSubmit: () => void;
+}) {
+  const { colors, reduceMotion } = useTheme();
+  if (!provider) return null;
+
+  const config = providerConfigs[provider];
+  const connected = status?.connected === true;
+  const canSubmit = value.trim().length > 0 && !busy;
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType={reduceMotion ? 'none' : 'slide'}
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <View style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}>
+          <Pressable
+            accessible={false}
+            disabled={busy}
+            onPress={onClose}
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+          />
+          <View
+            accessibilityRole="summary"
+            accessibilityLabel={`Connect ${config.title}`}
+            style={{
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.border,
+              borderTopLeftRadius: radius.lg,
+              borderTopRightRadius: radius.lg,
+              borderWidth: 1,
+              maxHeight: '82%',
+              overflow: 'hidden',
+            }}
+          >
+            <View
+              style={{
+                alignItems: 'center',
+                borderBottomColor: colors.border,
+                borderBottomWidth: 1,
+                flexDirection: 'row',
+                minHeight: 56,
+                paddingHorizontal: space.lg,
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text
+                  maxFontSizeMultiplier={2}
+                  style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}
+                >
+                  {config.title}
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={2}
+                  style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}
+                >
+                  {connected ? 'Connected' : 'Not connected'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close provider connection sheet"
+                disabled={busy}
+                onPress={onClose}
+                style={({ pressed }) => ({
+                  borderRadius: radius.sm,
+                  opacity: busy ? 0.4 : pressed ? 0.7 : 1,
+                  paddingHorizontal: space.sm,
+                  paddingVertical: space.sm,
+                })}
+              >
+                <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.md }}>
+                  Close
+                </Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              contentContainerStyle={{ gap: space.md, padding: space.lg }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text
+                maxFontSizeMultiplier={2}
+                style={{
+                  backgroundColor: colors.bgInput,
+                  borderColor: colors.borderSoft,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  color: colors.textMuted,
+                  fontSize: font.sm,
+                  lineHeight: 19,
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.sm,
+                }}
+              >
+                {config.hint}
+              </Text>
+              <View>
+                <Text
+                  maxFontSizeMultiplier={2}
+                  style={{
+                    color: colors.textMuted,
+                    fontSize: font.xs,
+                    fontWeight: '800',
+                    marginBottom: 6,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {config.fieldLabel}
+                </Text>
+                <TextInput
+                  accessibilityLabel={config.fieldLabel}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!busy}
+                  multiline={config.multiline}
+                  onChangeText={onChangeValue}
+                  placeholder={config.placeholder}
+                  placeholderTextColor={colors.textFaint}
+                  secureTextEntry={!config.multiline}
+                  spellCheck={false}
+                  style={{
+                    backgroundColor: colors.bgInput,
+                    borderColor: colors.border,
+                    borderRadius: radius.md,
+                    borderWidth: 1,
+                    color: colors.text,
+                    fontFamily: config.multiline
+                      ? Platform.OS === 'ios'
+                        ? 'Menlo'
+                        : 'monospace'
+                      : undefined,
+                    fontSize: config.multiline ? font.sm : font.md,
+                    minHeight: config.multiline ? 148 : 48,
+                    paddingHorizontal: space.md,
+                    paddingVertical: 12,
+                    textAlignVertical: config.multiline ? 'top' : 'center',
+                  }}
+                  value={value}
+                />
+              </View>
+              {status?.lastError ? (
+                <Text
+                  maxFontSizeMultiplier={2}
+                  style={{
+                    backgroundColor: colors.warningSurface,
+                    borderColor: colors.warningBorder,
+                    borderRadius: radius.md,
+                    borderWidth: 1,
+                    color: colors.warning,
+                    fontSize: font.sm,
+                    paddingHorizontal: space.md,
+                    paddingVertical: space.sm,
+                  }}
+                >
+                  {status.lastError}
+                </Text>
+              ) : null}
+              {error ? (
+                <Text
+                  accessibilityRole="alert"
+                  maxFontSizeMultiplier={2}
+                  style={{
+                    backgroundColor: colors.dangerSurface,
+                    borderColor: colors.dangerBorder,
+                    borderRadius: radius.md,
+                    borderWidth: 1,
+                    color: colors.danger,
+                    fontSize: font.sm,
+                    paddingHorizontal: space.md,
+                    paddingVertical: space.sm,
+                  }}
+                >
+                  {error}
+                </Text>
+              ) : null}
+            </ScrollView>
+            <View
+              style={{
+                alignItems: 'center',
+                borderTopColor: colors.border,
+                borderTopWidth: 1,
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                gap: space.sm,
+                padding: space.lg,
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Disconnect ${config.title}`}
+                accessibilityState={{ disabled: !connected || busy }}
+                disabled={!connected || busy}
+                onPress={onDisconnect}
+                style={({ pressed }) => ({
+                  borderRadius: radius.md,
+                  opacity: !connected || busy ? 0.35 : pressed ? 0.75 : 1,
+                  paddingHorizontal: space.sm,
+                  paddingVertical: space.sm,
+                })}
+              >
+                <Text
+                  maxFontSizeMultiplier={2}
+                  style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '700' }}
+                >
+                  Disconnect
+                </Text>
+              </Pressable>
+              <View style={{ flexDirection: 'row', gap: space.sm }}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel provider connection"
+                  disabled={busy}
+                  onPress={onClose}
+                  style={({ pressed }) => ({
+                    alignItems: 'center',
+                    borderRadius: radius.md,
+                    justifyContent: 'center',
+                    minHeight: 42,
+                    opacity: busy ? 0.45 : pressed ? 0.75 : 1,
+                    paddingHorizontal: space.md,
+                  })}
+                >
+                  <Text
+                    maxFontSizeMultiplier={2}
+                    style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '800' }}
+                  >
+                    Cancel
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${connected ? 'Reconnect' : 'Connect'} ${config.title}`}
+                  accessibilityState={{ disabled: !canSubmit }}
+                  disabled={!canSubmit}
+                  onPress={onSubmit}
+                  style={({ pressed }) => ({
+                    alignItems: 'center',
+                    backgroundColor: canSubmit ? colors.accent : colors.bgInput,
+                    borderRadius: radius.md,
+                    justifyContent: 'center',
+                    minHeight: 42,
+                    minWidth: 104,
+                    opacity: pressed ? 0.85 : 1,
+                    paddingHorizontal: space.md,
+                  })}
+                >
+                  {busy ? (
+                    <ActivityIndicator color={colors.onAccent} />
+                  ) : (
+                    <Text
+                      maxFontSizeMultiplier={2}
+                      numberOfLines={1}
+                      style={{
+                        color: canSubmit ? colors.onAccent : colors.textFaint,
+                        fontSize: font.sm,
+                        fontWeight: '800',
+                      }}
+                    >
+                      {connected ? 'Reconnect' : 'Connect'}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -142,6 +592,106 @@ export default function SettingsScreen() {
   const { logout } = useSession();
   const { colors, scheme, prefs, setPrefs } = useTheme();
   const version = Constants.expoConfig?.version ?? '0.1.0';
+  const [providerCredentials, setProviderCredentials] = useState<
+    Partial<Record<ProviderCredentialProvider, ProviderCredentialStatus>>
+  >({});
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providerStatusError, setProviderStatusError] = useState<string | null>(null);
+  const [activeProvider, setActiveProvider] = useState<ProviderCredentialProvider | null>(null);
+  const [credential, setCredential] = useState('');
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+  const [pendingProvider, setPendingProvider] = useState<ProviderCredentialProvider | null>(null);
+
+  const loadProviderCredentials = useCallback(async () => {
+    setProvidersLoading(true);
+    setProviderStatusError(null);
+    try {
+      const { providers: nextProviders } = await api.providerCredentials();
+      setProviderCredentials(
+        Object.fromEntries(nextProviders.map((provider) => [provider.provider, provider])) as Partial<
+          Record<ProviderCredentialProvider, ProviderCredentialStatus>
+        >,
+      );
+    } catch (err) {
+      setProviderStatusError(errorMessage(err, 'Could not load provider connections.'));
+    } finally {
+      setProvidersLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    void loadProviderCredentials();
+  }, [loadProviderCredentials]);
+
+  const openProviderSheet = useCallback((provider: ProviderCredentialProvider) => {
+    setActiveProvider(provider);
+    setCredential('');
+    setCredentialError(null);
+  }, []);
+
+  const closeProviderSheet = useCallback(() => {
+    if (pendingProvider) return;
+    setActiveProvider(null);
+    setCredential('');
+    setCredentialError(null);
+  }, [pendingProvider]);
+
+  const disconnectProvider = useCallback(
+    async (provider: ProviderCredentialProvider, closeOnSuccess = false) => {
+      if (pendingProvider) return;
+      setPendingProvider(provider);
+      setProviderStatusError(null);
+      if (closeOnSuccess) setCredentialError(null);
+      try {
+        if (provider === 'claude-code') {
+          await api.disconnectClaudeCode();
+        } else {
+          await api.disconnectCodex();
+        }
+        setProviderCredentials((prev) => ({
+          ...prev,
+          [provider]: disconnectedProviderStatus(provider),
+        }));
+        if (closeOnSuccess) {
+          setActiveProvider(null);
+          setCredential('');
+        }
+      } catch (err) {
+        const message = errorMessage(err, `Could not disconnect ${providerConfigs[provider].title}.`);
+        if (closeOnSuccess) {
+          setCredentialError(message);
+        } else {
+          setProviderStatusError(message);
+        }
+      } finally {
+        setPendingProvider(null);
+      }
+    },
+    [api, pendingProvider],
+  );
+
+  const submitProviderCredential = useCallback(async () => {
+    if (!activeProvider || pendingProvider) return;
+    const nextCredential = credential.trim();
+    if (!nextCredential) return;
+    setPendingProvider(activeProvider);
+    setCredentialError(null);
+    setProviderStatusError(null);
+    try {
+      const { provider } =
+        activeProvider === 'claude-code'
+          ? await api.connectClaudeCode(nextCredential)
+          : await api.connectCodex(nextCredential);
+      setProviderCredentials((prev) => ({ ...prev, [provider.provider]: provider }));
+      await loadProviderCredentials();
+      setActiveProvider(null);
+      setCredential('');
+    } catch (err) {
+      setCredentialError(errorMessage(err, `Could not connect ${providerConfigs[activeProvider].title}.`));
+    } finally {
+      setPendingProvider(null);
+    }
+  }, [activeProvider, api, credential, loadProviderCredentials, pendingProvider]);
 
   const logOut = () => {
     void Promise.all([
@@ -267,6 +817,54 @@ export default function SettingsScreen() {
           />
         </Row>
 
+        <SectionLabel>Connections</SectionLabel>
+        {providers.map((provider) => (
+          <ProviderConnectionRow
+            key={provider}
+            provider={provider}
+            status={providerCredentials[provider]}
+            loading={providersLoading}
+            busy={pendingProvider === provider}
+            onConnect={openProviderSheet}
+            onDisconnect={disconnectProvider}
+          />
+        ))}
+        {providerStatusError ? (
+          <Text
+            accessibilityRole="alert"
+            maxFontSizeMultiplier={2}
+            style={{
+              color: colors.danger,
+              fontSize: font.sm,
+              paddingHorizontal: space.lg,
+              paddingTop: space.sm,
+            }}
+          >
+            {providerStatusError}
+          </Text>
+        ) : null}
+
+        <SectionLabel>Notifications</SectionLabel>
+        <Row label="Notifications">
+          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+            <Switch
+              accessibilityRole="switch"
+              accessibilityLabel="Notifications coming soon"
+              accessibilityState={{ checked: false, disabled: true }}
+              disabled
+              value={false}
+              trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
+              thumbColor={colors.switchThumbOff}
+            />
+            <Text
+              maxFontSizeMultiplier={2}
+              style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '600' }}
+            >
+              Coming soon
+            </Text>
+          </View>
+        </Row>
+
         <SectionLabel>Account</SectionLabel>
         <Pressable
           accessibilityRole="button"
@@ -295,6 +893,21 @@ export default function SettingsScreen() {
           Atrium {version}
         </Text>
       </ScrollView>
+      <ConnectProviderSheet
+        provider={activeProvider}
+        status={activeProvider ? providerCredentials[activeProvider] : undefined}
+        value={credential}
+        busy={activeProvider != null && pendingProvider === activeProvider}
+        error={credentialError}
+        onChangeValue={setCredential}
+        onClose={closeProviderSheet}
+        onDisconnect={() => {
+          if (activeProvider) void disconnectProvider(activeProvider, true);
+        }}
+        onSubmit={() => {
+          void submitProviderCredential();
+        }}
+      />
     </View>
   );
 }

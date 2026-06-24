@@ -41,7 +41,14 @@ export default function Login() {
   const { colors } = useTheme();
   const [autoServer, autoHandle, autoName] = (AUTO_LOGIN ?? '').split('|');
   const [serverUrl, setServerUrl] = useState(autoServer ?? '');
-  const [methods, setMethods] = useState<AuthMethods>({ open: true, email: true, google: false, calls: false });
+  const [methods, setMethods] = useState<AuthMethods>({
+    open: true,
+    email: true,
+    google: false,
+    calls: false,
+  });
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [emailVisible, setEmailVisible] = useState(false);
   const [emailStep, setEmailStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -49,6 +56,7 @@ export default function Login() {
   const [displayName, setDisplayName] = useState(autoName ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const serverInputRef = useRef<TextInput>(null);
   const autoTried = useRef(false);
 
   useEffect(() => {
@@ -82,6 +90,7 @@ export default function Login() {
   const canRequestCode = serverUrl.trim().length > 0 && email.trim().length > 0 && !busy;
   const canVerifyCode =
     serverUrl.trim().length > 0 && email.trim().length > 0 && code.trim().length === 6 && !busy;
+  const canPressHandle = handle.trim().length >= 2 && !busy;
   const canSubmitHandle = serverUrl.trim().length > 0 && handle.trim().length >= 2 && !busy;
   const inputStyle = {
     backgroundColor: colors.bgInput,
@@ -109,6 +118,11 @@ export default function Login() {
     }
   };
 
+  const revealServerField = () => {
+    setAdvancedOpen(true);
+    setTimeout(() => serverInputRef.current?.focus(), 0);
+  };
+
   const verifyCode = async () => {
     if (!canVerifyCode) return;
     setBusy(true);
@@ -123,6 +137,11 @@ export default function Login() {
   };
 
   const submitHandle = async () => {
+    if (!serverUrl.trim()) {
+      setError('Enter your Atrium server origin to continue.');
+      revealServerField();
+      return;
+    }
     if (!canSubmitHandle) return;
     setBusy(true);
     setError(null);
@@ -145,187 +164,274 @@ export default function Login() {
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: space.xl }}
           keyboardShouldPersistTaps="handled"
         >
-          <Text
-            style={{
-              color: colors.text,
-              fontSize: 34,
-              fontWeight: '800',
-              marginBottom: 4,
-            }}
-          >
-            Atrium
-          </Text>
-          <Text style={{ color: colors.textMuted, fontSize: font.md, marginBottom: space.xl }}>
-            Sign in to your workspace
-          </Text>
-
-          <View style={{ gap: space.lg }}>
-            <View>
-              <Label>Server</Label>
-              <TextInput
-                style={inputStyle}
-                value={serverUrl}
-                onChangeText={setServerUrl}
-                placeholder="http://192.168.1.20:3001"
-                placeholderTextColor={colors.textFaint}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-              />
-              <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 4 }}>
-                Your Atrium server origin. On a real device, use your computer's LAN IP.
-              </Text>
-            </View>
-            <View>
-              <Label>Email</Label>
-              <TextInput
-                style={[inputStyle, emailStep === 'code' ? { color: colors.textMuted } : null]}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="alice@example.com"
-                placeholderTextColor={colors.textFaint}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                editable={emailStep === 'email'}
-              />
-            </View>
-
-            {emailStep === 'code' && (
-              <View>
-                <Label>Code</Label>
-                <TextInput
-                  style={inputStyle}
-                  value={code}
-                  onChangeText={(text) => setCode(text.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="123456"
-                  placeholderTextColor={colors.textFaint}
-                  keyboardType="number-pad"
-                  textContentType="oneTimeCode"
-                />
-              </View>
-            )}
-
-            <Pressable
-              onPress={emailStep === 'email' ? requestCode : verifyCode}
-              disabled={emailStep === 'email' ? !canRequestCode : !canVerifyCode}
-              style={({ pressed }) => {
-                const enabled = emailStep === 'email' ? canRequestCode : canVerifyCode;
-                return {
-                  backgroundColor: enabled ? colors.accent : colors.bgElevated,
-                  opacity: pressed ? 0.85 : 1,
-                  borderRadius: radius.md,
-                  alignItems: 'center',
-                  paddingVertical: 14,
-                  marginTop: space.sm,
-                };
+          <View style={{ width: '100%', maxWidth: 460, alignSelf: 'center' }}>
+            <Text
+              style={{
+                color: colors.text,
+                fontSize: 38,
+                fontWeight: '800',
+                marginBottom: 8,
               }}
             >
-              {busy ? (
-                <ActivityIndicator color={colors.onAccent} />
-              ) : (
-                <Text
+              Atrium
+            </Text>
+            <Text
+              style={{
+                color: colors.textMuted,
+                fontSize: font.lg,
+                lineHeight: 26,
+                marginBottom: space.xl,
+              }}
+            >
+              Where your team and AI agents work side by side.
+            </Text>
+
+            <View style={{ gap: space.lg }}>
+              {methods.open && (
+                <View style={{ gap: space.lg }}>
+                  <View>
+                    <Label>Handle</Label>
+                    <TextInput
+                      accessibilityLabel="Handle"
+                      style={inputStyle}
+                      value={handle}
+                      onChangeText={setHandle}
+                      placeholder="alice"
+                      placeholderTextColor={colors.textFaint}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+                  <View>
+                    <Label>Display name</Label>
+                    <TextInput
+                      accessibilityLabel="Display name"
+                      style={inputStyle}
+                      value={displayName}
+                      onChangeText={setDisplayName}
+                      placeholder="Alice (optional)"
+                      placeholderTextColor={colors.textFaint}
+                    />
+                  </View>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Enter Atrium with handle"
+                    accessibilityState={{ disabled: !canPressHandle, busy }}
+                    onPress={submitHandle}
+                    disabled={!canPressHandle}
+                    style={({ pressed }) => ({
+                      backgroundColor: canPressHandle ? colors.accent : colors.bgElevated,
+                      opacity: pressed ? 0.85 : 1,
+                      borderRadius: radius.md,
+                      alignItems: 'center',
+                      paddingVertical: 14,
+                      marginTop: space.sm,
+                    })}
+                  >
+                    {busy ? (
+                      <ActivityIndicator color={colors.onAccent} />
+                    ) : (
+                      <Text
+                        style={{
+                          color: canPressHandle ? colors.onAccent : colors.textFaint,
+                          fontSize: font.md,
+                          fontWeight: '800',
+                        }}
+                      >
+                        Enter Atrium
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
+              )}
+
+              <View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    advancedOpen ? 'Hide advanced server settings' : 'Show advanced server settings'
+                  }
+                  accessibilityState={{ expanded: advancedOpen }}
+                  onPress={() => setAdvancedOpen((open) => !open)}
+                  style={({ pressed }) => ({
+                    opacity: pressed ? 0.75 : 1,
+                    paddingVertical: space.sm,
+                  })}
+                >
+                  <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
+                    {advancedOpen ? 'Hide advanced' : 'Advanced'}
+                  </Text>
+                </Pressable>
+
+                {advancedOpen && (
+                  <View style={{ marginTop: space.sm }}>
+                    <Label>Server</Label>
+                    <TextInput
+                      accessibilityLabel="Server"
+                      ref={serverInputRef}
+                      style={inputStyle}
+                      value={serverUrl}
+                      onChangeText={setServerUrl}
+                      placeholder="http://192.168.1.20:3001"
+                      placeholderTextColor={colors.textFaint}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                    />
+                    <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 4 }}>
+                      Your Atrium server origin. On a real device, use your computer's LAN IP.
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {methods.email && !emailVisible && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign in with email instead"
+                  onPress={() => {
+                    setEmailVisible(true);
+                    setError(null);
+                  }}
+                  style={({ pressed }) => ({
+                    opacity: pressed ? 0.75 : 1,
+                    paddingVertical: space.sm,
+                  })}
+                >
+                  <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
+                    Sign in with email instead
+                  </Text>
+                </Pressable>
+              )}
+
+              {methods.email && emailVisible && (
+                <View
                   style={{
-                    color:
-                      emailStep === 'email'
-                        ? canRequestCode
-                          ? colors.onAccent
-                          : colors.textFaint
-                        : canVerifyCode
-                          ? colors.onAccent
-                          : colors.textFaint,
-                    fontSize: font.md,
-                    fontWeight: '700',
+                    borderTopWidth: 1,
+                    borderTopColor: colors.border,
+                    paddingTop: space.lg,
+                    gap: space.lg,
                   }}
                 >
-                  {emailStep === 'email' ? 'Email me a code' : 'Sign in'}
-                </Text>
+                  <View>
+                    <Label>Email</Label>
+                    <TextInput
+                      accessibilityLabel="Email"
+                      style={[inputStyle, emailStep === 'code' ? { color: colors.textMuted } : null]}
+                      value={email}
+                      onChangeText={setEmail}
+                      placeholder="alice@example.com"
+                      placeholderTextColor={colors.textFaint}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="email-address"
+                      editable={emailStep === 'email'}
+                    />
+                  </View>
+
+                  {emailStep === 'code' && (
+                    <View>
+                      <Label>Code</Label>
+                      <TextInput
+                        accessibilityLabel="Code"
+                        style={inputStyle}
+                        value={code}
+                        onChangeText={(text) => setCode(text.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="123456"
+                        placeholderTextColor={colors.textFaint}
+                        keyboardType="number-pad"
+                        textContentType="oneTimeCode"
+                      />
+                    </View>
+                  )}
+
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={emailStep === 'email' ? 'Email me a code' : 'Sign in with email code'}
+                    accessibilityState={{
+                      disabled: emailStep === 'email' ? !canRequestCode : !canVerifyCode,
+                      busy,
+                    }}
+                    onPress={emailStep === 'email' ? requestCode : verifyCode}
+                    disabled={emailStep === 'email' ? !canRequestCode : !canVerifyCode}
+                    style={({ pressed }) => {
+                      const enabled = emailStep === 'email' ? canRequestCode : canVerifyCode;
+                      return {
+                        backgroundColor: enabled ? colors.bgPressed : colors.bgElevated,
+                        opacity: pressed ? 0.85 : 1,
+                        borderRadius: radius.md,
+                        alignItems: 'center',
+                        paddingVertical: 14,
+                        marginTop: space.sm,
+                      };
+                    }}
+                  >
+                    {busy ? (
+                      <ActivityIndicator color={colors.text} />
+                    ) : (
+                      <Text
+                        style={{
+                          color:
+                            emailStep === 'email'
+                              ? canRequestCode
+                                ? colors.text
+                                : colors.textFaint
+                              : canVerifyCode
+                                ? colors.text
+                                : colors.textFaint,
+                          fontSize: font.md,
+                          fontWeight: '700',
+                        }}
+                      >
+                        {emailStep === 'email' ? 'Email me a code' : 'Sign in'}
+                      </Text>
+                    )}
+                  </Pressable>
+
+                  {emailStep === 'code' && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Use a different email"
+                      onPress={() => {
+                        setEmailStep('email');
+                        setCode('');
+                        setError(null);
+                      }}
+                    >
+                      <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
+                        Use a different email
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
               )}
-            </Pressable>
 
-            {emailStep === 'code' && (
-              <Pressable
-                onPress={() => {
-                  setEmailStep('email');
-                  setCode('');
-                  setError(null);
-                }}
-              >
-                <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
-                  Use a different email
-                </Text>
-              </Pressable>
-            )}
-
-            {/* Google OAuth needs a native redirect/deep-link flow; web only for this round. */}
-
-            {methods.open && (
-              <View
-                style={{
-                  borderTopWidth: 1,
-                  borderTopColor: colors.border,
-                  paddingTop: space.lg,
-                  gap: space.lg,
-                }}
-              >
-                <Text
-                  style={{ color: colors.textMuted, fontSize: font.xs, textAlign: 'center' }}
-                >
-                  dev login
-                </Text>
-                <View>
-                  <Label>Handle</Label>
-                  <TextInput
-                    style={inputStyle}
-                    value={handle}
-                    onChangeText={setHandle}
-                    placeholder="alice"
-                    placeholderTextColor={colors.textFaint}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-                <View>
-                  <Label>Display name</Label>
-                  <TextInput
-                    style={inputStyle}
-                    value={displayName}
-                    onChangeText={setDisplayName}
-                    placeholder="Alice (leave blank to keep your current name)"
-                    placeholderTextColor={colors.textFaint}
-                  />
-                </View>
-
+              {/* Google OAuth needs a native redirect/deep-link flow; web only for this round. */}
+              {methods.google && Platform.OS === 'web' && (
                 <Pressable
-                  onPress={submitHandle}
-                  disabled={!canSubmitHandle}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Google"
+                  onPress={() => {
+                    const base = normalizeServerUrl(serverUrl);
+                    window.location.href = `${base}/api/auth/google/start`;
+                  }}
                   style={({ pressed }) => ({
-                    backgroundColor: canSubmitHandle ? colors.bgPressed : colors.bgElevated,
+                    backgroundColor: colors.bgElevated,
                     opacity: pressed ? 0.85 : 1,
                     borderRadius: radius.md,
                     alignItems: 'center',
                     paddingVertical: 14,
-                    marginTop: space.sm,
                   })}
                 >
-                  {busy ? (
-                    <ActivityIndicator color={colors.text} />
-                  ) : (
-                    <Text
-                      style={{
-                        color: canSubmitHandle ? colors.text : colors.textFaint,
-                        fontSize: font.md,
-                        fontWeight: '700',
-                      }}
-                    >
-                      Join with handle
-                    </Text>
-                  )}
+                  <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
+                    Continue with Google
+                  </Text>
                 </Pressable>
-              </View>
-            )}
+              )}
 
-            {error && <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>}
+              {error && <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>}
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
