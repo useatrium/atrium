@@ -77,6 +77,17 @@ export type ReactionResponse = { event: WireEvent } | { event: null; applied: fa
 export interface OpOptions {
   opId?: string;
 }
+export interface EntryComment {
+  id: number;
+  author?: UserRef;
+  text: string;
+  createdAt: string;
+  deleted?: boolean;
+}
+export interface EntryAnnotations {
+  comments: WireEvent[];
+  reactions: { emoji: string; userIds: string[] }[];
+}
 
 export function createApi(opts: ApiOptions = {}) {
   const base = (opts.baseUrl ?? '').replace(/\/+$/, '');
@@ -287,6 +298,14 @@ export function createApi(opts: ApiOptions = {}) {
       req<ReactionResponse>(`/api/messages/${eventId}/reactions`, {
         method: 'POST',
         body: JSON.stringify({ emoji, action, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    // === entry-annotation client additions ===
+    getEntryAnnotations: (handle: string) =>
+      req<EntryAnnotations>(`/api/entries/${encodeURIComponent(handle)}/annotations`),
+    postEntryComment: (handle: string, text: string, op: OpOptions = {}) =>
+      req<{ event: WireEvent }>(`/api/entries/${encodeURIComponent(handle)}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     search: (q: string, limit = 8) =>
       req<{ results: { event: WireEvent; channelName: string }[] }>(
