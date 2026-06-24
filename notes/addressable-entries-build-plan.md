@@ -93,15 +93,24 @@ No new annotation table. No tombstone-for-GC table (transcripts live forever, §
 **P0-3. Resolve route** (`server/src/app.ts` + `entries.ts`)
 - `GET /api/entries/:handle` → normalized `{handle, kind, actor, text, meta,
   targetType, sourceRefs, tombstoned}`.
-- Authz: event → channel membership; record → session `full_view` OR channel member
-  OR `spawned_by` (reuse the changefeed's predicate, `session-record-changefeed.ts`).
+- Authz: event → channel membership; record → **reuse the changefeed predicate
+  verbatim** (`session-record-changefeed.ts:108–111`), which is *(channel `public` AND
+  workspace member) OR `s.spawned_by = user` OR `channel_members` row*. (Note: there is
+  **no `full_view` column** — earlier prose used that name loosely; the real mechanism
+  is these three OR-branches. `channel-member` is one branch, which is what makes the H6
+  collapse sound.)
 - **H6 — annotation authz = channel membership** (decision): a transcript-entry
   annotation follows the *channel* it's stored in, the broadest scope here. Since
   channel-member ⊆ the entry-resolve union above, anyone who can see an annotation
-  can resolve its entry — the dual-authz "split brain" collapses to one rule. One
-  documented edge: a `full_view`-without-membership viewer (rare) resolves the entry
-  but not its channel-scoped annotations. Build one tested authz matrix (member /
-  non-member / full_view / spawned_by) covering both target types.
+  can resolve its entry — the dual-authz "split brain" collapses to one rule.
+- **Sharpening (2026-06-24): extract the predicate into ONE shared SQL function** (e.g.
+  `visibleSessionPredicate(userParam)` in a shared module) that *both* the changefeed
+  (`session-record-changefeed.ts`) and the resolve route call — do **not** copy-paste
+  the WHERE clause. Single source of truth = the live changefeed and handle-resolve
+  can't drift (drift = you can resolve a handle you'd never receive live, or vice-versa
+  → a leak). One tested authz matrix (member / non-member / spawned_by / public-ws)
+  covers both target types. Edge: a `spawned_by`-without-membership viewer resolves the
+  entry but not its channel-scoped annotations (acceptable).
 - Archive fallback: leave a `// TODO archival` seam (no behavior now).
 
 **P0-4. Handle-bearing reads**
@@ -123,11 +132,17 @@ and `entry_uid` survives a forced `/reproject`.
   `payload.target` (= `evt_<id>` for chat). **Delete** the `target_event_id` reads
   and writes; no dual path. The fold queries switch from
   `(payload->>'target_event_id')::bigint = $1` to `payload->>'target' = $1`.
-- **H9 — silent-failure guard:** add a CI grep-guard that fails the build on any
-  surviving `target_event_id` reader/writer after the cutover, plus a transitional
-  assertion/log on any read that still encounters `target_event_id`-only rows. Cheap
-  insurance against the clean break's failure mode (a missed reader returns *no
-  annotations*, not an error).
+- **H9 — silent-failure guard. PRIMARY = make the compiler find the readers.**
+  Clean-break surface is **2 source files** (verified): server `events.ts` (10 refs) and
+  the web reducer `surface/web/src/hydration.ts:20`. The catch: `payload` is
+  `Record<string, unknown>` (events.ts:19), so `payload.target_event_id` is **invisible
+  to the compiler** — a grep can miss dynamic access. **Sharpening (2026-06-24):** give
+  annotation events a **typed payload** (`{ target: string; … }`) rather than the loose
+  `Record<string, unknown>`, so every old-field reader **fails to compile** — the
+  compiler enumerates them, not a regex. The **CI grep-guard drops to a backstop** for
+  genuinely-dynamic accesses, plus a transitional runtime assertion for stray
+  `target_event_id`-only rows (mostly dev/CI data — nothing's live). Both seams (server
+  `events.ts` + web `hydration.ts`) migrate in one change.
 
 **P1-2. New event types + writers**
 - `comment.posted`, `comment.edited`, `comment.deleted`. Reactions reuse
@@ -185,6 +200,32 @@ entry content, scoped to its session, on claude and codex harnesses.
 
 ---
 
+## Verification & hand-compute (2026-06-24, against code)
+
+Checked the plan's load-bearing claims against `surface/server` + `surface/web` before
+committing. What held, what changed:
+- **Migrations:** highest is `043`; **`044`/`045` are free and unique.** Caveat: `042`
+  is used by *two* files (`042_user_raw_access`, `042_workspace_scoped_artifacts`) — a
+  pre-existing dup, harmless because the runner sorts by **filename**
+  (`migrate.ts:20` `readdir().sort()`), but don't repeat it; use unique 044/045.
+- **`events_edit_target` index is real** (`001_init.sql:62` on
+  `((payload->>'target_event_id')::bigint)`) → the "drop it" step (mig 045) is valid.
+- **`entry_uid` provenance keys all exist** in `session-records.ts`: `tool_use_id`,
+  `messageId`/`uuid`, `questionId`, codex `itemId`, `changeIndex`, and `sourceEventIds`
+  (pervasive, 25 refs) — the H2 derivation chain is grounded.
+- **Changefeed authz predicate confirmed** (`session-record-changefeed.ts:108–111`):
+  `(public AND workspaceMember) OR spawned_by OR channel-member`. **No `full_view`
+  column** — corrected in P0-3. H6 collapse holds (channel-member ⊆ the union).
+- **Clean-break surface = 2 files** (`events.ts` + web `hydration.ts`), not server-only
+  — H9 updated.
+- **Ingestion is loss-free on the Atrium side by construction** (cursor never passes an
+  un-mirrored frame) → **H1 re-scoped**: detect+alarm load-bearing, refetch best-effort,
+  Centaur eviction irreducible. Plus a latent **incremental-projection late-frame skip**
+  (assumes monotonic arrival; self-heals via the frequent full-rebuild path) — now a
+  documented invariant in H1.
+- **Full rebuild is a frequent live path** (`projectAndEmitChange` →
+  `rebuildSessionRecords`), not rare — *reinforces* the `entry_uid`-not-`seq` decision.
+
 ## Hardening — critique resolutions (2026-06-24)
 
 Master map of the 9 weaknesses → plan items. Detail for the items without an inline
@@ -192,7 +233,7 @@ phase home (H1/H3/H5/H7) is here; the rest point at their phase.
 
 | # | Weakness | Resolution | Where |
 |---|---|---|---|
-| H1 | Silent frame loss | **active re-fetch** (detect gap → refill) | P0 · Lane G ↓ |
+| H1 | Silent frame loss | **detect + alarm** (refetch best-effort; eviction is irreducible) | P0 · Lane G ↓ |
 | H2 | `entry_uid` only as stable as weakest harness | per-harness conformance test + fallback metric | P0-2 |
 | H3 | Chat `events` grows forever, folded at read | fold behind a cache seam, **defer** the cache | ↓ |
 | H4 | Agent annotation spam | per-actor rate cap **ships with** agent-write | P1-2 |
@@ -202,27 +243,41 @@ phase home (H1/H3/H5/H7) is here; the rest point at their phase.
 | H8 | `evt_*` enumerable vs "opaque" | **raw bigint**; only `rec_*` opaque | P0-1 |
 | H9 | Clean break fails silently | CI grep-guard + transitional assertion | P1-1 |
 
-**H1 — frame-gap detection + active re-fetch (P0, new Lane G; transcript integrity).**
-- **First confirm Centaur's `event_id` contiguity** per `(thread, execution)` — is the
-  sequence gap-free, or does Centaur filter some events out of the stream? The whole
-  detection keys off this. (Build-time verification; if non-contiguous, key off
-  Centaur's own next-expected signal instead of a raw `+1`.)
-- In the tailer (`session-runs.ts runTailer`), track `lastContiguousId`. On
-  `frame.event_id > expected`:
-  - **Interim refill — in-repo, ships now, needs no new Centaur endpoint:** abort the
-    tail, reset the resume cursor to `lastContiguousId`, reconnect. The existing
-    `tailEvents(afterEventId=lastContiguousId)` replays everything after it; the
-    `ON CONFLICT DO NOTHING` mirror dedups what we already have. This *is* active
-    re-fetch, reusing the watermark machinery — just not yet a targeted range.
-  - **Targeted re-fetch — cross-repo, later optimization:** a bounded
-    `GET /api/session/:thread/events?after=A&before=B` on api-rs to refill only the
-    hole without re-streaming a long tail. Pure perf; the interim is correct without it.
-- **Health surface:** per-session `frames_behind`, `last_gap_at`, `refetch_count`.
-  **Alarm if a gap persists *after* a refill** — that's the irreducible bound (Centaur
-  no longer retains the frame); nothing downstream can recover it, so it must page a
-  human, not fail silently.
-- **Cross-repo dependency:** only the targeted-range endpoint (optional). Interim is
-  fully in Atrium.
+**H1 — frame-gap detection + alarm; refetch is best-effort (P0, new Lane G).**
+*Scope corrected by a 2026-06-24 hand-compute of the ingestion path (see § Verification).*
+The earlier framing oversold "active re-fetch." What the hand-compute established:
+- **The raw mirror (`session_events`) is loss-free by construction on the Atrium side.**
+  `mirrorFrame` (`INSERT … ON CONFLICT DO NOTHING`) runs *before* both the batched
+  `persistLastEventId` flush and `foldFrame`'s `GREATEST(last_event_id, event_id)`
+  writes, and the resume cursor is `max(event_id seen)` — so the cursor **can never
+  advance past an un-mirrored frame** (verified across crash / reconnect /
+  mirror-failure-aborts-tailer). Idempotent + order-independent.
+- **⇒ A `session_events` gap can only originate Centaur-side:** (i) eviction beyond the
+  resume point, or (ii) sparse `event_id`s by design. **Reconnect-refill cannot fix
+  (i)** — Centaur replays the *same* jump, so resetting the cursor just re-derives the
+  gap. So **detection + alarm is the load-bearing deliverable**, not re-fetch.
+- **Build:** First confirm Centaur's `event_id` contiguity per `(thread, execution)`
+  (gates whether a gap is even meaningful vs. case (ii)). In the tailer, track
+  `lastContiguousId`; on `event_id > expected`, emit per-session `frames_behind` /
+  `last_gap_at`, **try one best-effort refetch** (reconnect from `lastContiguousId` —
+  recovers only the narrow "Atrium-skipped-but-Centaur-still-retains" window, e.g. a
+  future ingestion bug), and **if the gap persists, ALARM + write a permanent `hole`
+  marker** into the transcript so it's *honestly* incomplete rather than silently so.
+  That persistent gap = irreducible Centaur-retention loss; nothing downstream recovers
+  it.
+- **Cross-repo targeted endpoint — DROPPED from scope** (sharpening 2026-06-24): a
+  bounded `GET …/events?after=A&before=B` on api-rs would only recover the
+  Centaur-still-retains window (a future ingestion bug), which the free reconnect
+  already covers. Not worth a cross-repo dependency. The reconnect-refetch stays as
+  ~5-line belt-and-suspenders; **the deliverable is detect + alarm + hole-marker.**
+- **Separate, latent — projection late-frame skip:** the *live* path projects
+  **incrementally** (`> projection cursor`), assuming monotonic frame arrival; an
+  out-of-order/late frame would be skipped until a full rebuild. Today rebuild is
+  common (`projectAndEmitChange` → full `rebuildSessionRecords`), so it self-heals — but
+  **document the monotonic-arrival invariant** and add a "late frame" assertion
+  (mirrored `event_id ≤ projection cursor` ⇒ schedule a rebuild) so a future change
+  can't make the skip permanent. (This also reinforces why the anchor must be
+  `entry_uid`, not `seq`: rebuild is a frequent live path, not an edge case.)
 
 **H3 — chat read-model scale (design-for, defer the build).**
 - Keep the `events_target` index (mig 045). Put the comment/reaction **fold behind a
@@ -257,8 +312,10 @@ phase home (H1/H3/H5/H7) is here; the rest point at their phase.
   comment+reaction fold; agent-authored annotation; record-target advisory-lock
   concurrency (two reactions race → net never negative). **H4:** agent annotation
   burst → rate-capped. **H5:** registry guard fails on a snapshot-less sync type.
-- **Integrity (H1):** drop a `centaur_event_id` in the mirror → assert gap detected,
-  interim refill restores contiguity, and a *persistent* gap raises the alarm metric.
+- **Integrity (H1):** drop a `centaur_event_id` in the mirror → assert gap **detected**,
+  best-effort reconnect-refetch attempted, and a *persistent* gap raises the alarm
+  metric + writes a `hole` marker. Plus: a late frame (`event_id ≤ projection cursor`)
+  schedules a rebuild (monotonic-arrival invariant).
 - **E2E (Playwright):** copy-link → resolve in another session; comment on a streaming
   message then let it finalize (EC1 — comment still anchored); delete → tombstone stub.
 - **MCP:** a sandbox agent reads an entry by handle; cross-session denied without access.
@@ -277,10 +334,10 @@ phase home (H1/H3/H5/H7) is here; the rest point at their phase.
 - **Clean break is real** — `target_event_id` is removed, not bridged. ~~A missed
   reader silently returns no annotations.~~ **GUARDED (H9):** CI grep-guard +
   transitional assertion catch a missed reader/writer.
-- **Frame-gap re-fetch depends on Centaur id semantics (H1)** — the interim refill is
-  in-repo, but verify `centaur_event_id` contiguity *first*; the targeted-range
-  optimization needs an api-rs endpoint (cross-repo). A gap that persists after refill
-  is real Centaur-side loss — alarm, don't swallow.
+- **Frame-gap is detect-not-recover (H1)** — verify `centaur_event_id` contiguity
+  *first*. The mirror is loss-free Atrium-side, so a real gap = Centaur eviction, which
+  no refetch can recover (cross-repo endpoint **dropped**). Deliverable = detect +
+  alarm + permanent `hole` marker; reconnect-refetch is free belt-and-suspenders only.
 
 ## Suggested fan-out (codex workers, isolated worktrees)
 
