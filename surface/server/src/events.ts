@@ -1,6 +1,6 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { encodeEventHandle } from './entries.js';
+import { encodeEventHandle, tryDecodeHandle } from './entries.js';
 import { workspaceMemberExists } from './membership.js';
 
 export interface UserRef {
@@ -451,6 +451,176 @@ export interface ReactionResult {
   applied: boolean;
 }
 
+export interface CommentPostedPayload {
+  target: string;
+  text: string;
+}
+
+export interface CommentEditedPayload {
+  target: string;
+  text: string;
+}
+
+export interface CommentDeletedPayload {
+  target: string;
+}
+
+export interface AnnotationReaction {
+  emoji: string;
+  userIds: string[];
+}
+
+export interface AnnotationFold {
+  comments: WireEvent[];
+  reactions: AnnotationReaction[];
+}
+
+interface EntryAnnotationScope {
+  workspaceId: string;
+  channelId: string;
+  threadRootEventId: number | null;
+}
+
+async function resolveAnnotationScopeTx(
+  client: DbClient,
+  handle: string,
+): Promise<EntryAnnotationScope> {
+  const decoded = tryDecodeHandle(handle);
+  if (!decoded) {
+    throw new DomainError(400, 'bad_handle', 'invalid entry handle');
+  }
+  switch (decoded.type) {
+    case 'event': {
+      const res = await client.query<{
+        workspace_id: string;
+        channel_id: string | null;
+        thread_root_event_id: number | null;
+      }>(
+        'SELECT workspace_id, channel_id, thread_root_event_id FROM events WHERE id = $1',
+        [decoded.eventId],
+      );
+      const row = res.rows[0];
+      if (!row?.channel_id) {
+        throw new DomainError(404, 'entry_not_found', 'entry not found');
+      }
+      return {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: row.thread_root_event_id,
+      };
+    }
+    case 'record': {
+      const res = await client.query<{
+        workspace_id: string;
+        channel_id: string;
+      }>(
+        `SELECT s.workspace_id, s.channel_id
+           FROM session_records r
+           JOIN sessions s ON s.id = r.session_id
+          WHERE r.entry_uid = $1
+          ORDER BY r.ts DESC, r.session_id ASC, r.seq ASC
+          LIMIT 1`,
+        [decoded.entryUid],
+      );
+      const row = res.rows[0];
+      if (!row) {
+        throw new DomainError(404, 'entry_not_found', 'entry not found');
+      }
+      return {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: null,
+      };
+    }
+  }
+}
+
+export async function postCommentTx(
+  client: DbClient,
+  args: { handle: string; actorId: string; text: string },
+): Promise<WireEvent> {
+  const scope = await resolveAnnotationScopeTx(client, args.handle);
+  const payload: CommentPostedPayload = { target: args.handle, text: args.text };
+  const ev = await insertEvent(client, {
+    workspaceId: scope.workspaceId,
+    channelId: scope.channelId,
+    threadRootEventId: scope.threadRootEventId,
+    type: 'comment.posted',
+    actorId: args.actorId,
+    payload: { ...payload },
+  });
+  return toWireEvent(await attachAuthor(client, ev));
+}
+
+export async function editCommentTx(
+  client: DbClient,
+  args: { commentEventId: number; actorId: string; text: string },
+): Promise<WireEvent> {
+  const target = await client.query<{
+    workspace_id: string;
+    channel_id: string | null;
+    thread_root_event_id: number | null;
+    type: string;
+    actor_id: string | null;
+  }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+    [args.commentEventId],
+  );
+  const t = target.rows[0];
+  if (!t || t.type !== 'comment.posted' || !t.channel_id) {
+    throw new DomainError(404, 'comment_not_found', 'comment not found');
+  }
+  if (t.actor_id !== args.actorId) {
+    throw new DomainError(403, 'forbidden', 'only the author may edit a comment');
+  }
+  const payload: CommentEditedPayload = {
+    target: encodeEventHandle(args.commentEventId),
+    text: args.text,
+  };
+  const ev = await insertEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: 'comment.edited',
+    actorId: args.actorId,
+    payload: { ...payload },
+  });
+  return toWireEvent(await attachAuthor(client, ev));
+}
+
+export async function deleteCommentTx(
+  client: DbClient,
+  args: { commentEventId: number; actorId: string },
+): Promise<WireEvent> {
+  const target = await client.query<{
+    workspace_id: string;
+    channel_id: string | null;
+    thread_root_event_id: number | null;
+    type: string;
+    actor_id: string | null;
+  }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+    [args.commentEventId],
+  );
+  const t = target.rows[0];
+  if (!t || t.type !== 'comment.posted' || !t.channel_id) {
+    throw new DomainError(404, 'comment_not_found', 'comment not found');
+  }
+  if (t.actor_id !== args.actorId) {
+    throw new DomainError(403, 'forbidden', 'only the author may delete a comment');
+  }
+  const payload: CommentDeletedPayload = { target: encodeEventHandle(args.commentEventId) };
+  const ev = await insertEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: 'comment.deleted',
+    actorId: args.actorId,
+    payload: { ...payload },
+  });
+  return toWireEvent(await attachAuthor(client, ev));
+}
+
 /**
  * Apply an explicit reaction set operation. Re-applying the same set state is
  * a successful no-op, which makes retry schedules safe without a toggle shim.
@@ -512,6 +682,52 @@ export async function setReactionTx(
   return { event: toWireEvent(await attachAuthor(client, ev)), applied: true };
 }
 
+export async function setEntryReactionTx(
+  client: DbClient,
+  args: { handle: string; actorId: string; emoji: string; action: ReactionAction },
+): Promise<ReactionResult> {
+  if (!(REACTION_EMOJI as readonly string[]).includes(args.emoji)) {
+    throw new DomainError(400, 'invalid_emoji', 'unsupported reaction emoji');
+  }
+  const decoded = tryDecodeHandle(args.handle);
+  if (!decoded) {
+    throw new DomainError(400, 'bad_handle', 'invalid entry handle');
+  }
+  if (decoded.type === 'event') {
+    return setReactionTx(client, {
+      targetEventId: decoded.eventId,
+      actorId: args.actorId,
+      emoji: args.emoji,
+      action: args.action,
+    });
+  }
+
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [args.handle]);
+  const scope = await resolveAnnotationScopeTx(client, args.handle);
+  const net = await client.query<{ net: string }>(
+    `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0) AS net
+     FROM events
+     WHERE type IN ('reaction.added', 'reaction.removed')
+       AND payload->>'target' = $1
+       AND actor_id = $2
+       AND payload->>'emoji' = $3`,
+    [args.handle, args.actorId, args.emoji],
+  );
+  const present = Number(net.rows[0]?.net ?? 0) > 0;
+  if ((args.action === 'add' && present) || (args.action === 'remove' && !present)) {
+    return { event: null, applied: false };
+  }
+  const ev = await insertEvent(client, {
+    workspaceId: scope.workspaceId,
+    channelId: scope.channelId,
+    threadRootEventId: scope.threadRootEventId,
+    type: args.action === 'add' ? 'reaction.added' : 'reaction.removed',
+    actorId: args.actorId,
+    payload: { target: args.handle, emoji: args.emoji },
+  });
+  return { event: toWireEvent(await attachAuthor(client, ev)), applied: true };
+}
+
 export async function appendVoiceTranscribedEventTx(
   client: DbClient,
   args: {
@@ -548,6 +764,77 @@ export async function appendVoiceTranscribedEventTx(
 // ---------------------------------------------------------------------------
 // Reads (straight off the events table)
 // ---------------------------------------------------------------------------
+
+interface CommentFoldRow extends EventDbRow {
+  edited_text?: string | null;
+  is_deleted?: boolean;
+}
+
+function foldComment(row: CommentFoldRow): EventDbRow {
+  if (row.is_deleted) {
+    row.payload = { ...row.payload, text: '', deleted: true };
+    return row;
+  }
+  if (row.edited_text != null) {
+    row.payload = { ...row.payload, text: row.edited_text, edited: true };
+  }
+  return row;
+}
+
+export async function foldAnnotations(db: Db | DbClient, handle: string): Promise<AnnotationFold> {
+  const comments = await db.query<CommentFoldRow>(
+    `SELECT e.*,
+            u.handle AS author_handle,
+            u.display_name AS author_display_name,
+            edit.text AS edited_text,
+            (del.id IS NOT NULL) AS is_deleted
+       FROM events e
+       LEFT JOIN users u ON u.id = e.actor_id
+       LEFT JOIN LATERAL (
+         SELECT x.payload->>'text' AS text
+           FROM events x
+          WHERE x.type = 'comment.edited'
+            AND x.payload->>'target' = ('evt_' || e.id::text)
+          ORDER BY x.id DESC
+          LIMIT 1
+       ) edit ON true
+       LEFT JOIN LATERAL (
+         SELECT x.id
+           FROM events x
+          WHERE x.type = 'comment.deleted'
+            AND x.payload->>'target' = ('evt_' || e.id::text)
+          LIMIT 1
+       ) del ON true
+      WHERE e.type = 'comment.posted'
+        AND e.payload->>'target' = $1
+      ORDER BY e.id ASC`,
+    [handle],
+  );
+  const reactions = await db.query<{ emoji: string; user_ids: string[] }>(
+    `SELECT emoji, array_agg(actor_id::text ORDER BY first_id) AS user_ids
+       FROM (
+         SELECT x.actor_id,
+                x.payload->>'emoji' AS emoji,
+                SUM(CASE WHEN x.type = 'reaction.added' THEN 1 ELSE -1 END) AS net,
+                MIN(x.id) AS first_id
+           FROM events x
+          WHERE x.type IN ('reaction.added', 'reaction.removed')
+            AND x.payload->>'target' = $1
+          GROUP BY x.actor_id, x.payload->>'emoji'
+       ) n
+      WHERE n.net > 0
+      GROUP BY emoji
+      ORDER BY MIN(first_id)`,
+    [handle],
+  );
+  return {
+    comments: comments.rows.map((row) => toWireEvent(foldComment(row))),
+    reactions: reactions.rows.map((row) => ({
+      emoji: row.emoji,
+      userIds: row.user_ids,
+    })),
+  };
+}
 
 const MESSAGE_SELECT = `
   SELECT e.*,
