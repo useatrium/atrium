@@ -1,5 +1,14 @@
-import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type SVGProps,
+} from 'react';
 import type { ChatMessage } from '@atrium/surface-client';
+import { encodeEventHandle } from '@atrium/surface-client/handle';
 
 /** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
 export const REACTION_EMOJI = [
@@ -16,10 +25,13 @@ import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
+import { EntryComments } from './EntryComments';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { MessageText } from './MessageText';
 import { useDialog } from '../useDialog';
 import { VoiceMessage } from '../VoiceMessage';
+
+type MessageWithHandle = ChatMessage & { handle?: string | null };
 
 export const MessageRow = memo(function MessageRow({
   message,
@@ -70,6 +82,9 @@ export const MessageRow = memo(function MessageRow({
   const canThread = !inThread && m.id != null && onOpenThread && !deleted;
   const isSessionRow = m.sessionId != null && session != null;
   const isSessionEventRow = m.sessionEventType != null;
+  const explicitHandle = (m as MessageWithHandle).handle ?? null;
+  const entryHandle =
+    explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
   const canEdit =
     !isSessionRow &&
     !isSessionEventRow &&
@@ -89,14 +104,21 @@ export const MessageRow = memo(function MessageRow({
     !!onDelete;
   const canReact =
     !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
+  const canAnnotate =
+    !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && entryHandle != null;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const commentButtonRef = useRef<HTMLButtonElement | null>(null);
   const emojiRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mouseOpenedPickerRef = useRef(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyResetRef = useRef<number | null>(null);
   const react = (emoji: string) => {
     setPickerOpen(false);
+    setCommentsOpen(false);
     onReact?.(m, emoji).catch(() => {});
   };
 
@@ -117,6 +139,29 @@ export const MessageRow = memo(function MessageRow({
     setPickerIndex(clamped);
     window.setTimeout(() => emojiRefs.current[clamped]?.focus());
   };
+  const closeComments = useCallback(() => setCommentsOpen(false), []);
+  const copyEntryLink = useCallback(() => {
+    if (!entryHandle || typeof navigator === 'undefined') return;
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) return;
+    const origin = typeof window === 'undefined' ? '' : window.location.origin;
+    void clipboard
+      .writeText(`${origin}/e/${entryHandle}`)
+      .then(() => {
+        setLinkCopied(true);
+        if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+        copyResetRef.current = window.setTimeout(() => setLinkCopied(false), 1400);
+      })
+      .catch(() => {});
+  }, [entryHandle]);
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (!canAnnotate) setCommentsOpen(false);
+  }, [canAnnotate]);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -378,7 +423,7 @@ export const MessageRow = memo(function MessageRow({
             </div>
           </div>
         )}
-        {(canThread || canEdit || canDelete || canReact) && !editing && (
+        {(canThread || canEdit || canDelete || canReact || canAnnotate) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {canReact && (
               <button
@@ -390,6 +435,7 @@ export const MessageRow = memo(function MessageRow({
                   mouseOpenedPickerRef.current = false;
                 }}
                 onClick={() => {
+                  setCommentsOpen(false);
                   setPickerIndex(0);
                   setPickerOpen((v) => !v);
                 }}
@@ -400,6 +446,39 @@ export const MessageRow = memo(function MessageRow({
                 className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 <SmilePlusIcon />
+              </button>
+            )}
+            {canAnnotate && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPickerOpen(false);
+                  copyEntryLink();
+                }}
+                title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+                aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+                className={`rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs shadow-sm hover:bg-edge-strong hover:text-fg ${
+                  linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                }`}
+              >
+                <LinkIcon />
+              </button>
+            )}
+            {canAnnotate && entryHandle && (
+              <button
+                ref={commentButtonRef}
+                type="button"
+                onClick={() => {
+                  setPickerOpen(false);
+                  setCommentsOpen((v) => !v);
+                }}
+                title="Comment"
+                aria-label="Comment on entry"
+                aria-expanded={commentsOpen}
+                aria-haspopup="dialog"
+                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+              >
+                <MessageCircleIcon />
               </button>
             )}
             {canEdit && (
@@ -438,10 +517,57 @@ export const MessageRow = memo(function MessageRow({
             )}
           </div>
         )}
+        {canAnnotate && entryHandle && (
+          <EntryComments
+            handle={entryHandle}
+            open={commentsOpen}
+            onClose={closeComments}
+            invokerRef={commentButtonRef}
+          />
+        )}
       </div>
     </div>
   );
 });
+
+function LinkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
+      <path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" />
+    </svg>
+  );
+}
+
+function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+    </svg>
+  );
+}
 
 function SessionEventCard({
   message,
