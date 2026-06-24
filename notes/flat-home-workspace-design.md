@@ -1,10 +1,25 @@
 # Flat-`~` agent workspace + complete the poll→daemon cutover — design note
 
-> **Status: 2026-06-23 DRAFT for review.** Decisions (Gary): **(1)** flat-`~` filesystem — no separate
-> `/workspace`, the agent's home *is* its workspace; **(2)** **complete** the poll→daemon cutover (daemon-only,
-> delete the in-pod poll). This note specs the target + the path to it. Companion:
+> **Status: 2026-06-24 — IMPLEMENTED + e2e-validated, gated default-OFF on gbasin/centaur main.** The flat-`~`
+> agent-FS is built across 7 PRs (below) and validated by a live agent-image composition probe. The production
+> **cutover flip + poll deletion is the remaining STAGED OPS step** (gated on the overlay being the universal
+> default + a parity bake — deleting the poll now would break capture for all non-flat-home pods). Companion:
 > [`in-agent-poll-cutover-plan.md`] (cutover mechanics + status), [`shared-workspace-build-spec.md`],
 > [[c4-overlay-capture-build]], [[agent-data-architecture]].
+>
+> **Landed (gbasin/centaur main, all green CI):**
+> - **#17** daemon dotfile capture rule (`classify_entry` denies top-level dotfiles — `.cargo`/`.config`/… plumbing)
+> - **#18** controller gated `flat_home` overlay layout (merged mount at `/home/agent`, context at `~/context`, `workingDir=/home/agent`)
+> - **#19** gated `CENTAUR_FLAT_HOME` entrypoint (CWD=`~`, skip clone+forced branch, `-home-agent` transcript key, skip state-symlinks, bypass the in-agent poll)
+> - **#20** daemon `flat_home` thread → Claude transcript project key `-home-agent`
+> - **#21** baked toolchain relocation `/home/agent` → `/opt/centaur` (the HOME-shadowing fix; `CARGO_HOME`/`RUSTUP_HOME`/`BUN_INSTALL`/`FOUNDRY_DIR`/`UV_TOOL_*`/PATH + harness-server/skills/AGENTS.md → `/opt`)
+> - **#22** `GIT_CONFIG_GLOBAL=/opt/centaur/gitconfig` (e2e-found: the overlay shadows the baked `~/.gitconfig`)
+>
+> **Composition e2e (live agent image, `/home/agent` shadowed via tmpfs + `CENTAUR_FLAT_HOME=1`):** toolchain
+> resolves from `/opt` (cargo/bun/forge/harness-server/uv); 8 skills load from `/opt`; **`git init`+commit works**;
+> entrypoint boots with **CWD=`/home/agent`** and the **in-agent poll bypassed**; `~` writable. Daemon *capture*
+> is mount-path-agnostic (scans the node-side upper) and is covered by the existing green `node-sync pod-e2e` +
+> the C2 dotfile unit tests; the `flat_home` transcript-key + controller geometry are unit-tested.
 
 ## 1. Decision & why
 
