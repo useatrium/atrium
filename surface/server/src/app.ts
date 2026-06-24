@@ -21,6 +21,7 @@ import {
   deleteMessageTx,
   editMessageTx,
   ensureDefaultWorkspace,
+  foldAnnotations,
   getOrCreateGdm,
   getOrCreateDm,
   leaveChannelTx,
@@ -31,8 +32,11 @@ import {
   listThreadMessages,
   listUsers,
   listVisibleSyncEvents,
+  postCommentTx,
   postMessage,
+  REACTION_EMOJI,
   searchMessages,
+  setEntryReactionTx,
   setReactionTx,
   type Workspace,
   type ReactionAction,
@@ -502,6 +506,19 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (args.onApplied) await args.onApplied(response);
     return response;
   }
+
+  const entryAnnotationRateLimit =
+    rateLimit === false
+      ? false
+      : {
+          max: 30,
+          timeWindow: '1 minute',
+          hook: 'preHandler' as const,
+          keyGenerator: async (req: FastifyRequest) => {
+            const user = req.user ?? (await userFromRequest(req));
+            return user?.id ?? 'anonymous';
+          },
+        };
 
   function isQuestionNotPendingError(err: unknown): boolean {
     return err instanceof DomainError && err.code === 'question_not_pending';
@@ -1854,6 +1871,108 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     return entry;
   });
+
+  app.get('/api/entries/:handle/annotations', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { handle } = req.params as { handle: string };
+    if (!tryDecodeHandle(handle)) {
+      return reply.code(400).send({ error: 'bad_handle' });
+    }
+    const entry = await resolveEntry(pool, handle, user.id);
+    if (!entry) {
+      return reply.code(404).send({ error: 'entry_not_found' });
+    }
+    return foldAnnotations(pool, handle);
+  });
+
+  app.post(
+    '/api/entries/:handle/comments',
+    { config: { rateLimit: entryAnnotationRateLimit } },
+    async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const { handle } = req.params as { handle: string };
+      if (!tryDecodeHandle(handle)) {
+        return reply.code(400).send({ error: 'bad_handle' });
+      }
+      const entry = await resolveEntry(pool, handle, user.id);
+      if (!entry) {
+        return reply.code(404).send({ error: 'entry_not_found' });
+      }
+      const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+      const opId = optionalOpId(body);
+      const text = typeof body.text === 'string' ? body.text : '';
+      if (text.trim().length === 0) {
+        return reply.code(400).send({ error: 'empty_comment', message: 'comment text is empty' });
+      }
+      if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+        return reply.code(413).send({ error: 'comment_too_large', message: 'comment exceeds 8KB' });
+      }
+      const response = await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'comment.post',
+        body: { handle, text },
+        fn: async (client) => {
+          const event = await postCommentTx(client, { handle, actorId: user.id, text });
+          return { event };
+        },
+        onApplied: (result) => {
+          hub.publishEvent(result.event);
+        },
+      });
+      return reply.code(201).send(response);
+    },
+  );
+
+  app.post(
+    '/api/entries/:handle/reactions',
+    { config: { rateLimit: entryAnnotationRateLimit } },
+    async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const { handle } = req.params as { handle: string };
+      if (!tryDecodeHandle(handle)) {
+        return reply.code(400).send({ error: 'bad_handle' });
+      }
+      const body = (req.body ?? {}) as { emoji?: string; action?: unknown; opId?: unknown };
+      const opId = optionalOpId(body);
+      if (typeof body.emoji !== 'string' || !body.emoji) {
+        return reply.code(400).send({ error: 'bad_request', message: 'emoji required' });
+      }
+      if (!(REACTION_EMOJI as readonly string[]).includes(body.emoji)) {
+        return reply.code(400).send({ error: 'invalid_emoji', message: 'unsupported reaction emoji' });
+      }
+      if (body.action !== 'add' && body.action !== 'remove') {
+        return reply
+          .code(400)
+          .send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
+      }
+      const entry = await resolveEntry(pool, handle, user.id);
+      if (!entry) {
+        return reply.code(404).send({ error: 'entry_not_found' });
+      }
+      return runMutation({
+        userId: user.id,
+        opId,
+        opType: 'entry.reaction.set',
+        body: { handle, emoji: body.emoji, action: body.action },
+        fn: async (client) => {
+          const result = await setEntryReactionTx(client, {
+            handle,
+            actorId: user.id,
+            emoji: body.emoji as string,
+            action: body.action as ReactionAction,
+          });
+          return result.applied ? { event: result.event } : { event: null, applied: false as const };
+        },
+        onApplied: (response) => {
+          if (response.event) hub.publishEvent(response.event);
+        },
+      });
+    },
+  );
 
   app.get('/api/search', async (req, reply) => {
     const user = requireUser(req, reply);
