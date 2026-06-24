@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { recordFrameObservation } from './frame-gap.js';
 import type { ServerResponse } from 'node:http';
 import { basename } from 'node:path';
 import {
@@ -1721,6 +1722,9 @@ export class SessionRuns {
     let frameCountSinceFlush = 0;
     let lastFlushAt = Date.now();
     let lastProjectAt = 0;
+    // Frame-gap observability (addressable-entries H1): track the next id we expect
+    // and record any gap/late frame. OBSERVABILITY ONLY — no behavior change.
+    let expectedEventId: number | null = row.last_event_id > 0 ? row.last_event_id + 1 : null;
     try {
       for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
         executionId: row.current_execution_id,
@@ -1728,6 +1732,8 @@ export class SessionRuns {
         signal: controller.signal,
       })) {
         if (controller.signal.aborted) return;
+        this.observeFrameOrder(id, expectedEventId, frame.event_id);
+        expectedEventId = Math.max(expectedEventId ?? 0, frame.event_id + 1);
         lastEventId = Math.max(lastEventId, frame.event_id);
         pendingLastEventId = lastEventId;
         frameCountSinceFlush += 1;
@@ -1756,6 +1762,27 @@ export class SessionRuns {
           .finally(() => releaseSessionProjectionState(id));
         await this.updateStatus(id, 'failed').catch(() => {});
       }
+    }
+  }
+
+  /**
+   * Record a frame's ordering against the expected next id and log the first gap
+   * (or late frame) per session. OBSERVABILITY ONLY — never alters the tail. A gap
+   * here means Centaur skipped ids relative to our resume point (eviction or sparse
+   * ids); a persistent post-resume gap is irreducible Centaur-side loss (H1).
+   */
+  private observeFrameOrder(id: string, expected: number | null, eventId: number): void {
+    const { order, firstOfKind } = recordFrameObservation(id, expected, eventId);
+    if (order === 'ok' || !firstOfKind) return;
+    if (order === 'gap') {
+      console.warn('session frame gap observed', {
+        sessionId: id,
+        expected,
+        got: eventId,
+        missing: eventId - (expected as number),
+      });
+    } else {
+      console.warn('session late frame observed', { sessionId: id, expected, got: eventId });
     }
   }
 
