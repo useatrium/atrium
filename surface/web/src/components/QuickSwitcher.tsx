@@ -171,7 +171,7 @@ export function QuickSwitcher({
           }}
           onKeyDown={onKeyDown}
           aria-label="Channel and message search"
-          className="w-full border-b border-edge bg-transparent px-3 py-2.5 text-sm text-fg placeholder-fg-muted outline-none"
+          className="w-full border-b border-edge bg-transparent px-3 py-2.5 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-focus"
         />
         <div id={listboxId} role="listbox" aria-label="Search results" className="max-h-96 overflow-y-auto py-1">
           {channelMatches.length > 0 && (

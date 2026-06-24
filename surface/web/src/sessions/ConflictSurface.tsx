@@ -136,7 +136,7 @@ export function ConflictSurface({
           aria-label="merged resolution"
           value={merged}
           onChange={(e) => setMerged(e.target.value)}
-          className="mt-1 h-32 w-full resize-y rounded-md border border-edge bg-surface p-2 font-mono text-2xs text-fg-body"
+          className="mt-1 h-32 w-full resize-y rounded-md border border-edge bg-surface p-2 font-mono text-2xs text-fg-body outline-none focus:border-edge-focus"
         />
         <button
           disabled={resolving}
