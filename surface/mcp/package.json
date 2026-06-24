@@ -1,0 +1,27 @@
+{
+  "name": "@atrium/mcp",
+  "version": "0.1.0",
+  "description": "Atrium MCP server — exposes addressable entries as resources (atrium://entry/<handle>).",
+  "type": "module",
+  "bin": {
+    "atrium-mcp": "./dist/index.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "tsx": "4.20.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.8"
+  }
+}
