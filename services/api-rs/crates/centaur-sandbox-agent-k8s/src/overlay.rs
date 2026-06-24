@@ -13,7 +13,9 @@ const DEFAULT_OVERLAYS_ROOT: &str = "/var/lib/centaur/overlays";
 const DEFAULT_MERGED_ROOT: &str = "/run/centaur/merged";
 const DEFAULT_ATRIUM_ROOT: &str = "/var/lib/centaur/atrium";
 const DEFAULT_WORKSPACE_MOUNT_PATH: &str = "/workspace";
+pub(crate) const DEFAULT_HOME_MOUNT_PATH: &str = "/home/agent";
 const DEFAULT_ATRIUM_MOUNT_PATH: &str = "/atrium";
+const DEFAULT_CONTEXT_MOUNT_PATH: &str = "/home/agent/context";
 const DEFAULT_AGENT_UID: u32 = 1001;
 const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
 const READINESS_TIMEOUT_SECS: u64 = 120;
@@ -35,6 +37,8 @@ pub struct OverlayConfig {
     pub agent_uid: u32,
     /// Path where the agent receives the already-mounted merged workspace.
     pub workspace_mount_path: String,
+    /// Mount the merged workspace as the agent's HOME with context underneath it.
+    pub flat_home: bool,
 }
 
 impl OverlayConfig {
@@ -45,6 +49,7 @@ impl OverlayConfig {
             merged_root: PathBuf::from(DEFAULT_MERGED_ROOT),
             agent_uid: DEFAULT_AGENT_UID,
             workspace_mount_path: DEFAULT_WORKSPACE_MOUNT_PATH.to_owned(),
+            flat_home: false,
         }
     }
 }
@@ -193,17 +198,29 @@ pub(crate) fn overlay_volumes_json(overlay: &OverlayConfig, session: &str) -> Ve
 }
 
 pub(crate) fn overlay_agent_volume_mount_json(overlay: &OverlayConfig, _session: &str) -> Value {
+    let mount_path = if overlay.flat_home {
+        DEFAULT_HOME_MOUNT_PATH
+    } else {
+        overlay.workspace_mount_path.as_str()
+    };
+
     json!({
         "name": WORKSPACE_VOLUME,
-        "mountPath": overlay.workspace_mount_path,
+        "mountPath": mount_path,
         "mountPropagation": "HostToContainer",
     })
 }
 
-pub(crate) fn atrium_agent_volume_mount_json() -> Value {
+pub(crate) fn atrium_agent_volume_mount_json(overlay: &OverlayConfig) -> Value {
+    let mount_path = if overlay.flat_home {
+        DEFAULT_CONTEXT_MOUNT_PATH
+    } else {
+        DEFAULT_ATRIUM_MOUNT_PATH
+    };
+
     json!({
         "name": ATRIUM_CONTEXT_VOLUME,
-        "mountPath": DEFAULT_ATRIUM_MOUNT_PATH,
+        "mountPath": mount_path,
         "readOnly": true,
     })
 }
@@ -266,4 +283,56 @@ fn atrium_session_path(session: &str) -> String {
 
 fn path_string(path: &Path) -> String {
     path.display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn agent_mount_json_defaults_to_workspace_and_atrium() {
+        let overlay = OverlayConfig::new("centaur-node-sync:test");
+
+        assert_eq!(
+            overlay_agent_volume_mount_json(&overlay, "asbx-test"),
+            json!({
+                "name": WORKSPACE_VOLUME,
+                "mountPath": "/workspace",
+                "mountPropagation": "HostToContainer",
+            })
+        );
+        assert_eq!(
+            atrium_agent_volume_mount_json(&overlay),
+            json!({
+                "name": ATRIUM_CONTEXT_VOLUME,
+                "mountPath": "/atrium",
+                "readOnly": true,
+            })
+        );
+    }
+
+    #[test]
+    fn agent_mount_json_uses_flat_home_paths_when_enabled() {
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+
+        assert_eq!(
+            overlay_agent_volume_mount_json(&overlay, "asbx-test"),
+            json!({
+                "name": WORKSPACE_VOLUME,
+                "mountPath": "/home/agent",
+                "mountPropagation": "HostToContainer",
+            })
+        );
+        assert_eq!(
+            atrium_agent_volume_mount_json(&overlay),
+            json!({
+                "name": ATRIUM_CONTEXT_VOLUME,
+                "mountPath": "/home/agent/context",
+                "readOnly": true,
+            })
+        );
+    }
 }

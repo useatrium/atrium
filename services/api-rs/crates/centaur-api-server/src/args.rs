@@ -519,6 +519,13 @@ struct SandboxArgs {
     )]
     overlay_node_sync_image: Option<String>,
     #[arg(
+        long = "sandbox-overlay-flat-home",
+        env = "CENTAUR_SANDBOX_OVERLAY_FLAT_HOME",
+        default_value_t = false,
+        action = clap::ArgAction::Set
+    )]
+    overlay_flat_home: bool,
+    #[arg(
         long = "session-sandbox-warm-pool-size",
         env = "SESSION_SANDBOX_WARM_POOL_SIZE",
         default_value_t = 0
@@ -859,7 +866,9 @@ impl SandboxArgs {
         }
         let image = clean_optional_value(self.overlay_node_sync_image.as_deref())
             .unwrap_or_else(|| DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE.to_owned());
-        Some(OverlayConfig::new(image))
+        let mut overlay = OverlayConfig::new(image);
+        overlay.flat_home = self.overlay_flat_home;
+        Some(overlay)
     }
 
     fn default_workflow_host_path(&self) -> String {
@@ -2083,6 +2092,42 @@ mod tests {
         assert_eq!(overlay.merged_root, PathBuf::from("/run/centaur/merged"));
         assert_eq!(overlay.agent_uid, 1001);
         assert_eq!(overlay.workspace_mount_path, "/workspace");
+        assert!(!overlay.flat_home);
+
+        let args = Args::try_parse_from([
+            "centaur-api-server",
+            "--database-url",
+            "postgres://postgres:postgres@localhost/centaur",
+            "--session-sandbox-backend",
+            "agent-k8s",
+            "--kubernetes-sandbox-iron-proxy-mode",
+            "disabled",
+            "--sandbox-overlay-provisioning",
+            "true",
+            "--sandbox-overlay-flat-home",
+            "true",
+        ])
+        .unwrap();
+
+        let config = AgentSandboxConfig::try_from(&args.sandbox).unwrap();
+        let overlay = config.overlay.expect("overlay should be Some");
+        assert!(overlay.flat_home);
+
+        let args = Args::try_parse_from([
+            "centaur-api-server",
+            "--database-url",
+            "postgres://postgres:postgres@localhost/centaur",
+            "--session-sandbox-backend",
+            "agent-k8s",
+            "--kubernetes-sandbox-iron-proxy-mode",
+            "disabled",
+            "--sandbox-overlay-flat-home",
+            "true",
+        ])
+        .unwrap();
+
+        let config = AgentSandboxConfig::try_from(&args.sandbox).unwrap();
+        assert!(config.overlay.is_none());
     }
 
     #[test]

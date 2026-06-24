@@ -673,12 +673,16 @@ fn build_agent_sandbox(
     if let Some(overlay) = &config.overlay {
         let agent_uid = agent_run_as_user(&container).unwrap_or(overlay.agent_uid);
         let metadata = overlay::OverlayMetadata::from_sandbox_spec(spec, agent_uid);
-        container["workingDir"] = json!(overlay.workspace_mount_path.clone());
+        container["workingDir"] = if overlay.flat_home {
+            json!(overlay::DEFAULT_HOME_MOUNT_PATH)
+        } else {
+            json!(overlay.workspace_mount_path.clone())
+        };
         volume_mounts.push(overlay::overlay_agent_volume_mount_json(
             overlay,
             id.as_str(),
         ));
-        volume_mounts.push(overlay::atrium_agent_volume_mount_json());
+        volume_mounts.push(overlay::atrium_agent_volume_mount_json(overlay));
         volumes.extend(overlay::overlay_volumes_json(overlay, id.as_str()));
         volumes.push(overlay::atrium_volume_json(id.as_str()));
         init_containers.push(overlay::overlay_manifest_init_container_json(
@@ -1215,6 +1219,40 @@ mod tests {
         assert_eq!(atrium_mount.mount_path, "/atrium");
         assert_eq!(atrium_mount.read_only, Some(true));
         assert_eq!(atrium_mount.mount_propagation, None);
+    }
+
+    #[test]
+    fn overlay_enabled_flat_home_renders_home_workspace_and_context_mounts() {
+        let spec = SandboxSpec::new("centaur-agent:latest");
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay);
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        assert_eq!(
+            pod_spec.containers[0].working_dir.as_deref(),
+            Some("/home/agent")
+        );
+
+        let agent_mounts = pod_spec.containers[0].volume_mounts.as_ref().unwrap();
+        let workspace_mount = agent_mounts
+            .iter()
+            .find(|mount| mount.name == "workspace")
+            .expect("workspace mount");
+        assert_eq!(workspace_mount.mount_path, "/home/agent");
+        assert_eq!(
+            workspace_mount.mount_propagation.as_deref(),
+            Some("HostToContainer")
+        );
+
+        let context_mount = agent_mounts
+            .iter()
+            .find(|mount| mount.name == "atrium-context")
+            .expect("atrium-context mount");
+        assert_eq!(context_mount.mount_path, "/home/agent/context");
+        assert_eq!(context_mount.read_only, Some(true));
+        assert_eq!(context_mount.mount_propagation, None);
     }
 
     #[test]
