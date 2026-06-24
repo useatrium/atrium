@@ -428,8 +428,8 @@ WORKSPACE_DIR="$WORKSPACE_DIR" install-tool-shims --refresh-skills \
 TARGET_PROMPT="$WORKSPACE_DIR/AGENTS.md"
 if [ -f "$HOME_DIR/AGENTS_BASE.md" ]; then
     cp "$HOME_DIR/AGENTS_BASE.md" "$TARGET_PROMPT"
-elif [ -f "$HOME_DIR/AGENTS.md" ]; then
-    cp "$HOME_DIR/AGENTS.md" "$TARGET_PROMPT"
+elif [ -f /opt/centaur/AGENTS.md ]; then
+    cp /opt/centaur/AGENTS.md "$TARGET_PROMPT"
 fi
 
 if [ -f "$HOME_DIR/AGENTS_OVERLAY.md" ] && [ -f "$TARGET_PROMPT" ]; then

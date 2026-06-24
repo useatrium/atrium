@@ -135,10 +135,30 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       echo "Skipping browser install: Chrome for Testing does not publish Linux ARM64 builds"; \
     fi
 
+RUN install -d -m 0775 -o agent -g agent \
+      /opt/centaur \
+      /opt/centaur/cargo \
+      /opt/centaur/rustup \
+      /opt/centaur/bun \
+      /opt/centaur/foundry \
+      /opt/centaur/local \
+      /opt/centaur/local/bin \
+      /opt/centaur/uv-tools \
+      /opt/centaur/amp/bin
+
 USER agent
 WORKDIR /home/agent
 
-ENV PATH="/home/agent/.cargo/bin:/home/agent/.local/bin:/home/agent/.foundry/bin:/home/agent/.bun/bin:${PATH}"
+ENV CARGO_HOME=/opt/centaur/cargo \
+    RUSTUP_HOME=/opt/centaur/rustup \
+    BUN_INSTALL=/opt/centaur/bun \
+    FOUNDRY_DIR=/opt/centaur/foundry \
+    UV_TOOL_DIR=/opt/centaur/uv-tools \
+    UV_TOOL_BIN_DIR=/opt/centaur/local/bin \
+    CENTAUR_TOOL_BIN_DIR=/opt/centaur/local/bin \
+    CENTAUR_SKILL_DIRS=/opt/centaur/agents/skills \
+    CENTAUR_HARNESS_CONFIG_DIR=/opt/centaur/harness \
+    PATH="/opt/centaur/cargo/bin:/opt/centaur/local/bin:/opt/centaur/foundry/bin:/opt/centaur/bun/bin:${PATH}"
 
 ARG FOUNDRY_VERSION=v1.7.0
 ARG AMP_CLI_VERSION=0.0.1774529752-g94f44d
@@ -152,17 +172,17 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && cargo --version \
     && rustfmt --version \
     && clippy-driver --version \
-    && rm -rf "$HOME/.rustup/toolchains"/*/share/doc "$HOME/.rustup/toolchains"/*/share/man
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+    && rm -rf "$RUSTUP_HOME/toolchains"/*/share/doc "$RUSTUP_HOME/toolchains"/*/share/man
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/opt/centaur/local/bin sh
 RUN curl -fsSL https://bun.sh/install | bash -s "${BUN_VERSION}"
 RUN --mount=type=cache,target=/home/agent/.cache/uv,uid=1001,gid=1001,sharing=locked \
     uv tool install "manim==${MANIM_VERSION}" \
     && manim --version
 RUN curl -L https://foundry.paradigm.xyz | bash \
-    && /home/agent/.foundry/bin/foundryup --install ${FOUNDRY_VERSION} \
+    && "$FOUNDRY_DIR/bin/foundryup" --install ${FOUNDRY_VERSION} \
     && for bin in forge cast anvil chisel; do \
-      rm -f "$HOME/.foundry/bin/$bin"; \
-      ln -s "$HOME/.foundry/versions/${FOUNDRY_VERSION}/$bin" "$HOME/.foundry/bin/$bin"; \
+      rm -f "$FOUNDRY_DIR/bin/$bin"; \
+      ln -s "$FOUNDRY_DIR/versions/${FOUNDRY_VERSION}/$bin" "$FOUNDRY_DIR/bin/$bin"; \
     done
 RUN set -eux; \
     amp_platform="$(case "$(dpkg --print-architecture)" in \
@@ -170,12 +190,12 @@ RUN set -eux; \
       arm64) echo linux-arm64 ;; \
       *) echo unsupported-architecture >&2; exit 1 ;; \
     esac)"; \
-    mkdir -p "$HOME/.amp/bin" "$HOME/.local/bin"; \
+    mkdir -p /opt/centaur/amp/bin /opt/centaur/local/bin; \
     curl -fsSL "https://static.ampcode.com/cli/${AMP_CLI_VERSION}/${amp_platform}-amp.sha256" -o /tmp/amp.sha256; \
-    curl -fsSL "https://static.ampcode.com/cli/${AMP_CLI_VERSION}/amp-${amp_platform}" -o "$HOME/.amp/bin/amp"; \
-    echo "$(cat /tmp/amp.sha256)  $HOME/.amp/bin/amp" | sha256sum -c -; \
-    chmod +x "$HOME/.amp/bin/amp"; \
-    ln -sf "$HOME/.amp/bin/amp" "$HOME/.local/bin/amp"; \
+    curl -fsSL "https://static.ampcode.com/cli/${AMP_CLI_VERSION}/amp-${amp_platform}" -o /opt/centaur/amp/bin/amp; \
+    echo "$(cat /tmp/amp.sha256)  /opt/centaur/amp/bin/amp" | sha256sum -c -; \
+    chmod +x /opt/centaur/amp/bin/amp; \
+    ln -sf /opt/centaur/amp/bin/amp /opt/centaur/local/bin/amp; \
     rm -f /tmp/amp.sha256; \
     amp --version >/dev/null
 
@@ -187,7 +207,7 @@ RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
 # ── Agent skills + workspace setup (rarely changes) ─────────────────────────
 RUN --mount=type=cache,target=/home/agent/.npm,uid=1001,gid=1001,sharing=locked \
     npx -y skills add vercel-labs/agent-browser
-RUN mkdir -p ~/.amp/bin ~/.config/amp ~/.codex ~/.pi/agent ~/github ~/workspace \
+RUN mkdir -p ~/.config/amp ~/.codex ~/.pi/agent ~/github ~/workspace \
     && git config --global init.defaultBranch main \
     && git config --global push.autoSetupRemote true \
     && git config --global --add safe.directory '*' \
@@ -206,8 +226,10 @@ USER root
 RUN rm -f /etc/sudoers.d/agent
 # BuildKit's COPY --link creates parent directories without an explicit mode,
 # which can leave /etc/centaur without the execute bit for non-root users.
-# Pre-create it as 0755 so the agent user can traverse into it at runtime.
-RUN install -d -m 0755 /etc/centaur /opt/centaur
+# Pre-create /etc/centaur as 0755 so the agent user can traverse into it at runtime.
+# Keep /opt/centaur writable by agent for the relocated baked toolchain.
+RUN install -d -m 0755 /etc/centaur \
+    && install -d -m 0775 -o agent -g agent /opt/centaur
 COPY --link centaur_sdk/ /opt/centaur/centaur_sdk/
 COPY --link --chmod=644 services/sandbox/codex-auth.json /etc/centaur/codex-auth.default.json
 COPY --link --chmod=644 services/sandbox/claude-credentials.json /etc/centaur/claude-credentials.default.json
@@ -228,17 +250,17 @@ WORKDIR /home/agent
 # non-1001 user (e.g. the root-with-dropped-caps repo-cache). A bind mount
 # leaves no trace in the image and caches on source content just like COPY.
 RUN --mount=type=bind,source=crates/harness-server,target=/harness-server-src \
-    --mount=type=cache,target=/home/agent/.cargo/registry,uid=1001,gid=1001,sharing=locked \
-    --mount=type=cache,target=/home/agent/.cargo/git,uid=1001,gid=1001,sharing=locked \
+    --mount=type=cache,target=/opt/centaur/cargo/registry,uid=1001,gid=1001,sharing=locked \
+    --mount=type=cache,target=/opt/centaur/cargo/git,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/home/agent/.cache/harness-server-target,uid=1001,gid=1001,sharing=locked \
     CARGO_TARGET_DIR=/home/agent/.cache/harness-server-target \
-    cargo install --locked --path /harness-server-src --root /home/agent/.local
+    cargo install --locked --path /harness-server-src --root /opt/centaur/local
 
 # No RUN instructions after these — all repo-local content at the very end.
-COPY --link --chown=1001:1001 .agents/skills/ /home/agent/.agents/skills/
-COPY --link --chown=1001:1001 harness/ /home/agent/harness/
+COPY --link --chown=1001:1001 .agents/skills/ /opt/centaur/agents/skills/
+COPY --link --chown=1001:1001 harness/ /opt/centaur/harness/
 COPY --link --chown=1001:1001 workflows/ /opt/centaur/workflows/
-COPY --link --chown=1001:1001 services/sandbox/SYSTEM_PROMPT.md /home/agent/AGENTS.md
+COPY --link --chown=1001:1001 services/sandbox/SYSTEM_PROMPT.md /opt/centaur/AGENTS.md
 
 ENTRYPOINT ["/entrypoint.sh"]
 # Default CMD uses Rust blocks mode; pass --mode=jsonrpc for raw App Server JSON-RPC.
