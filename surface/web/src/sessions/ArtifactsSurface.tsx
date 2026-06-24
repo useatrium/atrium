@@ -75,18 +75,16 @@ export function ArtifactTile({
 }) {
   const src = artifactSrc(sessionId, artifact);
   const isImage = artifact.mime.startsWith('image/') && src !== null;
-  return (
-    <div
-      data-testid="artifact-tile"
-      className="flex flex-col overflow-hidden rounded-md border border-edge bg-surface-raised/50"
-    >
+  const name = basename(artifact.path);
+  const inner = (
+    <>
       <div className="flex h-24 items-center justify-center overflow-hidden bg-surface">
         {isImage ? (
           // Falls back to the type label if the image can't load (manifest-only,
           // store miss, or before the capture sidecar lands).
           <img
             src={src}
-            alt={basename(artifact.path)}
+            alt={name}
             loading="lazy"
             className="h-full w-full object-contain"
             onError={(e) => {
@@ -109,7 +107,7 @@ export function ArtifactTile({
           {KIND_LABEL[artifact.kind]}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-body" title={artifact.path}>
-          {basename(artifact.path)}
+          {name}
         </span>
         {versions > 1 && (
           <span
@@ -122,8 +120,37 @@ export function ArtifactTile({
         <span className="shrink-0 text-3xs tabular-nums text-fg-muted">{formatBytes(artifact.size)}</span>
       </div>
       {artifact.ref === null && (
-        <div className="border-t border-edge px-2 py-0.5 text-3xs text-fg-faint">not captured · too large</div>
+        // No bytes were staged (over the capture size limit). Be honest about why
+        // rather than implying a broken link.
+        <div className="border-t border-edge px-2 py-0.5 text-3xs text-fg-muted">
+          Too large to capture — exceeds the size limit
+        </div>
       )}
+    </>
+  );
+
+  const tileClass = 'flex flex-col overflow-hidden rounded-md border border-edge bg-surface-raised/50';
+
+  // When the bytes are servable, the whole tile opens/downloads the artifact;
+  // manifest-only tiles (no ref) stay a non-interactive card.
+  if (src) {
+    return (
+      <a
+        data-testid="artifact-tile"
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer"
+        download={name}
+        aria-label={`Open ${name}`}
+        className={`${tileClass} cursor-pointer transition-colors hover:border-edge-strong hover:bg-surface-raised`}
+      >
+        {inner}
+      </a>
+    );
+  }
+  return (
+    <div data-testid="artifact-tile" title="No bytes were captured for this file" className={tileClass}>
+      {inner}
     </div>
   );
 }

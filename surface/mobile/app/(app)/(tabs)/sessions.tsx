@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Stack, router } from 'expo-router';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
   formatCost,
@@ -16,9 +16,10 @@ import {
   type SessionListItem,
   type SessionStatus,
 } from '@atrium/surface-client';
-import { useChat } from '../../src/lib/chat';
-import { font, radius, space, useTheme, type Colors } from '../../src/lib/theme';
-import { ConnectionBanner } from '../../src/components/bits';
+import { useChat } from '../../../src/lib/chat';
+import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
+import { ConnectionBanner } from '../../../src/components/bits';
+import { MobileHeader } from '../../../src/components/MobileHeader';
 
 interface DisplaySession extends SessionListItem {
   live?: Session;
@@ -169,22 +170,19 @@ export default function SessionsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Stack.Screen
-        options={{
-          title: 'Sessions',
-          headerBackButtonDisplayMode: 'minimal',
-          headerRight: () => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Search sessions"
-              onPress={() => router.push('/session-search')}
-              hitSlop={8}
-              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Ionicons name="search-outline" size={21} color={colors.textSecondary} />
-            </Pressable>
-          ),
-        }}
+      <MobileHeader
+        title="Agents"
+        right={
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Search sessions"
+            onPress={() => router.push('/session-search')}
+            hitSlop={8}
+            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="search-outline" size={21} color={colors.textSecondary} />
+          </Pressable>
+        }
       />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
       {loading ? (

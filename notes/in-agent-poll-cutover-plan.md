@@ -1,25 +1,70 @@
 # In-agent artifact poll → C4 node-sync: cutover & cleanup plan
 
-> **Status: 2026-06-23. PLAN (not started).** Goal: retire the legacy in-agent poller
+> **Status: 2026-06-24. FLAT-`~` IMPLEMENTATION LANDED + e2e-validated** (gbasin/centaur main #17–#22, gated
+> default-OFF — see [`flat-home-workspace-design.md`]). **Remaining = the STAGED PROD-OPS cutover** (flip default
+> `ARTIFACT_CAPTURE_ENABLED=0` once flat-home/overlay is the universal default + a parity bake, then delete the
+> in-pod poll — deleting it now would break capture for all non-flat-home pods). Phase 0 (parity + safe cleanup)
+> landed earlier. Goal: retire the legacy in-agent poller
 > (`centaur/services/sandbox/artifact_capture.py`) in favour of the C4 overlay-upper node-scan
 > (`centaur-node-sync` daemon), **without losing capture coverage or safety filters**.
 > Grounded in a code sweep of both repos (file:line below). Companion:
 > [`c4-overlay-provisioning-plan.md`], [`shared-workspace-build-spec.md`], [[c4-overlay-capture-build]].
 
+> **⚠️ CURRENT REALITY — read first (verified live on the kind `centaur` cluster, 2026-06-23).**
+> 1. **Nothing has been cut over or retired.** The **in-pod Python poll** (`artifact-capture`, pid 58 in live
+>    `asbx-*` pods) is STILL the active, default, and ONLY live capture path, POSTing to Centaur
+>    `/agent/executions/{id}/artifacts`. The **node daemon is NOT deployed anywhere** (no DaemonSet / node-sync
+>    pod; `nodeSync.enabled=false`). Today's PRs #14/#15/#16 are **gated-OFF prep + filters**, not a cutover.
+> 2. **There is no top-level `/workspace` or `/atrium` today.** Those are C4-overlay paths that exist only once
+>    the (gated-off) overlay is provisioned. The live root has `home tmp var …` — no `workspace`/`atrium`.
+> 3. **Today the captured surface is `~/workspace` + `~/outputs`** (both *under* `~`) plus the `/tmp`+`/var/tmp`
+>    hedges — the poll's `ARTIFACT_CAPTURE_DIRS`. So *part of `~` IS captured today*; the clean "`~` excluded,
+>    `/workspace` captured" split is the **C4 design**, not current reality.
+
 ## Decisions locked (2026-06-23, Gary)
 
-- **Next = decisions + cleanup only** — hold the production go-live (Phase 1); do design calls + cleanup now, gated.
+- **Next = COMPLETE THE CUTOVER (Gary 2026-06-23):** daemon-only + delete the poll, on the **flat-`~`** layout
+  (see [`flat-home-workspace-design.md`]). Execute via **agent-fanout**, land to main with **green CI
+  incrementally**, run to completion; **checkpoint only** the two irreversible prod steps (flip
+  `ARTIFACT_CAPTURE_ENABLED=0`, delete the poll).
 - **0e = do NOT capture repo source** ("git owns it"): exclude paths under a repo working tree from the
   Artifact lane (deliverables live OUTSIDE repo roots, §10.7). **Reverses the 5B-2 e2e** (which captured a
   file inside `foo/`) → that e2e is updated to capture *outside* the repo + assert *non*-capture inside.
-- **0c = keep `/tmp` + `/var/tmp`** as extra capture roots (implemented at go-live); **drop `~/outputs`**
-  (unused per the sweep; `~` is NOT scanned today — only the overlay upper `/workspace` is — and the future
-  flat-`~` layout would subsume it).
+- **0c → SINGLE CAPTURED ROOT (revised 2026-06-23; supersedes "keep /tmp"):** capture **only the agent's
+  working directory**, nothing else. **DROP `/tmp` + `/var/tmp` + `~/outputs`** as capture roots (the §1.3 sweep
+  + the live probe found no deliverables there; `/tmp` is scratch, `TMPDIR` unset). The working dir is
+  `~/workspace` **today** (the poll's first dir = the agent CWD) and *relocates* to the C4 working-dir mount at
+  cutover (designed as `/workspace`; whether it should instead be a flat-`~` is the **open fork §6**). One
+  captured dir in both eras. **Supersedes 1d** — no `/tmp` watch-root infra. *(Corrects an earlier wrong note
+  that "`~` is not scanned today": today the poll DOES scan `~/workspace`+`~/outputs`, and there is no
+  `/workspace` yet.)*
 - **Poll end-state = full delete after cutover** (no permanent fallback) — Phase 4 removes the poller +
   entrypoint launch + Dockerfile copy + the orphaned Centaur `/agent/executions/{id}/artifacts` route + tests.
-- **Harness-transcript lane is the daemon's (see §5 correction)** — go-live validates it; cleanup keeps it.
+- **Harness-transcript lane is the daemon's (see §1.5 correction)** — go-live validates it; cleanup keeps it.
 - **Cleanup now:** 0e repo-tree exclusion (+ e2e flip) and removing the vestigial `runtime::hydrate_lower`
   (only test callers; live path is `cas::hydrate_artifact_lower`).
+
+## Status ledger (updated 2026-06-23)
+
+| Item | Phase | Status | Landed |
+|---|---|---|---|
+| Secret-content scan in the daemon | 0a | ✅ done | centaur #15 (`a09eb35`) |
+| Junk/binary deny-list | 0b | ✅ done | centaur #15 |
+| Exclude `.git/` internals from the Artifact lane | 0d | ✅ done | centaur #15 |
+| Repo-working-tree exclusion | 0e | ✅ done | centaur #16 (`04c11fc`) |
+| Drop vestigial `runtime::hydrate_lower` | cleanup | ✅ done | centaur #16 |
+| Gated overlay-workspace entrypoint (default-off) | 1b | ✅ done (gated) | centaur #14 (`6a9d2ff`) |
+| Decisions locked + §5 resume-coupling fix + 4-lane taxonomy | docs | ✅ done | atrium #88 (`be059a7`) |
+| ~~`/tmp`+`/var/tmp` watch roots (1d)~~ → **dropped** (single captured root, 0c) | — | ❌ not needed | — |
+| Live-controller wiring (`overlay: Some`, `nodeSync.enabled`) | 1a | ⛔ not built | — |
+| Real-session-spawn validation — **both** lanes | 1c | ⛔ not validated | — |
+| Parity bake (poll vs daemon captured-set diff) | 2 | ⛔ not run | — |
+| Flip default `ARTIFACT_CAPTURE_ENABLED=0` + rollback bake | 3 | ⛔ not done | — |
+| Delete poller + entrypoint launch + Dockerfile COPY + orphaned route | 4 | ⛔ not done | — |
+
+**Net:** Phase 0 (safe parity filters + cleanup) is DONE and merged **gated default-OFF** — nothing in prod
+changed. Remaining = the production go-live (1a/1c), the parity bake (2), the flip (3), and deletion (4). The
+build + test checklist for those is **§5**.
 
 ## 0. The two mechanisms today (grounded)
 
@@ -55,10 +100,11 @@ validating the real session-spawn path**, NOT "the mount is unproven."
    workspace wants **all deliverables**, so replace the allow-list with a **deny-list** (junk/build-artifact
    extensions) + the secret-content scan. The 1 MiB cap is *superseded* by the daemon's large-file streaming
    (an improvement, not a gap).
-3. **Dir coverage gap.** Poll covers `/tmp`, `~/outputs`, `/var/tmp`; the overlay upper only covers
-   `/workspace`. The sweep found **no code evidence** the harness writes artifacts to those (transient/debug).
-   Decision needed: **drop them** (document "write deliverables under `/workspace`") — recommended — or add
-   them as extra capture roots.
+3. **Dir coverage gap → RESOLVED (single captured root, 0c).** Today the poll captures `~/workspace` +
+   `~/outputs` (both under `~`) + `/tmp` + `/var/tmp`; under C4 the captured surface is the one working-dir
+   mount. The sweep + live probe found **no deliverables** in `/tmp`/`/var/tmp`/`~/outputs` (transient/scratch).
+   **Decision: capture only the working dir; DROP `/tmp`+`/var/tmp`+`~/outputs`.** Document "deliverables go in
+   your working directory." (No `/tmp` watch-root infra — see superseded 1d.)
 4. **Workspace-model swap (biggest runtime change).** Today `entrypoint.sh:368-393` git-clones the repo into
    `~/workspace` and `cd`s there (`:429`); branch `agent-<ts>` (`:388`). The overlay model puts the repo in
    an **RO lower** + an **upper** merged at `/workspace`. **VALIDATED 2026-06-23** (privileged Linux-VM
@@ -95,18 +141,22 @@ validating the real session-spawn path**, NOT "the mount is unproven."
   sample before upsert; mirror `secret_denied`).
 - **0b:** add a deny-list filter to the daemon (junk/binary extensions; optional soft size policy) — keep
   "capture all workspace deliverables" but drop obvious junk/build artifacts.
-- **0c:** decide `/tmp`+`~/outputs`+`/var/tmp` — recommend **drop + document**; else add capture roots.
+- **0c (DECIDED → single captured root):** capture only the working dir; **drop `/tmp`+`/var/tmp`+`~/outputs`**.
+  Document "deliverables go in your working directory." Supersedes 1d.
 - **0d (HARD — validated-essential): exclude `.git/` internals from the Artifact lane.** The overlay test
   (§4) showed one `git commit` floods the upper with `.git/HEAD`, `.git/index`, `.git/objects/*`, refs.
   `classify_entry` (`runtime.rs:178-191`) currently routes those to `Artifact` → it'd capture git metadata as
   artifacts (pure churn-per-commit, never a deliverable). Route any path containing a `.git/` segment to
   `Denied`. (The legacy poll dodged this via its MIME allow-list + `.git` exclude.)
-- **0e (OPEN DESIGN DECISION — do NOT blind-filter):** do we capture an agent's *edits to tracked repo
-  source* (e.g. `src/main.rs`)? §10.7 distinguishes **capture-for-history** (maybe yes — a record of what
-  the agent changed) from **share-across-containers** (never — git owns code). The 5B-2 pod-e2e *asserts*
-  a new file under a composed-repo subdir IS captured, so a blanket repo-subtree exclusion would break it.
-  Resolve the policy (likely: capture-but-don't-share, keyed off path scope) before touching this — it is
-  NOT part of the safe Phase-0 lane.
+- **0e (RESOLVED 2026-06-23 → landed centaur #16):** repo working trees are **excluded from the Artifact
+  lane** ("git owns repo source; deliverables live outside repo roots", §10.7). `classify_entry` /
+  `partition_entries_by_lane` now take the session's repo subdirs (threaded from the manifest via
+  `repo_target_subdir`) and **Deny** any path whose first component is a repo subdir. The 5B-2 pod-e2e was
+  **flipped** to match: it now captures an *outside*-repo deliverable (`/workspace/outside-deliverable.txt`)
+  and asserts the *in*-repo write (`foo/agent-created.txt`) lands in the upper but is **NOT** captured.
+  (The earlier framing treated this as an open "capture-for-history vs share" fork; the locked decision is
+  **do not capture repo source at all** — git is the record. Per-path-scope capture-but-don't-share can
+  revisit later if ever wanted, but it is explicitly out of scope now.)
 
 **Phase 1 — Make C4 the live capture path (the real remaining edge):**
 - **1a:** wire the overlay into the live api-rs controller (`overlay: Some(...)`, currently `None`); flip
@@ -115,6 +165,21 @@ validating the real session-spawn path**, NOT "the mount is unproven."
   /workspace`, retire/move the `agent-<ts>` branch logic. Controller provisions the repo RO-lower first.
 - **1c:** validate the **real session-spawn** path on a real cluster (spawn → agent writes → daemon captures
   → Atrium ledger → offload → serve), beyond the synthetic e2e pods.
+- **1d (SUPERSEDED 2026-06-23 by the single-root decision (0c) — kept only as the analysis of *why* capturing
+  `/tmp` is hard, should we ever revisit):** `/tmp` +
+  `/var/tmp` are real dirs at the **container root** (mode `1777`, siblings of `/home`) that live on the
+  **container's own rootfs overlay** (containerd) — a *different filesystem* from the C4 artifact overlay at
+  `/workspace`. The node daemon scans the artifact-overlay **upper at a session-keyed node hostPath**; it has
+  **no session-keyed handle to the container rootfs**, so it CANNOT reach `/tmp` by adding a path to a scan list.
+  Capturing `/tmp` the daemon way means **mounting `/tmp`+`/var/tmp` from a session-keyed, node-visible volume**
+  (emptyDir/hostPath over them — the same property the harness-transcript lane relies on, where `~/.claude` sits
+  on the state PVC) and scanning *that*: a **pod-spec + provisioning change**, not a config toggle. Apply the
+  Phase-0 filters there too. Drop `~/outputs`.
+  **Decide before building (options):** (1) session-keyed tmp volume + daemon scan-root [cleanest; real infra];
+  (2) `TMPDIR=/workspace/.tmp` redirect [leaky — many tools hardcode `/tmp`, and it pollutes the ledger];
+  (3) keep a `/tmp`-only in-pod poll [defeats the cutover]; (4) **drop `/tmp` capture + document "deliverables
+  go under `/workspace`"** [recommended — the §1.3 sweep found no deliverables in `/tmp`, and `TMPDIR` is unset
+  = pure scratch]. **Without 1d, cutover silently loses today's `/tmp` capture** (the poll scans it now).
 
 **Phase 2 — Parallel run + parity check:**
 - Run **both** (poll + daemon) for a bake period; diff captured sets (path, sha256, count). Proceed only on
@@ -139,11 +204,13 @@ validating the real session-spawn path**, NOT "the mount is unproven."
    (that's done); this is the production wiring.
 3. Parallel parity bake passes (Phase 2).
 4. Poll-off shipped + baked one release with rollback (Phase 3).
-5. Dir-coverage + junk-filter decisions made + documented (Phase 0b/0c).
+5. Dir-coverage + junk-filter: decided ✅ — 0b done (#15); **0c = single captured root** (capture only the
+   working dir; drop `/tmp`+`/var/tmp`+`~/outputs`). No `/tmp` watch-root infra needed (1d superseded). Document
+   "deliverables go in the working dir."
 
 **Not blockers (corrected):** overlay mount validation (done in kind, #12/#13); **git commit/push/worktree on
 the overlay (VALIDATED §4)**; large-file handling (daemon streaming beats the 1 MiB cap). **Resume is NOT a
-non-blocker — corrected (§5):** restore is orthogonal, but per-turn transcript *capture* is the daemon's lane
+non-blocker — corrected (§1.5):** restore is orthogonal, but per-turn transcript *capture* is the daemon's lane
 (same `nodeSync.enabled` gate), so go-live must validate it and cleanup must keep it.
 
 ## 4. Validation log
@@ -157,3 +224,67 @@ non-blocker — corrected (§5):** restore is orthogonal, but per-turn transcrip
 - **Caveat (overlay backing):** the upper/work/lower must NOT sit on another overlayfs — nesting fails with
   `mount: Invalid argument` (the container rootfs is overlay; the real node uses an **ext4 hostPath**, which
   is fine). This is the same nested-overlay constraint the C4 plan already designs around.
+- **`/tmp` topology + access (2026-06-23, LIVE probe — `asbx-…` pod on the kind `centaur` cluster, as agent uid 1001):**
+  `id` = `uid=1001(agent)`, `HOME=/home/agent`, `TMPDIR` **unset**. `/tmp` and `/var/tmp` are real dirs at the
+  **container root** (`drwxrwxrwt root:root`, mode `1777` — sticky, world-writable), **siblings of `/home`**, NOT
+  symlinks, NOT under `~`. Write probe as the agent: `/tmp` ✅, `/var/tmp` ✅, `/` ✗ (perm-denied — `/` is
+  `root:root` 755; **`readOnlyRootFilesystem` is unset** (`tools.rs:109`), so the rootfs is `rw` and only unix
+  perms gate it). `df`: both sit on the **container rootfs overlay** (containerd) — the SAME fs as `/`, *not* tmpfs,
+  *not* a mounted volume. These (legacy-model) pods have **no `/workspace` overlay** (workspace is a plain
+  `~/workspace` dir; `/home/agent/github` is a RO ext4 hostPath; poll active by default). ⇒ Confirms the §1.3 gap
+  AND the 1d stress-test: under C4 the node daemon (scanning the artifact-overlay upper at a session-keyed node
+  path) is **structurally blind to `/tmp`**, which lives on a *different* overlay it holds no session-keyed handle
+  to. Capturing `/tmp` ⇒ a node-visible session-keyed tmp volume (1d), never a scan-list toggle.
+
+## 5. Go-live build + test matrix (must be built AND tested before deletion)
+
+**Build (remaining):**
+- [ ] **1a** controller wiring: `overlay: Some(...)` (currently `None`); flip `nodeSync.overlayProvisioning.enabled`
+  + `nodeSync.enabled`; per-tenant isolation (#65).
+- [ ] **Single-root capture (0c):** daemon captures **only the working dir** (the C4 working-dir mount); confirm
+  `/tmp`+`/var/tmp`+`~/outputs` are NOT captured. Document "deliverables go in your working dir."
+- [ ] **3** cutover coupling: auto `ARTIFACT_CAPTURE_ENABLED=0` when the overlay is active; poll behind a flag
+  for one release (instant rollback).
+- [ ] **4** deletion: `artifact_capture.py`, the `entrypoint.sh` launch block, the `Dockerfile` COPY, the
+  `ARTIFACT_CAPTURE_*` env vars, and the orphaned Centaur `/agent/executions/{id}/artifacts` route + handler + tests.
+
+**Test (must pass before flipping the default / deleting):**
+- [ ] **Artifact lane, real spawn:** real session on a real cluster → agent writes a deliverable under `/workspace`
+  → daemon captures → Atrium ledger version → offload to S3 → serve-by-path returns the bytes (sha match). (1c, beyond synthetic pods.)
+- [ ] **Harness-transcript lane, live:** daemon on → a turn's transcript is captured (PUT `/harness-transcript`
+  → `harness_transcripts`/S3) → kill + cold-start the pod → entrypoint restore pulls it → agent resumes with prior
+  context. (The lane the poll never covered; newly live at go-live — §1.5 correction.)
+- [ ] **Repo-tree exclusion, real spawn:** agent edits a tracked repo file (`foo/src/x`) AND writes an outside
+  deliverable → only the outside file is captured; the in-repo edit is in the upper but NOT in the ledger. (0e end-to-end.)
+- [ ] **`.git`/junk/secret filters, real spawn:** a `git commit` in the overlay → no `.git/*` artifacts; a `notes.txt`
+  with an embedded key → skipped (secret-scan); a `*.o` / `node_modules` write → skipped. (0a/0b/0d end-to-end.)
+- [ ] **Scratch is NOT captured (0c):** agent writes `/tmp/x`, `/var/tmp/y`, `~/outputs/z` → none land in the
+  ledger (intentional); a write in the working dir DOES. (Single-root parity — not `/tmp` parity.)
+- [ ] **Parity bake (Phase 2):** poll + daemon run together; diff captured sets (path, sha256, count); parity
+  modulo the intended dir-coverage/junk deltas.
+- [ ] **Rollback:** flip back to the poll (daemon off / `ARTIFACT_CAPTURE_ENABLED=1`) → capture continues, no data
+  loss across the flip.
+- [ ] **Backward compat:** a non-overlay sandbox still captures via the poll until the overlay is the universal default.
+
+## 6. Design fork — RESOLVED 2026-06-23 → Model B (flat-`~`). See [`flat-home-workspace-design.md`].
+
+**Decision (Gary): flat-`~`** — the agent's home IS its workspace; **capture = non-dotfile home entries except
+`repos/`+`context/`**; auth via **separate mounts (structural) + the dotfile rule + the secret-scan**. The
+analysis below is kept for the record. **Both models keep `/tmp` as ordinary uncaptured scratch.**
+
+- **Model A — `/workspace` mount (current C4 design).** Working dir = a top-level `/workspace` overlay,
+  *separate* from `~`. `~` (`.claude`/`.codex`/`state`) stays **structurally** outside the captured zone (the
+  `#72 P4` typed-root boundary). The agent has a distinct "workspace" concept. **Auth safety = structural.**
+- **Model B — flat-`~` (the "live in your home" UX).** Working dir = `~` itself; the agent lives in its home
+  like a normal Unix user (home = kept/captured, `/tmp` = scratch). No separate "workspace" concept; aligns with
+  the planned `~/shared`,`~/repos`,`~/context` rename. **Cost:** the auth carve-out (`.claude`/`.codex`/`state`)
+  becomes a **deny-list** boundary (`classify_entry`, already implemented) instead of a structural one — a
+  posture downgrade vs `#72 P4` (a deny-list bug ⇒ auth leaks as an artifact).
+
+**Independent of A/B:**
+- **`readOnlyRootFilesystem` hardening** (block writes to `/usr`,`/etc`, system bins) is worth doing on its own,
+  but it canNOT remove a writable `/tmp` (libc/pip/npm/git + the entrypoint's own `mktemp` need one) — so it does
+  not, by itself, constrain the agent to `~`.
+- **Symlinking/hardlinking `/tmp`→`~/tmp` does not help:** dir hardlinks are forbidden (POSIX); a `/tmp`→`~/tmp`
+  symlink only gets captured if `~` is the captured root (Model B) AND you accept scratch pollution (then you'd
+  re-exclude it). `/tmp` stays scratch regardless — the real question is only **A vs B for the *kept* surface.**
