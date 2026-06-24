@@ -57,10 +57,10 @@ async function reactionNet(targetEventId: number, actorId: string, emoji: string
     `SELECT COALESCE(SUM(CASE WHEN type = 'reaction.added' THEN 1 ELSE -1 END), 0)::int AS net
      FROM events
      WHERE type IN ('reaction.added', 'reaction.removed')
-       AND (payload->>'target_event_id')::bigint = $1
+       AND payload->>'target' = $1
        AND actor_id = $2
        AND payload->>'emoji' = $3`,
-    [targetEventId, actorId, emoji],
+    [`evt_${targetEventId}`, actorId, emoji],
   );
   return res.rows[0]?.net ?? 0;
 }
@@ -79,7 +79,7 @@ describe('PATCH /api/messages/:id (edit)', () => {
     expect(edit.statusCode).toBe(200);
     const ev = edit.json().event;
     expect(ev.type).toBe('message.edited');
-    expect(ev.payload.target_event_id).toBe(msg.id);
+    expect(ev.payload.target).toBe(`evt_${msg.id}`);
     expect(ev.payload.text).toBe('typo fixed');
 
     const read = await app.inject({

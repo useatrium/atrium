@@ -237,7 +237,7 @@ function buildEvents(commands: Command[]): WireEvent[] {
         threadRootEventId: null,
         type: 'message.edited',
         actorId: users[0].id,
-        payload: { target_event_id: target, text: command.text },
+        payload: { target: `evt_${target}`, text: command.text },
         createdAt: new Date(id * 1000).toISOString(),
         author: users[0],
       });
@@ -251,7 +251,7 @@ function buildEvents(commands: Command[]): WireEvent[] {
         threadRootEventId: null,
         type: 'message.deleted',
         actorId: users[0].id,
-        payload: { target_event_id: target },
+        payload: { target: `evt_${target}` },
         createdAt: new Date(id * 1000).toISOString(),
         author: users[0],
       });
@@ -274,7 +274,7 @@ function buildEvents(commands: Command[]): WireEvent[] {
       threadRootEventId: null,
       type: command.action === 'add' ? 'reaction.added' : 'reaction.removed',
       actorId: by.id,
-      payload: { target_event_id: target, emoji: e },
+      payload: { target: `evt_${target}`, emoji: e },
       createdAt: new Date(id * 1000).toISOString(),
       author: by,
     });

@@ -16,5 +16,6 @@ export * from './cache';
 export * from './drafts';
 export * from './catchup';
 export * from './prefs';
+export * from './handle';
 export * from './useWs';
 export * from './util';
