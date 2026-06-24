@@ -1,5 +1,6 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { encodeEventHandle } from './entries.js';
 import { workspaceMemberExists } from './membership.js';
 
 export interface UserRef {
@@ -11,6 +12,7 @@ export interface UserRef {
 /** Wire shape of an event, as fanned out over WS and returned from reads. */
 export interface WireEvent {
   id: number;
+  handle?: string;
   workspaceId: string;
   channelId: string | null;
   threadRootEventId: number | null;
@@ -56,6 +58,7 @@ interface EventDbRow {
 function toWireEvent(row: EventDbRow): WireEvent {
   const ev: WireEvent = {
     id: row.id,
+    handle: encodeEventHandle(row.id),
     workspaceId: row.workspace_id,
     channelId: row.channel_id,
     threadRootEventId: row.thread_root_event_id,

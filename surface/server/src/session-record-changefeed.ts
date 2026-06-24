@@ -1,6 +1,6 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { workspaceMemberExists } from './membership.js';
+import { visibleSessionPredicate } from './entries.js';
 import { projectSessionIncremental, rebuildSessionRecords } from './session-records.js';
 
 export interface SessionRecordChangeCursor {
@@ -105,10 +105,7 @@ export async function sessionRecordChangesSince(
          JOIN sessions s ON s.id = src.session_id
          JOIN channels c ON c.id = s.channel_id
         WHERE (src.xid, src.id) > ($1::xid8, $2::bigint)
-          AND ((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$3')})
-               OR s.spawned_by = $3
-               OR EXISTS (SELECT 1 FROM channel_members cm
-                          WHERE cm.channel_id = c.id AND cm.user_id = $3))
+          AND ${visibleSessionPredicate('$3')}
         ORDER BY src.xid, src.id
         LIMIT $4`,
       [cursor.xid, cursor.id, args.userId, limit],

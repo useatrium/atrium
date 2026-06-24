@@ -110,3 +110,165 @@ export function tryDecodeHandle(handle: string): EntryHandle | null {
     return null;
   }
 }
+
+// === Lane C: resolve ===
+
+import type { Db } from './db.js';
+import { canAccessChannel } from './events.js';
+import { workspaceMemberExists } from './membership.js';
+
+export type NormalizedEntryTargetType = 'event' | 'record';
+
+export interface NormalizedEntry {
+  handle: string;
+  kind: string;
+  actor: string | null;
+  text: string;
+  meta: Record<string, unknown>;
+  targetType: NormalizedEntryTargetType;
+  sourceRefs: string[];
+  tombstoned: boolean;
+}
+
+interface EventResolveRow {
+  id: number;
+  channel_id: string | null;
+  type: string;
+  actor_id: string | null;
+  payload: unknown;
+  edited_text: string | null;
+  is_deleted: boolean;
+}
+
+interface RecordResolveRow {
+  entry_uid: string;
+  kind: string;
+  actor: string;
+  text: string;
+  meta: unknown;
+}
+
+export function visibleSessionPredicate(userParam: string): string {
+  return `((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', userParam)})
+          OR s.spawned_by = ${userParam}
+          OR EXISTS (SELECT 1 FROM channel_members cm
+                     WHERE cm.channel_id = c.id AND cm.user_id = ${userParam}))`;
+}
+
+export async function resolveEntry(
+  db: Db,
+  handle: string,
+  userId: string,
+): Promise<NormalizedEntry | null> {
+  const decoded = decodeHandle(handle);
+  switch (decoded.type) {
+    case 'event':
+      return resolveEventEntry(db, decoded.eventId, userId);
+    case 'record':
+      return resolveRecordEntry(db, decoded.entryUid, userId);
+  }
+}
+
+async function resolveEventEntry(
+  db: Db,
+  eventId: number,
+  userId: string,
+): Promise<NormalizedEntry | null> {
+  const res = await db.query<EventResolveRow>(
+    `SELECT e.id,
+            e.channel_id,
+            e.type,
+            e.actor_id,
+            e.payload,
+            edit.text AS edited_text,
+            (del.id IS NOT NULL) AS is_deleted
+       FROM events e
+       LEFT JOIN LATERAL (
+         SELECT x.payload->>'text' AS text
+           FROM events x
+          WHERE x.type = 'message.edited'
+            AND (x.payload->>'target_event_id')::bigint = e.id
+          ORDER BY x.id DESC
+          LIMIT 1
+       ) edit ON e.type = 'message.posted'
+       LEFT JOIN LATERAL (
+         SELECT x.id
+           FROM events x
+          WHERE x.type = 'message.deleted'
+            AND (x.payload->>'target_event_id')::bigint = e.id
+          LIMIT 1
+       ) del ON e.type = 'message.posted'
+      WHERE e.id = $1`,
+    [eventId],
+  );
+  const row = res.rows[0];
+  if (!row?.channel_id) return null;
+  if (!(await canAccessChannel(db, userId, row.channel_id))) return null;
+
+  const meta = normalizeObject(row.payload);
+  const tombstoned = row.type === 'message.deleted' || meta.deleted === true || row.is_deleted;
+  return {
+    handle: encodeEventHandle(row.id),
+    kind: row.type,
+    actor: row.actor_id,
+    text: tombstoned ? '' : eventText(row, meta),
+    meta,
+    targetType: 'event',
+    sourceRefs: [],
+    tombstoned,
+  };
+}
+
+async function resolveRecordEntry(
+  db: Db,
+  entryUid: string,
+  userId: string,
+): Promise<NormalizedEntry | null> {
+  const res = await db.query<RecordResolveRow>(
+    `SELECT r.entry_uid,
+            r.kind,
+            r.actor,
+            r.text,
+            r.meta
+       FROM session_records r
+       JOIN sessions s ON s.id = r.session_id
+       JOIN channels c ON c.id = s.channel_id
+      WHERE r.entry_uid = $1
+        AND ${visibleSessionPredicate('$2')}
+      ORDER BY r.ts DESC, r.session_id ASC, r.seq ASC
+      LIMIT 1`,
+    [entryUid, userId],
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+
+  const meta = normalizeObject(row.meta);
+  return {
+    handle: encodeRecordHandle(row.entry_uid),
+    kind: row.kind,
+    actor: row.actor,
+    text: row.text,
+    meta,
+    targetType: 'record',
+    sourceRefs: sourceRefsFromMeta(meta),
+    tombstoned: meta.tombstoned === true || meta.deleted === true,
+  };
+}
+
+function eventText(row: EventResolveRow, meta: Record<string, unknown>): string {
+  if (row.type === 'message.posted' && row.edited_text != null) return row.edited_text;
+  return typeof meta.text === 'string' ? meta.text : '';
+}
+
+function sourceRefsFromMeta(meta: Record<string, unknown>): string[] {
+  const sourceEventIds = meta.sourceEventIds;
+  if (!Array.isArray(sourceEventIds)) return [];
+  return sourceEventIds
+    .filter((value) => typeof value === 'string' || typeof value === 'number')
+    .map((value) => String(value));
+}
+
+function normalizeObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}

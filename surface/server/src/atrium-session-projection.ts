@@ -40,6 +40,7 @@ interface SessionRecordRow {
   session_id: string;
   event_id: number;
   seq: number;
+  entry_uid: string | null;
   kind: SessionRecordKind;
   actor: SessionRecordActor;
   driver: SessionRecordDriver | null;
@@ -86,6 +87,7 @@ export async function loadSessionRecords(
     `SELECT session_id,
             event_id,
             seq,
+            entry_uid,
             kind,
             actor,
             driver,
@@ -321,6 +323,9 @@ function toSessionRecord(row: SessionRecordRow): SessionRecord {
     sessionId: row.session_id,
     eventId: Number(row.event_id),
     seq: row.seq,
+    // Markdown rendering doesn't use entryUid; '' bridges any transient null
+    // (pre-projection / pre-backfill rows) until the column is NOT NULL.
+    entryUid: row.entry_uid ?? '',
     kind: row.kind,
     actor: row.actor,
     driver: row.driver,
