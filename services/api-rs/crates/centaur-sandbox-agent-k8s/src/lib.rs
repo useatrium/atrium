@@ -1064,6 +1064,7 @@ mod tests {
     fn overlay_enabled_renders_manifest_wait_and_workspace_mount() {
         let spec = SandboxSpec::new("centaur-agent:latest")
             .label("centaur.ai/harness", "codex")
+            .env("CENTAUR_THREAD_KEY", "surface:session-1")
             .env("CENTAUR_RESUME_THREAD_ID", "thread-1")
             .env("CODEX_HOME", "/home/agent/.codex")
             .env("AGENT_REPO", "gbasin/centaur");
@@ -1121,6 +1122,8 @@ mod tests {
                 "/run/centaur/merged",
                 "--agent-uid",
                 "4242",
+                "--atrium-session",
+                "surface:session-1",
                 "--harness",
                 "codex",
                 "--harness-thread-id",

@@ -57,6 +57,7 @@ impl OverlayConfig {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct OverlayMetadata {
     pub(crate) agent_uid: u32,
+    pub(crate) atrium_session: Option<String>,
     pub(crate) harness: Option<String>,
     pub(crate) harness_thread_id: Option<String>,
     pub(crate) harness_home: Option<String>,
@@ -85,6 +86,7 @@ impl OverlayMetadata {
 
         Self {
             agent_uid,
+            atrium_session: env_value(spec, "CENTAUR_THREAD_KEY").map(str::to_owned),
             harness,
             harness_thread_id: env_value(spec, "CENTAUR_RESUME_THREAD_ID")
                 .or_else(|| env_value(spec, "CODEX_CONTINUE_THREAD_ID"))
@@ -112,6 +114,11 @@ pub(crate) fn overlay_manifest_init_container_json(
         "--agent-uid".to_owned(),
         metadata.agent_uid.to_string(),
     ];
+    push_optional_arg(
+        &mut args,
+        "--atrium-session",
+        metadata.atrium_session.as_deref(),
+    );
     if overlay.flat_home {
         args.push("--flat-home".to_owned());
     }

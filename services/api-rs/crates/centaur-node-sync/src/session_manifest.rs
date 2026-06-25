@@ -10,6 +10,8 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionManifest {
     pub session: String,
+    #[serde(default)]
+    pub atrium_session: String,
     pub merged: PathBuf,
     #[serde(default)]
     pub harness: Option<String>,
@@ -47,6 +49,7 @@ fn is_false(value: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredSession {
     pub session: String,
+    pub atrium_session: String,
     pub upper: PathBuf,
     pub state_file: PathBuf,
     pub manifest: SessionManifest,
@@ -150,12 +153,20 @@ pub fn discover_sessions(overlays_root: &Path) -> Result<SessionDiscovery, Strin
             continue;
         }
         match read_manifest(overlays_root, name) {
-            Ok(manifest) => out.sessions.push(DiscoveredSession {
-                session: name.to_string(),
-                upper: overlays_root.join(name),
-                state_file: state_path(overlays_root, name),
-                manifest,
-            }),
+            Ok(manifest) => {
+                let atrium_session = if manifest.atrium_session.trim().is_empty() {
+                    name.to_string()
+                } else {
+                    manifest.atrium_session.trim().to_string()
+                };
+                out.sessions.push(DiscoveredSession {
+                    session: name.to_string(),
+                    atrium_session,
+                    upper: overlays_root.join(name),
+                    state_file: state_path(overlays_root, name),
+                    manifest,
+                });
+            }
             Err(e) => out.warnings.push(format!("session {name}: {e}")),
         }
     }
@@ -242,6 +253,7 @@ mod tests {
     fn manifest_round_trips_with_expected_shape() {
         let manifest = SessionManifest {
             session: "sess-1".to_string(),
+            atrium_session: "surface:sess-1".to_string(),
             merged: PathBuf::from("/run/centaur/merged/sess-1"),
             harness: Some("claude".to_string()),
             harness_thread_id: "thread-123".to_string(),
@@ -258,6 +270,7 @@ mod tests {
 
         let value = serde_json::to_value(&manifest).unwrap();
         assert_eq!(value["session"], "sess-1");
+        assert_eq!(value["atrium_session"], "surface:sess-1");
         assert_eq!(value["merged"], "/run/centaur/merged/sess-1");
         assert_eq!(value["harness"], "claude");
         assert_eq!(value["harness_thread_id"], "thread-123");
@@ -283,6 +296,7 @@ mod tests {
         .unwrap();
 
         assert!(manifest.repos.is_empty());
+        assert!(manifest.atrium_session.is_empty());
         assert_eq!(manifest.repo, "/workspace/repo");
         assert_eq!(manifest.agent_uid, DEFAULT_AGENT_UID);
     }
@@ -306,6 +320,7 @@ mod tests {
     fn manifest_serializes_null_harness() {
         let manifest = SessionManifest {
             session: "sess-1".to_string(),
+            atrium_session: String::new(),
             merged: PathBuf::from("/run/centaur/merged/sess-1"),
             harness: None,
             harness_thread_id: String::new(),
@@ -337,6 +352,7 @@ mod tests {
             root,
             &SessionManifest {
                 session: "active".to_string(),
+                atrium_session: "surface:active".to_string(),
                 merged: PathBuf::from("/run/centaur/merged/active"),
                 harness: Some("codex".to_string()),
                 harness_thread_id: String::new(),
@@ -354,6 +370,7 @@ mod tests {
 
         assert_eq!(discovery.sessions.len(), 1);
         assert_eq!(discovery.sessions[0].session, "active");
+        assert_eq!(discovery.sessions[0].atrium_session, "surface:active");
         assert_eq!(discovery.sessions[0].upper, root.join("active"));
         assert_eq!(
             discovery.sessions[0].state_file,

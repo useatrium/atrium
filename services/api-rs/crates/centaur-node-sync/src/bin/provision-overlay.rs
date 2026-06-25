@@ -34,6 +34,7 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug)]
 struct Config {
     session: String,
+    atrium_session: String,
     manifest_only: bool,
     overlays_root: PathBuf,
     merged_root: PathBuf,
@@ -101,6 +102,7 @@ fn run() -> Result<(), String> {
         &cfg.overlays_root,
         &SessionManifest {
             session: cfg.session.clone(),
+            atrium_session: cfg.atrium_session.clone(),
             merged: merged.clone(),
             harness: cfg.harness.clone(),
             harness_thread_id: cfg.harness_thread_id.clone(),
@@ -129,6 +131,7 @@ fn run() -> Result<(), String> {
             &cfg.overlays_root,
             &SessionManifest {
                 session: cfg.session.clone(),
+                atrium_session: cfg.atrium_session.clone(),
                 merged: mounted.merged.clone(),
                 harness: cfg.harness.clone(),
                 harness_thread_id: cfg.harness_thread_id.clone(),
@@ -162,7 +165,7 @@ fn hydrate_artifacts_if_enabled(cfg: &Config, plan: &mut OverlayMountPlan) -> Re
         return Ok(());
     };
 
-    let mut client = HttpAtriumClient::new(atrium_url, atrium_key, &cfg.session);
+    let mut client = HttpAtriumClient::new(atrium_url, atrium_key, &cfg.atrium_session);
     let outcome = hydrate_artifact_lower_into_plan(
         &mut client,
         &cfg.cas_dir,
@@ -184,6 +187,7 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let mut session = None;
+    let mut atrium_session = String::new();
     let mut manifest_only = false;
     let mut overlays_root = PathBuf::from("/var/lib/centaur/overlays");
     let mut merged_root = PathBuf::from("/run/centaur/merged");
@@ -221,6 +225,9 @@ where
             }
             "--session" => {
                 session = Some(next_value(&mut iter, "--session")?);
+            }
+            "--atrium-session" => {
+                atrium_session = next_value(&mut iter, "--atrium-session")?;
             }
             "--overlays-root" => {
                 overlays_root = PathBuf::from(next_value(&mut iter, "--overlays-root")?);
@@ -279,9 +286,14 @@ where
     }
 
     let cas_dir = cas_dir.unwrap_or_else(|| overlays_root.join("cas"));
+    let session = session.ok_or_else(|| "--session <ID> is required".to_string())?;
+    if atrium_session.trim().is_empty() {
+        atrium_session = session.clone();
+    }
 
     Ok(Config {
-        session: session.ok_or_else(|| "--session <ID> is required".to_string())?,
+        session,
+        atrium_session,
         manifest_only,
         overlays_root,
         merged_root,
@@ -362,7 +374,7 @@ fn parse_bool(name: &str, value: &str) -> Result<bool, String> {
 
 fn print_help() {
     println!(
-        "usage: provision-overlay --session <ID> [--manifest-only] [--overlays-root PATH] [--merged-root PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
+        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--overlays-root PATH] [--merged-root PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
     );
 }
 

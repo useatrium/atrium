@@ -53,6 +53,8 @@ fn enc(s: &str) -> String {
 
 #[derive(Debug, Deserialize)]
 struct HydrationScopeResponse {
+    #[serde(default, rename = "sessionId")]
+    session_id: Option<String>,
     #[serde(rename = "activePrefix")]
     active_prefix: Option<String>,
     #[serde(default)]
@@ -77,6 +79,7 @@ fn parse_hydration_scope(
     let response = serde_json::from_value::<HydrationScopeResponse>(value)
         .map_err(|e| format!("parse hydration-scope response: {e}"))?;
     let active_prefix = response.active_prefix.as_deref();
+    let scratch_session_id = response.session_id.as_deref().unwrap_or(session_id);
     Ok(response
         .paths
         .into_iter()
@@ -89,7 +92,7 @@ fn parse_hydration_scope(
                 return None;
             }
             Some(
-                local_artifact_paths(&path.path, active_prefix, session_id)
+                local_artifact_paths(&path.path, active_prefix, scratch_session_id)
                     .into_iter()
                     .map(move |local_path| CasHydrateEntry {
                         path: local_path,

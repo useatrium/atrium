@@ -507,6 +507,9 @@ nodeSync:
     enabled: true
     namespace: atrium
     port: 8080
+    # Optional CIDR for local/dev installs where Atrium is outside Kubernetes
+    # (for example, a Docker bridge address in kind).
+    ipBlock: ""
   apiKeySecret:
     name: centaur-infra-env
     key: ATRIUM_CAPTURE_API_KEY

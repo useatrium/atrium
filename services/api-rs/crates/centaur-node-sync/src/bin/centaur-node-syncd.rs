@@ -26,6 +26,7 @@ fn scoped_atrium_root(atrium_root: &std::path::Path, session: &str) -> std::path
 #[derive(Clone)]
 struct SessionConfig {
     session: String,
+    atrium_session: String,
     upper: std::path::PathBuf,
     merged: std::path::PathBuf,
     harness: Option<centaur_node_sync::runtime::HarnessTranscriptKind>,
@@ -53,6 +54,7 @@ fn session_config_from_discovered(
     let merged = discovered.manifest.merged.clone();
     SessionConfig {
         session: discovered.session.clone(),
+        atrium_session: discovered.atrium_session.clone(),
         upper: mounted.upper.clone(),
         merged: merged.clone(),
         harness: discovered
@@ -343,6 +345,7 @@ mod linux_daemon {
         let repo = env("NODE_SYNC_REPO");
         let merged = PathBuf::from(merged_env);
         Ok(SessionConfig {
+            atrium_session: session.clone(),
             session,
             upper: PathBuf::from(upper_env),
             merged: merged.clone(),
@@ -427,6 +430,7 @@ mod linux_daemon {
                                 &global,
                                 &overlays_root,
                                 &discovered.session,
+                                &discovered.atrium_session,
                                 &mut plan,
                             );
                         }
@@ -471,13 +475,14 @@ mod linux_daemon {
         global: &GlobalConfig,
         overlays_root: &Path,
         session: &str,
+        atrium_session: &str,
         plan: &mut OverlayMountPlan,
     ) {
         if !global.hydrate_artifacts || global.base_url.is_empty() || global.api_key.is_empty() {
             return;
         }
 
-        let mut client = HttpAtriumClient::new(&global.base_url, &global.api_key, session);
+        let mut client = HttpAtriumClient::new(&global.base_url, &global.api_key, atrium_session);
         match hydrate_artifact_lower_into_plan(
             &mut client,
             &global.cas_dir,
@@ -524,7 +529,8 @@ mod linux_daemon {
         echo: &mut EchoGuard,
         lease: &LeaseGate,
     ) -> Result<(), String> {
-        let mut client = HttpAtriumClient::new(&global.base_url, &global.api_key, &session.session);
+        let mut client =
+            HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
 
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
@@ -1041,10 +1047,12 @@ mod tests {
 
         let discovered = DiscoveredSession {
             session: session.to_string(),
+            atrium_session: "surface:sess-multi".to_string(),
             upper: mounted.lower.path.clone(),
             state_file: PathBuf::from("/var/lib/centaur/overlays/.sessions/sess-multi.state.json"),
             manifest: SessionManifest {
                 session: session.to_string(),
+                atrium_session: "surface:sess-multi".to_string(),
                 merged: PathBuf::from("/run/centaur/merged/sess-multi"),
                 harness: Some("codex".to_string()),
                 harness_thread_id: "thread-123".to_string(),
@@ -1059,6 +1067,7 @@ mod tests {
         let session_config = session_config_from_discovered(&discovered, &mounted);
 
         assert_eq!(session_config.session, session);
+        assert_eq!(session_config.atrium_session, "surface:sess-multi");
         assert_eq!(
             session_config.upper,
             PathBuf::from("/var/lib/centaur/overlays/sess-multi")
@@ -1113,10 +1122,12 @@ mod tests {
         .unwrap();
         let discovered = DiscoveredSession {
             session: session.to_string(),
+            atrium_session: String::new(),
             upper: mounted.lower.path.clone(),
             state_file: PathBuf::from("/var/lib/centaur/overlays/.sessions/sess-single.state.json"),
             manifest: SessionManifest {
                 session: session.to_string(),
+                atrium_session: String::new(),
                 merged: PathBuf::from("/run/centaur/merged/sess-single"),
                 harness: Some("codex".to_string()),
                 harness_thread_id: String::new(),
