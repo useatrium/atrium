@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reduceSession, initialSessionState, type SessionState } from "../src/reducer.js";
-import { collectArtifacts, artifactPaths } from "../src/artifacts.js";
+import { collectArtifacts, collectArtifactPresentations, artifactPaths } from "../src/artifacts.js";
 import type { ArtifactCaptured, CentaurEventFrame } from "../src/types.js";
 
 const reduceAll = (frames: CentaurEventFrame[]): SessionState =>
@@ -60,5 +60,80 @@ describe("artifact.captured reducer", () => {
     const arts = collectArtifacts(state);
     expect(arts.map((a) => a.path)).toEqual(["src/out.png", "/tmp/x.csv"]);
     expect(artifactPaths(arts)).toHaveLength(2);
+  });
+
+  it("folds artifact.presented events into state.artifactPresentations", () => {
+    const state = reduceAll([
+      {
+        event: "artifact.presented",
+        event_id: 12,
+        data: {
+          type: "artifact.presented",
+          execution_id: "exe_123",
+          path: "shared/apps/demo/index.html",
+          title: "Demo App",
+          renderer: "html-app",
+          description: "Interactive demo",
+        },
+      },
+    ]);
+    expect(state.artifactPresentations).toEqual([
+      {
+        id: "artifact-presented:shared/apps/demo/index.html",
+        path: "shared/apps/demo/index.html",
+        title: "Demo App",
+        renderer: "html-app",
+        description: "Interactive demo",
+        executionId: "exe_123",
+        sourceEventIds: [12],
+      },
+    ]);
+    expect(state.items).toEqual([
+      {
+        type: "artifact_presentation",
+        id: "artifact-presented:shared/apps/demo/index.html",
+        path: "shared/apps/demo/index.html",
+        title: "Demo App",
+        renderer: "html-app",
+        description: "Interactive demo",
+        executionId: "exe_123",
+        sourceEventIds: [12],
+      },
+    ]);
+  });
+
+  it("re-presenting the same path upserts in place (one presentation, one item)", () => {
+    const state = reduceAll([
+      {
+        event: "artifact.presented",
+        event_id: 12,
+        data: { type: "artifact.presented", path: "shared/apps/demo/index.html", title: "First" },
+      },
+      {
+        event: "artifact.presented",
+        event_id: 15,
+        data: { type: "artifact.presented", path: "shared/apps/demo/index.html", renderer: "react-jsx" },
+      },
+    ]);
+    expect(state.artifactPresentations).toHaveLength(1);
+    expect(state.items.filter((i) => i.type === "artifact_presentation")).toHaveLength(1);
+    expect(state.artifactPresentations[0]).toMatchObject({
+      title: "First", // preserved when later frame omits it
+      renderer: "react-jsx", // updated by later frame
+      sourceEventIds: [12, 15],
+    });
+  });
+
+  it("collectArtifactPresentations strips the sandbox prefix; missing path defaults renderer to auto", () => {
+    const state = reduceAll([
+      {
+        event: "artifact.presented",
+        event_id: 20,
+        data: { type: "artifact.presented", path: "/home/agent/workspace/shared/apps/demo/index.html" },
+      },
+    ]);
+    const presented = collectArtifactPresentations(state);
+    expect(presented[0]?.path).toBe("shared/apps/demo/index.html");
+    expect(presented[0]?.renderer).toBe("auto");
   });
 });

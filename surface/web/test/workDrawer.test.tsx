@@ -3,7 +3,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Artifact, FileChange, SideEffect } from '@atrium/centaur-client';
+import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
 import { WorkDrawer, type WorkTab } from '../src/sessions/WorkDrawer';
 
 function fc(over: Partial<FileChange>): FileChange {
@@ -14,6 +14,18 @@ function se(over: Partial<SideEffect>): SideEffect {
 }
 function art(over: Partial<Artifact>): Artifact {
   return { id: 'a1', path: '/tmp/out.png', kind: 'created', mime: 'image/png', size: 2048, sha256: 'x', ref: 'b1', executionId: null, sourceEventIds: [3], ...over };
+}
+function presentation(over: Partial<ArtifactPresentation>): ArtifactPresentation {
+  return {
+    id: 'artifact-presented:shared/apps/demo/index.html',
+    path: 'shared/apps/demo/index.html',
+    title: 'Pipeline Dashboard',
+    renderer: 'html-app',
+    description: 'Business view',
+    executionId: 'exe_1',
+    sourceEventIds: [4],
+    ...over,
+  };
 }
 
 function renderDrawer(over: Partial<Parameters<typeof WorkDrawer>[0]> = {}) {
@@ -151,6 +163,19 @@ describe('WorkDrawer', () => {
     expect(screen.getByText('Created artifacts')).toBeTruthy();
     expect(screen.getByTestId('artifact-tile')).toBeTruthy();
     expect(screen.getByText('chart.png')).toBeTruthy();
+  });
+
+  it('promotes artifact presentations inside the What changed surface', () => {
+    renderDrawer({
+      artifacts: [art({ id: 'app', path: 'shared/apps/demo/index.html', mime: 'text/html' })],
+      artifactPresentations: [presentation({})],
+      artifactCount: 1,
+      tab: 'changes',
+    });
+    expect(screen.getByText('Presented apps')).toBeTruthy();
+    expect(screen.getByText('Pipeline Dashboard')).toBeTruthy();
+    expect(screen.getByText('Presented app · Business view')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /preview app/i })).toBeTruthy();
   });
 
   it('pin toggle is aria-pressed by state and calls onTogglePin', () => {

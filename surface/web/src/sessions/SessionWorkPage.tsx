@@ -8,6 +8,7 @@ import { useMemo } from 'react';
 import {
   artifactCount,
   changedPaths,
+  collectArtifactPresentations,
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
@@ -36,6 +37,10 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
   const changes = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
   const effects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
+  const artifactPresentations = useMemo(
+    () => collectArtifactPresentations(stream),
+    [stream.artifactPresentations],
+  );
 
   const count = (() => {
     switch (activeTab) {
@@ -70,6 +75,7 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
           <WhatChangedSurface
             changes={changes}
             artifacts={artifacts}
+            presentations={artifactPresentations}
             sessionId={sessionId}
             onClose={noop}
             embedded
