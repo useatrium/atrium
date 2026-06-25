@@ -18,6 +18,8 @@ interface ArtifactWriteResult {
 interface ArtifactConflictDetail {
   artifactId: string;
   path: string;
+  canonicalPath?: string;
+  displayPath?: string;
   conflictSeq: number;
   left: { text: string };
   right: { text: string };
@@ -160,11 +162,12 @@ test('session conflicts drawer resolves a mergeable artifact conflict', async ({
     const generalId = await channelId(page.context().request, 'general');
     const title = unique('conflict-session');
     const seeded = await seedSession({ handle: aliceHandle, channelId: generalId, title });
-    // Workspace-scoped identity: use a unique SHARED path. Conflicts are a
-    // shared-file phenomenon (private/scratch paths have no concurrent editors),
-    // and a fixed path would accumulate versions across runs/retries now that the
-    // ledger is keyed (workspace, path) rather than (session, path).
-    const artifactPath = `shared/${unique('plan')}.md`;
+    // Workspace-scoped identity: bare paths land in the active channel scope.
+    // Conflicts are a shared-file phenomenon (private/scratch paths have no
+    // concurrent editors), and a fixed path would accumulate versions across
+    // runs/retries now that the ledger is keyed (workspace, path).
+    const artifactPath = `${unique('plan')}.md`;
+    const canonicalArtifactPath = `shared/channels/${generalId}/${artifactPath}`;
 
     const v1 = await writeArtifact(page.context().request, {
       channelId: generalId,
@@ -174,7 +177,7 @@ test('session conflicts drawer resolves a mergeable artifact conflict', async ({
     });
     expect(v1).toMatchObject({ seq: 1, status: 'normal' });
 
-    await markMergeable(seeded.sessionId, artifactPath);
+    await markMergeable(seeded.sessionId, canonicalArtifactPath);
 
     const theirs = await writeArtifact(page.context().request, {
       channelId: generalId,
@@ -195,7 +198,12 @@ test('session conflicts drawer resolves a mergeable artifact conflict', async ({
     expect(yours).toMatchObject({ seq: 3, status: 'conflict' });
 
     const detail = await loadConflict(page.context().request, seeded.sessionId, artifactPath);
-    expect(detail).toMatchObject({ path: artifactPath, conflictSeq: 3 });
+    expect(detail).toMatchObject({
+      path: canonicalArtifactPath,
+      canonicalPath: canonicalArtifactPath,
+      displayPath: artifactPath,
+      conflictSeq: 3,
+    });
     expect(detail.base.text).toContain('step two');
     expect(detail.left.text).toContain('step two - THEIRS');
     expect(detail.right.text).toContain('step two - YOURS');
@@ -218,7 +226,7 @@ test('session conflicts drawer resolves a mergeable artifact conflict', async ({
 
     const drawer = page.getByTestId('work-drawer');
     await expect(drawer.getByRole('tab', { name: /Conflicts.*1/ })).toBeVisible();
-    await expect(drawer.getByText(artifactPath)).toBeVisible();
+    await expect(drawer.getByText(artifactPath, { exact: true })).toBeVisible();
     // The side text appears in the diff line, the markers <pre>, and the merge
     // box — assert the unique diff lines (left/right each show their own +line).
     await expect(drawer.getByText('+step two - THEIRS')).toBeVisible();
