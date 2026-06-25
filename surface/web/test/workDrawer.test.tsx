@@ -43,11 +43,12 @@ describe('WorkDrawer', () => {
   it('renders a tab per non-empty surface, with counts', () => {
     renderDrawer();
     const tabs = screen.getAllByRole('tab');
-    // what-changed + what-it-ran + the always-present Browse files tab.
-    expect(tabs).toHaveLength(3);
+    // what-changed + what-it-ran + the always-present Browse files and Published apps tabs.
+    expect(tabs).toHaveLength(4);
     expect(screen.getByRole('tab', { name: /What changed/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /What it ran/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
     // What changed tab is active → shows the file row, not the command.
     expect(screen.getByText('src/a.ts')).toBeTruthy();
     expect(screen.queryByText('npm install')).toBeNull();
@@ -55,9 +56,10 @@ describe('WorkDrawer', () => {
 
   it('omits the tab for an empty surface (but keeps the always-present Files tab)', () => {
     renderDrawer({ effects: [], sideEffectCount: 0 });
-    expect(screen.getAllByRole('tab')).toHaveLength(2); // changes + files
+    expect(screen.getAllByRole('tab')).toHaveLength(3); // changes + files + apps
     expect(screen.queryByRole('tab', { name: /What it ran/ })).toBeNull();
     expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
   });
 
   it('clicking the What it ran tab calls onTab', () => {
@@ -144,7 +146,7 @@ describe('WorkDrawer', () => {
       artifactCount: 1,
       tab: 'artifacts',
     });
-    expect(screen.getAllByRole('tab')).toHaveLength(3); // what changed + what it ran + browse files
+    expect(screen.getAllByRole('tab')).toHaveLength(4); // what changed + what it ran + browse files + apps
     expect(screen.queryByRole('tab', { name: /Artifacts/ })).toBeNull();
     expect(screen.getByRole('tab', { name: /What changed/ }).getAttribute('aria-selected')).toBe('true');
     // Back-compat tab=artifacts normalizes to What changed, where the gallery tile shows the filename.

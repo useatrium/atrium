@@ -4,8 +4,8 @@
 // route); others a monochrome type label. Manifest-only entries (bytes too large
 // / filtered) render disabled with a note. Newest capture first.
 
-import { useMemo } from 'react';
-import type { Artifact } from '@atrium/centaur-client';
+import { useMemo, useState } from 'react';
+import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
 import { EmptyState } from './EmptyState';
 
@@ -40,6 +40,15 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function canPreviewArtifact(artifact: Artifact): boolean {
+  return artifact.mime === 'text/html' || /\.(html?|jsx|tsx)$/i.test(artifact.path);
+}
+
+function previewUrl(sessionId: string, artifact: Artifact): string {
+  const renderer = /\.(jsx|tsx)$/i.test(artifact.path) ? 'react-jsx' : 'html-app';
+  return `/api/sessions/${sessionId}/artifacts/preview?path=${encodeURIComponent(artifact.path)}&renderer=${renderer}`;
+}
+
 /** URL atrium serves the bytes from (presigned-GET redirect server-side). Null
  * for manifest-only artifacts (no bytes were staged). */
 function artifactSrc(sessionId: string, artifact: Artifact): string | null {
@@ -68,14 +77,20 @@ export function ArtifactTile({
   sessionId,
   artifact,
   versions,
+  onPreview,
+  presentation,
 }: {
   sessionId: string;
   artifact: Artifact;
   versions: number;
+  onPreview?: (artifact: Artifact) => void;
+  presentation?: ArtifactPresentation;
 }) {
   const src = artifactSrc(sessionId, artifact);
   const isImage = artifact.mime.startsWith('image/') && src !== null;
-  const name = basename(artifact.path);
+  const previewable = src !== null && canPreviewArtifact(artifact);
+  const name = presentation?.title ?? basename(artifact.path);
+  const fileName = basename(artifact.path);
   const inner = (
     <>
       <div className="flex h-24 items-center justify-center overflow-hidden bg-surface">
@@ -84,7 +99,7 @@ export function ArtifactTile({
           // store miss, or before the capture sidecar lands).
           <img
             src={src}
-            alt={name}
+            alt={fileName}
             loading="lazy"
             className="h-full w-full object-contain"
             onError={(e) => {
@@ -119,6 +134,33 @@ export function ArtifactTile({
         )}
         <span className="shrink-0 text-3xs tabular-nums text-fg-muted">{formatBytes(artifact.size)}</span>
       </div>
+      {presentation && (
+        <div className="border-t border-edge px-2 py-1 text-3xs text-accent-text">
+          Presented app{presentation.description ? ` · ${presentation.description}` : ''}
+        </div>
+      )}
+      {previewable && onPreview && (
+        <div className="flex items-center gap-1 border-t border-edge px-2 py-1.5">
+          <button
+            type="button"
+            onClick={() => onPreview?.(artifact)}
+            className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft"
+          >
+            Preview app
+          </button>
+          {src && (
+            <a
+              href={src}
+              target="_blank"
+              rel="noopener noreferrer"
+              download={name}
+              className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
+            >
+              Download
+            </a>
+          )}
+        </div>
+      )}
       {artifact.ref === null && (
         // No bytes were staged (over the capture size limit). Be honest about why
         // rather than implying a broken link.
@@ -133,7 +175,7 @@ export function ArtifactTile({
 
   // When the bytes are servable, the whole tile opens/downloads the artifact;
   // manifest-only tiles (no ref) stay a non-interactive card.
-  if (src) {
+  if (src && !previewable) {
     return (
       <a
         data-testid="artifact-tile"
@@ -141,7 +183,7 @@ export function ArtifactTile({
         target="_blank"
         rel="noopener noreferrer"
         download={name}
-        aria-label={`Open ${name}`}
+        aria-label={`Open ${fileName}`}
         className={`${tileClass} cursor-pointer transition-colors hover:border-edge-strong hover:bg-surface-raised`}
       >
         {inner}
@@ -155,18 +197,70 @@ export function ArtifactTile({
   );
 }
 
+export function ArtifactPreviewModal({
+  sessionId,
+  artifact,
+  presentation,
+  onClose,
+}: {
+  sessionId: string;
+  artifact: Artifact;
+  presentation?: ArtifactPresentation;
+  onClose: () => void;
+}) {
+  const title = presentation?.title ?? basename(artifact.path);
+  return (
+    <div className="fixed inset-3 z-50 flex flex-col overflow-hidden rounded-lg border border-edge-strong bg-surface shadow-2xl">
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-edge px-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold text-fg">{title}</div>
+          <div className="truncate font-mono text-3xs text-fg-muted">{artifact.path}</div>
+        </div>
+        <a
+          href={previewUrl(sessionId, artifact)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-md border border-edge px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
+        >
+          Open
+        </a>
+        <button
+          onClick={onClose}
+          aria-label="Close artifact preview"
+          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+        >
+          <XIcon size={15} />
+        </button>
+      </header>
+      <iframe
+        title={`Artifact preview: ${basename(artifact.path)}`}
+        src={previewUrl(sessionId, artifact)}
+        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+        className="min-h-0 flex-1 bg-white"
+      />
+    </div>
+  );
+}
+
 export function ArtifactsSurface({
   artifacts,
+  presentations = [],
   sessionId,
   onClose,
   embedded = false,
 }: {
   artifacts: Artifact[];
+  presentations?: ArtifactPresentation[];
   sessionId: string;
   onClose: () => void;
   /** Render body-only (no own header/overlay) — the WorkDrawer supplies the chrome. */
   embedded?: boolean;
 }) {
+  const [preview, setPreview] = useState<Artifact | null>(null);
+  const presentationByPath = useMemo(
+    () => new Map(presentations.map((presentation) => [presentation.path, presentation])),
+    [presentations],
+  );
   // One tile per path, newest-wins (mirrors the ledger's (session,path) chain),
   // newest activity first.
   const tiles = useMemo(() => latestArtifactsByPath(artifacts), [artifacts]);
@@ -178,9 +272,24 @@ export function ArtifactsSurface({
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {tiles.map(({ artifact, versions }) => (
-            <ArtifactTile key={artifact.path} sessionId={sessionId} artifact={artifact} versions={versions} />
+            <ArtifactTile
+              key={artifact.path}
+              sessionId={sessionId}
+              artifact={artifact}
+              versions={versions}
+              onPreview={setPreview}
+              presentation={presentationByPath.get(artifact.path)}
+            />
           ))}
         </div>
+      )}
+      {preview && (
+        <ArtifactPreviewModal
+          sessionId={sessionId}
+          artifact={preview}
+          presentation={presentationByPath.get(preview.path)}
+          onClose={() => setPreview(null)}
+        />
       )}
     </div>
   );

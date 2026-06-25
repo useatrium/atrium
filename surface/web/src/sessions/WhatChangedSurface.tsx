@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { Artifact, FileChange } from '@atrium/centaur-client';
+import type { Artifact, ArtifactPresentation, FileChange } from '@atrium/centaur-client';
 import { ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
-import { ArtifactTile, latestArtifactsByPath } from './ArtifactsSurface';
+import { ArtifactPreviewModal, ArtifactTile, latestArtifactsByPath } from './ArtifactsSurface';
 import { ChangeFileRow, groupFileChanges } from './ChangesSurface';
 import { EmptyState } from './EmptyState';
 
@@ -69,22 +69,44 @@ function Section({
 export function WhatChangedSurface({
   changes,
   artifacts,
+  presentations = [],
   sessionId,
   onClose,
   embedded = false,
 }: {
   changes: FileChange[];
   artifacts: Artifact[];
+  presentations?: ArtifactPresentation[];
   sessionId: string;
   onClose: () => void;
   embedded?: boolean;
 }) {
   const changeGroups = useMemo(() => groupFileChanges(changes), [changes]);
   const artifactTiles = useMemo(() => latestArtifactsByPath(artifacts), [artifacts]);
+  const presentationByPath = useMemo(
+    () => new Map(presentations.map((presentation) => [presentation.path, presentation])),
+    [presentations],
+  );
+  const presentedTiles = useMemo(
+    () =>
+      presentations
+        .map((presentation) => {
+          const tile = artifactTiles.find(({ artifact }) => artifact.path === presentation.path);
+          return tile ? { ...tile, presentation } : null;
+        })
+        .filter((tile): tile is { artifact: Artifact; versions: number; presentation: ArtifactPresentation } => tile !== null),
+    [artifactTiles, presentations],
+  );
+  const otherArtifactTiles = useMemo(
+    () => artifactTiles.filter(({ artifact }) => !presentationByPath.has(artifact.path)),
+    [artifactTiles, presentationByPath],
+  );
   const editedCount = changeGroups.length;
-  const createdCount = artifactTiles.length;
-  const totalCount = editedCount + createdCount;
+  const createdCount = otherArtifactTiles.length;
+  const presentedCount = presentedTiles.length;
+  const totalCount = editedCount + artifactTiles.length;
   const [filter, setFilter] = useState<Filter>('all');
+  const [preview, setPreview] = useState<Artifact | null>(null);
 
   const showEdited = filter === 'all' || filter === 'edited';
   const showCreated = filter === 'all' || filter === 'created';
@@ -122,22 +144,52 @@ export function WhatChangedSurface({
             </Section>
           )}
           {showCreated && (
-            <Section title="Created artifacts" count={createdCount}>
+            <>
+              {presentedCount > 0 && (
+                <Section title="Presented apps" count={presentedCount}>
+                  <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3">
+                    {presentedTiles.map(({ artifact, versions, presentation }) => (
+                      <ArtifactTile
+                        key={`presented:${artifact.path}`}
+                        sessionId={sessionId}
+                        artifact={artifact}
+                        versions={versions}
+                        onPreview={setPreview}
+                        presentation={presentation}
+                      />
+                    ))}
+                  </div>
+                </Section>
+              )}
+            </>
+          )}
+          {showCreated && (
+            <Section title={presentedCount > 0 ? 'Other artifacts' : 'Created artifacts'} count={createdCount}>
               {createdCount === 0 ? (
                 <div className="px-3 py-2 text-2xs text-fg-muted">No created artifacts yet.</div>
               ) : (
                 <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3">
-                  {artifactTiles.map(({ artifact, versions }) => (
+                  {otherArtifactTiles.map(({ artifact, versions }) => (
                     <ArtifactTile
                       key={artifact.path}
                       sessionId={sessionId}
                       artifact={artifact}
                       versions={versions}
+                      onPreview={setPreview}
+                      presentation={presentationByPath.get(artifact.path)}
                     />
                   ))}
                 </div>
               )}
             </Section>
+          )}
+          {preview && (
+            <ArtifactPreviewModal
+              sessionId={sessionId}
+              artifact={preview}
+              presentation={presentationByPath.get(preview.path)}
+              onClose={() => setPreview(null)}
+            />
           )}
         </>
       )}

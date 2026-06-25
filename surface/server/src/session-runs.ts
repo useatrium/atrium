@@ -192,8 +192,13 @@ export interface SessionArtifactStream {
  * The 404 cases (unknown / manifest-only) throw a DomainError instead.
  */
 export type ArtifactServePlan =
-  | { kind: 'redirect'; url: string }
+  | { kind: 'redirect'; url: string; s3Key?: string }
   | ({ kind: 'proxy' } & SessionArtifactStream);
+
+function ledgerServePathCandidates(path: string): string[] {
+  if (path.startsWith('/')) return [path];
+  return [path, `/home/agent/workspace/${path}`];
+}
 
 /** Outcome of one offload batch, for logging/observability. */
 export interface ArtifactOffloadResult {
@@ -621,7 +626,7 @@ export class SessionRuns {
       const filename = basename(artifact.path) || 'artifact';
       const inline = (artifact.mime || '').startsWith('image/');
       const url = await this.artifactStorage.presignGet(s3Key, filename, inline);
-      return { kind: 'redirect', url };
+      return { kind: 'redirect', url, s3Key };
     }
     // Not yet offloaded: proxy from Centaur staging. Fetch from the execution
     // that captured the artifact (on the event since Centaur added
@@ -641,7 +646,15 @@ export class SessionRuns {
   // === serve additions ===
 
   async getLedgerServePlan(sessionId: string, path: string, ref: VersionRef): Promise<ArtifactServePlan> {
-    const v = await this.artifactLedger.resolveVersion(sessionId, path, ref);
+    let v: Awaited<ReturnType<ArtifactLedger['resolveVersion']>> = null;
+    let resolvedPath = path;
+    for (const candidate of ledgerServePathCandidates(path)) {
+      v = await this.artifactLedger.resolveVersion(sessionId, candidate, ref);
+      if (v) {
+        resolvedPath = candidate;
+        break;
+      }
+    }
     if (!v) {
       throw new DomainError(404, 'artifact_not_found', 'artifact not found');
     }
@@ -652,7 +665,7 @@ export class SessionRuns {
       const filename = basename(path) || 'artifact';
       const inline = (v.mime || '').startsWith('image/');
       const url = await this.artifactStorage.presignGet(v.s3Key, filename, inline);
-      return { kind: 'redirect', url };
+      return { kind: 'redirect', url, s3Key: v.s3Key };
     }
     if (!v.blobSha) {
       throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
@@ -677,7 +690,7 @@ export class SessionRuns {
       kind: 'proxy',
       artifact: {
         id: v.artifactId,
-        path,
+        path: resolvedPath,
         kind: v.kind,
         mime: v.mime || 'application/octet-stream',
         size: Number(v.sizeBytes ?? 0),

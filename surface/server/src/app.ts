@@ -62,7 +62,7 @@ import {
   uploadObjectStream,
 } from './s3.js';
 import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
-import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import { SessionRuns, type ArtifactServePlan, type SessionRunsOptions } from './session-runs.js';
 import { searchSessionRecords } from './session-search.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
 import {
@@ -145,6 +145,175 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
 function normalizeMime(value: string | undefined): string {
   const mime = (value ?? '').split(';', 1)[0]!.trim().toLowerCase();
   return /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime : 'application/octet-stream';
+}
+
+async function previewBytes(plan: ArtifactServePlan): Promise<Buffer> {
+  if (plan.kind === 'redirect') {
+    if (plan.s3Key) {
+      return getObjectBytes(plan.s3Key);
+    }
+    const response = await fetch(plan.url);
+    if (!response.ok) {
+      throw new DomainError(502, 'artifact_preview_fetch_failed', 'failed to fetch artifact preview bytes');
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+  if (!plan.bytes.body) return Buffer.alloc(0);
+  const chunks: Buffer[] = [];
+  for await (const chunk of Readable.fromWeb(plan.bytes.body)) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function resolveArtifactPreviewRenderer(path: string, mime: string | null, hint?: string): 'html-app' | 'react-jsx' {
+  const normalizedHint = (hint ?? '').trim().toLowerCase();
+  if (normalizedHint === 'react-jsx') return 'react-jsx';
+  if (normalizedHint === 'html-app') return 'html-app';
+  if (/\.(jsx|tsx)$/i.test(path)) return 'react-jsx';
+  if ((mime ?? '').toLowerCase() === 'text/html' || /\.html?$/i.test(path)) return 'html-app';
+  return 'html-app';
+}
+
+const APP_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+interface AppManifestInput {
+  name?: unknown;
+  kind?: unknown;
+  entry?: unknown;
+  description?: unknown;
+  rootPath?: unknown;
+  root_path?: unknown;
+}
+
+interface NormalizedAppManifest {
+  name: string;
+  rootPath: string;
+  entry: string;
+  description: string | null;
+}
+
+interface ArtifactAppFileRow {
+  artifact_id: string;
+  source_path: string;
+  seq: number;
+  blob_sha: string;
+  mime: string;
+  size_bytes: string | number;
+}
+
+function normalizeArtifactAppName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const name = value.trim().toLowerCase();
+  return APP_NAME_RE.test(name) ? name : null;
+}
+
+function normalizeArtifactAppRelativePath(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const path = value.trim().replace(/^\/+/g, '');
+  if (!path || path.includes('\0')) return null;
+  const parts = path.split('/').filter(Boolean);
+  if (parts.some((part) => part === '.' || part === '..')) return null;
+  return parts.join('/');
+}
+
+function normalizeArtifactAppRoot(value: unknown): string | null {
+  const rel = normalizeArtifactAppRelativePath(value);
+  return rel ? `${rel.replace(/\/+$/g, '')}/` : null;
+}
+
+function appNameFromRoot(rootPath: string): string | null {
+  const parts = rootPath.replace(/\/+$/g, '').split('/');
+  return normalizeArtifactAppName(parts.at(-1));
+}
+
+function normalizeArtifactAppManifest(body: AppManifestInput): NormalizedAppManifest | null {
+  if (body.kind != null && body.kind !== 'static') return null;
+  const explicitRoot = normalizeArtifactAppRoot(body.rootPath ?? body.root_path);
+  const explicitName = normalizeArtifactAppName(body.name);
+  const rootPath = explicitRoot ?? (explicitName ? `shared/apps/${explicitName}/` : null);
+  if (!rootPath) return null;
+  const name = explicitName ?? appNameFromRoot(rootPath);
+  if (!name) return null;
+  const entry = normalizeArtifactAppRelativePath(body.entry ?? 'index.html');
+  if (!entry) return null;
+  const description =
+    typeof body.description === 'string' && body.description.trim().length > 0
+      ? body.description.trim().slice(0, 1000)
+      : null;
+  return { name, rootPath, entry, description };
+}
+
+function relPathForArtifactAppFile(sourcePath: string, rootPath: string): string | null {
+  const workspaceRoot = `/home/agent/workspace/${rootPath}`;
+  if (sourcePath.startsWith(rootPath)) return sourcePath.slice(rootPath.length);
+  if (sourcePath.startsWith(workspaceRoot)) return sourcePath.slice(workspaceRoot.length);
+  return null;
+}
+
+function artifactAppDisplayPath(rootPath: string, relPath: string): string {
+  return `${rootPath}${relPath}`.replace(/\/+/g, '/');
+}
+
+function appPreviewUrl(sessionId: string, path: string, seq: number, renderer = 'html-app'): string {
+  const params = new URLSearchParams({ path, at: String(seq), renderer });
+  return `/api/sessions/${sessionId}/artifacts/preview?${params.toString()}`;
+}
+
+function reactJsxPreviewDocument(source: string, filename: string): string {
+  const sourceJson = JSON.stringify(source);
+  const titleJson = JSON.stringify(filename);
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(filename)}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <pre id="artifact-error" style="display:none; white-space:pre-wrap; padding:16px; color:#991b1b;"></pre>
+  <script>
+    const source = ${sourceJson};
+    const title = ${titleJson};
+    function showError(error) {
+      const el = document.getElementById('artifact-error');
+      el.style.display = 'block';
+      el.textContent = String(error && error.stack ? error.stack : error);
+    }
+    function toRunnableJsx(input) {
+      return input
+        .replace(/^\\s*import\\s+.*?from\\s+['"].*?['"];?\\s*$/gm, '')
+        .replace(/^\\s*import\\s+['"].*?['"];?\\s*$/gm, '')
+        .replace(/export\\s+default\\s+function\\s+([A-Za-z0-9_$]+)/, 'function $1')
+        .replace(/export\\s+default\\s+/, 'const App = ');
+    }
+    try {
+      const cleaned = toRunnableJsx(source);
+      const transformed = Babel.transform(cleaned, { presets: ['react'] }).code;
+      const factory = new Function('React', transformed + '\\n; return typeof App !== "undefined" ? App : (typeof exports !== "undefined" && exports.default) || null;');
+      const App = factory(React);
+      if (!App) throw new Error('No default React component found in ' + title);
+      ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    } catch (error) {
+      showError(error);
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 interface MessageAttachmentFileRow {
@@ -2906,6 +3075,285 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
     if (!bytes.body) return reply.send(Buffer.alloc(0));
     return reply.send(Readable.fromWeb(bytes.body));
+  });
+
+  app.get('/api/sessions/:id/artifacts/preview', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string; at?: string; renderer?: string };
+    const path = q.path;
+    if (typeof path !== 'string' || path.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    const scope = classifyScope(path);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
+    const ref = q.at && /^\d+$/.test(q.at) ? { seq: Number(q.at) } : { pointer: 'latest' };
+
+    let plan: Awaited<ReturnType<typeof sessionRuns.getLedgerServePlan>>;
+    try {
+      plan = await sessionRuns.getLedgerServePlan(id, path, ref);
+    } catch (err) {
+      if (err instanceof CentaurApiError) {
+        if (err.status === 404) {
+          return reply.code(410).send({ error: 'artifact_gone', message: 'artifact bytes are no longer available' });
+        }
+        return reply
+          .code(502)
+          .send({ error: 'artifact_upstream_error', message: 'failed to fetch artifact from Centaur' });
+      }
+      throw err;
+    }
+
+    const bytes = await previewBytes(plan);
+    const renderer = resolveArtifactPreviewRenderer(path, plan.kind === 'proxy' ? plan.artifact.mime : null, q.renderer);
+    const filename = basename(path) || 'artifact';
+    reply.header('X-Artifact-Scope', scope);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Content-Disposition', `inline; filename="${sanitizeFilename(filename)}"`);
+    reply.header(
+      'Content-Security-Policy',
+      [
+        "default-src 'none'",
+        "script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://esm.sh",
+        "style-src 'unsafe-inline' https://cdn.tailwindcss.com",
+        "img-src data: blob: https:",
+        "font-src data: https:",
+        "connect-src https:",
+        "frame-ancestors 'self'",
+      ].join('; '),
+    );
+    if (renderer === 'react-jsx') {
+      reply.header('Content-Type', 'text/html; charset=utf-8');
+      return reply.send(reactJsxPreviewDocument(bytes.toString('utf8'), filename));
+    }
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    return reply.send(bytes);
+  });
+
+  app.post('/api/sessions/:id/apps', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as AppManifestInput & { manifest?: AppManifestInput };
+    const manifest = normalizeArtifactAppManifest({ ...body, ...(body.manifest ?? {}) });
+    if (!manifest) {
+      return reply.code(400).send({
+        error: 'bad_app_manifest',
+        message: 'app publish requires a static app name/rootPath and safe relative entry',
+      });
+    }
+    const scope = classifyScope(manifest.rootPath);
+    if (!userCanReadScope(scope)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
+
+    const result = await withTx(pool, async (client) => {
+      const sessionRes = await client.query<{ workspace_id: string; channel_id: string }>(
+        `SELECT workspace_id, channel_id FROM sessions WHERE id = $1`,
+        [id],
+      );
+      const session = sessionRes.rows[0];
+      if (!session) throw new DomainError(404, 'session_not_found', 'session not found');
+
+      const filesRes = await client.query<ArtifactAppFileRow>(
+        `SELECT a.id AS artifact_id,
+                a.path AS source_path,
+                v.seq,
+                v.blob_sha,
+                b.mime,
+                b.size_bytes
+           FROM artifacts a
+           JOIN artifact_pointers p
+             ON p.artifact_id = a.id AND p.name = 'latest'
+           JOIN artifact_versions v
+             ON v.artifact_id = a.id AND v.seq = p.seq
+           JOIN cas_blobs b
+             ON b.sha256 = v.blob_sha
+          WHERE a.workspace_id = $1
+            AND v.kind <> 'deleted'
+            AND v.status = 'normal'
+            AND v.blob_sha IS NOT NULL
+            AND (a.path LIKE $2 OR a.path LIKE $3)
+          ORDER BY a.path`,
+        [
+          session.workspace_id,
+          `${manifest.rootPath}%`,
+          `/home/agent/workspace/${manifest.rootPath}%`,
+        ],
+      );
+      const files = filesRes.rows
+        .map((row) => ({ row, relPath: relPathForArtifactAppFile(row.source_path, manifest.rootPath) }))
+        .filter((item): item is { row: ArtifactAppFileRow; relPath: string } => Boolean(item.relPath));
+      if (files.length === 0) {
+        throw new DomainError(400, 'app_files_missing', 'no captured files found under the app root');
+      }
+      const entry = files.find((file) => file.relPath === manifest.entry);
+      if (!entry) {
+        throw new DomainError(400, 'app_entry_missing', 'app entry file was not captured');
+      }
+
+      const appRes = await client.query<{ id: string; current_version: number }>(
+        `INSERT INTO artifact_apps
+           (workspace_id, channel_id, session_id, name, root_path, entry, description, created_by, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'published')
+         ON CONFLICT (workspace_id, name) DO UPDATE
+           SET channel_id = EXCLUDED.channel_id,
+               session_id = EXCLUDED.session_id,
+               root_path = EXCLUDED.root_path,
+               entry = EXCLUDED.entry,
+               description = EXCLUDED.description,
+               status = 'published',
+               updated_at = now()
+         RETURNING id, current_version`,
+        [
+          session.workspace_id,
+          session.channel_id,
+          id,
+          manifest.name,
+          manifest.rootPath,
+          manifest.entry,
+          manifest.description,
+          user.id,
+        ],
+      );
+      const appRow = appRes.rows[0]!;
+      const version = appRow.current_version + 1;
+      for (const file of files) {
+        await client.query(
+          `INSERT INTO artifact_app_versions
+             (app_id, version, rel_path, source_path, artifact_id, version_seq, blob_sha, mime, size_bytes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            appRow.id,
+            version,
+            file.relPath,
+            file.row.source_path,
+            file.row.artifact_id,
+            file.row.seq,
+            file.row.blob_sha,
+            file.row.mime,
+            file.row.size_bytes,
+          ],
+        );
+      }
+      await client.query(
+        `UPDATE artifact_apps
+            SET current_version = $2, updated_at = now(), status = 'published'
+          WHERE id = $1`,
+        [appRow.id, version],
+      );
+      return {
+        appId: appRow.id,
+        name: manifest.name,
+        rootPath: manifest.rootPath,
+        entry: manifest.entry,
+        description: manifest.description,
+        version,
+        status: 'published',
+        launchUrl: appPreviewUrl(id, artifactAppDisplayPath(manifest.rootPath, manifest.entry), entry.row.seq),
+      };
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.get('/api/sessions/:id/apps', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const sessionRes = await pool.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM sessions WHERE id = $1`,
+      [id],
+    );
+    const workspaceId = sessionRes.rows[0]?.workspace_id;
+    if (!workspaceId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    const apps = await pool.query<{
+      app_id: string;
+      name: string;
+      root_path: string;
+      entry: string;
+      description: string | null;
+      version: number;
+      status: string;
+      created_by: string;
+      created_at: Date | string;
+      updated_at: Date | string;
+    }>(
+      `SELECT id AS app_id, name, root_path, entry, description, current_version AS version,
+              status, created_by, created_at, updated_at
+         FROM artifact_apps
+        WHERE workspace_id = $1
+        ORDER BY updated_at DESC, name ASC`,
+      [workspaceId],
+    );
+    return {
+      apps: apps.rows
+        .filter((row) => userCanReadScope(classifyScope(row.root_path)))
+        .map((row) => ({
+          appId: row.app_id,
+          name: row.name,
+          rootPath: row.root_path,
+          entry: row.entry,
+          description: row.description,
+          version: row.version,
+          status: row.status,
+          createdBy: row.created_by,
+          createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : new Date(row.created_at).toISOString(),
+          updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : new Date(row.updated_at).toISOString(),
+        })),
+    };
+  });
+
+  app.get('/api/sessions/:id/apps/:appId/launch', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id, appId } = req.params as { id: string; appId: string };
+    if (!isUuid(appId)) {
+      return reply.code(404).send({ error: 'app_not_found', message: 'app not found' });
+    }
+    const q = req.query as { version?: string };
+    const requestedVersion = q.version && /^\d+$/.test(q.version) ? Number(q.version) : null;
+    const sessionRes = await pool.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM sessions WHERE id = $1`,
+      [id],
+    );
+    const workspaceId = sessionRes.rows[0]?.workspace_id;
+    if (!workspaceId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    const appRes = await pool.query<{
+      app_id: string;
+      root_path: string;
+      entry: string;
+      version: number;
+      status: string;
+      entry_seq: number;
+    }>(
+      `WITH selected_app AS (
+         SELECT id AS app_id, root_path, entry,
+                COALESCE($3::int, current_version) AS version,
+                status
+           FROM artifact_apps
+          WHERE id = $1 AND workspace_id = $2
+       )
+       SELECT a.app_id, a.root_path, a.entry, a.version, a.status, v.version_seq AS entry_seq
+         FROM selected_app a
+         JOIN artifact_app_versions v
+           ON v.app_id = a.app_id AND v.version = a.version AND v.rel_path = a.entry`,
+      [appId, workspaceId, requestedVersion],
+    );
+    const row = appRes.rows[0];
+    if (!row || !userCanReadScope(classifyScope(row.root_path))) {
+      return reply.code(404).send({ error: 'app_not_found', message: 'app not found' });
+    }
+    if (row.status !== 'published') {
+      return reply.code(409).send({ error: 'app_not_ready', message: 'app is not published yet' });
+    }
+    return {
+      url: appPreviewUrl(id, artifactAppDisplayPath(row.root_path, row.entry), row.entry_seq),
+      version: row.version,
+      expiresAt: null,
+    };
   });
 
   // C1 inbound-sync source: the gap-free, egress-pollable change-feed the Centaur

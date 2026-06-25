@@ -289,6 +289,16 @@ export interface ArtifactCaptured {
   ref: string | null;
 }
 
+export interface ArtifactPresented {
+  type?: "artifact.presented";
+  execution_id?: string;
+  path: string;
+  title?: string;
+  renderer?: "auto" | "html-app" | "react-jsx" | "markdown" | string;
+  description?: string;
+  metadata?: JsonValue;
+}
+
 export type ProjectionEvent =
   | AssistantTextObserved
   | AssistantToolUseObserved
@@ -312,7 +322,8 @@ export type CentaurEventFrame =
   | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved }
   | { event: "question_requested"; event_id: number; data: QuestionRequested }
   | { event: "question_resolved"; event_id: number; data: QuestionResolved }
-  | { event: "artifact.captured"; event_id: number; data: ArtifactCaptured };
+  | { event: "artifact.captured"; event_id: number; data: ArtifactCaptured }
+  | { event: "artifact.presented"; event_id: number; data: ArtifactPresented };
 
 export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
   return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";

@@ -135,19 +135,19 @@ async function session(): Promise<string> {
   return r.rows[0]!.id;
 }
 
-async function commit(sessionId: string, path: string, bytes: string) {
+async function commit(sessionId: string, path: string, bytes: string, mime = 'text/markdown') {
   const payload = Buffer.from(bytes);
   const sha = createHash('sha256').update(payload).digest('hex');
   await pool.query(
     `INSERT INTO cas_blobs (sha256, size_bytes, mime)
-     VALUES ($1, $2, 'text/markdown')
+     VALUES ($1, $2, $3)
      ON CONFLICT (sha256) DO NOTHING`,
-    [sha, payload.byteLength],
+    [sha, payload.byteLength, mime],
   );
   await pool.query(
     `INSERT INTO session_artifacts (id, session_id, execution_id, centaur_ref, path, mime, size_bytes, sha256)
-     VALUES ($1, $2, 'exec-1', $3, $4, 'text/markdown', $5, $6)`,
-    [`artifact-${sha.slice(0, 12)}`, sessionId, `ref-${sha.slice(0, 12)}`, path, payload.byteLength, sha],
+     VALUES ($1, $2, 'exec-1', $3, $4, $5, $6, $7)`,
+    [`artifact-${sha.slice(0, 12)}`, sessionId, `ref-${sha.slice(0, 12)}`, path, mime, payload.byteLength, sha],
   );
   await ledger.commitVersion({
     sessionId,
@@ -155,7 +155,7 @@ async function commit(sessionId: string, path: string, bytes: string) {
     path,
     blobSha: sha,
     sizeBytes: payload.byteLength,
-    mime: 'text/markdown',
+    mime,
     author: `agent:${sessionId}`,
     kind: 'created',
   });
@@ -192,6 +192,152 @@ describe('artifact scope route enforcement', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-artifact-scope']).toBe('workspace');
     expect(res.body).toBe('node captured this');
+  });
+
+  it('previews a shared HTML artifact inline without changing the download route', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commit(sid, 'shared/apps/demo/index.html', '<h1>Demo</h1>', 'text/html');
+
+    const preview = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/preview?path=${encodeURIComponent('shared/apps/demo/index.html')}`,
+      headers: { cookie },
+    });
+
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers['x-artifact-scope']).toBe('workspace');
+    expect(preview.headers['content-type']).toContain('text/html');
+    expect(preview.headers['content-disposition']).toContain('inline');
+    expect(preview.body).toBe('node captured this');
+
+    const download = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/by-path?path=${encodeURIComponent('shared/apps/demo/index.html')}`,
+      headers: { cookie },
+    });
+    expect(download.statusCode).toBe(200);
+    expect(download.headers['content-disposition']).toContain('attachment');
+  });
+
+  it('serves workspace-relative display paths for artifacts captured with absolute sandbox paths', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commit(
+      sid,
+      '/home/agent/workspace/shared/apps/demo/index.html',
+      '<h1>Demo</h1>',
+      'text/html',
+    );
+
+    const preview = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/preview?path=${encodeURIComponent('shared/apps/demo/index.html')}`,
+      headers: { cookie },
+    });
+
+    expect(preview.statusCode).toBe(200);
+    expect(preview.body).toBe('node captured this');
+  });
+
+  it('publishes a captured static app directory and returns a version-pinned launch URL', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commit(sid, 'shared/apps/demo/index.html', '<h1>Demo</h1>', 'text/html');
+    await commit(
+      sid,
+      'shared/apps/demo/atrium.app.json',
+      JSON.stringify({ name: 'demo', kind: 'static', entry: 'index.html' }),
+      'application/json',
+    );
+
+    const publish = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sid}/apps`,
+      headers: { cookie },
+      payload: { name: 'demo', entry: 'index.html', description: 'Demo app' },
+    });
+
+    expect(publish.statusCode).toBe(201);
+    const published = publish.json() as {
+      appId: string;
+      name: string;
+      version: number;
+      status: string;
+      launchUrl: string;
+    };
+    expect(published.name).toBe('demo');
+    expect(published.version).toBe(1);
+    expect(published.status).toBe('published');
+    expect(published.launchUrl).toContain('/artifacts/preview?');
+    expect(published.launchUrl).toContain('path=shared%2Fapps%2Fdemo%2Findex.html');
+    expect(published.launchUrl).toContain('at=1');
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/apps`,
+      headers: { cookie },
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().apps).toEqual([
+      expect.objectContaining({
+        appId: published.appId,
+        name: 'demo',
+        rootPath: 'shared/apps/demo/',
+        entry: 'index.html',
+        version: 1,
+        status: 'published',
+      }),
+    ]);
+
+    const launch = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/apps/${published.appId}/launch`,
+      headers: { cookie },
+    });
+    expect(launch.statusCode).toBe(200);
+    expect(launch.json()).toEqual({
+      url: published.launchUrl,
+      version: 1,
+      expiresAt: null,
+    });
+
+    const preview = await app.inject({
+      method: 'GET',
+      url: published.launchUrl,
+      headers: { cookie },
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers['content-disposition']).toContain('inline');
+  });
+
+  it('publishes app files captured under an absolute workspace path using a relative launch path', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commit(
+      sid,
+      '/home/agent/workspace/shared/apps/absolute/index.html',
+      '<h1>Absolute</h1>',
+      'text/html',
+    );
+
+    const publish = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sid}/apps`,
+      headers: { cookie },
+      payload: { name: 'absolute', entry: 'index.html' },
+    });
+
+    expect(publish.statusCode).toBe(201);
+    const body = publish.json() as { launchUrl: string };
+    expect(body.launchUrl).toContain('path=shared%2Fapps%2Fabsolute%2Findex.html');
+
+    const preview = await app.inject({
+      method: 'GET',
+      url: body.launchUrl,
+      headers: { cookie },
+    });
+    expect(preview.statusCode).toBe(200);
   });
 
   it('omits private artifacts from the user-facing files listing', async () => {

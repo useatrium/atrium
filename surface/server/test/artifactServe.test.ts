@@ -81,6 +81,7 @@ describe('getLedgerServePlan', () => {
 
     expect(plan).toEqual({
       kind: 'redirect',
+      s3Key,
       url: `https://storage.local/get/${encodeURIComponent(s3Key)}?inline=1`,
     });
     expect(presignCalls).toEqual([{ key: s3Key, filename: 'chart.png', inline: true }]);

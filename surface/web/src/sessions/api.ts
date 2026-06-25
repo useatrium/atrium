@@ -29,6 +29,19 @@ export interface SessionStreamCallbacks {
   onError?: () => void;
 }
 
+export interface PublishedArtifactApp {
+  appId: string;
+  name: string;
+  rootPath: string;
+  entry: string;
+  description: string | null;
+  version: number;
+  status: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Every event name the Centaur durable stream emits (notes/build-history/phase0/results/event-schema.md). */
 export const FRAME_EVENT_NAMES = [
   'execution_state',
@@ -42,6 +55,7 @@ export const FRAME_EVENT_NAMES = [
   'result_observed',
   'execution_summary',
   'artifact.captured',
+  'artifact.presented',
 ] as const;
 
 async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -129,6 +143,47 @@ export const sessionsApi = {
       method: 'POST',
       body: JSON.stringify({ text }),
     });
+  },
+
+  listApps(id: string): Promise<{ apps: PublishedArtifactApp[] }> {
+    return reqJson<{ apps: PublishedArtifactApp[] }>(`/api/sessions/${id}/apps`);
+  },
+
+  publishApp(
+    id: string,
+    body: { name?: string; rootPath?: string; entry?: string; description?: string },
+  ): Promise<{
+    appId: string;
+    name: string;
+    rootPath: string;
+    entry: string;
+    description: string | null;
+    version: number;
+    status: string;
+    launchUrl: string;
+  }> {
+    return reqJson<{
+      appId: string;
+      name: string;
+      rootPath: string;
+      entry: string;
+      description: string | null;
+      version: number;
+      status: string;
+      launchUrl: string;
+    }>(`/api/sessions/${id}/apps`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  launchApp(id: string, appId: string, version?: number): Promise<{ url: string; version: number; expiresAt: string | null }> {
+    const q = new URLSearchParams();
+    if (version != null) q.set('version', String(version));
+    const qs = q.toString();
+    return reqJson<{ url: string; version: number; expiresAt: string | null }>(
+      `/api/sessions/${id}/apps/${appId}/launch${qs ? `?${qs}` : ''}`,
+    );
   },
 
   answerQuestion(

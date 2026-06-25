@@ -61,4 +61,44 @@ describe("artifact.captured reducer", () => {
     expect(arts.map((a) => a.path)).toEqual(["src/out.png", "/tmp/x.csv"]);
     expect(artifactPaths(arts)).toHaveLength(2);
   });
+
+  it("folds artifact.presented events into state.artifactPresentations", () => {
+    const state = reduceAll([
+      {
+        event: "artifact.presented",
+        event_id: 12,
+        data: {
+          type: "artifact.presented",
+          execution_id: "exe_123",
+          path: "shared/apps/demo/index.html",
+          title: "Demo App",
+          renderer: "html-app",
+          description: "Interactive demo",
+        },
+      },
+    ]);
+    expect(state.artifactPresentations).toEqual([
+      {
+        id: "artifact-presented:shared/apps/demo/index.html",
+        path: "shared/apps/demo/index.html",
+        title: "Demo App",
+        renderer: "html-app",
+        description: "Interactive demo",
+        executionId: "exe_123",
+        sourceEventIds: [12],
+      },
+    ]);
+    expect(state.items).toEqual([
+      {
+        type: "artifact_presentation",
+        id: "artifact-presented:shared/apps/demo/index.html",
+        path: "shared/apps/demo/index.html",
+        title: "Demo App",
+        renderer: "html-app",
+        description: "Interactive demo",
+        executionId: "exe_123",
+        sourceEventIds: [12],
+      },
+    ]);
+  });
 });
