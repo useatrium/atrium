@@ -15,9 +15,8 @@ CREATE TABLE warmcache_blobs (
   PRIMARY KEY (workspace_id, lockfile_hash, kind, path)
 );
 
--- Hydration lookup: every entry for one dependency set.
-CREATE INDEX warmcache_blobs_lookup_idx
-  ON warmcache_blobs (workspace_id, lockfile_hash, kind);
+-- Hydration lookup (WHERE workspace_id, lockfile_hash, kind) is served by the
+-- primary key prefix, so no separate index is needed for it.
 
 -- GC root lookup: is this blob still referenced by any warm cache?
 CREATE INDEX warmcache_blobs_sha_idx ON warmcache_blobs (sha256);

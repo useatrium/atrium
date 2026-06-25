@@ -122,6 +122,7 @@ import {
   loadWarmcacheBlob,
   loadWarmcacheManifest,
   MAX_WARMCACHE_BLOB_BYTES,
+  MAX_WARMCACHE_MANIFEST_ENTRIES,
   normalizeWarmcacheSha,
   registerWarmcacheManifest,
   storeWarmcacheBlob,
@@ -4332,6 +4333,9 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(404).send({ error: 'workspace_not_found' });
     }
     const entries = Array.isArray(body.entries) ? (body.entries as WarmcacheEntry[]) : [];
+    if (entries.length > MAX_WARMCACHE_MANIFEST_ENTRIES) {
+      return reply.code(413).send({ error: 'manifest_too_large', message: 'too many cache entries' });
+    }
     const result = await registerWarmcacheManifest(pool, {
       workspaceId,
       lockfileHash: String(body.lockfile_hash ?? ''),

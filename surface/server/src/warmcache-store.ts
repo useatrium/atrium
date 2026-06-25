@@ -7,6 +7,9 @@ import { DomainError } from './events.js';
 // A single warm-cache blob is one file from an installed dependency set (a file
 // under node_modules/, cargo registry/, ...). Bounded by the shared CAS ceiling.
 export const MAX_WARMCACHE_BLOB_BYTES = 16 * 1024 * 1024;
+// A dependency set is large but bounded; cap manifest size to keep the bulk
+// insert + hydration response from going unbounded.
+export const MAX_WARMCACHE_MANIFEST_ENTRIES = 100_000;
 
 interface BlobStorage {
   uploadObject: (key: string, body: Buffer, contentType: string) => Promise<void>;
@@ -87,24 +90,36 @@ export async function registerWarmcacheManifest(
 ): Promise<{ count: number }> {
   const lockfileHash = normalizeLockfileHash(args.lockfileHash);
   const kind = normalizeKind(args.kind);
-  const entries = args.entries.map((e) => ({
-    path: normalizeCachePath(e.path),
-    sha256: normalizeWarmcacheSha(e.sha256),
-    size_bytes: Number.isFinite(e.size_bytes) && e.size_bytes >= 0 ? Math.floor(e.size_bytes) : 0,
-  }));
+  // Dedupe by path (last wins) so the bulk insert can't hit the unique key twice.
+  const byPath = new Map<string, WarmcacheEntry>();
+  for (const e of args.entries) {
+    byPath.set(normalizeCachePath(e.path), {
+      path: normalizeCachePath(e.path),
+      sha256: normalizeWarmcacheSha(e.sha256),
+      size_bytes: Number.isFinite(e.size_bytes) && e.size_bytes >= 0 ? Math.floor(e.size_bytes) : 0,
+    });
+  }
+  const entries = [...byPath.values()];
 
   await withTx(pool, async (client) => {
     await client.query(
       `DELETE FROM warmcache_blobs WHERE workspace_id = $1 AND lockfile_hash = $2 AND kind = $3`,
       [args.workspaceId, lockfileHash, kind],
     );
-    for (const e of entries) {
+    if (entries.length > 0) {
+      // Single round-trip bulk insert — a full node_modules manifest is tens of
+      // thousands of rows, so per-row INSERTs would be a long-held transaction.
       await client.query(
         `INSERT INTO warmcache_blobs (workspace_id, lockfile_hash, kind, path, sha256, size_bytes)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (workspace_id, lockfile_hash, kind, path)
-           DO UPDATE SET sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes`,
-        [args.workspaceId, lockfileHash, kind, e.path, e.sha256, e.size_bytes],
+         SELECT $1, $2, $3, unnest($4::text[]), unnest($5::text[]), unnest($6::bigint[])`,
+        [
+          args.workspaceId,
+          lockfileHash,
+          kind,
+          entries.map((e) => e.path),
+          entries.map((e) => e.sha256),
+          entries.map((e) => e.size_bytes),
+        ],
       );
     }
   });
@@ -119,7 +134,8 @@ export async function loadWarmcacheManifest(
     `SELECT path, sha256, size_bytes
        FROM warmcache_blobs
       WHERE workspace_id = $1 AND lockfile_hash = $2 AND kind = $3
-      ORDER BY path`,
+      ORDER BY path
+      LIMIT ${MAX_WARMCACHE_MANIFEST_ENTRIES}`,
     [args.workspaceId, normalizeLockfileHash(args.lockfileHash), normalizeKind(args.kind)],
   );
   return rows.rows.map((r) => ({
@@ -155,7 +171,8 @@ function normalizeCachePath(value: unknown): string {
     throw new DomainError(400, 'bad_query', 'cache path must be a string');
   }
   const trimmed = value.replace(/^\/+/, '').trim();
-  if (!trimmed || trimmed.length > 1024 || trimmed.includes('..')) {
+  // Reject traversal + NUL (PG rejects NUL in text → would surface as a 500).
+  if (!trimmed || trimmed.length > 1024 || trimmed.includes('..') || trimmed.includes('\0')) {
     throw new DomainError(400, 'bad_query', 'invalid cache path');
   }
   return trimmed;
