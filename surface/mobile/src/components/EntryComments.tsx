@@ -287,8 +287,14 @@ function CommentRow({ comment }: { comment: WireEvent }) {
   const { colors } = useTheme();
   const { text, deleted } = commentPayload(comment);
   const author = comment.author;
-  const displayName = author?.displayName ?? author?.handle ?? 'Unknown';
-  const handleLabel = author?.handle && author.handle !== displayName ? author.handle : null;
+  // Agent-authored comments (posted via the MCP tool) are attributed as
+  // `agent-<handle>` — the human principal whose credential the agent used.
+  const isAgent = (comment.payload as { via?: unknown } | undefined)?.via === 'agent';
+  const displayName = isAgent
+    ? `agent-${author?.handle ?? 'unknown'}`
+    : (author?.displayName ?? author?.handle ?? 'Unknown');
+  const handleLabel =
+    !isAgent && author?.handle && author.handle !== displayName ? author.handle : null;
   return (
     <View
       style={{
