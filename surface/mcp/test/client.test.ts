@@ -80,7 +80,8 @@ describe("postEntryComment", () => {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
     });
-    expect(calls[0]?.init?.body).toBe(JSON.stringify({ text: "Looks useful" }));
+    // Agent-authored: the tool tags the comment so clients render `agent-<handle>`.
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ text: "Looks useful", via: "agent" }));
   });
 
   it("throws a not found error on 404", async () => {

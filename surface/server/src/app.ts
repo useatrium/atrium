@@ -1900,9 +1900,12 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (!entry) {
         return reply.code(404).send({ error: 'entry_not_found' });
       }
-      const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+      const body = (req.body ?? {}) as { text?: string; opId?: unknown; via?: unknown };
       const opId = optionalOpId(body);
       const text = typeof body.text === 'string' ? body.text : '';
+      // Only 'agent' is honored; the MCP write tool sets it. Display tag, not a
+      // trust boundary (the actor remains the real principal).
+      const via = body.via === 'agent' ? ('agent' as const) : undefined;
       if (text.trim().length === 0) {
         return reply.code(400).send({ error: 'empty_comment', message: 'comment text is empty' });
       }
@@ -1913,9 +1916,9 @@ function rawSession(req: FastifyRequest): string | undefined {
         userId: user.id,
         opId,
         opType: 'comment.post',
-        body: { handle, text },
+        body: { handle, text, via },
         fn: async (client) => {
-          const event = await postCommentTx(client, { handle, actorId: user.id, text });
+          const event = await postCommentTx(client, { handle, actorId: user.id, text, via });
           return { event };
         },
         onApplied: (result) => {
