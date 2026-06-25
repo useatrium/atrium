@@ -128,6 +128,8 @@ async function session(channelId = fx.channelId): Promise<string> {
 }
 
 async function commit(sessionId: string, path: string, bytes: string) {
+  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+  const channelId = sessionRow.rows[0]!.channel_id;
   const payload = Buffer.from(bytes);
   const sha = createHash('sha256').update(payload).digest('hex');
   const s3Key = casBlobKey(sha);
@@ -141,7 +143,7 @@ async function commit(sessionId: string, path: string, bytes: string) {
   );
   await ledger.commitVersion({
     sessionId,
-    channelId: fx.channelId,
+    channelId,
     path,
     blobSha: sha,
     sizeBytes: payload.byteLength,
@@ -223,8 +225,9 @@ describe('artifact scope route enforcement', () => {
   it('lists and serves artifacts from readable non-active public channels', async () => {
     const cookie = await loginCookie();
     const sid = await session();
+    const otherSid = await session(fx.otherChannelId);
     const otherPath = `shared/channels/${fx.otherChannelId}/other.md`;
-    await commit(sid, otherPath, 'other channel body');
+    await commit(otherSid, otherPath, 'other channel body');
 
     const listing = await app.inject({
       method: 'GET',

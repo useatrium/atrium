@@ -49,6 +49,16 @@ ALTER TABLE cas_blobs
   ALTER COLUMN is_text SET NOT NULL,
   ALTER COLUMN is_text SET DEFAULT false;
 
-ALTER TABLE cas_blobs
-  ADD CONSTRAINT cas_blobs_media_kind_check
-    CHECK (media_kind IN ('text', 'image', 'audio', 'video', 'pdf', 'archive', 'json', 'document', 'binary'));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'cas_blobs_media_kind_check'
+       AND conrelid = 'cas_blobs'::regclass
+  ) THEN
+    ALTER TABLE cas_blobs
+      ADD CONSTRAINT cas_blobs_media_kind_check
+        CHECK (media_kind IN ('text', 'image', 'audio', 'video', 'pdf', 'archive', 'json', 'document', 'binary'));
+  END IF;
+END $$;
