@@ -51,6 +51,7 @@ export const config = {
   artifactGcEnabled: process.env.ARTIFACT_GC_ENABLED === '1',
   artifactGcIntervalMs: Number(process.env.ARTIFACT_GC_INTERVAL_MS ?? 300_000),
   artifactGcGraceMs: Number(process.env.ARTIFACT_GC_GRACE_MS ?? 3_600_000),
+  artifactRetentionMs: Number(process.env.ARTIFACT_RETENTION_MS ?? 30 * 24 * 3_600_000),
   artifactGcBatchSize: Number(process.env.ARTIFACT_GC_BATCH_SIZE ?? 50),
   // File uploads (MinIO in dev; any S3-compatible store in deployment).
   s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',

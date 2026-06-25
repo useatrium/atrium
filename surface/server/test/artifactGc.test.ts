@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { ArtifactLedger } from '../src/artifact-ledger.js';
-import { sweepUnreferencedBlobs } from '../src/artifact-ledger-gc.js';
+import { sweepRetainedScratchVersions, sweepUnreferencedBlobs } from '../src/artifact-ledger-gc.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -66,6 +66,25 @@ async function blobRefsForPath(path: string): Promise<Array<{ seq: number; sha: 
        FROM artifact_blob_refs
       WHERE artifact_id = $1
       ORDER BY seq ASC, role ASC, sha ASC`,
+    [artifactId],
+  );
+  return res.rows;
+}
+
+async function versionsForPath(
+  path: string,
+): Promise<Array<{ seq: number; blob_sha: string | null; retention_blob_sha: string | null; tombstoned: boolean }>> {
+  const artifactId = await artifactIdForPath(path);
+  const res = await pool.query<{
+    seq: number;
+    blob_sha: string | null;
+    retention_blob_sha: string | null;
+    tombstoned: boolean;
+  }>(
+    `SELECT seq, blob_sha, retention_blob_sha, retention_tombstoned_at IS NOT NULL AS tombstoned
+       FROM artifact_versions
+      WHERE artifact_id = $1
+      ORDER BY seq ASC`,
     [artifactId],
   );
   return res.rows;
@@ -256,6 +275,156 @@ describe('artifact ledger GC', () => {
     expect(await blobExists(failSha)).toBe(true);
     expect(await blobExists(okSha)).toBe(false);
     expect(storage.deleteObject).toHaveBeenCalledTimes(2);
+  });
+
+  it('tombstones old superseded scratch versions so CAS GC can reclaim them', async () => {
+    const oldSha = '7'.repeat(64);
+    const latestSha = '8'.repeat(64);
+    const scratchPath = `scratch/${sessionId}/draft.md`;
+    await capture(scratchPath, oldSha, 'created');
+    await setVersionCreatedAt(scratchPath, 1, '2026-01-01T00:00:00.000Z');
+    await capture(scratchPath, latestSha, 'modified');
+    await setVersionCreatedAt(scratchPath, 2, '2026-01-02T00:00:00.000Z');
+    await pool.query(
+      `UPDATE cas_blobs
+          SET s3_key = 'cas/' || substr(sha256, 1, 2) || '/' || sha256,
+              created_at = now() - interval '40 days'
+        WHERE sha256 IN ($1, $2)`,
+      [oldSha, latestSha],
+    );
+
+    const retained = await sweepRetainedScratchVersions(pool, {
+      retentionMs: 30 * 24 * 3_600_000,
+      limit: 10,
+    });
+    const storage = { deleteObject: vi.fn(async (_key: string) => {}) };
+    const swept = await sweepUnreferencedBlobs(pool, storage, { graceMs: 0, limit: 10 });
+
+    expect(retained).toEqual({ tombstoned: 1 });
+    expect(await versionsForPath(scratchPath)).toEqual([
+      { seq: 1, blob_sha: null, retention_blob_sha: oldSha, tombstoned: true },
+      { seq: 2, blob_sha: latestSha, retention_blob_sha: null, tombstoned: false },
+    ]);
+    expect(await blobRefsForPath(scratchPath)).toEqual([{ seq: 2, sha: latestSha, role: 'version' }]);
+    expect(swept).toEqual({ swept: 1, failed: 0 });
+    expect(await blobExists(oldSha)).toBe(false);
+    expect(await blobExists(latestSha)).toBe(true);
+  });
+
+  it('does not tombstone shared paths or the latest normal scratch version', async () => {
+    const sharedOldSha = '9'.repeat(64);
+    const sharedLatestSha = 'a'.repeat(64);
+    const scratchOnlySha = 'b'.repeat(64);
+    await capture('shared/global/keep.md', sharedOldSha, 'created');
+    await setVersionCreatedAt('shared/global/keep.md', 1, '2026-01-01T00:00:00.000Z');
+    await capture('shared/global/keep.md', sharedLatestSha, 'modified');
+    await setVersionCreatedAt('shared/global/keep.md', 2, '2026-01-02T00:00:00.000Z');
+
+    const scratchPath = `scratch/${sessionId}/only.md`;
+    await capture(scratchPath, scratchOnlySha, 'created');
+    await setVersionCreatedAt(scratchPath, 1, '2026-01-01T00:00:00.000Z');
+
+    const retained = await sweepRetainedScratchVersions(pool, {
+      retentionMs: 30 * 24 * 3_600_000,
+      limit: 10,
+    });
+
+    expect(retained).toEqual({ tombstoned: 0 });
+    expect(await versionsForPath('shared/global/keep.md')).toEqual([
+      { seq: 1, blob_sha: sharedOldSha, retention_blob_sha: null, tombstoned: false },
+      { seq: 2, blob_sha: sharedLatestSha, retention_blob_sha: null, tombstoned: false },
+    ]);
+    expect(await versionsForPath(scratchPath)).toEqual([
+      { seq: 1, blob_sha: scratchOnlySha, retention_blob_sha: null, tombstoned: false },
+    ]);
+  });
+
+  it('keeps conflict versions and conflict refs while pruning older normal scratch refs', async () => {
+    const baseSha = 'c'.repeat(64);
+    const markerSha = 'd'.repeat(64);
+    const incomingSha = 'e'.repeat(64);
+    const resolvedSha = '1'.repeat(64);
+    const scratchPath = `scratch/${sessionId}/conflict.md`;
+    await capture(scratchPath, baseSha, 'created');
+    await setVersionCreatedAt(scratchPath, 1, '2026-01-01T00:00:00.000Z');
+    await ledger.commitVersion({
+      sessionId,
+      channelId: fx.channelId,
+      path: scratchPath,
+      blobSha: markerSha,
+      sizeBytes: 10,
+      mime: 'text/markdown',
+      author: `agent:${sessionId}`,
+      kind: 'modified',
+      status: 'conflict',
+      conflict: {
+        base_seq: 1,
+        left: { seq: 1, author: `agent:${sessionId}`, sha: baseSha },
+        right: { author: `human:${fx.userId}`, sha: incomingSha },
+      },
+    });
+    await setVersionCreatedAt(scratchPath, 2, '2026-01-02T00:00:00.000Z');
+    await ledger.commitVersion({
+      sessionId,
+      channelId: fx.channelId,
+      path: scratchPath,
+      blobSha: resolvedSha,
+      sizeBytes: 10,
+      mime: 'text/markdown',
+      author: `agent:${sessionId}`,
+      kind: 'modified',
+      baseSeq: 2,
+    });
+    await pool.query(
+      `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
+       VALUES ($1, $2, 10, 'text/plain')
+       ON CONFLICT (sha256) DO UPDATE SET s3_key = EXCLUDED.s3_key`,
+      [incomingSha, `cas/ee/${incomingSha}`],
+    );
+
+    const retained = await sweepRetainedScratchVersions(pool, {
+      retentionMs: 30 * 24 * 3_600_000,
+      limit: 10,
+    });
+
+    expect(retained).toEqual({ tombstoned: 1 });
+    expect(await versionsForPath(scratchPath)).toEqual([
+      { seq: 1, blob_sha: null, retention_blob_sha: baseSha, tombstoned: true },
+      { seq: 2, blob_sha: markerSha, retention_blob_sha: null, tombstoned: false },
+      { seq: 3, blob_sha: resolvedSha, retention_blob_sha: null, tombstoned: false },
+    ]);
+    expect(await blobRefsForPath(scratchPath)).toEqual([
+      { seq: 2, sha: baseSha, role: 'conflict' },
+      { seq: 2, sha: incomingSha, role: 'conflict' },
+      { seq: 2, sha: markerSha, role: 'version' },
+      { seq: 3, sha: resolvedSha, role: 'version' },
+    ]);
+  });
+
+  it('treats retention pins as roots', async () => {
+    const oldSha = 'f'.repeat(64);
+    const latestSha = '0'.repeat(64);
+    const scratchPath = `scratch/${sessionId}/pinned.md`;
+    await capture(scratchPath, oldSha, 'created');
+    await setVersionCreatedAt(scratchPath, 1, '2026-01-01T00:00:00.000Z');
+    await capture(scratchPath, latestSha, 'modified');
+    const artifactId = await artifactIdForPath(scratchPath);
+    await pool.query(
+      `INSERT INTO artifact_retention_pins (artifact_id, seq, reason)
+       VALUES ($1, 1, 'test-pin')`,
+      [artifactId],
+    );
+
+    const retained = await sweepRetainedScratchVersions(pool, {
+      retentionMs: 30 * 24 * 3_600_000,
+      limit: 10,
+    });
+
+    expect(retained).toEqual({ tombstoned: 0 });
+    expect(await versionsForPath(scratchPath)).toEqual([
+      { seq: 1, blob_sha: oldSha, retention_blob_sha: null, tombstoned: false },
+      { seq: 2, blob_sha: latestSha, retention_blob_sha: null, tombstoned: false },
+    ]);
   });
 
   it('returns the latest changed version per path since a watermark', async () => {
