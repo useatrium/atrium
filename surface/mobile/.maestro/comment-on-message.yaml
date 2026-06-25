@@ -41,7 +41,10 @@ appId: chat.atrium.app
     visible: ".*Maestro comment probe.*"
     timeout: 15000
 
-# THE interaction idb couldn't reach: long-press opens the action sheet.
+# Open comments via long-press -> action sheet. (There is also a visible, tappable
+# "Comment" affordance on each message row for humans, but it inherits the row's
+# accessibility grouping — like the row's reply/react buttons — so it isn't an
+# independent node a driver can target; the long-press path is what we automate.)
 # A synthetic long-press occasionally doesn't register as RN's onLongPress, so retry
 # the gesture until the sheet's "Comments" action appears.
 - retry:
@@ -52,8 +55,6 @@ appId: chat.atrium.app
           visible: "Comments"
           timeout: 3000
 - takeScreenshot: longpress-menu
-
-# …and "Comments" opens the EntryComments sheet
 - tapOn: "Comments"
 - assertVisible: "No comments yet."
 - takeScreenshot: comments-sheet
