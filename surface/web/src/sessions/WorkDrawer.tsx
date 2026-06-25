@@ -5,7 +5,7 @@
 // reflows beside (single swappable slot — the DevTools dock model); detach =
 // the surface in its own browser tab (/s/:id/work/:tab), the top rung.
 
-import type { Artifact, FileChange, SideEffect } from '@atrium/centaur-client';
+import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
@@ -83,6 +83,7 @@ export function WorkDrawer({
   sideEffectCount,
   hasDanger,
   artifacts,
+  artifactPresentations = [],
   artifactCount,
   conflicts = [],
   conflictCount = 0,
@@ -102,6 +103,7 @@ export function WorkDrawer({
   sideEffectCount: number;
   hasDanger: boolean;
   artifacts: Artifact[];
+  artifactPresentations?: ArtifactPresentation[];
   artifactCount: number;
   /** Unresolved conflicts (A3). Optional — absent surfaces hide the tab. */
   conflicts?: ArtifactConflict[];
@@ -212,6 +214,7 @@ export function WorkDrawer({
         <WhatChangedSurface
           changes={changes}
           artifacts={artifacts}
+          presentations={artifactPresentations}
           sessionId={sessionId}
           onClose={onClose}
           embedded

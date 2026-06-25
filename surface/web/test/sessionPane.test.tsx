@@ -1058,4 +1058,54 @@ describe('artifacts surface (Phase 4)', () => {
     const img = within(drawer).getByRole('img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/by-path?path=%2Ftmp%2Fchart.png');
   });
+
+  it('renders presented app artifacts as transcript cards with preview', async () => {
+    const frames = [
+      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_app' } },
+      {
+        event: 'artifact.captured',
+        event_id: 2,
+        data: {
+          type: 'artifact.captured',
+          artifact_id: 'app-1',
+          path: '/home/agent/workspace/shared/apps/demo/index.html',
+          kind: 'created',
+          mime: 'text/html',
+          size_bytes: 2048,
+          sha256: 'app-1',
+          ref: 'blob-1',
+        },
+      },
+      {
+        event: 'artifact.presented',
+        event_id: 3,
+        data: {
+          type: 'artifact.presented',
+          execution_id: 'exe_app',
+          path: 'shared/apps/demo/index.html',
+          title: 'Demo Artifact',
+          renderer: 'html-app',
+          description: 'Interactive applet',
+        },
+      },
+    ] as unknown as CentaurEventFrame[];
+
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(frames);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    const card = screen.getByTestId('artifact-presentation-card');
+    expect(within(card).getByText('Presented artifact')).toBeTruthy();
+    expect(within(card).getByText('Demo Artifact')).toBeTruthy();
+    expect(within(card).getByText('Interactive applet')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: 'Preview' }));
+    const frame = screen.getByTitle('Artifact preview: index.html') as HTMLIFrameElement;
+    expect(frame.getAttribute('src')).toBe(
+      '/api/sessions/s-b/artifacts/preview?path=shared%2Fapps%2Fdemo%2Findex.html&renderer=html-app',
+    );
+  });
 });

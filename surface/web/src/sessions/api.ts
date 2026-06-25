@@ -44,6 +44,7 @@ export const FRAME_EVENT_NAMES = [
   'result_observed',
   'execution_summary',
   'artifact.captured',
+  'artifact.presented',
 ] as const;
 
 async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {

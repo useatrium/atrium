@@ -72,7 +72,7 @@ import {
   storeHarnessStateBundle,
   storeHarnessTranscript,
 } from './harness-transcript.js';
-import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import { SessionRuns, type ArtifactServePlan, type SessionRunsOptions } from './session-runs.js';
 import { searchSessionRecords } from './session-search.js';
 import { resolveEntry, tryDecodeHandle } from './entries.js';
 import { writeBackArtifact, writeBackDelete } from './artifact-writeback.js';
@@ -201,6 +201,85 @@ function canonicalizeRouteArtifactPath(
 function normalizeMime(value: string | undefined): string {
   const mime = (value ?? '').split(';', 1)[0]!.trim().toLowerCase();
   return /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime : 'application/octet-stream';
+}
+
+async function previewBytes(plan: ArtifactServePlan): Promise<Buffer> {
+  if (plan.kind === 'redirect') {
+    if (plan.s3Key) {
+      return getObjectBytes(plan.s3Key);
+    }
+    const response = await fetch(plan.url);
+    if (!response.ok) {
+      throw new DomainError(502, 'artifact_preview_fetch_failed', 'failed to fetch artifact preview bytes');
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+  throw new DomainError(500, 'artifact_preview_unsupported_plan', 'unsupported artifact preview serve plan');
+}
+
+function resolveArtifactPreviewRenderer(path: string, mime: string | null, hint?: string): 'html-app' | 'react-jsx' {
+  const normalizedHint = (hint ?? '').trim().toLowerCase();
+  if (normalizedHint === 'react-jsx') return 'react-jsx';
+  if (normalizedHint === 'html-app') return 'html-app';
+  if (/\.(jsx|tsx)$/i.test(path)) return 'react-jsx';
+  if ((mime ?? '').toLowerCase() === 'text/html' || /\.html?$/i.test(path)) return 'html-app';
+  return 'html-app';
+}
+
+function reactJsxPreviewDocument(source: string, filename: string): string {
+  const sourceJson = JSON.stringify(source);
+  const titleJson = JSON.stringify(filename);
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(filename)}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <pre id="artifact-error" style="display:none; white-space:pre-wrap; padding:16px; color:#991b1b;"></pre>
+  <script>
+    const source = ${sourceJson};
+    const title = ${titleJson};
+    function showError(error) {
+      const el = document.getElementById('artifact-error');
+      el.style.display = 'block';
+      el.textContent = String(error && error.stack ? error.stack : error);
+    }
+    function toRunnableJsx(input) {
+      return input
+        .replace(/^\\s*import\\s+.*?from\\s+['"].*?['"];?\\s*$/gm, '')
+        .replace(/^\\s*import\\s+['"].*?['"];?\\s*$/gm, '')
+        .replace(/export\\s+default\\s+function\\s+([A-Za-z0-9_$]+)/, 'function $1')
+        .replace(/export\\s+default\\s+/, 'const App = ');
+    }
+    try {
+      const cleaned = toRunnableJsx(source);
+      const transformed = Babel.transform(cleaned, { presets: ['react'] }).code;
+      const factory = new Function('React', transformed + '\\n; return typeof App !== "undefined" ? App : (typeof exports !== "undefined" && exports.default) || null;');
+      const App = factory(React);
+      if (!App) throw new Error('No default React component found in ' + title);
+      ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    } catch (error) {
+      showError(error);
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 interface MessageAttachmentFileRow {
@@ -3352,6 +3431,81 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (version.textEncoding != null) reply.header('X-Text-Encoding', version.textEncoding);
     }
     return reply.redirect(plan.url, 302);
+  });
+
+  app.get('/api/sessions/:id/artifacts/preview', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string; at?: string; renderer?: string };
+    const rawPath = q.path;
+    if (typeof rawPath !== 'string' || rawPath.length === 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+    }
+    const access = await sessionArtifactAccess(id, user.id);
+    const channelId = access.channelId;
+    const sharedChannelId = rawPath.trim().replace(/\\/g, '/').match(/^shared\/channels\/([^/]+)\//)?.[1];
+    if (sharedChannelId && sharedChannelId !== channelId && !access.readableChannelIds.includes(sharedChannelId)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
+    const path = canonicalizeRouteArtifactPath(reply, rawPath, {
+      sessionId: id,
+      channelId,
+      readableChannelIds: access.readableChannelIds,
+    });
+    if (!path) return;
+    // === ACL scope enforcement (#4) ===
+    const scope = classifyScope(path);
+    if (!artifactPathInRoots(path, access.readableRoots)) {
+      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+    }
+    const displayPath = displaySessionArtifactPath(path, { sessionId: id, channelId });
+    const at = q.at ?? 'latest';
+    let ref: { seq: number } | { pointer: string };
+    const ledger = new ArtifactLedger(pool);
+    if (at === 'latest') {
+      const res = await ledger.serveResolution(id, path, { readableChannelIds: access.readableChannelIds });
+      if (!res || res.servedSeq == null) {
+        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      }
+      reply.header('X-Artifact-Seq', String(res.servedSeq));
+      reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
+      if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
+      ref = { seq: res.servedSeq };
+    } else {
+      ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
+    }
+    const plan = await sessionRuns.getLedgerServePlan(id, path, ref, {
+      readableChannelIds: access.readableChannelIds,
+    });
+    const version = await ledger.resolveVersion(id, path, ref, {
+      readableChannelIds: access.readableChannelIds,
+    });
+    const bytes = await previewBytes(plan);
+    const renderer = resolveArtifactPreviewRenderer(path, version?.mime ?? null, q.renderer);
+    const filename = basename(path) || 'artifact';
+    reply.header('X-Artifact-Scope', scope);
+    reply.header('X-Artifact-Canonical-Path', path);
+    reply.header('X-Artifact-Display-Path', displayPath);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Content-Disposition', `inline; filename="${sanitizeFilename(filename)}"`);
+    reply.header(
+      'Content-Security-Policy',
+      [
+        "default-src 'none'",
+        "script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://esm.sh",
+        "style-src 'unsafe-inline' https://cdn.tailwindcss.com",
+        'img-src data: blob: https:',
+        'font-src data: https:',
+        'connect-src https:',
+        "frame-ancestors 'self'",
+      ].join('; '),
+    );
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    if (renderer === 'react-jsx') {
+      return reply.send(reactJsxPreviewDocument(bytes.toString('utf8'), filename));
+    }
+    return reply.send(bytes);
   });
 
   // C1 inbound-sync source: the gap-free, egress-pollable change-feed the Centaur

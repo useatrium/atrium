@@ -90,6 +90,48 @@ describe('ArtifactsSurface', () => {
     expect(within(tile).getByText(/too large to capture/i)).toBeTruthy();
   });
 
+  it('opens HTML artifacts in an app preview iframe and leaves raw download available', () => {
+    render(
+      <ArtifactsSurface
+        sessionId="s-1"
+        onClose={() => {}}
+        artifacts={[art({ id: 'app', path: '/home/agent/workspace/apps/demo/index.html', mime: 'text/html' })]}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /preview app/i }));
+    const frame = screen.getByTitle('Artifact preview: index.html') as HTMLIFrameElement;
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-modals');
+    expect(frame.getAttribute('src')).toBe(
+      '/api/sessions/s-1/artifacts/preview?path=%2Fhome%2Fagent%2Fworkspace%2Fapps%2Fdemo%2Findex.html&renderer=html-app',
+    );
+    expect(screen.getByRole('link', { name: 'Download' }).getAttribute('href')).toBe(
+      '/api/sessions/s-1/artifacts/by-path?path=%2Fhome%2Fagent%2Fworkspace%2Fapps%2Fdemo%2Findex.html',
+    );
+  });
+
+  it('uses artifact presentation metadata for app tiles', () => {
+    render(
+      <ArtifactsSurface
+        sessionId="s-1"
+        onClose={() => {}}
+        artifacts={[art({ id: 'app', path: 'shared/apps/demo/index.html', mime: 'text/html' })]}
+        presentations={[
+          {
+            id: 'artifact-presented:shared/apps/demo/index.html',
+            path: 'shared/apps/demo/index.html',
+            title: 'Pipeline Dashboard',
+            renderer: 'html-app',
+            description: 'Live business view',
+            executionId: 'exe_1',
+            sourceEventIds: [9],
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText('Pipeline Dashboard')).toBeTruthy();
+    expect(screen.getByText('Presented app · Live business view')).toBeTruthy();
+  });
+
   it('closes via the header button (standalone)', () => {
     const onClose = vi.fn();
     render(<ArtifactsSurface sessionId="s-1" onClose={onClose} artifacts={[art({})]} />);

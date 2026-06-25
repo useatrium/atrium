@@ -26,6 +26,7 @@ import { withTx } from './db.js';
 import { projectSessionIncremental, releaseSessionProjectionState } from './session-records.js';
 import { projectIncrementalAndEmit } from './session-record-changefeed.js';
 import { ArtifactLedger, type VersionRef } from './artifact-ledger.js';
+import { InvalidArtifactPathError } from './artifact-path.js';
 import { presignGet as s3PresignGet } from './s3.js';
 import {
   appendEvent,
@@ -187,7 +188,12 @@ export interface QuestionAnswerBody {
   };
 }
 
-export type ArtifactServePlan = { kind: 'redirect'; url: string };
+export type ArtifactServePlan = { kind: 'redirect'; url: string; s3Key?: string };
+
+function ledgerServePathCandidates(path: string): string[] {
+  if (path.startsWith('/')) return [path];
+  return [path, `/home/agent/workspace/${path}`];
+}
 
 export interface SessionListItem {
   id: string;
@@ -564,7 +570,20 @@ export class SessionRuns {
     ref: VersionRef,
     options: { readableChannelIds?: readonly string[] } = {},
   ): Promise<ArtifactServePlan> {
-    const v = await this.artifactLedger.resolveVersion(sessionId, path, ref, options);
+    let v: Awaited<ReturnType<ArtifactLedger['resolveVersion']>> = null;
+    let resolvedPath = path;
+    for (const candidate of ledgerServePathCandidates(path)) {
+      try {
+        v = await this.artifactLedger.resolveVersion(sessionId, candidate, ref, options);
+      } catch (err) {
+        if (candidate !== path && err instanceof InvalidArtifactPathError) continue;
+        throw err;
+      }
+      if (v) {
+        resolvedPath = candidate;
+        break;
+      }
+    }
     if (!v) {
       throw new DomainError(404, 'artifact_not_found', 'artifact not found');
     }
@@ -578,10 +597,10 @@ export class SessionRuns {
         'artifact bytes are not durable in CAS',
       );
     }
-    const filename = basename(path) || 'artifact';
+    const filename = basename(resolvedPath) || 'artifact';
     const inline = (v.mime || '').startsWith('image/');
     const url = await this.artifactStorage.presignGet(v.s3Key, filename, inline);
-    return { kind: 'redirect', url };
+    return { kind: 'redirect', url, s3Key: v.s3Key };
   }
 
   /** Replay the durable mirror into a reduced session state (transcript items +
