@@ -10,8 +10,9 @@
 > ([[cas-ledger-build-plan]], [[agent-data-architecture]]). Realizes the
 > "warm the whole lease, not just the pod" call in `atrium-daily-driver-plan.md` §4/§5.
 >
-> **Progress: Phase 0 ✅ landed (#118, 2026-06-25).** Phase 1 (caches + sccache) next;
-> Phase 2 (CAS overlay tier) cluster-gated. See §3 + §11.
+> **Progress: Phase 0 ✅ (#118) + Phase 1 ✅ cut over default-ON (Centaur #27, 2026-06-25).**
+> Dep + compile cache live: node hostPath bind-mount + sccache, sccache e2e 100% warm hit.
+> Phase 2 (content-keyed CAS overlay tier) cluster-gated next. See §3 + §11.
 
 ---
 
@@ -121,7 +122,22 @@ Without this, Atrium sessions target no repo and nothing downstream matters.
 - **Acceptance:** an Atrium-spawned `@agent` with a repo lands in a checked-out working
   tree on the target branch, sourced from the node repo-cache (not a fresh GitHub clone).
 
-### Phase 1 — Medium v1: shared cache mounts + sccache, single-tenant (~days)
+### Phase 1 — Medium v1: shared cache mounts + sccache, single-tenant (~days) — ✅ DONE
+
+> **LANDED + CUT OVER 2026-06-25** (Centaur fork PR #27 = `31505fc`, squash to `fork/main`,
+> CI green incl. kind pod-native e2e; code-reviewer = fix-first → fixed). **Default-ON**,
+> no flag (`sandbox.depCachePath: /var/lib/centaur/depcache`). What shipped:
+> a node hostPath dep-cache **bind-mounted RW into every session + warm sandbox** (not the
+> overlay-lower RO model originally sketched — that's Phase 2; v1 uses a shared RW node dir,
+> safe because pnpm/cargo/uv/sccache are concurrency-safe single-tenant); entrypoint redirects
+> pnpm store / cargo registry+git (symlink) / uv (`UV_CACHE_DIR`) / sccache (`SCCACHE_DIR`,
+> `RUSTC_WRAPPER`); **sccache installed in the image**, backend = `SCCACHE_DIR` node-local
+> (not MinIO — node-local is simpler for v1; MinIO/cross-node is a Phase 2 concern).
+> **e2e:** sccache compile-cache cold 0% → warm 100% hit (fresh `target/`). **Review-caught
+> blocker fixed:** kubelet creates the `DirectoryOrCreate` hostPath `root:root` and fsGroup
+> doesn't apply to hostPath → added an `ensure_writable` Mount flag → a root `chmod` init
+> container makes the mount UID-1001-writable (else default-ON silently no-ops on bare nodes).
+> **Multi-tenant TODO** recorded in values.yaml (shared RW cache = sccache poisoning vector).
 
 The quick win, done overlay-safe (not the naive corruption-prone RWX share).
 
@@ -295,11 +311,17 @@ The five-cost framing and these analogs come from the 2026-06-25 landscape resea
 
 ## 11. Next step
 
-**Phase 0 is landed** (#118). Next is **Phase 1** (shared dep caches + sccache) in the
-Centaur worktree — fan out the lanes: sccache→MinIO wiring, entrypoint RO cache-mounts
-(pnpm/cargo-registry/uv) with writes-to-upper, Helm cache volumes, docs + a
-time-to-productive metric. **Validation caveat:** Phase 1 is only partially e2e-testable
-on the Mac (`docker run` smoke + unit); full cache-hit validation and all of **Phase 2**
-(content-keyed CAS overlay tier) need a real Linux node / kind-on-GHA — nested overlay
-on Docker Desktop doesn't work. Treat cluster e2e as a gated handoff (cf.
-[[harness-resume-build-plan]]).
+**Phase 0 (#118) + Phase 1 (Centaur #27) are landed + cut over.** Next is **Phase 2** —
+the content-keyed CAS warm-cache tier (§3): node_modules/`target/` content-addressed in
+Atrium CAS, keyed by lockfile-hash + tenant, reflinked into the overlay lower; capture-on-
+checkpoint; eviction. This is the multi-tenant-safe + cross-node upgrade of Phase 1's
+single-tenant node-local RW cache.
+
+**Validation caveat (Phase 2):** the overlay `hydrate_lower` + `mountPropagation` can't
+nest on Docker Desktop, so live e2e needs a real Linux node — **kind-on-GHA** (the proven
+C4 path, [[c4-overlay-capture-build]]) or a cloud VM. Phase 1's k8s delivery is covered by
+the kind pod-native CI e2e; the remaining live-pod dep-cache writability check could be
+added there too. Open items carried forward: §10 (sccache hit-rate on hot Rust repos,
+hydration size caps, checkpoint timing, eviction), plus the Phase 1 follow-ups —
+`owner/name` repo input validation (Phase 0 codex Low) and the multi-tenant cache
+namespacing TODO (values.yaml).
