@@ -1,5 +1,5 @@
 import { Component, memo, useMemo, type ReactNode } from 'react';
-import { Linking, Platform, Text, View, type TextStyle, type ViewStyle } from 'react-native';
+import { Linking, Platform, ScrollView, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import MarkdownDisplay, {
   MarkdownIt,
   renderRules,
@@ -199,11 +199,13 @@ function makeRules(colors: Colors): RenderRules {
         }}
       >
         <SyntaxHighlighter
-          highlighter="highlightjs"
+          highlighter="hljs"
           language={normalizeLanguage(sourceNode.sourceInfo)}
           style={syntaxTheme(colors)}
           fontFamily={monoFont}
           fontSize={font.xs}
+          PreTag={ScrollView}
+          CodeTag={ScrollView}
         >
           {trimTrailingNewline(node.content)}
         </SyntaxHighlighter>
