@@ -31,6 +31,7 @@ import { ApiError, type ProviderCredentialProvider, type ProviderCredentialStatu
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
+import { PlanPanel } from './PlanPanel';
 import { Composer } from '../components/Composer';
 import { EntryComments } from '../components/EntryComments';
 import {
@@ -644,6 +645,7 @@ export function SessionPane({
           />
         )}
         <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
+        <PlanPanel todos={stream.todos} plan={stream.plan} />
         {stream.items.length === 0 && (
           <div className="flex h-full items-center justify-center text-xs text-fg-muted">
             {!displayTerminal ? (
