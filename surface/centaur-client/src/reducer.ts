@@ -29,7 +29,7 @@ export interface TextItem {
   sourceEventIds: number[];
 }
 
-export interface ToolCallItemBase {
+export interface ToolCallItem {
   type: "tool_call";
   id: string;
   name: string;
@@ -42,14 +42,15 @@ export interface ToolCallItemBase {
   sourceEventIds: number[];
 }
 
-export interface ReasoningItem extends Omit<ToolCallItemBase, "type"> {
+export interface ReasoningItem {
   type: "reasoning";
+  id: string;
   text: string;
   summary?: string;
   messageId?: string;
+  handle?: string | null;
+  sourceEventIds: number[];
 }
-
-export type ToolCallItem = ToolCallItemBase | ReasoningItem;
 
 export interface QuestionItem {
   type: "question";
@@ -835,8 +836,6 @@ function upsertReasoningItem(
   const created: ReasoningItem = {
     type: "reasoning",
     id,
-    name: "reasoning",
-    input: {},
     text,
     ...(summary !== undefined ? { summary } : {}),
     ...(itemId ? { messageId: itemId } : {}),
