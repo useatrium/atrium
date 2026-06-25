@@ -59,6 +59,11 @@ export async function sweepUnreferencedBlobs(
         AND NOT EXISTS (
           SELECT 1 FROM app_versions av WHERE av.blob_sha = b.sha256
         )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM agent_profile_versions apv
+           WHERE apv.manifest_json->'bundles' @> jsonb_build_array(jsonb_build_object('sha256', b.sha256))
+        )
       ORDER BY b.created_at ASC
       LIMIT $2`,
     [options.graceMs, options.limit],

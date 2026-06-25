@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
@@ -185,6 +185,27 @@ function legacyCentaurProposal() {
   };
 }
 
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function baselinePayload() {
+  return {
+    adapterVersion: 'baseline-test',
+    manifest: {
+      settings: {
+        model: 'gpt-4',
+        approval_policy: 'on-request',
+        removed_setting: true,
+      },
+      mcpServers: {
+        safe: { command: 'mcp-old', env_names: ['SAFE_MCP_TOKEN'] },
+        removed: { command: 'mcp-removed' },
+      },
+    },
+  };
+}
+
 describe('agent profile candidate ingest', () => {
   it('stores a redacted pending proposal outside artifacts', async () => {
     const sid = await session('codex');
@@ -296,6 +317,86 @@ describe('agent profile candidate ingest', () => {
     expect(proposal.proposal.manifest.settings.model).toBe('gpt-5');
     expect(proposal.proposal.manifest.mcpServers.search.env_names).toEqual(['SEARCH_TOKEN']);
     expect(proposal.riskSummary.blockedSecrets).toBe(1);
+  });
+
+  it('computes proposal diffs against the session baseline', async () => {
+    const sid = await session('codex');
+    const baseline = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-baseline?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: baselinePayload(),
+    });
+    expect(baseline.statusCode).toBe(200);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-candidates?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: {
+        provider: 'codex',
+        adapterVersion: 'diff-test',
+        manifest: {
+          settings: {
+            model: 'gpt-5',
+            approval_policy: 'on-request',
+            new_setting: 42,
+          },
+          mcpServers: {
+            safe: { command: 'mcp-new', env_names: ['SAFE_MCP_TOKEN'] },
+          },
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().proposal.diff).toEqual({
+      added: ['settings.new_setting'],
+      changed: ['mcpServers.safe.command', 'settings.model'],
+      removed: ['mcpServers.removed.command', 'settings.removed_setting'],
+    });
+    expect(res.json().proposal.proposal.diff).toEqual(res.json().proposal.diff);
+  });
+
+  it('marks every current profile key added when there is no baseline', async () => {
+    const sid = await session('codex');
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-candidates?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: {
+        provider: 'codex',
+        adapterVersion: 'diff-test',
+        manifest: {
+          settings: { model: 'gpt-5' },
+          mcpServers: { safe: { command: 'mcp-safe' } },
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().proposal.diff).toEqual({
+      added: ['mcpServers.safe.command', 'settings.model'],
+      changed: [],
+      removed: [],
+    });
+  });
+
+  it('rejects denied paths in profile baselines', async () => {
+    const sid = await session('codex');
+    const denied = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-baseline?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: {
+        adapterVersion: 'baseline-test',
+        manifest: {
+          bundles: [{ path: '.codex/auth.json', role: 'config', sha256: SHA, sizeBytes: 10 }],
+        },
+      },
+    });
+
+    expect(denied.statusCode).toBe(400);
   });
 
   it('stores profile candidates when addressed by centaur_thread_key', async () => {
@@ -511,6 +612,78 @@ describe('agent profile candidate ingest', () => {
 });
 
 describe('harness-state bundle and credential refresh prerequisites', () => {
+  it('round-trips profile bundle blobs through CAS', async () => {
+    const sid = await session('codex');
+    const bytes = Buffer.from('profile bundle bytes\n');
+    const bundleSha = sha256(bytes);
+    const stored = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-bundle-blob?sha256=${bundleSha}&path=${encodeURIComponent('skills/review/SKILL.md')}`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/octet-stream' },
+      payload: bytes,
+    });
+    expect(stored.statusCode).toBe(200);
+    expect(stored.json()).toEqual({ sha256: bundleSha, size_bytes: bytes.length });
+
+    const loaded = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/profile-bundle-blob?sha256=${bundleSha}`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(loaded.statusCode).toBe(200);
+    expect(Buffer.from(loaded.rawPayload)).toEqual(bytes);
+  });
+
+  it('rejects profile bundle blob sha mismatches and denied paths', async () => {
+    const sid = await session('codex');
+    const bytes = Buffer.from('profile bundle bytes\n');
+    const mismatch = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-bundle-blob?sha256=${'0'.repeat(64)}&path=${encodeURIComponent('skills/review/SKILL.md')}`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/octet-stream' },
+      payload: bytes,
+    });
+    expect(mismatch.statusCode).toBe(400);
+
+    const deniedSha = sha256(bytes);
+    const denied = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-bundle-blob?sha256=${deniedSha}&path=${encodeURIComponent('.codex/auth.json')}`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/octet-stream' },
+      payload: bytes,
+    });
+    expect(denied.statusCode).toBe(400);
+  });
+
+  it("returns the bound profile version's functional bundles", async () => {
+    const sid = await session('codex');
+    const cookie = await loginCookie();
+    const ingest = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/profile-candidates?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: codexProposal(),
+    });
+    expect(ingest.statusCode).toBe(200);
+    const save = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sid}/profile-change-proposals/${ingest.json().proposal.id}/save-new-profile`,
+      headers: { cookie },
+      payload: { name: 'Team Codex' },
+    });
+    expect(save.statusCode).toBe(200);
+
+    const bundles = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/profile-bundles?harness=codex`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(bundles.statusCode).toBe(200);
+    expect(bundles.json()).toEqual({
+      bundles: [{ path: 'skills/review/SKILL.md', sha256: SHA, role: 'skill', executable: false }],
+    });
+  });
+
   it('stores safe harness-state bundle metadata and rejects credential-shaped paths', async () => {
     const sid = await session('codex');
     const safe = await app.inject({

@@ -45,6 +45,12 @@ export interface AgentProfileRiskSummary {
   warnings: string[];
 }
 
+export interface AgentProfileDiff {
+  added: string[];
+  changed: string[];
+  removed: string[];
+}
+
 export interface AgentProfileProposalPayload {
   provider: AgentProfileProvider;
   adapterVersion: string;
@@ -52,6 +58,7 @@ export interface AgentProfileProposalPayload {
   manifest: AgentProfileManifest;
   riskSummary: AgentProfileRiskSummary;
   baselineHash?: string | null;
+  diff?: AgentProfileDiff;
 }
 
 export type AgentProfileProposalStatus =
@@ -67,6 +74,7 @@ export interface AgentProfileProposal {
   baseProfileVersionId: string | null;
   adapterVersion: string;
   proposal: AgentProfileProposalPayload;
+  diff?: AgentProfileDiff;
   riskSummary: AgentProfileRiskSummary;
   status: AgentProfileProposalStatus;
   source: 'session' | 'local_import';

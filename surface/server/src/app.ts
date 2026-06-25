@@ -111,6 +111,13 @@ import {
   ProviderCredentials,
 } from './provider-credentials.js';
 import { AgentProfiles, providerFromProfileValue } from './agent-profiles.js';
+import {
+  listSessionProfileBundles,
+  loadProfileBundleBlob,
+  MAX_PROFILE_BUNDLE_BLOB_BYTES,
+  normalizeBundleSha,
+  storeProfileBundleBlob,
+} from './profile-bundles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, classifyMediaFromMime, type MediaClassification } from './media-classifier.js';
 import { AppRegistry, type AppScope } from './app-registry.js';
@@ -4195,6 +4202,70 @@ function rawSession(req: FastifyRequest): string | undefined {
     const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
     const proposal = await agentProfiles.ingestSessionProposal(session.id, provider, req.body ?? {});
     return reply.send({ proposal });
+  });
+
+  app.put('/api/internal/sessions/:id/profile-baseline', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+    const { baselineHash } = await agentProfiles.putSessionBaseline(session.id, provider, req.body ?? {});
+    return reply.send({ baselineHash });
+  });
+
+  // === A2 bundle-CAS additions ===
+  app.get('/api/internal/sessions/:id/profile-bundles', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+    const bundles = await listSessionProfileBundles(pool, session.id, provider);
+    return reply.send({ bundles });
+  });
+
+  app.get('/api/internal/sessions/:id/profile-bundle-blob', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const sha256 = normalizeBundleSha((req.query as { sha256?: string }).sha256);
+    const bytes = await loadProfileBundleBlob(pool, { getObjectBytes }, sha256);
+    if (!bytes) return reply.code(404).send({ error: 'not_found', message: 'profile bundle blob not found' });
+    reply.header('Content-Type', 'application/octet-stream');
+    reply.header('X-Profile-Bundle-Sha256', sha256);
+    return reply.send(bytes);
+  });
+
+  await app.register(async (profileBundleBlob) => {
+    profileBundleBlob.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: MAX_PROFILE_BUNDLE_BLOB_BYTES },
+      (_req, body, done) => done(null, body),
+    );
+    profileBundleBlob.put('/api/internal/sessions/:id/profile-bundle-blob', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const { id } = req.params as { id: string };
+      const session = await resolveInternalSessionRef(id);
+      if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const q = req.query as { sha256?: string; path?: string };
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const result = await storeProfileBundleBlob(
+        pool,
+        { uploadObject, headObject },
+        { sha256: q.sha256 ?? '', path: q.path ?? '', bytes },
+      );
+      return reply.send(result);
+    });
   });
 
   app.put('/api/internal/sessions/:id/provider-credential-refresh', async (req, reply) => {
