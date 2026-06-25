@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import {
   ApiError,
   api,
+  type AgentProfile,
   type Channel,
   type ProviderCredentialProvider,
   type ProviderCredentialStatus,
@@ -743,6 +744,7 @@ export function Chat({
   const [providerCredentials, setProviderCredentials] = useState<
     Record<string, ProviderCredentialStatus | undefined>
   >({});
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [providerDialog, setProviderDialog] = useState<ProviderCredentialProvider | null>(null);
 
   const loadProviderCredentials = useCallback(async () => {
@@ -757,6 +759,14 @@ export function Chat({
   useEffect(() => {
     void loadProviderCredentials();
   }, [loadProviderCredentials]);
+
+  useEffect(() => {
+    api.agentProfiles()
+      .then(({ profiles }) => setAgentProfiles(profiles))
+      .catch((err: unknown) => {
+        console.warn('failed to load agent profiles', err);
+      });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -1264,7 +1274,13 @@ export function Chat({
     channelId: string,
     task: string,
     threadRootEventId?: number,
-    opts?: { harness?: string; repo?: string; branch?: string },
+    opts?: {
+      harness?: string;
+      repo?: string;
+      branch?: string;
+      agentProfileId?: string;
+      agentProfileVersionId?: string;
+    },
   ) => {
     const harness = opts?.harness?.trim() || 'codex';
     const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
@@ -1276,6 +1292,8 @@ export function Chat({
       harness,
       ...(opts?.repo?.trim() ? { repo: opts.repo.trim() } : {}),
       ...(opts?.branch?.trim() ? { branch: opts.branch.trim() } : {}),
+      ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
+      ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
       createdAt: new Date().toISOString(),
     };
     const pending = pendingSpawnFromPayload(payload);
@@ -1310,6 +1328,8 @@ export function Chat({
       harness: config.harness,
       ...(config.repo ? { repo: config.repo } : {}),
       ...(config.branch ? { branch: config.branch } : {}),
+      ...(config.agentProfileId ? { agentProfileId: config.agentProfileId } : {}),
+      ...(config.agentProfileVersionId ? { agentProfileVersionId: config.agentProfileVersionId } : {}),
     });
   };
 
@@ -2251,6 +2271,7 @@ export function Chat({
           onCancel={() => setSpawnOpen(false)}
           onSpawn={startConfiguredSession}
           providerStatuses={providerCredentials}
+          profiles={agentProfiles}
           onConnectProvider={setProviderDialog}
         />
       )}

@@ -49,6 +49,7 @@ export default defineConfig({
         PORT: String(serverPort),
         LOG_LEVEL: process.env.LOG_LEVEL ?? 'error',
         ATRIUM_RATE_LIMIT: '0',
+        ARTIFACT_CAPTURE_API_KEY: 'e2e-capture-key',
       },
     },
     {

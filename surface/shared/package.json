@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./handle": "./src/handle.ts",
-    "./prefs": "./src/prefs.ts"
+    "./prefs": "./src/prefs.ts",
+    "./agentProfiles": "./src/agentProfiles.ts"
   },
   "scripts": {
     "test": "vitest run",

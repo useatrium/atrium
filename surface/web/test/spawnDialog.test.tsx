@@ -16,6 +16,16 @@ const connectedCodex = {
   updatedAt: new Date().toISOString(),
 };
 
+const codexProfile = {
+  id: 'profile-1',
+  provider: 'codex' as const,
+  name: 'Careful Codex',
+  currentVersionId: 'version-1',
+  currentVersion: null,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
+
 describe('SpawnDialog', () => {
   it('disables submit until a task is entered', () => {
     render(
@@ -76,6 +86,30 @@ describe('SpawnDialog', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
     expect(onSpawn).toHaveBeenCalledWith({ task: 'do a thing', harness: 'codex' });
+  });
+
+  it('emits selected profile ids', () => {
+    const onSpawn = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+        profiles={[codexProfile]}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'use my profile' },
+    });
+    fireEvent.change(screen.getAllByRole('combobox')[1]!, { target: { value: 'profile-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+    expect(onSpawn).toHaveBeenCalledWith({
+      task: 'use my profile',
+      harness: 'codex',
+      agentProfileId: 'profile-1',
+      agentProfileVersionId: 'version-1',
+    });
   });
 
   it('cancels via the Cancel button', () => {

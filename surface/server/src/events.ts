@@ -1261,7 +1261,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
 
 /** True when the user may read/post in the channel (public, or member-only kinds). */
 export async function canAccessChannel(
-  pool: Db,
+  pool: Pick<Db | DbClient, 'query'>,
   userId: string,
   channelId: string,
 ): Promise<boolean> {

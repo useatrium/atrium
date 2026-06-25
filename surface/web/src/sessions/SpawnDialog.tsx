@@ -4,7 +4,7 @@
 // Phase 4 work surfaces + side-effect gate (Centaur doesn't consume it yet).
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
+import type { AgentProfile, ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
 import { XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
@@ -17,6 +17,8 @@ export interface SpawnConfig {
   harness: string;
   repo?: string;
   branch?: string;
+  agentProfileId?: string;
+  agentProfileVersionId?: string;
 }
 
 export function SpawnDialog({
@@ -24,24 +26,31 @@ export function SpawnDialog({
   onCancel,
   onSpawn,
   providerStatuses,
+  profiles = [],
   onConnectProvider,
 }: {
   channelName: string;
   onCancel: () => void;
   onSpawn: (config: SpawnConfig) => void;
   providerStatuses?: Record<string, ProviderCredentialStatus | undefined>;
+  profiles?: AgentProfile[];
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
 }) {
   const [task, setTask] = useState('');
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');
+  const [agentProfileId, setAgentProfileId] = useState('');
 
   const claudeStatus = providerStatuses?.['claude-code'];
   const codexStatus = providerStatuses?.codex;
   const claudeUsesDefaultAuth = harness === 'claude-code' && claudeStatus?.connected !== true;
   const codexUsesDefaultAuth = harness === 'codex' && codexStatus?.connected !== true;
   const canSpawn = task.trim().length > 0;
+  const providerProfiles = profiles.filter(
+    (profile) => profile.provider === harness && profile.currentVersionId,
+  );
+  const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -51,6 +60,8 @@ export function SpawnDialog({
       harness,
       ...(repo.trim() ? { repo: repo.trim() } : {}),
       ...(branch.trim() ? { branch: branch.trim() } : {}),
+      ...(selectedProfile ? { agentProfileId: selectedProfile.id } : {}),
+      ...(selectedProfile?.currentVersionId ? { agentProfileVersionId: selectedProfile.currentVersionId } : {}),
     });
   }
 
@@ -175,6 +186,26 @@ export function SpawnDialog({
               />
             </label>
           </div>
+
+          {providerProfiles.length > 0 && (
+            <label className="block">
+              <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+                Profile <span className="font-normal normal-case text-fg-muted">· optional</span>
+              </span>
+              <select
+                value={agentProfileId}
+                onChange={(e) => setAgentProfileId(e.target.value)}
+                className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg outline-none focus:border-edge-strong"
+              >
+                <option value="">Default</option>
+                {providerProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         <footer className="flex items-center justify-end gap-2 border-t border-edge px-4 py-3">

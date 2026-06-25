@@ -48,6 +48,7 @@ import {
   type ProviderCredentialProvider,
   type ProviderAuthRequiredJson,
 } from './provider-credentials.js';
+import { AgentProfiles } from './agent-profiles.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -69,6 +70,7 @@ export interface SessionJson {
   answerProposals: SessionAnswerProposalJson[];
   pendingQuestion: SessionPendingQuestionJson | null;
   providerAuthRequired: ProviderAuthRequiredJson | null;
+  agentProfileVersionId: string | null;
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
@@ -218,6 +220,7 @@ export interface SessionRunsOptions {
   questionRenotifyMinutes?: number;
   questionPushFetchImpl?: typeof fetch;
   providerCredentials?: ProviderCredentials;
+  agentProfiles?: AgentProfiles;
 }
 
 export interface SessionCreateResult {
@@ -252,6 +255,7 @@ interface SessionRow {
   pending_question: unknown | null;
   provider_credential_user_id: string | null;
   provider_auth_required: unknown | null;
+  agent_profile_version_id: string | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -329,6 +333,7 @@ export class SessionRuns {
   private readonly questionRenotifyMinutes: number;
   private readonly questionPushFetchImpl?: typeof fetch;
   private readonly providerCredentials: ProviderCredentials;
+  private readonly agentProfiles: AgentProfiles;
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly questionRenotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -353,6 +358,7 @@ export class SessionRuns {
     this.questionPushFetchImpl = options.questionPushFetchImpl;
     this.providerCredentials =
       options.providerCredentials ?? new ProviderCredentials(this.pool, config.providerCredentialSecret);
+    this.agentProfiles = options.agentProfiles ?? new AgentProfiles(this.pool);
   }
 
   async createSession(args: {
@@ -362,6 +368,8 @@ export class SessionRuns {
     harness?: string;
     repo?: string | null;
     branch?: string | null;
+    agentProfileId?: string | null;
+    agentProfileVersionId?: string | null;
     /** Client's optimistic id, echoed on session.spawned so a spawn whose
      * POST response was lost still reconciles instead of duplicating. */
     clientSpawnId?: string;
@@ -381,6 +389,8 @@ export class SessionRuns {
       harness?: string;
       repo?: string | null;
       branch?: string | null;
+      agentProfileId?: string | null;
+      agentProfileVersionId?: string | null;
       clientSpawnId?: string;
       user: UserRef;
     },
@@ -396,6 +406,12 @@ export class SessionRuns {
     const repo = normalizeGitMeta(args.repo);
     const branch = normalizeGitMeta(args.branch);
     const provider = providerForHarness(harness);
+    const selectedProfileVersion = await this.agentProfiles.resolveVersionForSpawn(client, {
+      userId: args.user.id,
+      provider,
+      profileId: args.agentProfileId,
+      profileVersionId: args.agentProfileVersionId,
+    });
     const providerCredentialUserId = provider ? args.user.id : null;
     const channel = await getChannel(client, args.channelId);
     if (!channel) {
@@ -410,10 +426,11 @@ export class SessionRuns {
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch,
-         title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id
+         title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id,
+         agent_profile_version_id
        )
        -- driver_id starts as the spawner ($9 used for both spawned_by + driver_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10, $11)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10, $11, $12)
        ${conflictClause}
        RETURNING *`,
       [
@@ -428,6 +445,7 @@ export class SessionRuns {
         args.user.id,
         args.clientSpawnId ?? null,
         providerCredentialUserId,
+        selectedProfileVersion?.id ?? null,
       ],
     );
     let row = inserted.rows[0];
@@ -449,6 +467,7 @@ export class SessionRuns {
         by: args.user.id,
         ...(row.repo ? { repo: row.repo } : {}),
         ...(row.branch ? { branch: row.branch } : {}),
+        ...(row.agent_profile_version_id ? { agent_profile_version_id: row.agent_profile_version_id } : {}),
         ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
       },
     });
@@ -459,6 +478,7 @@ export class SessionRuns {
       );
       row = updated.rows[0]!;
     }
+    await this.agentProfiles.bindSessionProfileSnapshot(client, row.id, selectedProfileVersion);
     return { session: toJson(row), created: true, event, row };
   }
 
@@ -978,13 +998,15 @@ export class SessionRuns {
   ): Promise<Record<string, string> | undefined> {
     const provider = providerForHarness(row.harness);
     if (!provider) return undefined;
+    const profileEnvironment = await this.agentProfiles.environmentForSession(row.id, provider);
     const ownerId = row.provider_credential_user_id;
-    if (!ownerId) return undefined;
+    if (!ownerId) return profileEnvironment;
     const secret = await this.providerCredentials.getProviderSecret(ownerId, provider);
-    if (!secret) return undefined;
-    return provider === CLAUDE_CODE_PROVIDER
+    if (!secret) return profileEnvironment;
+    const credentialEnvironment = provider === CLAUDE_CODE_PROVIDER
       ? claudeExecutionEnvironment(secret)
       : codexExecutionEnvironment(secret);
+    return { ...(profileEnvironment ?? {}), ...credentialEnvironment };
   }
 
   async clearStalePendingQuestion(id: string, questionId: string): Promise<void> {
@@ -2428,6 +2450,7 @@ function toJson(
     answerProposals: seatInfo.answerProposals ?? [],
     pendingQuestion: parsePendingQuestion(row.pending_question),
     providerAuthRequired: parseProviderAuthRequired(row.provider_auth_required),
+    agentProfileVersionId: row.agent_profile_version_id,
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,

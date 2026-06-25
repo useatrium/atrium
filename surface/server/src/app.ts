@@ -65,7 +65,13 @@ import {
   uploadObject,
   uploadObjectStream,
 } from './s3.js';
-import { isHarness, loadHarnessTranscript, storeHarnessTranscript } from './harness-transcript.js';
+import {
+  isHarness,
+  loadHarnessStateBundle,
+  loadHarnessTranscript,
+  storeHarnessStateBundle,
+  storeHarnessTranscript,
+} from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { searchSessionRecords } from './session-search.js';
 import { resolveEntry, tryDecodeHandle } from './entries.js';
@@ -96,7 +102,12 @@ import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
 import { CentaurClient } from '@atrium/centaur-client';
-import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_PROVIDER,
+  ProviderCredentials,
+} from './provider-credentials.js';
+import { AgentProfiles, providerFromProfileValue } from './agent-profiles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 
 declare module 'fastify' {
@@ -293,6 +304,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
   const emailFetch = deps.emailFetch;
   const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
+  const agentProfiles = new AgentProfiles(pool);
   const sessionRunOptions = deps.sessionRuns ?? {};
   const centaur =
     sessionRunOptions.centaur ??
@@ -304,6 +316,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     ...sessionRunOptions,
     centaur: new DemoCentaurClient(centaur),
     providerCredentials,
+    agentProfiles,
   });
   const calls =
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
@@ -1126,6 +1139,49 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     await providerCredentials.deleteCodexAuthJson(user.id);
     return { ok: true };
+  });
+
+  app.get('/api/me/agent-profiles', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return { profiles: await agentProfiles.listProfiles(user.id) };
+  });
+
+  app.post('/api/me/agent-profiles', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { provider?: unknown; name?: unknown };
+    const provider = providerFromProfileValue(body.provider);
+    if (!provider) {
+      return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });
+    }
+    const name = typeof body.name === 'string' ? body.name : '';
+    return { profile: await agentProfiles.createProfile(user.id, provider, name) };
+  });
+
+  app.get('/api/me/agent-profiles/:id', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { profile: await agentProfiles.getProfile(user.id, id) };
+  });
+
+  app.post('/api/me/agent-profiles/:id/versions', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { version: await agentProfiles.createVersion(user.id, id, req.body ?? {}) };
+  });
+
+  app.post('/api/me/agent-profiles/import-local', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { provider?: unknown; proposal?: unknown };
+    const provider = providerFromProfileValue(body.provider);
+    if (!provider) {
+      return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });
+    }
+    return { proposal: await agentProfiles.createImportProposal(user.id, provider, body.proposal ?? req.body) };
   });
 
   app.post('/auth/logout', async (req, reply) => {
@@ -2557,6 +2613,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       harness?: string;
       repo?: string;
       branch?: string;
+      agentProfileId?: string;
+      agentProfileVersionId?: string;
       opId?: unknown;
     };
     const opId = optionalOpId(body);
@@ -2584,6 +2642,14 @@ function rawSession(req: FastifyRequest): string | undefined {
     const bodySpawnId = (body as { clientSpawnId?: unknown }).clientSpawnId;
     const clientSpawnId =
       typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined;
+    const agentProfileId =
+      typeof body.agentProfileId === 'string' && body.agentProfileId.trim()
+        ? body.agentProfileId.trim()
+        : undefined;
+    const agentProfileVersionId =
+      typeof body.agentProfileVersionId === 'string' && body.agentProfileVersionId.trim()
+        ? body.agentProfileVersionId.trim()
+        : undefined;
     let createdSession: Awaited<ReturnType<typeof sessionRuns.createSessionInTx>> | null = null;
     const result = await runMutation({
       userId: user.id,
@@ -2596,6 +2662,8 @@ function rawSession(req: FastifyRequest): string | undefined {
         harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
         repo,
         branch,
+        agentProfileId,
+        agentProfileVersionId,
         clientSpawnId,
       },
       fn: async (client) => {
@@ -2607,6 +2675,8 @@ function rawSession(req: FastifyRequest): string | undefined {
             typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
           repo,
           branch,
+          agentProfileId,
+          agentProfileVersionId,
           clientSpawnId,
           user,
         });
@@ -2645,6 +2715,47 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     return { session: await sessionRuns.getSessionForUser(id, user.id) };
+  });
+
+  app.get('/api/sessions/:id/profile-change-proposals', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { proposals: await agentProfiles.listSessionProposals(id, user.id) };
+  });
+
+  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/discard', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    return { proposal: await agentProfiles.discardProposal(user.id, id, proposalId) };
+  });
+
+  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/apply-lineage', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    return { proposal: await agentProfiles.applyProposalToLineage(user.id, id, proposalId) };
+  });
+
+  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/save-current-profile', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    const body = (req.body ?? {}) as { profileId?: unknown; name?: unknown };
+    return await agentProfiles.saveProposalToCurrentProfile(user.id, id, proposalId, {
+      ...(typeof body.profileId === 'string' ? { profileId: body.profileId } : {}),
+      ...(typeof body.name === 'string' ? { name: body.name } : {}),
+    });
+  });
+
+  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/save-new-profile', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    const body = (req.body ?? {}) as { name?: unknown };
+    const name = typeof body.name === 'string' ? body.name : '';
+    return await agentProfiles.saveProposalToNewProfile(user.id, id, proposalId, name);
   });
 
   // The durable session record (transcript + human-side overlay) for agents +
@@ -3762,6 +3873,97 @@ function rawSession(req: FastifyRequest): string | undefined {
       const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, id, harness, bytes);
       return reply.send({ size_bytes: size, sha256 });
     });
+  });
+
+  app.get('/api/internal/sessions/:id/harness-state-bundle', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const bundle = await loadHarnessStateBundle(pool, id, harness);
+    if (!bundle) return reply.code(404).send({ error: 'not_found', message: 'no harness-state bundle captured' });
+    return reply.send(bundle);
+  });
+
+  app.put('/api/internal/sessions/:id/harness-state-bundle', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const sess = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1`, [id]);
+    if (!sess.rows[0]) return reply.code(404).send({ error: 'session_not_found' });
+    try {
+      const { size, sha256 } = await storeHarnessStateBundle(
+        pool,
+        { uploadObject },
+        id,
+        harness,
+        (req.body ?? {}) as { adapterVersion?: string; manifest?: unknown },
+      );
+      return reply.send({ size_bytes: size, sha256 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'invalid harness-state bundle';
+      return reply.code(400).send({ error: 'bad_request', message });
+    }
+  });
+
+  app.put('/api/internal/sessions/:id/profile-candidates', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+    const proposal = await agentProfiles.ingestSessionProposal(id, provider, req.body ?? {});
+    return reply.send({ proposal });
+  });
+
+  app.put('/api/internal/sessions/:id/provider-credential-refresh', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const session = await pool.query<{ spawned_by: string }>(
+      'SELECT spawned_by FROM sessions WHERE id = $1',
+      [id],
+    );
+    const ownerId = session.rows[0]?.spawned_by;
+    if (!ownerId) return reply.code(404).send({ error: 'session_not_found' });
+
+    const body = (req.body ?? {}) as { token?: unknown; authJson?: unknown };
+    try {
+      if (harness === 'codex') {
+        const authJson =
+          typeof body.authJson === 'string'
+            ? body.authJson
+            : body.authJson && typeof body.authJson === 'object'
+              ? JSON.stringify(body.authJson)
+              : '';
+        if (!authJson.trim()) {
+          return reply.code(400).send({ error: 'bad_request', message: 'Codex authJson required' });
+        }
+        const provider = await providerCredentials.upsertCodexAuthJson(ownerId, authJson);
+        return reply.send({ provider });
+      }
+      const token = typeof body.token === 'string' ? body.token.trim() : '';
+      if (!token) {
+        return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
+      }
+      const provider = await providerCredentials.upsertClaudeToken(ownerId, token);
+      return reply.send({ provider });
+    } catch (err) {
+      const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+      const message = err instanceof Error ? err.message : 'invalid refreshed credential';
+      await providerCredentials.markProviderAuthRequired(provider, ownerId, message);
+      return reply.code(400).send({ error: 'bad_request', message });
+    }
   });
 
   // === H10 commit-group additions ===

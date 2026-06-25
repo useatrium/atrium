@@ -745,6 +745,58 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('POST /api/sessions binds a selected agent profile and injects its overlay', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie } = await loginUser(app, 'alice-profile-spawn', 'Alice Profile Spawn');
+
+    const profileRes = await app.inject({
+      method: 'POST',
+      url: '/api/me/agent-profiles',
+      headers: { cookie },
+      payload: { provider: 'codex', name: 'Codex Saved' },
+    });
+    expect(profileRes.statusCode).toBe(200);
+    const profileId = profileRes.json().profile.id as string;
+    const versionRes = await app.inject({
+      method: 'POST',
+      url: `/api/me/agent-profiles/${profileId}/versions`,
+      headers: { cookie },
+      payload: {
+        provider: 'codex',
+        adapterVersion: 'test',
+        manifest: { settings: { model: 'gpt-5', model_reasoning_effort: 'high' } },
+      },
+    });
+    expect(versionRes.statusCode).toBe(200);
+    const versionId = versionRes.json().version.id as string;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'codex',
+        agentProfileId: profileId,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().session.agentProfileVersionId).toBe(versionId);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    const execute = fake.requests.find((r) => r.path === '/agent/execute');
+    expect(execute?.body.environment.CODEX_CONFIG_OVERLAY).toContain('model = "gpt-5"');
+    expect(execute?.body.environment.CODEX_CONFIG_OVERLAY).toContain('model_reasoning_effort = "high"');
+    await app.close();
+  });
+
   it('rejects Codex auth JSON that contains an API key', async () => {
     const app = await buildApp({
       pool,

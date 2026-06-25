@@ -7,6 +7,13 @@ import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
+import type {
+  AgentProfile,
+  AgentProfileProposal,
+  AgentProfileProposalPayload,
+  AgentProfileProvider,
+  AgentProfileVersion,
+} from './agentProfiles';
 
 export interface Workspace {
   id: string;
@@ -139,6 +146,58 @@ export function createApi(opts: ApiOptions = {}) {
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
     providerCredentials: () =>
       req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
+    agentProfiles: () =>
+      req<{ profiles: AgentProfile[] }>('/api/me/agent-profiles'),
+    createAgentProfile: (body: { provider: AgentProfileProvider; name: string }) =>
+      req<{ profile: AgentProfile }>('/api/me/agent-profiles', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    createAgentProfileVersion: (profileId: string, proposal: AgentProfileProposalPayload) =>
+      req<{ version: AgentProfileVersion }>(`/api/me/agent-profiles/${profileId}/versions`, {
+        method: 'POST',
+        body: JSON.stringify(proposal),
+      }),
+    importLocalAgentProfile: (body: {
+      provider: AgentProfileProvider;
+      proposal: AgentProfileProposalPayload;
+    }) =>
+      req<{ proposal: AgentProfileProposal }>('/api/me/agent-profiles/import-local', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    sessionProfileProposals: (sessionId: string) =>
+      req<{ proposals: AgentProfileProposal[] }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals`,
+      ),
+    discardSessionProfileProposal: (sessionId: string, proposalId: string) =>
+      req<{ proposal: AgentProfileProposal }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/discard`,
+        { method: 'POST', body: '{}' },
+      ),
+    applySessionProfileProposalToLineage: (sessionId: string, proposalId: string) =>
+      req<{ proposal: AgentProfileProposal }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/apply-lineage`,
+        { method: 'POST', body: '{}' },
+      ),
+    saveSessionProfileProposalToCurrent: (
+      sessionId: string,
+      proposalId: string,
+      body: { profileId?: string; name?: string } = {},
+    ) =>
+      req<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-current-profile`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    saveSessionProfileProposalAsNew: (
+      sessionId: string,
+      proposalId: string,
+      body: { name: string },
+    ) =>
+      req<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-new-profile`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
     connectClaudeCode: (token: string) =>
       req<{ provider: ProviderCredentialStatus }>('/api/me/provider-credentials/claude-code', {
         method: 'PUT',
@@ -249,6 +308,8 @@ export function createApi(opts: ApiOptions = {}) {
       /** Spawn-dialog git metadata (optional). */
       repo?: string;
       branch?: string;
+      agentProfileId?: string;
+      agentProfileVersionId?: string;
       threadRootEventId?: number;
       /** Optimistic id echoed on session.spawned for lost-response reconcile. */
       clientSpawnId?: string;

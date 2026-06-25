@@ -10,6 +10,10 @@ export type {
   AuthMethods,
   Workspace,
   Channel,
+  AgentProfile,
+  AgentProfileProposal,
+  AgentProfileProvider,
+  AgentProfileVersion,
   ProviderCredentialProvider,
   ProviderCredentialStatus,
 } from '@atrium/surface-client';

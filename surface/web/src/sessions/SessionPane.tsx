@@ -27,7 +27,13 @@ import {
   type ToolCallItem,
   type UserMessageItem,
 } from '@atrium/centaur-client';
-import { ApiError, type ProviderCredentialProvider, type ProviderCredentialStatus } from '../api';
+import {
+  ApiError,
+  api,
+  type AgentProfileProposal,
+  type ProviderCredentialProvider,
+  type ProviderCredentialStatus,
+} from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
@@ -310,6 +316,62 @@ export function SessionPane({
     [session.answerProposals, pendingQuestion],
   );
 
+  const [profileProposals, setProfileProposals] = useState<AgentProfileProposal[]>([]);
+  const [profileActionBusy, setProfileActionBusy] = useState<string | null>(null);
+  const [profileActionError, setProfileActionError] = useState<string | null>(null);
+  const profileProposalsEnabled = import.meta.env.MODE !== 'test';
+  const loadProfileProposals = async () => {
+    if (!profileProposalsEnabled) return;
+    const { proposals } = await api.sessionProfileProposals(session.id);
+    setProfileProposals(proposals);
+  };
+  useEffect(() => {
+    if (!profileProposalsEnabled) return;
+    let disposed = false;
+    api.sessionProfileProposals(session.id)
+      .then(({ proposals }) => {
+        if (!disposed) setProfileProposals(proposals);
+      })
+      .catch(() => {
+        if (!disposed) setProfileProposals([]);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [session.id, profileProposalsEnabled]);
+  const pendingProfileProposals = useMemo(
+    () => profileProposals.filter((proposal) => proposal.status === 'pending'),
+    [profileProposals],
+  );
+  const runProfileAction = async (
+    proposal: AgentProfileProposal,
+    action: 'discard' | 'lineage' | 'save-current' | 'save-new',
+  ) => {
+    const key = `${proposal.id}:${action}`;
+    setProfileActionBusy(key);
+    setProfileActionError(null);
+    try {
+      if (action === 'discard') {
+        await api.discardSessionProfileProposal(session.id, proposal.id);
+      } else if (action === 'lineage') {
+        await api.applySessionProfileProposalToLineage(session.id, proposal.id);
+      } else if (action === 'save-current') {
+        await api.saveSessionProfileProposalToCurrent(session.id, proposal.id, {
+          name: `${profileProviderLabel(proposal.provider)} profile`,
+        });
+      } else {
+        await api.saveSessionProfileProposalAsNew(session.id, proposal.id, {
+          name: `${profileProviderLabel(proposal.provider)} profile`,
+        });
+      }
+      await loadProfileProposals();
+    } catch (err) {
+      setProfileActionError((err as Error).message || 'Could not update profile proposal');
+    } finally {
+      setProfileActionBusy(null);
+    }
+  };
+
   // Cancel is destructive and possibly shared — two-step inline confirm.
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
   const displayCancelAsk = failedCancel ? 'failed' : cancelAsk;
@@ -537,6 +599,15 @@ export function SessionPane({
           ownerName={providerAuthOwnerName}
           connected={providerCredentials?.[session.providerAuthRequired.provider]?.connected === true}
           onConnect={() => onConnectProvider?.(session.providerAuthRequired!.provider)}
+        />
+      )}
+
+      {pendingProfileProposals.length > 0 && (
+        <ProfileChangesBanner
+          proposals={pendingProfileProposals}
+          busyKey={profileActionBusy}
+          error={profileActionError}
+          onAction={runProfileAction}
         />
       )}
 
@@ -999,6 +1070,113 @@ function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
       <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
     </svg>
   );
+}
+
+function ProfileChangesBanner({
+  proposals,
+  busyKey,
+  error,
+  onAction,
+}: {
+  proposals: AgentProfileProposal[];
+  busyKey: string | null;
+  error: string | null;
+  onAction: (
+    proposal: AgentProfileProposal,
+    action: 'discard' | 'lineage' | 'save-current' | 'save-new',
+  ) => Promise<void>;
+}) {
+  const proposal = proposals[0]!;
+  const settingsCount = Object.keys(proposal.proposal.manifest.settings ?? {}).length;
+  const mcpCount = Object.keys(proposal.proposal.manifest.mcpServers ?? {}).length;
+  const bundleCount = proposal.proposal.manifest.bundles?.length ?? 0;
+  const excludedCount = proposal.proposal.manifest.excluded?.length ?? 0;
+  const disabled = busyKey != null;
+
+  return (
+    <div
+      data-testid="profile-changes-banner"
+      role="region"
+      aria-label="Agent profile changes"
+      className="shrink-0 border-b border-edge bg-surface-raised/80 px-3 py-2 text-xs"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-accent-hover/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent-text-strong">
+          profile changes
+        </span>
+        <span className="min-w-0 flex-1 text-fg-body">
+          {profileProviderLabel(proposal.provider)} proposed {settingsCount} settings, {mcpCount} MCP servers, {bundleCount} bundles
+          {excludedCount > 0 ? `; ${excludedCount} excluded` : ''}
+          {proposal.riskSummary.blockedSecrets > 0
+            ? `; ${proposal.riskSummary.blockedSecrets} secret-shaped values blocked`
+            : ''}
+        </span>
+      </div>
+      {error && (
+        <div role="alert" className="mt-1 text-2xs text-danger-text">
+          {error}
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <ProfileActionButton
+          label="Discard"
+          disabled={disabled}
+          busy={busyKey === `${proposal.id}:discard`}
+          onClick={() => onAction(proposal, 'discard')}
+        />
+        <ProfileActionButton
+          label="Apply lineage"
+          disabled={disabled}
+          busy={busyKey === `${proposal.id}:lineage`}
+          onClick={() => onAction(proposal, 'lineage')}
+        />
+        <ProfileActionButton
+          label="Save profile"
+          disabled={disabled}
+          busy={busyKey === `${proposal.id}:save-current`}
+          onClick={() => onAction(proposal, 'save-current')}
+        />
+        <ProfileActionButton
+          label="Save as new"
+          disabled={disabled}
+          busy={busyKey === `${proposal.id}:save-new`}
+          onClick={() => onAction(proposal, 'save-new')}
+        />
+        {proposals.length > 1 && (
+          <span className="px-1.5 py-1 text-2xs text-fg-muted">
+            {proposals.length - 1} more pending
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileActionButton({
+  label,
+  disabled,
+  busy,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-md border border-edge px-2 py-1 text-2xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {busy ? 'Saving...' : label}
+    </button>
+  );
+}
+
+function profileProviderLabel(provider: AgentProfileProposal['provider']): string {
+  return provider === 'codex' ? 'Codex' : 'Claude Code';
 }
 
 function ProviderAuthBanner({

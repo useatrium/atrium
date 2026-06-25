@@ -112,6 +112,8 @@ export interface SessionSpawnPayload {
   /** Spawn-dialog git metadata (optional). */
   repo?: string;
   branch?: string;
+  agentProfileId?: string;
+  agentProfileVersionId?: string;
   createdAt?: string;
 }
 
@@ -849,6 +851,8 @@ export function createDefaultOpRegistry(): OpRegistry {
           harness: payload.harness,
           repo: payload.repo,
           branch: payload.branch,
+          agentProfileId: payload.agentProfileId,
+          agentProfileVersionId: payload.agentProfileVersionId,
           clientSpawnId: payload.clientSpawnId,
           opId: op.opId,
         }),

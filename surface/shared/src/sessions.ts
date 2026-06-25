@@ -160,6 +160,7 @@ export interface SessionWire {
   answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
   providerAuthRequired?: SessionProviderAuthRequired | null;
+  agentProfileVersionId?: string | null;
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -208,6 +209,7 @@ export interface Session {
   answerProposals: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
   providerAuthRequired?: SessionProviderAuthRequired | null;
+  agentProfileVersionId?: string | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
   /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
@@ -311,6 +313,7 @@ export function sessionFromWire(w: SessionWire): Session {
     answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
     providerAuthRequired: parseProviderAuthRequired(w.providerAuthRequired),
+    agentProfileVersionId: w.agentProfileVersionId ?? null,
     questionEvents: [],
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
