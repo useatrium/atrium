@@ -509,7 +509,7 @@ nodeSync:
     port: 8080
   apiKeySecret:
     name: centaur-infra-env
-    key: ARTIFACT_CAPTURE_API_KEY
+    key: ATRIUM_CAPTURE_API_KEY
   # VM-per-tenant (R2 / §8B #19) — NOT-VALIDATED-ON-MACOS. Off by default: the
   # single global DaemonSet above runs. Enable to render ONE DaemonSet per tenant,
   # node-pinned + optionally under a microVM runtimeClass. See the per-tenant

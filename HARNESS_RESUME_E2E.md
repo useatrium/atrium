@@ -19,7 +19,7 @@ cluster + spends real model calls — do it watched.
 2. `just deploy` — redeploys api-rs (the route + runtime resume logic) + sandbox
    (entrypoint restore). NB this disrupts running `asbx-*` pods.
 3. **Server-side config the proxy needs** (NOT in the sandbox): api-rs must have the
-   Atrium base URL + `ARTIFACT_CAPTURE_API_KEY` (the proxy reads them via
+   Atrium base URL + `ATRIUM_CAPTURE_API_KEY` (the proxy reads them via
    `configured_atrium_proxy()`), and api-rs→Atrium egress must be allowed. Verify in
    `contrib/chart/values.yaml` (`nodeSync.atriumEgress` etc.) + the api-rs env.
 4. **Atrium** must be running + reachable from the cluster (the api-rs proxy + the
@@ -38,7 +38,7 @@ cluster + spends real model calls — do it watched.
 5. Repeat for **Codex** (verify `CODEX_CONTINUE_THREAD_ID` is present ONLY on the
    resumed sandbox, absent on fresh starts).
 6. **dev-browser**: the session pane's resumed turn answers with prior memory.
-7. **Security check**: exec into the sandbox, confirm `ARTIFACT_CAPTURE_API_KEY` is
+7. **Security check**: exec into the sandbox, confirm `ATRIUM_CAPTURE_API_KEY` is
    NOT set (only the scoped `CENTAUR_API_KEY` sandbox-token) — the restore must work
    without the broad key.
 

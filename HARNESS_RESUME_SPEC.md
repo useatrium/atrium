@@ -11,8 +11,7 @@ Work ONLY in this worktree (`~/Code/centaur-wt/harness-resume`, branch
 worktrees. Investigate the real code before relying on the seams below.
 
 ## The Atrium contract (already shipped — build against it)
-Atrium internal endpoints, auth = header `x-api-key: <ARTIFACT_CAPTURE_API_KEY>`
-(the daemon already has this key as `ATRIUM_CAPTURE_API_KEY`):
+Atrium internal endpoints, auth = header `x-api-key: <ATRIUM_CAPTURE_API_KEY>`:
 - `PUT /api/internal/sessions/{sessionId}/harness-transcript?harness=<claude|codex>`
   — raw `.jsonl` body = the full transcript snapshot. Last-write-wins.
 - `GET /api/internal/sessions/{sessionId}/harness-transcript?harness=<claude|codex>`

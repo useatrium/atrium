@@ -20,8 +20,9 @@ We don't upstream changes back and we don't track upstream closely. Keep it simp
 ## What's here (the Atrium surface)
 The substantive Atrium-only work this fork carries on top of upstream:
 
-- **Artifact capture + workspace sync** — api-rs capture routes + sandbox worker +
-  the node-sync capture/hydrate daemon. See `ARTIFACT_CAPTURE_SPEC.md` / `_REPORT.md`.
+- **Artifact capture + workspace sync** — the node-sync capture/hydrate daemon
+  ships overlay changes directly to Atrium's CAS ledger. Centaur no longer stages
+  artifact bytes or exposes compatibility artifact byte routes.
 - **Harness resume** — capture/restore of the rollout transcript so a torn-down
   session resumes the *same* Codex/Claude conversation (ephemeral home + entrypoint
   restore + conditional resume-trigger + a thread-scoped restore proxy).
@@ -48,7 +49,7 @@ just build-one api-rs
 just build-one sandbox
 just deploy
 ```
-Required env for artifact capture: `ARTIFACT_CAPTURE_API_KEY` (a dedicated key — do
+Required env for Atrium capture: `ATRIUM_CAPTURE_API_KEY` (a dedicated key — do
 NOT reuse `CENTAUR_API_KEY`) + `CENTAUR_API_URL`. Deploy-time config (iron-proxy
 disable, warm-pool size, …) lives in Atrium's `infra/values.local.yaml`, applied via
 `CENTAUR_EXTRA_VALUES` at `just deploy`.

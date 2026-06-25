@@ -2460,11 +2460,9 @@ mod tests {
         .unwrap();
         let previous = env::var_os("ATRIUM_BASE_URL");
         let previous_key = env::var_os("ATRIUM_CAPTURE_API_KEY");
-        let previous_artifact_key = env::var_os("ARTIFACT_CAPTURE_API_KEY");
         unsafe {
             env::set_var("ATRIUM_BASE_URL", "http://atrium-server.atrium.svc:8080");
             env::set_var("ATRIUM_CAPTURE_API_KEY", "server-side-key");
-            env::set_var("ARTIFACT_CAPTURE_API_KEY", "legacy-server-side-key");
         }
 
         let envs = args.sandbox.codex_app_server_env_template().unwrap();
@@ -2474,11 +2472,6 @@ mod tests {
             !envs
                 .iter()
                 .any(|(name, _)| name == "ATRIUM_CAPTURE_API_KEY")
-        );
-        assert!(
-            !envs
-                .iter()
-                .any(|(name, _)| name == "ARTIFACT_CAPTURE_API_KEY")
         );
 
         unsafe {
@@ -2491,11 +2484,6 @@ mod tests {
                 env::set_var("ATRIUM_CAPTURE_API_KEY", value);
             } else {
                 env::remove_var("ATRIUM_CAPTURE_API_KEY");
-            }
-            if let Some(value) = previous_artifact_key {
-                env::set_var("ARTIFACT_CAPTURE_API_KEY", value);
-            } else {
-                env::remove_var("ARTIFACT_CAPTURE_API_KEY");
             }
         }
     }

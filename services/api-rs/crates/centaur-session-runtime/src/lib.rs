@@ -21,8 +21,7 @@ use centaur_session_core::{
     SessionMessageInput, ThreadKey, sandbox_token,
 };
 use centaur_session_sqlx::{
-    ArtifactBlob, ArtifactCaptureInput, ArtifactCaptureResult, PgSessionStore,
-    SessionEventListener, SessionStoreError, default_metadata,
+    PgSessionStore, SessionEventListener, SessionStoreError, default_metadata,
 };
 use centaur_telemetry::{
     export_thread_trace_root_span, record_sandbox_warm_pool_claim,
@@ -1759,29 +1758,6 @@ impl SessionRuntime {
     ) -> Result<ThreadKey, SessionRuntimeError> {
         self.store
             .execution_thread_key(execution_id)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub async fn capture_artifact(
-        &self,
-        thread_key: &ThreadKey,
-        execution_id: &str,
-        input: ArtifactCaptureInput,
-    ) -> Result<ArtifactCaptureResult, SessionRuntimeError> {
-        self.store
-            .capture_artifact(thread_key, execution_id, input)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub async fn get_artifact_blob(
-        &self,
-        execution_id: &str,
-        artifact_ref: &str,
-    ) -> Result<Option<ArtifactBlob>, SessionRuntimeError> {
-        self.store
-            .get_artifact_blob(execution_id, artifact_ref)
             .await
             .map_err(Into::into)
     }

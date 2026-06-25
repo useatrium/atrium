@@ -66,7 +66,7 @@ fi
 echo "==> [2/9] install the capture sink and chart with the node-sync DaemonSet enabled"
 kubectl create namespace "${NS}" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "${NS}" create secret generic centaur-infra-env \
-  --from-literal=ARTIFACT_CAPTURE_API_KEY=e2e-capture-key \
+  --from-literal=ATRIUM_CAPTURE_API_KEY=e2e-capture-key \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n "${NS}" apply -f - <<YAML

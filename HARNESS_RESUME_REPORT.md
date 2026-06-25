@@ -16,9 +16,8 @@ security fix:
   api-rs verifies the token is scoped to the requested thread, then proxies to
   Atrium with `ATRIUM_CAPTURE_API_KEY` held server-side. No Atrium URL or capture
   key is read by the sandbox entrypoint.
-- Artifact upload now uses the same scoped sandbox token for sandbox-originated
-  writes; server/Atrium artifact byte fetches still use the server-side
-  `ARTIFACT_CAPTURE_API_KEY`.
+- Artifact capture is node-side via `centaur-node-sync`; Centaur does not stage
+  artifact bytes for Atrium.
 
 ## Files Changed
 
@@ -27,7 +26,7 @@ security fix:
 - `services/api-rs/crates/centaur-api-server/src/{args.rs,error.rs,lib.rs,routes.rs}`
 - `services/api-rs/crates/centaur-node-sync/src/{runtime.rs,http_client.rs,bin/centaur-node-syncd.rs}`
 - `crates/harness-server/src/server.rs`
-- `services/sandbox/{entrypoint.sh,artifact_capture.py}`
+- `services/sandbox/entrypoint.sh`
 - `contrib/chart/templates/apirs.yaml`
 - `contrib/chart/values.yaml`
 
@@ -83,12 +82,10 @@ Passed:
 - `cargo test -p centaur-api-server` — 52 passed across lib/main targets
 - `cargo test -p centaur-node-sync` — 53 passed
 - `cargo test --manifest-path crates/harness-server/Cargo.toml` — 48 passed, 4 ignored
-- `uvx pytest services/sandbox/tests/test_artifact_capture.py -q` — 6 passed
 - `git diff --check`
 
-Also verified with `rg` that `services/sandbox/entrypoint.sh` and
-`services/sandbox/artifact_capture.py` no longer reference `ATRIUM_CAPTURE_API_KEY`,
-`ARTIFACT_CAPTURE_API_KEY`, or `ATRIUM_BASE_URL`.
+Also verified with `rg` that `services/sandbox/entrypoint.sh` no longer references
+`ATRIUM_CAPTURE_API_KEY` or `ATRIUM_BASE_URL`.
 
 Helm render check was attempted with `helm template centaur contrib/chart`, but
 this checkout is still missing the chart dependency `connect` under
@@ -117,5 +114,4 @@ add generated dependency artifacts.
   shape by writing under the current UTC date. Validate this against the exact
   Codex version baked into the sandbox image.
 - Warm sandboxes boot before a thread-scoped token exists. Restore cold-starts do
-  not use warm sandboxes, but artifact capture from a prewarmed sandbox will need
-  runtime-context token refresh if warm-pool artifact capture is required.
+  not use warm sandboxes.
