@@ -971,7 +971,7 @@ export default function SessionScreen() {
                     item={item}
                     events={questionEventsByQuestion.get(item.questionId) ?? []}
                   />
-                ) : (
+                ) : item.type === 'reasoning' ? null : (
                   <ToolCard item={item} />
                 )}
               </View>
