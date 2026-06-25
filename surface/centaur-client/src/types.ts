@@ -156,6 +156,37 @@ export interface CodexCommandExecutionOutputDeltaEvent {
   [key: string]: unknown;
 }
 
+export interface CodexReasoningTextDeltaEvent {
+  type: "item.reasoning.textDelta";
+  delta?: string;
+  item_id?: string;
+  itemId?: string;
+  id?: string;
+  threadId?: string;
+  turnId?: string;
+  contentIndex?: number;
+  [key: string]: unknown;
+}
+
+export interface CodexReasoningSummaryTextDeltaEvent {
+  type: "item.reasoning.summaryTextDelta";
+  delta?: string;
+  item_id?: string;
+  itemId?: string;
+  id?: string;
+  threadId?: string;
+  turnId?: string;
+  contentIndex?: number;
+  [key: string]: unknown;
+}
+
+export interface JsonRpcAmpRawEvent {
+  type?: undefined;
+  method: string;
+  params: JsonObject;
+  [key: string]: unknown;
+}
+
 export type AmpRawEvent =
   | AmpSystemEvent
   | AmpAssistantEvent
@@ -165,7 +196,10 @@ export type AmpRawEvent =
   | CodexItemStartedEvent
   | CodexItemCompletedEvent
   | CodexAgentMessageDeltaEvent
-  | CodexCommandExecutionOutputDeltaEvent;
+  | CodexCommandExecutionOutputDeltaEvent
+  | CodexReasoningTextDeltaEvent
+  | CodexReasoningSummaryTextDeltaEvent
+  | JsonRpcAmpRawEvent;
 
 interface ObservationBase {
   engine: string;
