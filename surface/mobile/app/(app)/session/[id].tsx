@@ -53,6 +53,7 @@ import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
 import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
+import { SessionMarkdown } from '../../../src/components/Markdown';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -160,12 +161,7 @@ function ToolCard({ item }: { item: ToolCallItem }) {
 }
 
 function TextBlock({ item }: { item: TextItem }) {
-  const { colors } = useTheme();
-  return (
-    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: font.md * 1.4 }}>
-      {item.text}
-    </Text>
-  );
+  return <SessionMarkdown text={item.text} />;
 }
 
 function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<string, SessionQuestionEvent[]> {

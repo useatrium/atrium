@@ -64,6 +64,7 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
+import { SessionMarkdown } from './Markdown';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -1828,11 +1829,8 @@ function QuestionTranscriptCard({
 const TextBlock = memo(
   function TextBlock({ item }: { item: TextItem }) {
     return (
-      <div
-        style={ITEM_VIS}
-        className="whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-fg-body"
-      >
-        {item.text}
+      <div style={ITEM_VIS}>
+        <SessionMarkdown text={item.text} />
       </div>
     );
   },
