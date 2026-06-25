@@ -10,6 +10,7 @@
   - [Request rules](#request-rules)
 - [Static secrets](#static-secrets)
 - [GCP auth secrets](#gcp-auth-secrets)
+- [GCP ID token secrets](#gcp-id-token-secrets)
 - [AWS auth secrets](#aws-auth-secrets)
 - [OAuth token secrets](#oauth-token-secrets)
 - [PG DSN secrets](#pg-dsn-secrets)
@@ -54,14 +55,14 @@ A missing or invalid token returns `401`:
   ```
 
 - **Pagination** uses the `page` (default `1`) and `limit` (default `50`, max `200`) query parameters. Values are clamped into range; a non-integer value returns `400`.
-- **Namespaced list filtering** (static secrets, GCP auth secrets, OAuth token secrets, principals, roles) requires a `namespace` query parameter and accepts an optional `labels[key]=value` filter that matches by JSONB containment (all supplied pairs must be present). Label values must be scalars.
-- **Object IDs** are prefixed by type: `ssr_` (static secret), `gas_` (GCP auth secret), `ots_` (OAuth token secret), `prn_` (principal), `role_` (role), `grant_` (grant), `ak_` (API key), `prx_` (proxy).
+- **Namespaced list filtering** (static secrets, GCP auth secrets, GCP ID token secrets, OAuth token secrets, principals, roles) requires a `namespace` query parameter and accepts an optional `labels[key]=value` filter that matches by JSONB containment (all supplied pairs must be present). Label values must be scalars.
+- **Object IDs** are prefixed by type: `ssr_` (static secret), `gas_` (GCP auth secret), `gid_` (GCP ID token secret), `ots_` (OAuth token secret), `prn_` (principal), `role_` (role), `grant_` (grant), `ak_` (API key), `prx_` (proxy).
 - **`namespace`** defaults to `"default"` when omitted on create. Once set, `namespace` and `foreign_id` are immutable.
 - **`namespace` and `foreign_id`** must be URL-safe: only `A-Z a-z 0-9 - . _ ~`. `foreign_id` is optional and, when set, must be unique within its namespace. A `foreign_id` may not start with the resource's opaque-id prefix (e.g. `ssr_`), so it can never be mistaken for an OID.
 
 ### Upsert (`PUT` / `PATCH`)
 
-For the resources with a `foreign_id` (static secrets, GCP auth secrets, OAuth token secrets, principals, roles), `PUT`/`PATCH /api/v1/<resource>/:id` is an **upsert**, and `:id` may be either an OID or a `foreign_id`:
+For the resources with a `foreign_id` (static secrets, GCP auth secrets, GCP ID token secrets, OAuth token secrets, principals, roles), `PUT`/`PATCH /api/v1/<resource>/:id` is an **upsert**, and `:id` may be either an OID or a `foreign_id`:
 
 - **`:id` is an OID** (it starts with the resource's prefix, e.g. `ssr_…`): updates that record. `404` if it does not exist — an OID is server-assigned, so it can't be created at a chosen value.
 - **`:id` is anything else**: it is treated as a `foreign_id` within the body `namespace` (default `"default"`). The record is **updated if it exists, created if it does not**. Creation responds `201`; update responds `200`.
@@ -100,7 +101,7 @@ Errors return an `error` object with a `message` and, for validation failures, a
 
 ### Secret sources
 
-A secret source describes where a credential value is resolved from. It appears as the `source` of a static secret, the `keyfile` of a GCP auth secret, and each entry in an OAuth token secret's `credentials` and `token_endpoint_headers` maps.
+A secret source describes where a credential value is resolved from. It appears as the `source` of a static secret, the `keyfile` of a GCP auth or GCP ID token secret, and each entry in an OAuth token secret's `credentials` and `token_endpoint_headers` maps.
 
 Shape:
 
@@ -149,7 +150,7 @@ The `secret` field is encrypted at rest, is write-only, and is never returned in
 
 ### Request rules
 
-A rule scopes a credential to matching outbound requests. Rules appear as the `rules` array of static, GCP, and OAuth secrets.
+A rule scopes a credential to matching outbound requests. Rules appear as the `rules` array of static, GCP auth, GCP ID token, and OAuth secrets.
 
 ```json
 {
@@ -350,6 +351,77 @@ Returns `201`. Response shape:
 | `GET`  | `/api/v1/gcp_auth_secrets/lookup/:namespace/:foreign_id` | Fetch by namespace + foreign id. `404` if missing. |
 | `PUT`/`PATCH` | `/api/v1/gcp_auth_secrets/:id` | [Upsert](#upsert-put--patch) by OID or `foreign_id`; same body as create. |
 | `DELETE` | `/api/v1/gcp_auth_secrets/:id` | Delete. Returns `204`; `404` if missing. Cascades: the secret's sources, rules, and any grants that reference it are removed. The granted roles and principals are not deleted. |
+
+## GCP ID token secrets
+
+A GCP ID token secret mints Google-signed OIDC ID tokens for an audience and injects them as a bearer header. It is used for private Cloud Run services, Cloud Run functions, IAP, API Gateway, and other Google audience-authenticated targets. It requires a service-account `keyfile` [secret source](#secret-sources) and at least one [rule](#request-rules).
+
+### Attributes
+
+| Field                 | In requests | Notes |
+| --------------------- | ----------- | ----- |
+| `namespace`           | optional    | Defaults to `"default"`. Immutable. |
+| `foreign_id`          | optional    | Unique per namespace. Immutable. |
+| `name`, `description` | optional    | |
+| `labels`              | optional    | Object; defaults to `{}`. |
+| `audience`            | required    | ID token `aud` claim. For Cloud Run, use the service URL or configured custom audience. |
+| `header`              | optional    | Omit or use `authorization` for `Authorization`; use `x-serverless-authorization` when the upstream app owns `Authorization`. |
+| `keyfile`             | required    | A [secret source](#secret-sources) resolving the service account JSON. |
+| `rules`               | required    | At least one [rule](#request-rules). |
+
+### Create
+
+`POST /api/v1/gcp_id_token_secrets`
+
+```json
+{
+  "data": {
+    "namespace": "default",
+    "foreign_id": "cloud-run-caller",
+    "name": "Cloud Run Caller",
+    "audience": "https://my-service-abc123-uc.a.run.app",
+    "header": "x-serverless-authorization",
+    "keyfile": {
+      "source_type": "1password_connect",
+      "config": { "secret_ref": "op://Engineering/Cloud-Run-Caller/credential" }
+    },
+    "rules": [ { "host": "my-service-abc123-uc.a.run.app" } ]
+  }
+}
+```
+
+Returns `201`. Response shape:
+
+```json
+{
+  "data": {
+    "id": "gid_...",
+    "namespace": "default",
+    "foreign_id": "cloud-run-caller",
+    "name": "Cloud Run Caller",
+    "description": null,
+    "labels": {},
+    "audience": "https://my-service-abc123-uc.a.run.app",
+    "header": "x-serverless-authorization",
+    "keyfile": { "source_type": "1password_connect", "config": { "secret_ref": "op://Engineering/Cloud-Run-Caller/credential" } },
+    "rules": [ { "host": "my-service-abc123-uc.a.run.app", "cidr": null, "position": 0, "http_methods": [], "paths": [] } ],
+    "created_at": "2026-06-01T10:00:00Z",
+    "updated_at": "2026-06-01T10:00:00Z"
+  }
+}
+```
+
+The `keyfile` in responses never includes a `control_plane` `secret` value.
+
+### Other operations
+
+| Method | Path | Notes |
+| ------ | ---- | ----- |
+| `GET`  | `/api/v1/gcp_id_token_secrets?namespace=default` | List. |
+| `GET`  | `/api/v1/gcp_id_token_secrets/:id` | Fetch one. |
+| `GET`  | `/api/v1/gcp_id_token_secrets/lookup/:namespace/:foreign_id` | Fetch by namespace + foreign id. `404` if missing. |
+| `PUT`/`PATCH` | `/api/v1/gcp_id_token_secrets/:id` | [Upsert](#upsert-put--patch) by OID or `foreign_id`; same body as create. |
+| `DELETE` | `/api/v1/gcp_id_token_secrets/:id` | Delete. Returns `204`; `404` if missing. Cascades: the secret's source, rules, and any grants that reference it are removed. The granted roles and principals are not deleted. |
 
 ## AWS auth secrets
 
@@ -730,11 +802,11 @@ Returns `201`. Response shape (note that `credentials` echoes each source as `{ 
 
 ## Broker credentials
 
-A broker credential is an OAuth credential whose refresh-token lifecycle iron-control manages itself. iron-control runs the refresh loop, mints fresh access tokens before they expire, and delivers the current access token to `iron-proxy` inline through [proxy sync](#proxy-sync) wherever a [`token_broker` secret source](#secret-sources) references the credential by its `id`.
+A broker credential is an OAuth credential whose token lifecycle iron-control manages itself. iron-control runs the refresh loop, mints fresh access tokens before they expire, and delivers the current access token to `iron-proxy` inline through [proxy sync](#proxy-sync) wherever a [`token_broker` secret source](#secret-sources) references the credential by its `id`.
 
-Unlike the secret types above, a broker credential is not granted directly and is not injected on its own. It is referenced by a `token_broker` source on a grantable secret (typically a [static secret](#static-secrets)), which carries the rules and injection config. The `refresh_token` never leaves iron-control.
+Unlike the secret types above, a broker credential is not granted directly and is not injected on its own. It is referenced by a `token_broker` source on a grantable secret (typically a [static secret](#static-secrets)), which carries the rules and injection config. Refresh tokens, usernames, passwords, and API keys never leave iron-control.
 
-The OAuth client credentials it refreshes with are fields on the credential, resolved by iron-control itself. `client_id` is not secret and is returned in responses; `client_secret` and the `token_endpoint_headers` values are encrypted at rest and never returned.
+The token credentials it refreshes with are fields on the credential, resolved by iron-control itself. `client_id` is not secret and is returned in responses; `client_secret`, password-grant fields, Preqin API keys, and the `token_endpoint_headers` values are encrypted at rest and never returned.
 
 ### Attributes
 
@@ -744,12 +816,16 @@ The OAuth client credentials it refreshes with are fields on the credential, res
 | `foreign_id`                   | optional    | Unique per namespace. Immutable. |
 | `name`, `description`          | optional    | |
 | `labels`                       | optional    | |
-| `token_endpoint`               | required    | OAuth token endpoint the refresh request is sent to. |
+| `grant`                        | optional    | One of `refresh_token`, `password`, or `preqin`. Defaults to `refresh_token`. |
+| `token_endpoint`               | conditional | Token endpoint the refresh request is sent to. Required except `preqin`, which uses the fixed `https://api.preqin.com/connect/token` endpoint. |
 | `scopes`                       | optional    | Array of strings. |
-| `client_id`                    | required    | OAuth client id. Returned in responses. |
+| `client_id`                    | conditional | OAuth client id. Required for standalone `refresh_token` and `password` credentials. Returned in responses. Not used for `preqin`. |
 | `client_secret`                | optional    | OAuth client secret. Write-only and encrypted at rest; omit for public clients. Never returned. |
 | `token_endpoint_headers`       | optional    | Object mapping header name to a string value, sent on the refresh request. Values are write-only and encrypted; only the header names are returned (as `token_endpoint_header_names`). |
-| `refresh_token`                | optional    | Write-only seed. Supplying a value (re)bootstraps the credential: it is scheduled to refresh immediately and any dead state is cleared. Never returned. |
+| `refresh_token`                | optional    | Write-only initial value for `refresh_token` credentials. Also used by `password` credentials when the provider returns one. Supplying a value schedules the credential immediately and clears dead state. Never returned. |
+| `username`                     | conditional | Required for `password` credentials. Write-only and encrypted at rest. Never returned. |
+| `password`                     | conditional | Required for `password` credentials. Write-only and encrypted at rest. Never returned. |
+| `api_key`                      | conditional | Required for `preqin` credentials. Write-only and encrypted at rest. Never returned. |
 | `early_refresh_slack_seconds`  | optional    | Refresh this many seconds before expiry. Defaults to `300`. |
 | `early_refresh_fraction`       | optional    | Refresh once this fraction of the token's lifetime remains, when that is larger than the slack. In `[0, 1)`. Defaults to `0.2`. |
 | `max_refresh_interval_seconds` | optional    | Refresh at least this often, even for long-lived tokens. Defaults to `86400`. |
@@ -759,7 +835,7 @@ Read-only fields are returned but never accepted in requests:
 
 | Field                         | Notes |
 | ----------------------------- | ----- |
-| `status`                      | `bootstrapping` (no token minted yet), `live`, or `dead` (an unrecoverable refresh failure; needs a new `refresh_token`). |
+| `status`                      | `bootstrapping` (no token minted yet), `live`, or `dead` (an unrecoverable refresh failure; needs fresh initial values). |
 | `token_endpoint_header_names` | The configured header names (values are not returned). |
 | `expires_at`                  | When the current access token expires. |
 | `last_refresh`                | When the last successful refresh completed. |
@@ -772,7 +848,9 @@ Read-only fields are returned but never accepted in requests:
 | `provider_email`              | The account email captured at consent time. |
 | `external_user_key`           | An opaque key generated for the credential when it is minted by the consent flow. |
 
-The minted `access_token`, the `refresh_token`, the `client_secret`, and the `token_endpoint_headers` values are never returned in any response.
+The minted `access_token`, the `refresh_token`, `username`, `password`, `api_key`, the `client_secret`, and the `token_endpoint_headers` values are never returned in any response.
+
+Password-grant credentials first use the stored initial values with `grant_type=password`. If the token endpoint returns a `refresh_token`, iron-control stores it and uses `grant_type=refresh_token` on later scheduled refreshes. If that stored refresh token is rejected with an unrecoverable OAuth error, iron-control retries once with `grant_type=password`; retryable network, 5xx, rate-limit, and parse failures keep the existing backoff behavior and do not fall back to password.
 
 Credentials minted by the [OAuth consent flow](#oauth-consent-flow) are linked to an OAuth app and delegate their `client_id` and `client_secret` to it: rotating the app's secret applies to every credential it minted. Such a credential needs no `client_id`/`client_secret` of its own, and its `scopes` reflect exactly what the IdP granted.
 
@@ -786,6 +864,7 @@ Credentials minted by the [OAuth consent flow](#oauth-consent-flow) are linked t
     "namespace": "default",
     "foreign_id": "gmail",
     "name": "Gmail",
+    "grant": "refresh_token",
     "token_endpoint": "https://oauth2.googleapis.com/token",
     "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
     "client_id": "1234.apps.googleusercontent.com",
@@ -806,6 +885,7 @@ Returns `201`. The token blob, the `refresh_token` seed, and the `client_secret`
     "name": "Gmail",
     "description": null,
     "labels": {},
+    "grant": "refresh_token",
     "token_endpoint": "https://oauth2.googleapis.com/token",
     "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
     "client_id": "1234.apps.googleusercontent.com",
@@ -827,6 +907,58 @@ Returns `201`. The token blob, the `refresh_token` seed, and the `client_secret`
 }
 ```
 
+Password-grant providers use the same endpoint with `grant: "password"`:
+
+```json
+{
+  "data": {
+    "namespace": "default",
+    "foreign_id": "alphasense",
+    "name": "AlphaSense",
+    "grant": "password",
+    "token_endpoint": "https://api.alpha-sense.com/auth",
+    "client_id": "client-id",
+    "client_secret": "client-secret",
+    "username": "user@example.com",
+    "password": "account-password",
+    "token_endpoint_headers": { "x-api-key": "api-key" }
+  }
+}
+```
+
+For AlphaSense API calls, grant static secrets alongside the broker token so the proxy also injects the required `x-api-key` and `clientid` headers on `api.alpha-sense.com`. The broker credential itself only supplies the current bearer token through a `token_broker` source.
+
+Preqin Operational API credentials use the provider-specific `preqin` grant. iron-control submits Preqin's multipart `username` and `apikey` form, stores any returned `refresh_token`, and later uses Preqin's refresh endpoint when possible:
+
+```json
+{
+  "data": {
+    "namespace": "default",
+    "foreign_id": "preqin-operational",
+    "name": "Preqin Operational",
+    "grant": "preqin",
+    "username": "preqinapiuser@example.com",
+    "api_key": "preqin-api-key"
+  }
+}
+```
+
+The token is still consumed like any other broker token:
+
+```json
+{
+  "data": {
+    "foreign_id": "preqin-operational-auth",
+    "inject_config": { "header": "Authorization", "formatter": "Bearer {{ .Value }}" },
+    "source": {
+      "source_type": "token_broker",
+      "config": { "credential_id": "preqin-operational", "credential_namespace": "default" }
+    },
+    "rules": [ { "host": "api.preqin.com" } ]
+  }
+}
+```
+
 To put the credential to use, reference it from a grantable secret's `token_broker` source, then grant that secret to a principal:
 
 ```json
@@ -842,7 +974,7 @@ To put the credential to use, reference it from a grantable secret's `token_brok
 
 ### Re-authenticating a dead credential
 
-When a refresh fails unrecoverably (for example the IdP returns `invalid_grant` because the refresh token was revoked), the credential's `status` becomes `dead` and it stops minting tokens. Supply a fresh `refresh_token` via `PUT` / `PATCH` to clear the dead state and reschedule it:
+When a refresh fails unrecoverably (for example the IdP returns `invalid_grant` because the refresh token was revoked), the credential's `status` becomes `dead` and it stops minting tokens. Supply a fresh `refresh_token` for a `refresh_token` credential, fresh `username` / `password` fields for a `password` credential, or fresh `username` / `api_key` fields for a `preqin` credential, via `PUT` / `PATCH` to clear the dead state and reschedule it:
 
 ```json
 { "data": { "refresh_token": "1//0gNEW..." } }
@@ -855,7 +987,7 @@ When a refresh fails unrecoverably (for example the IdP returns `invalid_grant` 
 | `GET`  | `/api/v1/broker_credentials?namespace=default` | List. `namespace` required; `labels[k]=v` and pagination optional. |
 | `GET`  | `/api/v1/broker_credentials/:id` | Fetch one. `404` if missing. |
 | `GET`  | `/api/v1/broker_credentials/lookup/:namespace/:foreign_id` | Fetch by namespace + foreign id. `404` if missing. |
-| `PUT`/`PATCH` | `/api/v1/broker_credentials/:id` | [Upsert](#upsert-put--patch) by OID or `foreign_id`. A `refresh_token` reseeds and clears dead state. Omitted fields are preserved; `client_secret` and `token_endpoint_headers` are only changed when supplied. |
+| `PUT`/`PATCH` | `/api/v1/broker_credentials/:id` | [Upsert](#upsert-put--patch) by OID or `foreign_id`. Fresh initial values reseed and clear dead state. Omitted fields are preserved; write-only fields are only changed when supplied. |
 | `DELETE` | `/api/v1/broker_credentials/:id` | Delete. Returns `204`; `404` if missing. Returns `409` if any `token_broker` secret source still references the credential (remove those references first). |
 
 ## OAuth apps

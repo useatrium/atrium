@@ -190,5 +190,32 @@ def post(
     console.print(f"[green]Sent[/] message {result.get('id')} to channel {result.get('channel_id')}")
 
 
+@app.command("create-thread")
+def create_thread(
+    channel: str = typer.Argument(..., help="Channel name or ID"),
+    name: str = typer.Argument(..., help="Thread name"),
+    from_message: str = typer.Option(
+        None, "--from-message", "-m", help="Message ID to branch the thread from"
+    ),
+    content: str = typer.Option(
+        None, "--content", "-c", help="First message to post in a standalone thread"
+    ),
+    private: bool = typer.Option(False, "--private", help="Create a private thread"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Create a thread in a channel."""
+    result = _get_client().create_thread(
+        channel=channel,
+        name=name,
+        from_message_id=from_message,
+        content=content,
+        private=private,
+    )
+    if _emit(result, json_output):
+        return
+    console.print(f"[green]Created thread[/] {result.get('name')} ({result.get('id')})")
+    console.print(f"[dim]{result.get('url')}[/]")
+
+
 if __name__ == "__main__":
     app()

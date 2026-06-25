@@ -39,6 +39,9 @@ anyhow = "1"
 async-trait = "0.1"
 absurd-sdk = { path = "crates/absurd-sdk" }
 axum = "0.8.9"
+aws-config = "1"
+aws-sdk-s3 = "1"
+aws-smithy-types = "1"
 bytes = { version = "1", features = ["serde"] }
 centaur-api-server = { path = "crates/centaur-api-server" }
 centaur-iron-control = { path = "crates/centaur-iron-control" }
@@ -57,6 +60,7 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 chrono-tz = "0.10.4"
 cron = "0.16.0"
 crossterm = "0.28"
+dashmap = "6"
 eventsource-stream = "0.2.3"
 eyre = "0.6"
 base64 = "0.22"
@@ -75,7 +79,9 @@ ratatui = "0.29"
 rustls = "0.23"
 opentelemetry = "0.32.0"
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["trace", "gen-tonic-messages"] }
 opentelemetry_sdk = { version = "0.32.1", features = ["trace"] }
+prost = "0.14"
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 sqlx = { version = "0.8.6", default-features = false, features = ["derive", "json", "macros", "migrate", "postgres", "runtime-tokio-rustls", "time"] }

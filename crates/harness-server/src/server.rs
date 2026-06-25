@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, Write};
@@ -24,9 +24,10 @@ use uuid::Uuid;
 use crate::amp::AmpHarness;
 use crate::claude::ClaudeCodeHarness;
 use crate::codex::CodexHarnessServer;
+use crate::otel::{self, HarnessUsageSpan, TraceContext};
 use crate::traits::{
     AppServerNormalizer, AppServerRuntime, HarnessChild, HarnessKind, HarnessServer,
-    NormalizedEvent, ThreadState,
+    NormalizedContent, NormalizedEvent, NormalizedTokenUsage, ThreadState,
 };
 use crate::turn::{BridgeConfig, CodexTurnNormalizer};
 use crate::util::{absolute_path, default_codex_home, write_value};
@@ -98,6 +99,7 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                 // knob (its provider is fixed at thread start from session params).
                 provider: _,
                 reasoning: _,
+                trace_context,
             }) => {
                 if let Some(model) = model {
                     state.model = model;
@@ -107,6 +109,7 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                     &mut state,
                     input,
                     client_user_message_id,
+                    &trace_context,
                     &mut stdout,
                     &request_rx,
                     Some(ActiveBlocksInput {
@@ -209,6 +212,7 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
     state: &mut ThreadState,
     input: Vec<UserInput>,
     client_user_message_id: Option<String>,
+    trace_context: &TraceContext,
     stdout: &mut W,
     request_rx: &Receiver<JSONRPCRequest>,
     active_blocks: Option<ActiveBlocksInput<'_>>,
@@ -221,6 +225,7 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
         TurnRunContext {
             input: &input,
             client_user_message_id,
+            trace_context: Some(trace_context),
             normalizer: &mut normalizer,
             stdout,
             request_rx,
@@ -237,6 +242,7 @@ pub(crate) enum BlocksCommand {
         model: Option<String>,
         provider: Option<String>,
         reasoning: Option<String>,
+        trace_context: TraceContext,
     },
     QuestionAnswer {
         question_id: String,
@@ -317,6 +323,7 @@ struct ActiveBlocksInput<'a> {
 struct TurnRunContext<'a, W: Write> {
     input: &'a [UserInput],
     client_user_message_id: Option<String>,
+    trace_context: Option<&'a TraceContext>,
     normalizer: &'a mut CodexTurnNormalizer,
     stdout: &'a mut W,
     request_rx: &'a Receiver<JSONRPCRequest>,
@@ -341,6 +348,14 @@ struct BlocksLine {
     provider: Option<String>,
     #[serde(default)]
     reasoning: Option<String>,
+    #[serde(default)]
+    thread_key: Option<String>,
+    #[serde(default)]
+    trace_id: Option<String>,
+    #[serde(default)]
+    traceparent: Option<String>,
+    #[serde(default)]
+    trace_metadata: Option<Value>,
     #[serde(rename = "attachmentId", default)]
     attachment_id: Option<String>,
     #[serde(default)]
@@ -357,6 +372,27 @@ struct BlocksLine {
     question_id: Option<String>,
     #[serde(default)]
     answers: Option<Value>,
+}
+
+impl BlocksLine {
+    fn trace_context(&self) -> TraceContext {
+        TraceContext {
+            thread_key: clean_string(self.thread_key.as_deref()),
+            trace_id: clean_string(self.trace_id.as_deref()),
+            traceparent: clean_string(self.traceparent.as_deref()),
+            metadata: self
+                .trace_metadata
+                .as_ref()
+                .and_then(Value::as_object)
+                .map(|metadata| {
+                    metadata
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,6 +457,7 @@ pub(crate) fn parse_blocks_line_with_state(
 
     match parsed.kind.as_str() {
         "user" => {
+            let trace_context = parsed.trace_context();
             let content = parsed
                 .message
                 .as_ref()
@@ -461,6 +498,7 @@ pub(crate) fn parse_blocks_line_with_state(
                     .reasoning
                     .map(|reasoning| reasoning.trim().to_owned())
                     .filter(|reasoning| !reasoning.is_empty()),
+                trace_context,
             })
         }
         "question_answer" => {
@@ -751,6 +789,10 @@ fn request_id_key(value: &Value) -> String {
     }
 }
 
+fn clean_string(value: Option<&str>) -> Option<String> {
+    non_empty(value).map(ToOwned::to_owned)
+}
+
 fn handle_request<H: HarnessServer, W: Write>(
     harness: &H,
     request: JSONRPCRequest,
@@ -879,6 +921,7 @@ fn handle_request<H: HarnessServer, W: Write>(
                 TurnRunContext {
                     input: &params.input,
                     client_user_message_id: params.client_user_message_id.clone(),
+                    trace_context: None,
                     normalizer: &mut normalizer,
                     stdout,
                     request_rx,
@@ -1107,6 +1150,12 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
     state: &mut ThreadState,
     ctx: &mut TurnRunContext<'_, W>,
 ) -> Result<Option<codex_app_server_protocol::Turn>> {
+    let usage_span_start = otel::unix_time_nanos();
+    let usage_span_model = state.model.clone();
+    let usage_span_model_provider = state.model_provider.clone();
+    let usage_span_turn_id = ctx.normalizer.turn_id().to_string();
+    let usage_span_input = usage_span_input_value(ctx.input);
+    let mut usage_span_output = UsageSpanOutput::default();
     ensure_harness_process(harness, state)?;
     let process = state
         .process
@@ -1120,6 +1169,7 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
     let mut last_session_id = state.harness_session_id.clone();
     let mut event_normalizer = H::EventNormalizer::default();
     let mut completed_turn = None;
+    let mut latest_usage = None;
     loop {
         while let Ok(request) = ctx.request_rx.try_recv() {
             handle_active_turn_request(harness, process, ctx.normalizer, request, ctx.stdout)?;
@@ -1160,6 +1210,10 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
         let normalized_events = harness.normalize_events(&mut event_normalizer, event)?;
         let mut terminal = false;
         for normalized in normalized_events {
+            if let Some(usage) = normalized.token_usage() {
+                latest_usage = Some(usage.clone());
+            }
+            append_usage_span_output(&normalized, &mut usage_span_output);
             if let Some(session_id) = normalized.session_id() {
                 last_session_id = Some(session_id.to_string());
                 state.harness_session_id = Some(session_id.to_string());
@@ -1172,6 +1226,17 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
                     && normalized.is_assistant_end_turn());
         }
         if terminal {
+            export_harness_usage_if_available(
+                ctx.trace_context,
+                harness.kind(),
+                &usage_span_model,
+                &usage_span_model_provider,
+                &usage_span_turn_id,
+                usage_span_input.as_deref(),
+                usage_span_output.value().as_deref(),
+                usage_span_start,
+                latest_usage.as_ref(),
+            );
             if let Some(notification) = ctx.normalizer.finish_turn(None)? {
                 if let ServerNotification::TurnCompleted(completed) = &notification {
                     completed_turn = Some(completed.turn.clone());
@@ -1215,6 +1280,7 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
                 model,
                 provider,
                 reasoning,
+                trace_context: _,
             }) => {
                 if model.is_some() || provider.is_some() || reasoning.is_some() {
                     eprintln!("blocks active steering ignored model/provider/reasoning overrides");
@@ -1342,6 +1408,125 @@ fn write_question_resolved<W: Write>(
             "reason": reason,
         }),
     )
+}
+
+fn export_harness_usage_if_available(
+    trace_context: Option<&TraceContext>,
+    harness: HarnessKind,
+    model: &str,
+    model_provider: &str,
+    turn_id: &str,
+    input: Option<&str>,
+    output: Option<&str>,
+    start_unix_nano: u64,
+    usage: Option<&NormalizedTokenUsage>,
+) {
+    let (Some(trace_context), Some(usage)) = (trace_context, usage) else {
+        return;
+    };
+    let span = HarnessUsageSpan {
+        harness,
+        model,
+        model_provider,
+        turn_id,
+        input,
+        output,
+        start_unix_nano,
+        end_unix_nano: otel::unix_time_nanos(),
+    };
+    if let Err(error) = otel::export_harness_usage_span(trace_context, span, usage) {
+        eprintln!("harness usage OTLP export failed: {error:#}");
+    }
+}
+
+fn usage_span_input_value(input: &[UserInput]) -> Option<String> {
+    let mut parts = Vec::new();
+    for item in input {
+        match item {
+            UserInput::Text { text, .. } => parts.push(text.clone()),
+            UserInput::Image { url, .. } => parts.push(format!("[image: {url}]")),
+            UserInput::LocalImage { path, .. } => {
+                parts.push(format!("[local image: {}]", path.display()));
+            }
+            UserInput::Skill { name, path } => {
+                parts.push(format!("[skill: {name} at {}]", path.display()));
+            }
+            UserInput::Mention { name, path } => {
+                parts.push(format!("[mention: {name} at {path}]"));
+            }
+        }
+    }
+    let joined = parts.join("\n");
+    non_empty(Some(&joined)).map(str::to_owned)
+}
+
+#[derive(Debug, Default)]
+struct UsageSpanOutput {
+    item_order: Vec<String>,
+    text_by_item_id: HashMap<String, String>,
+    fallback: Option<String>,
+}
+
+impl UsageSpanOutput {
+    fn append_delta(&mut self, item_id: &str, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        self.remember_item(item_id);
+        self.text_by_item_id
+            .entry(item_id.to_string())
+            .or_default()
+            .push_str(delta);
+    }
+
+    fn set_item_text(&mut self, item_id: &str, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.remember_item(item_id);
+        self.text_by_item_id
+            .insert(item_id.to_string(), text.to_string());
+    }
+
+    fn set_fallback_if_empty(&mut self, value: &str) {
+        if self.value().is_none() {
+            self.fallback = clean_string(Some(value));
+        }
+    }
+
+    fn value(&self) -> Option<String> {
+        let mut text = String::new();
+        for item_id in &self.item_order {
+            if let Some(item_text) = self.text_by_item_id.get(item_id) {
+                text.push_str(item_text);
+            }
+        }
+        clean_string(Some(&text)).or_else(|| self.fallback.clone())
+    }
+
+    fn remember_item(&mut self, item_id: &str) {
+        if self.text_by_item_id.contains_key(item_id) {
+            return;
+        }
+        self.item_order.push(item_id.to_string());
+        self.text_by_item_id
+            .insert(item_id.to_string(), String::new());
+    }
+}
+
+fn append_usage_span_output(event: &NormalizedEvent, output: &mut UsageSpanOutput) {
+    match event {
+        NormalizedEvent::AssistantMessage { content, .. } => {
+            for item in content {
+                if let NormalizedContent::AgentText { item_id, text } = item {
+                    output.set_item_text(item_id, text);
+                }
+            }
+        }
+        NormalizedEvent::AgentTextDelta { item_id, delta } => output.append_delta(item_id, delta),
+        NormalizedEvent::Error { message } => output.set_fallback_if_empty(message),
+        _ => {}
+    }
 }
 
 fn ensure_harness_process<H: HarnessServer>(harness: &H, state: &mut ThreadState) -> Result<()> {
@@ -1511,6 +1696,32 @@ mod tests {
     }
 
     #[test]
+    fn parses_blocks_user_line_with_trace_context() {
+        let line = r#"{"type":"user","thread_key":"web:t1","trace_id":"01234567-89ab-cdef-0123-456789abcdef","traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01","trace_metadata":{"execution_id":"exe_123"},"text":"hi"}"#;
+        let BlocksCommand::User { trace_context, .. } = parse_blocks_line(line).expect("parses")
+        else {
+            panic!("expected user command");
+        };
+
+        assert_eq!(trace_context.thread_key.as_deref(), Some("web:t1"));
+        assert_eq!(
+            trace_context.trace_id.as_deref(),
+            Some("01234567-89ab-cdef-0123-456789abcdef")
+        );
+        assert_eq!(
+            trace_context.traceparent.as_deref(),
+            Some("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+        );
+        assert_eq!(
+            trace_context
+                .metadata
+                .get("execution_id")
+                .and_then(Value::as_str),
+            Some("exe_123")
+        );
+    }
+
+    #[test]
     fn ignores_blank_model_on_blocks_user_line() {
         let line = r#"{"type":"user","model":"  ","text":"hi"}"#;
         let BlocksCommand::User { model, .. } = parse_blocks_line(line).expect("parses") else {
@@ -1562,6 +1773,38 @@ mod tests {
             panic!("expected user command");
         };
         assert_eq!(reasoning, None);
+    }
+
+    #[test]
+    fn usage_span_output_replaces_delta_reconstruction_with_canonical_text() {
+        let mut output = UsageSpanOutput::default();
+        append_usage_span_output(
+            &NormalizedEvent::AgentTextDelta {
+                item_id: "msg-1".to_string(),
+                delta: "hel".to_string(),
+            },
+            &mut output,
+        );
+        append_usage_span_output(
+            &NormalizedEvent::AgentTextDelta {
+                item_id: "msg-1".to_string(),
+                delta: "lo".to_string(),
+            },
+            &mut output,
+        );
+        append_usage_span_output(
+            &NormalizedEvent::AssistantMessage {
+                partial: false,
+                stop_reason: Some("end_turn".to_string()),
+                content: vec![NormalizedContent::AgentText {
+                    item_id: "msg-1".to_string(),
+                    text: "hello".to_string(),
+                }],
+            },
+            &mut output,
+        );
+
+        assert_eq!(output.value().as_deref(), Some("hello"));
     }
 
     #[test]

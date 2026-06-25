@@ -150,9 +150,11 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     assert_equal first, second
   end
 
-  test "transforms carries gcp_auth per grant and a single bundled oauth_token" do
+  test "transforms carries gcp auth transforms per grant and a single bundled oauth_token" do
     admin = users(:acme_admin)
     Grant.create!(principal: @proxy.principal, gcp_auth_secret: gcp_auth_secrets(:acme_bigquery), created_by: admin)
+    Grant.create!(principal: @proxy.principal, gcp_id_token_secret: gcp_id_token_secrets(:acme_cloud_run),
+                  created_by: admin)
     Grant.create!(principal: @proxy.principal, oauth_token_secret: oauth_token_secrets(:acme_gmail_oauth), created_by: admin)
 
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
@@ -161,10 +163,52 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     transforms = json_body.fetch("transforms")
     names = transforms.map { |t| t["name"] }
     assert_equal 1, names.count("gcp_auth")
+    assert_equal 1, names.count("gcp_id_token")
     assert_equal 1, names.count("oauth_token")
+
+    gcp_id = transforms.find { |t| t["name"] == "gcp_id_token" }
+    assert_equal "https://my-service-abc123-uc.a.run.app", gcp_id.dig("config", "audience")
+    assert_equal "x-serverless-authorization", gcp_id.dig("config", "header")
 
     oauth = transforms.find { |t| t["name"] == "oauth_token" }
     assert_equal 1, oauth.dig("config", "tokens").length
+  end
+
+  test "cached proxy snapshot carries gcp_id_token and invalidates when it changes" do
+    admin = users(:acme_admin)
+    secret = gcp_id_token_secrets(:acme_cloud_run)
+    Grant.create!(principal: @proxy.principal, gcp_id_token_secret: secret, created_by: admin)
+
+    assert_difference -> { PrincipalSyncConfigSnapshot.count }, 1 do
+      post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
+    end
+    assert_response :ok
+
+    original_hash = json_body.fetch("config_hash")
+    snapshot = PrincipalSyncConfigSnapshot.find_by!(principal: @proxy.principal)
+    transform = snapshot.payload.fetch("transforms").find { |t| t["name"] == "gcp_id_token" }
+    assert_equal secret.audience, transform.dig("config", "audience")
+    assert_equal "CLOUD_RUN_SA_KEYFILE", transform.dig("config", "keyfile", "var")
+
+    assert_no_difference -> { PrincipalSyncConfigSnapshot.count } do
+      post api_v1_proxy_sync_url, params: { config_hash: "sha256:#{'0' * 64}" }.to_json,
+                                 headers: auth_headers
+    end
+    assert_response :ok
+    transform = json_body.fetch("transforms").find { |t| t["name"] == "gcp_id_token" }
+    assert_equal secret.audience, transform.dig("config", "audience")
+
+    original_version = @proxy.principal.reload.sync_config_cache_version
+    secret.update!(audience: "https://updated-service-abc123-uc.a.run.app")
+
+    assert_operator @proxy.principal.reload.sync_config_cache_version, :>, original_version
+    assert_difference -> { PrincipalSyncConfigSnapshot.count }, 1 do
+      post api_v1_proxy_sync_url, params: { config_hash: original_hash }.to_json, headers: auth_headers
+    end
+    assert_response :ok
+    refute_equal original_hash, json_body.fetch("config_hash")
+    transform = json_body.fetch("transforms").find { |t| t["name"] == "gcp_id_token" }
+    assert_equal "https://updated-service-abc123-uc.a.run.app", transform.dig("config", "audience")
   end
 
   test "transforms carries one hmac_sign transform per granted HmacSecret" do

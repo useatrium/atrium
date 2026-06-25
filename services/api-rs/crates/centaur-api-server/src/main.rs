@@ -58,6 +58,7 @@ async fn initialize_runtime(args: Args, app_state: AppState) -> Result<(), Serve
     if args.server.run_migrations {
         store.run_migrations().await?;
     }
+    let pool = store.pool().clone();
     let sandbox_runtime = args.sandbox_runtime().await?;
     let mut runtime = SessionRuntime::new(store.clone(), sandbox_runtime);
     let mut warm_pool_bootstrap_principal = None;
@@ -72,11 +73,13 @@ async fn initialize_runtime(args: Args, app_state: AppState) -> Result<(), Serve
         info!("iron-control tool secret reconciliation enabled");
         tokio::spawn(reconciler.run());
     }
+    runtime = runtime.with_personas(args.persona_registry()?);
     if let Some(mut config) = args.warm_pool_config() {
         config.bootstrap_iron_control_principal = warm_pool_bootstrap_principal.clone();
         runtime = runtime.with_warm_pool(config);
     }
     runtime = runtime.with_sandbox_reaper(args.sandbox_reaper_config());
+    runtime = runtime.with_sandbox_cleanup(args.sandbox_cleanup_config());
     let workflow_host_sandbox = args
         .workflow_host_sandbox_runtime(workflow_host_principal.as_deref())
         .await?;
@@ -97,7 +100,7 @@ async fn initialize_runtime(args: Args, app_state: AppState) -> Result<(), Serve
         adoption_runtime.adopt_orphaned_executions().await;
     });
 
-    app_state.mark_ready(runtime, workflows);
+    app_state.mark_ready(runtime, workflows, Some(pool));
     info!("centaur api-rs runtime initialized");
     Ok(())
 }

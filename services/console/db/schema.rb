@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_25_002334) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -44,6 +44,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
 
   create_table "broker_credentials", force: :cascade do |t|
     t.text "access_token"
+    t.text "api_key"
     t.string "client_id"
     t.text "client_secret"
     t.datetime "created_at", null: false
@@ -57,6 +58,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.string "external_user_key"
     t.integer "failure_count", default: 0, null: false
     t.string "foreign_id"
+    t.string "grant", default: "refresh_token", null: false
     t.jsonb "labels", default: {}, null: false
     t.datetime "last_refresh"
     t.integer "max_refresh_interval_seconds", default: 86400, null: false
@@ -64,6 +66,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.string "namespace", default: "default", null: false
     t.datetime "next_attempt_at"
     t.bigint "oauth_app_id"
+    t.text "password"
     t.string "provider_email"
     t.string "provider_subject"
     t.integer "refresh_timeout_seconds", default: 30, null: false
@@ -72,6 +75,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.string "token_endpoint", null: false
     t.text "token_endpoint_headers"
     t.datetime "updated_at", null: false
+    t.text "username"
     t.index ["created_by_id"], name: "index_broker_credentials_on_created_by_id"
     t.index ["labels"], name: "index_broker_credentials_on_labels", using: :gin
     t.index ["namespace", "foreign_id"], name: "index_broker_credentials_on_namespace_and_foreign_id", unique: true
@@ -97,11 +101,28 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.index ["namespace", "foreign_id"], name: "index_gcp_auth_secrets_on_namespace_and_foreign_id", unique: true
   end
 
+  create_table "gcp_id_token_secrets", force: :cascade do |t|
+    t.string "audience", null: false
+    t.datetime "created_at", null: false
+    t.bigint "created_by_id", null: false
+    t.string "description"
+    t.string "foreign_id"
+    t.string "header"
+    t.jsonb "labels", default: {}, null: false
+    t.string "name"
+    t.string "namespace", default: "default", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_by_id"], name: "index_gcp_id_token_secrets_on_created_by_id"
+    t.index ["labels"], name: "index_gcp_id_token_secrets_on_labels", using: :gin
+    t.index ["namespace", "foreign_id"], name: "index_gcp_id_token_secrets_on_namespace_and_foreign_id", unique: true
+  end
+
   create_table "grants", force: :cascade do |t|
     t.bigint "aws_auth_secret_id"
     t.datetime "created_at", null: false
     t.bigint "created_by_id", null: false
     t.bigint "gcp_auth_secret_id"
+    t.bigint "gcp_id_token_secret_id"
     t.bigint "hmac_secret_id"
     t.bigint "oauth_token_secret_id"
     t.bigint "pg_dsn_secret_id"
@@ -113,6 +134,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.index ["aws_auth_secret_id"], name: "index_grants_on_aws_auth_secret_id"
     t.index ["created_by_id"], name: "index_grants_on_created_by_id"
     t.index ["gcp_auth_secret_id"], name: "index_grants_on_gcp_auth_secret_id"
+    t.index ["gcp_id_token_secret_id"], name: "index_grants_on_gcp_id_token_secret_id"
     t.index ["hmac_secret_id"], name: "index_grants_on_hmac_secret_id"
     t.index ["oauth_token_secret_id"], name: "index_grants_on_oauth_token_secret_id"
     t.index ["pg_dsn_secret_id"], name: "index_grants_on_pg_dsn_secret_id"
@@ -259,6 +281,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.string "cidr"
     t.datetime "created_at", null: false
     t.bigint "gcp_auth_secret_id"
+    t.bigint "gcp_id_token_secret_id"
     t.bigint "hmac_secret_id"
     t.string "host"
     t.jsonb "http_methods", default: [], null: false
@@ -269,6 +292,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.datetime "updated_at", null: false
     t.index ["aws_auth_secret_id"], name: "index_request_rules_on_aws_auth_secret_id"
     t.index ["gcp_auth_secret_id"], name: "index_request_rules_on_gcp_auth_secret_id"
+    t.index ["gcp_id_token_secret_id"], name: "index_request_rules_on_gcp_id_token_secret_id"
     t.index ["hmac_secret_id"], name: "index_request_rules_on_hmac_secret_id"
     t.index ["host"], name: "index_request_rules_on_host"
     t.index ["oauth_token_secret_id"], name: "index_request_rules_on_oauth_token_secret_id"
@@ -294,6 +318,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.jsonb "config", default: {}, null: false
     t.datetime "created_at", null: false
     t.bigint "gcp_auth_secret_id"
+    t.bigint "gcp_id_token_secret_id"
     t.bigint "hmac_secret_id"
     t.bigint "oauth_token_secret_id"
     t.bigint "pg_dsn_secret_id"
@@ -306,6 +331,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
     t.index ["aws_auth_secret_id", "role", "role_kind"], name: "index_secret_sources_on_aws_owner_and_role", unique: true
     t.index ["aws_auth_secret_id"], name: "index_secret_sources_on_aws_auth_secret_id"
     t.index ["gcp_auth_secret_id"], name: "index_secret_sources_on_gcp_auth_secret_id", unique: true
+    t.index ["gcp_id_token_secret_id"], name: "index_secret_sources_on_gcp_id_token_secret_id", unique: true
     t.index ["hmac_secret_id", "role", "role_kind"], name: "index_secret_sources_on_hmac_owner_and_role", unique: true
     t.index ["hmac_secret_id"], name: "index_secret_sources_on_hmac_secret_id"
     t.index ["oauth_token_secret_id", "role", "role_kind"], name: "index_secret_sources_on_oauth_owner_and_role", unique: true
@@ -364,8 +390,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
   add_foreign_key "broker_credentials", "oauth_apps"
   add_foreign_key "broker_credentials", "users", column: "created_by_id"
   add_foreign_key "gcp_auth_secrets", "users", column: "created_by_id"
+  add_foreign_key "gcp_id_token_secrets", "users", column: "created_by_id"
   add_foreign_key "grants", "aws_auth_secrets"
   add_foreign_key "grants", "gcp_auth_secrets"
+  add_foreign_key "grants", "gcp_id_token_secrets"
   add_foreign_key "grants", "hmac_secrets"
   add_foreign_key "grants", "oauth_token_secrets"
   add_foreign_key "grants", "pg_dsn_secrets"
@@ -384,12 +412,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_170000) do
   add_foreign_key "proxies", "principals", on_delete: :nullify
   add_foreign_key "request_rules", "aws_auth_secrets"
   add_foreign_key "request_rules", "gcp_auth_secrets"
+  add_foreign_key "request_rules", "gcp_id_token_secrets"
   add_foreign_key "request_rules", "hmac_secrets"
   add_foreign_key "request_rules", "oauth_token_secrets"
   add_foreign_key "request_rules", "static_secrets"
   add_foreign_key "roles", "users", column: "created_by_id"
   add_foreign_key "secret_sources", "aws_auth_secrets"
   add_foreign_key "secret_sources", "gcp_auth_secrets"
+  add_foreign_key "secret_sources", "gcp_id_token_secrets"
   add_foreign_key "secret_sources", "hmac_secrets"
   add_foreign_key "secret_sources", "oauth_token_secrets"
   add_foreign_key "secret_sources", "pg_dsn_secrets"

@@ -451,14 +451,14 @@ The sandbox image bakes `services/sandbox/SYSTEM_PROMPT.md` into `~/AGENTS.md` a
 The system prompt tells the agent:
 - **Identity**: it's running inside a Kubernetes sandbox pod, calling back to the API for tool access
 - **Tools**: three kinds — harness built-ins (Read, Bash, etc.), API tools exposed as shell CLI shims, and a headless browser
-- **Tool CLIs**: each tool is installed as a shell command at container startup by `services/sandbox/install_tool_shims.py`, which scans `TOOL_DIRS` for `pyproject.toml [project.scripts]` and `uvx`-installs each. Agents call tools directly (`slack get_channel_history '{"channel":"general"}'`, `<tool> --help` to discover) — there is no `call` helper.
+- **Tool CLIs**: each tool is installed as a shell command at container startup by `services/sandbox/install_tool_shims.py`, which scans `TOOL_DIRS` for `pyproject.toml [project.scripts]` and `uvx`-installs each. Agents call tools directly (`slack get_channel_history '{"channel":"general"}'`, `<tool> --help` to discover).
 - **Slack messaging**: the agent's stdout IS the Slack reply — never call `send_message` on the active thread
 - **Rules**: never display secrets, show your work, lead with the answer
 
 `centaur-tools` is the generated catalog CLI emitted by the same installer:
 - `centaur-tools list` → list available tool CLIs
 - `centaur-tools run <tool> [args]` → run a tool CLI
-- `centaur-tools call <tool> <method> [json]` → internal method bridge kept only for the Python workflow host's `ctx.call_tool(...)`; interactive agents use the direct tool CLIs above.
+- `<tool> --help` → discover one tool's direct CLI; the internal method bridge is kept only for the Python workflow host's `ctx.call_tool(...)`.
 
 ### Persona System
 
@@ -535,11 +535,11 @@ For local development, infra secrets are stored in Kubernetes Secrets created by
 
 ### centaur-perms
 
-`centaur-perms` is the operator CLI for iron-control permissions: it controls which Slack principals (users and channels) and which roles hold which tool roles and secrets. It lives at `services/api-rs/crates/centaur-perms` and reuses iron-control's canonical mappings (`derive_principal`, `RoleSpec::tool`), so every principal and role `foreign_id` it writes matches exactly what `api-rs` registers at session start. It is the supported way to inspect and edit grants by hand; the API writes the same resources at runtime.
+`centaur-perms` is the operator CLI for iron-control permissions: it controls which chat principals (Slack users/channels, Discord channels, and Teams users/conversations) and which roles hold which tool roles and secrets. It lives at `services/api-rs/crates/centaur-perms` and reuses iron-control's canonical mappings (`derive_principal`, `RoleSpec::tool`), so every principal and role `foreign_id` it writes matches exactly what `api-rs` registers at session start. It is the supported way to inspect and edit grants by hand; the API writes the same resources at runtime.
 
 #### Concepts
 
-- **Principal** — a Slack user or channel that an agent session runs as. `foreign_id`s are derived canonically: `slack-channel-<team>-<conv>` for a channel, `slack-user-<team>-<user>` for a DM. A channel's grants win when present; otherwise the session falls back to the requesting user's grants.
+- **Principal** — the chat identity an agent session runs as. `foreign_id`s are derived canonically: `slack-channel-<team>-<conv>` for a Slack channel, `slack-user-<team>-<user>` for a Slack DM, `discord-channel-<guild>-<channel>` for Discord, `teams-conversation-<tenant-slug>-<conversation-slug>` for Teams conversations, and `teams-user-<tenant-slug>-<user-slug>` for Teams user-scoped runs. Each session binds to one derived principal; grant the channel/conversation principal for shared contexts and the user principal for DM or user-scoped contexts.
 - **Role** — a named bundle of secret grants assignable to principals. Canonical roles: `infra` (shared infra secrets), `tools` (shared harness/tool secrets), and one `tool-<slug>` per tool (e.g. `tool-github`).
 - **Secret** — a typed iron-control resource (static `ssr_`, OAuth token `ots_`, GCP auth `gas_`, Postgres DSN `pgs_`, HMAC signing `hms_`). iron-control never returns credential values, only the source each resolves from. Each `tool-<slug>` secret keeps a canonical `tool-<slug>-…` id so the same object is shared no matter which role grants it.
 - **Grant** — binds a secret to a grantee (a principal or a role). `centaur-perms` resources carry the label `managed-by=centaur`.
@@ -573,8 +573,8 @@ Commands are resource-first — `centaur-perms <noun> <verb>`:
 |---------|--------------|
 | `principals list [--filter S] [--label k=v] [--managed]` | List principals. `--filter` is a case-insensitive substring on `foreign_id`/name; `--managed` is shorthand for `--label managed-by=centaur`. |
 | `principals show <principal> [--slack-user U]` | Show a principal's roles (with each role's grants), direct grants, and effective replace-secret placeholders. |
-| `principals grant <principal> [--tool N] [--role F] [--secret OID]` | Grant access. `--tool` registers the tool's `tool-<slug>` role + secrets then assigns it; `--role` assigns an existing role; `--secret` grants a secret OID directly. All repeatable; creates the principal if absent. |
-| `principals revoke <principal> [--tool N] [--role F] [--secret OID] [--grant-id OID]` | Reverse of grant. `--tool`/`--role` unassign the role; `--secret` deletes the direct grant for that secret; `--grant-id` deletes a grant by its `grant_…` id. |
+| `principals grant <principal> [--slack-user U] [--tool N] [--role F] [--secret OID]` | Grant access. `--tool` registers its `tool-<slug>` role + secrets then assigns it; `--role` assigns an existing role; `--secret` grants a secret OID directly. All repeatable; creates the principal if absent. |
+| `principals revoke <principal> [--slack-user U] [--tool N] [--role F] [--secret OID] [--grant-id OID]` | Reverse of grant. `--tool`/`--role` unassign the role; `--secret` deletes the direct grant for that secret; `--grant-id` deletes a grant by its `grant_…` id. |
 | `roles list / show <role>` | List roles, or show the secrets granted to one role. |
 | `roles grant <role> [--secret OID] [--tool N [--secret-name NAME]]` | Grant secrets to a role by OID, or register+grant a tool's declared secrets. `--secret-name` (repeatable, requires `--tool`) selects specific declared secrets instead of all. |
 | `roles revoke <role> --secret OID` | Revoke one or more secrets from a role (`--secret` required, repeatable). |
@@ -583,7 +583,7 @@ Commands are resource-first — `centaur-perms <noun> <verb>`:
 | `broker create --foreign-id F --token-endpoint URL --client-id ID [--client-secret S] [--refresh-token SEED] [--scope SC]…` | Create or update an iron-control broker credential. Values are passed literally; iron-control owns the OAuth refresh loop. Re-supplying `--refresh-token` re-bootstraps it. |
 | `broker list / show <credential> / delete <credential>` | List broker credentials, show one (status/expiry; secret material is never returned), or delete one (by `bcr_` OID or `foreign_id`). |
 
-A `<principal>` argument is treated as a Slack thread key when it contains `:` (e.g. `slack:T123:C456:1700000000.0001`) and run through `derive_principal` — pass `--slack-user` so a DM thread keys to the user. Any value without a `:` is used verbatim as a `foreign_id` (e.g. `slack-channel-t123-c456`) or an OID. Grant/revoke operations are idempotent: re-granting an assigned role or revoking a missing grant is a no-op, reported as such.
+A `<principal>` argument is treated as a chat thread key when it contains `:` (for example `slack:T123:C456:1700000000.0001`, `discord:111:222:333`, or `teams:<base64url-conversation-id>:<base64url-service-url>`) and run through `derive_principal`. Pass `--slack-user` so a Slack DM thread keys to the user. Any value without a `:` is used verbatim as a `foreign_id` (e.g. `slack-channel-t123-c456` or `teams-conversation-19-abc123-thread-tacv2`) or an OID. Grant/revoke operations are idempotent: re-granting an assigned role or revoking a missing grant is a no-op, reported as such.
 
 A tool's `brokered_token` secret registers the *consumer* side — a static secret that injects the access token from a `token_broker` source. The broker credential itself (the managed OAuth refresh loop) is provisioned out of band with `broker create`; the tool's `brokered_token` references it by `foreign_id` (its `credential`, defaulting to the secret `name`).
 

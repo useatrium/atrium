@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.linear.readonly import LinearReadonlyClient
+try:
+    from .readonly import LinearReadonlyClient
+except ImportError:  # pragma: no cover - supports file-based plugin loading
+    from readonly import LinearReadonlyClient
 
 
 class LinearClient(LinearReadonlyClient):

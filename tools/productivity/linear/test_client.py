@@ -11,14 +11,11 @@ import types
 from pathlib import Path
 from typing import Any
 
-# client.py inherits from workflows.linear.readonly.LinearReadonlyClient, which
-# lives in the workflows package and may not be importable in isolation. The
-# mutation logic under test never touches readonly behavior, so stub the base
-# class before loading the module.
-if "workflows.linear.readonly" not in sys.modules:
-    workflows_pkg = types.ModuleType("workflows")
-    linear_pkg = types.ModuleType("workflows.linear")
-    readonly_mod = types.ModuleType("workflows.linear.readonly")
+# client.py inherits from the packaged readonly client. The mutation logic under
+# test never touches readonly behavior, so stub the base class before loading the
+# module as a standalone file.
+if "readonly" not in sys.modules:
+    readonly_mod = types.ModuleType("readonly")
 
     class LinearReadonlyClient:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -28,11 +25,7 @@ if "workflows.linear.readonly" not in sys.modules:
             raise NotImplementedError
 
     readonly_mod.LinearReadonlyClient = LinearReadonlyClient
-    linear_pkg.readonly = readonly_mod
-    workflows_pkg.linear = linear_pkg
-    sys.modules["workflows"] = workflows_pkg
-    sys.modules["workflows.linear"] = linear_pkg
-    sys.modules["workflows.linear.readonly"] = readonly_mod
+    sys.modules["readonly"] = readonly_mod
 
 spec = importlib.util.spec_from_file_location(
     "linear_client", Path(__file__).with_name("client.py")

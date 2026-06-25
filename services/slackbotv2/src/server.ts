@@ -37,8 +37,13 @@ const options: SlackbotV2Options = {
     optionalEnv('SLACKBOTV2_DATABASE_URL') ??
     optionalEnv('DATABASE_URL') ??
     optionalEnv('POSTGRES_URL'),
+  renderRecoveryMaxObligationAgeMs: optionalNumberEnv(
+    'SLACKBOTV2_RENDER_RECOVERY_MAX_OBLIGATION_AGE_MS'
+  ),
+  sessionApiTimeoutMs: optionalNumberEnv('SLACKBOTV2_SESSION_API_TIMEOUT_MS'),
   signingSecret,
   slackApiUrl: optionalEnv('SLACK_API_URL'),
+  slackApiTimeoutMs: optionalNumberEnv('SLACKBOTV2_SLACK_API_TIMEOUT_MS'),
   stateKeyPrefix: optionalEnv('SLACKBOTV2_STATE_KEY_PREFIX'),
   userName: stringEnv('SLACKBOTV2_USER_NAME', 'centaur'),
   logger: consoleLogger

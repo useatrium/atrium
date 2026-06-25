@@ -37,6 +37,7 @@ These are broadly useful across most deployments and are good candidates to conf
 | `company_context` | Search indexed company history across internal sources | None |
 | `grafana` | Query dashboards, alerts, VictoriaMetrics, VictoriaLogs, and annotations | `GRAFANA_URL`, `GRAFANA_API_KEY` |
 | `posthog` | Query product analytics, events, pageviews, breakdowns, and user agents | `POSTHOG_API_KEY`, `POSTHOG_PROJECT_ID` |
+| `amplitude` | Query product analytics — event segmentation, funnels, retention, user activity, and taxonomy | `AMPLITUDE_API_KEY`, `AMPLITUDE_SECRET_KEY` |
 | `attio` | Work with CRM objects, records, lists, notes, tasks, calls, and meetings | `ATTIO_API_KEY` |
 | `pylon` | Read and manage support issues, accounts, contacts, teams, tags, and users | `PYLON_API_KEY` |
 
@@ -63,6 +64,7 @@ These are broadly useful across most deployments and are good candidates to conf
 | `demo` | Test tool hot-reload and basic tool plumbing | None |
 | `grafana` | Grafana dashboards, alerts, VictoriaMetrics, VictoriaLogs, and annotations | `GRAFANA_URL`, `GRAFANA_API_KEY` |
 | `posthog` | Product analytics through HogQL, events, pageviews, and breakdowns | `POSTHOG_API_KEY`, `POSTHOG_PROJECT_ID` |
+| `amplitude` | Amplitude event segmentation, funnels, retention, user activity, realtime, and taxonomy | `AMPLITUDE_API_KEY`, `AMPLITUDE_SECRET_KEY` |
 | `profslice` | Extract Firefox Profiler data for analysis | None |
 | `reth` | Reth execution timing and performance metrics | None |
 | `reth-log-analyzer` | Parse Reth logs and generate performance graphs | None |

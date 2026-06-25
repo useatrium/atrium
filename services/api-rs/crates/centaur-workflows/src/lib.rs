@@ -267,6 +267,33 @@ pub struct WorkflowWebhookSpec {
     pub allowed_methods: Vec<String>,
     #[serde(default = "default_webhook_content_types")]
     pub allowed_content_types: Vec<String>,
+    /// Optional edge pre-filter. When set, the API evaluates it against the
+    /// parsed event (headers + JSON body) and only creates a workflow run when
+    /// it matches. This keeps org-wide webhooks from spawning a sandbox per event.
+    #[serde(default)]
+    pub filter: Option<WebhookFilter>,
+}
+
+/// A declarative webhook pre-filter, evaluated in-process before a run is
+/// created. A node is either a boolean combinator (`any`/`all`) or a leaf that
+/// reads a `header` or a dot-path into the JSON `body` and applies `op`
+/// (`equals` | `in` | `contains` | `prefix`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WebhookFilter {
+    #[serde(default)]
+    pub any: Option<Vec<WebhookFilter>>,
+    #[serde(default)]
+    pub all: Option<Vec<WebhookFilter>>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub op: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub values: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -846,7 +873,7 @@ enum WorkflowQueueClass {
 fn workflow_queue_class(workflow_name: &str) -> WorkflowQueueClass {
     match workflow_name {
         "slack_sync" => WorkflowQueueClass::SlackLive,
-        "slack_backfill" => WorkflowQueueClass::EtlBackfill,
+        "slack_backfill" | "slack_archive_import" => WorkflowQueueClass::EtlBackfill,
         "google_calendar_sync"
         | "google_drive_sync"
         | "linear_sync"
@@ -1056,7 +1083,145 @@ fn normalize_webhook(webhook: &mut RegisteredWorkflowWebhook) -> Result<(), Work
             }
         }
     }
+    if let Some(filter) = &mut webhook.spec.filter {
+        normalize_webhook_filter(&webhook.spec.slug, filter)?;
+    }
     Ok(())
+}
+
+fn normalize_webhook_filter(
+    slug: &str,
+    filter: &mut WebhookFilter,
+) -> Result<(), WorkflowRuntimeError> {
+    normalize_webhook_filter_node(slug, filter, "filter")
+}
+
+fn normalize_webhook_filter_node(
+    slug: &str,
+    filter: &mut WebhookFilter,
+    path: &str,
+) -> Result<(), WorkflowRuntimeError> {
+    let has_any = filter.any.is_some();
+    let has_all = filter.all.is_some();
+    let has_leaf = filter.source.is_some()
+        || filter.key.is_some()
+        || filter.op.is_some()
+        || filter.value.is_some()
+        || filter.values.is_some();
+    if usize::from(has_any) + usize::from(has_all) + usize::from(has_leaf) != 1 {
+        return Err(invalid_webhook_filter(
+            slug,
+            path,
+            "node must be exactly one of any, all, or a leaf predicate",
+        ));
+    }
+
+    if let Some(any) = &mut filter.any {
+        if any.is_empty() {
+            return Err(invalid_webhook_filter(slug, path, "any must not be empty"));
+        }
+        for (index, child) in any.iter_mut().enumerate() {
+            normalize_webhook_filter_node(slug, child, &format!("{path}.any[{index}]"))?;
+        }
+        return Ok(());
+    }
+    if let Some(all) = &mut filter.all {
+        if all.is_empty() {
+            return Err(invalid_webhook_filter(slug, path, "all must not be empty"));
+        }
+        for (index, child) in all.iter_mut().enumerate() {
+            normalize_webhook_filter_node(slug, child, &format!("{path}.all[{index}]"))?;
+        }
+        return Ok(());
+    }
+
+    let source = normalize_required_filter_string(&mut filter.source)
+        .ok_or_else(|| invalid_webhook_filter(slug, path, "leaf requires source"))?;
+    let key = normalize_required_filter_string(&mut filter.key)
+        .ok_or_else(|| invalid_webhook_filter(slug, path, "leaf requires key"))?;
+    let op = normalize_required_filter_string(&mut filter.op)
+        .ok_or_else(|| invalid_webhook_filter(slug, path, "leaf requires op"))?;
+    filter.source = Some(source.to_ascii_lowercase());
+    filter.op = Some(op.to_ascii_lowercase());
+    let source = filter.source.as_deref().unwrap_or_default();
+    let op = filter.op.as_deref().unwrap_or_default();
+    if !matches!(source, "header" | "body") {
+        return Err(invalid_webhook_filter(
+            slug,
+            path,
+            "source must be header or body",
+        ));
+    }
+    if source == "body" && key.split('.').any(|part| part.trim().is_empty()) {
+        return Err(invalid_webhook_filter(
+            slug,
+            path,
+            "body key must be a non-empty dot path",
+        ));
+    }
+    match op {
+        "equals" | "contains" | "prefix" => {
+            if filter.values.is_some() {
+                return Err(invalid_webhook_filter(
+                    slug,
+                    path,
+                    "values is only valid with op in",
+                ));
+            }
+            normalize_required_filter_string(&mut filter.value).ok_or_else(|| {
+                invalid_webhook_filter(slug, path, "op requires a non-empty value")
+            })?;
+        }
+        "in" => {
+            if filter.value.is_some() {
+                return Err(invalid_webhook_filter(
+                    slug,
+                    path,
+                    "value is not valid with op in",
+                ));
+            }
+            let Some(values) = &mut filter.values else {
+                return Err(invalid_webhook_filter(
+                    slug,
+                    path,
+                    "op in requires non-empty values",
+                ));
+            };
+            for value in values.iter_mut() {
+                *value = value.trim().to_owned();
+            }
+            if values.is_empty() || values.iter().any(String::is_empty) {
+                return Err(invalid_webhook_filter(
+                    slug,
+                    path,
+                    "op in requires non-empty values",
+                ));
+            }
+        }
+        _ => {
+            return Err(invalid_webhook_filter(
+                slug,
+                path,
+                "op must be equals, in, contains, or prefix",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_required_filter_string(value: &mut Option<String>) -> Option<String> {
+    let normalized = value.as_ref()?.trim().to_owned();
+    if normalized.is_empty() {
+        return None;
+    }
+    *value = Some(normalized.clone());
+    Some(normalized)
+}
+
+fn invalid_webhook_filter(slug: &str, path: &str, reason: &str) -> WorkflowRuntimeError {
+    WorkflowRuntimeError::BadRequest(format!(
+        "workflow webhook {slug:?} has invalid filter at {path}: {reason}"
+    ))
 }
 
 fn valid_webhook_slug(slug: &str) -> bool {
@@ -1237,6 +1402,7 @@ fn default_workflow_webhooks() -> Vec<RegisteredWorkflowWebhook> {
                     "application/json".to_owned(),
                     "application/x-www-form-urlencoded".to_owned(),
                 ],
+                filter: None,
             },
         },
         RegisteredWorkflowWebhook {
@@ -1256,6 +1422,7 @@ fn default_workflow_webhooks() -> Vec<RegisteredWorkflowWebhook> {
                     "application/json".to_owned(),
                     "application/x-www-form-urlencoded".to_owned(),
                 ],
+                filter: None,
             },
         },
         RegisteredWorkflowWebhook {
@@ -1270,6 +1437,7 @@ fn default_workflow_webhooks() -> Vec<RegisteredWorkflowWebhook> {
                 trigger_key: None,
                 allowed_methods: vec!["POST".to_owned()],
                 allowed_content_types: vec!["application/json".to_owned()],
+                filter: None,
             },
         },
     ]
@@ -2142,6 +2310,33 @@ async fn run_centaur_workflow(
     session_runtime: SessionRuntime,
     workflow_host_sandbox: Option<WorkflowHostSandboxRuntime>,
 ) -> absurd::Result<WorkflowResult> {
+    let mut cleanup_guard =
+        WorkflowSandboxCleanupGuard::new(session_runtime.clone(), ctx.run_id().to_owned());
+    let result =
+        run_centaur_workflow_inner(input, ctx, session_runtime, workflow_host_sandbox).await;
+    if let Some(reason) = workflow_cleanup_reason(&result) {
+        cleanup_guard.cleanup(reason).await;
+    } else {
+        cleanup_guard.disarm();
+    }
+    result
+}
+
+fn workflow_cleanup_reason(result: &absurd::Result<WorkflowResult>) -> Option<&'static str> {
+    match result {
+        Ok(_) => Some("workflow_completed"),
+        Err(absurd::Error::Suspend) => None,
+        Err(absurd::Error::Cancelled) => Some("workflow_cancelled"),
+        Err(_) => Some("workflow_failed"),
+    }
+}
+
+async fn run_centaur_workflow_inner(
+    input: WorkflowTaskInput,
+    ctx: TaskContext,
+    session_runtime: SessionRuntime,
+    workflow_host_sandbox: Option<WorkflowHostSandboxRuntime>,
+) -> absurd::Result<WorkflowResult> {
     let _heartbeat_guard = start_workflow_task_heartbeat(ctx.clone())
         .await
         .map_err(absurd_error)?;
@@ -2233,6 +2428,7 @@ async fn run_centaur_workflow(
                                 execution_idempotency_key: format!(
                                     "absurd-workflow-agent-turn:{client_message_id}"
                                 ),
+                                workflow_owned_thread: true,
                                 idle_timeout_ms,
                                 max_duration_ms,
                             },
@@ -2308,6 +2504,64 @@ async fn run_centaur_workflow(
                 output,
             })
         }
+    }
+}
+
+struct WorkflowSandboxCleanupGuard {
+    session_runtime: Option<SessionRuntime>,
+    workflow_run_id: String,
+}
+
+impl WorkflowSandboxCleanupGuard {
+    fn new(session_runtime: SessionRuntime, workflow_run_id: String) -> Self {
+        Self {
+            session_runtime: Some(session_runtime),
+            workflow_run_id,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.session_runtime = None;
+    }
+
+    async fn cleanup(&mut self, reason: &'static str) {
+        let Some(session_runtime) = self.session_runtime.as_ref().cloned() else {
+            return;
+        };
+        if let Err(error) = session_runtime
+            .stop_workflow_owned_sandboxes(&self.workflow_run_id, reason)
+            .await
+        {
+            warn!(
+                workflow_run_id = %self.workflow_run_id,
+                reason,
+                %error,
+                "failed to clean up workflow-owned sandboxes"
+            );
+            return;
+        }
+        self.session_runtime = None;
+    }
+}
+
+impl Drop for WorkflowSandboxCleanupGuard {
+    fn drop(&mut self) {
+        let Some(session_runtime) = self.session_runtime.take() else {
+            return;
+        };
+        let workflow_run_id = self.workflow_run_id.clone();
+        tokio::spawn(async move {
+            if let Err(error) = session_runtime
+                .stop_workflow_owned_sandboxes(&workflow_run_id, "workflow_cancelled_or_dropped")
+                .await
+            {
+                warn!(
+                    workflow_run_id,
+                    %error,
+                    "failed to clean up dropped workflow-owned sandboxes"
+                );
+            }
+        });
     }
 }
 
@@ -2813,17 +3067,18 @@ async fn run_python_agent_turn(
             "ctx.agent_turn requires text, prompt, content, or parts".to_owned(),
         ));
     }
-    let thread_key = args
+    let explicit_thread_key = args
         .get("thread_key")
         .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| {
-            format!(
-                "wf:{}:agent:{}",
-                ctx.task_id().replace('-', ""),
-                input.workflow_name
-            )
-        });
+        .map(ToOwned::to_owned);
+    let workflow_owned_thread = explicit_thread_key.is_none();
+    let thread_key = explicit_thread_key.unwrap_or_else(|| {
+        format!(
+            "wf:{}:agent:{}",
+            ctx.task_id().replace('-', ""),
+            input.workflow_name
+        )
+    });
     let harness_type = parse_agent_harness(&args)?.unwrap_or_else(|| input.harness_type.clone());
     let persona_id = args
         .get("persona_id")
@@ -2885,6 +3140,7 @@ async fn run_python_agent_turn(
             message_metadata,
             execution_metadata,
             execution_idempotency_key,
+            workflow_owned_thread,
             idle_timeout_ms,
             max_duration_ms,
         },
@@ -3080,6 +3336,18 @@ async fn post_python_slack_message(
                 "SLACK_BOT_TOKEN or SLACK_BOT_TOKEN_OVERRIDE must be set".to_owned(),
             )
         })?;
+    let payload = python_slack_message_payload(channel, text, &client_msg_id, &args);
+    let response = send_slack_message(&token, payload).await?;
+    serde_json::to_value(slack_post_result_from_response(channel, response))
+        .map_err(WorkflowRuntimeError::from)
+}
+
+fn python_slack_message_payload(
+    channel: &str,
+    text: &str,
+    client_msg_id: &str,
+    args: &Value,
+) -> Value {
     let mut payload = json!({
         "channel": channel,
         "text": text,
@@ -3096,15 +3364,16 @@ async fn post_python_slack_message(
     if let Some(thread_ts) = args.get("thread_ts").and_then(Value::as_str) {
         payload["thread_ts"] = json!(thread_ts);
     }
+    if let Some(reply_broadcast) = args.get("reply_broadcast").and_then(Value::as_bool) {
+        payload["reply_broadcast"] = json!(reply_broadcast);
+    }
     if let Some(blocks) = args.get("blocks") {
         payload["blocks"] = blocks.clone();
     }
     if let Some(no_attribution) = args.get("no_attribution").and_then(Value::as_bool) {
         payload["no_attribution"] = json!(no_attribution);
     }
-    let response = send_slack_message(&token, payload).await?;
-    serde_json::to_value(slack_post_result_from_response(channel, response))
-        .map_err(WorkflowRuntimeError::from)
+    payload
 }
 
 async fn send_slack_message(token: &str, payload: Value) -> Result<Value, WorkflowRuntimeError> {
@@ -3153,6 +3422,7 @@ struct AgentTurnRequest {
     message_metadata: Value,
     execution_metadata: Value,
     execution_idempotency_key: String,
+    workflow_owned_thread: bool,
     idle_timeout_ms: u64,
     max_duration_ms: u64,
 }
@@ -3171,10 +3441,15 @@ async fn run_agent_session_turn(
         message_metadata,
         execution_metadata,
         execution_idempotency_key,
+        workflow_owned_thread,
         idle_timeout_ms,
         max_duration_ms,
     } = turn;
     let thread_key = ThreadKey::parse(thread_key)?;
+    let mut session_metadata = session_metadata;
+    if workflow_owned_thread {
+        object_insert(&mut session_metadata, "workflow_owned_thread", json!(true));
+    }
     session_runtime
         .create_or_get_session(
             &thread_key,
@@ -3457,9 +3732,36 @@ mod tests {
             WorkflowQueueClass::EtlBackfill
         );
         assert_eq!(
+            workflow_queue_class("slack_archive_import"),
+            WorkflowQueueClass::EtlBackfill
+        );
+        assert_eq!(
             workflow_queue_class("github_issue_triage"),
             WorkflowQueueClass::Standard
         );
+    }
+
+    #[test]
+    fn python_slack_payload_passes_reply_broadcast() {
+        let payload = python_slack_message_payload(
+            "C123",
+            "hello",
+            "client-1",
+            &json!({
+                "thread_ts": "1710000000.000100",
+                "reply_broadcast": true,
+                "unfurl_links": true,
+                "unfurl_media": true,
+            }),
+        );
+
+        assert_eq!(payload["channel"], json!("C123"));
+        assert_eq!(payload["text"], json!("hello"));
+        assert_eq!(payload["client_msg_id"], json!("client-1"));
+        assert_eq!(payload["thread_ts"], json!("1710000000.000100"));
+        assert_eq!(payload["reply_broadcast"], json!(true));
+        assert_eq!(payload["unfurl_links"], json!(true));
+        assert_eq!(payload["unfurl_media"], json!(true));
     }
 
     #[test]
@@ -3575,6 +3877,133 @@ mod tests {
     }
 
     #[test]
+    fn discovery_metadata_preserves_webhook_filter() {
+        let payload: PythonWorkflowDiscoveryPayload = serde_json::from_value(json!({
+            "workflows": [
+                {
+                    "workflow_name": "github_issue_triage",
+                    "source_path": "workflows/github_issue_triage.py",
+                    "webhooks": [
+                        {
+                            "workflow_name": "github_issue_triage",
+                            "source_path": "workflows/github_issue_triage.py",
+                            "spec": {
+                                "slug": "github-issue-triage",
+                                "auth": {
+                                    "type": "github",
+                                    "secret_ref": "GITHUB_WEBHOOK_SECRET"
+                                },
+                                "filter": {
+                                    "all": [
+                                        {
+                                            "source": "header",
+                                            "key": "x-github-event",
+                                            "op": "equals",
+                                            "value": "issue_comment"
+                                        },
+                                        {
+                                            "source": "body",
+                                            "key": "repository.full_name",
+                                            "op": "in",
+                                            "values": ["ethereum-optimism/optimism"]
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+        }))
+        .unwrap();
+
+        let metadata = metadata_from_discovery_payload(payload);
+        let filter = metadata.webhooks[0].spec.filter.as_ref().unwrap();
+        let all = filter.all.as_ref().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].source.as_deref(), Some("header"));
+        assert_eq!(all[1].key.as_deref(), Some("repository.full_name"));
+    }
+
+    fn webhook_with_filter(filter: Value) -> RegisteredWorkflowWebhook {
+        RegisteredWorkflowWebhook {
+            workflow_name: "github_issue_triage".to_owned(),
+            source_path: "workflows/github_issue_triage.py".to_owned(),
+            spec: WorkflowWebhookSpec {
+                slug: "github-issue-triage".to_owned(),
+                provider: Some("github".to_owned()),
+                auth: WorkflowWebhookAuth::Github {
+                    secret_ref: "GITHUB_WEBHOOK_SECRET".to_owned(),
+                },
+                trigger_key: Some(WorkflowWebhookTriggerKey::Header {
+                    header: "X-GitHub-Delivery".to_owned(),
+                }),
+                allowed_methods: vec!["POST".to_owned()],
+                allowed_content_types: vec!["application/json".to_owned()],
+                filter: Some(serde_json::from_value(filter).unwrap()),
+            },
+        }
+    }
+
+    #[test]
+    fn normalize_webhook_accepts_and_normalizes_filter() {
+        let mut webhook = webhook_with_filter(json!({
+            "all": [
+                {
+                    "source": " Header ",
+                    "key": " x-github-event ",
+                    "op": " EQUALS ",
+                    "value": " issue_comment "
+                },
+                {
+                    "source": "body",
+                    "key": "repository.full_name",
+                    "op": "in",
+                    "values": [" ethereum-optimism/optimism "]
+                }
+            ]
+        }));
+
+        normalize_webhook(&mut webhook).unwrap();
+
+        let all = webhook.spec.filter.unwrap().all.unwrap();
+        assert_eq!(all[0].source.as_deref(), Some("header"));
+        assert_eq!(all[0].key.as_deref(), Some("x-github-event"));
+        assert_eq!(all[0].op.as_deref(), Some("equals"));
+        assert_eq!(all[0].value.as_deref(), Some("issue_comment"));
+        assert_eq!(
+            all[1].values.as_ref().unwrap(),
+            &vec!["ethereum-optimism/optimism".to_owned()]
+        );
+    }
+
+    #[test]
+    fn normalize_webhook_rejects_malformed_filters() {
+        for filter in [
+            json!({}),
+            json!({"any": []}),
+            json!({
+                "any": [{"source": "header", "key": "x-github-event", "op": "equals", "value": "issues"}],
+                "source": "header",
+                "key": "x-github-event",
+                "op": "equals",
+                "value": "issues"
+            }),
+            json!({"source": "headers", "key": "x-github-event", "op": "equals", "value": "issues"}),
+            json!({"source": "body", "key": "repository..full_name", "op": "equals", "value": "repo"}),
+            json!({"source": "body", "key": "repository.full_name", "op": "regex", "value": "repo"}),
+            json!({"source": "body", "key": "repository.full_name", "op": "equals", "values": ["repo"]}),
+            json!({"source": "body", "key": "repository.full_name", "op": "in", "value": "repo"}),
+            json!({"source": "body", "key": "repository.full_name", "op": "in", "values": []}),
+            json!({"source": "body", "key": "repository.full_name", "op": "in", "values": [""]}),
+        ] {
+            let mut webhook = webhook_with_filter(filter);
+            let error = normalize_webhook(&mut webhook).unwrap_err();
+            assert!(matches!(error, WorkflowRuntimeError::BadRequest(_)));
+        }
+    }
+
+    #[test]
     fn workflow_allowlist_parses_comma_and_whitespace_names() {
         let enablement = WorkflowEnablement::allowlist("agent_turn, slack_sync\ncompany_context");
         assert!(enablement.is_enabled("agent_turn"));
@@ -3651,6 +4080,33 @@ mod tests {
             .ensure_enabled("slack_sync")
             .unwrap_err();
         assert!(matches!(error, WorkflowRuntimeError::Disabled(_)));
+    }
+
+    #[test]
+    fn workflow_cleanup_reason_skips_suspended_runs() {
+        let completed: absurd::Result<WorkflowResult> = Ok(WorkflowResult {
+            workflow_name: "test".to_owned(),
+            run_id: "run-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            steps: Vec::new(),
+            output: json!({}),
+        });
+        assert_eq!(
+            workflow_cleanup_reason(&completed),
+            Some("workflow_completed")
+        );
+
+        let suspended: absurd::Result<WorkflowResult> = Err(absurd::Error::Suspend);
+        assert_eq!(workflow_cleanup_reason(&suspended), None);
+
+        let cancelled: absurd::Result<WorkflowResult> = Err(absurd::Error::Cancelled);
+        assert_eq!(
+            workflow_cleanup_reason(&cancelled),
+            Some("workflow_cancelled")
+        );
+
+        let failed: absurd::Result<WorkflowResult> = Err(absurd::Error::Timeout("boom".to_owned()));
+        assert_eq!(workflow_cleanup_reason(&failed), Some("workflow_failed"));
     }
 
     #[test]

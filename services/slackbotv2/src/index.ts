@@ -22,6 +22,7 @@ import {
 } from '@centaur/rendering'
 import { conflateChatSdkStream } from './conflate'
 import { observeSeconds, slackbotMetrics } from './metrics'
+import { renderSlackDisplayText, slackMessagePromptText } from './slack-display-text'
 import {
   collectInitialContext,
   forwardToSessionApi,
@@ -29,6 +30,7 @@ import {
   isRetryableSessionApiError,
   openSessionEventStream,
   serializeAttachment,
+  serializeMessageLinks,
   serializeMessage,
   sessionStreamError
 } from './session-api'
@@ -102,6 +104,7 @@ const RENDER_OBLIGATION_INDEX_MAX_LENGTH = 2000
 const RENDER_INDEX_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const RENDER_RECOVERY_LEASE_TTL_MS = 2 * 60 * 1000
 const RENDER_LEASE_REFRESH_INTERVAL_MS = 60 * 1000
+const RENDER_RECOVERY_MAX_OBLIGATION_AGE_MS = 24 * 60 * 60 * 1000
 const RENDER_RECOVERY_THREAD_TIMEOUT_MS = 2 * 60 * 1000
 const RENDER_RECOVERY_MAX_THREAD_FAILURES = 5
 const RENDER_RETRY_INITIAL_DELAY_MS = 250
@@ -377,11 +380,31 @@ function recordForward(
 function recordRenderAttempt(source: string, outcome: string, startedAtMs: number): void {
   slackbotMetrics.renderAttempts.inc({ outcome, source })
   slackbotMetrics.renderAttemptDuration.observe({ outcome, source }, observeSeconds(startedAtMs))
+  slackbotMetrics.sessionDelivery.inc({ delivery_status: deliveryStatusForRenderOutcome(outcome) })
   if (outcome === 'complete' || outcome === 'fallback' || outcome === 'answer_visible') {
     slackbotMetrics.lastSuccessfulRenderTimestamp.set(
       { source },
       Math.floor(Date.now() / 1000)
     )
+  }
+}
+
+function deliveryStatusForRenderOutcome(outcome: string): string {
+  switch (outcome) {
+    case 'complete':
+      return 'streamed'
+    case 'fallback':
+      return 'fallback_sent'
+    case 'answer_visible':
+      return 'answer_visible'
+    case 'retry':
+      return 'deferred'
+    case 'stream_error_rendered':
+      return 'error_visible'
+    case 'size_limit_no_replacement':
+      return 'failed_size_limit'
+    default:
+      return 'failed'
   }
 }
 
@@ -519,7 +542,7 @@ async function syncThreadMessageToSession(
   const serializeStartedAtMs = nowMs()
   const serializedMessage = await serializeMessage(message)
   const overrides = extractMessageOverrides(serializedMessage.text)
-  serializedMessage.text = overrides.cleanedText
+  setMessageText(serializedMessage, overrides.cleanedText)
   if (overrides.harnessType || overrides.model || overrides.provider || overrides.reasoning) {
     traceLog(input.options, 'slackbotv2_forward_overrides_parsed', trace, {
       harness_type: overrides.harnessType,
@@ -530,6 +553,10 @@ async function syncThreadMessageToSession(
   }
   traceLog(input.options, 'slackbotv2_forward_message_serialized', trace, {
     attachment_count: serializedMessage.attachments.length,
+    raw_slack_attachment_count: serializedMessage.rawSlackAttachmentCount,
+    raw_slack_block_count: serializedMessage.rawSlackBlockCount,
+    slack_display_text_chars: slackMessagePromptText(serializedMessage).length,
+    slack_text_source: serializedMessage.displayTextSource,
     phase_ms: elapsedMs(serializeStartedAtMs)
   })
   let context: SlackbotV2ApiMessage[] | undefined
@@ -542,7 +569,7 @@ async function syncThreadMessageToSession(
     // collectInitialContext re-serializes the current message; mirror the
     // flag-stripped text on that copy too.
     for (const item of context) {
-      if (item.id === serializedMessage.id) item.text = serializedMessage.text
+      if (item.id === serializedMessage.id) copyMessageTextFields(item, serializedMessage)
     }
     traceLog(input.options, 'slackbotv2_forward_context_collected', trace, {
       message_count: context.length,
@@ -792,6 +819,23 @@ function scheduleExecutionRender(
     }
   })()
   backgroundWaitUntil(promise)
+}
+
+function setMessageText(message: SlackbotV2ApiMessage, text: string): void {
+  const displayText = renderSlackDisplayText({ raw: message.raw, text })
+  message.text = text
+  message.displayText = displayText.text
+  message.displayTextSource = displayText.source
+  message.rawSlackAttachmentCount = displayText.rawAttachmentCount
+  message.rawSlackBlockCount = displayText.rawBlockCount
+}
+
+function copyMessageTextFields(target: SlackbotV2ApiMessage, source: SlackbotV2ApiMessage): void {
+  target.text = source.text
+  target.displayText = source.displayText
+  target.displayTextSource = source.displayTextSource
+  target.rawSlackAttachmentCount = source.rawSlackAttachmentCount
+  target.rawSlackBlockCount = source.rawSlackBlockCount
 }
 
 async function renderExecutionAttempt(
@@ -1140,6 +1184,8 @@ async function recoverRenderObligations(
   await chat.initialize()
   const indexedThreadIds = await state.getList<string>(RENDER_OBLIGATION_INDEX_KEY)
   const threadIds = Array.from(new Set(indexedThreadIds))
+  const maxObligationAgeMs =
+    options.renderRecoveryMaxObligationAgeMs ?? RENDER_RECOVERY_MAX_OBLIGATION_AGE_MS
   const timeoutMs = options.renderRecoveryThreadTimeoutMs ?? RENDER_RECOVERY_THREAD_TIMEOUT_MS
   let abandonedCount = 0
   let activeObligationCount = 0
@@ -1148,6 +1194,7 @@ async function recoverRenderObligations(
   let leaseSkippedCount = 0
   let resolvedCount = 0
   let retryableDeferredCount = 0
+  let staleSkippedCount = 0
   let timedOutCount = 0
   traceLog(options, 'slackbotv2_render_recovery_scan', undefined, {
     indexed_thread_count: threadIds.length,
@@ -1162,6 +1209,23 @@ async function recoverRenderObligations(
       const obligation = threadState?.renderObligation
       if (!obligation) continue
       activeObligationCount += 1
+
+      const obligationAgeMs = renderObligationAgeMs(obligation)
+      if (obligationAgeMs !== undefined && obligationAgeMs > maxObligationAgeMs) {
+        staleSkippedCount += 1
+        recordRecoveryThreadEvent('stale_skipped')
+        traceLog(options, 'slackbotv2_render_recovery_stale_obligation_skipped', undefined, {
+          ...renderObligationFields(obligation),
+          max_obligation_age_ms: maxObligationAgeMs,
+          thread_id: threadId
+        })
+        await thread.setState({
+          activeExecution: false,
+          lastEventId: threadState?.lastEventId ?? 0,
+          renderObligation: null
+        })
+        continue
+      }
 
       // An obligation that keeps failing non-retryably (for example corrupt
       // state that can never address a Slack thread) must not poison the
@@ -1291,6 +1355,7 @@ async function recoverRenderObligations(
     phaseMs: elapsedMs(startedAtMs),
     resolvedCount,
     retryableDeferredCount,
+    staleSkippedCount,
     timedOutCount
   })
   recordRecoveryScan(deferredCount > 0 ? 'deferred' : 'complete', startedAtMs, {
@@ -1527,6 +1592,7 @@ function recordRenderRecoveryScan(
     phaseMs: number
     resolvedCount: number
     retryableDeferredCount: number
+    staleSkippedCount: number
     timedOutCount: number
   }
 ): void {
@@ -1540,21 +1606,27 @@ function recordRenderRecoveryScan(
     phase_ms: observation.phaseMs,
     resolved_count: observation.resolvedCount,
     retryable_deferred_count: observation.retryableDeferredCount,
+    stale_skipped_count: observation.staleSkippedCount,
     timed_out_count: observation.timedOutCount
   }
   traceLog(options, 'slackbotv2_render_recovery_scan_complete', undefined, fields)
 }
 
-function renderObligationFields(obligation: SlackbotV2RenderObligation): JsonObject {
+function renderObligationAgeMs(obligation: SlackbotV2RenderObligation): number | undefined {
   const messageTimestampMs = Date.parse(obligation.message.timestamp)
+  return Number.isFinite(messageTimestampMs)
+    ? Math.max(0, Date.now() - messageTimestampMs)
+    : undefined
+}
+
+function renderObligationFields(obligation: SlackbotV2RenderObligation): JsonObject {
+  const obligationAgeMs = renderObligationAgeMs(obligation)
   return {
     after_event_id: obligation.afterEventId,
     execution_id: obligation.executionId,
     message_id: obligation.message.id,
     message_timestamp: obligation.message.timestamp,
-    ...(Number.isFinite(messageTimestampMs)
-      ? { obligation_age_ms: Math.max(0, Date.now() - messageTimestampMs) }
-      : {})
+    ...(obligationAgeMs !== undefined ? { obligation_age_ms: obligationAgeMs } : {})
   }
 }
 
@@ -1600,7 +1672,8 @@ async function renderExecutionStream(
   trace?: SlackbotV2Trace,
   assistantStatusVisible = false
 ): Promise<{ diverged: boolean; messageId?: string }> {
-  if (isPlainTextOnlyRequest(message.text)) {
+  const promptText = slackMessagePromptText(message)
+  if (isPlainTextOnlyRequest(promptText)) {
     await renderPlainTextExecutionStream(
       thread,
       stream,
@@ -1612,7 +1685,7 @@ async function renderExecutionStream(
     return { diverged: false }
   }
   const titleStartedAtMs = nowMs()
-  await setAssistantTitle(thread, titleFromMessage(message.text, options.userName))
+  await setAssistantTitle(thread, titleFromMessage(promptText, options.userName))
   if (!assistantStatusVisible) {
     await setAssistantStatus(thread, options.assistantStatus ?? 'Thinking...', options, trace)
   }
@@ -1656,12 +1729,13 @@ async function renderRecoveredExecutionStream(
   options: SlackbotV2Options,
   trace?: SlackbotV2Trace
 ): Promise<{ diverged: boolean; messageId?: string }> {
-  if (isPlainTextOnlyRequest(message.text)) {
+  const promptText = slackMessagePromptText(message)
+  if (isPlainTextOnlyRequest(promptText)) {
     await renderPlainTextExecutionStream(thread, stream, message, options, trace)
     return { diverged: false }
   }
   const titleStartedAtMs = nowMs()
-  await setAssistantTitle(thread, titleFromMessage(message.text, options.userName))
+  await setAssistantTitle(thread, titleFromMessage(promptText, options.userName))
   await setAssistantStatus(thread, options.assistantStatus ?? 'Thinking...', options, trace)
   traceLog(options, 'slackbotv2_render_slack_metadata_set', trace, {
     phase_ms: elapsedMs(titleStartedAtMs)
@@ -1704,7 +1778,7 @@ async function renderPlainTextExecutionStream(
 ): Promise<void> {
   const fallback = new SlackRenderFallback()
   const titleStartedAtMs = nowMs()
-  await setAssistantTitle(thread, titleFromMessage(message.text, options.userName))
+  await setAssistantTitle(thread, titleFromMessage(slackMessagePromptText(message), options.userName))
   if (!assistantStatusVisible) {
     await setAssistantStatus(thread, options.assistantStatus ?? 'Thinking...', options, trace)
   }
@@ -1991,6 +2065,8 @@ async function slackApiMessageFromSlack(
   const id = stringField(message.ts) || randomUUID()
   const actorId = slackActorId(message)
   const isBot = Boolean(message.bot_id || message.bot_profile)
+  const text = normalizeSlackText(stringField(message.text))
+  const displayText = renderSlackDisplayText({ raw: message, text })
   return {
     attachments: await slackApiAttachmentsFromFiles(options, message, rawCurrent),
     author: {
@@ -2000,15 +2076,20 @@ async function slackApiMessageFromSlack(
       userId: actorId,
       userName: actorId
     },
+    displayText: displayText.text,
+    displayTextSource: displayText.source,
     id,
     isMention: id === currentMessage.id ? currentMessage.isMention === true : false,
+    links: serializeMessageLinks(undefined, message),
     raw: message,
+    rawSlackAttachmentCount: displayText.rawAttachmentCount,
+    rawSlackBlockCount: displayText.rawBlockCount,
     teamId:
       stringField(message.team)
       || stringField(message.team_id)
       || stringField(rawCurrent.team)
       || stringField(rawCurrent.team_id),
-    text: normalizeSlackText(stringField(message.text)),
+    text,
     threadId: currentMessage.threadId,
     timestamp: slackTimestampToIso(id)
   }
@@ -2141,11 +2222,11 @@ function slackTimestampToIso(ts: string): string {
     : new Date().toISOString()
 }
 
-function normalizeSlackText(input: string): string {
+export function normalizeSlackText(input: string): string {
   return input
     .replace(/<([a-z]+:\/\/[^>|]+)\|([^>]+)>/gi, '$2 ($1)')
     .replace(/<([a-z]+:\/\/[^>]+)>/gi, '$1')
-    .replace(/<#([A-Z0-9]+)\|([^>]+)>/g, '#$2')
+    .replace(/<#([A-Z0-9]+)\|([^>]+)>/g, '#$2 ($1)')
     .replace(/<#([A-Z0-9]+)>/g, '#$1')
     .replace(/<@([A-Z0-9]+)>/g, '@$1')
     .replace(/<!subteam\^([A-Z0-9]+)\|([^>]+)>/g, '@$2')

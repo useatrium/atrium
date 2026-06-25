@@ -1,5 +1,5 @@
-//! `centaur-perms` — manage iron-control permissions for Centaur: which Slack
-//! principals (users / channels) and roles hold which tool roles and secrets.
+//! `centaur-perms` — manage iron-control permissions for Centaur: which chat
+//! principals (Slack, Discord, Teams) and roles hold which tool roles and secrets.
 //!
 //! Commands are resource-first: `centaur-perms <noun> <verb>`, where the noun is
 //! `principals`, `roles`, or `secrets`. The CLI reuses `centaur-iron-control`'s
@@ -125,8 +125,8 @@ enum SecretsCmd {
 
 #[derive(Args, Debug)]
 struct SecretSelector {
-    /// Secret OID (`ssr_`/`ots_`/`gas_`/`pgs_`/`hms_`/`aas_`) or `foreign_id`. A
-    /// `foreign_id` is resolved by trying each secret type in turn.
+    /// Secret OID (`ssr_`/`ots_`/`gas_`/`gid_`/`pgs_`/`hms_`/`aas_`) or
+    /// `foreign_id`. A `foreign_id` is resolved by trying each secret type in turn.
     secret: String,
 }
 
@@ -227,8 +227,8 @@ struct FilterArgs {
 
 #[derive(Args, Debug)]
 struct PrincipalSelector {
-    /// Slack thread key (`slack:T…:C…[:ts]`, derived), a principal `foreign_id`
-    /// (e.g. `slack-channel-t1-c9`), or an OID (`prn_…`).
+    /// Slack/Teams/Discord thread key (derived), a principal `foreign_id`
+    /// (e.g. `slack-channel-t1-c9`), or an OID (`prn_...`).
     principal: String,
 
     /// Acting Slack user id, used only to key a DM principal from a thread key.
@@ -238,7 +238,7 @@ struct PrincipalSelector {
 
 #[derive(Args, Debug)]
 struct PrincipalGrantArgs {
-    /// Slack thread key (derived) or raw principal `foreign_id`.
+    /// Slack/Teams/Discord thread key (derived) or raw principal `foreign_id`.
     principal: String,
 
     /// Acting Slack user id, used only to key a DM principal from a thread key.
@@ -255,7 +255,8 @@ struct PrincipalGrantArgs {
     #[arg(long = "role", value_name = "FOREIGN_ID")]
     roles: Vec<String>,
 
-    /// Secret OID (`ssr_`/`ots_`/`gas_`/`hms_`) to grant/revoke directly. Repeatable.
+    /// Secret OID (`ssr_`/`ots_`/`gas_`/`gid_`/`pgs_`/`hms_`/`aas_`) to
+    /// grant/revoke directly. Repeatable.
     #[arg(long = "secret", value_name = "OID")]
     secrets: Vec<String>,
 
@@ -275,7 +276,8 @@ struct RoleSecretArgs {
     /// Role `foreign_id` (e.g. `infra`, `tools`, `tool-github`) or OID.
     role: String,
 
-    /// Secret OID (`ssr_`/`ots_`/`gas_`/`hms_`) to grant/revoke. Repeatable.
+    /// Secret OID (`ssr_`/`ots_`/`gas_`/`gid_`/`pgs_`/`hms_`/`aas_`) to
+    /// grant/revoke. Repeatable.
     #[arg(long = "secret", value_name = "OID", required = true)]
     secrets: Vec<String>,
 }
@@ -285,7 +287,8 @@ struct RoleGrantArgs {
     /// Role `foreign_id` (e.g. `infra`, `tools`, `tool-github`) or OID.
     role: String,
 
-    /// Existing secret OID (`ssr_`/`ots_`/`gas_`/`hms_`) to grant. Repeatable.
+    /// Existing secret OID (`ssr_`/`ots_`/`gas_`/`gid_`/`pgs_`/`hms_`/`aas_`) to
+    /// grant. Repeatable.
     #[arg(long = "secret", value_name = "OID")]
     secrets: Vec<String>,
 
@@ -1002,7 +1005,7 @@ fn grant_secret_from_oid(oid: &str) -> Result<GrantSecret> {
     match GrantSecret::from_oid(oid) {
         Some(secret) => Ok(secret),
         None => {
-            bail!("--secret expects a secret OID (ssr_/ots_/gas_/pgs_/hms_/aas_), got {oid:?}")
+            bail!("--secret expects a secret OID (ssr_/ots_/gas_/gid_/pgs_/hms_/aas_), got {oid:?}")
         }
     }
 }

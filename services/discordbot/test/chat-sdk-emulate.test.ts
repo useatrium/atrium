@@ -146,15 +146,15 @@ describe("discordbot", () => {
     expect(firstAttachment).toEqual(
       expect.objectContaining({
         attachment_type: "image",
+        // The Discord adapter exposes only a signed CDN url, so discordbot
+        // downloads the bytes and inlines them as base64 (parity with
+        // slackbotv2) rather than forwarding the raw remote url.
+        dataBase64: Buffer.from("fake-binary").toString("base64"),
         mimeType: "image/png",
         name: "captured.png",
         type: "attachment",
         url: fileUrl,
       }),
-    );
-    // Discord delta: attachments forward by URL, never inlined as base64.
-    expect((firstAttachment as Record<string, unknown>).dataBase64).toBe(
-      undefined,
     );
 
     const firstExecute = codexApi.executes[0]!;
@@ -166,7 +166,7 @@ describe("discordbot", () => {
     expect(firstInputLine).toEqual(
       expect.objectContaining({ type: "user", thread_key: key }),
     );
-    expect(JSON.stringify(firstInputLine)).toContain(fileUrl);
+    expect(JSON.stringify(firstInputLine)).toContain("data:image/png;base64");
 
     const followUpAppend = codexApi.appends[1]!;
     expect(followUpAppend.body.messages[0]?.client_message_id).toBe(followUpId);
