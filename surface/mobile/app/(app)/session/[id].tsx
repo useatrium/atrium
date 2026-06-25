@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -37,13 +37,17 @@ import { useSessionStream } from '../../../src/lib/useSessionStream';
 import {
   artifactCount,
   changedPaths,
+  codexInlineFileChanges,
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
+  fileChangeFromToolCall,
   sideEffectCount,
+  toolDisplay,
 } from '@atrium/centaur-client';
 import { ArtifactsSurface } from '../../../src/components/work/ArtifactsSurface';
 import { ChangesSurface } from '../../../src/components/work/ChangesSurface';
+import { InlineFileChange } from '../../../src/components/work/fileChangeView';
 import { SideEffectsSurface } from '../../../src/components/work/SideEffectsSurface';
 import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/work/MobileWorkSheet';
 import { WorkStrips, type WorkStripItem } from '../../../src/components/work/WorkStrips';
@@ -53,6 +57,7 @@ import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
 import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
+import { SessionMarkdown } from '../../../src/components/Markdown';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -102,17 +107,15 @@ function StatusChip({ status, stalled }: { status: SessionStatus; stalled: boole
   );
 }
 
-function textExcerpt(value: string, limit = 600): string {
-  const trimmed = value.trim();
-  return trimmed.length > limit ? `${trimmed.slice(0, limit)}...` : trimmed;
-}
-
 function ToolCard({ item }: { item: ToolCallItem }) {
   const { colors } = useTheme();
+  const [open, setOpen] = useState(false);
+  const descriptor = toolDisplay(item);
+  const running = item.result === undefined;
   const isError = item.result?.is_error === true;
   const command = typeof item.input.command === 'string' ? item.input.command : null;
-  const keys = Object.keys(item.input);
-  const summary = command ?? (keys.length ? JSON.stringify(item.input).slice(0, 160) : '');
+  const rest = Object.fromEntries(Object.entries(item.input).filter(([key]) => key !== 'command'));
+  const restJson = Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
   return (
     <View
       style={{
@@ -120,52 +123,121 @@ function ToolCard({ item }: { item: ToolCallItem }) {
         borderColor: isError ? colors.dangerBorder : colors.border,
         backgroundColor: isError ? colors.dangerSurface : colors.bgElevated,
         borderRadius: radius.sm,
-        padding: space.sm,
-        gap: 6,
+        overflow: 'hidden',
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '800' }}>
-          {item.name}
+      <Pressable
+        onPress={() => setOpen((value) => !value)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: space.sm,
+          padding: space.sm,
+          backgroundColor: pressed ? colors.bgPressed : 'transparent',
+        })}
+      >
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>
+          {open ? '▾' : '▸'}
         </Text>
         <Text
+          numberOfLines={1}
           style={{
-            marginLeft: 'auto',
-            color: item.result ? (isError ? colors.danger : colors.textMuted) : colors.accent,
+            minWidth: 0,
+            flexShrink: 1,
+            color: colors.text,
             fontSize: font.xs,
-            fontWeight: '700',
+            fontFamily: 'monospace',
+            fontWeight: '800',
           }}
         >
-          {item.result ? (isError ? 'ERROR' : 'DONE') : 'RUNNING'}
+          {descriptor.title}
         </Text>
-      </View>
-      {summary ? (
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontFamily: 'monospace' }}>
-          {textExcerpt(summary, 180)}
-        </Text>
-      ) : null}
-      {item.result ? (
         <Text
+          numberOfLines={1}
           style={{
-            color: isError ? colors.danger : colors.textSecondary,
+            flex: 1,
+            minWidth: 0,
+            color: colors.textMuted,
             fontSize: font.xs,
             fontFamily: 'monospace',
           }}
         >
-          {textExcerpt(item.result.content)}
+          {!open ? descriptor.subtitle : ''}
         </Text>
+        <Text
+          style={{
+            color: running ? colors.accent : isError ? colors.danger : colors.textMuted,
+            fontSize: font.xs,
+            fontWeight: '700',
+          }}
+        >
+          {running ? 'RUNNING' : isError ? 'ERROR' : 'DONE'}
+        </Text>
+      </Pressable>
+      {open ? (
+        <View
+          style={{
+            borderTopWidth: 1,
+            borderTopColor: colors.borderSoft,
+            padding: space.sm,
+            gap: space.sm,
+          }}
+        >
+          {command !== null ? (
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: font.xs,
+                fontFamily: 'monospace',
+                lineHeight: 16,
+              }}
+            >
+              {command}
+            </Text>
+          ) : null}
+          {restJson ? (
+            <Text
+              style={{
+                color: colors.textMuted,
+                fontSize: font.xs,
+                fontFamily: 'monospace',
+                lineHeight: 16,
+              }}
+            >
+              {restJson}
+            </Text>
+          ) : null}
+          {item.result ? (
+            <Text
+              style={{
+                color: isError ? colors.danger : colors.textSecondary,
+                fontSize: font.xs,
+                fontFamily: 'monospace',
+                lineHeight: 16,
+              }}
+            >
+              {item.result.content}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
 }
 
+function TranscriptTool({ item }: { item: ToolCallItem }) {
+  const fileChange = fileChangeFromToolCall(item);
+  if (fileChange) {
+    const status = item.result === undefined ? 'running' : item.result.is_error ? 'error' : 'done';
+    return <InlineFileChange change={fileChange} status={status} />;
+  }
+  return <ToolCard item={item} />;
+}
+
 function TextBlock({ item }: { item: TextItem }) {
-  const { colors } = useTheme();
-  return (
-    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: font.md * 1.4 }}>
-      {item.text}
-    </Text>
-  );
+  return <SessionMarkdown text={item.text} />;
 }
 
 function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<string, SessionQuestionEvent[]> {
@@ -562,6 +634,14 @@ export default function SessionScreen() {
   // web — Changes · Side-effects · Artifacts. Each non-empty surface gets a strip
   // chip + a full-screen sheet tab.
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
+  const inlineCodexChanges = useMemo(
+    () => codexInlineFileChanges(stream),
+    [stream.items, stream.fileChanges],
+  );
+  const codexChangesAt = useCallback(
+    (index: number) => inlineCodexChanges.filter((change) => change.index === index),
+    [inlineCodexChanges],
+  );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
@@ -950,10 +1030,14 @@ export default function SessionScreen() {
                 {terminal ? 'No transcript.' : 'Waiting for agent output...'}
               </Text>
             </View>
-          ) : (
-            stream.items.map((item) => (
+          ) : null}
+
+          {stream.items.map((item, index) => (
+            <Fragment key={item.id}>
+              {codexChangesAt(index).map((anchored) => (
+                <InlineFileChange key={anchored.change.id} change={anchored.change} />
+              ))}
               <View
-                key={item.id}
                 onLayout={(e) => {
                   itemOffsets.current[item.id] = e.nativeEvent.layout.y;
                 }}
@@ -972,11 +1056,14 @@ export default function SessionScreen() {
                     events={questionEventsByQuestion.get(item.questionId) ?? []}
                   />
                 ) : item.type === 'reasoning' ? null : (
-                  <ToolCard item={item} />
+                  <TranscriptTool item={item} />
                 )}
               </View>
-            ))
-          )}
+            </Fragment>
+          ))}
+          {codexChangesAt(stream.items.length).map((anchored) => (
+            <InlineFileChange key={anchored.change.id} change={anchored.change} />
+          ))}
         </ScrollView>
 
         <WorkStrips items={workStripItems} onOpen={setWorkTab} />

@@ -1,0 +1,58 @@
+.atrium-session-markdown .hljs {
+  color: var(--fg-body);
+  background: transparent;
+}
+
+.atrium-session-markdown .hljs-comment,
+.atrium-session-markdown .hljs-quote {
+  color: var(--fg-muted);
+}
+
+.atrium-session-markdown .hljs-keyword,
+.atrium-session-markdown .hljs-selector-tag,
+.atrium-session-markdown .hljs-subst {
+  color: #ff7b72;
+}
+
+.atrium-session-markdown .hljs-literal,
+.atrium-session-markdown .hljs-number,
+.atrium-session-markdown .hljs-tag .hljs-attr,
+.atrium-session-markdown .hljs-template-variable,
+.atrium-session-markdown .hljs-variable {
+  color: #79c0ff;
+}
+
+.atrium-session-markdown .hljs-doctag,
+.atrium-session-markdown .hljs-string {
+  color: #a5d6ff;
+}
+
+.atrium-session-markdown .hljs-section,
+.atrium-session-markdown .hljs-selector-id,
+.atrium-session-markdown .hljs-title {
+  color: #d2a8ff;
+}
+
+.atrium-session-markdown .hljs-built_in,
+.atrium-session-markdown .hljs-name,
+.atrium-session-markdown .hljs-symbol {
+  color: #7ee787;
+}
+
+.atrium-session-markdown .hljs-attribute,
+.atrium-session-markdown .hljs-bullet,
+.atrium-session-markdown .hljs-meta,
+.atrium-session-markdown .hljs-selector-attr,
+.atrium-session-markdown .hljs-selector-class {
+  color: #f2cc60;
+}
+
+.atrium-session-markdown .hljs-addition {
+  color: #aff5b4;
+  background-color: rgba(3, 58, 22, 0.45);
+}
+
+.atrium-session-markdown .hljs-deletion {
+  color: #ffdcd7;
+  background-color: rgba(103, 6, 12, 0.45);
+}

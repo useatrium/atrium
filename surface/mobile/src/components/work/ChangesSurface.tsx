@@ -1,71 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import type { FileChange, FileChangeKind } from '@atrium/centaur-client';
-import { font, radius, space, useTheme, type Colors } from '../../lib/theme';
+import type { FileChange } from '@atrium/centaur-client';
+import { font, radius, space, useTheme } from '../../lib/theme';
+import { DiffView, KIND_LABEL, diffStats, kindColor } from './fileChangeView';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
-
-const KIND_LABEL: Record<FileChangeKind, string> = {
-  add: 'added',
-  update: 'edited',
-  delete: 'deleted',
-};
-
-function kindColor(kind: FileChangeKind, colors: Colors): string {
-  if (kind === 'add') return colors.online;
-  if (kind === 'delete') return colors.danger;
-  return colors.textSecondary;
-}
-
-function diffStats(diff: string): { adds: number; dels: number } {
-  if (!diff) return { adds: 0, dels: 0 };
-  const lines = diff.split('\n');
-  return {
-    adds: lines.filter((line) => line.startsWith('+')).length,
-    dels: lines.filter((line) => line.startsWith('-')).length,
-  };
-}
-
-function DiffView({ diff }: { diff: string }) {
-  const { colors } = useTheme();
-  return (
-    <ScrollView
-      style={{
-        maxHeight: 288,
-        backgroundColor: colors.bgInput,
-        borderTopWidth: 1,
-        borderTopColor: colors.borderSoft,
-      }}
-      contentContainerStyle={{
-        paddingHorizontal: space.md,
-        paddingVertical: space.sm,
-      }}
-      nestedScrollEnabled
-      showsVerticalScrollIndicator
-    >
-      {diff.split('\n').map((line, index) => {
-        const color = line.startsWith('+')
-          ? colors.online
-          : line.startsWith('-')
-            ? colors.danger
-            : colors.textMuted;
-        return (
-          <Text
-            key={`${index}:${line}`}
-            style={{
-              color,
-              fontFamily: monoFont,
-              fontSize: font.xs,
-              lineHeight: 16,
-            }}
-          >
-            {line || ' '}
-          </Text>
-        );
-      })}
-    </ScrollView>
-  );
-}
 
 function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
   const { colors } = useTheme();
