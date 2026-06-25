@@ -9,6 +9,9 @@
 > ([[shared-workspace-build-spec]] 5B-1→5B-3) and the CAS ledger
 > ([[cas-ledger-build-plan]], [[agent-data-architecture]]). Realizes the
 > "warm the whole lease, not just the pod" call in `atrium-daily-driver-plan.md` §4/§5.
+>
+> **Progress: Phase 0 ✅ landed (#118, 2026-06-25).** Phase 1 (caches + sccache) next;
+> Phase 2 (CAS overlay tier) cluster-gated. See §3 + §11.
 
 ---
 
@@ -93,7 +96,18 @@ The dominant safe sharing pattern is also already how our overlay is shaped:
 
 ## 3. Phases
 
-### Phase 0 — wire repo/branch Atrium → Centaur (prerequisite, ~small)
+### Phase 0 — wire repo/branch Atrium → Centaur (prerequisite, ~small) — ✅ DONE
+
+> **LANDED 2026-06-25** (PR #118 = `bf68625`, squash to `master`, CI green; codex
+> review = SHIP). Turned out **Atrium-only**: the Centaur consume side already
+> existed (`CreateSessionRequest.repos` → `metadata_with_repos` → `centaur_session_repos`
+> → `AGENT_REPOS_JSON`, from PR #10 C4 5B-2). `session-runs.ts` `spawnAssignment` now
+> forwards the session's `repo`/`branch` as a `RepoSpec` through `centaur-client.spawn()`.
+> Tested: centaur-client unit (repos in/out of body) + server `sessions.test.ts`
+> (forward + omit, real PG). **Follow-up (codex Low):** Atrium only trims the repo
+> string — add `owner/name` validation so a mistyped URL fails fast instead of
+> silently resolving to a nonexistent node-cache path (Centaur `validate_relative_repo`
+> catches it server-side today, but the UX is a silent no-checkout).
 
 Without this, Atrium sessions target no repo and nothing downstream matters.
 
@@ -281,6 +295,11 @@ The five-cost framing and these analogs come from the 2026-06-25 landscape resea
 
 ## 11. Next step
 
-**Phase 0** is the unblocker and is small: wire repo/branch through
-`surface/centaur-client` + `surface/server/src/session-runs.ts` so Atrium sessions
-actually target a repo. Everything else is downstream of that.
+**Phase 0 is landed** (#118). Next is **Phase 1** (shared dep caches + sccache) in the
+Centaur worktree — fan out the lanes: sccache→MinIO wiring, entrypoint RO cache-mounts
+(pnpm/cargo-registry/uv) with writes-to-upper, Helm cache volumes, docs + a
+time-to-productive metric. **Validation caveat:** Phase 1 is only partially e2e-testable
+on the Mac (`docker run` smoke + unit); full cache-hit validation and all of **Phase 2**
+(content-keyed CAS overlay tier) need a real Linux node / kind-on-GHA — nested overlay
+on Docker Desktop doesn't work. Treat cluster e2e as a gated handoff (cf.
+[[harness-resume-build-plan]]).
