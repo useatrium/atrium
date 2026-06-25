@@ -78,12 +78,21 @@ export function MessageActions({
   return (
     <Modal visible={m != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close message actions"
+        // Scrim: tap-to-dismiss for sighted users. It must NOT be an accessibility
+        // element — a labelled, role="button" container collapses into a single a11y
+        // node on iOS and HIDES all its children (the reactions + actions) from
+        // VoiceOver and from UI test drivers. VoiceOver users close via "Cancel" below.
+        accessible={false}
+        importantForAccessibility="no"
         style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
         onPress={onClose}
       >
         <Pressable
+          // Inner sheet only exists to swallow taps (so they don't hit the scrim).
+          // Same a11y rule as the scrim: it must not be an accessibility element, or
+          // it collapses every action into one combined node instead of exposing the
+          // individual reaction/action buttons.
+          accessible={false}
           onPress={() => {}}
           style={{
             backgroundColor: colors.bgElevated,

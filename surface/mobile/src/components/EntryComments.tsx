@@ -102,13 +102,17 @@ export function EntryComments({ api, handle, visible, me, onClose }: EntryCommen
       onRequestClose={onClose}
     >
       <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close comments"
+        // Scrim tap-to-dismiss; must not be an a11y element (it would hide the sheet
+        // content from VoiceOver + test drivers). The header has its own "Close
+        // comments" button. Same rule as MessageActions.
+        accessible={false}
+        importantForAccessibility="no"
         onPress={onClose}
         style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
       >
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable
+            accessible={false}
             onPress={() => {}}
             style={{
               maxHeight: '82%',
