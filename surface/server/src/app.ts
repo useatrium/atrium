@@ -118,6 +118,15 @@ import {
   normalizeBundleSha,
   storeProfileBundleBlob,
 } from './profile-bundles.js';
+import {
+  loadWarmcacheBlob,
+  loadWarmcacheManifest,
+  MAX_WARMCACHE_BLOB_BYTES,
+  normalizeWarmcacheSha,
+  registerWarmcacheManifest,
+  storeWarmcacheBlob,
+  type WarmcacheEntry,
+} from './warmcache-store.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, classifyMediaFromMime, type MediaClassification } from './media-classifier.js';
 import { AppRegistry, type AppScope } from './app-registry.js';
@@ -4271,6 +4280,85 @@ function rawSession(req: FastifyRequest): string | undefined {
         { sha256: q.sha256 ?? '', path: q.path ?? '', bytes },
       );
       return reply.send(result);
+    });
+  });
+
+  // === Warm-cache (dep/build cache) hydration ===
+  // Machine state, workspace-scoped, deliberately NOT in the artifact ledger. The
+  // Centaur node daemon uploads cache blobs to the shared CAS and registers a
+  // per-(workspace, lockfile-hash, kind) manifest; the overlay lower is hydrated
+  // from that manifest on a cache hit. All routes use capture-key (machine) auth.
+  const warmcacheWorkspaceExists = async (id: string): Promise<boolean> => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return false;
+    const r = await pool.query('SELECT 1 FROM workspaces WHERE id = $1', [id]);
+    return r.rows.length > 0;
+  };
+
+  app.get('/api/internal/cache/blob', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const sha256 = normalizeWarmcacheSha((req.query as { sha256?: string }).sha256);
+    const bytes = await loadWarmcacheBlob(pool, { getObjectBytes }, sha256);
+    if (!bytes) return reply.code(404).send({ error: 'not_found', message: 'warm-cache blob not found' });
+    reply.header('Content-Type', 'application/octet-stream');
+    reply.header('X-Warmcache-Sha256', sha256);
+    return reply.send(bytes);
+  });
+
+  await app.register(async (warmcacheBlob) => {
+    warmcacheBlob.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: MAX_WARMCACHE_BLOB_BYTES },
+      (_req, body, done) => done(null, body),
+    );
+    warmcacheBlob.put('/api/internal/cache/blob', async (req, reply) => {
+      if (!requireCaptureKey(req, reply)) return;
+      const sha256 = (req.query as { sha256?: string }).sha256 ?? '';
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const result = await storeWarmcacheBlob(pool, { uploadObject, headObject }, { sha256, bytes });
+      return reply.send(result);
+    });
+  });
+
+  app.put('/api/internal/cache/manifest', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const body = (req.body ?? {}) as {
+      workspace_id?: unknown;
+      lockfile_hash?: unknown;
+      kind?: unknown;
+      entries?: unknown;
+    };
+    const workspaceId = typeof body.workspace_id === 'string' ? body.workspace_id : '';
+    if (!(await warmcacheWorkspaceExists(workspaceId))) {
+      return reply.code(404).send({ error: 'workspace_not_found' });
+    }
+    const entries = Array.isArray(body.entries) ? (body.entries as WarmcacheEntry[]) : [];
+    const result = await registerWarmcacheManifest(pool, {
+      workspaceId,
+      lockfileHash: String(body.lockfile_hash ?? ''),
+      kind: String(body.kind ?? ''),
+      entries,
+    });
+    return reply.send(result);
+  });
+
+  app.get('/api/internal/cache/hydration', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const q = req.query as { workspace_id?: string; lockfile_hash?: string; kind?: string };
+    const workspaceId = typeof q.workspace_id === 'string' ? q.workspace_id : '';
+    if (!(await warmcacheWorkspaceExists(workspaceId))) {
+      return reply.code(404).send({ error: 'workspace_not_found' });
+    }
+    const entries = await loadWarmcacheManifest(pool, {
+      workspaceId,
+      lockfileHash: String(q.lockfile_hash ?? ''),
+      kind: String(q.kind ?? ''),
+    });
+    return reply.send({
+      workspaceId,
+      scope: 'warmcache',
+      kind: String(q.kind ?? ''),
+      lockfileHash: String(q.lockfile_hash ?? ''),
+      entries,
     });
   });
 
