@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { recordFrameObservation } from './frame-gap.js';
 import type { ServerResponse } from 'node:http';
 import { basename } from 'node:path';
+import { encodeRecordHandle } from '@atrium/surface-client/handle';
 import {
   CentaurApiError,
   CentaurClient,
@@ -23,7 +24,7 @@ import {
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { releaseSessionProjectionState } from './session-records.js';
+import { projectSessionIncremental, releaseSessionProjectionState } from './session-records.js';
 import { projectIncrementalAndEmit } from './session-record-changefeed.js';
 import { ArtifactLedger, casBlobKey, type MergeClass, type VersionRef } from './artifact-ledger.js';
 import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
@@ -76,6 +77,13 @@ export interface SessionJson {
   completedAt: string | null;
   lastEventId: number;
   permalink: string;
+}
+
+interface SessionFrameRecordHandle {
+  handle: string;
+  kind: string;
+  actor: string;
+  meta: Record<string, unknown>;
 }
 
 export interface SessionUserJson {
@@ -925,11 +933,16 @@ export class SessionRuns {
     keepAlive.unref?.();
     try {
       let cursor = afterEventId;
+      await projectSessionIncremental(this.pool, session.id).catch(() => {});
       const mirrored = await this.readMirroredFrames(session.id, cursor);
+      const replayHandles = await this.recordHandlesByEventId(
+        session.id,
+        mirrored.rows.map(({ frame }) => frame.event_id),
+      );
       for (const { frame } of mirrored.rows) {
         if (signal.aborted) break;
         cursor = Math.max(cursor, frame.event_id);
-        writeSessionFrame(raw, frame);
+        writeSessionFrame(raw, frame, replayHandles.get(frame.event_id));
       }
       // Only tail live for a session with an active execution. A terminal
       // session's mirror already contains its terminal execution_state, which we
@@ -945,7 +958,10 @@ export class SessionRuns {
           signal,
         })) {
           if (signal.aborted) break;
-          writeSessionFrame(raw, frame);
+          const recordHandles = frameMayCreateTranscriptRecord(frame)
+            ? (await this.recordHandlesByEventId(session.id, [frame.event_id])).get(frame.event_id)
+            : undefined;
+          writeSessionFrame(raw, frame, recordHandles);
         }
       }
     } finally {
@@ -955,6 +971,42 @@ export class SessionRuns {
       });
       raw.end();
     }
+  }
+
+  private async recordHandlesByEventId(
+    sessionId: string,
+    eventIds: number[],
+  ): Promise<Map<number, SessionFrameRecordHandle[]>> {
+    const uniqueEventIds = [...new Set(eventIds.filter((id) => Number.isSafeInteger(id) && id >= 0))];
+    const byEventId = new Map<number, SessionFrameRecordHandle[]>();
+    if (uniqueEventIds.length === 0) return byEventId;
+
+    const res = await this.pool.query<{
+      event_id: number;
+      entry_uid: string;
+      kind: string;
+      actor: string;
+      meta: unknown;
+    }>(
+      `SELECT event_id, entry_uid, kind, actor, meta
+         FROM session_records
+        WHERE session_id = $1
+          AND event_id = ANY($2::bigint[])
+          AND entry_uid IS NOT NULL
+        ORDER BY seq ASC`,
+      [sessionId, uniqueEventIds],
+    );
+    for (const row of res.rows) {
+      const list = byEventId.get(row.event_id) ?? [];
+      list.push({
+        handle: encodeRecordHandle(row.entry_uid),
+        kind: row.kind,
+        actor: row.actor,
+        meta: objectRecord(row.meta),
+      });
+      byEventId.set(row.event_id, list);
+    }
+    return byEventId;
   }
 
   async postUserMessage(id: string, userId: string, text: string): Promise<void> {
@@ -2625,9 +2677,46 @@ function userInputLine(text: string): string {
   });
 }
 
-function writeSessionFrame(raw: ServerResponse, frame: CentaurEventFrame): void {
+function writeSessionFrame(
+  raw: ServerResponse,
+  frame: CentaurEventFrame,
+  recordHandles?: SessionFrameRecordHandle[],
+): void {
   raw.write(`event: ${frame.event}\n`);
-  raw.write(`data: ${JSON.stringify({ ...frame.data, event_id: frame.event_id })}\n\n`);
+  raw.write(
+    `data: ${JSON.stringify({
+      ...frame.data,
+      ...(recordHandles?.length ? { recordHandles } : {}),
+      event_id: frame.event_id,
+    })}\n\n`,
+  );
+}
+
+function frameMayCreateTranscriptRecord(frame: CentaurEventFrame): boolean {
+  if (frame.event === 'question_requested' || frame.event === 'question_resolved') return true;
+  if (frame.event !== 'amp_raw_event') return false;
+  const raw = frame.data as Record<string, unknown>;
+  const type =
+    typeof raw.type === 'string'
+      ? raw.type
+      : raw.method === 'item/completed'
+        ? 'item.completed'
+        : raw.method === 'item/started'
+          ? 'item.started'
+          : null;
+  if (type === 'item.completed') return true;
+  if (type !== 'assistant') return false;
+  if (typeof raw.uuid === 'string' && raw.uuid.length > 0) return true;
+  const message = objectRecord(raw.message);
+  const content = message.content;
+  return Array.isArray(content) && content.some((block) => objectRecord(block).type === 'tool_use');
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 function isDemoHarness(harness: string): boolean {

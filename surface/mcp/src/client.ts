@@ -20,6 +20,12 @@ export interface EntryResourceReadResult {
   ];
 }
 
+export type EntryReactionAction = "add" | "remove";
+
+export interface EntryWriteResult {
+  ok: true;
+}
+
 type Env = Record<string, string | undefined>;
 
 export function loadConfig(env: Env): AtriumMcpConfig {
@@ -66,6 +72,23 @@ export async function readEntryResource(
   };
 }
 
+export async function postEntryComment(
+  handle: string,
+  text: string,
+  cfg: AtriumMcpConfig,
+): Promise<EntryWriteResult> {
+  return postEntryAnnotation(handle, "comments", { text }, "comment", cfg);
+}
+
+export async function postEntryReaction(
+  handle: string,
+  emoji: string,
+  action: EntryReactionAction,
+  cfg: AtriumMcpConfig,
+): Promise<EntryWriteResult> {
+  return postEntryAnnotation(handle, "reactions", { emoji, action }, "reaction", cfg);
+}
+
 function requiredEnv(env: Env, name: "ATRIUM_BASE_URL" | "ATRIUM_TOKEN"): string {
   const value = env[name];
   if (!value) {
@@ -73,4 +96,36 @@ function requiredEnv(env: Env, name: "ATRIUM_BASE_URL" | "ATRIUM_TOKEN"): string
   }
 
   return value;
+}
+
+async function postEntryAnnotation(
+  handle: string,
+  path: "comments" | "reactions",
+  body: Record<string, string>,
+  operation: "comment" | "reaction",
+  cfg: AtriumMcpConfig,
+): Promise<EntryWriteResult> {
+  const fetchImpl = cfg.fetchImpl ?? fetch;
+  const baseUrl = cfg.baseUrl.replace(/\/+$/, "");
+  const response = await fetchImpl(
+    `${baseUrl}/api/entries/${encodeURIComponent(handle)}/${path}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (response.status === 404) {
+    throw new Error("entry not found or not accessible");
+  }
+
+  if (!response.ok) {
+    throw new Error(`Atrium entry ${operation} failed with status ${response.status}`);
+  }
+
+  return { ok: true };
 }

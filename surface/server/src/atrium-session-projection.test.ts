@@ -44,6 +44,7 @@ async function insertSession(): Promise<string> {
 async function insertRecord(args: {
   sessionId: string;
   seq: number;
+  entryUid?: string | null;
   kind: string;
   actor?: string;
   driver?: string | null;
@@ -54,12 +55,13 @@ async function insertRecord(args: {
 }): Promise<void> {
   await pool.query(
     `INSERT INTO session_records
-       (session_id, event_id, seq, kind, actor, driver, view_tier, text, meta, ts)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       args.sessionId,
       args.seq + 10,
       args.seq,
+      args.entryUid ?? `test_${args.seq}`,
       args.kind,
       args.actor ?? 'agent',
       args.driver ?? 'codex',
@@ -197,6 +199,7 @@ describe('atrium session projection renderers', () => {
       kind: 'message',
       viewTier: 'lean',
       text: 'Please repair the widget renderer.',
+      handle: 'rec_test_0',
     });
   });
 });

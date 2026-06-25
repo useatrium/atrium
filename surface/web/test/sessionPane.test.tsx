@@ -165,6 +165,40 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(es.closed).toBe(true);
   });
 
+  it('renders the comment affordance for a transcript row with a record handle', async () => {
+    const frame = {
+      event: 'amp_raw_event',
+      event_id: 71,
+      data: {
+        type: 'item.completed',
+        item: {
+          id: 'agent-row-1',
+          type: 'agentMessage',
+          text: 'Annotatable agent row',
+        },
+        recordHandles: [
+          {
+            handle: 'rec_item_test123',
+            kind: 'message',
+            actor: 'agent',
+            meta: { itemId: 'agent-row-1' },
+          },
+        ],
+      },
+    } as CentaurEventFrame;
+
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emit(frame);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    expect(screen.getByText('Annotatable agent row')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Comment on entry' })).toBeTruthy();
+  });
+
 });
 
 // ---- driver seat (Phase 3) --------------------------------------------------

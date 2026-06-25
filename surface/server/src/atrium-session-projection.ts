@@ -1,4 +1,5 @@
 import type { Db } from './db.js';
+import { encodeRecordHandle } from '@atrium/surface-client/handle';
 import type {
   SessionRecord,
   SessionRecordActor,
@@ -436,6 +437,7 @@ function recordToJson(record: SessionRecord): Record<string, unknown> {
     viewTier: record.viewTier,
     text: record.text,
     meta: record.meta,
+    handle: record.entryUid ? encodeRecordHandle(record.entryUid) : null,
     ts: record.ts.toISOString(),
   };
 }
