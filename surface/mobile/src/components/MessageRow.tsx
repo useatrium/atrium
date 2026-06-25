@@ -12,6 +12,7 @@ import {
   type Session,
 } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
+import { entryHandleForMessage } from '../lib/entryHandle';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
 import { MessageText } from './MessageText';
@@ -34,6 +35,7 @@ export interface MessageRowProps {
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
+  onOpenComments?: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
@@ -369,6 +371,7 @@ export const MessageRow = memo(function MessageRow({
   api,
   fileHeaders,
   onLongPress,
+  onOpenComments,
   onOpenThread,
   onToggleReaction,
   onRetry,
@@ -390,8 +393,10 @@ export const MessageRow = memo(function MessageRow({
       (m.sessionId ? 'Agent session' : 'Message');
   const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
+  const canComment = entryHandleForMessage(m) != null && onOpenComments != null;
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
+    ...(canComment ? [{ name: 'comments', label: 'Comments' }] : []),
     ...(!tombstone && m.sessionId == null && onOpenThread && !inThread
       ? [{ name: 'reply', label: 'Reply in thread' }]
       : []),
@@ -413,6 +418,10 @@ export const MessageRow = memo(function MessageRow({
     }
     if (name === 'reply' && onOpenThread) {
       onOpenThread(m);
+      return;
+    }
+    if (name === 'comments' && onOpenComments) {
+      onOpenComments(m);
       return;
     }
     if (['react', 'copy', 'edit', 'delete'].includes(name)) onLongPress(m);

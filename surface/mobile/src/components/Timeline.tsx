@@ -31,6 +31,7 @@ export interface TimelineProps {
   fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
   onLongPress: (m: ChatMessage) => void;
+  onOpenComments?: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
@@ -54,6 +55,7 @@ export function Timeline({
   fileHeaders,
   onLoadEarlier,
   onLongPress,
+  onOpenComments,
   onOpenThread,
   onToggleReaction,
   onRetry,
@@ -116,6 +118,7 @@ export function Timeline({
           api={api}
           fileHeaders={fileHeaders}
           onLongPress={onLongPress}
+          onOpenComments={onOpenComments}
           onOpenThread={onOpenThread}
           onToggleReaction={onToggleReaction}
           onRetry={onRetry}
@@ -135,6 +138,7 @@ export function Timeline({
       api,
       fileHeaders,
       onLongPress,
+      onOpenComments,
       onOpenThread,
       onToggleReaction,
       onRetry,
