@@ -3497,7 +3497,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       'Content-Security-Policy',
       [
         "default-src 'none'",
-        "script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://esm.sh",
+        // cdn.tailwindcss.com is loaded as a <script> (the JIT runtime that injects
+        // styles), so it must be in script-src too — not just style-src — or the
+        // CSP blocks it and previews render unstyled. Verified in a real browser.
+        "script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://esm.sh https://cdn.tailwindcss.com",
         "style-src 'unsafe-inline' https://cdn.tailwindcss.com",
         'img-src data: blob: https:',
         'font-src data: https:',
