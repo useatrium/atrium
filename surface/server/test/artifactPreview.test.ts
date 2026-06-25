@@ -170,6 +170,10 @@ describe('artifact preview route', () => {
     expect(res.body).toContain('ReactDOM');
     expect(res.body).toContain('Babel.transform');
     expect(res.body).toContain('JSX Preview');
+    // The scaffold runs Babel inside `new Function`, so it MUST use the classic
+    // JSX runtime (React.createElement). The automatic runtime injects an
+    // `import` statement that throws there — verified broken in a real browser.
+    expect(res.body).toContain("runtime: 'classic'");
   });
 
   it('returns 404 for an artifact path outside readable roots', async () => {

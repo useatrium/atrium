@@ -260,7 +260,11 @@ function reactJsxPreviewDocument(source: string, filename: string): string {
     }
     try {
       const cleaned = toRunnableJsx(source);
-      const transformed = Babel.transform(cleaned, { presets: ['react'] }).code;
+      // Force the classic JSX runtime: @babel/standalone now defaults the react
+      // preset to the automatic runtime, which injects \`import { jsx } from
+      // "react/jsx-runtime"\` — an import statement that throws inside new Function.
+      // Classic emits React.createElement, which the scaffold supplies React for.
+      const transformed = Babel.transform(cleaned, { presets: [['react', { runtime: 'classic' }]] }).code;
       const factory = new Function('React', transformed + '\\n; return typeof App !== "undefined" ? App : (typeof exports !== "undefined" && exports.default) || null;');
       const App = factory(React);
       if (!App) throw new Error('No default React component found in ' + title);
