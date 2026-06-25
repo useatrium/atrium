@@ -179,6 +179,44 @@ describe('entry annotations', () => {
     await exerciseCommentLifecycle(cookie, encodeRecordHandle('annotation_record_comment'));
   });
 
+  it('tags agent-authored comments with via=agent (only "agent" honored)', async () => {
+    const cookie = await authCookie(fx.userId);
+    const message = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'agent comment target',
+    });
+    const handle = encodeEventHandle(message.id);
+
+    // The MCP write tool sends via:"agent".
+    const agentRes = await app.inject({
+      method: 'POST',
+      url: `/api/entries/${handle}/comments`,
+      headers: { cookie },
+      payload: { text: 'looks correct', via: 'agent' },
+    });
+    expect(agentRes.statusCode).toBe(201);
+    const agentEvent = agentRes.json().event as WireEvent;
+    expect(agentEvent.payload).toMatchObject({ via: 'agent' });
+    // actor stays the real principal; via is display-only attribution.
+    expect(agentEvent.actorId).toBe(fx.userId);
+
+    // A bogus via is ignored (not persisted).
+    const bogusRes = await app.inject({
+      method: 'POST',
+      url: `/api/entries/${handle}/comments`,
+      headers: { cookie },
+      payload: { text: 'human note', via: 'spoof' },
+    });
+    expect(bogusRes.statusCode).toBe(201);
+    expect((bogusRes.json().event as WireEvent).payload.via).toBeUndefined();
+
+    const folded = await annotations(cookie, handle);
+    const agentComment = folded.comments.find((c) => c.payload.text === 'looks correct');
+    expect(agentComment?.payload.via).toBe('agent');
+  });
+
   it('sets entry reactions on evt_ and rec_ handles and keeps replays idempotent', async () => {
     const cookie = await authCookie(fx.userId);
     const message = await postMessage(pool, {

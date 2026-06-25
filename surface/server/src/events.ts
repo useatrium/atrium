@@ -454,6 +454,12 @@ export interface ReactionResult {
 export interface CommentPostedPayload {
   target: string;
   text: string;
+  /** Set to 'agent' when an agent authored the comment via the MCP tool. The
+   * actor_id is still the real (human) principal whose credential the agent used;
+   * `via` only drives display attribution (rendered as `agent-<handle>`). It is a
+   * display tag, not a trust boundary — a future hardening could bind it to a
+   * dedicated agent credential. */
+  via?: 'agent';
 }
 
 export interface CommentEditedPayload {
@@ -537,10 +543,11 @@ async function resolveAnnotationScopeTx(
 
 export async function postCommentTx(
   client: DbClient,
-  args: { handle: string; actorId: string; text: string },
+  args: { handle: string; actorId: string; text: string; via?: 'agent' },
 ): Promise<WireEvent> {
   const scope = await resolveAnnotationScopeTx(client, args.handle);
   const payload: CommentPostedPayload = { target: args.handle, text: args.text };
+  if (args.via === 'agent') payload.via = 'agent';
   const ev = await insertEvent(client, {
     workspaceId: scope.workspaceId,
     channelId: scope.channelId,

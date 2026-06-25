@@ -172,12 +172,22 @@ export function EntryComments({
 function CommentRow({ comment }: { comment: WireEvent }) {
   const { text, deleted } = commentPayload(comment);
   const author = comment.author;
-  const displayName = author?.displayName ?? author?.handle ?? 'Unknown';
-  const showHandle = author?.handle && author.handle !== displayName;
+  // Agent-authored comments (posted via the MCP tool) are attributed as
+  // `agent-<handle>` — the human principal whose credential the agent used.
+  const isAgent = (comment.payload as { via?: unknown } | undefined)?.via === 'agent';
+  const displayName = isAgent
+    ? `agent-${author?.handle ?? 'unknown'}`
+    : (author?.displayName ?? author?.handle ?? 'Unknown');
+  const showHandle = !isAgent && author?.handle && author.handle !== displayName;
   return (
     <div className="rounded-md border border-edge bg-surface-raised/60 px-2 py-1.5 text-xs">
       <div className="flex min-w-0 items-baseline gap-1.5">
         <span className="truncate font-semibold text-fg-secondary">{displayName}</span>
+        {isAgent && (
+          <span className="shrink-0 rounded bg-accent-hover/15 px-1 text-3xs font-medium uppercase tracking-wide text-accent">
+            agent
+          </span>
+        )}
         {showHandle && <span className="truncate text-fg-muted">@{author.handle}</span>}
         <span
           className="ml-auto shrink-0 tabular-nums text-2xs text-fg-muted"

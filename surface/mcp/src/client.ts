@@ -77,7 +77,9 @@ export async function postEntryComment(
   text: string,
   cfg: AtriumMcpConfig,
 ): Promise<EntryWriteResult> {
-  return postEntryAnnotation(handle, "comments", { text }, "comment", cfg);
+  // via:"agent" tags the comment as agent-authored — clients render it as
+  // `agent-<handle>` (the human principal whose credential the agent is using).
+  return postEntryAnnotation(handle, "comments", { text, via: "agent" }, "comment", cfg);
 }
 
 export async function postEntryReaction(
