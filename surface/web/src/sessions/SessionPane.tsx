@@ -682,7 +682,7 @@ export function SessionPane({
                     events={questionEventsByQuestion.get(item.questionId) ?? []}
                   />
                 </div>
-              ) : (
+              ) : item.type === 'reasoning' ? null : (
                 <div className="pl-3.5">
                   <TranscriptTool
                     item={item}

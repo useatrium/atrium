@@ -5,6 +5,8 @@ import type {
   CodexItem,
   CodexItemCompletedEvent,
   CodexItemStartedEvent,
+  CodexReasoningSummaryTextDeltaEvent,
+  CodexReasoningTextDeltaEvent,
   AmpToolEvent,
   AnthropicTextBlock,
   AnthropicToolUseBlock,
@@ -27,7 +29,7 @@ export interface TextItem {
   sourceEventIds: number[];
 }
 
-export interface ToolCallItem {
+export interface ToolCallItemBase {
   type: "tool_call";
   id: string;
   name: string;
@@ -39,6 +41,15 @@ export interface ToolCallItem {
   handle?: string | null;
   sourceEventIds: number[];
 }
+
+export interface ReasoningItem extends Omit<ToolCallItemBase, "type"> {
+  type: "reasoning";
+  text: string;
+  summary?: string;
+  messageId?: string;
+}
+
+export type ToolCallItem = ToolCallItemBase | ReasoningItem;
 
 export interface QuestionItem {
   type: "question";
@@ -60,7 +71,13 @@ export interface UserMessageItem {
   sourceEventIds: number[];
 }
 
-export type SessionItem = TextItem | ToolCallItem | QuestionItem | UserMessageItem;
+export type SessionItem = TextItem | ReasoningItem | ToolCallItem | QuestionItem | UserMessageItem;
+
+export interface TodoEntry {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm?: string;
+}
 
 interface RecordHandleHint {
   handle: string;
@@ -114,6 +131,11 @@ export interface SessionState {
   models: string[];
   costUsd: number;
   lastEventId: number;
+  todos?: TodoEntry[];
+  plan?: {
+    text: string;
+    sourceEventIds: number[];
+  } | null;
   pendingQuestion: {
     questionId: string;
     turnId?: string;
@@ -131,6 +153,7 @@ export function initialSessionState(): SessionState {
     models: [],
     costUsd: 0,
     lastEventId: 0,
+    plan: null,
     pendingQuestion: null,
   };
 }
@@ -142,6 +165,10 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     fileChanges: [...state.fileChanges],
     artifacts: [...state.artifacts],
     models: [...state.models],
+    ...(state.todos ? { todos: state.todos.map((todo) => ({ ...todo })) } : {}),
+    ...(state.plan !== undefined
+      ? { plan: state.plan ? { ...state.plan, sourceEventIds: [...state.plan.sourceEventIds] } : null }
+      : {}),
     lastEventId: Math.max(state.lastEventId, frame.event_id),
   };
   const recordHandles = recordHandleHints(frame);
@@ -214,6 +241,10 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     reduceCodexItemStarted(next, frame.event_id, raw);
   } else if (raw.type === "item.commandExecution.outputDelta") {
     reduceCodexCommandOutputDelta(next, frame.event_id, raw);
+  } else if (raw.type === "item.reasoning.textDelta") {
+    reduceReasoningTextDelta(next, frame.event_id, raw);
+  } else if (raw.type === "item.reasoning.summaryTextDelta") {
+    reduceReasoningSummaryTextDelta(next, frame.event_id, raw);
   } else if (raw.type === "item.completed") {
     reduceCodexItemCompleted(next, frame.event_id, raw, recordHandles);
   }
@@ -240,6 +271,18 @@ function normalizeRawEvent(event: CentaurEventFrame["data"]): CentaurEventFrame[
     case "item/commandExecution/outputDelta":
       return {
         type: "item.commandExecution.outputDelta",
+        ...params,
+        itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
+      } as CentaurEventFrame["data"];
+    case "item/reasoning/textDelta":
+      return {
+        type: "item.reasoning.textDelta",
+        ...params,
+        itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
+      } as CentaurEventFrame["data"];
+    case "item/reasoning/summaryTextDelta":
+      return {
+        type: "item.reasoning.summaryTextDelta",
         ...params,
         itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
       } as CentaurEventFrame["data"];
@@ -439,7 +482,7 @@ function reduceAssistant(
       );
     }
     for (const block of toolBlocks) {
-      upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id));
+      applyToolDerivedState(state, eventId, upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id)));
     }
     return;
   }
@@ -453,7 +496,7 @@ function reduceAssistant(
     );
   }
   for (const block of toolBlocks) {
-    upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id));
+    applyToolDerivedState(state, eventId, upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id)));
   }
 }
 
@@ -527,7 +570,7 @@ function upsertToolCall(
   eventId: number,
   block: AnthropicToolUseBlock,
   handle?: string,
-): void {
+): ToolCallItem {
   const existing = state.items.find((item) =>
     item.type === "tool_call" && item.id === block.id,
   ) as ToolCallItem | undefined;
@@ -537,17 +580,55 @@ function upsertToolCall(
     existing.input = block.input;
     assignHandle(existing, handle);
     existing.sourceEventIds.push(eventId);
-    return;
+    return existing;
   }
 
-  state.items.push({
+  const created: ToolCallItem = {
     type: "tool_call",
     id: block.id,
     name: block.name,
     input: block.input,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
+  };
+  state.items.push(created);
+  return created;
+}
+
+function applyToolDerivedState(state: SessionState, eventId: number, item: ToolCallItem): void {
+  const name = item.name.toLowerCase();
+  if (name === "todowrite") {
+    state.todos = parseTodoEntries(item.input.todos);
+  } else if (name === "exitplanmode") {
+    state.plan = {
+      text: typeof item.input.plan === "string" ? item.input.plan : "",
+      sourceEventIds: [eventId],
+    };
+  }
+}
+
+function parseTodoEntries(value: unknown): TodoEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry): TodoEntry[] => {
+    if (!isJsonObject(entry) || typeof entry.content !== "string") {
+      return [];
+    }
+    const status = parseTodoStatus(entry.status);
+    return [
+      {
+        content: entry.content,
+        status,
+        ...(typeof entry.activeForm === "string" ? { activeForm: entry.activeForm } : {}),
+      },
+    ];
   });
+}
+
+function parseTodoStatus(value: unknown): TodoEntry["status"] {
+  return value === "in_progress" || value === "completed" || value === "pending" ? value : "pending";
 }
 
 function reduceToolResult(state: SessionState, eventId: number, event: AmpToolEvent): void {
@@ -608,6 +689,28 @@ function reduceCodexCommandOutputDelta(
   item.sourceEventIds.push(eventId);
 }
 
+function reduceReasoningTextDelta(
+  state: SessionState,
+  eventId: number,
+  event: CodexReasoningTextDeltaEvent,
+): void {
+  if (!event.delta) {
+    return;
+  }
+  appendReasoningText(state, eventId, codexItemId(event), event.delta);
+}
+
+function reduceReasoningSummaryTextDelta(
+  state: SessionState,
+  eventId: number,
+  event: CodexReasoningSummaryTextDeltaEvent,
+): void {
+  if (!event.delta) {
+    return;
+  }
+  appendReasoningSummary(state, eventId, codexItemId(event), event.delta);
+}
+
 function reduceCodexItemCompleted(
   state: SessionState,
   eventId: number,
@@ -643,6 +746,25 @@ function reduceCodexItemCompleted(
     return;
   }
 
+  if (event.item.type === "reasoning") {
+    const text = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
+    upsertReasoningItem(
+      state,
+      eventId,
+      event.item.id,
+      text,
+      stringValue(event.item.summary),
+      handleForCodexItem(handles, event.item.id, "reasoning", "agent"),
+      true,
+    );
+    return;
+  }
+
+  if (event.item.type === "plan") {
+    setPlanFromText(state, eventId, typeof event.item.text === "string" ? event.item.text : codexContentText(event.item));
+    return;
+  }
+
   if (event.item.type === "commandExecution") {
     upsertCodexCommandExecution(
       state,
@@ -657,6 +779,76 @@ function reduceCodexItemCompleted(
   if (event.item.type === "fileChange") {
     captureCodexFileChange(state, eventId, event.item);
   }
+}
+
+function appendReasoningText(
+  state: SessionState,
+  eventId: number,
+  itemId: string | undefined,
+  delta: string,
+): void {
+  const item = upsertReasoningItem(state, eventId, itemId, "");
+  item.text += delta;
+  pushSourceEventId(item, eventId);
+}
+
+function appendReasoningSummary(
+  state: SessionState,
+  eventId: number,
+  itemId: string | undefined,
+  delta: string,
+): void {
+  const item = upsertReasoningItem(state, eventId, itemId, "");
+  item.summary = `${item.summary ?? ""}${delta}`;
+  pushSourceEventId(item, eventId);
+}
+
+function upsertReasoningItem(
+  state: SessionState,
+  eventId: number,
+  itemId: string | undefined,
+  text: string,
+  summary?: string,
+  handle?: string,
+  replaceText = false,
+): ReasoningItem {
+  const id = itemId ? `reasoning:${itemId}` : `reasoning:${eventId}`;
+  const existing = state.items.find((candidate) =>
+    candidate.type === "reasoning" && candidate.id === id,
+  ) as ReasoningItem | undefined;
+
+  if (existing) {
+    if (replaceText) {
+      existing.text = text;
+    }
+    if (summary !== undefined) {
+      existing.summary = summary;
+    }
+    if (itemId) {
+      existing.messageId = itemId;
+    }
+    assignHandle(existing, handle);
+    pushSourceEventId(existing, eventId);
+    return existing;
+  }
+
+  const created: ReasoningItem = {
+    type: "reasoning",
+    id,
+    name: "reasoning",
+    input: {},
+    text,
+    ...(summary !== undefined ? { summary } : {}),
+    ...(itemId ? { messageId: itemId } : {}),
+    ...(handle ? { handle } : {}),
+    sourceEventIds: [eventId],
+  };
+  state.items.push(created);
+  return created;
+}
+
+function setPlanFromText(state: SessionState, eventId: number, text: string): void {
+  state.plan = { text, sourceEventIds: [eventId] };
 }
 
 const CODEX_KIND: Record<string, FileChangeKind> = {
