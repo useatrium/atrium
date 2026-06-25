@@ -28,6 +28,7 @@ check_migrations() {
   local label="$1"
   local dir="$2"
   local regex="$3"
+  local split_at="${4:-}"
   local dir_failed=0
 
   local head_entries
@@ -75,10 +76,31 @@ check_migrations() {
 
   while IFS= read -r version; do
     [[ -n "${version}" ]] || continue
-    if (( $(version_number "${version}") <= $(version_number "${base_max}") )); then
+    local compare_base_max="${base_max}"
+    if [[ -n "${split_at}" ]]; then
+      local version_num
+      version_num="$(version_number "${version}")"
+      if (( version_num >= split_at )); then
+        compare_base_max="$(
+          printf '%s\n' "${base_entries}" |
+            awk -v split_at="${split_at}" 'NF && $1 + 0 >= split_at { print $1 }' |
+            sort -n |
+            tail -n 1
+        )"
+      else
+        compare_base_max="$(
+          printf '%s\n' "${base_entries}" |
+            awk -v split_at="${split_at}" 'NF && $1 + 0 < split_at { print $1 }' |
+            sort -n |
+            tail -n 1
+        )"
+      fi
+      [[ -n "${compare_base_max}" ]] || continue
+    fi
+    if (( $(version_number "${version}") <= $(version_number "${compare_base_max}") )); then
       failed=1
       dir_failed=1
-      echo "::error title=${label} non-monotonic migration::New migration version ${version} must be greater than ${base_max} from ${base_ref}"
+      echo "::error title=${label} non-monotonic migration::New migration version ${version} must be greater than ${compare_base_max} from ${base_ref}"
       printf '%s\n' "${head_entries}" | awk -v version="${version}" '$1 == version { print "  " $2 }'
     fi
   done <<<"${added_versions}"
@@ -91,7 +113,8 @@ check_migrations() {
 check_migrations \
   "SQLx" \
   "services/api-rs/crates/centaur-session-sqlx/migrations" \
-  '^([0-9]+)_.+\.sql$'
+  '^([0-9]+)_.+\.sql$' \
+  1000
 
 check_migrations \
   "Rails console" \
