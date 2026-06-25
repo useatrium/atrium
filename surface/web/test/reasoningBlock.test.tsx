@@ -9,8 +9,6 @@ afterEach(cleanup);
 const item: ReasoningItem = {
   type: 'reasoning',
   id: 'reasoning-1',
-  name: 'reasoning',
-  input: {},
   text: 'Full internal reasoning\nwith a second line.',
   summary: 'Checking the transcript render branch',
   sourceEventIds: [1],
