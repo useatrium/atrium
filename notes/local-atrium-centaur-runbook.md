@@ -5,14 +5,17 @@ This is the local Mac workflow for running Atrium against a local Centaur
 
 ## Branch Model
 
-Use upstream Centaur as the source of truth:
+Use upstream Centaur as the upstream source and Gary's fork as the Atrium deploy
+line:
 
 - `origin/main`: upstream `paradigmxyz/centaur` — the source of truth
-- `fork/atrium/integration`: the fork's default branch and Atrium's deploy line (see "Deploy line vs. upstream branches" below)
+- `fork/main`: Atrium's Centaur fork line; this is what the local Atrium stack
+  should build and deploy
 - `fork/gb/*`: feature branches pushed to Gary's fork for upstream PRs
 
-The fork has no `main`; we base work on upstream `origin/main` directly, so a fork
-mirror would only go stale. Deleted on purpose.
+Keep `fork/main` intentionally rebased or merged forward from `origin/main` when
+we need upstream changes. Do not treat an old topic branch as the deploy line once
+its commits have landed here.
 
 For stacked Centaur work, rebase from the bottom up:
 
@@ -34,23 +37,18 @@ Independent Centaur features should branch directly from `origin/main`.
 ### Deploy line vs. upstream branches
 
 The `gb/*` branches above are *upstream-shaped*: one feature each, destined for
-PRs to paradigm. Atrium runs a single combined image, so the **build source is a
-dedicated integration branch on the fork**, not any one feature branch:
+PRs to paradigm. Atrium runs a combined fork image, so the **build source is
+`fork/main`**, not any one feature branch. `ATRIUM_FORK.md` is the authority on
+fork-only intent labels and migration numbering.
 
-- `fork/atrium/integration` = `origin/main` + every in-flight Centaur feature
-  (cancel + HITL relay + artifact capture, plus any fork-only config), merged.
-
-It is rebuildable, never the source of truth, and never PR'd upstream. The fork's
-`ATRIUM_FORK.md` is the authority on the branch model and intent labels; rebuild
-the line with `./atrium-integration.sh` (driven by `atrium-integration.manifest`,
-`git rerere` replays prior conflict resolutions). When a feature lands upstream,
-drop it from the manifest; when all do, delete the branch and track `origin/main`.
-
-**Build local Centaur from this branch** so the deploy carries every feature:
+**Build local Centaur from this branch** so the deploy carries every Atrium fork
+feature:
 
 ```sh
 cd ~/Code/centaur
-git fetch fork && git checkout atrium/integration
+git fetch fork origin
+git checkout main
+git reset --hard fork/main
 ```
 
 ## Build And Deploy Centaur Locally
@@ -74,8 +72,14 @@ cd ~/Code/centaur            # on atrium/integration
 
 just build-one api-rs
 just build-one agent
+docker build -f services/api-rs/crates/centaur-node-sync/Dockerfile \
+  -t centaur-node-sync:latest services/api-rs
 
-kind load docker-image centaur-api-rs:latest centaur-agent:latest --name centaur
+kind load docker-image \
+  centaur-api-rs:latest \
+  centaur-agent:latest \
+  centaur-node-sync:latest \
+  --name centaur
 
 # Artifact capture: dedicated key on the api-rs pod (envFrom centaur-infra-env);
 # api-rs propagates it to sandboxes. NOT the control-plane CENTAUR_API_KEY.
@@ -86,11 +90,35 @@ CENTAUR_EXTRA_VALUES=~/Code/atrium/infra/values.local.yaml just deploy
 kubectl -n centaur rollout restart deploy/centaur-centaur-api-rs
 kubectl -n centaur rollout status deploy/centaur-centaur-api-rs --timeout=180s
 
-# Artifact capture egress (see note below) — required with iron-proxy disabled.
+# Sandbox scoped API egress (see note below) — required with iron-proxy disabled.
 kubectl apply -f ~/Code/atrium/infra/sandbox-egress-api-rs.yaml
 
 kubectl -n centaur port-forward deploy/centaur-centaur-api-rs 18000:8080
 ```
+
+### Node-sync -> Atrium local networking
+
+Node-sync runs inside the kind cluster and calls Atrium directly. The Atrium
+server container must be reachable from the `kind` Docker network, and the Helm
+values must allow egress to that exact IP.
+
+For the usual local stack, attach the server container to the kind network before
+or after starting compose:
+
+```sh
+docker network connect kind atrium-prod-server-1 2>/dev/null || true
+docker inspect atrium-prod-server-1 \
+  --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{$net.IPAddress}}{{"\n"}}{{end}}'
+```
+
+`infra/values.local.yaml` assumes the `kind` network IP is `172.18.0.3` and sets
+both `nodeSync.atriumBaseUrl` and `nodeSync.atriumEgress.ipBlock` accordingly.
+If Docker assigns a different `kind` IP, replace both values in that file before
+running `CENTAUR_EXTRA_VALUES=~/Code/atrium/infra/values.local.yaml just deploy`.
+
+A healthy node-sync DaemonSet should log `capture: ... 0 errors`; `No route to
+host` means the container is not attached to the `kind` network or the egress
+IP/port does not match.
 
 ### Artifact capture: sandbox→api-rs egress gap
 
@@ -240,4 +268,3 @@ cd ~/Code/centaur/crates/harness-server
 cargo fmt --check
 cargo test
 ```
-

@@ -259,7 +259,7 @@ firsthand → merges (the established C4 cadence).
 | **D — upload on-ramp (auto-land, §0.2)** | Atrium | Every human upload auto-creates a `shared/channels/<channel-id>/uploads/<name>` artifact, `author: human:<uid>`, pointing at the **same** CAS blob as the `files` row (zero-copy via server-verified `content_hash` → `cas_blobs`). Collision: sha-dedup identical; suffix-disambiguate different-bytes-same-name. Chat message pins `(artifact, seq)` for immutability. `files` stays as the ingest record. (Supersedes the old "explicit add / attachments stay separate" — see §0.2.) | `app.ts:1994-2074,2057-2070` (uploads), `2084` (channel write-back), `artifact-writeback.ts`, `classifyScope` |
 | **E — Centaur subscription-set hydration = 5B-3, re-scoped** | Centaur | `http_client.rs` consumes the existing session-scoped internal routes and their `activePrefix`. **`hydrate_lower`** pulls canonical paths into the overlay RO lower as a CAS checkout after projecting local aliases: active shared prefix at `~` and also at `~/shared/channels/<active>` with the same base seq, own `scratch/<session-id>` at `~/scratch`, other shared scopes under `~/shared`. **Capture stays session-authored** (`author=agent:<session>`; server resolves aliases to canonical workspace paths). | `http_client.rs` |
 | **F — single-CAS capture hard cut** | Atrium + Centaur | **LANDED 2026-06-25.** Make Atrium CAS the only normal artifact byte path: node/agent capture, upload auto-land, human write-back, hydration, and app publish all require durable `cas_blobs.s3_key` before a non-delete version commits. Delete Atrium `session_artifacts`, artifact offload worker, Centaur artifact proxy fallback, and Centaur staging as an Atrium dependency. Node-sync/direct Atrium capture is required for production capture; the old in-agent poll is retired, not bridged. | Atrium `session-runs.ts`, `app.ts`, `artifact-writeback.ts`; Centaur node-sync direct capture |
-| **G — Centaur live overlay + daemon wiring** | Centaur | Mount the overlay in the **live** controller (replace the `/workspace` EmptyDir); wire `nodeSync.enabled` + the multi-session flags the daemon currently ignores; inbound node-side merge (`agent-sync-design §4`). **Needs a real cluster** (the `c4-overlay-provisioning-plan.md` "Remaining" list); gated default-OFF; the in-agent poll stays the live path until cutover + parity. | `lib.rs:903`; chart `nodeSync.*` |
+| **G — Centaur live overlay + daemon wiring** | Centaur | **LANDED for the Atrium fork.** The live controller renders overlay manifest/readiness wiring, `provision-overlay` is in the node-sync image, and chart defaults enable node-sync + overlay provisioning for the fork. Remaining work is scale/product hardening: inbound node-side merge, commit-group producer, multi-node/per-tenant isolation, arm64 coverage, and external prod rollout validation. | `centaur-sandbox-agent-k8s`, `nodeSync.*` |
 
 ## 6. How this re-scopes 5B-3
 
@@ -276,16 +276,16 @@ tier, `agent-sync-design §5B` scale levers) is unchanged and rides after E.
 ## 7. Sequencing
 
 ```
-A (migration) ─┬─> B (workspace ledger fns + node endpoints) ─┬─> E (5B-3 alias/hydration) ─> F (single CAS hard cut) ─> G (live cluster/cutover) ─> 5B-4
+A (migration) ─┬─> B (workspace ledger fns + node endpoints) ─┬─> E (5B-3 alias/hydration) ─> F (single CAS hard cut) ─> G (live overlay wiring) ─> 5B-4
                │                                              └─> C (shared write) ─> D (human on-ramp)
                └─ B is the hinge: E, C, D all need workspace-keyed reads/writes.
 ```
 A → B are the load-bearing Atrium changes (and are independently shippable — they make the
 ledger workspace-shared even before Centaur catches up). E is the teed-up Centaur build, now
 correctly scoped. C/D deliver the human-visible product (co-edit + drop-a-file). F removes
-the old two-path artifact storage before the live overlay/capture path depends on it. G is
-the real-cluster finish from the C4 plan. **Cutover (disable in-agent poll) stays deliberate
-and last**, gated on parity (secret-scan / MIME filter).
+the old two-path artifact storage before the live overlay/capture path depends on it. G has
+landed for the Atrium fork; remaining G-shaped work is scale/product hardening and external
+prod rollout validation, not preserving the old poll/staging path.
 
 ## 8. Risks & decisions to confirm before fan-out
 
@@ -313,9 +313,8 @@ and last**, gated on parity (secret-scan / MIME filter).
    for `cas_blobs` dedup (file-types §9.5 caveat), else re-hash on promote.
 8. **Single-CAS hard cut (lane F) — LANDED 2026-06-25.** Fresh captures serve from
    Atrium S3/CAS immediately without `session_artifacts`, the artifact offload worker,
-   or Centaur proxy fallback. The remaining risk is production rollout: node-sync/direct
-   Atrium capture must be enabled in the live cluster before removing the old in-agent
-   poll from deployed workloads.
+   or Centaur proxy fallback. Local kind + Atrium prod smoke has node-sync/direct
+   Atrium capture enabled; external prod rollout is the remaining ops validation.
 9. **Per-tenant blast radius (G)** — workspace-shared `/workspace` across containers raises the
    multi-tenant isolation bar; VM-per-tenant per the C4 remainder (#65).
 

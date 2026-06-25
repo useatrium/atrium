@@ -553,9 +553,9 @@ lanes; e2e + dev-browser isolation assertions).
    simplified** (capture→versions, serve-latest, write-back+conflict-state, GC,
    workspace-scoped identity). The single-CAS hard cut makes capture→S3 + gallery
    preview/edit durable without `session_artifacts` or a Centaur proxy fallback.
-   Production rollout still needs node-sync/direct Atrium capture enabled before
-   removing the old in-agent poll from deployed workloads, and rollout JSONL should
-   move onto the same pipeline.
+   Local kind + Atrium prod smoke has node-sync/direct Atrium capture enabled; external
+   prod rollout is the remaining ops validation. Rollout JSONL should move onto the
+   same pipeline.
 4. **Archival + watcher:** raw `session_events` + rollout-JSONL + external-jsonl
    blobs to S3, redaction-as-projection, normalized search; ship the watcher CLI
    (sink into `cass`).

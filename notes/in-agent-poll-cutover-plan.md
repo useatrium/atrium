@@ -1,25 +1,19 @@
 # In-agent artifact poll → C4 node-sync: cutover & cleanup plan
 
-> **Status: 2026-06-24. FLAT-`~` IMPLEMENTATION LANDED + e2e-validated** (gbasin/centaur main #17–#22, gated
-> default-OFF — see [`flat-home-workspace-design.md`]). **Remaining = the STAGED PROD-OPS cutover** (flip default
-> `ARTIFACT_CAPTURE_ENABLED=0` once flat-home/overlay is the universal default + a parity bake, then delete the
-> in-pod poll — deleting it now would break capture for all non-flat-home pods). Phase 0 (parity + safe cleanup)
-> landed earlier. Goal: retire the legacy in-agent poller
-> (`centaur/services/sandbox/artifact_capture.py`) in favour of the C4 overlay-upper node-scan
-> (`centaur-node-sync` daemon), **without losing capture coverage or safety filters**.
-> Grounded in a code sweep of both repos (file:line below). Companion:
-> [`c4-overlay-provisioning-plan.md`], [`shared-workspace-build-spec.md`], [[c4-overlay-capture-build]].
+> **Status: 2026-06-25. SUPERSEDED BY THE SINGLE-CAS HARD CUT + NODE-SYNC DEFAULT.**
+> The legacy in-pod artifact poller and Centaur artifact staging API are no longer
+> the normal path in the Atrium fork. Centaur `fork/main` now enables node-sync and
+> overlay provisioning by default, the `centaur-node-sync` image includes
+> `provision-overlay`, and captures go directly to Atrium CAS/S3 through internal
+> session routes. Keep this file as historical cutover context for safety filters
+> and operational sequencing; use [`shared-workspace-build-spec.md`] lane F/G and
+> [`local-atrium-centaur-runbook.md`] for current bring-up.
 
-> **⚠️ CURRENT REALITY — read first (verified live on the kind `centaur` cluster, 2026-06-23).**
-> 1. **Nothing has been cut over or retired.** The **in-pod Python poll** (`artifact-capture`, pid 58 in live
->    `asbx-*` pods) is STILL the active, default, and ONLY live capture path, POSTing to Centaur
->    `/agent/executions/{id}/artifacts`. The **node daemon is NOT deployed anywhere** (no DaemonSet / node-sync
->    pod; `nodeSync.enabled=false`). Today's PRs #14/#15/#16 are **gated-OFF prep + filters**, not a cutover.
-> 2. **There is no top-level `/workspace` or `/atrium` today.** Those are C4-overlay paths that exist only once
->    the (gated-off) overlay is provisioned. The live root has `home tmp var …` — no `workspace`/`atrium`.
-> 3. **Today the captured surface is `~/workspace` + `~/outputs`** (both *under* `~`) plus the `/tmp`+`/var/tmp`
->    hedges — the poll's `ARTIFACT_CAPTURE_DIRS`. So *part of `~` IS captured today*; the clean "`~` excluded,
->    `/workspace` captured" split is the **C4 design**, not current reality.
+> **Current local verification, 2026-06-25:** local kind has the node-sync DaemonSet
+> running and api-rs overlay provisioning enabled. After attaching the Atrium prod
+> server container to the `kind` Docker network, node-sync posted artifact captures
+> with `0 errors`; Atrium's local prod DB had no `session_artifacts` table and
+> durable `cas_blobs.s3_key` rows.
 
 ## Decisions locked (2026-06-23, Gary)
 
@@ -56,15 +50,16 @@
 | Gated overlay-workspace entrypoint (default-off) | 1b | ✅ done (gated) | centaur #14 (`6a9d2ff`) |
 | Decisions locked + §5 resume-coupling fix + 4-lane taxonomy | docs | ✅ done | atrium #88 (`be059a7`) |
 | ~~`/tmp`+`/var/tmp` watch roots (1d)~~ → **dropped** (single captured root, 0c) | — | ❌ not needed | — |
-| Live-controller wiring (`overlay: Some`, `nodeSync.enabled`) | 1a | ⛔ not built | — |
-| Real-session-spawn validation — **both** lanes | 1c | ⛔ not validated | — |
-| Parity bake (poll vs daemon captured-set diff) | 2 | ⛔ not run | — |
-| Flip default `ARTIFACT_CAPTURE_ENABLED=0` + rollback bake | 3 | ⛔ not done | — |
-| Delete poller + entrypoint launch + Dockerfile COPY + orphaned route | 4 | ⛔ not done | — |
+| Live-controller wiring (`overlay: Some`, `nodeSync.enabled`) | 1a | ✅ built/enabled in fork chart defaults | Centaur `fork/main` |
+| Real-session-spawn validation — **both** lanes | 1c | ✅ local kind + Atrium prod smoke for node-sync capture; real-model harness resume remains a separate watched e2e | 2026-06-25 local |
+| Parity bake (poll vs daemon captured-set diff) | 2 | Superseded by hard cut | — |
+| Flip default `ARTIFACT_CAPTURE_ENABLED=0` + rollback bake | 3 | Superseded by poll/staging removal in fork | — |
+| Delete poller + entrypoint launch + Dockerfile COPY + orphaned route | 4 | ✅ done for artifact staging route/path in fork | Centaur `fork/main` |
 
-**Net:** Phase 0 (safe parity filters + cleanup) is DONE and merged **gated default-OFF** — nothing in prod
-changed. Remaining = the production go-live (1a/1c), the parity bake (2), the flip (3), and deletion (4). The
-build + test checklist for those is **§5**.
+**Net:** this plan's "how do we safely get off the in-agent poll?" question is
+closed for the Atrium fork's artifact path. Remaining platform work is broader
+workspace sync/product scope, not preserving the old Centaur artifact staging
+route.
 
 ## 0. The two mechanisms today (grounded)
 
@@ -75,12 +70,11 @@ build + test checklist for those is **§5**.
 | Scan | stat-walks the **whole** `DEFAULT_DIRS=/home/agent/workspace:/tmp:/home/agent/outputs:/var/tmp` every **2.5s** = O(all files) | reads the overlay **upper** = O(changes), interval 2s (`scanIntervalSeconds`) |
 | Ingest | POST `{api}/agent/executions/{id}/artifacts` (**Centaur** `routes.rs:507`) | POST `/api/internal/sessions/{id}/artifacts/capture` (**Atrium**) |
 | Filters | secret-**content** scan (`secret_denied`), MIME allow-list (`image/audio/video`+set), `.git`/`node_modules` excludes, junk-extension, **1 MiB** soft cap | path-based deny (`classify_entry` denies `.git-credentials` etc., routes harness homes off-artifact, excludes repos via `.git`); large-file **streaming** to S3 |
-| Gate | `ARTIFACT_CAPTURE_ENABLED` default **1** (on) | `nodeSync.enabled` default **false** (off); controller `overlay: None` |
+| Gate | Historical only in the Atrium fork | `nodeSync.enabled` default **true**; controller overlay provisioning enabled |
 
-**Current production reality:** the poll is the **active, default, and only-live** capture path. C4 is
-**gated off and not wired into the live controller** (`overlay: None`, `nodeSync.enabled=false`). There is
-**no cutover coupling** — nothing disables the poll when C4 is on. So the poll **cannot be deleted today**
-without stopping all capture.
+**Current Atrium fork reality:** C4/node-sync is the normal artifact capture path.
+If node-sync logs `No route to host` in local kind, fix the Atrium container
+networking and node-sync egress values; do not revive the old staging route.
 
 **Correction to an earlier framing:** the overlay **mechanism, capture round-trip, and hydration ARE
 kind-validated** (5B-1/5B-2 + PRs #12/#13 — the `node-sync-pod-e2e` captures + the agent reads

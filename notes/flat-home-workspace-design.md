@@ -1,9 +1,10 @@
 # Flat-`~` agent workspace + complete the poll→daemon cutover — design note
 
-> **Status: 2026-06-24 — IMPLEMENTED + e2e-validated, gated default-OFF on gbasin/centaur main.** The flat-`~`
-> agent-FS is built across 7 PRs (below) and validated by a live agent-image composition probe. The production
-> **cutover flip + poll deletion is the remaining STAGED OPS step** (gated on the overlay being the universal
-> default + a parity bake — deleting the poll now would break capture for all non-flat-home pods). Companion:
+> **Status: 2026-06-25 — IMPLEMENTED, enabled in the Atrium fork, and locally
+> smoke-validated.** The flat-`~` agent-FS is built across the listed PRs and
+> validated by the live agent-image composition probe plus node-sync pod e2e. The
+> Atrium fork now treats node-sync/direct Atrium CAS capture as the normal path;
+> old in-agent artifact staging is gone. Companion:
 > [`in-agent-poll-cutover-plan.md`] (cutover mechanics + status), [`shared-workspace-build-spec.md`],
 > [[c4-overlay-capture-build]], [[agent-data-architecture]].
 >
@@ -27,7 +28,8 @@
   (wiped). No `/workspace` mount, no "which dir is captured?" reasoning. Certain home subdirs are "special"
   (RO, or excluded, or separately mounted).
 - **Complete the cutover.** Retire the in-pod Python poll (`artifact-capture`) entirely; the node daemon
-  becomes the **sole** capture path. (Today the poll is the only *live* path; the daemon isn't deployed at all.)
+  becomes the **sole** capture path. In the current Atrium fork, node-sync is the
+  normal path and Centaur artifact staging has been removed.
 - **Why flat-`~`:** cleaner agent UX; aligns with the planned active-root + `~/shared`,`~/scratch`,`~/repos`,`~/context` rename. **Cost,
   eyes open:** capturing home means capture must *exclude* all non-deliverables (auth, toolchain, caches) — §3
   makes that a single legible rule rather than an open-ended deny-list.
@@ -101,11 +103,12 @@ Phase 0 parity filters are DONE, gated (#15 secret/junk/`.git`, #16 repo-tree ex
 2. **Daemon home-capture:** point the daemon at the session-keyed home volume with the §3 rule (skip dotfiles +
    `repos/`+`context/`, canonicalize `~`/`scratch`/`shared` aliases before writeback). Both lanes — artifact
    **and** harness-transcript.
-3. **Live-wire the daemon** (controller `overlay: Some`, `nodeSync.enabled`) — not deployed today.
+3. **Live-wire the daemon** (controller `overlay: Some`, `nodeSync.enabled`) — done in the Atrium fork chart/defaults.
 4. **Validate on a real cluster:** a home deliverable IS captured; a `repos/` edit is NOT; dotfiles/auth/
    toolchain/`/tmp` are NOT; the transcript IS captured + cold-start resume works.
-5. **Parity bake** (poll vs daemon), **flip** `ARTIFACT_CAPTURE_ENABLED=0` with rollback, **delete** the poll
-   + the orphaned Centaur `/agent/executions/{id}/artifacts` route.
+5. **Historical:** parity bake / `ARTIFACT_CAPTURE_ENABLED` flip / route deletion.
+   The Atrium fork hard-cut removed the Centaur staging route and uses direct
+   Atrium CAS capture.
 
 ## 7. Open questions (for review)
 

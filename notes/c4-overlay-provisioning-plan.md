@@ -1,6 +1,12 @@
 # C4 overlay-capture: runtime provisioning build + validation plan
 
-> **Status: 2026-06-22.** Decision recorded after a four-agent investigation pass.
+> **Status: 2026-06-25. IMPLEMENTED IN THE ATRIUM FORK.** `provision-overlay`
+> exists as a Rust binary in the `centaur-node-sync` image, the sandbox controller
+> renders the manifest-writer/readiness overlay path, the chart has node-sync and
+> overlay provisioning enabled for the Atrium fork, and the pod-native e2e runs in
+> CI. Keep the older phase plan below as historical build context.
+>
+> **Original status: 2026-06-22.** Decision recorded after a four-agent investigation pass.
 > Scope: **fixture-first, then production**. Validation venue: **GHA ubuntu-latest + kind**.
 > Companion docs: [`sync-validation-gaps.md`](./sync-validation-gaps.md),
 > [`cas-ledger-build-plan.md`](./cas-ledger-build-plan.md) (TRACK C4 + §10.7b),
@@ -24,38 +30,31 @@
 >
 > **A cluster can now run C4** via `nodeSync.enabled=true` + `nodeSync.overlayProvisioning.enabled=true`.
 >
-> ### Remaining — needs a REAL cluster (not the kind fixture):
-> - **Deep integration**: make the agent's actual working dir *be* the overlay merged (reconcile with
->   the existing git-clone workspace flow) + a real **repo-RO lower** (today `provision-overlay` seeds a
->   lower). The gated controller renders the mount; it does not yet replace the agent's real workspace.
-> - **Live-session end-to-end** on a real cluster: spawn → agent writes → captured → Atrium ledger →
->   MinIO. The kind fixture proves the mechanism, not the full session-spawn path.
-> - **Phase 3**: #63 large-file live wire, #64 commit-group outbound producer.
-> - **Cutover**: disable the in-agent poll once C4 is live + parity-checked (secret-scan / MIME filter).
-> - **arm64** image (workflow is amd64-only); multi-node / per-tenant isolation (#65).
+> ### Remaining platform work:
+> - **Real external prod cutover** is an ops validation, not a missing code path.
+> - **Phase 3+ scale work** remains: large-file live wire, commit-group outbound
+>   producer, multi-node/per-tenant isolation, and arm64 image coverage where needed.
 
 ## 0. The correction this plan exists to fix
 
-C4 ("overlay-upper node-scan") is the decided permanent capture mechanism, intended to
-retire the in-agent poll (`services/sandbox/artifact_capture.py`). The investigation found
-that **C4 has never run end-to-end on any platform**, because the piece that *feeds* the
-scanner — **runtime overlay provisioning** — does not exist as code.
+C4 ("overlay-upper node-scan") is the decided permanent capture mechanism. This
+section records the historical problem statement from before runtime overlay
+provisioning was implemented.
 
 | Piece | State | Evidence |
 |---|---|---|
 | node-sync **scanner** daemon (capture/adopt/manifest) | ✅ built, 62 crate tests | `centaur-node-sync/src/bin/centaur-node-syncd.rs` |
 | syscall proofs (openat2/whiteout/xattr) | ✅ scripted | `centaur-node-sync/ci/overlay-validation.sh` |
-| Helm DaemonSet (scanner), gated off | ✅ renders clean | `contrib/chart/templates/node-sync-daemonset.yaml` (`.Values.nodeSync.enabled`, default `false`) |
+| Helm DaemonSet (scanner) | ✅ built; enabled in Atrium fork values/defaults | `contrib/chart/templates/node-sync-daemonset.yaml` |
 | mountPropagation kernel mechanism | ✅ POC-confirmed (9/9, privileged Linux container) | memory `agent-data-architecture.md` |
-| **`provision-overlay` binary** (mounts the per-session overlay) | ❌ **ABSENT** | example only: `centaur-node-sync/deploy/overlay-provisioning.example.yaml` calls `/usr/local/bin/provision-overlay`; image builds only `centaur-node-syncd` + `scan-demo` |
-| **sandbox controller wiring** (render init container + mounts per pod) | ❌ **ABSENT** | `centaur-sandbox-agent-k8s/src/lib.rs::build_agent_sandbox()` adds only a tools-bootstrap init container (`init_containers` ~L643/L707); no overlay path, no gate flag |
-| **teardown unmount** (orphan-mount cleanup) | ❌ **ABSENT** | flagged "Remaining" in memory; no code |
-| pod-native e2e harness | ⚠️ **stub** | `centaur-node-sync/ci/pod-native-e2e.sh` step `[4/6]` is a comment ("delegates to the existing overlay provisioning example") with **no command** |
+| **`provision-overlay` binary** (mounts the per-session overlay) | ✅ built | `centaur-node-sync/src/bin/provision-overlay.rs`; image copies `/usr/local/bin/provision-overlay` |
+| **sandbox controller wiring** (render init container + mounts per pod) | ✅ built | `centaur-sandbox-agent-k8s` overlay config + manifest writer/readiness wait |
+| **teardown unmount** (orphan-mount cleanup) | ⚠️ operational cleanup path still worth auditing | node-sync remounts idempotently; local smoke showed repeated "already mounted" messages |
+| pod-native e2e harness | ✅ built | `centaur-node-sync/ci/pod-native-e2e.sh` |
 
-**Consequence:** issues #62–#65 and `sync-validation-gaps.md` are framed as *"validate on a
-real Linux node"*, presupposing provisioning exists. It does not. #62 is therefore blocked
-on an **untracked implementation prerequisite** (this plan). The in-agent poll stays the
-live + local-Mac capture path until C4 is live **and** cut over.
+**Current consequence:** this plan is no longer blocking C4. Use it to understand
+why the current implementation exists; do not read the old "absent" language as
+current state.
 
 ## 1. Why not validate on this Mac
 

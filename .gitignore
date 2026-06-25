@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 infra/iron-proxy-trust/fw-ca.crt
 notes/build-history/phase2/e2e/artifacts/
+.prod-cutover-backups/
