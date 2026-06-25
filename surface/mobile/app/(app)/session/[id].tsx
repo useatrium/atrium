@@ -58,6 +58,7 @@ import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/Seat
 import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 import { SessionMarkdown } from '../../../src/components/Markdown';
+import { PlanPanel } from '../../../src/components/PlanPanel';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -996,6 +997,8 @@ export default function SessionScreen() {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ padding: space.md, gap: space.md }}
         >
+          <PlanPanel todos={stream.todos} plan={stream.plan} />
+
           {terminal ? (
             <TurnCard status={displayStatus} resultText={resultText} costUsd={costUsd} />
           ) : null}
