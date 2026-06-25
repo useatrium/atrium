@@ -21,6 +21,7 @@ import {
   fileChangeFromToolCall,
   isTerminalExecutionStatus,
   sideEffectCount,
+  toolDisplay,
   type QuestionItem,
   type TextItem,
   type ToolCallItem,
@@ -1837,13 +1838,6 @@ const TextBlock = memo(
   (prev, next) => prev.item.text === next.item.text,
 );
 
-function firstInputLine(item: ToolCallItem): string {
-  const command = item.input['command'];
-  if (typeof command === 'string' && command) return command.split('\n')[0] ?? '';
-  const keys = Object.keys(item.input);
-  return keys.length === 0 ? '' : JSON.stringify(item.input).slice(0, 120);
-}
-
 /** A transcript tool call: file edits (Edit/Write/MultiEdit/NotebookEdit) render
  * as an inline diff card — the actual change where it happened, not raw JSON —
  * and everything else as the generic tool card. Codex edits arrive as state, not
@@ -1880,6 +1874,7 @@ const ToolCard = memo(
     const command = typeof item.input['command'] === 'string' ? (item.input['command'] as string) : null;
     const rest = Object.fromEntries(Object.entries(item.input).filter(([k]) => k !== 'command'));
     const restJson = Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
+    const descriptor = toolDisplay(item);
 
     return (
       <div
@@ -1897,10 +1892,13 @@ const ToolCard = memo(
           <span className="text-fg-muted">
             {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
           </span>
-          <span className="shrink-0 font-mono font-semibold text-fg-body">{item.name}</span>
-          {!expanded && (
+          <span className="sr-only">{item.name}</span>
+          <span className="min-w-0 shrink truncate font-mono font-semibold text-fg-body">
+            {descriptor.title}
+          </span>
+          {!expanded && descriptor.subtitle && (
             <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">
-              {firstInputLine(item)}
+              {descriptor.subtitle}
             </span>
           )}
           <span className="ml-auto shrink-0">
