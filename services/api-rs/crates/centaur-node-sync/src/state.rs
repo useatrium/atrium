@@ -37,6 +37,17 @@ pub struct DaemonState {
     /// session's own latest snapshot after the working tree has moved on.
     #[serde(default)]
     pub wip_restore_attempted: HashMap<String, String>,
+    /// harness -> sha256 of the provider credential file last sent to Atrium's
+    /// dedicated credential-refresh endpoint.
+    #[serde(default)]
+    pub provider_credential_hashes: HashMap<String, String>,
+    /// harness -> whether the first sanitized profile baseline was sent.
+    #[serde(default)]
+    pub profile_baseline_sent: HashMap<String, bool>,
+    /// profile bundle path -> sha256 last materialized into this session's
+    /// harness overlay.
+    #[serde(default)]
+    pub materialized_profile_bundles: HashMap<String, String>,
 }
 
 impl Default for DaemonState {
@@ -47,6 +58,9 @@ impl Default for DaemonState {
             atrium_cursor: default_cursor(),
             hydrated: false,
             wip_restore_attempted: HashMap::new(),
+            provider_credential_hashes: HashMap::new(),
+            profile_baseline_sent: HashMap::new(),
+            materialized_profile_bundles: HashMap::new(),
         }
     }
 }

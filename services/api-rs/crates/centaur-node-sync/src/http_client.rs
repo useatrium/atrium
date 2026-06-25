@@ -5,7 +5,7 @@
 
 use crate::adopt::RemoteChange;
 use crate::cas::CasHydrateEntry;
-use crate::runtime::{AtriumClient, status_of};
+use crate::runtime::{AtriumClient, BundleRef, status_of};
 use serde::Deserialize;
 
 pub struct HttpAtriumClient {
@@ -232,6 +232,99 @@ impl AtriumClient for HttpAtriumClient {
             .map_err(|e| format!("put profile candidates {harness}: {e}"))
     }
 
+    fn put_provider_credential_refresh(
+        &mut self,
+        harness: &str,
+        body: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.agent
+            .put(&self.url(&format!(
+                "/provider-credential-refresh?harness={}",
+                enc(harness)
+            )))
+            .set("x-api-key", &self.api_key)
+            .set("content-type", "application/json")
+            .send_json(body)
+            .map(|_| ())
+            .map_err(|e| format!("put provider credential refresh {harness}: {e}"))
+    }
+
+    fn put_harness_state_bundle(
+        &mut self,
+        harness: &str,
+        manifest: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.agent
+            .put(&self.url(&format!("/harness-state-bundle?harness={}", enc(harness))))
+            .set("x-api-key", &self.api_key)
+            .set("content-type", "application/json")
+            .send_json(manifest)
+            .map(|_| ())
+            .map_err(|e| format!("put harness state bundle {harness}: {e}"))
+    }
+
+    fn put_profile_baseline(
+        &mut self,
+        harness: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.agent
+            .put(&self.url(&format!("/profile-baseline?harness={}", enc(harness))))
+            .set("x-api-key", &self.api_key)
+            .set("content-type", "application/json")
+            .send_json(payload)
+            .map(|_| ())
+            .map_err(|e| format!("put profile baseline {harness}: {e}"))
+    }
+
+    fn put_profile_bundle_blob(
+        &mut self,
+        sha256: &str,
+        path: &str,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        self.agent
+            .put(&self.url(&format!(
+                "/profile-bundle-blob?sha256={}&path={}",
+                enc(sha256),
+                enc(path)
+            )))
+            .set("x-api-key", &self.api_key)
+            .set("content-type", "application/octet-stream")
+            .send_bytes(bytes)
+            .map(|_| ())
+            .map_err(|e| format!("put profile bundle blob {path}@{sha256}: {e}"))
+    }
+
+    fn get_profile_bundles(&self, harness: &str) -> Result<Vec<BundleRef>, String> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/profile-bundles?harness={}", enc(harness))))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| format!("get profile bundles {harness}: {e}"))?;
+        let value: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+        serde_json::from_value::<Vec<BundleRef>>(
+            value
+                .get("bundles")
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::Array(vec![])),
+        )
+        .map_err(|e| format!("parse profile bundles {harness}: {e}"))
+    }
+
+    fn get_profile_bundle_blob(&self, sha256: &str) -> Result<Vec<u8>, String> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/profile-bundle-blob?sha256={}", enc(sha256))))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| format!("get profile bundle blob {sha256}: {e}"))?;
+        let mut buf = Vec::new();
+        std::io::copy(&mut resp.into_reader(), &mut buf).map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
+
     fn poll_changes(
         &mut self,
         cursor: &str,
@@ -347,6 +440,32 @@ mod tests {
         assert_eq!(
             client.url("/profile-candidates?harness=codex"),
             "http://atrium/api/internal/sessions/slack:C123:123.456/profile-candidates?harness=codex"
+        );
+    }
+
+    #[test]
+    fn new_profile_writeback_urls_use_internal_session_endpoint() {
+        let client = HttpAtriumClient::new("http://atrium/", "key", "slack:C123:123.456");
+
+        assert_eq!(
+            client.url("/provider-credential-refresh?harness=codex"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/provider-credential-refresh?harness=codex"
+        );
+        assert_eq!(
+            client.url("/harness-state-bundle?harness=claude"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/harness-state-bundle?harness=claude"
+        );
+        assert_eq!(
+            client.url("/profile-baseline?harness=codex"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/profile-baseline?harness=codex"
+        );
+        assert_eq!(
+            client.url("/profile-bundles?harness=codex"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/profile-bundles?harness=codex"
+        );
+        assert_eq!(
+            client.url("/profile-bundle-blob?sha256=abc123&path=.codex/skills/a/SKILL.md"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/profile-bundle-blob?sha256=abc123&path=.codex/skills/a/SKILL.md"
         );
     }
 

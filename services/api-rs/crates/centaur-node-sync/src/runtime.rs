@@ -13,6 +13,8 @@ use crate::echo::EchoGuard;
 use crate::overlay::{OverlayOp, RawEntry};
 use crate::scan_to_ops;
 use crate::secret;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 /// What the node needs from Atrium (egress-only). Errors are stringly-typed here;
 /// the live impl maps HTTP failures into them.
@@ -59,6 +61,48 @@ pub trait AtriumClient {
     ) -> Result<(), String> {
         Ok(())
     }
+    /// PUT a provider credential refresh. The caller is responsible for ensuring
+    /// credential bytes only reach this endpoint.
+    fn put_provider_credential_refresh(
+        &mut self,
+        _harness: &str,
+        _body: &serde_json::Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// PUT an exact-resume harness state bundle manifest.
+    fn put_harness_state_bundle(
+        &mut self,
+        _harness: &str,
+        _manifest: &serde_json::Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// PUT the first sanitized profile baseline snapshot for a session.
+    fn put_profile_baseline(
+        &mut self,
+        _harness: &str,
+        _payload: &serde_json::Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// PUT one profile bundle blob into Atrium's CAS.
+    fn put_profile_bundle_blob(
+        &mut self,
+        _sha256: &str,
+        _path: &str,
+        _bytes: &[u8],
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Fetch bundle refs for the session's bound profile version.
+    fn get_profile_bundles(&self, _harness: &str) -> Result<Vec<BundleRef>, String> {
+        Ok(vec![])
+    }
+    /// Fetch one profile bundle blob by content hash.
+    fn get_profile_bundle_blob(&self, _sha256: &str) -> Result<Vec<u8>, String> {
+        Ok(vec![])
+    }
     /// Poll the gap-free change-feed past `cursor` → (path, remote-change) rows +
     /// the next cursor. Default: nothing (the live HTTP impl overrides it).
     fn poll_changes(
@@ -72,6 +116,15 @@ pub trait AtriumClient {
     fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String>;
     /// Fetch one rendered Atrium document body for a target session.
     fn atrium_doc(&self, target_id: &str, doc: &str) -> Result<Vec<u8>, String>;
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct BundleRef {
+    pub path: String,
+    pub sha256: String,
+    pub role: String,
+    #[serde(default)]
+    pub executable: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -153,6 +206,14 @@ pub fn sha_hex(bytes: &[u8]) -> String {
         h = h.wrapping_mul(0x100000001b3);
     }
     format!("{h:016x}")
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+pub fn is_denied_profile_path(path: &Path) -> bool {
+    normalized_path_components(path).is_none_or(|components| is_denied_path(&components))
 }
 
 pub struct CaptureOutcome {
@@ -323,6 +384,7 @@ fn is_junk_binary_file(file_name: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct HarnessTranscriptOutcome {
     pub captured: Option<(PathBuf, usize)>,
+    pub state_bundle_files: usize,
     pub skipped: bool,
     pub error: Option<String>,
 }
@@ -332,9 +394,25 @@ pub struct ProfileCandidateSweepOutcome {
     pub uploaded: bool,
     pub candidate_count: usize,
     pub excluded_count: usize,
+    pub bundle_count: usize,
     pub warnings: Vec<String>,
     pub skipped: bool,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct CredentialRefreshOutcome {
+    pub uploaded: bool,
+    pub current_hash: Option<String>,
+    pub skipped: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct ProfileBundleMaterializeOutcome {
+    pub written: usize,
+    pub skipped: usize,
+    pub errors: Vec<(String, String)>,
 }
 
 /// One capture sweep: classify the upper, read bytes for each upsert, and POST to
@@ -558,15 +636,68 @@ pub fn harness_transcript_sweep(
         };
     };
     match client.put_harness_transcript(harness.atrium_harness(), &bytes) {
-        Ok(()) => HarnessTranscriptOutcome {
-            captured: Some((path, bytes.len())),
-            ..HarnessTranscriptOutcome::default()
-        },
+        Ok(()) => {
+            let state_bundle = harness_state_bundle_payload(entries, reader, &path);
+            match client.put_harness_state_bundle(harness.atrium_harness(), &state_bundle) {
+                Ok(()) => HarnessTranscriptOutcome {
+                    captured: Some((path, bytes.len())),
+                    state_bundle_files: state_bundle["manifest"]["files"]
+                        .as_array()
+                        .map_or(0, Vec::len),
+                    ..HarnessTranscriptOutcome::default()
+                },
+                Err(error) => HarnessTranscriptOutcome {
+                    captured: Some((path, bytes.len())),
+                    error: Some(error),
+                    ..HarnessTranscriptOutcome::default()
+                },
+            }
+        }
         Err(error) => HarnessTranscriptOutcome {
             error: Some(error),
             ..HarnessTranscriptOutcome::default()
         },
     }
+}
+
+fn harness_state_bundle_payload(
+    entries: &[RawEntry],
+    reader: &dyn UpperReader,
+    transcript_path: &Path,
+) -> Value {
+    let transcript_parent = transcript_path.parent();
+    let mut files = entries
+        .iter()
+        .filter(|entry| entry.file_type == crate::overlay::RawFileType::Regular)
+        .filter(|entry| entry.rel_path.parent() == transcript_parent)
+        .filter(|entry| !is_denied_profile_path(&entry.rel_path))
+        .filter_map(|entry| {
+            let bytes = reader.read(&entry.rel_path)?;
+            let role = if entry.rel_path == transcript_path {
+                "transcript"
+            } else {
+                // TODO: replace same-directory sidecar discovery with richer,
+                // provider-version-specific exact-resume bundle discovery.
+                "resume_sidecar"
+            };
+            Some(json!({
+                "path": path_string(&entry.rel_path),
+                "sha256": sha256_hex(&bytes),
+                "sizeBytes": bytes.len() as u64,
+                "role": role,
+            }))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["path"].as_str().unwrap_or_default())
+    });
+    json!({
+        "adapterVersion": crate::profile_candidates::ADAPTER_VERSION,
+        "manifest": { "files": files },
+    })
 }
 
 pub fn profile_candidate_sweep(
@@ -589,12 +720,32 @@ pub fn profile_candidate_sweep(
         .unwrap_or(0);
     let candidate_count = report.candidates.len();
     let excluded_count = report.excluded.len();
+    let bundle_count = report.bundles.len();
     let warnings = report.warnings.clone();
-    if source_count == 0 && candidate_count == 0 && excluded_count == 0 && warnings.is_empty() {
+    if source_count == 0
+        && candidate_count == 0
+        && excluded_count == 0
+        && bundle_count == 0
+        && warnings.is_empty()
+    {
         return ProfileCandidateSweepOutcome {
             skipped: true,
             ..ProfileCandidateSweepOutcome::default()
         };
+    }
+    for bundle in &report.bundles {
+        if let Err(error) =
+            client.put_profile_bundle_blob(&bundle.sha256, &bundle.path, &bundle.bytes)
+        {
+            return ProfileCandidateSweepOutcome {
+                candidate_count,
+                excluded_count,
+                bundle_count,
+                warnings,
+                error: Some(format!("put profile bundle blob {}: {error}", bundle.path)),
+                ..ProfileCandidateSweepOutcome::default()
+            };
+        }
     }
     let payload = report.into_payload();
     match client.put_profile_candidates(harness.atrium_harness(), &payload) {
@@ -602,17 +753,234 @@ pub fn profile_candidate_sweep(
             uploaded: true,
             candidate_count,
             excluded_count,
+            bundle_count,
             warnings,
             ..ProfileCandidateSweepOutcome::default()
         },
         Err(error) => ProfileCandidateSweepOutcome {
             candidate_count,
             excluded_count,
+            bundle_count,
             warnings,
             error: Some(error),
             ..ProfileCandidateSweepOutcome::default()
         },
     }
+}
+
+pub fn profile_baseline_sweep(
+    entries: &[RawEntry],
+    reader: &dyn UpperReader,
+    client: &mut dyn AtriumClient,
+    harness: HarnessTranscriptKind,
+    harness_home: &Path,
+) -> ProfileCandidateSweepOutcome {
+    let report = crate::profile_candidates::extract_profile_candidates(
+        entries,
+        reader,
+        harness,
+        harness_home,
+    );
+    let source_count = report
+        .manifest
+        .get("source_count")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let candidate_count = report.candidates.len();
+    let excluded_count = report.excluded.len();
+    let bundle_count = report.bundles.len();
+    let warnings = report.warnings.clone();
+    if source_count == 0
+        && candidate_count == 0
+        && excluded_count == 0
+        && bundle_count == 0
+        && warnings.is_empty()
+    {
+        return ProfileCandidateSweepOutcome {
+            skipped: true,
+            ..ProfileCandidateSweepOutcome::default()
+        };
+    }
+    let payload = report.into_baseline_payload();
+    match client.put_profile_baseline(harness.atrium_harness(), &payload) {
+        Ok(()) => ProfileCandidateSweepOutcome {
+            uploaded: true,
+            candidate_count,
+            excluded_count,
+            bundle_count,
+            warnings,
+            ..ProfileCandidateSweepOutcome::default()
+        },
+        Err(error) => ProfileCandidateSweepOutcome {
+            candidate_count,
+            excluded_count,
+            bundle_count,
+            warnings,
+            error: Some(error),
+            ..ProfileCandidateSweepOutcome::default()
+        },
+    }
+}
+
+/// `seen_hash` is the sha256 of the credential file we have already accounted for
+/// in this session (the injected baseline, or the last value written back). It is
+/// `None` only on the very first sweep of a session, where the credential file is
+/// always the entrypoint-injected baseline (in brokered/subscription mode this is a
+/// static dummy, e.g. a far-future-exp `.credentials.json`). We must NEVER echo that
+/// baseline back: Atrium's credential store overwrites unconditionally for Claude, so
+/// echoing the dummy would clobber the user's real stored credential. Only a genuine
+/// in-session change (current != baseline) is written back.
+pub fn credential_refresh_sweep(
+    reader: &dyn UpperReader,
+    client: &mut dyn AtriumClient,
+    harness: HarnessTranscriptKind,
+    harness_home: &Path,
+    seen_hash: Option<&str>,
+) -> CredentialRefreshOutcome {
+    let path = match harness {
+        HarnessTranscriptKind::Codex => harness_home.join("auth.json"),
+        HarnessTranscriptKind::Claude => harness_home.join(".credentials.json"),
+    };
+    let Some(bytes) = reader.read(&path) else {
+        return CredentialRefreshOutcome {
+            skipped: true,
+            ..CredentialRefreshOutcome::default()
+        };
+    };
+    let current_hash = sha256_hex(&bytes);
+    // First sight of the credential file = the entrypoint-injected baseline. Record it
+    // (the caller persists `current_hash`) but never write it back. Returning the hash
+    // with `skipped` lets the next sweep compare against this baseline.
+    if seen_hash.is_none() || seen_hash == Some(current_hash.as_str()) {
+        return CredentialRefreshOutcome {
+            current_hash: Some(current_hash),
+            skipped: true,
+            ..CredentialRefreshOutcome::default()
+        };
+    }
+    let body = match harness {
+        HarnessTranscriptKind::Codex => match String::from_utf8(bytes) {
+            Ok(text) => json!({ "authJson": text }),
+            Err(error) => {
+                return CredentialRefreshOutcome {
+                    current_hash: Some(current_hash),
+                    error: Some(format!("credential file is not utf-8: {error}")),
+                    ..CredentialRefreshOutcome::default()
+                };
+            }
+        },
+        HarnessTranscriptKind::Claude => match extract_claude_oauth_access_token(&bytes) {
+            Ok(token) => json!({ "token": token }),
+            Err(error) => {
+                return CredentialRefreshOutcome {
+                    current_hash: Some(current_hash),
+                    error: Some(error),
+                    ..CredentialRefreshOutcome::default()
+                };
+            }
+        },
+    };
+    match client.put_provider_credential_refresh(harness.atrium_harness(), &body) {
+        Ok(()) => CredentialRefreshOutcome {
+            uploaded: true,
+            current_hash: Some(current_hash),
+            ..CredentialRefreshOutcome::default()
+        },
+        Err(error) => CredentialRefreshOutcome {
+            current_hash: Some(current_hash),
+            error: Some(error),
+            ..CredentialRefreshOutcome::default()
+        },
+    }
+}
+
+fn extract_claude_oauth_access_token(bytes: &[u8]) -> Result<String, String> {
+    let value = serde_json::from_slice::<Value>(bytes)
+        .map_err(|error| format!("parse Claude credentials: {error}"))?;
+    for path in [
+        &["claudeAiOauth", "accessToken"][..],
+        &["claudeAiOauth", "access_token"][..],
+        &["oauth", "accessToken"][..],
+        &["oauth", "access_token"][..],
+        &["accessToken"][..],
+        &["access_token"][..],
+    ] {
+        let mut cursor = &value;
+        for key in path {
+            cursor = cursor.get(*key).unwrap_or(&Value::Null);
+        }
+        if let Some(token) = cursor.as_str().map(str::trim)
+            && !token.is_empty()
+        {
+            return Ok(token.to_string());
+        }
+    }
+    Err("Claude credentials did not contain an OAuth access token".to_string())
+}
+
+pub fn materialize_profile_bundles(
+    client: &dyn AtriumClient,
+    harness: HarnessTranscriptKind,
+    harness_home: &Path,
+    root: &Path,
+    already_materialized: &mut HashMap<String, String>,
+    mut write: impl FnMut(&Path, &[u8], bool) -> Result<(), String>,
+) -> ProfileBundleMaterializeOutcome {
+    let mut out = ProfileBundleMaterializeOutcome::default();
+    let bundles = match client.get_profile_bundles(harness.atrium_harness()) {
+        Ok(bundles) => bundles,
+        Err(error) => {
+            out.errors
+                .push((harness.atrium_harness().to_string(), error));
+            return out;
+        }
+    };
+    for bundle in bundles {
+        let rel_path = materialized_bundle_path(harness_home, &bundle.path);
+        if is_denied_profile_path(&rel_path) {
+            out.skipped += 1;
+            continue;
+        }
+        if already_materialized
+            .get(&bundle.path)
+            .is_some_and(|sha| sha == &bundle.sha256)
+        {
+            out.skipped += 1;
+            continue;
+        }
+        match client.get_profile_bundle_blob(&bundle.sha256) {
+            Ok(bytes) => {
+                if sha256_hex(&bytes) != bundle.sha256 {
+                    out.errors.push((
+                        bundle.path.clone(),
+                        "profile bundle blob sha256 mismatch".to_string(),
+                    ));
+                    continue;
+                }
+                if let Err(error) = write(&root.join(&rel_path), &bytes, bundle.executable) {
+                    out.errors.push((bundle.path.clone(), error));
+                    continue;
+                }
+                already_materialized.insert(bundle.path.clone(), bundle.sha256.clone());
+                out.written += 1;
+            }
+            Err(error) => out.errors.push((bundle.path.clone(), error)),
+        }
+    }
+    out
+}
+
+fn materialized_bundle_path(harness_home: &Path, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.starts_with(harness_home) {
+        path
+    } else {
+        harness_home.join(path)
+    }
+}
+
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[derive(Debug, Default)]
@@ -751,6 +1119,12 @@ mod tests {
         deletes: Vec<(String, u64)>,
         transcripts: Vec<(String, Vec<u8>)>,
         profile_candidates: Vec<(String, serde_json::Value)>,
+        credential_refreshes: Vec<(String, serde_json::Value)>,
+        state_bundles: Vec<(String, serde_json::Value)>,
+        baselines: Vec<(String, serde_json::Value)>,
+        profile_bundle_blobs: Vec<(String, String, Vec<u8>)>,
+        profile_bundles: Vec<BundleRef>,
+        profile_bundle_blob_bytes: HashMap<String, Vec<u8>>,
         next_seq: u64,
     }
     impl AtriumClient for FakeClient {
@@ -779,6 +1153,51 @@ mod tests {
             self.profile_candidates
                 .push((harness.to_owned(), payload.clone()));
             Ok(())
+        }
+        fn put_provider_credential_refresh(
+            &mut self,
+            harness: &str,
+            body: &serde_json::Value,
+        ) -> Result<(), String> {
+            self.credential_refreshes
+                .push((harness.to_owned(), body.clone()));
+            Ok(())
+        }
+        fn put_harness_state_bundle(
+            &mut self,
+            harness: &str,
+            manifest: &serde_json::Value,
+        ) -> Result<(), String> {
+            self.state_bundles
+                .push((harness.to_owned(), manifest.clone()));
+            Ok(())
+        }
+        fn put_profile_baseline(
+            &mut self,
+            harness: &str,
+            payload: &serde_json::Value,
+        ) -> Result<(), String> {
+            self.baselines.push((harness.to_owned(), payload.clone()));
+            Ok(())
+        }
+        fn put_profile_bundle_blob(
+            &mut self,
+            sha256: &str,
+            path: &str,
+            bytes: &[u8],
+        ) -> Result<(), String> {
+            self.profile_bundle_blobs
+                .push((sha256.to_string(), path.to_string(), bytes.to_vec()));
+            Ok(())
+        }
+        fn get_profile_bundles(&self, _harness: &str) -> Result<Vec<BundleRef>, String> {
+            Ok(self.profile_bundles.clone())
+        }
+        fn get_profile_bundle_blob(&self, sha256: &str) -> Result<Vec<u8>, String> {
+            self.profile_bundle_blob_bytes
+                .get(sha256)
+                .cloned()
+                .ok_or_else(|| format!("missing blob {sha256}"))
         }
         fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String> {
             Ok((vec![], since.to_string()))
@@ -1215,11 +1634,23 @@ mod tests {
 
     #[test]
     fn harness_transcript_sweep_puts_bytes_without_artifact_capture() {
-        let entries = vec![reg(".claude/projects/-home-agent-workspace/thread-1.jsonl")];
+        let entries = vec![
+            reg(".claude/projects/-home-agent-workspace/thread-1.jsonl"),
+            reg(".claude/projects/-home-agent-workspace/thread-1.state"),
+            reg(".claude/projects/-home-agent-workspace/auth.json"),
+        ];
         let mut files = HashMap::new();
         files.insert(
             PathBuf::from(".claude/projects/-home-agent-workspace/thread-1.jsonl"),
             b"{\"type\":\"assistant\"}\n".to_vec(),
+        );
+        files.insert(
+            PathBuf::from(".claude/projects/-home-agent-workspace/thread-1.state"),
+            b"sidecar".to_vec(),
+        );
+        files.insert(
+            PathBuf::from(".claude/projects/-home-agent-workspace/auth.json"),
+            b"secret".to_vec(),
         );
         let reader = MapReader(files);
         let mut client = FakeClient::default();
@@ -1246,15 +1677,31 @@ mod tests {
             client.transcripts,
             vec![("claude".to_owned(), b"{\"type\":\"assistant\"}\n".to_vec())]
         );
+        assert_eq!(client.state_bundles.len(), 1);
+        let files = client.state_bundles[0].1["manifest"]["files"]
+            .as_array()
+            .unwrap();
+        assert_eq!(files.len(), 2);
+        let serialized = serde_json::to_string(&client.state_bundles[0].1).unwrap();
+        assert!(serialized.contains("thread-1.jsonl"));
+        assert!(serialized.contains("thread-1.state"));
+        assert!(!serialized.contains("auth.json"));
     }
 
     #[test]
     fn profile_candidate_sweep_puts_sanitized_payload_without_artifact_capture() {
-        let entries = vec![reg(".codex/config.toml")];
+        let entries = vec![
+            reg(".codex/config.toml"),
+            reg(".codex/skills/demo/SKILL.md"),
+        ];
         let mut files = HashMap::new();
         files.insert(
             PathBuf::from(".codex/config.toml"),
             b"model = \"gpt-5\"\napi_key = \"sk-secretsecretsecretsecretsecret\"\n".to_vec(),
+        );
+        files.insert(
+            PathBuf::from(".codex/skills/demo/SKILL.md"),
+            b"# Demo skill\nUse carefully.\n".to_vec(),
         );
         let reader = MapReader(files);
         let mut client = FakeClient::default();
@@ -1271,11 +1718,223 @@ mod tests {
         assert_eq!(out.candidate_count, 1);
         assert!(client.captures.is_empty());
         assert_eq!(client.profile_candidates.len(), 1);
+        assert_eq!(client.profile_bundle_blobs.len(), 1);
+        assert_eq!(
+            client.profile_bundle_blobs[0].1,
+            ".codex/skills/demo/SKILL.md"
+        );
+        assert_eq!(
+            client.profile_bundle_blobs[0].2,
+            b"# Demo skill\nUse carefully.\n"
+        );
         assert_eq!(client.profile_candidates[0].0, "codex");
         let serialized = serde_json::to_string(&client.profile_candidates[0].1).unwrap();
         assert!(serialized.contains("\"provider\":\"codex\""));
         assert!(serialized.contains("profile-candidates/v1"));
+        assert!(serialized.contains("\"bundles\""));
+        assert!(serialized.contains(&client.profile_bundle_blobs[0].0));
         assert!(!serialized.contains("sk-secret"));
+    }
+
+    #[test]
+    fn credential_refresh_reads_denied_file_only_for_credential_endpoint_and_dedupes() {
+        let injected = br#"{"auth_mode":"chatgpt","tokens":{"access":"injected-baseline"}}"#;
+        let refreshed = br#"{"auth_mode":"chatgpt","tokens":{"access":"secret-access"}}"#;
+        let entries = vec![reg(".codex/auth.json"), reg(".codex/config.toml")];
+        let partitioned = partition_entries_by_lane(&entries, &[PathBuf::from(".codex")], &[]);
+        assert_eq!(partitioned.denied_count, 1);
+        let mut files = HashMap::new();
+        files.insert(PathBuf::from(".codex/auth.json"), injected.to_vec());
+        files.insert(
+            PathBuf::from(".codex/config.toml"),
+            b"model = \"gpt-5\"\n".to_vec(),
+        );
+        let reader = MapReader(files);
+        let mut client = FakeClient::default();
+
+        // First sweep: the entrypoint-injected baseline is recorded but never written
+        // back (echoing it would clobber the user's real stored credential).
+        let out0 = credential_refresh_sweep(
+            &reader,
+            &mut client,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+            None,
+        );
+        assert!(out0.skipped);
+        assert!(client.credential_refreshes.is_empty());
+        let baseline = out0.current_hash.clone();
+
+        // Same file again: still the baseline, still nothing written back.
+        let out_same = credential_refresh_sweep(
+            &reader,
+            &mut client,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+            baseline.as_deref(),
+        );
+        assert!(out_same.skipped);
+        assert!(client.credential_refreshes.is_empty());
+
+        // A genuine in-session refresh (file differs from baseline) IS written back.
+        let mut files2 = HashMap::new();
+        files2.insert(PathBuf::from(".codex/auth.json"), refreshed.to_vec());
+        let reader2 = MapReader(files2);
+        let out = credential_refresh_sweep(
+            &reader2,
+            &mut client,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+            baseline.as_deref(),
+        );
+        assert!(out.uploaded);
+        assert_eq!(client.credential_refreshes.len(), 1);
+        assert_eq!(client.credential_refreshes[0].0, "codex");
+        assert_eq!(
+            client.credential_refreshes[0].1,
+            serde_json::json!({ "authJson": std::str::from_utf8(refreshed).unwrap() })
+        );
+        let capture_serialized = serde_json::to_string(&client.profile_candidates).unwrap();
+        assert!(!capture_serialized.contains("secret-access"));
+
+        // Once written back, the same refreshed value dedupes.
+        let out2 = credential_refresh_sweep(
+            &reader2,
+            &mut client,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+            out.current_hash.as_deref(),
+        );
+        assert!(out2.skipped);
+        assert_eq!(client.credential_refreshes.len(), 1);
+    }
+
+    #[test]
+    fn claude_credential_refresh_extracts_access_token_only() {
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from(".claude/.credentials.json"),
+            br#"{"claudeAiOauth":{"accessToken":"access-token","refreshToken":"refresh-token"}}"#
+                .to_vec(),
+        );
+        let reader = MapReader(files);
+
+        // First sight (None) is the injected dummy baseline — never written back.
+        let mut baseline_client = FakeClient::default();
+        let out_baseline = credential_refresh_sweep(
+            &reader,
+            &mut baseline_client,
+            HarnessTranscriptKind::Claude,
+            Path::new(".claude"),
+            None,
+        );
+        assert!(out_baseline.skipped);
+        assert!(baseline_client.credential_refreshes.is_empty());
+
+        // A genuine refresh (differs from a prior baseline) writes back only the
+        // OAuth access token, never the refresh token.
+        let mut client = FakeClient::default();
+        let out = credential_refresh_sweep(
+            &reader,
+            &mut client,
+            HarnessTranscriptKind::Claude,
+            Path::new(".claude"),
+            Some("prior-baseline-hash"),
+        );
+
+        assert!(out.uploaded);
+        assert_eq!(
+            client.credential_refreshes[0].1,
+            serde_json::json!({ "token": "access-token" })
+        );
+        assert!(
+            !serde_json::to_string(&client.credential_refreshes[0].1)
+                .unwrap()
+                .contains("refresh-token")
+        );
+    }
+
+    #[test]
+    fn profile_baseline_sweep_puts_baseline_payload_once_when_caller_tracks_state() {
+        let entries = vec![reg(".codex/config.toml")];
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from(".codex/config.toml"),
+            b"model = \"gpt-5\"\n".to_vec(),
+        );
+        let reader = MapReader(files);
+        let mut client = FakeClient::default();
+
+        let out = profile_baseline_sweep(
+            &entries,
+            &reader,
+            &mut client,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+        );
+
+        assert!(out.uploaded);
+        assert_eq!(client.baselines.len(), 1);
+        assert_eq!(client.baselines[0].0, "codex");
+        assert_eq!(
+            client.baselines[0].1["adapterVersion"],
+            crate::profile_candidates::ADAPTER_VERSION
+        );
+        assert_eq!(
+            client.baselines[0].1["manifest"]["settings"]["model"],
+            "gpt-5"
+        );
+    }
+
+    #[test]
+    fn materialize_profile_bundles_writes_verified_non_denied_blobs() {
+        let bytes = b"# Skill\n".to_vec();
+        let sha = sha256_hex(&bytes);
+        let mut client = FakeClient {
+            profile_bundles: vec![
+                BundleRef {
+                    path: ".codex/skills/demo/SKILL.md".to_string(),
+                    sha256: sha.clone(),
+                    role: "skill".to_string(),
+                    executable: false,
+                },
+                BundleRef {
+                    path: ".codex/auth.json".to_string(),
+                    sha256: sha.clone(),
+                    role: "credential".to_string(),
+                    executable: false,
+                },
+            ],
+            ..FakeClient::default()
+        };
+        client
+            .profile_bundle_blob_bytes
+            .insert(sha.clone(), bytes.clone());
+        let mut materialized = HashMap::new();
+        let mut writes = Vec::new();
+
+        let out = materialize_profile_bundles(
+            &client,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+            Path::new("/merged"),
+            &mut materialized,
+            |path, bytes, executable| {
+                writes.push((path.to_path_buf(), bytes.to_vec(), executable));
+                Ok(())
+            },
+        );
+
+        assert_eq!(out.written, 1);
+        assert_eq!(out.skipped, 1);
+        assert!(out.errors.is_empty());
+        assert_eq!(
+            writes[0].0,
+            PathBuf::from("/merged/.codex/skills/demo/SKILL.md")
+        );
+        assert_eq!(writes[0].1, bytes);
+        assert!(!writes[0].2);
+        assert_eq!(materialized.get(".codex/skills/demo/SKILL.md"), Some(&sha));
     }
 
     #[test]

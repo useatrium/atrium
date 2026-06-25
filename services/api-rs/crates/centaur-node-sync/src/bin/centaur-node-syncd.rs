@@ -141,8 +141,9 @@ mod linux_daemon {
     };
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
-        AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, harness_transcript_sweep,
-        inbound_sweep, partition_entries_by_lane, profile_candidate_sweep, sha_hex,
+        AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, credential_refresh_sweep,
+        harness_transcript_sweep, inbound_sweep, materialize_profile_bundles,
+        partition_entries_by_lane, profile_baseline_sweep, profile_candidate_sweep, sha_hex,
     };
     use centaur_node_sync::session_manifest::discover_sessions;
     use centaur_node_sync::state::DaemonState;
@@ -532,6 +533,7 @@ mod linux_daemon {
         let mut client =
             HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
 
+        materialize_profile_bundles_for_session(session, state, &client);
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
         restore_repo_wip(session, state);
@@ -757,6 +759,42 @@ mod linux_daemon {
                 }
 
                 for (harness, harness_home) in harnesses_to_capture(session) {
+                    let harness_key = harness.atrium_harness().to_string();
+                    if !state
+                        .profile_baseline_sent
+                        .get(&harness_key)
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        let out = profile_baseline_sweep(
+                            &partitioned.harness_entries,
+                            &reader,
+                            client,
+                            harness,
+                            &harness_home,
+                        );
+                        for warning in &out.warnings {
+                            eprintln!(
+                                "session {}: profile baseline warning: {warning}",
+                                session.session
+                            );
+                        }
+                        if out.uploaded {
+                            state
+                                .profile_baseline_sent
+                                .insert(harness_key.clone(), true);
+                            println!(
+                                "session {}: profile baseline: uploaded {} candidates, {} bundles for {}",
+                                session.session,
+                                out.candidate_count,
+                                out.bundle_count,
+                                harness.atrium_harness()
+                            );
+                        } else if let Some(error) = out.error {
+                            eprintln!("session {}: profile baseline: {error}", session.session);
+                        }
+                    }
+
                     let out = harness_transcript_sweep(
                         &partitioned.harness_entries,
                         &reader,
@@ -773,7 +811,16 @@ mod linux_daemon {
                             bytes,
                             path.display()
                         );
-                    } else if let Some(error) = out.error {
+                        if out.state_bundle_files > 0 {
+                            println!(
+                                "session {}: harness state bundle: uploaded {} files for {}",
+                                session.session,
+                                out.state_bundle_files,
+                                harness.atrium_harness()
+                            );
+                        }
+                    }
+                    if let Some(error) = out.error {
                         eprintln!("session {}: harness transcript: {error}", session.session);
                     }
 
@@ -801,6 +848,33 @@ mod linux_daemon {
                     } else if let Some(error) = out.error {
                         eprintln!("session {}: profile candidates: {error}", session.session);
                     }
+
+                    let out = credential_refresh_sweep(
+                        &reader,
+                        client,
+                        harness,
+                        &harness_home,
+                        state
+                            .provider_credential_hashes
+                            .get(&harness_key)
+                            .map(String::as_str),
+                    );
+                    if out.uploaded {
+                        if let Some(hash) = out.current_hash {
+                            state.provider_credential_hashes.insert(harness_key, hash);
+                        }
+                        println!(
+                            "session {}: provider credential refresh: uploaded for {}",
+                            session.session,
+                            harness.atrium_harness()
+                        );
+                    } else if let Some(error) = out.error {
+                        eprintln!(
+                            "session {}: provider credential refresh for {}: {error}",
+                            session.session,
+                            harness.atrium_harness()
+                        );
+                    }
                 }
             }
             Err(e) => eprintln!(
@@ -808,6 +882,37 @@ mod linux_daemon {
                 session.session,
                 session.upper.display()
             ),
+        }
+    }
+
+    fn materialize_profile_bundles_for_session(
+        session: &SessionConfig,
+        state: &mut DaemonState,
+        client: &HttpAtriumClient,
+    ) {
+        for (harness, harness_home) in harnesses_to_capture(session) {
+            let out = materialize_profile_bundles(
+                client,
+                harness,
+                &harness_home,
+                &session.merged,
+                &mut state.materialized_profile_bundles,
+                write_profile_bundle_file,
+            );
+            if out.written > 0 {
+                println!(
+                    "session {}: profile bundles: materialized {} files for {}",
+                    session.session,
+                    out.written,
+                    harness.atrium_harness()
+                );
+            }
+            for (path, error) in &out.errors {
+                eprintln!(
+                    "session {}: profile bundle materialize {path}: {error}",
+                    session.session
+                );
+            }
         }
     }
 
@@ -958,6 +1063,22 @@ mod linux_daemon {
             let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o664));
         }
         std::fs::rename(&tmp, &dst).map_err(|e| e.to_string())
+    }
+
+    fn write_profile_bundle_file(dst: &Path, bytes: &[u8], executable: bool) -> Result<(), String> {
+        use std::os::unix::fs::chown;
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let tmp = dst.with_extension("profile-bundle.tmp");
+        std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+        let _ = chown(&tmp, Some(1001), Some(1001));
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if executable { 0o775 } else { 0o664 };
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode));
+        }
+        std::fs::rename(&tmp, dst).map_err(|e| e.to_string())
     }
 
     fn staged_tmp(merged: &Path, rel: &str) -> PathBuf {

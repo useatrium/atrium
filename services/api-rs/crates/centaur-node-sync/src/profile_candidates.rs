@@ -8,6 +8,16 @@ use crate::runtime::{HarnessTranscriptKind, UpperReader};
 use crate::secret;
 
 pub const ADAPTER_VERSION: &str = "centaur-node-sync/profile-candidates/v1";
+pub const PROFILE_BUNDLE_MAX_BYTES: u64 = 256 * 1024;
+
+#[derive(Debug, Clone)]
+pub struct ProfileBundleBlob {
+    pub path: String,
+    pub sha256: String,
+    pub role: String,
+    pub executable: bool,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ProfileCandidateReport {
@@ -16,6 +26,7 @@ pub struct ProfileCandidateReport {
     pub candidates: Vec<Value>,
     pub excluded: Vec<Value>,
     pub warnings: Vec<String>,
+    pub bundles: Vec<ProfileBundleBlob>,
     pub manifest: Value,
     pub risk_summary: Value,
 }
@@ -76,6 +87,24 @@ impl ProfileCandidateReport {
         if !mcp_servers.is_empty() {
             manifest.insert("mcpServers".to_string(), Value::Object(mcp_servers));
         }
+        if !self.bundles.is_empty() {
+            manifest.insert(
+                "bundles".to_string(),
+                Value::Array(
+                    self.bundles
+                        .iter()
+                        .map(|bundle| {
+                            json!({
+                                "path": bundle.path,
+                                "sha256": bundle.sha256,
+                                "role": bundle.role,
+                                "executable": bundle.executable,
+                            })
+                        })
+                        .collect(),
+                ),
+            );
+        }
         if !self.excluded.is_empty() {
             manifest.insert("excluded".to_string(), Value::Array(self.excluded.clone()));
         }
@@ -108,6 +137,15 @@ impl ProfileCandidateReport {
                 "manifest": self.manifest,
                 "risk_summary": self.risk_summary,
             }
+        })
+    }
+
+    pub fn into_baseline_payload(self) -> Value {
+        let adapter_version = self.adapter_version.clone();
+        let payload = self.into_payload();
+        json!({
+            "adapterVersion": adapter_version,
+            "manifest": payload.get("manifest").cloned().unwrap_or_else(|| json!({})),
         })
     }
 }
@@ -146,6 +184,7 @@ struct BuildState {
     blocked_secret_count: usize,
     unsupported_item_count: usize,
     executable_item_count: usize,
+    bundles: Vec<ProfileBundleBlob>,
 }
 
 pub fn extract_profile_candidates(
@@ -164,6 +203,7 @@ pub fn extract_profile_candidates(
             HarnessTranscriptKind::Claude => claude_source_kind(&entry.rel_path, harness_home),
         };
         let Some(source_kind) = source_kind else {
+            maybe_record_functional_bundle(&mut state, entry, reader, harness_home);
             maybe_record_denied_candidate_path(&mut state, &entry.rel_path);
             continue;
         };
@@ -211,6 +251,7 @@ pub fn extract_profile_candidates(
         candidates: state.candidates,
         excluded: state.excluded,
         warnings: state.warnings,
+        bundles: state.bundles,
         manifest: json!({
             "adapter_version": ADAPTER_VERSION,
             "source_count": state.source_count,
@@ -776,6 +817,78 @@ fn denied_source_path_reason(path: &Path) -> Option<&'static str> {
     None
 }
 
+fn maybe_record_functional_bundle(
+    state: &mut BuildState,
+    entry: &RawEntry,
+    reader: &dyn UpperReader,
+    harness_home: &Path,
+) {
+    let Some((role, executable)) = functional_bundle_role(&entry.rel_path, harness_home) else {
+        return;
+    };
+    if entry.size > PROFILE_BUNDLE_MAX_BYTES {
+        record_excluded_path(state, &entry.rel_path, "profile_bundle_too_large");
+        return;
+    }
+    if let Some(reason) = denied_source_path_reason(&entry.rel_path) {
+        record_excluded_path(state, &entry.rel_path, reason);
+        return;
+    }
+    if metadata_string_unsafe(&path_string(&entry.rel_path)) {
+        record_excluded_path(state, &entry.rel_path, "secret_metadata_path");
+        return;
+    }
+    let Some(bytes) = reader.read(&entry.rel_path) else {
+        state.warnings.push(format!(
+            "unreadable profile bundle source {}",
+            entry.rel_path.display()
+        ));
+        return;
+    };
+    if bytes.len() as u64 > PROFILE_BUNDLE_MAX_BYTES {
+        record_excluded_path(state, &entry.rel_path, "profile_bundle_too_large");
+        return;
+    }
+    let sample_len = bytes.len().min(secret::SECRET_SCAN_BYTES);
+    if secret::is_secret(&entry.rel_path, &bytes[..sample_len]) {
+        record_excluded_path(state, &entry.rel_path, "literal_secret_value");
+        return;
+    }
+    let sha256 = sha256_hex(&bytes);
+    state.bundles.push(ProfileBundleBlob {
+        path: path_string(&entry.rel_path),
+        sha256,
+        role: role.to_string(),
+        executable,
+        bytes,
+    });
+}
+
+fn functional_bundle_role(path: &Path, harness_home: &Path) -> Option<(&'static str, bool)> {
+    let rel = path.strip_prefix(harness_home).ok()?;
+    let components = rel
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => {
+                Some(value.to_string_lossy().to_ascii_lowercase())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let first = components.first()?.as_str();
+    let file_name = components.last().map(String::as_str).unwrap_or_default();
+    match first {
+        "skills" | ".agents" if file_name == "skill.md" || file_name.ends_with(".md") => {
+            Some(("skill", false))
+        }
+        "plugins" => Some(("plugin", false)),
+        "commands" => Some(("command", true)),
+        "agents" => Some(("agent", false)),
+        _ if file_name.eq_ignore_ascii_case("agents.md") => Some(("agent_prompt", false)),
+        _ => None,
+    }
+}
+
 fn is_allowed_codex_preference(key: &str) -> bool {
     matches!(
         key,
@@ -1169,6 +1282,78 @@ headers = {{ Authorization = "Bearer {secret}", "X-{secret}" = "value" }}
         assert!(serialized.contains("volatile_harness_state_path"));
         assert_eq!(payload["sourceHashes"].as_array().unwrap().len(), 0);
         assert_eq!(payload["diagnostics"]["manifest"]["source_count"], 0);
+    }
+
+    #[test]
+    fn functional_bundles_include_sha_and_bytes_but_payload_only_has_manifest_refs() {
+        let bytes = b"# Demo skill\nUse this skill.\n".to_vec();
+        let mut files = HashMap::new();
+        files.insert(PathBuf::from(".codex/skills/demo/SKILL.md"), bytes.clone());
+        let reader = MapReader(files);
+
+        let report = extract_profile_candidates(
+            &[reg(".codex/skills/demo/SKILL.md")],
+            &reader,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+        );
+
+        assert_eq!(report.bundles.len(), 1);
+        assert_eq!(report.bundles[0].path, ".codex/skills/demo/SKILL.md");
+        assert_eq!(report.bundles[0].sha256, sha256_hex(&bytes));
+        assert_eq!(report.bundles[0].bytes, bytes);
+        let payload = report.into_payload();
+        assert_eq!(
+            payload["manifest"]["bundles"][0]["sha256"],
+            sha256_hex(b"# Demo skill\nUse this skill.\n")
+        );
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains("Use this skill."));
+    }
+
+    #[test]
+    fn functional_bundle_skips_denied_secret_and_oversize_paths() {
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from(".codex/skills/leaky/SKILL.md"),
+            b"OPENAI_API_KEY=sk-secretsecretsecretsecretsecret".to_vec(),
+        );
+        files.insert(
+            PathBuf::from(".codex/skills/too-big/SKILL.md"),
+            vec![b'x'; PROFILE_BUNDLE_MAX_BYTES as usize + 1],
+        );
+        let reader = MapReader(files);
+
+        let report = extract_profile_candidates(
+            &[
+                RawEntry {
+                    rel_path: PathBuf::from(".codex/skills/leaky/SKILL.md"),
+                    file_type: RawFileType::Regular,
+                    rdev: 0,
+                    size: 44,
+                    xattrs: vec![],
+                },
+                RawEntry {
+                    rel_path: PathBuf::from(".codex/skills/too-big/SKILL.md"),
+                    file_type: RawFileType::Regular,
+                    rdev: 0,
+                    size: PROFILE_BUNDLE_MAX_BYTES + 1,
+                    xattrs: vec![],
+                },
+                reg(".codex/skills/credentials/SKILL.md"),
+            ],
+            &reader,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+        );
+
+        assert!(report.bundles.is_empty());
+        let payload = report.into_payload();
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(serialized.contains("literal_secret_value"));
+        assert!(serialized.contains("profile_bundle_too_large"));
+        assert!(serialized.contains("credential_shaped_path"));
+        assert!(!serialized.contains("sk-secret"));
     }
 
     #[test]
