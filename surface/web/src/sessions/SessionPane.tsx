@@ -67,6 +67,7 @@ import {
 } from './types';
 import { useSessionStream } from './useSessionStream';
 import { SessionMarkdown } from './Markdown';
+import { ReasoningBlock } from './ReasoningBlock';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -686,7 +687,11 @@ export function SessionPane({
                     events={questionEventsByQuestion.get(item.questionId) ?? []}
                   />
                 </div>
-              ) : item.type === 'reasoning' ? null : (
+              ) : item.type === 'reasoning' ? (
+                <div className="pl-3.5">
+                  <ReasoningBlock item={item} />
+                </div>
+              ) : (
                 <div className="pl-3.5">
                   <TranscriptTool
                     item={item}
