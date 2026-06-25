@@ -664,6 +664,31 @@ fn build_agent_sandbox(
 
     let (mut volumes, mut volume_mounts) = mount_json(spec);
     let mut init_containers = Vec::new();
+    // hostPath dirs the kubelet creates (DirectoryOrCreate) are root:root, and
+    // fsGroup is not applied to hostPath volumes — so a mount flagged
+    // `ensure_writable` gets a root init container that chmods the mount point
+    // for the non-root agent (UID 1001). mount_json names volumes `mount-{index}`
+    // in spec order, so the same index reaches the same volume here.
+    for (index, mount) in spec.mounts.iter().enumerate() {
+        if mount.ensure_writable {
+            init_containers.push(json!({
+                "name": format!("ensure-writable-{index}"),
+                "image": spec.image.clone(),
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["sh", "-c", format!("chmod 0777 '{}'", mount.target_path)],
+                "securityContext": {
+                    "runAsUser": 0,
+                    "privileged": false,
+                    "allowPrivilegeEscalation": false,
+                    "seccompProfile": { "type": "RuntimeDefault" },
+                },
+                "volumeMounts": [{
+                    "name": format!("mount-{index}"),
+                    "mountPath": mount.target_path.clone(),
+                }],
+            }));
+        }
+    }
     if let Some(state_volume) = &config.state_volume {
         volume_mounts.push(json!({
             "name": "state",
@@ -849,6 +874,9 @@ fn mount_json(spec: &SandboxSpec) -> (Vec<Value>, Vec<Value>) {
                 "name": name,
                 "hostPath": {
                     "path": source_path,
+                    // Create the node dir if missing (the dep-cache starts empty
+                    // and is populated by the agent; repo-cache already exists).
+                    "type": "DirectoryOrCreate",
                 },
             }),
         });
@@ -944,7 +972,7 @@ fn map_kube_error(operation: &str, err: Error) -> SandboxError {
 
 #[cfg(test)]
 mod tests {
-    use centaur_sandbox_core::{ResourceLimits, SandboxSpec};
+    use centaur_sandbox_core::{Mount, ResourceLimits, SandboxSpec};
     use k8s_openapi::api::core::v1::{PodCondition, PodStatus};
 
     use super::*;
@@ -1008,6 +1036,63 @@ mod tests {
                 .any(|volume| volume.name == RUNTIME_CONTEXT_VOLUME)
         );
         assert!(container.resources.as_ref().unwrap().limits.is_some());
+    }
+
+    #[test]
+    fn ensure_writable_mount_gets_a_root_chmod_init_container() {
+        let spec = SandboxSpec::new("centaur-agent:test").mount(
+            Mount::new(
+                MountKind::Bind {
+                    source_path: "/var/lib/centaur/depcache".to_owned(),
+                },
+                "/var/cache/centaur/depcache",
+            )
+            .ensure_writable(),
+        );
+        let config = AgentSandboxConfig::new("centaur");
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let init_containers = sandbox
+            .spec
+            .pod_template
+            .spec
+            .init_containers
+            .as_ref()
+            .unwrap();
+        let chmod = init_containers
+            .iter()
+            .find(|c| c.name.starts_with("ensure-writable-"))
+            .expect("ensure-writable init container");
+        // Runs from the agent image and chmods the mount point so the non-root
+        // agent can populate the kubelet-created root:root hostPath.
+        assert_eq!(chmod.image.as_deref(), Some("centaur-agent:test"));
+        let cmd = chmod.command.as_ref().unwrap();
+        assert!(
+            cmd.iter()
+                .any(|s| s.contains("chmod 0777") && s.contains("/var/cache/centaur/depcache")),
+            "expected chmod of the dep-cache mount, got {cmd:?}"
+        );
+
+        // A plain (non-ensure_writable) mount must NOT get a chmod init container.
+        let plain = SandboxSpec::new("centaur-agent:test").mount(Mount::new(
+            MountKind::Bind {
+                source_path: "/var/lib/centaur/repos".to_owned(),
+            },
+            "/home/agent/github",
+        ));
+        let plain_sandbox =
+            build_agent_sandbox(&SandboxId::new("asbx-test"), &plain, &config).unwrap();
+        let has_chmod = plain_sandbox
+            .spec
+            .pod_template
+            .spec
+            .init_containers
+            .as_ref()
+            .is_some_and(|cs| cs.iter().any(|c| c.name.starts_with("ensure-writable-")));
+        assert!(
+            !has_chmod,
+            "non-ensure_writable mount should not get a chmod init container"
+        );
     }
 
     #[test]

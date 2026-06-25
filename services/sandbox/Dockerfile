@@ -69,6 +69,7 @@ ARG PI_CODING_AGENT_VERSION=0.67.2
 ARG NUSHELL_VERSION=0.112.2
 ARG KUBECTL_VERSION=v1.34.2
 ARG KACHE_VERSION=v0.7.0
+ARG SCCACHE_VERSION=v0.8.2
 # Bootstrap pnpm for agents working in JS monorepos. The exact baked version
 # doesn't constrain repos: when a repo's `packageManager` field declares a
 # different version, pnpm downloads and runs that one (v11 `pmOnFail=download`
@@ -104,6 +105,24 @@ RUN set -eux; \
     install -m 0755 /tmp/nu/nu /usr/local/bin/nu; \
     rm -rf /tmp/nu /tmp/nu.tar.gz; \
     nu --version | grep -F "${NUSHELL_VERSION}"
+
+# ── sccache (shared compiler cache; wired via RUSTC_WRAPPER at runtime) ───────
+# Static musl build; the runtime entrypoint points SCCACHE_DIR at the node
+# dep-cache mount so compile artifacts survive across sessions.
+RUN set -eux; \
+    sccache_arch="$(case "$(dpkg --print-architecture)" in \
+      amd64) echo x86_64 ;; \
+      arm64) echo aarch64 ;; \
+      *) echo unsupported-architecture >&2; exit 1 ;; \
+    esac)"; \
+    curl -fsSL \
+      "https://github.com/mozilla/sccache/releases/download/${SCCACHE_VERSION}/sccache-${SCCACHE_VERSION}-${sccache_arch}-unknown-linux-musl.tar.gz" \
+      -o /tmp/sccache.tar.gz; \
+    mkdir -p /tmp/sccache; \
+    tar -xzf /tmp/sccache.tar.gz -C /tmp/sccache --strip-components=1; \
+    install -m 0755 /tmp/sccache/sccache /usr/local/bin/sccache; \
+    rm -rf /tmp/sccache /tmp/sccache.tar.gz; \
+    sccache --version | grep -F "${SCCACHE_VERSION#v}"
 
 # ── Global npm CLIs (root) ──────────────────────────────────────────────────
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \

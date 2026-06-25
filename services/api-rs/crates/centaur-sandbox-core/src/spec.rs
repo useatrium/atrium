@@ -94,6 +94,11 @@ pub struct Mount {
     pub kind: MountKind,
     pub target_path: String,
     pub read_only: bool,
+    /// When true, a root init container chmods the mount point so the non-root
+    /// agent (UID 1001) can write to it. Needed for hostPath dirs the kubelet
+    /// creates as root:root — fsGroup does not apply to hostPath volumes.
+    #[serde(default)]
+    pub ensure_writable: bool,
 }
 
 impl Mount {
@@ -102,11 +107,17 @@ impl Mount {
             kind,
             target_path: target_path.into(),
             read_only: false,
+            ensure_writable: false,
         }
     }
 
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
+        self
+    }
+
+    pub fn ensure_writable(mut self) -> Self {
+        self.ensure_writable = true;
         self
     }
 }

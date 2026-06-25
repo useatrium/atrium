@@ -423,6 +423,34 @@ cat > "$HOME_DIR/.pi/agent/settings.json" <<EOF
 }
 EOF
 
+# ── Dependency / compile cache (node-local, shared across sessions) ──────────
+# When api-rs bind-mounts the node dep-cache, redirect the package-manager and
+# compiler caches at it so installs/builds reuse work from prior sessions on the
+# same node. Read-write; the cache tools are concurrency-safe. No-op when unmounted.
+DEP_CACHE_DIR="/var/cache/centaur/depcache"
+if [ -d "$DEP_CACHE_DIR" ] && [ -w "$DEP_CACHE_DIR" ]; then
+    mkdir -p "$DEP_CACHE_DIR/pnpm-store" "$DEP_CACHE_DIR/uv" "$DEP_CACHE_DIR/sccache" \
+        "$DEP_CACHE_DIR/cargo/registry" "$DEP_CACHE_DIR/cargo/git" 2>/dev/null || true
+
+    # cargo: CARGO_HOME is the baked toolchain dir; only registry/ and git/ are the
+    # download cache (empty at runtime — build-cache mounts don't persist into the
+    # image). Symlink just those into the shared cache; never touch the baked bins.
+    for sub in registry git; do
+        target="${CARGO_HOME:-/opt/centaur/cargo}/$sub"
+        if [ ! -L "$target" ] && { [ ! -e "$target" ] || [ -z "$(ls -A "$target" 2>/dev/null)" ]; }; then
+            rm -rf "$target" 2>/dev/null || true
+            ln -s "$DEP_CACHE_DIR/cargo/$sub" "$target" 2>/dev/null || true
+        fi
+    done
+
+    export UV_CACHE_DIR="$DEP_CACHE_DIR/uv"
+    export SCCACHE_DIR="$DEP_CACHE_DIR/sccache"
+    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-20G}"
+    export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
+    # pnpm's store-dir is config, not env — set it globally (best-effort).
+    pnpm config set store-dir "$DEP_CACHE_DIR/pnpm-store" --global >/dev/null 2>&1 || true
+fi
+
 # 5B-1: When node-sync is enabled, /workspace is a daemon-provisioned
 # merged overlay whose lower checkout is already at the base ref. Keep this
 # default-OFF so the legacy git clone/bootstrap path remains unchanged.

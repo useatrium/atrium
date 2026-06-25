@@ -195,6 +195,16 @@ sandbox:
     pullPolicy: Always
   runtimeClassName: ""
   reposPath: ""
+  # Node-local dep/compile cache root, bind-mounted read-write into every session
+  # + warm sandbox (pnpm store, cargo registry, uv, sccache). Shared across
+  # sessions on the node so installs/builds reuse prior work. Set "" to disable
+  # (sandboxes build cold). The node dir is hostPath DirectoryOrCreate (created
+  # root:root) and a root init container chmods the mount so the UID-1001 agent
+  # can populate it.
+  # SECURITY: this is a node-wide SHARED read-write cache — single-tenant only.
+  # TODO: namespace per tenant (or disable) before scheduling multi-tenant pods
+  # on shared nodes; a poisoned sccache entry would be consumed by other sessions.
+  depCachePath: /var/lib/centaur/depcache
   # How the in-sandbox harness authenticates upstream. Single source of truth:
   # the control plane reads it to register the matching iron-proxy credential
   # AND propagates it into the sandbox, so the agent's auth.json and the

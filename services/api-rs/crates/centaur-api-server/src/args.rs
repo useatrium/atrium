@@ -41,6 +41,9 @@ use crate::{
 };
 
 const SANDBOX_REPOS_MOUNT_PATH: &str = "/home/agent/github";
+// Node-local dependency/compile cache shared across sessions on the node
+// (pnpm store, cargo registry, uv, sccache). Read-write: the agent populates it.
+const SANDBOX_DEP_CACHE_MOUNT_PATH: &str = "/var/cache/centaur/depcache";
 const DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE: &str = "centaur-node-sync:latest";
 
 /// OTLP env always forwarded from the api-rs process into codex sandboxes,
@@ -600,6 +603,13 @@ struct SandboxArgs {
     centaur_api_url: Option<String>,
     #[arg(long = "repos-path", env = "REPOS_PATH")]
     repos_path: Option<String>,
+    // Node-local dep/compile cache root (hostPath) bind-mounted read-write into
+    // every session + warm sandbox. When unset, sandboxes build cold.
+    #[arg(
+        long = "session-sandbox-dep-cache-path",
+        env = "SESSION_SANDBOX_DEP_CACHE_PATH"
+    )]
+    dep_cache_path: Option<String>,
     #[arg(
         long = "session-sandbox-passthrough-env",
         env = "SESSION_SANDBOX_PASSTHROUGH_ENV",
@@ -958,6 +968,22 @@ impl SandboxArgs {
                             SANDBOX_REPOS_MOUNT_PATH,
                         )
                         .read_only(),
+                    );
+                }
+                // Read-write so pnpm/cargo/uv/sccache populate it; shared across
+                // sessions on the node. Single-tenant — the cache tools are
+                // concurrency-safe (content-addressed stores / flocked registry).
+                if let Some(dep_cache_path) = clean_optional_value(self.dep_cache_path.as_deref()) {
+                    workload = workload.mount(
+                        Mount::new(
+                            MountKind::Bind {
+                                source_path: dep_cache_path,
+                            },
+                            SANDBOX_DEP_CACHE_MOUNT_PATH,
+                        )
+                        // hostPath is created root:root by the kubelet; a root init
+                        // container chmods it so the UID-1001 agent can populate it.
+                        .ensure_writable(),
                     );
                 }
                 Ok(workload)
