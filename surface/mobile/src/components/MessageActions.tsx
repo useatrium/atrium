@@ -13,9 +13,11 @@ export interface MessageActionsProps {
   message: ChatMessage | null;
   mine: boolean;
   canReply: boolean;
+  canComment: boolean;
   onClose: () => void;
   onReact: (m: ChatMessage, emoji: string) => void;
   onReply: (m: ChatMessage) => void;
+  onComments: (m: ChatMessage) => void;
   onEdit: (m: ChatMessage) => void;
   onDelete: (m: ChatMessage) => void;
 }
@@ -60,9 +62,11 @@ export function MessageActions({
   message,
   mine,
   canReply,
+  canComment,
   onClose,
   onReact,
   onReply,
+  onComments,
   onEdit,
   onDelete,
 }: MessageActionsProps) {
@@ -124,6 +128,15 @@ export function MessageActions({
             </View>
           )}
           <View style={{ height: 1, backgroundColor: colors.border }} />
+          {m && confirmed && canComment && (
+            <Action
+              label="Comments"
+              onPress={() => {
+                onComments(m);
+                onClose();
+              }}
+            />
+          )}
           {m && confirmed && canReply && (
             <Action
               label="Reply in thread"
