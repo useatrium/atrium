@@ -104,10 +104,10 @@ fn parse_hydration_scope(
 }
 
 fn local_artifact_paths(path: &str, active_prefix: Option<&str>, session_id: &str) -> Vec<String> {
-    if let Some(prefix) = active_prefix.map(|value| value.trim_matches('/')) {
-        if let Some(rest) = path.strip_prefix(&format!("{prefix}/")) {
-            return vec![rest.to_string(), path.to_string()];
-        }
+    if let Some(prefix) = active_prefix.map(|value| value.trim_matches('/'))
+        && let Some(rest) = path.strip_prefix(&format!("{prefix}/"))
+    {
+        return vec![rest.to_string(), path.to_string()];
     }
     let scratch_prefix = format!("scratch/{session_id}/");
     if let Some(rest) = path.strip_prefix(&scratch_prefix) {
