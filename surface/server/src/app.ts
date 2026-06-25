@@ -112,6 +112,7 @@ import {
 } from './provider-credentials.js';
 import { AgentProfiles, providerFromProfileValue } from './agent-profiles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
+import { classifyMedia, classifyMediaFromMime, type MediaClassification } from './media-classifier.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -205,6 +206,15 @@ interface MessageAttachmentFileRow {
   content_hash: string | null;
 }
 
+function mediaHeaders(classification: MediaClassification): Record<string, string> {
+  return {
+    'X-Detected-Mime': classification.detectedMime,
+    'X-Media-Kind': classification.mediaKind,
+    'X-Is-Text': classification.isText ? 'true' : 'false',
+    ...(classification.textEncoding != null ? { 'X-Text-Encoding': classification.textEncoding } : {}),
+  };
+}
+
 function uploadArtifactFilename(filename: string): string {
   const base = basename(filename.replace(/\\/g, '/'));
   if (!base || base === '.' || base === '..') return 'file';
@@ -264,12 +274,28 @@ async function landUploadAttachmentAsArtifact(
   const blobSha = params.file.content_hash;
   if (blobSha == null) throw new Error(`content_hash missing for file ${params.file.id}`);
   const sizeBytes = Number(params.file.size_bytes);
+  const classification = classifyMediaFromMime(params.file.content_type);
   await pool.query(
-    `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO cas_blobs
+       (sha256, s3_key, size_bytes, mime, detected_mime, media_kind, is_text, text_encoding, classification_meta)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (sha256) DO UPDATE
-           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
-    [blobSha, params.file.s3_key, sizeBytes, params.file.content_type],
+           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key),
+               detected_mime = COALESCE(cas_blobs.detected_mime, EXCLUDED.detected_mime),
+               media_kind = COALESCE(cas_blobs.media_kind, EXCLUDED.media_kind),
+               is_text = COALESCE(cas_blobs.is_text, EXCLUDED.is_text),
+               text_encoding = COALESCE(cas_blobs.text_encoding, EXCLUDED.text_encoding)`,
+    [
+      blobSha,
+      params.file.s3_key,
+      sizeBytes,
+      params.file.content_type,
+      classification.detectedMime,
+      classification.mediaKind,
+      classification.isText,
+      classification.textEncoding,
+      JSON.stringify(classification.meta),
+    ],
   );
 
   const path = await landingPathForUpload(pool, {
@@ -2823,6 +2849,11 @@ function rawSession(req: FastifyRequest): string | undefined {
       backing: 'git' | 'ledger';
       type: 'file' | 'dir';
       scope?: ArtifactScope;
+      mime?: string;
+      mediaKind?: string;
+      isText?: boolean;
+      sizeBytes?: number;
+      seq?: number;
     };
 
     function normalizeFilesGitPrefix(value: string): string {
@@ -2855,7 +2886,15 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
 
     function ledgerRowsForDir(
-      scope: Array<{ path: string; latestSeq: number; kind: string }>,
+      scope: Array<{
+        path: string;
+        latestSeq: number;
+        kind: string;
+        detectedMime: string | null;
+        mediaKind: string | null;
+        isText: boolean | null;
+        sizeBytes: number | null;
+      }>,
       dir: string,
       ctx: { sessionId: string; channelId: string },
     ): UnifiedFileRow[] {
@@ -2878,7 +2917,19 @@ function rawSession(req: FastifyRequest): string | undefined {
           const canonicalPath = type === 'file' ? item.path : undefined;
           const displayPath = type === 'file' ? displaySessionArtifactPath(item.path, ctx) : undefined;
           if (!rows.has(path) || type === 'dir') {
-            rows.set(path, { path, canonicalPath, displayPath, backing: 'ledger', type, scope: rowScope });
+            rows.set(path, {
+              path,
+              canonicalPath,
+              displayPath,
+              backing: 'ledger',
+              type,
+              scope: rowScope,
+              ...(type === 'file' && item.detectedMime != null ? { mime: item.detectedMime } : {}),
+              ...(type === 'file' && item.mediaKind != null ? { mediaKind: item.mediaKind } : {}),
+              ...(type === 'file' && item.isText != null ? { isText: item.isText } : {}),
+              ...(type === 'file' && item.sizeBytes != null ? { sizeBytes: Number(item.sizeBytes) } : {}),
+              ...(type === 'file' ? { seq: item.latestSeq } : {}),
+            });
           }
         }
       }
@@ -3029,17 +3080,20 @@ function rawSession(req: FastifyRequest): string | undefined {
         const resolved = resolveBacking(path, { gitPrefix });
         // === ACL scope enforcement (#4) ===
         let ledgerPath = resolved.relPath;
+        let ledgerChannelId: string | null = null;
+        let ledgerAccess: Awaited<ReturnType<typeof sessionArtifactAccess>> | null = null;
         if (resolved.backing === 'ledger') {
-          const access = await sessionArtifactAccess(id, user.id);
-          const channelId = access.channelId;
+          ledgerAccess = await sessionArtifactAccess(id, user.id);
+          const channelId = ledgerAccess.channelId;
+          ledgerChannelId = channelId;
           const canonicalPath = canonicalizeRouteArtifactPath(reply, resolved.relPath, {
             sessionId: id,
             channelId,
-            readableChannelIds: access.readableChannelIds,
+            readableChannelIds: ledgerAccess.readableChannelIds,
           });
           if (!canonicalPath) return;
           ledgerPath = canonicalPath;
-          if (!artifactPathInRoots(ledgerPath, access.readableRoots)) {
+          if (!artifactPathInRoots(ledgerPath, ledgerAccess.readableRoots)) {
             return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
           }
         }
@@ -3050,9 +3104,14 @@ function rawSession(req: FastifyRequest): string | undefined {
           try {
             const file = await gitSource.readFile(resolved.relPath);
             if (!file) return reply.code(404).send({ error: 'not_found', message: 'file not found' });
+            const classification = classifyMedia(file.bytes, { filename: resolved.relPath });
             reply.header('X-File-Backing', 'git');
             reply.header('X-Git-Blob-Sha', file.sha);
-            reply.header('Content-Type', 'application/octet-stream');
+            reply.header('X-Canonical-Path', resolved.relPath);
+            reply.header('X-Display-Path', path);
+            reply.header('X-Size-Bytes', String(file.bytes.byteLength));
+            for (const [name, value] of Object.entries(mediaHeaders(classification))) reply.header(name, value);
+            reply.header('Content-Type', classification.isText ? `${classification.detectedMime}; charset=${classification.textEncoding ?? 'utf-8'}` : classification.detectedMime);
             return reply.send(file.bytes);
           } catch (err) {
             if (unsafeGitPathError(err)) {
@@ -3061,10 +3120,42 @@ function rawSession(req: FastifyRequest): string | undefined {
             throw err;
           }
         }
-        return reply.redirect(
-          `/api/sessions/${id}/artifacts/by-path?path=${encodeURIComponent(ledgerPath)}`,
-          302,
-        );
+        const ledger = new ArtifactLedger(pool);
+        const res = await ledger.serveResolution(id, ledgerPath, {
+          readableChannelIds: ledgerAccess?.readableChannelIds,
+        });
+        if (!res || res.servedSeq == null) {
+          return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        }
+        const version = await ledger.resolveVersion(id, ledgerPath, { seq: res.servedSeq }, {
+          readableChannelIds: ledgerAccess?.readableChannelIds,
+        });
+        if (!version) return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        if (version.kind === 'deleted') {
+          return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
+        }
+        if (!version.s3Key || !version.blobSha) {
+          return reply.code(503).send({ error: 'blob_unavailable', message: 'artifact bytes are not durable in CAS' });
+        }
+        const bytes = await getObjectBytes(version.s3Key);
+        const classification = {
+          detectedMime: version.detectedMime ?? version.mime ?? 'application/octet-stream',
+          mediaKind: version.mediaKind ?? 'binary',
+          isText: version.isText ?? false,
+          textEncoding: version.textEncoding ?? null,
+          meta: {},
+        } satisfies MediaClassification;
+        reply.header('X-File-Backing', 'ledger');
+        reply.header('X-Artifact-Seq', String(version.seq));
+        reply.header('X-Artifact-Sha', version.blobSha);
+        reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
+        if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
+        reply.header('X-Canonical-Path', ledgerPath);
+        reply.header('X-Display-Path', displaySessionArtifactPath(ledgerPath, { sessionId: id, channelId: ledgerChannelId! }));
+        reply.header('X-Size-Bytes', String(version.sizeBytes ?? bytes.byteLength));
+        for (const [name, value] of Object.entries(mediaHeaders(classification))) reply.header(name, value);
+        reply.header('Content-Type', classification.isText ? `${classification.detectedMime}; charset=${classification.textEncoding ?? 'utf-8'}` : classification.detectedMime);
+        return reply.send(bytes);
       });
 
       filesScope.put('/api/sessions/:id/files', async (req, reply) => {
@@ -3100,6 +3191,17 @@ function rawSession(req: FastifyRequest): string | undefined {
           return reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
         }
         const body = bodyBuffer(req.body);
+        const classification = classifyMedia(body, {
+          declaredMime: normalizeMime(firstHeader(req.headers['content-type'])),
+          filename: canonicalPath,
+        });
+        if (!classification.isText) {
+          return reply.code(415).send({
+            error: 'binary_not_editable',
+            message: 'binary files cannot be edited as text',
+            mediaKind: classification.mediaKind,
+          });
+        }
         const result = await writeBackArtifact({
           pool,
           storage: { uploadObject, getObjectBytes, headObject },
@@ -3107,7 +3209,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           sessionId: id,
           path: canonicalPath,
           bytes: body,
-          mime: normalizeMime(firstHeader(req.headers['content-type'])),
+          mime: classification.detectedMime,
           author: `human:${user.id}`,
           ...(baseSeq == null ? {} : { baseSeq }),
         });
@@ -3153,8 +3255,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     // unresolved conflict in headers so the UI can show a banner. Explicit `at`
     // (a seq) is served verbatim for inspect/resolve flows.
     let ref: { seq: number } | { pointer: string };
+    const ledger = new ArtifactLedger(pool);
     if (at === 'latest') {
-      const ledger = new ArtifactLedger(pool);
       const res = await ledger.serveResolution(id, path, { readableChannelIds: access.readableChannelIds });
       if (!res || res.servedSeq == null) {
         return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
@@ -3169,10 +3271,21 @@ function rawSession(req: FastifyRequest): string | undefined {
     const plan = await sessionRuns.getLedgerServePlan(id, path, ref, {
       readableChannelIds: access.readableChannelIds,
     });
+    const version = await ledger.resolveVersion(id, path, ref, {
+      readableChannelIds: access.readableChannelIds,
+    });
     // === ACL scope enforcement (#4) ===
     reply.header('X-Artifact-Scope', scope);
     reply.header('X-Artifact-Canonical-Path', path);
     reply.header('X-Artifact-Display-Path', displayPath);
+    if (version) {
+      if (version.blobSha != null) reply.header('X-Artifact-Sha', version.blobSha);
+      reply.header('X-Size-Bytes', String(version.sizeBytes ?? 0));
+      reply.header('X-Detected-Mime', version.detectedMime ?? version.mime ?? 'application/octet-stream');
+      reply.header('X-Media-Kind', version.mediaKind ?? 'binary');
+      reply.header('X-Is-Text', version.isText ? 'true' : 'false');
+      if (version.textEncoding != null) reply.header('X-Text-Encoding', version.textEncoding);
+    }
     return reply.redirect(plan.url, 302);
   });
 
@@ -3856,6 +3969,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       try {
         const hash = createHash('sha256');
         let sizeBytes = 0;
+        const sampleChunks: Buffer[] = [];
+        let sampleBytes = 0;
         const hashingStream = new Transform({
           transform(chunk, encoding, callback) {
             const bytes = Buffer.isBuffer(chunk)
@@ -3865,6 +3980,11 @@ function rawSession(req: FastifyRequest): string | undefined {
                 : Buffer.from(chunk as Uint8Array);
             hash.update(bytes);
             sizeBytes += bytes.byteLength;
+            if (sampleBytes < 8192) {
+              const next = bytes.subarray(0, Math.min(bytes.byteLength, 8192 - sampleBytes));
+              sampleChunks.push(next);
+              sampleBytes += next.byteLength;
+            }
             callback(null, chunk);
           },
         });
@@ -3873,6 +3993,10 @@ function rawSession(req: FastifyRequest): string | undefined {
 
         const sha = hash.digest('hex');
         const finalKey = casBlobKey(sha);
+        const classification = classifyMedia(Buffer.concat(sampleChunks), {
+          declaredMime: mime,
+          filename: canonicalPath,
+        });
         await copyObject(stagingKey, finalKey);
         await deleteObject(stagingKey);
         stagingDeleted = true;
@@ -3884,6 +4008,7 @@ function rawSession(req: FastifyRequest): string | undefined {
             sizeBytes,
             mime,
             s3Key: finalKey,
+            classification,
           });
         });
         // First version of a path is 'created', else 'modified' (mirrors the

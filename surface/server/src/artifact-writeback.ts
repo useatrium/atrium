@@ -10,6 +10,7 @@ import {
 import { canonicalizeSessionArtifactPath } from './artifact-path.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { classifyMedia, type MediaClassification } from './media-classifier.js';
 
 export interface ArtifactWritebackStorage {
   uploadObject(key: string, body: Buffer | Uint8Array, contentType: string): Promise<void>;
@@ -68,6 +69,7 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
   }
 
   const sha = sha256(params.bytes);
+  const classification = classifyMedia(params.bytes, { declaredMime: params.mime, filename: params.path });
   await ensureCasBlobStored({
     pool: params.pool,
     ledger,
@@ -75,6 +77,7 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
     sha,
     bytes: params.bytes,
     mime: params.mime,
+    classification,
   });
 
   const committed = await ledger.commitVersion({
@@ -162,6 +165,7 @@ async function ensureCasBlobStored(args: {
   sha: string;
   bytes: Buffer;
   mime: string;
+  classification?: MediaClassification;
   client?: DbClient;
 }): Promise<void> {
   const key = casBlobKey(args.sha);
@@ -184,6 +188,7 @@ async function ensureCasBlobStored(args: {
       sizeBytes: args.bytes.byteLength,
       mime: args.mime,
       s3Key: key,
+      classification: args.classification ?? classifyMedia(args.bytes, { declaredMime: args.mime }),
     });
     return;
   }
@@ -193,6 +198,7 @@ async function ensureCasBlobStored(args: {
       sizeBytes: args.bytes.byteLength,
       mime: args.mime,
       s3Key: key,
+      classification: args.classification ?? classifyMedia(args.bytes, { declaredMime: args.mime }),
     });
   });
 }
@@ -250,6 +256,7 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
       sha: mergedSha,
       bytes: mergedBytes,
       mime: args.mime,
+      classification: classifyMedia(mergedBytes, { declaredMime: args.mime, filename: args.path }),
       client,
     });
 

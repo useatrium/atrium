@@ -11,6 +11,11 @@ type FileRow = {
   path: string;
   canonicalPath?: string;
   displayPath?: string;
+  mime?: string;
+  mediaKind?: string;
+  isText?: boolean;
+  sizeBytes?: number;
+  seq?: number;
   backing: Backing;
   type: FileType;
 };
@@ -41,6 +46,16 @@ type PreviewVersionSkew = {
   path: string;
   workingSeq: number;
   latestSeq: number;
+};
+
+type ContentMeta = {
+  isText: boolean;
+  mime: string;
+  mediaKind: string;
+  sizeBytes: number | null;
+  seq: number | null;
+  canonicalPath: string | null;
+  displayPath: string | null;
 };
 
 const BACKING_BADGE: Record<Backing, string> = {
@@ -90,6 +105,21 @@ function seqHeader(response: Response, name: string): number | null {
   if (!raw) return null;
   const seq = Number(raw);
   return Number.isInteger(seq) && seq >= 0 ? seq : null;
+}
+
+function contentMeta(row: FileRow, response: Response): ContentMeta {
+  const isTextHeader = response.headers?.get('X-Is-Text');
+  const sizeHeader = response.headers?.get('X-Size-Bytes');
+  const size = sizeHeader != null ? Number(sizeHeader) : row.sizeBytes;
+  return {
+    isText: isTextHeader === 'false' ? false : row.isText ?? true,
+    mime: response.headers?.get('X-Detected-Mime') ?? row.mime ?? response.headers?.get('Content-Type')?.split(';', 1)[0] ?? 'application/octet-stream',
+    mediaKind: response.headers?.get('X-Media-Kind') ?? row.mediaKind ?? 'text',
+    sizeBytes: Number.isFinite(size) ? Number(size) : null,
+    seq: seqHeader(response, 'X-Artifact-Seq') ?? row.seq ?? null,
+    canonicalPath: response.headers?.get('X-Canonical-Path') ?? row.canonicalPath ?? null,
+    displayPath: response.headers?.get('X-Display-Path') ?? row.displayPath ?? null,
+  };
 }
 
 function previewVersionSkew(row: FileRow, response: Response): PreviewVersionSkew | null {
@@ -203,6 +233,7 @@ export function FilesSurface({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [versionSkew, setVersionSkew] = useState<PreviewVersionSkew | null>(null);
+  const [meta, setMeta] = useState<ContentMeta | null>(null);
 
   const sortedRows = useMemo(
     () =>
@@ -213,6 +244,7 @@ export function FilesSurface({
     [rows],
   );
   const selectedReadOnlyRepo = selected?.backing === 'git';
+  const selectedTextEditable = selected != null && !selectedReadOnlyRepo && meta?.isText !== false;
   const rowsEmpty = !rowsLoading && !rowsError && sortedRows.length === 0;
 
   const loadContent = useCallback(
@@ -224,13 +256,21 @@ export function FilesSurface({
         const response = await fetch(contentUrl(sessionId, row.path), { credentials: 'same-origin' });
         if (!response.ok) throw new Error(await responseError(response, 'Could not load file'));
         const skew = previewVersionSkew(row, response);
-        const text = await response.text();
-        setContent(text);
-        setDraft(text);
+        const nextMeta = contentMeta(row, response);
+        if (nextMeta.isText) {
+          const text = await response.text();
+          setContent(text);
+          setDraft(text);
+        } else {
+          setContent('');
+          setDraft('');
+        }
+        setMeta(nextMeta);
         setVersionSkew(skew);
       } catch (error) {
         setContent('');
         setDraft('');
+        setMeta(null);
         setVersionSkew(null);
         setContentError(error instanceof Error ? error.message : 'Could not load file');
       } finally {
@@ -267,6 +307,7 @@ export function FilesSurface({
     setSelected(row);
     setEditing(false);
     setSaveError(null);
+    setMeta(null);
     setHistoryOpen(false);
     setHistory(null);
     setHistoryError(null);
@@ -296,7 +337,7 @@ export function FilesSurface({
 
   async function saveFile() {
     if (!selected) return;
-    if (selected.backing === 'git') return;
+    if (selected.backing === 'git' || meta?.isText === false) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -397,7 +438,10 @@ export function FilesSurface({
             >
               History
             </button>
-            {!selectedReadOnlyRepo && (
+            {meta?.isText === false && (
+              <span className="shrink-0 text-2xs text-fg-muted">{meta.mediaKind} · {meta.mime}</span>
+            )}
+            {selectedTextEditable && (
               <button
                 type="button"
                 onClick={() => {
@@ -432,7 +476,22 @@ export function FilesSurface({
             <div role="alert" className="px-3 py-2 text-2xs text-danger-text">
               {contentError}
             </div>
-          ) : editing && !selectedReadOnlyRepo ? (
+          ) : meta?.isText === false ? (
+            <div className="flex min-h-0 flex-1 flex-col gap-3 bg-surface px-3 py-3 text-2xs text-fg-body">
+              <div className="font-mono text-fg-muted">
+                {meta.mediaKind} · {meta.mime}
+                {meta.sizeBytes != null ? ` · ${meta.sizeBytes.toLocaleString()} bytes` : ''}
+                {meta.seq != null ? ` · v${meta.seq}` : ''}
+              </div>
+              <a
+                href={contentUrl(sessionId, selected.path)}
+                download={basename(rowDisplayPath(selected))}
+                className="w-fit rounded border border-edge-strong px-2 py-1 text-2xs font-medium text-fg-body hover:bg-surface-overlay"
+              >
+                Download
+              </a>
+            </div>
+          ) : editing && selectedTextEditable ? (
             <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
               <textarea
                 aria-label="File contents"

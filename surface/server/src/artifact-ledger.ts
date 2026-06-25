@@ -10,6 +10,11 @@ import {
   canonicalizeWorkspaceArtifactPath,
 } from './artifact-path.js';
 import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
+import {
+  classifyMediaFromMime,
+  type MediaClassification,
+  type MediaKind,
+} from './media-classifier.js';
 
 export type MergeClass = 'immutable-data' | 'mergeable-doc' | 'derived-output';
 export type VersionKind = 'created' | 'modified' | 'deleted';
@@ -33,6 +38,10 @@ export interface ResolvedVersion {
   status: VersionStatus;
   /** mime/size/s3Key come from the blob; all null for a delete tombstone. */
   mime: string | null;
+  detectedMime: string | null;
+  mediaKind: MediaKind | null;
+  isText: boolean | null;
+  textEncoding: string | null;
   sizeBytes: number | null;
   s3Key: string | null;
 }
@@ -209,14 +218,40 @@ export class ArtifactLedger {
    * after bytes are durable in S3/CAS; legacy NULL rows are repair-only. */
   async upsertBlob(
     client: DbClient,
-    blob: { sha256: string; sizeBytes: number; mime: string; s3Key?: string | null },
+    blob: {
+      sha256: string;
+      sizeBytes: number;
+      mime: string;
+      s3Key?: string | null;
+      classification?: MediaClassification;
+    },
   ): Promise<void> {
+    const classification = blob.classification ?? classifyMediaFromMime(blob.mime);
     await client.query(
-      `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO cas_blobs
+         (sha256, s3_key, size_bytes, mime, detected_mime, media_kind, is_text, text_encoding, classification_meta)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (sha256) DO UPDATE
-             SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
-      [blob.sha256, blob.s3Key ?? null, blob.sizeBytes, blob.mime],
+             SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key),
+                 detected_mime = COALESCE(cas_blobs.detected_mime, EXCLUDED.detected_mime),
+                 media_kind = COALESCE(cas_blobs.media_kind, EXCLUDED.media_kind),
+                 is_text = COALESCE(cas_blobs.is_text, EXCLUDED.is_text),
+                 text_encoding = COALESCE(cas_blobs.text_encoding, EXCLUDED.text_encoding),
+                 classification_meta = CASE
+                   WHEN cas_blobs.classification_meta = '{}'::jsonb THEN EXCLUDED.classification_meta
+                   ELSE cas_blobs.classification_meta
+                 END`,
+      [
+        blob.sha256,
+        blob.s3Key ?? null,
+        blob.sizeBytes,
+        blob.mime,
+        classification.detectedMime,
+        classification.mediaKind,
+        classification.isText,
+        classification.textEncoding,
+        JSON.stringify(classification.meta),
+      ],
     );
   }
 
@@ -609,19 +644,51 @@ export class ArtifactLedger {
    * current latest seq — the node's hydration/subscription set seed (§10.1). */
   async sessionScope(
     sessionId: string,
-  ): Promise<Array<{ path: string; latestSeq: number; kind: VersionKind; sha: string | null }>> {
+  ): Promise<Array<{
+    path: string;
+    latestSeq: number;
+    kind: VersionKind;
+    sha: string | null;
+    mime: string | null;
+    detectedMime: string | null;
+    mediaKind: MediaKind | null;
+    isText: boolean | null;
+    sizeBytes: number | null;
+  }>> {
     const scope = await readableArtifactRootsForSession(this.pool, sessionId);
-    const res = await this.pool.query<{ path: string; seq: number; kind: VersionKind; sha: string | null }>(
-      `SELECT a.path, p.seq, v.kind, v.blob_sha AS sha
+    const res = await this.pool.query<{
+      path: string;
+      seq: number;
+      kind: VersionKind;
+      sha: string | null;
+      mime: string | null;
+      detected_mime: string | null;
+      media_kind: MediaKind | null;
+      is_text: boolean | null;
+      size_bytes: number | null;
+    }>(
+      `SELECT a.path, p.seq, v.kind, v.blob_sha AS sha,
+              b.mime, b.detected_mime, b.media_kind, b.is_text, b.size_bytes
          FROM artifacts a
          JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+         LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
         WHERE a.workspace_id = $1
           AND a.path LIKE ANY($2::text[])
         ORDER BY a.path ASC`,
       [scope.workspaceId, this.rootLikePatterns(scope.readableRoots)],
     );
-    return res.rows.map((r) => ({ path: r.path, latestSeq: r.seq, kind: r.kind, sha: r.sha }));
+    return res.rows.map((r) => ({
+      path: r.path,
+      latestSeq: r.seq,
+      kind: r.kind,
+      sha: r.sha,
+      mime: r.mime,
+      detectedMime: r.detected_mime,
+      mediaKind: r.media_kind,
+      isText: r.is_text,
+      sizeBytes: r.size_bytes,
+    }));
   }
 
   // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
@@ -939,10 +1006,15 @@ export class ArtifactLedger {
       kind: VersionKind;
       status: VersionStatus;
       mime: string | null;
+      detected_mime: string | null;
+      media_kind: MediaKind | null;
+      is_text: boolean | null;
+      text_encoding: string | null;
       size_bytes: number | null;
       s3_key: string | null;
     }>(
-      `SELECT v.seq, v.blob_sha, v.kind, v.status, b.mime, b.size_bytes, b.s3_key
+      `SELECT v.seq, v.blob_sha, v.kind, v.status,
+              b.mime, b.detected_mime, b.media_kind, b.is_text, b.text_encoding, b.size_bytes, b.s3_key
          FROM artifact_versions v
          LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
         WHERE v.artifact_id = $1 AND v.seq = $2`,
@@ -957,6 +1029,10 @@ export class ArtifactLedger {
       kind: row.kind,
       status: row.status,
       mime: row.mime,
+      detectedMime: row.detected_mime,
+      mediaKind: row.media_kind,
+      isText: row.is_text,
+      textEncoding: row.text_encoding,
       sizeBytes: row.size_bytes,
       s3Key: row.s3_key,
     };

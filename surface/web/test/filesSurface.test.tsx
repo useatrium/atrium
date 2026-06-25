@@ -199,6 +199,42 @@ describe('FilesSurface', () => {
     });
   });
 
+  it('does not decode or edit non-text files', async () => {
+    const text = vi.fn();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/files/content')) {
+        return Promise.resolve({
+          ok: true,
+          headers: new Headers({
+            'X-Is-Text': 'false',
+            'X-Media-Kind': 'image',
+            'X-Detected-Mime': 'image/png',
+            'X-Size-Bytes': '67',
+            'X-Artifact-Seq': '2',
+          }),
+          text,
+        } as unknown as Response);
+      }
+      if (url.includes('/files?dir=')) {
+        return Promise.resolve(jsonResponse({
+          rows: [{ path: 'chart.png', backing: 'ledger', type: 'file', isText: false, mediaKind: 'image', mime: 'image/png' }],
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<FilesSurface sessionId="s-1" onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('chart.png')).toBeTruthy());
+    fireEvent.click(screen.getByText('chart.png'));
+
+    await waitFor(() => expect(screen.getByText('image · image/png · 67 bytes · v2')).toBeTruthy());
+    expect(text).not.toHaveBeenCalled();
+    expect(screen.queryByText('Edit')).toBeNull();
+    expect(screen.getByText('Download')).toBeTruthy();
+  });
+
   it('surfaces a save error without throwing', async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
