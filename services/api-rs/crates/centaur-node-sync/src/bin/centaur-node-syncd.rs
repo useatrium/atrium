@@ -32,10 +32,16 @@ struct SessionConfig {
     harness_thread_id: String,
     harness_home: String,
     flat_home: bool,
-    repo: String,
-    repo_name: String,
     repo_subdirs: Vec<std::path::PathBuf>,
+    repo_worktrees: Vec<RepoWorktree>,
     state_file: std::path::PathBuf,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepoWorktree {
+    key: String,
+    path: std::path::PathBuf,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -44,10 +50,11 @@ fn session_config_from_discovered(
     mounted: &centaur_node_sync::overlay_mount::OverlayMountPlan,
 ) -> SessionConfig {
     let repo = discovered.manifest.repo.clone();
+    let merged = discovered.manifest.merged.clone();
     SessionConfig {
         session: discovered.session.clone(),
         upper: mounted.upper.clone(),
-        merged: discovered.manifest.merged.clone(),
+        merged: merged.clone(),
         harness: discovered
             .manifest
             .harness
@@ -56,9 +63,8 @@ fn session_config_from_discovered(
         harness_thread_id: discovered.manifest.harness_thread_id.clone(),
         harness_home: discovered.manifest.harness_home.clone(),
         flat_home: discovered.manifest.flat_home,
-        repo_name: repo_name(&repo),
-        repo,
         repo_subdirs: repo_lane_subdirs(&discovered.manifest.repos),
+        repo_worktrees: repo_worktrees(&repo, &discovered.manifest.repos, &merged),
         state_file: discovered.state_file.clone(),
     }
 }
@@ -72,6 +78,33 @@ fn repo_lane_subdirs(
         .filter_map(|repo| centaur_node_sync::overlay_mount::repo_target_subdir(repo).ok())
         .map(std::path::PathBuf::from)
         .collect()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn repo_worktrees(
+    repo: &str,
+    repos: &[centaur_node_sync::session_manifest::RepoMount],
+    merged: &std::path::Path,
+) -> Vec<RepoWorktree> {
+    if !repos.is_empty() {
+        return repos
+            .iter()
+            .filter_map(|repo| {
+                let target = centaur_node_sync::overlay_mount::repo_target_subdir(repo).ok()?;
+                Some(RepoWorktree {
+                    key: centaur_node_sync::wip::sanitize_repo_key(&target),
+                    path: merged.join(&target),
+                })
+            })
+            .collect();
+    }
+    if repo.trim().is_empty() {
+        return Vec::new();
+    }
+    vec![RepoWorktree {
+        key: centaur_node_sync::wip::sanitize_repo_key(&repo_name(repo)),
+        path: merged.to_path_buf(),
+    }]
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -307,16 +340,17 @@ mod linux_daemon {
                 PathBuf::from(configured)
             }
         };
+        let repo = env("NODE_SYNC_REPO");
+        let merged = PathBuf::from(merged_env);
         Ok(SessionConfig {
             session,
             upper: PathBuf::from(upper_env),
-            merged: PathBuf::from(merged_env),
+            merged: merged.clone(),
             harness: HarnessTranscriptKind::parse(&env("NODE_SYNC_HARNESS")),
             harness_thread_id: env("NODE_SYNC_HARNESS_THREAD_ID"),
             harness_home: env("NODE_SYNC_HARNESS_HOME"),
             flat_home: false,
-            repo: env("NODE_SYNC_REPO"),
-            repo_name: repo_name(&env("NODE_SYNC_REPO")),
+            repo_worktrees: repo_worktrees(&repo, &[], &merged),
             repo_subdirs: Vec::new(),
             state_file,
         })
@@ -494,6 +528,7 @@ mod linux_daemon {
 
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
+        restore_repo_wip(session, state);
         inbound(session, state, echo, lease, &mut client);
         outbound(global, session, state, echo, &mut client);
         capture_repo_wip(session, state, &mut client);
@@ -776,35 +811,87 @@ mod linux_daemon {
         }
     }
 
+    fn restore_repo_wip(session: &SessionConfig, state: &mut DaemonState) {
+        for repo in &session.repo_worktrees {
+            let latest_path = centaur_node_sync::wip::latest_path(&repo.key);
+            let latest_file = session.merged.join(&latest_path);
+            let bytes = match std::fs::read(&latest_file) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+            let manifest =
+                match serde_json::from_slice::<centaur_node_sync::wip::WipSnapshotManifest>(&bytes)
+                {
+                    Ok(manifest) => manifest,
+                    Err(e) => {
+                        eprintln!(
+                            "session {}: wip restore {}: parse latest {}: {e}",
+                            session.session,
+                            repo.key,
+                            latest_file.display()
+                        );
+                        continue;
+                    }
+                };
+            if state
+                .wip_restore_attempted
+                .get(&repo.key)
+                .is_some_and(|snapshot| snapshot == &manifest.snapshot_id)
+            {
+                continue;
+            }
+            match centaur_node_sync::wip::restore_snapshot(&repo.path, &session.merged, &manifest) {
+                Ok(()) => println!(
+                    "session {}: wip restore: applied {} snapshot {}",
+                    session.session, repo.key, manifest.snapshot_id
+                ),
+                Err(e) => eprintln!("session {}: wip restore {}: {e}", session.session, repo.key),
+            }
+            state
+                .wip_restore_attempted
+                .insert(repo.key.clone(), manifest.snapshot_id);
+        }
+    }
+
     fn capture_repo_wip(
         session: &SessionConfig,
         state: &mut DaemonState,
         client: &mut HttpAtriumClient,
     ) {
-        if session.repo.is_empty() {
-            return;
-        }
-        match centaur_node_sync::wip::capture_wip(Path::new(&session.repo)) {
-            Ok(patch) => {
-                let captured = centaur_node_sync::runtime::wip_sweep(
-                    &session.repo_name,
-                    &patch,
-                    &state.base_seqs(),
-                    client,
-                );
-                for (path, seq, sha) in &captured {
-                    state.sync_to(path, *seq, Some(sha.clone()), false);
-                }
-                if !captured.is_empty() {
-                    println!(
-                        "session {}: wip: {} artifacts snapshotted for {}",
-                        session.session,
-                        captured.len(),
-                        session.repo_name
+        for repo in &session.repo_worktrees {
+            match centaur_node_sync::wip::capture_wip(&repo.path) {
+                Ok(patch) => {
+                    let out = centaur_node_sync::runtime::wip_sweep(
+                        &repo.key,
+                        &patch,
+                        &state.base_seqs(),
+                        client,
                     );
+                    for (path, seq, sha) in &out.captured {
+                        state.sync_to(path, *seq, Some(sha.clone()), false);
+                    }
+                    for (path, seq) in &out.deleted {
+                        state.sync_to(path, *seq, None, false);
+                    }
+                    if !out.captured.is_empty() || !out.deleted.is_empty() {
+                        println!(
+                            "session {}: wip: {} captured, {} deleted for {}",
+                            session.session,
+                            out.captured.len(),
+                            out.deleted.len(),
+                            repo.key
+                        );
+                    }
+                    for (path, error) in &out.errors {
+                        eprintln!("session {}: wip error {path}: {error}", session.session);
+                    }
                 }
+                Err(e) => eprintln!(
+                    "session {}: wip {}: {e}",
+                    session.session,
+                    repo.path.display()
+                ),
             }
-            Err(e) => eprintln!("session {}: wip {}: {e}", session.session, session.repo),
         }
     }
 
@@ -963,15 +1050,67 @@ mod tests {
         assert_eq!(session_config.harness_thread_id, "thread-123");
         assert_eq!(session_config.harness_home, ".codex");
         assert!(!session_config.flat_home);
-        assert_eq!(session_config.repo, "");
-        assert_eq!(session_config.repo_name, "");
         assert_eq!(
             session_config.repo_subdirs,
             vec![PathBuf::from("foo"), PathBuf::from("bar")]
         );
         assert_eq!(
+            session_config.repo_worktrees,
+            vec![
+                RepoWorktree {
+                    key: "foo".to_string(),
+                    path: PathBuf::from("/run/centaur/merged/sess-multi/foo"),
+                },
+                RepoWorktree {
+                    key: "bar".to_string(),
+                    path: PathBuf::from("/run/centaur/merged/sess-multi/bar"),
+                },
+            ]
+        );
+        assert_eq!(
             session_config.state_file,
             PathBuf::from("/var/lib/centaur/overlays/.sessions/sess-multi.state.json")
+        );
+    }
+
+    #[test]
+    fn single_repo_wip_uses_merged_workspace_not_lower_repo() {
+        let overlays_root = Path::new("/var/lib/centaur/overlays");
+        let session = "sess-single";
+        let mounted = plan_overlay_mount(
+            overlays_root,
+            session,
+            Path::new("/run/centaur/merged/sess-single"),
+            "/var/lib/centaur/repos/sess-single",
+            &[],
+            None,
+        )
+        .unwrap();
+        let discovered = DiscoveredSession {
+            session: session.to_string(),
+            upper: mounted.lower.path.clone(),
+            state_file: PathBuf::from("/var/lib/centaur/overlays/.sessions/sess-single.state.json"),
+            manifest: SessionManifest {
+                session: session.to_string(),
+                merged: PathBuf::from("/run/centaur/merged/sess-single"),
+                harness: Some("codex".to_string()),
+                harness_thread_id: String::new(),
+                harness_home: ".codex".to_string(),
+                flat_home: false,
+                repo: "/var/lib/centaur/repos/sess-single".to_string(),
+                repos: vec![],
+                agent_uid: 1001,
+            },
+        };
+
+        let session_config = session_config_from_discovered(&discovered, &mounted);
+
+        assert_eq!(
+            session_config.repo_worktrees,
+            vec![RepoWorktree {
+                key: "sess-single".to_string(),
+                path: PathBuf::from("/run/centaur/merged/sess-single"),
+            }]
         );
     }
 }

@@ -32,6 +32,11 @@ pub struct DaemonState {
     /// whether we've reconstructed base_seqs from the feed yet.
     #[serde(default)]
     pub hydrated: bool,
+    /// repo_key -> scratch WIP snapshot id we already attempted to restore in
+    /// this container state. This keeps periodic capture from re-applying the
+    /// session's own latest snapshot after the working tree has moved on.
+    #[serde(default)]
+    pub wip_restore_attempted: HashMap<String, String>,
 }
 
 impl Default for DaemonState {
@@ -41,6 +46,7 @@ impl Default for DaemonState {
             cursor: default_cursor(),
             atrium_cursor: default_cursor(),
             hydrated: false,
+            wip_restore_attempted: HashMap::new(),
         }
     }
 }

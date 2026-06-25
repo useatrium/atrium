@@ -546,44 +546,64 @@ pub fn harness_transcript_sweep(
     }
 }
 
+#[derive(Debug, Default)]
+pub struct WipSweepOutcome {
+    pub captured: Vec<(String, u64, String)>,
+    pub deleted: Vec<(String, u64)>,
+    pub errors: Vec<(String, String)>,
+}
+
 /// Capture uncommitted repo WIP to the ledger as a recovery point (§5A / H6).
-/// PURE-READ: the bytes come from `wip::capture_wip` (a `git diff HEAD` + untracked
-/// snapshot, zero git writes). Lands as normal artifacts under `wip/<repo>/…` so a
-/// crash/destroy doesn't lose uncommitted work; recovery = re-clone @ HEAD + apply
-/// the patch + drop the untracked files. Content-dedup means an unchanged WIP is
-/// idempotent (no churn). Returns the captured (path, seq, sha) for state tracking.
+/// PURE-READ: the bytes come from `wip::capture_wip` (a `git diff HEAD` +
+/// untracked snapshot, zero git writes). Lands under session scratch
+/// (`scratch/wip/<repo>/…`) so another live agent does not adopt it as shared
+/// workspace state. A versioned snapshot is published first and `latest.json` is
+/// written last as the visible commit point.
 pub fn wip_sweep(
     repo_name: &str,
     patch: &crate::wip::WipPatch,
     base_seqs: &HashMap<String, u64>,
     client: &mut dyn AtriumClient,
-) -> Vec<(String, u64, String)> {
-    let mut captured = Vec::new();
+) -> WipSweepOutcome {
+    let mut out = WipSweepOutcome::default();
+    let latest_path = crate::wip::latest_path(repo_name);
     if patch.is_empty() {
-        return captured;
+        if let Some(base) = base_seqs.get(&latest_path).copied()
+            && base > 0
+        {
+            match client.post_delete(&latest_path, base) {
+                Ok(seq) => out.deleted.push((latest_path, seq)),
+                Err(e) => out.errors.push((latest_path, e)),
+            }
+        }
+        return out;
     }
-    // the base HEAD sha (so recovery knows what to clone), the tracked diff, and
-    // each untracked file — each a normal artifact under wip/<repo>/.
-    let mut items: Vec<(String, Vec<u8>)> = vec![
-        (
-            format!("wip/{repo_name}/HEAD"),
-            patch.base_head_sha.clone().into_bytes(),
-        ),
-        (
-            format!("wip/{repo_name}/patch.diff"),
-            patch.diff.clone().into_bytes(),
-        ),
-    ];
-    for (rel, bytes) in &patch.untracked {
-        items.push((format!("wip/{repo_name}/untracked/{rel}"), bytes.clone()));
-    }
-    for (path, bytes) in items {
+    let snapshot = match crate::wip::snapshot_from_patch(repo_name, patch) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return out,
+        Err(e) => {
+            out.errors.push((latest_path, e));
+            return out;
+        }
+    };
+    for (path, bytes, _mime) in snapshot.files {
         let base = base_seqs.get(&path).copied().unwrap_or(0);
-        if let Ok(seq) = client.post_capture(&path, base, &bytes) {
-            captured.push((path, seq, sha_hex(&bytes)));
+        match client.post_capture(&path, base, &bytes) {
+            Ok(seq) => out.captured.push((path, seq, sha_hex(&bytes))),
+            Err(e) => out.errors.push((path, e)),
         }
     }
-    captured
+    if out.errors.is_empty() {
+        let base = base_seqs.get(&snapshot.latest_path).copied().unwrap_or(0);
+        match client.post_capture(&snapshot.latest_path, base, &snapshot.latest_bytes) {
+            Ok(seq) => {
+                out.captured
+                    .push((snapshot.latest_path, seq, sha_hex(&snapshot.latest_bytes)))
+            }
+            Err(e) => out.errors.push((snapshot.latest_path, e)),
+        }
+    }
+    out
 }
 
 pub struct InboundPlan {
@@ -659,6 +679,7 @@ mod tests {
     #[derive(Default)]
     struct FakeClient {
         captures: Vec<(String, u64)>,
+        deletes: Vec<(String, u64)>,
         transcripts: Vec<(String, Vec<u8>)>,
         next_seq: u64,
     }
@@ -668,8 +689,9 @@ mod tests {
             self.captures.push((path.to_string(), self.next_seq));
             Ok(self.next_seq)
         }
-        fn post_delete(&mut self, _path: &str, _base: u64) -> Result<u64, String> {
+        fn post_delete(&mut self, path: &str, _base: u64) -> Result<u64, String> {
             self.next_seq += 1;
+            self.deletes.push((path.to_string(), self.next_seq));
             Ok(self.next_seq)
         }
         fn fetch_bytes(&mut self, _path: &str, _seq: u64) -> Result<Vec<u8>, String> {
@@ -1144,30 +1166,52 @@ mod tests {
     }
 
     #[test]
-    fn wip_sweep_posts_head_diff_and_untracked() {
+    fn wip_sweep_posts_scratch_snapshot_and_latest_last() {
         let patch = crate::wip::WipPatch {
             base_head_sha: "abc123".into(),
             diff: "diff --git a/x b/x".into(),
             untracked: vec![("new.txt".into(), b"hi".to_vec())],
         };
         let mut client = FakeClient::default();
-        let captured = wip_sweep("myrepo", &patch, &HashMap::new(), &mut client);
-        let paths: Vec<&str> = captured.iter().map(|(p, _, _)| p.as_str()).collect();
-        assert_eq!(captured.len(), 3); // HEAD + patch.diff + 1 untracked
-        assert!(paths.contains(&"wip/myrepo/HEAD"));
-        assert!(paths.contains(&"wip/myrepo/patch.diff"));
-        assert!(paths.contains(&"wip/myrepo/untracked/new.txt"));
+        let out = wip_sweep("myrepo", &patch, &HashMap::new(), &mut client);
+        let paths: Vec<&str> = out.captured.iter().map(|(p, _, _)| p.as_str()).collect();
+        assert_eq!(out.captured.len(), 4); // patch + manifest + 1 untracked + latest
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("scratch/wip/myrepo/snapshots/")
+                    && path.ends_with("/patch.diff"))
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("scratch/wip/myrepo/snapshots/")
+                    && path.ends_with("/untracked/new.txt"))
+        );
+        assert_eq!(paths.last(), Some(&"scratch/wip/myrepo/latest.json"));
+        assert!(out.errors.is_empty());
     }
 
     #[test]
-    fn wip_sweep_skips_an_empty_patch() {
+    fn wip_sweep_deletes_latest_when_patch_becomes_empty() {
         let patch = crate::wip::WipPatch {
             base_head_sha: "x".into(),
             diff: String::new(),
             untracked: vec![],
         };
+        let mut base = HashMap::new();
+        base.insert("scratch/wip/r/latest.json".to_string(), 9);
         let mut client = FakeClient::default();
-        assert!(wip_sweep("r", &patch, &HashMap::new(), &mut client).is_empty());
+        let out = wip_sweep("r", &patch, &base, &mut client);
+        assert!(out.captured.is_empty());
+        assert_eq!(
+            out.deleted,
+            vec![("scratch/wip/r/latest.json".to_string(), 1)]
+        );
+        assert_eq!(
+            client.deletes,
+            vec![("scratch/wip/r/latest.json".to_string(), 1)]
+        );
     }
 
     #[test]
