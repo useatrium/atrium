@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
   AgentProfile,
+  AgentProfileDiff,
   AgentProfileManifest,
   AgentProfileProposal,
   AgentProfileProposalPayload,
@@ -75,7 +76,6 @@ export class AgentProfiles {
     raw: unknown,
   ): Promise<AgentProfileProposal> {
     const proposal = normalizeProposal(provider, raw);
-    const contentHash = sha256(stableStringify(proposal));
     return withTx(this.pool, async (client) => {
       const session = await client.query<{
         spawned_by: string;
@@ -90,14 +90,19 @@ export class AgentProfiles {
       if (!sessionProvider || sessionProvider !== provider) {
         throw new DomainError(400, 'harness_provider_mismatch', 'profile candidates do not match session harness');
       }
-      const snapshot = await client.query<{ profile_version_id: string | null }>(
-        `SELECT profile_version_id
+      const snapshot = await client.query<{
+        profile_version_id: string | null;
+        baseline_manifest_json: AgentProfileManifest | null;
+      }>(
+        `SELECT profile_version_id, baseline_manifest_json
          FROM session_profile_snapshots
          WHERE session_id = $1 AND provider = $2`,
         [sessionId, provider],
       );
       const baseProfileVersionId =
         snapshot.rows.length > 0 ? snapshot.rows[0]!.profile_version_id : found.agent_profile_version_id;
+      proposal.diff = diffManifests(snapshot.rows[0]?.baseline_manifest_json ?? null, proposal.manifest);
+      const contentHash = sha256(stableStringify(proposal));
 
       const inserted = await client.query<ProposalRow>(
         `INSERT INTO session_profile_change_proposals (
@@ -127,6 +132,48 @@ export class AgentProfiles {
       );
       return proposalFromRow(inserted.rows[0]!);
     });
+  }
+
+  async putSessionBaseline(
+    sessionId: string,
+    provider: AgentProfileProvider,
+    raw: unknown,
+  ): Promise<{ baselineHash: string }> {
+    assertNoDeniedProfilePaths(raw);
+    const proposal = normalizeProposal(provider, raw);
+    const baselineHash = sha256(stableStringify(proposal.manifest));
+    await withTx(this.pool, async (client) => {
+      const session = await client.query<{ harness: string | null }>(
+        'SELECT harness FROM sessions WHERE id = $1 FOR UPDATE',
+        [sessionId],
+      );
+      const found = session.rows[0];
+      if (!found) throw new DomainError(404, 'session_not_found', 'session not found');
+      const sessionProvider = providerForHarnessValue(found.harness);
+      if (!sessionProvider || sessionProvider !== provider) {
+        throw new DomainError(400, 'harness_provider_mismatch', 'profile baseline does not match session harness');
+      }
+      await client.query(
+        `INSERT INTO session_profile_snapshots (
+           session_id, provider, profile_version_id, adapter_version, baseline_hash,
+           baseline_manifest_json, runtime_overlay_json
+         )
+         VALUES ($1, $2, NULL, $3, $4, $5::jsonb, '{}'::jsonb)
+         ON CONFLICT (session_id, provider) DO UPDATE SET
+           adapter_version = EXCLUDED.adapter_version,
+           baseline_hash = EXCLUDED.baseline_hash,
+           baseline_manifest_json = EXCLUDED.baseline_manifest_json,
+           updated_at = now()`,
+        [
+          sessionId,
+          provider,
+          proposal.adapterVersion,
+          baselineHash,
+          JSON.stringify(proposal.manifest),
+        ],
+      );
+    });
+    return { baselineHash };
   }
 
   async createImportProposal(
@@ -784,6 +831,7 @@ function proposalFromRow(row: ProposalRow): AgentProfileProposal {
     baseProfileVersionId: row.base_profile_version_id,
     adapterVersion: row.adapter_version,
     proposal: row.proposal_json,
+    diff: row.proposal_json.diff,
     riskSummary: row.risk_summary_json,
     status: row.status,
     source: row.source,
@@ -791,6 +839,55 @@ function proposalFromRow(row: ProposalRow): AgentProfileProposal {
     updatedAt: new Date(row.updated_at).toISOString(),
     resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
   };
+}
+
+function diffManifests(
+  baseline: AgentProfileManifest | null,
+  current: AgentProfileManifest,
+): AgentProfileDiff {
+  const currentPaths = manifestDiffPaths(current);
+  if (!baseline) {
+    return { added: [...currentPaths.keys()].sort(), changed: [], removed: [] };
+  }
+  const baselinePaths = manifestDiffPaths(baseline);
+  const added: string[] = [];
+  const changed: string[] = [];
+  const removed: string[] = [];
+  for (const [path, value] of currentPaths) {
+    if (!baselinePaths.has(path)) {
+      added.push(path);
+    } else if (stableStringify(baselinePaths.get(path)) !== stableStringify(value)) {
+      changed.push(path);
+    }
+  }
+  for (const path of baselinePaths.keys()) {
+    if (!currentPaths.has(path)) removed.push(path);
+  }
+  return {
+    added: added.sort(),
+    changed: changed.sort(),
+    removed: removed.sort(),
+  };
+}
+
+function manifestDiffPaths(manifest: AgentProfileManifest): Map<string, unknown> {
+  const paths = new Map<string, unknown>();
+  collectDiffPaths(manifest.settings, ['settings'], paths);
+  collectDiffPaths(manifest.mcpServers, ['mcpServers'], paths);
+  return paths;
+}
+
+function collectDiffPaths(value: unknown, path: string[], out: Map<string, unknown>): void {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      if (path.length > 1) out.set(path.join('.'), {});
+      return;
+    }
+    for (const [key, child] of entries) collectDiffPaths(child, [...path, key], out);
+    return;
+  }
+  if (path.length > 1) out.set(path.join('.'), value);
 }
 
 function profileFromRow(row: ProfileRow, version: AgentProfileVersion | null | undefined): AgentProfile {
@@ -1065,6 +1162,45 @@ function normalizeProfilePath(value: unknown): string | null {
   if (!path || path.includes('\0') || path.split('/').some((part) => part === '..')) return null;
   if (metadataStringContainsSecret(path)) return null;
   return path.slice(0, 300);
+}
+
+export function normalizeAgentProfilePath(value: unknown): string | null {
+  return normalizeProfilePath(value);
+}
+
+export function isDeniedAgentProfilePath(path: string): boolean {
+  return deniedProfilePath(path);
+}
+
+function assertNoDeniedProfilePaths(value: unknown): void {
+  const denied = firstDeniedProfilePath(value);
+  if (denied) {
+    throw new DomainError(400, 'denied_profile_path', `profile baseline includes denied path: ${denied}`);
+  }
+}
+
+function firstDeniedProfilePath(value: unknown): string | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const denied = firstDeniedProfilePath(item);
+      if (denied) return denied;
+    }
+    return null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      /^(path|source_path)$/i.test(key)
+      && typeof child === 'string'
+      && normalizeProfilePath(child)
+      && deniedProfilePath(normalizeProfilePath(child)!)
+    ) {
+      return child;
+    }
+    const denied = firstDeniedProfilePath(child);
+    if (denied) return denied;
+  }
+  return null;
 }
 
 function deniedProfilePath(path: string): boolean {
