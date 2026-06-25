@@ -83,6 +83,14 @@ async function session(harness = 'codex', channelId = fx.channelId): Promise<str
   return r.rows[0]!.id;
 }
 
+async function sessionThreadKey(sessionId: string): Promise<string> {
+  const r = await pool.query<{ centaur_thread_key: string }>(
+    'SELECT centaur_thread_key FROM sessions WHERE id = $1',
+    [sessionId],
+  );
+  return r.rows[0]!.centaur_thread_key;
+}
+
 async function loginCookie(): Promise<string> {
   const res = await app.inject({
     method: 'POST',
@@ -290,16 +298,49 @@ describe('agent profile candidate ingest', () => {
     expect(proposal.riskSummary.blockedSecrets).toBe(1);
   });
 
-  it('rejects profile candidates for the wrong session harness', async () => {
-    const sid = await session('claude-code');
+  it('stores profile candidates when addressed by centaur_thread_key', async () => {
+    const sid = await session('codex');
+    const threadKey = await sessionThreadKey(sid);
     const res = await app.inject({
       method: 'PUT',
-      url: `/api/internal/sessions/${sid}/profile-candidates?harness=codex`,
+      url: `/api/internal/sessions/${threadKey}/profile-candidates?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: codexProposal(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().proposal.sessionId).toBe(sid);
+
+    const rows = await pool.query<{ session_id: string }>(
+      'SELECT session_id FROM session_profile_change_proposals WHERE session_id = $1',
+      [sid],
+    );
+    expect(rows.rows).toHaveLength(1);
+  });
+
+  it('rejects profile candidates for the wrong session harness', async () => {
+    const sid = await session('claude-code');
+    const threadKey = await sessionThreadKey(sid);
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${threadKey}/profile-candidates?harness=codex`,
       headers: { 'x-api-key': KEY },
       payload: codexProposal(),
     });
 
     expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects centaur_thread_key profile candidates without the internal api key', async () => {
+    const sid = await session('codex');
+    const threadKey = await sessionThreadKey(sid);
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${threadKey}/profile-candidates?harness=codex`,
+      payload: codexProposal(),
+    });
+
+    expect(res.statusCode).toBe(401);
   });
 
   it('can apply a proposal to lineage or save it as a new immutable profile version', async () => {

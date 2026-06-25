@@ -4007,8 +4007,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!isHarness(harness)) {
       return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
     }
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
     const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
-    const proposal = await agentProfiles.ingestSessionProposal(id, provider, req.body ?? {});
+    const proposal = await agentProfiles.ingestSessionProposal(session.id, provider, req.body ?? {});
     return reply.send({ proposal });
   });
 
