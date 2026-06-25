@@ -59,6 +59,7 @@ import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip'
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
+import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -1058,7 +1059,9 @@ export default function SessionScreen() {
                     item={item}
                     events={questionEventsByQuestion.get(item.questionId) ?? []}
                   />
-                ) : item.type === 'reasoning' ? null : (
+                ) : item.type === 'reasoning' ? (
+                  <ReasoningBlock item={item} />
+                ) : (
                   <TranscriptTool item={item} />
                 )}
               </View>
