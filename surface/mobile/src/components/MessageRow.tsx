@@ -535,6 +535,28 @@ export const MessageRow = memo(function MessageRow({
             </Text>
           </Pressable>
         )}
+        {canComment && (
+          // Explicit, tappable comment affordance — long-press still opens the full
+          // action sheet, but this makes commenting discoverable (and reliably
+          // testable) without depending on the long-press gesture.
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Comment"
+            onPress={() => onOpenComments?.(m)}
+            hitSlop={10}
+            style={{
+              marginTop: 2,
+              minHeight: 32,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              alignSelf: 'flex-start',
+            }}
+          >
+            <Ionicons name="chatbubble-outline" size={13} color={colors.textMuted} />
+            <Text style={{ color: colors.textMuted, fontSize: font.xs }}>Comment</Text>
+          </Pressable>
+        )}
       </View>
     </Pressable>
   );
