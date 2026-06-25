@@ -65,6 +65,36 @@ describe("CentaurClient endpoint paths", () => {
     ]);
   });
 
+  it("includes repos in the spawn body when provided, omits the key otherwise", async () => {
+    const withRepos: { url?: string; body?: unknown } = {};
+    const clientA = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: captureFetch(withRepos),
+    });
+    await clientA.spawn("thread:1", "codex", {
+      spawnId: "spawn-1",
+      repos: [{ repo: "owner/name", ref: "main" }],
+    });
+    expect(withRepos.body).toEqual({
+      harness_type: "codex",
+      metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
+      repos: [{ repo: "owner/name", ref: "main" }],
+    });
+
+    const noRepos: { url?: string; body?: unknown } = {};
+    const clientB = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: captureFetch(noRepos),
+    });
+    await clientB.spawn("thread:1", "codex", { spawnId: "spawn-1" });
+    expect(noRepos.body).toEqual({
+      harness_type: "codex",
+      metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
+    });
+  });
+
   it("throws typed api errors with Centaur error codes when present", async () => {
     const client = new CentaurClient({
       baseUrl: "http://centaur.test:8000",

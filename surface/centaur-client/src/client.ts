@@ -40,8 +40,18 @@ export interface ExecutionResponse {
   [key: string]: JsonValue | undefined;
 }
 
+/** A repo to check out into the sandbox at spawn. `repo` is `owner/name`
+ * (resolved against the node repo-cache); `ref` is the branch/tag. Folded into
+ * `centaur_session_repos` server-side → `AGENT_REPOS_JSON` → entrypoint checkout. */
+export interface RepoSpec {
+  repo: string;
+  ref?: string;
+  subdir?: string;
+}
+
 export interface SpawnOptions {
   spawnId?: string;
+  repos?: RepoSpec[];
 }
 
 export interface PostMessageOptions {
@@ -114,6 +124,9 @@ export class CentaurClient {
         harness,
         ...(opts.spawnId ? { spawn_id: opts.spawnId } : {}),
       },
+      ...(opts.repos && opts.repos.length
+        ? { repos: opts.repos.map((r) => ({ ...r })) }
+        : {}),
     };
     return this.request<Record<string, JsonValue | undefined>>(
       "POST",

@@ -907,7 +907,14 @@ export class SessionRuns {
   ): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
-      const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness, client);
+      const spawned = await this.spawnAssignment(
+        row.id,
+        row.centaur_thread_key,
+        row.harness,
+        row.repo,
+        row.branch,
+        client,
+      );
       generation = spawned.assignment_generation;
       row = spawned.row;
     }
@@ -1450,7 +1457,13 @@ export class SessionRuns {
       if (!row) return;
       let generation = row.assignment_generation;
       if (generation == null) {
-        const spawned = await this.spawnAssignment(row.id, row.centaur_thread_key, row.harness);
+        const spawned = await this.spawnAssignment(
+          row.id,
+          row.centaur_thread_key,
+          row.harness,
+          row.repo,
+          row.branch,
+        );
         generation = spawned.assignment_generation;
         row = spawned.row;
         if (TERMINAL_STATUSES.has(row.status)) return;
@@ -2084,10 +2097,18 @@ export class SessionRuns {
     id: string,
     threadKey: string,
     harness: string,
+    repo: string | null,
+    branch: string | null,
     client: Db | DbClient = this.pool,
   ): Promise<{ row: SessionRow; assignment_generation: number }> {
     const spawnId = await this.reserveSpawnId(id, client);
-    const spawned = await this.centaur.spawn(threadKey, harness, { spawnId });
+    // Forward the session's checkout target so Centaur hydrates it from the node
+    // repo-cache (centaur_session_repos → AGENT_REPOS_JSON → entrypoint clone).
+    const repos = repo ? [{ repo, ...(branch ? { ref: branch } : {}) }] : [];
+    const spawned = await this.centaur.spawn(threadKey, harness, {
+      spawnId,
+      ...(repos.length ? { repos } : {}),
+    });
     const generation = spawned.assignment_generation ?? 1;
     const row = await this.persistSpawnedAssignment(id, generation, client);
     return { row, assignment_generation: generation };

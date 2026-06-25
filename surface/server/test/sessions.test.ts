@@ -103,7 +103,12 @@ class FakeCentaur {
       if (req.method === 'POST' && action === '') {
         const metadata = isRecord(body.metadata) ? body.metadata : {};
         const spawnId = typeof metadata.spawn_id === 'string' ? metadata.spawn_id : undefined;
-        const legacyBody = { thread_key: threadKey, harness: body.harness_type, spawn_id: spawnId };
+        const legacyBody = {
+          thread_key: threadKey,
+          harness: body.harness_type,
+          spawn_id: spawnId,
+          ...(Array.isArray(body.repos) ? { repos: body.repos } : {}),
+        };
         this.recordLegacy('POST', '/agent/spawn', legacyBody, url.searchParams);
         const replay = this.replayIdempotent(res, 'spawn', threadKey, spawnId, legacyBody);
         if (replay) return;
@@ -1033,6 +1038,63 @@ describe('Phase 2 sessions', () => {
       'session.spawned',
     ]);
     expect(events.rows[0].payload).toMatchObject({ repo: 'acme/app', branch: 'dev' });
+    await app.close();
+  });
+
+  it('forwards repo/branch to Centaur as a checkout spec on spawn', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repo: '  acme/app  ',
+        branch: ' dev ',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    // Trimmed repo/branch become the RepoSpec Centaur folds into AGENT_REPOS_JSON.
+    expect(spawn?.body).toMatchObject({ repos: [{ repo: 'acme/app', ref: 'dev' }] });
+    await app.close();
+  });
+
+  it('omits repos from the spawn when no repo is set', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
+    });
+    expect(res.statusCode).toBe(201);
+
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    expect(spawn?.body).not.toHaveProperty('repos');
     await app.close();
   });
 
