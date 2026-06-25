@@ -447,7 +447,7 @@ export function applySessionEvent(
         ...prev,
         providerAuthRequired: required,
         pendingQuestion: null,
-        status: prev.status === 'spawning' ? 'queued' : prev.status,
+        status: 'queued',
       },
     };
   }

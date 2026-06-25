@@ -1529,6 +1529,7 @@ export class SessionRuns {
     let frameCountSinceFlush = 0;
     let lastFlushAt = Date.now();
     let lastProjectAt = 0;
+    let providerAuthFailureEventId: number | null = null;
     // Frame-gap observability (addressable-entries H1): track the next id we expect
     // and record any gap/late frame. OBSERVABILITY ONLY — no behavior change.
     let expectedEventId: number | null = row.last_event_id > 0 ? row.last_event_id + 1 : null;
@@ -1545,7 +1546,10 @@ export class SessionRuns {
         pendingLastEventId = lastEventId;
         frameCountSinceFlush += 1;
         await this.mirrorFrame(id, frame);
-        await this.foldFrame(id, frame);
+        if (providerAuthFailureTextForFrame(frame)) {
+          providerAuthFailureEventId = frame.event_id;
+        }
+        await this.foldFrame(id, frame, providerAuthFailureEventId);
         if (isCompletedItemFrame(frame) && Date.now() - lastProjectAt >= 4000) {
           lastProjectAt = Date.now();
           await projectIncrementalAndEmit(this.pool, id).catch(() => {});
@@ -1567,6 +1571,15 @@ export class SessionRuns {
         await projectIncrementalAndEmit(this.pool, id)
           .catch(() => {})
           .finally(() => releaseSessionProjectionState(id));
+        if (providerAuthFailureEventId != null) {
+          const marked = await this.markProviderAuthRequired(
+            id,
+            'invalid_token',
+            undefined,
+            providerAuthFailureEventId,
+          );
+          if (marked) return;
+        }
         await this.updateStatus(id, 'failed').catch(() => {});
       }
     }
@@ -1602,7 +1615,11 @@ export class SessionRuns {
     );
   }
 
-  private async foldFrame(id: string, frame: CentaurEventFrame): Promise<void> {
+  private async foldFrame(
+    id: string,
+    frame: CentaurEventFrame,
+    providerAuthFailureEventId: number | null = null,
+  ): Promise<void> {
     if (frame.event === 'usage_observed') {
       const cost = typeof frame.data.cost_usd === 'number' ? frame.data.cost_usd : 0;
       if (cost > 0) {
@@ -1622,7 +1639,10 @@ export class SessionRuns {
     const status = normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
       const resultText = typeof frame.data.result_text === 'string' ? frame.data.result_text : null;
-      if (status === 'failed' && isProviderAuthFailureText(resultText)) {
+      const terminalAuthFailureEventId = providerAuthFailureTextForFrame(frame)
+        ? frame.event_id
+        : providerAuthFailureEventId;
+      if (status === 'failed' && terminalAuthFailureEventId != null) {
         const marked = await this.markProviderAuthRequired(
           id,
           'invalid_token',
@@ -1790,7 +1810,7 @@ export class SessionRuns {
       const updated = await client.query<SessionRow>(
         `UPDATE sessions
          SET provider_auth_required = $1,
-             status = CASE WHEN status = 'spawning' THEN 'queued' ELSE status END,
+             status = 'queued',
              current_execution_id = NULL,
              pending_question = NULL,
              last_event_id = GREATEST(last_event_id, $2)
@@ -2378,6 +2398,35 @@ function writeSessionFrame(
       event_id: frame.event_id,
     })}\n\n`,
   );
+}
+
+function providerAuthFailureTextForFrame(frame: CentaurEventFrame): string | null {
+  if (frame.event === 'execution_state') {
+    const text = frameAuthText(frame.data);
+    return isProviderAuthFailureText(text) ? text : null;
+  }
+  if (frame.event !== 'amp_raw_event') return null;
+  const raw = objectRecord(frame.data);
+  if (!isRawHarnessErrorFrame(raw)) return null;
+  const text = frameAuthText(raw);
+  return isProviderAuthFailureText(text) ? text : null;
+}
+
+function isRawHarnessErrorFrame(raw: Record<string, unknown>): boolean {
+  return (
+    raw.method === 'error' ||
+    raw.method === 'turn/failed' ||
+    raw.type === 'error' ||
+    raw.type === 'turn.failed'
+  );
+}
+
+function frameAuthText(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
 }
 
 function frameMayCreateTranscriptRecord(frame: CentaurEventFrame): boolean {

@@ -884,6 +884,83 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('classifies Codex raw 401 output before a generic terminal failure as provider auth required', async () => {
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 9,
+        data: {
+          type: 'execution.state',
+          status: 'running',
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 10,
+        data: {
+          method: 'error',
+          params: {
+            error: {
+              message: 'Reconnecting... 2/5',
+              codexErrorInfo: {
+                responseStreamDisconnected: { httpStatusCode: 401 },
+              },
+              additionalDetails:
+                'unexpected status 401 Unauthorized: Incorrect API key provided: OPENAI_A**_KEY, url: wss://api.openai.com/v1/responses',
+            },
+            willRetry: true,
+          },
+        },
+      },
+      {
+        event: 'execution_state',
+        event_id: 11,
+        data: {
+          type: 'execution.state',
+          status: 'failed',
+          error: 'terminal harness output reported failure',
+        },
+      },
+    ]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie } = await loginUser(app, 'alice-codex-raw-auth', 'Alice Codex Raw Auth');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'auth will fail', harness: 'codex' },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().session.id;
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        `SELECT status, provider_auth_required
+         FROM sessions
+         WHERE id = $1`,
+        [id],
+      );
+      expect(row.rows[0].status).toBe('queued');
+      expect(row.rows[0].provider_auth_required).toMatchObject({
+        provider: 'codex',
+        reason: 'invalid_token',
+      });
+      const completed = await pool.query(`SELECT 1 FROM events WHERE type = 'session.completed'`);
+      expect(completed.rowCount).toBe(0);
+      const authEvent = await pool.query(
+        `SELECT payload FROM events WHERE type = 'session.provider_auth_required'`,
+      );
+      expect(authEvent.rows[0].payload).toMatchObject({ sessionId: id, provider: 'codex' });
+    });
+    expect(fake.requests.some((r) => r.path.endsWith('/cancel'))).toBe(true);
+    await app.close();
+  });
+
   it('does not attach an execution when cancel wins the async session-start race', async () => {
     fake.pauseNextExecute();
     const app = await buildApp({
