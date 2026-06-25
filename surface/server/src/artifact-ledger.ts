@@ -9,6 +9,7 @@ import {
   canonicalizeSessionArtifactPath,
   canonicalizeWorkspaceArtifactPath,
 } from './artifact-path.js';
+import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
 
 export type MergeClass = 'immutable-data' | 'mergeable-doc' | 'derived-output';
 export type VersionKind = 'created' | 'modified' | 'deleted';
@@ -185,6 +186,10 @@ interface VersionRow {
 export class ArtifactLedger {
   constructor(private readonly pool: Db) {}
 
+  private rootLikePatterns(roots: readonly ArtifactScopeRoot[]): string[] {
+    return roots.map((root) => `${root.prefix}/%`);
+  }
+
   private async workspaceForSession(
     client: Db | DbClient,
     sessionId: string,
@@ -344,7 +349,7 @@ export class ArtifactLedger {
 
   /** C1 change-feed source: latest changed version per path after a watermark. */
   async changedSince(sessionId: string, sinceIso: string): Promise<ChangedArtifact[]> {
-    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const scope = await readableArtifactRootsForSession(this.pool, sessionId);
     const res = await this.pool.query<{
       path: string;
       seq: number;
@@ -360,16 +365,14 @@ export class ArtifactLedger {
            FROM artifacts a
            JOIN artifact_versions v ON v.artifact_id = a.id
           WHERE a.workspace_id = $1
-            AND (a.path LIKE 'scratch/' || $2::text || '/%'
-              OR a.path LIKE 'shared/global/%'
-              OR a.path LIKE 'shared/channels/' || $3::text || '/%')
-            AND v.created_at > $4::timestamptz
+            AND a.path LIKE ANY($2::text[])
+            AND v.created_at > $3::timestamptz
        )
        SELECT path, seq, sha, kind
          FROM changed
         WHERE rn = 1
         ORDER BY created_at ASC, path ASC`,
-      [workspaceId, sessionId, channelId, sinceIso],
+      [scope.workspaceId, this.rootLikePatterns(scope.readableRoots), sinceIso],
     );
     return res.rows;
   }
@@ -400,7 +403,7 @@ export class ArtifactLedger {
     limit = 500,
   ): Promise<ChangeFeedPage> {
     return withTx(this.pool, async (client) => {
-      const { workspaceId, channelId } = await this.workspaceForSession(client, sessionId);
+      const scope = await readableArtifactRootsForSession(client, sessionId);
       // Per-WORKSPACE exclusive try-lock, matching the writer's shared lock
       // (migration 043). Artifacts are workspace-shared, so gap-freeness must
       // stall on any in-flight writer of THIS WORKSPACE's feed, not just this
@@ -408,7 +411,7 @@ export class ArtifactLedger {
       const lock = await client.query<{ got: boolean }>(
         `SELECT pg_try_advisory_xact_lock(
                   hashtextextended('artifact_changes:' || $1::text, 0)) AS got`,
-        [workspaceId],
+        [scope.workspaceId],
       );
       if (!lock.rows[0]?.got) {
         // A same-workspace writer is mid-flight; withhold so nothing is skipped.
@@ -429,13 +432,11 @@ export class ArtifactLedger {
         `SELECT id::text AS id, xid::text AS xid, path, seq, base_seq, sha, status, kind, author, origin
           FROM artifact_changes
          WHERE workspace_id = $1
-            AND (path LIKE 'scratch/' || $2::text || '/%'
-              OR path LIKE 'shared/global/%'
-              OR path LIKE 'shared/channels/' || $3::text || '/%')
-            AND (xid, id) > ($4::xid8, $5::bigint)
+            AND path LIKE ANY($2::text[])
+            AND (xid, id) > ($3::xid8, $4::bigint)
           ORDER BY xid, id
-          LIMIT $6`,
-        [workspaceId, sessionId, channelId, cursor.xid, cursor.id, limit],
+          LIMIT $5`,
+        [scope.workspaceId, this.rootLikePatterns(scope.readableRoots), cursor.xid, cursor.id, limit],
       );
       const rows: ChangeRow[] = res.rows.map((r) => ({
         id: r.id,
@@ -467,6 +468,7 @@ export class ArtifactLedger {
   async serveResolution(
     sessionId: string,
     path: string,
+    options: { readableChannelIds?: readonly string[] } = {},
   ): Promise<{
     servedSeq: number | null;
     servedKind: VersionKind | null;
@@ -475,7 +477,11 @@ export class ArtifactLedger {
     latestSeq: number | null;
   } | null> {
     const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
-    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
+    const canonicalPath = canonicalizeSessionArtifactPath(path, {
+      sessionId,
+      channelId,
+      readableChannelIds: options.readableChannelIds,
+    });
     const art = await this.pool.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2`,
       [workspaceId, canonicalPath],
@@ -516,9 +522,14 @@ export class ArtifactLedger {
   async getConflict(
     sessionId: string,
     path: string,
+    options: { readableChannelIds?: readonly string[] } = {},
   ): Promise<{ artifactId: string; conflictSeq: number; conflict: unknown; markerSha: string | null } | null> {
     const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
-    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
+    const canonicalPath = canonicalizeSessionArtifactPath(path, {
+      sessionId,
+      channelId,
+      readableChannelIds: options.readableChannelIds,
+    });
     const res = await this.pool.query<{
       artifact_id: string;
       seq: number;
@@ -552,9 +563,17 @@ export class ArtifactLedger {
   }
 
   /** Resolve `(session, path)` to an artifact id (no create). */
-  async artifactIdByPath(sessionId: string, path: string): Promise<string | null> {
+  async artifactIdByPath(
+    sessionId: string,
+    path: string,
+    options: { readableChannelIds?: readonly string[] } = {},
+  ): Promise<string | null> {
     const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
-    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
+    const canonicalPath = canonicalizeSessionArtifactPath(path, {
+      sessionId,
+      channelId,
+      readableChannelIds: options.readableChannelIds,
+    });
     const res = await this.pool.query<{ id: string; path: string }>(
       `SELECT id, path FROM artifacts WHERE workspace_id = $1 AND path = $2`,
       [workspaceId, canonicalPath],
@@ -562,11 +581,11 @@ export class ArtifactLedger {
     return res.rows[0]?.id ?? null;
   }
 
-  /** Resolve an artifact id back to its (workspace, session, channel, path) — for the
+  /** Resolve an artifact id back to its workspace/provenance/path — for the
    * by-id resolve endpoint. */
   async artifactById(
     artifactId: string,
-  ): Promise<{ workspaceId: string; sessionId: string; channelId: string; path: string } | null> {
+  ): Promise<{ workspaceId: string; sessionId: string | null; channelId: string | null; path: string } | null> {
     const res = await this.pool.query<{
       workspace_id: string;
       session_id: string;
@@ -578,7 +597,12 @@ export class ArtifactLedger {
     );
     const row = res.rows[0];
     if (!row) return null;
-    return { workspaceId: row.workspace_id, sessionId: row.session_id, channelId: row.channel_id, path: row.path };
+    return {
+      workspaceId: row.workspace_id,
+      sessionId: row.session_id,
+      channelId: row.channel_id,
+      path: row.path,
+    };
   }
 
   /** Scope query (A4): the artifact paths a session subscribes, with their
@@ -586,18 +610,16 @@ export class ArtifactLedger {
   async sessionScope(
     sessionId: string,
   ): Promise<Array<{ path: string; latestSeq: number; kind: VersionKind; sha: string | null }>> {
-    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const scope = await readableArtifactRootsForSession(this.pool, sessionId);
     const res = await this.pool.query<{ path: string; seq: number; kind: VersionKind; sha: string | null }>(
       `SELECT a.path, p.seq, v.kind, v.blob_sha AS sha
          FROM artifacts a
          JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
         WHERE a.workspace_id = $1
-          AND (a.path LIKE 'scratch/' || $2::text || '/%'
-            OR a.path LIKE 'shared/global/%'
-            OR a.path LIKE 'shared/channels/' || $3::text || '/%')
+          AND a.path LIKE ANY($2::text[])
         ORDER BY a.path ASC`,
-      [workspaceId, sessionId, channelId],
+      [scope.workspaceId, this.rootLikePatterns(scope.readableRoots)],
     );
     return res.rows.map((r) => ({ path: r.path, latestSeq: r.seq, kind: r.kind, sha: r.sha }));
   }
@@ -884,9 +906,14 @@ export class ArtifactLedger {
     sessionId: string,
     path: string,
     ref: VersionRef,
+    options: { readableChannelIds?: readonly string[] } = {},
   ): Promise<ResolvedVersion | null> {
     const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
-    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
+    const canonicalPath = canonicalizeSessionArtifactPath(path, {
+      sessionId,
+      channelId,
+      readableChannelIds: options.readableChannelIds,
+    });
     const art = await this.pool.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2`,
       [workspaceId, canonicalPath],

@@ -84,9 +84,12 @@ import {
   type CommitVersionGroupFile,
 } from './artifact-ledger.js';
 import {
+  artifactPathInRoots,
   classifyScope,
+  readableArtifactRootsForSession,
   userCanReadSessionArtifactPath,
   type ArtifactScope,
+  type ArtifactScopeRoot,
 } from './artifact-scope.js';
 import { loadConflictDetail } from './artifact-conflict.js';
 import {
@@ -176,7 +179,7 @@ function badArtifactPath(reply: FastifyReply, err: unknown) {
 function canonicalizeRouteArtifactPath(
   reply: FastifyReply,
   input: string,
-  ctx: { sessionId: string; channelId: string },
+  ctx: { sessionId: string; channelId: string; readableChannelIds?: readonly string[] },
 ): string | null {
   try {
     return canonicalizeSessionArtifactPath(input, ctx);
@@ -2794,6 +2797,18 @@ function rawSession(req: FastifyRequest): string | undefined {
     return row ? { id: row.id, channelId: row.channel_id } : null;
   }
 
+  async function sessionArtifactAccess(sessionId: string, userId?: string | null) {
+    return readableArtifactRootsForSession(pool, sessionId, userId);
+  }
+
+  function serializeArtifactRoots(roots: readonly ArtifactScopeRoot[]) {
+    return roots.map((root) => ({
+      prefix: root.prefix,
+      scope: root.kind,
+      writable: root.writable,
+    }));
+  }
+
   // === Phase 3 unified Files routes ===
   {
     const { createGitSource } = await import('./git-source.js');
@@ -2927,8 +2942,8 @@ function rawSession(req: FastifyRequest): string | undefined {
           return reply.code(400).send({ error: 'bad_query', message: 'dir must be a safe relative path' });
         }
 
-        const channelId = await sessionChannelId(id);
-        if (!channelId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+        const access = await sessionArtifactAccess(id, user.id);
+        const channelId = access.channelId;
         const ledger = new ArtifactLedger(pool);
         const rows = ledgerRowsForDir(await ledger.sessionScope(id), dir, { sessionId: id, channelId });
         const gitRelDir = gitRelDirForApiDir(dir);
@@ -2944,7 +2959,12 @@ function rawSession(req: FastifyRequest): string | undefined {
           }
         }
         rows.sort((a, b) => a.path.localeCompare(b.path) || a.backing.localeCompare(b.backing));
-        return reply.send({ activePrefix: `shared/channels/${channelId}`, rows });
+        return reply.send({
+          activePrefix: access.activePrefix,
+          readableRoots: serializeArtifactRoots(access.readableRoots),
+          writableRoots: serializeArtifactRoots(access.writableRoots),
+          rows,
+        });
       });
 
       filesScope.get('/api/sessions/:id/files/history', async (req, reply) => {
@@ -2958,16 +2978,18 @@ function rawSession(req: FastifyRequest): string | undefined {
 
         const resolved = resolveBacking(path, { gitPrefix });
         // === ACL scope enforcement (#4) ===
-        const channelId = resolved.backing === 'ledger' ? await sessionChannelId(id) : null;
-        if (resolved.backing === 'ledger' && !channelId) {
-          return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-        }
+        const access = resolved.backing === 'ledger' ? await sessionArtifactAccess(id, user.id) : null;
+        const channelId = access?.channelId ?? null;
         const ledgerPath = resolved.backing === 'ledger'
-          ? canonicalizeRouteArtifactPath(reply, resolved.relPath, { sessionId: id, channelId: channelId! })
+          ? canonicalizeRouteArtifactPath(reply, resolved.relPath, {
+              sessionId: id,
+              channelId: channelId!,
+              readableChannelIds: access!.readableChannelIds,
+            })
           : resolved.relPath;
         if (!ledgerPath) return;
         const scope = classifyScope(ledgerPath);
-        if (resolved.backing === 'ledger' && !userCanReadSessionArtifactPath(ledgerPath, id)) {
+        if (resolved.backing === 'ledger' && !artifactPathInRoots(ledgerPath, access!.readableRoots)) {
           return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
         }
         if (resolved.backing === 'git') {
@@ -3008,12 +3030,16 @@ function rawSession(req: FastifyRequest): string | undefined {
         // === ACL scope enforcement (#4) ===
         let ledgerPath = resolved.relPath;
         if (resolved.backing === 'ledger') {
-          const channelId = await sessionChannelId(id);
-          if (!channelId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-          const canonicalPath = canonicalizeRouteArtifactPath(reply, resolved.relPath, { sessionId: id, channelId });
+          const access = await sessionArtifactAccess(id, user.id);
+          const channelId = access.channelId;
+          const canonicalPath = canonicalizeRouteArtifactPath(reply, resolved.relPath, {
+            sessionId: id,
+            channelId,
+            readableChannelIds: access.readableChannelIds,
+          });
           if (!canonicalPath) return;
           ledgerPath = canonicalPath;
-          if (!userCanReadSessionArtifactPath(ledgerPath, id)) {
+          if (!artifactPathInRoots(ledgerPath, access.readableRoots)) {
             return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
           }
         }
@@ -3062,12 +3088,17 @@ function rawSession(req: FastifyRequest): string | undefined {
         if (baseSeq === false) {
           return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
         }
-        const channelId = await sessionChannelId(id);
-        if (!channelId) {
-          return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-        }
-        const canonicalPath = canonicalizeRouteArtifactPath(reply, resolved.relPath, { sessionId: id, channelId });
+        const access = await sessionArtifactAccess(id, user.id);
+        const channelId = access.channelId;
+        const canonicalPath = canonicalizeRouteArtifactPath(reply, resolved.relPath, {
+          sessionId: id,
+          channelId,
+          readableChannelIds: access.readableChannelIds,
+        });
         if (!canonicalPath) return;
+        if (!artifactPathInRoots(canonicalPath, access.writableRoots)) {
+          return reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
+        }
         const body = bodyBuffer(req.body);
         const result = await writeBackArtifact({
           pool,
@@ -3102,13 +3133,17 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (typeof rawPath !== 'string' || rawPath.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
     }
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-    const path = canonicalizeRouteArtifactPath(reply, rawPath, { sessionId: id, channelId });
+    const access = await sessionArtifactAccess(id, user.id);
+    const channelId = access.channelId;
+    const path = canonicalizeRouteArtifactPath(reply, rawPath, {
+      sessionId: id,
+      channelId,
+      readableChannelIds: access.readableChannelIds,
+    });
     if (!path) return;
     // === ACL scope enforcement (#4) ===
     const scope = classifyScope(path);
-    if (!userCanReadSessionArtifactPath(path, id)) {
+    if (!artifactPathInRoots(path, access.readableRoots)) {
       return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
     }
     const displayPath = displaySessionArtifactPath(path, { sessionId: id, channelId });
@@ -3120,7 +3155,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     let ref: { seq: number } | { pointer: string };
     if (at === 'latest') {
       const ledger = new ArtifactLedger(pool);
-      const res = await ledger.serveResolution(id, path);
+      const res = await ledger.serveResolution(id, path, { readableChannelIds: access.readableChannelIds });
       if (!res || res.servedSeq == null) {
         return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
       }
@@ -3131,7 +3166,9 @@ function rawSession(req: FastifyRequest): string | undefined {
     } else {
       ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
     }
-    const plan = await sessionRuns.getLedgerServePlan(id, path, ref);
+    const plan = await sessionRuns.getLedgerServePlan(id, path, ref, {
+      readableChannelIds: access.readableChannelIds,
+    });
     // === ACL scope enforcement (#4) ===
     reply.header('X-Artifact-Scope', scope);
     reply.header('X-Artifact-Canonical-Path', path);
@@ -3168,8 +3205,8 @@ function rawSession(req: FastifyRequest): string | undefined {
 
     const ledger = new ArtifactLedger(pool);
     const page = await ledger.changesSince(id, cursor, limit);
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    const access = await sessionArtifactAccess(id, user.id);
+    const channelId = access.channelId;
     // === ACL scope enforcement (#4) ===
     const rows = page.rows
       .map((row) => ({
@@ -3178,9 +3215,11 @@ function rawSession(req: FastifyRequest): string | undefined {
         displayPath: displaySessionArtifactPath(row.path, { sessionId: id, channelId }),
         scope: classifyScope(row.path),
       }))
-      .filter((row) => userCanReadSessionArtifactPath(row.path, id));
+      .filter((row) => artifactPathInRoots(row.path, access.readableRoots));
     return reply.send({
-      activePrefix: `shared/channels/${channelId}`,
+      activePrefix: access.activePrefix,
+      readableRoots: serializeArtifactRoots(access.readableRoots),
+      writableRoots: serializeArtifactRoots(access.writableRoots),
       rows,
       next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
     });
@@ -3195,15 +3234,21 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (typeof path !== 'string' || path.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
     }
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-    const canonicalPath = canonicalizeRouteArtifactPath(reply, path, { sessionId: id, channelId });
+    const access = await sessionArtifactAccess(id, user.id);
+    const channelId = access.channelId;
+    const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
+      sessionId: id,
+      channelId,
+      readableChannelIds: access.readableChannelIds,
+    });
     if (!canonicalPath) return;
     // === ACL scope enforcement (#4) ===
-    if (!userCanReadSessionArtifactPath(canonicalPath, id)) {
+    if (!artifactPathInRoots(canonicalPath, access.readableRoots)) {
       return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
     }
-    const detail = await loadConflictDetail(pool, { getObjectBytes }, id, canonicalPath);
+    const detail = await loadConflictDetail(pool, { getObjectBytes }, id, canonicalPath, {
+      readableChannelIds: access.readableChannelIds,
+    });
     if (!detail) {
       return reply.code(404).send({ error: 'no_conflict', message: 'no unresolved conflict at path' });
     }
@@ -3226,13 +3271,17 @@ function rawSession(req: FastifyRequest): string | undefined {
     resolveScope.post('/api/sessions/:id/artifacts/:artifactId/resolve', async (req, reply) => {
       const user = await requireSessionAccess(req, reply);
       if (!user) return;
-      const { artifactId } = req.params as { artifactId: string };
+      const { id, artifactId } = req.params as { id: string; artifactId: string };
       const ledger = new ArtifactLedger(pool);
       const art = await ledger.artifactById(artifactId);
       if (!art) {
         return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
       }
-      const conflict = await ledger.getConflict(art.sessionId, art.path);
+      const access = await sessionArtifactAccess(id, user.id);
+      if (art.workspaceId !== access.workspaceId || !artifactPathInRoots(art.path, access.writableRoots)) {
+        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      }
+      const conflict = await ledger.getConflict(id, art.path, { readableChannelIds: access.readableChannelIds });
       if (!conflict) {
         return reply.code(409).send({ error: 'no_conflict', message: 'artifact has no unresolved conflict' });
       }
@@ -3240,8 +3289,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       const result = stayDeleted
         ? await writeBackDelete({
             pool,
-            channelId: art.channelId,
-            sessionId: art.sessionId,
+            channelId: access.channelId,
+            sessionId: id,
             path: art.path,
             author: `human:${user.id}`,
             baseSeq: conflict.conflictSeq,
@@ -3249,8 +3298,8 @@ function rawSession(req: FastifyRequest): string | undefined {
         : await writeBackArtifact({
             pool,
             storage: { uploadObject, getObjectBytes, headObject },
-            channelId: art.channelId,
-            sessionId: art.sessionId,
+            channelId: access.channelId,
+            sessionId: id,
             path: art.path,
             bytes: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
             mime: normalizeMime(firstHeader(req.headers['content-type'])),
@@ -3270,8 +3319,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    const access = await sessionArtifactAccess(id, user.id);
+    const channelId = access.channelId;
     const ledger = new ArtifactLedger(pool);
     const paths = await ledger.sessionScope(id);
     // === ACL scope enforcement (#4) ===
@@ -3282,11 +3331,13 @@ function rawSession(req: FastifyRequest): string | undefined {
         displayPath: displaySessionArtifactPath(path.path, { sessionId: id, channelId }),
         scope: classifyScope(path.path),
       }))
-      .filter((path) => userCanReadSessionArtifactPath(path.path, id));
+      .filter((path) => artifactPathInRoots(path.path, access.readableRoots));
     return reply.send({
       sessionId: id,
       scope: 'session',
-      activePrefix: `shared/channels/${channelId}`,
+      activePrefix: access.activePrefix,
+      readableRoots: serializeArtifactRoots(access.readableRoots),
+      writableRoots: serializeArtifactRoots(access.writableRoots),
       paths: scopedPaths,
     });
   });
@@ -3670,10 +3721,20 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     const session = await resolveInternalSessionRef(id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const path = canonicalizeRouteArtifactPath(reply, q.path, { sessionId: session.id, channelId: session.channelId });
+    const access = await sessionArtifactAccess(session.id);
+    const path = canonicalizeRouteArtifactPath(reply, q.path, {
+      sessionId: session.id,
+      channelId: session.channelId,
+      readableChannelIds: access.readableChannelIds,
+    });
     if (!path) return;
+    if (!artifactPathInRoots(path, access.readableRoots)) {
+      return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
+    }
     const ref = typeof q.seq === 'string' && /^\d+$/.test(q.seq) ? { seq: Number(q.seq) } : { pointer: 'latest' };
-    const v = await new ArtifactLedger(pool).resolveVersion(session.id, path, ref);
+    const v = await new ArtifactLedger(pool).resolveVersion(session.id, path, ref, {
+      readableChannelIds: access.readableChannelIds,
+    });
     if (!v || v.kind === 'deleted') {
       return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
     }
@@ -3697,11 +3758,14 @@ function rawSession(req: FastifyRequest): string | undefined {
     const { id } = req.params as { id: string };
     const session = await resolveInternalSessionRef(id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const access = await sessionArtifactAccess(session.id);
     const paths = await new ArtifactLedger(pool).sessionScope(session.id);
     return reply.send({
       sessionId: session.id,
       scope: 'session',
-      activePrefix: `shared/channels/${session.channelId}`,
+      activePrefix: access.activePrefix,
+      readableRoots: serializeArtifactRoots(access.readableRoots),
+      writableRoots: serializeArtifactRoots(access.writableRoots),
       paths,
     });
   });
@@ -3722,11 +3786,16 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       const session = await resolveInternalSessionRef(id);
       if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const access = await sessionArtifactAccess(session.id);
       const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
         sessionId: session.id,
         channelId: session.channelId,
+        readableChannelIds: access.readableChannelIds,
       });
       if (!canonicalPath) return;
+      if (!artifactPathInRoots(canonicalPath, access.writableRoots)) {
+        return reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
+      }
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
@@ -3764,11 +3833,16 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       const session = await resolveInternalSessionRef(id);
       if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const access = await sessionArtifactAccess(session.id);
       const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
         sessionId: session.id,
         channelId: session.channelId,
+        readableChannelIds: access.readableChannelIds,
       });
       if (!canonicalPath) return;
+      if (!artifactPathInRoots(canonicalPath, access.writableRoots)) {
+        return reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
+      }
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
@@ -3998,6 +4072,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     const session = await resolveInternalSessionRef(id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const access = await sessionArtifactAccess(session.id);
 
     const files: CommitVersionGroupFile[] = [];
     const seenPaths = new Set<string>();
@@ -4022,10 +4097,14 @@ function rawSession(req: FastifyRequest): string | undefined {
         path = canonicalizeSessionArtifactPath(file.path, {
           sessionId: session.id,
           channelId: session.channelId,
+          readableChannelIds: access.readableChannelIds,
         });
       } catch (err) {
         if (err instanceof InvalidArtifactPathError) return badManifest(err.message);
         throw err;
+      }
+      if (!artifactPathInRoots(path, access.writableRoots)) {
+        return badManifest('artifact path is not writable');
       }
       if (seenPaths.has(path)) return badManifest('duplicate path');
       seenPaths.add(path);

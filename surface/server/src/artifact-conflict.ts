@@ -49,9 +49,10 @@ export async function loadConflictDetail(
   storage: ConflictStorage,
   sessionId: string,
   path: string,
+  options: { readableChannelIds?: readonly string[] } = {},
 ): Promise<ArtifactConflictOut | null> {
   const ledger = new ArtifactLedger(pool);
-  const conflict = await ledger.getConflict(sessionId, path);
+  const conflict = await ledger.getConflict(sessionId, path, options);
   if (!conflict) return null;
   const payload = (conflict.conflict ?? {}) as ConflictPayload;
 
@@ -68,7 +69,7 @@ export async function loadConflictDetail(
   const baseSeq = payload.base_seq ?? null;
   let baseSha: string | null = null;
   if (baseSeq != null) {
-    const baseVer = await ledger.resolveVersion(sessionId, path, { seq: baseSeq });
+    const baseVer = await ledger.resolveVersion(sessionId, path, { seq: baseSeq }, options);
     baseSha = baseVer?.blobSha ?? null;
   }
   const markers = await blobText(conflict.markerSha);

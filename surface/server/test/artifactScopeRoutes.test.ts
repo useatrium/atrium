@@ -220,6 +220,39 @@ describe('artifact scope route enforcement', () => {
     expect(body.rows.find((row) => row.path === 'scratch')?.scope).toBe('private');
   });
 
+  it('lists and serves artifacts from readable non-active public channels', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    const otherPath = `shared/channels/${fx.otherChannelId}/other.md`;
+    await commit(sid, otherPath, 'other channel body');
+
+    const listing = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/files?dir=${encodeURIComponent('shared/channels')}`,
+      headers: { cookie },
+    });
+
+    expect(listing.statusCode).toBe(200);
+    const listBody = listing.json() as {
+      activePrefix: string;
+      readableRoots: Array<{ prefix: string; writable: boolean }>;
+      rows: Array<{ path: string; canonicalPath?: string; displayPath?: string; scope?: string }>;
+    };
+    expect(listBody.activePrefix).toBe(`shared/channels/${fx.channelId}`);
+    expect(listBody.readableRoots.map((root) => root.prefix)).toContain(`shared/channels/${fx.otherChannelId}`);
+    expect(listBody.rows.map((row) => row.path)).toContain(`shared/channels/${fx.otherChannelId}`);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/by-path?path=${encodeURIComponent(otherPath)}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers['x-artifact-canonical-path']).toBe(otherPath);
+    expect(res.headers['x-artifact-display-path']).toBe(otherPath);
+  });
+
   it('keeps the internal raw path able to read a scratch artifact', async () => {
     await ensureBucket();
     const sid = await session();

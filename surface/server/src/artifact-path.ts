@@ -8,10 +8,12 @@ export class InvalidArtifactPathError extends Error {
 export interface SessionArtifactPathContext {
   sessionId: string;
   channelId: string;
+  readableChannelIds?: readonly string[];
 }
 
 export interface WorkspaceArtifactPathContext {
   channelId: string;
+  readableChannelIds?: readonly string[];
 }
 
 const EXCLUDED_ROOTS = new Set(['repo', 'repos', 'context']);
@@ -113,7 +115,7 @@ function canonicalSharedPath(path: string, ctx: WorkspaceArtifactPathContext): s
   const id = parts[2];
   if (!id) throw new InvalidArtifactPathError(`shared/${root} path must include an id`);
   if (parts.length < 4) throw new InvalidArtifactPathError(`shared/${root}/${id} path must include a file path`);
-  if (id !== ctx.channelId) {
+  if (id !== ctx.channelId && !ctx.readableChannelIds?.includes(id)) {
     throw new InvalidArtifactPathError('shared/channels paths must target the active channel');
   }
   return path;

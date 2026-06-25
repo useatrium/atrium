@@ -558,8 +558,13 @@ export class SessionRuns {
     };
   }
 
-  async getLedgerServePlan(sessionId: string, path: string, ref: VersionRef): Promise<ArtifactServePlan> {
-    const v = await this.artifactLedger.resolveVersion(sessionId, path, ref);
+  async getLedgerServePlan(
+    sessionId: string,
+    path: string,
+    ref: VersionRef,
+    options: { readableChannelIds?: readonly string[] } = {},
+  ): Promise<ArtifactServePlan> {
+    const v = await this.artifactLedger.resolveVersion(sessionId, path, ref, options);
     if (!v) {
       throw new DomainError(404, 'artifact_not_found', 'artifact not found');
     }

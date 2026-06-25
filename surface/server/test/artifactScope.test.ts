@@ -65,6 +65,13 @@ describe('artifact path canonicalization', () => {
     expect(canonicalizeSessionArtifactPath(canonicalizeSessionArtifactPath(shared, ctx), ctx)).toBe(shared);
   });
 
+  it('allows explicit readable channel paths when supplied by the resolver', () => {
+    const otherChannelId = '33333333-3333-4333-8333-333333333333';
+    const path = `shared/channels/${otherChannelId}/report.md`;
+    expect(canonicalizeSessionArtifactPath(path, { ...ctx, readableChannelIds: [ctx.channelId, otherChannelId] }))
+      .toBe(path);
+  });
+
   it('maps scratch aliases into the current session scratch', () => {
     expect(canonicalizeSessionArtifactPath('scratch/draft.md', ctx)).toBe(
       `scratch/${ctx.sessionId}/draft.md`,
