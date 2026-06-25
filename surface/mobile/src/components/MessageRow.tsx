@@ -452,53 +452,101 @@ export const MessageRow = memo(function MessageRow({
     </>
   );
 
+  const avatar = (
+    <View style={{ width: 36, alignItems: 'center' }}>
+      {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} size={36} />}
+    </View>
+  );
+
+  const header = !grouped ? (
+    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+      <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
+        {m.author.displayName}
+      </Text>
+      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
+        {formatTime(m.createdAt)}
+      </Text>
+    </View>
+  ) : null;
+
+  const editedNote =
+    m.pendingEdit && !tombstone ? (
+      <Text style={{ color: colors.warning, fontSize: font.xs }}>(saving edit)</Text>
+    ) : m.edited && !tombstone ? (
+      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>(edited)</Text>
+    ) : null;
+
+  const containerStyle = {
+    flexDirection: 'row' as const,
+    paddingHorizontal: space.lg,
+    paddingTop: grouped ? 1 : space.sm,
+    paddingBottom: 1,
+    gap: space.md,
+    opacity: pending ? 0.55 : 1,
+  };
+
+  // Session / tombstone rows have no inline controls, so keep them as a single
+  // accessible row element (the card / tombstone is the whole content).
+  if (tombstone || m.sessionId != null || m.sessionEventType != null) {
+    return (
+      <Pressable
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={rowLabel}
+        accessibilityActions={accessibilityActions}
+        onAccessibilityAction={onAccessibilityAction}
+        onLongPress={() => {
+          if (tombstone || m.sessionId != null) return;
+          lightImpactHaptic();
+          onLongPress(m);
+        }}
+        delayLongPress={250}
+        style={({ pressed }) => ({
+          ...containerStyle,
+          backgroundColor: highlighted ? colors.accentBg : pressed ? colors.borderSoft : 'transparent',
+        })}
+      >
+        {avatar}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {header}
+          {body}
+          {editedNote}
+        </View>
+      </Pressable>
+    );
+  }
+
+  // Regular message: the row container is NOT an accessibility element, so each
+  // control below is an independent, individually-reachable button (VoiceOver +
+  // UI test drivers). The message body keeps the label and the full action menu
+  // (the long-press sheet: react / reply / copy / edit / delete) for VoiceOver.
   return (
-    <Pressable
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel={rowLabel}
-      accessibilityActions={accessibilityActions}
-      onAccessibilityAction={onAccessibilityAction}
-      onLongPress={() => {
-        if (tombstone || m.sessionId != null) return;
-        lightImpactHaptic();
-        onLongPress(m);
+    <View
+      style={{
+        ...containerStyle,
+        backgroundColor: highlighted ? colors.accentBg : 'transparent',
       }}
-      delayLongPress={250}
-      style={({ pressed }) => ({
-        flexDirection: 'row',
-        paddingHorizontal: space.lg,
-        paddingTop: grouped ? 1 : space.sm,
-        paddingBottom: 1,
-        gap: space.md,
-        opacity: pending ? 0.55 : 1,
-        backgroundColor: highlighted
-          ? colors.accentBg
-          : pressed
-            ? colors.borderSoft
-            : 'transparent',
-      })}
     >
-      <View style={{ width: 36, alignItems: 'center' }}>
-        {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} size={36} />}
-      </View>
+      {avatar}
       <View style={{ flex: 1, minWidth: 0 }}>
-        {!grouped && (
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-            <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-              {m.author.displayName}
-            </Text>
-            <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
-              {formatTime(m.createdAt)}
-            </Text>
-          </View>
-        )}
-        {body}
-        {m.pendingEdit && !tombstone ? (
-          <Text style={{ color: colors.warning, fontSize: font.xs }}>(saving edit)</Text>
-        ) : m.edited && !tombstone ? (
-          <Text style={{ color: colors.textFaint, fontSize: font.xs }}>(edited)</Text>
-        ) : null}
+        <Pressable
+          accessibilityRole="text"
+          accessibilityLabel={rowLabel}
+          accessibilityActions={accessibilityActions}
+          onAccessibilityAction={onAccessibilityAction}
+          onLongPress={() => {
+            lightImpactHaptic();
+            onLongPress(m);
+          }}
+          delayLongPress={250}
+          style={({ pressed }) => ({
+            backgroundColor: pressed ? colors.borderSoft : 'transparent',
+          })}
+        >
+          {header}
+          {body}
+          {editedNote}
+        </Pressable>
         {failed && (
           <Pressable
             accessibilityRole="button"
@@ -536,9 +584,9 @@ export const MessageRow = memo(function MessageRow({
           </Pressable>
         )}
         {canComment && (
-          // Explicit, tappable comment affordance — long-press still opens the full
-          // action sheet, but this makes commenting discoverable (and reliably
-          // testable) without depending on the long-press gesture.
+          // Explicit, tappable comment affordance — a first-class a11y button now that
+          // the row no longer swallows its children. Long-press still opens the full
+          // action sheet for power users.
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Comment"
@@ -558,6 +606,6 @@ export const MessageRow = memo(function MessageRow({
           </Pressable>
         )}
       </View>
-    </Pressable>
+    </View>
   );
 });
