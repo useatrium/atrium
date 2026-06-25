@@ -258,8 +258,9 @@ non-blocker — corrected (§1.5):** restore is orthogonal, but per-turn transcr
   deliverable → only the outside file is captured; the in-repo edit is in the upper but NOT in the ledger. (0e end-to-end.)
 - [ ] **`.git`/junk/secret filters, real spawn:** a `git commit` in the overlay → no `.git/*` artifacts; a `notes.txt`
   with an embedded key → skipped (secret-scan); a `*.o` / `node_modules` write → skipped. (0a/0b/0d end-to-end.)
-- [ ] **Scratch is NOT captured (0c):** agent writes `/tmp/x`, `/var/tmp/y`, `~/outputs/z` → none land in the
-  ledger (intentional); a write in the working dir DOES. (Single-root parity — not `/tmp` parity.)
+- [ ] **OS scratch is NOT captured (0c):** agent writes `/tmp/x` or `/var/tmp/y` → none land in the
+  ledger (intentional); a write in the working dir DOES. In the 2026-06-25 shared-workspace model,
+  `~/scratch` is different: it is captured as `scratch/<session-id>/...` with a session-scoped ACL.
 - [ ] **Parity bake (Phase 2):** poll + daemon run together; diff captured sets (path, sha256, count); parity
   modulo the intended dir-coverage/junk deltas.
 - [ ] **Rollback:** flip back to the poll (daemon off / `ARTIFACT_CAPTURE_ENABLED=1`) → capture continues, no data
@@ -276,8 +277,8 @@ analysis below is kept for the record. **Both models keep `/tmp` as ordinary unc
   *separate* from `~`. `~` (`.claude`/`.codex`/`state`) stays **structurally** outside the captured zone (the
   `#72 P4` typed-root boundary). The agent has a distinct "workspace" concept. **Auth safety = structural.**
 - **Model B — flat-`~` (the "live in your home" UX).** Working dir = `~` itself; the agent lives in its home
-  like a normal Unix user (home = kept/captured, `/tmp` = scratch). No separate "workspace" concept; aligns with
-  the planned `~/shared`,`~/repos`,`~/context` rename. **Cost:** the auth carve-out (`.claude`/`.codex`/`state`)
+  like a normal Unix user (home = kept/captured, `/tmp` = OS scratch). No separate "workspace" concept; aligns with
+  the planned `~/shared`,`~/scratch`,`~/repos`,`~/context` rename. **Cost:** the auth carve-out (`.claude`/`.codex`/`state`)
   becomes a **deny-list** boundary (`classify_entry`, already implemented) instead of a structural one — a
   posture downgrade vs `#72 P4` (a deny-list bug ⇒ auth leaks as an artifact).
 

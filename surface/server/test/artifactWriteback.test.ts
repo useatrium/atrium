@@ -48,10 +48,14 @@ function write(path: string, text: string, baseSeq?: number) {
   });
 }
 
+function activePath(path: string): string {
+  return `shared/channels/${fx.channelId}/${path}`;
+}
+
 async function markMergeable(path: string): Promise<void> {
   await pool.query(
     `UPDATE artifacts SET merge_class = 'mergeable-doc' WHERE workspace_id = $1 AND path = $2`,
-    [fx.workspaceId, path],
+    [fx.workspaceId, activePath(path)],
   );
 }
 
@@ -118,10 +122,10 @@ describe('writeBackArtifact', () => {
 
     const conflict = await pool.query<{ status: string; conflict: Record<string, unknown> }>(
       `SELECT status, conflict
-         FROM artifact_versions v
-         JOIN artifacts a ON a.id = v.artifact_id
-        WHERE a.workspace_id = $1 AND a.path = $2 AND v.seq = 3`,
-      [fx.workspaceId, 'report.md'],
+        FROM artifact_versions v
+        JOIN artifacts a ON a.id = v.artifact_id
+       WHERE a.workspace_id = $1 AND a.path = $2 AND v.seq = 3`,
+      [fx.workspaceId, activePath('report.md')],
     );
     expect(conflict.rows[0]!.status).toBe('conflict');
     expect(conflict.rows[0]!.conflict).toMatchObject({

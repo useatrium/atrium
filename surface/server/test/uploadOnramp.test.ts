@@ -122,6 +122,10 @@ async function fileS3Key(fileId: string): Promise<string> {
   return res.rows[0]!.s3_key;
 }
 
+function uploadArtifactPath(filename: string): string {
+  return `shared/channels/${fx.channelId}/uploads/${filename}`;
+}
+
 describe('human upload artifact on-ramp', () => {
   it('lands a hashed upload attachment as a shared workspace artifact', async () => {
     const { cookie, userId } = await login();
@@ -134,7 +138,7 @@ describe('human upload artifact on-ramp', () => {
     });
     await sendAttachment(cookie, fileId);
 
-    const path = 'shared/general/uploads/plan.txt';
+    const path = uploadArtifactPath('plan.txt');
     const artifact = await latestArtifact(path);
     expect(artifact).toMatchObject({
       seq: 1,
@@ -163,7 +167,7 @@ describe('human upload artifact on-ramp', () => {
     await sendAttachment(cookie, fileId);
     await sendAttachment(cookie, fileId);
 
-    const path = 'shared/general/uploads/again.md';
+    const path = uploadArtifactPath('again.md');
     expect(await versionCount(path)).toBe(1);
     expect(await latestArtifact(path)).toMatchObject({ seq: 1, blob_sha: contentHash });
   });
@@ -188,11 +192,11 @@ describe('human upload artifact on-ramp', () => {
     await sendAttachment(cookie, firstId);
     await sendAttachment(cookie, secondId);
 
-    expect(await latestArtifact('shared/general/uploads/diagram.png')).toMatchObject({
+    expect(await latestArtifact(uploadArtifactPath('diagram.png'))).toMatchObject({
       seq: 1,
       blob_sha: firstHash,
     });
-    expect(await latestArtifact('shared/general/uploads/diagram (2).png')).toMatchObject({
+    expect(await latestArtifact(uploadArtifactPath('diagram (2).png'))).toMatchObject({
       seq: 1,
       blob_sha: secondHash,
     });
@@ -208,7 +212,7 @@ describe('human upload artifact on-ramp', () => {
 
     await sendAttachment(cookie, fileId);
 
-    expect(await latestArtifact('shared/general/uploads/unhashed.txt')).toBeNull();
+    expect(await latestArtifact(uploadArtifactPath('unhashed.txt'))).toBeNull();
     const artifacts = await pool.query<{ count: string }>('SELECT count(*)::int FROM artifacts');
     expect(Number(artifacts.rows[0]!.count)).toBe(0);
   });

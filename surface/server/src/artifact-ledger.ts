@@ -9,6 +9,10 @@
 
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import {
+  canonicalizeSessionArtifactPath,
+  canonicalizeWorkspaceArtifactPath,
+} from './artifact-path.js';
 
 export type MergeClass = 'immutable-data' | 'mergeable-doc' | 'derived-output';
 export type VersionKind = 'created' | 'modified' | 'deleted';
@@ -242,17 +246,18 @@ export class ArtifactLedger {
     params: { sessionId: string; channelId: string; path: string; mergeClass?: MergeClass },
   ): Promise<string> {
     const { workspaceId, channelId } = await this.workspaceForSession(client, params.sessionId);
+    const path = canonicalizeSessionArtifactPath(params.path, { sessionId: params.sessionId, channelId });
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO artifacts (workspace_id, session_id, channel_id, path, merge_class)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (workspace_id, path) DO NOTHING
        RETURNING id`,
-      [workspaceId, params.sessionId, channelId, params.path, params.mergeClass ?? 'immutable-data'],
+      [workspaceId, params.sessionId, channelId, path, params.mergeClass ?? 'immutable-data'],
     );
     if (inserted.rows[0]) return inserted.rows[0].id; // fresh row, locked by this tx
     const locked = await client.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2 FOR UPDATE`,
-      [workspaceId, params.path],
+      [workspaceId, path],
     );
     return locked.rows[0]!.id; // exists: the INSERT conflicted, so the row is there
   }
@@ -264,17 +269,18 @@ export class ArtifactLedger {
     client: DbClient,
     params: { workspaceId: string; channelId: string; path: string; mergeClass: MergeClass },
   ): Promise<string> {
+    const path = canonicalizeWorkspaceArtifactPath(params.path, { channelId: params.channelId });
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO artifacts (workspace_id, session_id, channel_id, path, merge_class)
        VALUES ($1, NULL, $2, $3, $4)
        ON CONFLICT (workspace_id, path) DO NOTHING
        RETURNING id`,
-      [params.workspaceId, params.channelId, params.path, params.mergeClass],
+      [params.workspaceId, params.channelId, path, params.mergeClass],
     );
     if (inserted.rows[0]) return inserted.rows[0].id; // fresh row, locked by this tx
     const locked = await client.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2 FOR UPDATE`,
-      [params.workspaceId, params.path],
+      [params.workspaceId, path],
     );
     return locked.rows[0]!.id; // exists: the INSERT conflicted, so the row is there
   }
@@ -342,7 +348,7 @@ export class ArtifactLedger {
 
   /** C1 change-feed source: latest changed version per path after a watermark. */
   async changedSince(sessionId: string, sinceIso: string): Promise<ChangedArtifact[]> {
-    const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
+    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
     const res = await this.pool.query<{
       path: string;
       seq: number;
@@ -358,14 +364,16 @@ export class ArtifactLedger {
            FROM artifacts a
            JOIN artifact_versions v ON v.artifact_id = a.id
           WHERE a.workspace_id = $1
-            AND (a.path LIKE 'scratch/' || $2::text || '/%' OR a.path LIKE 'shared/%')
-            AND v.created_at > $3::timestamptz
+            AND (a.path LIKE 'scratch/' || $2::text || '/%'
+              OR a.path LIKE 'shared/global/%'
+              OR a.path LIKE 'shared/channels/' || $3::text || '/%')
+            AND v.created_at > $4::timestamptz
        )
        SELECT path, seq, sha, kind
          FROM changed
         WHERE rn = 1
         ORDER BY created_at ASC, path ASC`,
-      [workspaceId, sessionId, sinceIso],
+      [workspaceId, sessionId, channelId, sinceIso],
     );
     return res.rows;
   }
@@ -396,7 +404,7 @@ export class ArtifactLedger {
     limit = 500,
   ): Promise<ChangeFeedPage> {
     return withTx(this.pool, async (client) => {
-      const { workspaceId } = await this.workspaceForSession(client, sessionId);
+      const { workspaceId, channelId } = await this.workspaceForSession(client, sessionId);
       // Per-WORKSPACE exclusive try-lock, matching the writer's shared lock
       // (migration 043). Artifacts are workspace-shared, so gap-freeness must
       // stall on any in-flight writer of THIS WORKSPACE's feed, not just this
@@ -423,13 +431,15 @@ export class ArtifactLedger {
         origin: string;
       }>(
         `SELECT id::text AS id, xid::text AS xid, path, seq, base_seq, sha, status, kind, author, origin
-           FROM artifact_changes
-          WHERE workspace_id = $1
-            AND (path LIKE 'scratch/' || $2::text || '/%' OR path LIKE 'shared/%')
-            AND (xid, id) > ($3::xid8, $4::bigint)
+          FROM artifact_changes
+         WHERE workspace_id = $1
+            AND (path LIKE 'scratch/' || $2::text || '/%'
+              OR path LIKE 'shared/global/%'
+              OR path LIKE 'shared/channels/' || $3::text || '/%')
+            AND (xid, id) > ($4::xid8, $5::bigint)
           ORDER BY xid, id
-          LIMIT $5`,
-        [workspaceId, sessionId, cursor.xid, cursor.id, limit],
+          LIMIT $6`,
+        [workspaceId, sessionId, channelId, cursor.xid, cursor.id, limit],
       );
       const rows: ChangeRow[] = res.rows.map((r) => ({
         id: r.id,
@@ -468,10 +478,11 @@ export class ArtifactLedger {
     conflictSeq: number | null;
     latestSeq: number | null;
   } | null> {
-    const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
+    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
     const art = await this.pool.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2`,
-      [workspaceId, path],
+      [workspaceId, canonicalPath],
     );
     const artifactId = art.rows[0]?.id;
     if (!artifactId) return null;
@@ -510,7 +521,8 @@ export class ArtifactLedger {
     sessionId: string,
     path: string,
   ): Promise<{ artifactId: string; conflictSeq: number; conflict: unknown; markerSha: string | null } | null> {
-    const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
+    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
     const res = await this.pool.query<{
       artifact_id: string;
       seq: number;
@@ -519,10 +531,10 @@ export class ArtifactLedger {
     }>(
       `SELECT v.artifact_id, v.seq, v.conflict, v.blob_sha
          FROM artifacts a
-         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
-         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+        JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+        JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
         WHERE a.workspace_id = $1 AND a.path = $2 AND v.status = 'conflict'`,
-      [workspaceId, path],
+      [workspaceId, canonicalPath],
     );
     const row = res.rows[0];
     if (!row) return null;
@@ -545,10 +557,11 @@ export class ArtifactLedger {
 
   /** Resolve `(session, path)` to an artifact id (no create). */
   async artifactIdByPath(sessionId: string, path: string): Promise<string | null> {
-    const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
+    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
     const res = await this.pool.query<{ id: string; path: string }>(
       `SELECT id, path FROM artifacts WHERE workspace_id = $1 AND path = $2`,
-      [workspaceId, path],
+      [workspaceId, canonicalPath],
     );
     return res.rows[0]?.id ?? null;
   }
@@ -577,16 +590,18 @@ export class ArtifactLedger {
   async sessionScope(
     sessionId: string,
   ): Promise<Array<{ path: string; latestSeq: number; kind: VersionKind; sha: string | null }>> {
-    const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
+    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
     const res = await this.pool.query<{ path: string; seq: number; kind: VersionKind; sha: string | null }>(
       `SELECT a.path, p.seq, v.kind, v.blob_sha AS sha
          FROM artifacts a
          JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
         WHERE a.workspace_id = $1
-          AND (a.path LIKE 'scratch/' || $2::text || '/%' OR a.path LIKE 'shared/%')
+          AND (a.path LIKE 'scratch/' || $2::text || '/%'
+            OR a.path LIKE 'shared/global/%'
+            OR a.path LIKE 'shared/channels/' || $3::text || '/%')
         ORDER BY a.path ASC`,
-      [workspaceId, sessionId],
+      [workspaceId, sessionId, channelId],
     );
     return res.rows.map((r) => ({ path: r.path, latestSeq: r.seq, kind: r.kind, sha: r.sha }));
   }
@@ -594,6 +609,8 @@ export class ArtifactLedger {
   // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
 
   async getSyncState(sessionId: string, path: string): Promise<SyncState | null> {
+    const { channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
     const res = await this.pool.query<{
       base_seq: number;
       base_sha: string | null;
@@ -602,7 +619,7 @@ export class ArtifactLedger {
     }>(
       `SELECT base_seq, base_sha, upper_sha, applied_remote_seq
          FROM artifact_sync_state WHERE session_id = $1 AND path = $2`,
-      [sessionId, path],
+      [sessionId, canonicalPath],
     );
     const row = res.rows[0];
     if (!row) return null;
@@ -617,6 +634,8 @@ export class ArtifactLedger {
   /** Upsert the per-path sync-state. Used at hydration (base_seq), on capture
    * (upper_sha), and after a node-side adopt (applied_remote_seq + advance base). */
   async upsertSyncState(sessionId: string, path: string, state: SyncState): Promise<void> {
+    const { channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
     await this.pool.query(
       `INSERT INTO artifact_sync_state
          (session_id, path, base_seq, base_sha, upper_sha, applied_remote_seq, updated_at)
@@ -627,7 +646,7 @@ export class ArtifactLedger {
              upper_sha = EXCLUDED.upper_sha,
              applied_remote_seq = EXCLUDED.applied_remote_seq,
              updated_at = now()`,
-      [sessionId, path, state.baseSeq, state.baseSha, state.upperSha, state.appliedRemoteSeq],
+      [sessionId, canonicalPath, state.baseSeq, state.baseSha, state.upperSha, state.appliedRemoteSeq],
     );
   }
 
@@ -740,6 +759,18 @@ export class ArtifactLedger {
   async commitVersionGroup(params: CommitVersionGroupParams): Promise<CommitGroupResult> {
     try {
       return await withTx(this.pool, async (client) => {
+        const { channelId } = await this.workspaceForSession(client, params.sessionId);
+        const files = params.files.map((file) => ({
+          ...file,
+          path: canonicalizeSessionArtifactPath(file.path, { sessionId: params.sessionId, channelId }),
+        }));
+        const seenCanonicalPaths = new Set<string>();
+        for (const file of files) {
+          if (seenCanonicalPaths.has(file.path)) {
+            throw new Error(`duplicate artifact path after canonicalization: ${file.path}`);
+          }
+          seenCanonicalPaths.add(file.path);
+        }
         const insertedGroup = await client.query<{ group_id: string }>(
           `INSERT INTO artifact_commit_groups (group_id, session_id)
            VALUES ($1, $2)
@@ -763,7 +794,7 @@ export class ArtifactLedger {
           artifactId: string;
           latest: LatestVersion | null;
         }> = [];
-        for (const { file, index } of params.files
+        for (const { file, index } of files
           .map((file, index) => ({ file, index }))
           .sort((a, b) => a.file.path.localeCompare(b.file.path))) {
           const artifactId = await this.resolveOrCreateArtifactLocked(client, {
@@ -792,7 +823,7 @@ export class ArtifactLedger {
         if (stale.length > 0) throw new CommitGroupStaleBaseError(stale);
 
         const blobs = new Map<string, { sizeBytes: number; mime: string }>();
-        for (const file of params.files) {
+        for (const file of files) {
           if (file.blobSha != null && !blobs.has(file.blobSha)) {
             blobs.set(file.blobSha, { sizeBytes: file.sizeBytes, mime: file.mime });
           }
@@ -801,7 +832,7 @@ export class ArtifactLedger {
           await this.upsertBlob(client, { sha256, sizeBytes: blob.sizeBytes, mime: blob.mime });
         }
 
-        const results: CommitGroupFileResult[] = new Array(params.files.length);
+        const results: CommitGroupFileResult[] = new Array(files.length);
         for (const item of locked.sort((a, b) => a.index - b.index)) {
           if (
             item.latest != null &&
@@ -858,10 +889,11 @@ export class ArtifactLedger {
     path: string,
     ref: VersionRef,
   ): Promise<ResolvedVersion | null> {
-    const { workspaceId } = await this.workspaceForSession(this.pool, sessionId);
+    const { workspaceId, channelId } = await this.workspaceForSession(this.pool, sessionId);
+    const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId });
     const art = await this.pool.query<{ id: string }>(
       `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2`,
-      [workspaceId, path],
+      [workspaceId, canonicalPath],
     );
     const artifactId = art.rows[0]?.id;
     if (!artifactId) return null;

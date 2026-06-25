@@ -69,13 +69,13 @@ describe('GET /api/sessions/:id/hydration-scope', () => {
   it('lists subscribed paths for an accessible session', async () => {
     const cookie = await loginCookie();
     const sid = await insertSession();
-    await commit(sid, 'shared/a.md', 'a'.repeat(64), 'created');
-    await commit(sid, 'shared/b.md', 'b'.repeat(64), 'created');
+    await commit(sid, 'shared/global/a.md', 'a'.repeat(64), 'created');
+    await commit(sid, 'shared/global/b.md', 'b'.repeat(64), 'created');
     const res = await app.inject({ method: 'GET', url: `/api/sessions/${sid}/hydration-scope`, headers: { cookie } });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { scope: string; paths: Array<{ path: string }> };
     expect(body.scope).toBe('session');
-    expect(body.paths.map((p) => p.path)).toEqual(['shared/a.md', 'shared/b.md']);
+    expect(body.paths.map((p) => p.path)).toEqual(['shared/global/a.md', 'shared/global/b.md']);
   });
 
   it('refuses an unauthenticated caller', async () => {

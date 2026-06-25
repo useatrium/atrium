@@ -141,9 +141,10 @@ describe('internal node-ingestion auth', () => {
 describe('internal capture round-trip (PG + object storage)', () => {
   it('captures a version, surfaces it in the feed, and serves it back raw', async () => {
     const sid = await session();
+    const path = `shared/channels/${fx.channelId}/a.md`;
     const cap = await app.inject({
       method: 'POST',
-      url: `/api/internal/sessions/${sid}/artifacts/capture?path=shared/a.md`,
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(path)}`,
       headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
       payload: 'node captured this',
     });
@@ -156,15 +157,60 @@ describe('internal capture round-trip (PG + object storage)', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(feed.statusCode).toBe(200);
-    expect(feed.json().rows.map((r: { path: string }) => r.path)).toContain('shared/a.md');
+    expect(feed.json().rows.map((r: { path: string }) => r.path)).toContain(path);
 
     const raw = await app.inject({
       method: 'GET',
-      url: `/api/internal/sessions/${sid}/artifacts/raw?path=shared/a.md`,
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=${encodeURIComponent(path)}`,
       headers: { 'x-api-key': KEY },
     });
     expect(raw.statusCode).toBe(200);
     expect(raw.body).toBe('node captured this');
+  });
+
+  it('canonicalizes active-channel aliases to one artifact chain', async () => {
+    const sid = await session();
+    const explicit = `shared/channels/${fx.channelId}/report.md`;
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=report.md`,
+      headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
+      payload: 'first',
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ seq: 1, status: 'normal' });
+
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(explicit)}`,
+      headers: {
+        'x-api-key': KEY,
+        'content-type': 'text/markdown',
+        'x-artifact-base-seq': '1',
+      },
+      payload: 'second',
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({ seq: 2, status: 'normal' });
+
+    const rows = await pool.query<{ path: string; versions: number }>(
+      `SELECT a.path, count(v.*)::int AS versions
+         FROM artifacts a
+         JOIN artifact_versions v ON v.artifact_id = a.id
+        WHERE a.workspace_id = $1
+        GROUP BY a.path
+        ORDER BY a.path`,
+      [fx.workspaceId],
+    );
+    expect(rows.rows).toEqual([{ path: explicit, versions: 2 }]);
+
+    const raw = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=report.md`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.body).toBe('second');
   });
 
   it('raw 404s for an unknown path', async () => {
@@ -179,7 +225,9 @@ describe('internal capture round-trip (PG + object storage)', () => {
 
   it('hydration-scope returns the subscription set (own scratch + shared)', async () => {
     const sid = await session();
-    for (const path of ['shared/note.md', `scratch/${sid}/local.md`]) {
+    const sharedPath = `shared/channels/${fx.channelId}/note.md`;
+    const scratchPath = `scratch/${sid}/local.md`;
+    for (const path of [sharedPath, scratchPath]) {
       const cap = await app.inject({
         method: 'POST',
         url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(path)}`,
@@ -196,9 +244,9 @@ describe('internal capture round-trip (PG + object storage)', () => {
     expect(res.statusCode).toBe(200);
     const entries = res.json().paths as Array<{ path: string; sha: string | null }>;
     const paths = entries.map((p) => p.path);
-    expect(paths).toContain('shared/note.md');
-    expect(paths).toContain(`scratch/${sid}/local.md`);
+    expect(paths).toContain(sharedPath);
+    expect(paths).toContain(scratchPath);
     // the node needs the blob sha to CAS-key the lower (5B-3 materialize_cached)
-    expect(entries.find((e) => e.path === 'shared/note.md')?.sha).toMatch(/^[0-9a-f]{64}$/);
+    expect(entries.find((e) => e.path === sharedPath)?.sha).toMatch(/^[0-9a-f]{64}$/);
   });
 });

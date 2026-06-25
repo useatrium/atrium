@@ -6,8 +6,9 @@
 -- Coupled with the artifact-ledger.ts re-key (lane B): the old ON CONFLICT (session_id, path)
 -- becomes ON CONFLICT (workspace_id, path). This migration + that code land together.
 --
--- §8 decisions encoded here (confirm before a PROD apply; safe on dev/test where data is empty):
---   §8.1 collision rewrite  — namespace colliding non-scratch paths, never silent-merge
+-- §8 decisions encoded here. No deployed Atrium data needs legacy duplicate-path
+-- preservation; if a non-empty dev database contains duplicate (workspace_id, path)
+-- rows, the UNIQUE add below should fail loudly.
 --   §8.2 session-cascade    — drop it: artifacts survive session GC (session_id -> SET NULL)
 --   §8.3 channel_id         — keep as nullable provenance (FK -> SET NULL), not identity
 
@@ -17,26 +18,6 @@ UPDATE artifacts a
   SET workspace_id = s.workspace_id
   FROM sessions s
   WHERE s.id = a.session_id AND a.workspace_id IS NULL;
-
--- 2. Collision rewrite (§8.1). Two sessions in one workspace may legitimately hold the same
---    non-scratch path today (each was its own silo). Before enforcing UNIQUE(workspace_id, path)
---    we namespace EVERY colliding non-scratch row under proj-<full-session-uuid>/ so no two rows
---    silently collapse onto one version chain. scratch/<session>/… paths already embed the
---    session id, so they never collide. Deterministic + lossless (relocates a path, never drops
---    a row); the full uuid (fixed length) keeps the rewritten paths provably unique. If any
---    collision survives (e.g. a pre-existing literal proj-<uuid>/ path), the UNIQUE add below
---    fails the whole migration — fail-loud, never silent-merge.
-WITH dups AS (
-  SELECT workspace_id, path
-  FROM artifacts
-  WHERE path NOT LIKE 'scratch/%'
-  GROUP BY workspace_id, path
-  HAVING count(*) > 1
-)
-UPDATE artifacts a
-  SET path = 'proj-' || a.session_id::text || '/' || a.path
-  FROM dups d
-  WHERE a.workspace_id = d.workspace_id AND a.path = d.path;
 
 ALTER TABLE artifacts ALTER COLUMN workspace_id SET NOT NULL;
 

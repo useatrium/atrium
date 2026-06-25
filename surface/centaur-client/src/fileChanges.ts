@@ -25,10 +25,16 @@ const WRITE_TOOLS = new Set(["Write", "create_file"]);
 const MULTI_EDIT_TOOLS = new Set(["MultiEdit"]);
 const NOTEBOOK_TOOLS = new Set(["NotebookEdit"]);
 
-/** Strip the absolute sandbox prefix so /home/agent/workspace/src/x.ts → src/x.ts. */
+/** Strip sandbox/canonical prefixes so work surfaces show the path the agent sees. */
 export function displayPath(path: string): string {
-  const m = /\/workspace\/(.+)$/.exec(path);
-  if (m) return m[1]!;
+  const active = /^shared\/channels\/[^/]+\/(.+)$/.exec(path);
+  if (active) return active[1]!;
+  const scratch = /^scratch\/[0-9a-f-]{36}\/(.+)$/i.exec(path);
+  if (scratch) return `scratch/${scratch[1]!}`;
+  const workspace = /\/workspace\/(.+)$/.exec(path);
+  if (workspace) return workspace[1]!;
+  const home = /^\/home\/agent\/(.+)$/.exec(path);
+  if (home) return home[1]!;
   return path.replace(/^\.\//, "");
 }
 

@@ -28,7 +28,7 @@
   (RO, or excluded, or separately mounted).
 - **Complete the cutover.** Retire the in-pod Python poll (`artifact-capture`) entirely; the node daemon
   becomes the **sole** capture path. (Today the poll is the only *live* path; the daemon isn't deployed at all.)
-- **Why flat-`~`:** cleaner agent UX; aligns with the planned `~/shared`,`~/repos`,`~/context` rename. **Cost,
+- **Why flat-`~`:** cleaner agent UX; aligns with the planned active-root + `~/shared`,`~/scratch`,`~/repos`,`~/context` rename. **Cost,
   eyes open:** capturing home means capture must *exclude* all non-deliverables (auth, toolchain, caches) — §3
   makes that a single legible rule rather than an open-ended deny-list.
 
@@ -36,8 +36,12 @@
 
 ```
 /home/agent/   (= ~, the CWD; the agent's whole world)
-  report.md, data.csv, …   ← CAPTURED: the agent's own deliverables (just files in home)
-  shared/<channel>/         ← CAPTURED + co-edited (shared-workspace zone)
+  report.md, data.csv, …   ← CAPTURED: active shared-scope artifacts
+  scratch/                  ← CAPTURED: this session's private durable artifact scope
+  shared/                   ← CAPTURED/BROWSE: server-owned aliases to shared scopes
+    global/
+    channels/<channel-id>/
+    projects/<project-id>/  ← future only: requires real project objects + ACL
   repos/<owner>/<repo>/      ← RO lower (git owns code) — EXCLUDED from capture
   context/                   ← RO projection (today's /atrium: chat, sibling sessions, ledger) — EXCLUDED
   .claude, .codex, .state/   ← auth / harness / resume — EXCLUDED (separate mounts; dotfiles)
@@ -47,17 +51,28 @@
 
 ## 3. The capture rule (one legible line)
 
-**Capture = non-dotfile entries under `~`, except `repos/` and `context/`.**
+**Capture = non-dotfile entries under `~`, except `repos/` and `context/`, after resolving
+reserved mount aliases to canonical artifact paths.**
 
 - **Excluded by the rule:** everything starting with `.` (`.claude`,`.codex`,`.state`,`.cargo`,`.config`,
   `.cache`,…) — i.e. all auth + toolchain + config, the Unix convention for "plumbing"; plus the two named RO
   dirs `repos/` and `context/`; plus `/tmp`,`/var/tmp` (outside `~`, scratch).
-- **Captured:** the agent's *visible* home files/dirs — its deliverables — and `shared/`.
+- **Captured:** active-root files, `scratch/`, and mounted `shared/` leaves. These all become
+  artifacts, but with different canonical prefixes/ACLs:
+  - `~/foo` → `shared/<active-scope>/foo`
+  - `~/scratch/foo` → `scratch/<session-id>/foo`
+  - `~/shared/global/foo` → `shared/global/foo`
+  - `~/shared/channels/<active-channel-id>/foo` → `shared/channels/<active-channel-id>/foo`
+  - non-active `~/shared/channels/<id>` and `~/shared/projects/<id>` are not accepted until
+    Atrium has explicit grants for those scopes.
 - This replaces an open-ended toolchain deny-list with **"skip dotfiles + two RO dirs."** Cheap, legible, and
   it shrinks the exclude surface that was flat-`~`'s main cost.
 - **Dir-naming cleanups required** (so the rule covers them): rename `~/state`→`~/.state`, `~/branches`→
   `~/.branches` (git plumbing). Decide `~/uploads`: keep visible if human-dropped files should be captured
   (likely yes), else `~/.uploads`.
+- **Reserved active-root names:** `scratch`, `shared`, `repos`, `context`, and dotdirs are mount/plumbing
+  names at the active-root level, not normal active-scope artifact names. UI/import should escape exact
+  collisions before hydration.
 
 ## 4. Auth safety under flat-`~` (preserve the `#72 P4` guarantee)
 
@@ -79,11 +94,13 @@ Stays OS scratch, uncaptured. No symlink, no `readOnlyRootFilesystem` dependency
 
 Phase 0 parity filters are DONE, gated (#15 secret/junk/`.git`, #16 repo-tree exclusion).
 
-1. **Entrypoint → flat-`~`** (extends the gated `CENTAUR_OVERLAY_ENABLED` seam, #14): CWD=`~`; repo as RO
-   lower at `~/repos/…`; auth/state as separate mounts; drop the `~/workspace` clone + forced `agent-<ts>`
-   branch; apply the §3 dir-renames.
+1. **Entrypoint → flat-`~`** (extends the gated `CENTAUR_OVERLAY_ENABLED` seam, #14): CWD=`~`; active shared
+   scope materialized at home root; session scratch at `~/scratch`; optional shared-scope aliases at
+   `~/shared`; repo as RO lower at `~/repos/…`; auth/state as separate mounts; drop the `~/workspace` clone +
+   forced `agent-<ts>` branch; apply the §3 dir-renames.
 2. **Daemon home-capture:** point the daemon at the session-keyed home volume with the §3 rule (skip dotfiles +
-   `repos/`+`context/`). Both lanes — artifact **and** harness-transcript.
+   `repos/`+`context/`, canonicalize `~`/`scratch`/`shared` aliases before writeback). Both lanes — artifact
+   **and** harness-transcript.
 3. **Live-wire the daemon** (controller `overlay: Some`, `nodeSync.enabled`) — not deployed today.
 4. **Validate on a real cluster:** a home deliverable IS captured; a `repos/` edit is NOT; dotfiles/auth/
    toolchain/`/tmp` are NOT; the transcript IS captured + cold-start resume works.
@@ -95,9 +112,19 @@ Phase 0 parity filters are DONE, gated (#15 secret/junk/`.git`, #16 repo-tree ex
 - **Overlay mount point:** overlay-mount *all* of `~` (lower = image home + repo + hydrated) vs. capture-scan
   `~` with the §3 rule and overlay only the `repos/` subtree. **Lean: capture-scan home + overlay only repos/
   hydration** — simpler, avoids shadowing the image-baked home (`.cargo` etc. are image layers).
-- **Exclude rule = deny vs allow:** "non-dotfile minus repos/context" (§3, deny-ish) vs. an explicit allow-list
-  of deliverable roots (`~` top-level + `~/shared`). Allow-list is safer (default-exclude) but slightly less
-  "just your home." **Lean: §3 dotfile rule** (legible) with the secret-scan as the safety net.
+- **Alias canonicalization:** if the active shared leaf is also visible under `~/shared/channels/<id>`, the
+  daemon must write back one canonical path, not two chains. **Lean:** a single canonical-path resolver shared
+  by hydration, capture, writeback, and sync-state. Implemented shape: Atrium responses carry
+  `activePrefix`; Centaur projects `shared/channels/<active>/foo` to both local `foo` and
+  `shared/channels/<active>/foo` with the same base seq, and projects `scratch/<session-id>/foo`
+  to local `scratch/foo`.
+- **Exclude rule = deny vs allow:** "non-dotfile minus repos/context, with reserved aliases" (§3, deny-ish) vs.
+  an explicit allow-list of deliverable roots (`~` top-level + `~/scratch` + selected `~/shared` leaves).
+  Allow-list is safer (default-exclude) but slightly less "just your home." **Lean: §3 dotfile rule** with
+  reserved-name handling and the secret-scan as the safety net.
 - **Deliverable discoverability:** with no named "workspace," how do humans/UI distinguish deliverables? The
   ledger already keys by path and the UI shows captured paths, so "your visible home files" maps cleanly — but
   confirm the Files surface reads well under home-rooted paths.
+- **Non-active shared scopes:** materialize all granted `~/shared/...` trees, or keep large/broad scopes
+  read-through/lazy via `context`/CLI? **Lean:** active scope eager; session scratch eager; non-active broad
+  scopes lazy unless explicitly opened/mounted.

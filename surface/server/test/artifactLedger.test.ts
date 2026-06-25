@@ -156,13 +156,13 @@ describe('ArtifactLedger foundation', () => {
 
   it('shares workspace identity across sessions at the same path', async () => {
     const otherSession = await seedSession();
-    const first = await capture('shared/report.md', 'a'.repeat(64), 'created');
+    const first = await capture('shared/global/report.md', 'a'.repeat(64), 'created');
     expect(first).toMatchObject({ ok: true, seq: 1 });
     if (!first.ok) throw new Error('expected first commit to succeed');
     const other = await ledger.commitVersion({
       sessionId: otherSession,
       channelId: fx.channelId,
-      path: 'shared/report.md',
+      path: 'shared/global/report.md',
       blobSha: 'b'.repeat(64),
       sizeBytes: 10,
       mime: 'text/markdown',
@@ -170,8 +170,8 @@ describe('ArtifactLedger foundation', () => {
       kind: 'created',
     });
     expect(other).toMatchObject({ ok: true, seq: 2, artifactId: first.artifactId });
-    const a = await ledger.resolveVersion(sessionId, 'shared/report.md', { pointer: 'latest' });
-    const b = await ledger.resolveVersion(otherSession, 'shared/report.md', { pointer: 'latest' });
+    const a = await ledger.resolveVersion(sessionId, 'shared/global/report.md', { pointer: 'latest' });
+    const b = await ledger.resolveVersion(otherSession, 'shared/global/report.md', { pointer: 'latest' });
     expect(a?.blobSha).toBe('b'.repeat(64));
     expect(b?.blobSha).toBe('b'.repeat(64));
   });

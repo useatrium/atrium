@@ -44,6 +44,10 @@ function file(
   };
 }
 
+function activePath(path: string): string {
+  return `shared/channels/${fx.channelId}/${path}`;
+}
+
 async function versionCount(): Promise<number> {
   const r = await pool.query<{ n: number }>(
     `SELECT count(*)::int AS n
@@ -84,8 +88,8 @@ describe('ArtifactLedger commitVersionGroup', () => {
       ok: true,
       group_id: 'happy-group',
       results: [
-        { path: 'a.md', seq: 1 },
-        { path: 'b.md', seq: 1 },
+        { path: activePath('a.md'), seq: 1 },
+        { path: activePath('b.md'), seq: 1 },
       ],
     });
     await expect(ledger.resolveVersion(sessionId, 'a.md', { pointer: 'latest' })).resolves.toMatchObject({
@@ -126,7 +130,7 @@ describe('ArtifactLedger commitVersionGroup', () => {
     expect(stale).toEqual({
       ok: false,
       reason: 'stale_base',
-      stale: [{ path: 'a.md', latest_seq: 2, base_seq: 1 }],
+      stale: [{ path: activePath('a.md'), latest_seq: 2, base_seq: 1 }],
     });
     expect(await versionCount()).toBe(before);
     await expect(ledger.resolveVersion(sessionId, 'b.md', { pointer: 'latest' })).resolves.toMatchObject({
@@ -174,15 +178,15 @@ describe('ArtifactLedger commitVersionGroup', () => {
       ok: true,
       group_id: 'dedup-group',
       results: [
-        { path: 'a.md', seq: 1 },
-        { path: 'b.md', seq: 1 },
+        { path: activePath('a.md'), seq: 1 },
+        { path: activePath('b.md'), seq: 1 },
       ],
     });
     expect(await versionCount()).toBe(before + 1);
     const dedupChanges = await pool.query<{ path: string }>(
       `SELECT path FROM artifact_changes WHERE group_id = 'dedup-group' ORDER BY path`,
     );
-    expect(dedupChanges.rows.map((r) => r.path)).toEqual(['b.md']);
+    expect(dedupChanges.rows.map((r) => r.path)).toEqual([activePath('b.md')]);
   });
 
   it('emits gap-free change rows carrying the group_id', async () => {
@@ -199,7 +203,11 @@ describe('ArtifactLedger commitVersionGroup', () => {
         ORDER BY xid, id`,
       [sessionId],
     );
-    expect(rows.rows.map((r) => r.path)).toEqual(['a.md', 'b.md', 'c.md']);
+    expect(rows.rows.map((r) => r.path)).toEqual([
+      activePath('a.md'),
+      activePath('b.md'),
+      activePath('c.md'),
+    ]);
     expect(rows.rows.map((r) => r.group_id)).toEqual(['feed-group', 'feed-group', 'feed-group']);
     const firstId = rows.rows[0]!.id;
     expect(rows.rows.map((r) => r.id)).toEqual([firstId, firstId + 1, firstId + 2]);

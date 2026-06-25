@@ -45,10 +45,16 @@ async function blobExists(sha256: string): Promise<boolean> {
   return res.rows[0]!.exists;
 }
 
+function storedPath(path: string): string {
+  return path.startsWith('shared/') || path.startsWith('scratch/')
+    ? path
+    : `shared/channels/${fx.channelId}/${path}`;
+}
+
 async function artifactIdForPath(path: string): Promise<string> {
   const res = await pool.query<{ id: string }>(
     'SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2',
-    [fx.workspaceId, path],
+    [fx.workspaceId, storedPath(path)],
   );
   return res.rows[0]!.id;
 }
@@ -79,7 +85,7 @@ async function setVersionCreatedAt(path: string, seq: number, createdAt: string)
         AND a.workspace_id = $1
         AND a.path = $2
         AND v.seq = $4`,
-    [fx.workspaceId, path, createdAt, seq],
+    [fx.workspaceId, storedPath(path), createdAt, seq],
   );
 }
 
@@ -253,22 +259,22 @@ describe('artifact ledger GC', () => {
   });
 
   it('returns the latest changed version per path since a watermark', async () => {
-    await capture('shared/old.md', '0'.repeat(64), 'created');
-    await setVersionCreatedAt('shared/old.md', 1, '2026-01-01T00:00:00.000Z');
+    await capture('shared/global/old.md', '0'.repeat(64), 'created');
+    await setVersionCreatedAt('shared/global/old.md', 1, '2026-01-01T00:00:00.000Z');
 
-    await capture('shared/report.md', '1'.repeat(64), 'created');
-    await setVersionCreatedAt('shared/report.md', 1, '2026-01-02T00:00:00.000Z');
-    await capture('shared/report.md', '2'.repeat(64), 'modified');
-    await setVersionCreatedAt('shared/report.md', 2, '2026-01-04T00:00:00.000Z');
+    await capture('shared/global/report.md', '1'.repeat(64), 'created');
+    await setVersionCreatedAt('shared/global/report.md', 1, '2026-01-02T00:00:00.000Z');
+    await capture('shared/global/report.md', '2'.repeat(64), 'modified');
+    await setVersionCreatedAt('shared/global/report.md', 2, '2026-01-04T00:00:00.000Z');
 
-    await capture('shared/chart.md', '3'.repeat(64), 'created');
-    await setVersionCreatedAt('shared/chart.md', 1, '2026-01-03T00:00:00.000Z');
+    await capture('shared/global/chart.md', '3'.repeat(64), 'created');
+    await setVersionCreatedAt('shared/global/chart.md', 1, '2026-01-03T00:00:00.000Z');
 
     const rows = await ledger.changedSince(sessionId, '2026-01-01T12:00:00.000Z');
 
     expect(rows).toEqual([
-      { path: 'shared/chart.md', seq: 1, sha: '3'.repeat(64), kind: 'created' },
-      { path: 'shared/report.md', seq: 2, sha: '2'.repeat(64), kind: 'modified' },
+      { path: 'shared/global/chart.md', seq: 1, sha: '3'.repeat(64), kind: 'created' },
+      { path: 'shared/global/report.md', seq: 2, sha: '2'.repeat(64), kind: 'modified' },
     ]);
   });
 });

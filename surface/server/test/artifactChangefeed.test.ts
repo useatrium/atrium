@@ -59,15 +59,15 @@ beforeEach(async () => {
 
 describe('artifact change-feed', () => {
   it('emits one row per commit, in order, with the right fields', async () => {
-    await capture('shared/a.md', 'a'.repeat(64), 'created');
-    await capture('shared/a.md', 'b'.repeat(64), 'modified');
-    await capture('shared/b.md', 'c'.repeat(64), 'created');
+    await capture('shared/global/a.md', 'a'.repeat(64), 'created');
+    await capture('shared/global/a.md', 'b'.repeat(64), 'modified');
+    await capture('shared/global/b.md', 'c'.repeat(64), 'created');
 
     const page = await ledger.changesSince(sessionId);
     expect(page.rows.map((r) => [r.path, r.seq, r.kind])).toEqual([
-      ['shared/a.md', 1, 'created'],
-      ['shared/a.md', 2, 'modified'],
-      ['shared/b.md', 1, 'created'],
+      ['shared/global/a.md', 1, 'created'],
+      ['shared/global/a.md', 2, 'modified'],
+      ['shared/global/b.md', 1, 'created'],
     ]);
     expect(page.rows[0]).toMatchObject({
       sha: 'a'.repeat(64),
@@ -80,11 +80,11 @@ describe('artifact change-feed', () => {
   });
 
   it('resumes from a cursor without re-delivering', async () => {
-    await capture('shared/a.md', 'a'.repeat(64), 'created');
+    await capture('shared/global/a.md', 'a'.repeat(64), 'created');
     const first = await ledger.changesSince(sessionId);
     expect(first.rows).toHaveLength(1);
 
-    await capture('shared/a.md', 'b'.repeat(64), 'modified');
+    await capture('shared/global/a.md', 'b'.repeat(64), 'modified');
     const second = await ledger.changesSince(sessionId, first.nextCursor);
     expect(second.rows.map((r) => r.seq)).toEqual([2]);
 
@@ -96,8 +96,8 @@ describe('artifact change-feed', () => {
 
   it('is gap-free under concurrent overlapping commits (§8B #7)', async () => {
     // Seed one committed row so we have an artifact + a starting cursor.
-    await capture('shared/race.md', 'a'.repeat(64), 'created');
-    const artifactId = await artifactIdFor('shared/race.md');
+    await capture('shared/global/race.md', 'a'.repeat(64), 'created');
+    const artifactId = await artifactIdFor('shared/global/race.md');
     const start = (await ledger.changesSince(sessionId)).nextCursor;
 
     // Two overlapping txns: B inserts a LATER id but commits FIRST; A commits last.
@@ -108,13 +108,13 @@ describe('artifact change-feed', () => {
       await a.query('BEGIN');
       await a.query(
         `INSERT INTO artifact_changes (artifact_id, workspace_id, session_id, path, seq, base_seq, sha, status, kind, author)
-         VALUES ($1,$2,$3,'shared/race.md',2,1,$4,'normal','modified',$5)`,
+         VALUES ($1,$2,$3,'shared/global/race.md',2,1,$4,'normal','modified',$5)`,
         [artifactId, fx.workspaceId, sessionId, 'a2'.repeat(32), `agent:${sessionId}`],
       );
       await b.query('BEGIN');
       await b.query(
         `INSERT INTO artifact_changes (artifact_id, workspace_id, session_id, path, seq, base_seq, sha, status, kind, author)
-         VALUES ($1,$2,$3,'shared/race.md',3,2,$4,'normal','modified',$5)`,
+         VALUES ($1,$2,$3,'shared/global/race.md',3,2,$4,'normal','modified',$5)`,
         [artifactId, fx.workspaceId, sessionId, 'a3'.repeat(32), `agent:${sessionId}`],
       );
       await b.query('COMMIT'); // B (higher id) durable; A still open.
@@ -144,7 +144,7 @@ describe('artifact change-feed', () => {
       const artifactId = randomUUID();
       await client.query(
         `INSERT INTO artifacts (id, workspace_id, session_id, channel_id, path, merge_class)
-         VALUES ($1,$2,$3,$4,'shared/echo.md','mergeable-doc')`,
+         VALUES ($1,$2,$3,$4,'shared/global/echo.md','mergeable-doc')`,
         [artifactId, fx.workspaceId, sessionId, fx.channelId],
       );
       await client.query(
@@ -163,12 +163,12 @@ describe('artifact change-feed', () => {
     }
     const page = await ledger.changesSince(sessionId);
     expect(page.rows).toHaveLength(1);
-    expect(page.rows[0]).toMatchObject({ path: 'shared/echo.md', origin: 'node-merge' });
+    expect(page.rows[0]).toMatchObject({ path: 'shared/global/echo.md', origin: 'node-merge' });
   });
 
   it('surfaces conflict-status versions in the feed (§8B #5)', async () => {
-    await capture('shared/doc.md', 'a'.repeat(64), 'created');
-    const artifactId = await artifactIdFor('shared/doc.md');
+    await capture('shared/global/doc.md', 'a'.repeat(64), 'created');
+    const artifactId = await artifactIdFor('shared/global/doc.md');
     await pool.query(
       `INSERT INTO cas_blobs (sha256, size_bytes, mime) VALUES ($1, 3, 'text/markdown')
        ON CONFLICT DO NOTHING`,
@@ -181,7 +181,7 @@ describe('artifact change-feed', () => {
     );
     const page = await ledger.changesSince(sessionId);
     const conflict = page.rows.find((r) => r.status === 'conflict');
-    expect(conflict).toMatchObject({ path: 'shared/doc.md', seq: 2, status: 'conflict' });
+    expect(conflict).toMatchObject({ path: 'shared/global/doc.md', seq: 2, status: 'conflict' });
   });
 });
 

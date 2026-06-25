@@ -44,6 +44,11 @@ or merge.
 a *separate volume*, so it never enters the overlay `upper` (no capture, no bloat — by
 construction):
 
+> **UPDATE 2026-06-25:** the mount names below are lineage. The same structural split now
+> materializes as flat home: active shared artifacts at `~`, session artifacts at
+> `~/scratch`, optional shared aliases at `~/shared`, repos at `~/repos`, and context at
+> `~/context`.
+
 ```
 /workspace/
   proj-x/  shared/   ← OVERLAY  (lower = hydrated artifacts RO; upper = agent edits)   → node-scan CAPTURES
@@ -80,11 +85,13 @@ construction):
 
 ## 2A. The agent's view — `/workspace` (work) + `/atrium` (read-only context)
 
-> **UPDATE 2026-06-22 (design session): layout refined for agent UX.** The agent works in a
-> **flat home** (`~`, private-by-default) with three obvious roots: `shared/` (files, editable),
-> `repos/<repo>/` (git, not artifact-synced), and **`context/`** (read-only — **renamed from
-> `/atrium`**, since "context" is self-evident to a no-context agent). Uploads auto-land in
-> `shared/<channel>/uploads/`. Canonical: `notes/shared-workspace-build-spec.md` §0.1–0.3.
+> **UPDATE 2026-06-25 (scope/mount clarification): layout refined for agent UX.** The agent
+> works in **flat home** (`~`) and Atrium selects one active shared leaf for it, usually
+> `shared/channels/<active-channel>`. Private durable files are explicit at `~/scratch`
+> (`scratch/<session-id>/...` canonically). Other granted scopes may appear under `~/shared`;
+> `repos/<repo>/` is git-backed, not artifact-synced; **`context/`** is read-only (renamed from
+> `/atrium`). Uploads auto-land in `shared/channels/<channel-id>/uploads/`. Canonical:
+> `notes/shared-workspace-build-spec.md` §0.1–0.3.
 > (Original `/workspace`+`/atrium` framing below is the lineage; the *concepts* are unchanged.)
 
 The agent's whole filesystem, laid out for **agent UX** (it greps/cats a predictable tree;
@@ -108,12 +115,10 @@ the no-ingress constraint stays out of its way). DECIDED 2026-06-20.
   capture has exactly one tree to watch.
 - **Both layered** (chosen): the mounted tree is the ergonomic grep/cat default; the `atrium`
   tool is the power tool for fresh/targeted/beyond-scope lookups.
-- **Visibility = workspace-wide by default, scope-knob later** (chosen). Affordable ONLY
-  because `/atrium` is **one shared per-node projection** reflinked into pods (content-
-  addressed → free dedup). Naive per-agent eager push is **O(sessions²)** write-amp (~80k
-  appends/s at 200 agents — hand-compute); shared-per-node collapses it ~200×. Eager-tail the
-  near scope (own + channel/topic); serve the wide cold tail lazily via the tool. The scope
-  knob tunes eager-vs-lazy + recency/active-only to cut noise.
+- **Visibility = active shared leaf eager, wider granted scopes lazy.** The active channel/task
+  scope is materialized at `~`; `~/scratch` is session-scoped; broad `~/shared/global` or
+  other non-active scopes should be read-through/lazy unless explicitly opened. This keeps the
+  no-context agent path simple without eagerly pushing a company-wide tree into every pod.
 - **Freshness = live append-tail** (chosen). chat/transcripts are append-only → the node just
   appends new events to the file tail (no merge, no quiesce). Artifacts in `/workspace` use
   the §4 node-side merge. **Steers/HITL ride the normal message stream, NOT a marker file.**
@@ -202,7 +207,7 @@ mistake (logs churn it; code fights its branch model).
 
 | Content class | Destination | Why there |
 |---|---|---|
-| **Artifacts** (`proj-x/`, `shared/`) | version-**ledger** (CAS + chain + pointers + conflict-state) | edited, versioned, workspace-shared |
+| **Artifacts** (active shared root `~`, `~/scratch`, mounted `~/shared/...` aliases) | version-**ledger** (CAS + chain + pointers + conflict-state) | edited, versioned, ACL-scoped by canonical prefixes (`shared/...`, `scratch/...`) |
 | **Code working-state** (repos) | **patch/diff artifact** (a `git diff HEAD` + untracked-file snapshot stored as a ledger blob; **no git refs created**) | keeps uncommitted repo work durable *without* writing git objects/refs into a repo a fleet shares (DECIDED 2026-06-20 — see below) |
 | **Logs / transcripts** (`~/.codex`, `~/.claude`, …) | **chunked CAS blob + append-index** (NOT a version chain) | append-only; resume consumer; versioning is the wrong shape |
 

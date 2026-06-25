@@ -66,6 +66,37 @@ describe('FilesSurface', () => {
     });
   });
 
+  it('shows display and canonical labels for aliased ledger files', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/files/content')) return Promise.resolve(textResponse('initial contents'));
+      if (url.includes('/files?dir=')) {
+        return Promise.resolve(jsonResponse({
+          rows: [
+            {
+              path: 'report.md',
+              canonicalPath: 'shared/channels/channel-1/report.md',
+              displayPath: 'report.md',
+              backing: 'ledger',
+              type: 'file',
+            },
+          ],
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<FilesSurface sessionId="s-1" onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('report.md')).toBeTruthy());
+    fireEvent.click(screen.getByText('report.md'));
+
+    await waitFor(() => expect(screen.getByText('shared/channels/channel-1/report.md')).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledWith('/api/sessions/s-1/files/content?path=report.md', {
+      credentials: 'same-origin',
+    });
+  });
+
   it('renders git-backed files read-only', async () => {
     render(<FilesSurface sessionId="s-1" onClose={() => {}} />);
 

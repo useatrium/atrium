@@ -27,6 +27,10 @@ import { withTx } from './db.js';
 import { projectSessionIncremental, releaseSessionProjectionState } from './session-records.js';
 import { projectIncrementalAndEmit } from './session-record-changefeed.js';
 import { ArtifactLedger, casBlobKey, type MergeClass, type VersionRef } from './artifact-ledger.js';
+import {
+  canonicalizeSessionArtifactPath,
+  InvalidArtifactPathError,
+} from './artifact-path.js';
 import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
 import {
   appendEvent,
@@ -1846,8 +1850,41 @@ export class SessionRuns {
       [id, frame.event_id, frame.event, JSON.stringify(frame)],
     );
     if (frame.event === 'artifact.captured') {
-      await this.recordArtifact(id, frame.data);
-      await this.ingestCapturedArtifactToLedger(id, frame.data);
+      const data = await this.canonicalCapturedArtifactData(id, frame.data);
+      if (!data) return;
+      await this.recordArtifact(id, data);
+      await this.ingestCapturedArtifactToLedger(id, data);
+    }
+  }
+
+  private async canonicalCapturedArtifactData(
+    sessionId: string,
+    data: Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'],
+  ): Promise<Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'] | null> {
+    const session = await this.pool.query<{ channel_id: string }>(
+      'SELECT channel_id FROM sessions WHERE id = $1',
+      [sessionId],
+    );
+    const channelId = session.rows[0]?.channel_id;
+    if (!channelId) {
+      console.warn('artifact mirror skipped: session not found', { sessionId, path: data.path });
+      return null;
+    }
+    try {
+      return {
+        ...data,
+        path: canonicalizeSessionArtifactPath(data.path, { sessionId, channelId }),
+      };
+    } catch (err) {
+      if (err instanceof InvalidArtifactPathError) {
+        console.warn('artifact mirror skipped: invalid artifact path', {
+          sessionId,
+          path: data.path,
+          reason: err.message,
+        });
+        return null;
+      }
+      throw err;
     }
   }
 

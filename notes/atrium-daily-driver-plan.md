@@ -235,13 +235,16 @@ sandbox — but runtime-mounts-overlay + node-scan is the target; today's 2.5s
 isolation = **VM-per-tenant** (per-tenant node → per-tenant DaemonSet; hypervisor
 boundary). The ledger is cadence- and FS-agnostic, so none of this blocks it.
 
-**Scope + filtering — design pass 2026-06-19 (see `cas-ledger-build-plan.md` §10).**
-Artifacts are **shared workspace-wide by default** — sessions share *across*
-channels. Identity is effectively `(workspace, fullpath)`; **scope is a path
-prefix** the filter/access layer reads, not a session/channel tag: `scratch/<session>/`
-= private (filter-excluded, blind-append), `proj-x/` = topic/team scope (the default
-altitude), `shared/`/root = workspace-wide. Each task gets a default working dir so
-files land namespaced and generic names (`report.md`) don't accidentally collide.
+**Scope + filtering — design pass 2026-06-19, clarified 2026-06-25 (see
+`cas-ledger-build-plan.md` §10 and `shared-workspace-build-spec.md` §0).** Identity is
+effectively `(workspace, canonical_path)`; **scope is a reserved path prefix** the
+filter/access layer reads, not a session/channel tag. Atrium selects one active shared
+leaf and materializes it at `~`, so generic names (`report.md`) land in the right
+channel/task scope without agent prompting. Canonical prefixes are `shared/global/...`,
+`shared/channels/<active-channel-id>/...`, future `shared/projects/<project-id>/...` once
+projects are product objects with ACLs, and `scratch/<session-id>/...` for session-scoped
+durable artifacts. The landed resolver rejects project/non-active channel prefixes until those
+ACLs exist.
 **diff3 is gated by merge-class**: binaries → `immutable-data` (never merged);
 structured-serialized (JSON/YAML/CSV/`.ipynb`) → diff3-unsafe, whole-file
 conflict-state; line-text (code, md prose) → diff3 OK. **Code repos are excluded

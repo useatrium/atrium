@@ -18,6 +18,8 @@ export interface ConflictSide {
 export interface ArtifactConflict {
   artifactId: string;
   path: string;
+  canonicalPath?: string;
+  displayPath?: string;
   kind: string;
   conflictSeq: number;
   baseSeq: number | null;
@@ -61,6 +63,16 @@ function SideColumn({ side, base }: { side: ConflictSide; base: string }) {
   );
 }
 
+function conflictDisplayPath(conflict: ArtifactConflict): string {
+  return conflict.displayPath ?? conflict.path;
+}
+
+function conflictCanonicalPath(conflict: ArtifactConflict): string | null {
+  const display = conflictDisplayPath(conflict);
+  const canonical = conflict.canonicalPath ?? conflict.path;
+  return canonical !== display ? canonical : null;
+}
+
 export function ConflictSurface({
   conflict,
   onResolve,
@@ -94,8 +106,15 @@ export function ConflictSurface({
           <span className="shrink-0 rounded bg-danger-surface px-1 py-px text-3xs font-semibold uppercase tracking-wide text-danger-text">
             Conflict
           </span>
-          <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-body" title={conflict.path}>
-            {conflict.path}
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate font-mono text-2xs text-fg-body" title={conflictDisplayPath(conflict)}>
+              {conflictDisplayPath(conflict)}
+            </span>
+            {conflictCanonicalPath(conflict) && (
+              <span className="truncate font-mono text-3xs text-fg-muted" title={conflictCanonicalPath(conflict) ?? undefined}>
+                {conflictCanonicalPath(conflict)}
+              </span>
+            )}
           </span>
           <span className="shrink-0 tabular-nums text-2xs text-fg-muted">· v{conflict.conflictSeq}</span>
         </div>
@@ -164,8 +183,15 @@ export function ConflictSurface({
           <span className="shrink-0 rounded bg-danger-surface px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-danger-text">
             Conflict
           </span>
-          <span className="truncate font-mono text-fg-body" title={conflict.path}>
-            {conflict.path}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate font-mono text-fg-body" title={conflictDisplayPath(conflict)}>
+              {conflictDisplayPath(conflict)}
+            </span>
+            {conflictCanonicalPath(conflict) && (
+              <span className="truncate font-mono text-3xs text-fg-muted" title={conflictCanonicalPath(conflict) ?? undefined}>
+                {conflictCanonicalPath(conflict)}
+              </span>
+            )}
           </span>
           <span className="shrink-0 tabular-nums text-fg-muted">· v{conflict.conflictSeq}</span>
         </h3>

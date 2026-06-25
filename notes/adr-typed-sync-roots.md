@@ -28,11 +28,11 @@ never mix; sensitive shapes are denied from all of them.
 
 | Lane | What it holds | Owner / destination | Captured as a user artifact? |
 |---|---|---|---|
-| `artifact_root` | user / work-product files | artifact ledger (S3 CAS + version chain) + Files UI | **yes** — this is the only lane that becomes artifacts |
+| `artifact_root` | user / work-product files, including reserved shared/scratch prefixes | artifact ledger (S3 CAS + version chain) + Files UI | **yes** — this is the only lane that becomes artifacts |
 | `harness_state_root` | Codex/Claude native exact-resume state (rollout JSONL, transcript sidepaths) | restricted harness-state store (`harness_transcripts`) | no — system resume state, not a product artifact, not the UI transcript |
 | `repo_root` | code checkout | git owns history; optional WIP **patch** artifact for recovery (pure-read `git diff`, no refs) | no — never the whole tree into the ledger |
 | `profile_bundle_root` | materialized config / skills / plugins from the session's profile snapshot | profile metadata / bundle entries | no — profile state, not user files |
-| `/atrium` | read-only chat/session/search context projection | a **cache/materialization** of server-owned records | **never** — read-only, session-scoped, never swept for capture |
+| `/atrium` / `~/context` | read-only chat/session/search context projection | a **cache/materialization** of server-owned records | **never** — read-only, session-scoped, never swept for capture |
 
 **Deny-by-default (all lanes):** `auth.json`, `.credentials.json`, any
 `*credentials*` component, `*.pem`/`*.key` and known private-key names
@@ -47,9 +47,20 @@ transcripts, or profile bundles.
   feeding the sweeps: `capture_sweep` receives only `Artifact` entries,
   `harness_transcript_sweep` only `HarnessState` entries; `Denied` entries reach
   neither. (Centaur `runtime.rs::classify_entry` / `partition_entries_by_lane`.)
+- Inside `artifact_root`, scope is still typed by server-owned canonical prefixes, not by
+  arbitrary folder ACLs or a separate v1 `space_id`: `shared/global/...`,
+  `shared/channels/<active-channel-id>/...`, future `shared/projects/<project-id>/...`
+  after project objects/ACLs exist, and `scratch/<session-id>/...`. The landed resolver
+  rejects project and non-active channel prefixes rather than trusting arbitrary ids. Session
+  scratch is an artifact surface with a narrower ACL; it is not harness state and should be
+  visible to authorized humans in the Files/artifacts UI.
+- Agent-visible mount aliases (`~` for the active shared leaf, `~/scratch`, and optional
+  `~/shared/...`) must resolve to canonical artifact paths before capture, writeback,
+  hydration manifests, and `artifact_sync_state` updates. Alias paths must not create duplicate
+  artifact chains.
 - `/atrium` is mounted **read-only and per-session** (`/var/lib/centaur/atrium/<session>`
-  → `/atrium`), so it can never be a capture surface and can't leak one viewer's
-  ACL-filtered context to another agent on the same node.
+  → `/atrium`, renamed to `~/context` in flat-home mode), so it can never be a capture surface
+  and can't leak one viewer's ACL-filtered context to another agent on the same node.
 - The product transcript that humans/agents search is the **rendered, redacted
   `session_records` projection** — not raw harness JSONL. Raw JSONL stays a
   gated resume/forensics archive (`harness_transcripts`).

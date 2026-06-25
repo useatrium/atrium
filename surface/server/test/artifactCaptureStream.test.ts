@@ -132,6 +132,10 @@ function patternedBuffer(size: number): Buffer {
   return bytes;
 }
 
+function activePath(path: string): string {
+  return `shared/channels/${fx.channelId}/${path}`;
+}
+
 describe('internal streaming artifact capture', () => {
   it('captures a multi-MB body into CAS and serves back identical bytes', async () => {
     const sid = await session();
@@ -155,10 +159,10 @@ describe('internal streaming artifact capture', () => {
     const version = await pool.query<{ blob_sha: string; size_bytes: number; s3_key: string | null; kind: string }>(
       `SELECT v.blob_sha, v.kind, b.size_bytes, b.s3_key
          FROM artifacts a
-         JOIN artifact_versions v ON v.artifact_id = a.id
-         JOIN cas_blobs b ON b.sha256 = v.blob_sha
-        WHERE a.workspace_id = $1 AND a.path = $2`,
-      [fx.workspaceId, 'large/blob.bin'],
+        JOIN artifact_versions v ON v.artifact_id = a.id
+        JOIN cas_blobs b ON b.sha256 = v.blob_sha
+       WHERE a.workspace_id = $1 AND a.path = $2`,
+      [fx.workspaceId, activePath('large/blob.bin')],
     );
     expect(version.rows[0]).toEqual({
       blob_sha: sha,

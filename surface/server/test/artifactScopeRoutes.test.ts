@@ -126,11 +126,11 @@ async function loginCookie(): Promise<string> {
   return login.headers['set-cookie'] as string;
 }
 
-async function session(): Promise<string> {
+async function session(channelId = fx.channelId): Promise<string> {
   const r = await pool.query<{ id: string }>(
     `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by, driver_id, current_execution_id)
      VALUES ($1, $2, $3, 'claude-code', 'acl-route-test', 'running', $4, $4, 'exec-1') RETURNING id`,
-    [fx.workspaceId, fx.channelId, `thread-${randomUUID()}`, fx.userId],
+    [fx.workspaceId, channelId, `thread-${randomUUID()}`, fx.userId],
   );
   return r.rows[0]!.id;
 }
@@ -162,7 +162,7 @@ async function commit(sessionId: string, path: string, bytes: string) {
 }
 
 describe('artifact scope route enforcement', () => {
-  it('404s a user read of a scratch artifact', async () => {
+  it('allows a user read of this session scratch artifact', async () => {
     const cookie = await loginCookie();
     const sid = await session();
     const path = `scratch/${sid}/secret.md`;
@@ -174,18 +174,19 @@ describe('artifact scope route enforcement', () => {
       headers: { cookie },
     });
 
-    expect(res.statusCode).toBe(404);
-    expect(res.json()).toEqual({ error: 'artifact_not_found', message: 'artifact not found' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-artifact-scope']).toBe('private');
+    expect(res.body).toBe('node captured this');
   });
 
   it('allows a user read of a shared artifact and exposes its scope', async () => {
     const cookie = await loginCookie();
     const sid = await session();
-    await commit(sid, 'shared/report.md', 'shared report body');
+    await commit(sid, 'shared/global/report.md', 'shared report body');
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/sessions/${sid}/artifacts/by-path?path=${encodeURIComponent('shared/report.md')}`,
+      url: `/api/sessions/${sid}/artifacts/by-path?path=${encodeURIComponent('shared/global/report.md')}`,
       headers: { cookie },
     });
 
@@ -194,11 +195,19 @@ describe('artifact scope route enforcement', () => {
     expect(res.body).toBe('node captured this');
   });
 
-  it('omits private artifacts from the user-facing files listing', async () => {
+  it('shows session scratch and shared artifacts in the user-facing files listing', async () => {
     const cookie = await loginCookie();
     const sid = await session();
     await commit(sid, `scratch/${sid}/secret.md`, 'private notes');
-    await commit(sid, 'shared/report.md', 'shared report body');
+    await commit(sid, 'shared/global/report.md', 'shared report body');
+    await commit(sid, 'report.md', 'active channel body');
+    const otherChannel = await pool.query<{ id: string }>(
+      `INSERT INTO channels (workspace_id, name, kind, created_by)
+       VALUES ($1, 'other-channel', 'public', $2) RETURNING id`,
+      [fx.workspaceId, fx.userId],
+    );
+    const otherSid = await session(otherChannel.rows[0]!.id);
+    await commit(otherSid, 'other-channel.md', 'other channel body');
 
     const res = await app.inject({
       method: 'GET',
@@ -207,9 +216,18 @@ describe('artifact scope route enforcement', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { rows: Array<{ path: string; scope?: string }> };
-    expect(body.rows.map((row) => row.path)).toEqual(['shared']);
-    expect(body.rows[0]?.scope).toBe('workspace');
+    const body = res.json() as {
+      activePrefix: string;
+      rows: Array<{ path: string; canonicalPath?: string; displayPath?: string; scope?: string }>;
+    };
+    expect(body.activePrefix).toBe(`shared/channels/${fx.channelId}`);
+    expect(body.rows.map((row) => row.path)).toEqual(['report.md', 'scratch', 'shared']);
+    expect(body.rows.find((row) => row.path === 'report.md')).toMatchObject({
+      canonicalPath: `shared/channels/${fx.channelId}/report.md`,
+      displayPath: 'report.md',
+      scope: 'workspace',
+    });
+    expect(body.rows.find((row) => row.path === 'scratch')?.scope).toBe('private');
   });
 
   it('keeps the internal raw path able to read a scratch artifact', async () => {

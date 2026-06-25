@@ -9,6 +9,8 @@ type FileType = 'file' | 'dir';
 
 type FileRow = {
   path: string;
+  canonicalPath?: string;
+  displayPath?: string;
   backing: Backing;
   type: FileType;
 };
@@ -30,6 +32,8 @@ type LedgerHistoryEntry = {
 
 type HistoryResponse = {
   backing: Backing;
+  canonicalPath?: string;
+  displayPath?: string;
   entries: Array<GitHistoryEntry | LedgerHistoryEntry>;
 };
 
@@ -53,6 +57,14 @@ function parentDir(path: string): string {
   const parts = path.split('/').filter(Boolean);
   parts.pop();
   return parts.join('/');
+}
+
+function rowDisplayPath(row: FileRow): string {
+  return row.displayPath ?? row.path;
+}
+
+function canonicalLabel(row: FileRow): string | null {
+  return row.canonicalPath && row.canonicalPath !== rowDisplayPath(row) ? row.canonicalPath : null;
 }
 
 function filesUrl(sessionId: string, dir: string): string {
@@ -196,7 +208,7 @@ export function FilesSurface({
     () =>
       [...rows].sort((a, b) => {
         if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-        return basename(a.path).localeCompare(basename(b.path));
+        return basename(rowDisplayPath(a)).localeCompare(basename(rowDisplayPath(b)));
       }),
     [rows],
   );
@@ -333,6 +345,8 @@ export function FilesSurface({
           !rowsError &&
           sortedRows.map((row) => {
             const active = selected?.path === row.path;
+            const display = rowDisplayPath(row);
+            const canonical = canonicalLabel(row);
             return (
               <button
                 type="button"
@@ -345,8 +359,8 @@ export function FilesSurface({
                 <span className="grid size-4 shrink-0 place-items-center text-fg-muted">
                   {row.type === 'dir' ? <ChevronRightIcon size={13} /> : <FileIcon size={13} />}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-body" title={row.path}>
-                  {basename(row.path)}
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-body" title={canonical ?? display}>
+                  {basename(display)}
                 </span>
                 <BackingBadge backing={row.backing} />
               </button>
@@ -361,8 +375,15 @@ export function FilesSurface({
       {selected ? (
         <>
           <div className="flex shrink-0 items-center gap-2 border-b border-edge px-3 py-1.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-body" title={selected.path}>
-              {selected.path}
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate font-mono text-2xs text-fg-body" title={rowDisplayPath(selected)}>
+                {rowDisplayPath(selected)}
+              </span>
+              {canonicalLabel(selected) && (
+                <span className="truncate font-mono text-3xs text-fg-muted" title={canonicalLabel(selected) ?? undefined}>
+                  {canonicalLabel(selected)}
+                </span>
+              )}
             </span>
             {versionSkew?.path === selected.path && (
               <VersionSkewBadge workingSeq={versionSkew.workingSeq} latestSeq={versionSkew.latestSeq} />

@@ -32,6 +32,11 @@ describe("displayPath", () => {
     expect(displayPath("src/app.ts")).toBe("src/app.ts");
     expect(displayPath("./x.ts")).toBe("x.ts");
   });
+  it("projects canonical artifact paths to agent-visible paths", () => {
+    expect(displayPath("shared/channels/channel-1/report.md")).toBe("report.md");
+    expect(displayPath("scratch/11111111-1111-4111-8111-111111111111/draft.md")).toBe("scratch/draft.md");
+    expect(displayPath("shared/global/handbook.md")).toBe("shared/global/handbook.md");
+  });
 });
 
 describe("fileChangeFromToolCall", () => {

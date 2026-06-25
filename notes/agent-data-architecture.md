@@ -48,13 +48,17 @@ latency optimization, not a correctness requirement.
 A conversation after v1 landed settled the sharing / identity / notes / sync opens.
 Full record: `cas-ledger-build-plan.md` §10. Deltas to the design above:
 
-- **Identity = workspace-scoped, scope-as-path-prefix.** Artifacts are **shared
-  across the whole workspace by default** (sessions share *across channels*), so the
-  key is `(workspace, fullpath)` — session/channel are provenance, not the key.
-  Scope folds into a path prefix the filter reads: `scratch/<session>/`=private
-  (blind-append), `proj-x/`=topic/team (the realistic default altitude),
-  `shared/`/root=workspace-wide. Access follows scope; a default per-task working dir
-  keeps generic-name collisions structural, not accidental.
+- **Identity = workspace-scoped, scope-as-reserved-path-prefix.** The key is
+  `(workspace, canonical_path)` — session/channel are provenance, not the key. Atrium
+  selects one active shared leaf and materializes it at `~`, so generic writes like
+  `report.md` land in the right channel/task scope without agent prompting. Scope folds
+  into canonical prefixes the filter reads: `shared/global/...`,
+  `shared/channels/<active-channel-id>/...`, future `shared/projects/<project-id>/...`
+  once projects are product objects with ACLs, and `scratch/<session-id>/...` for
+  session-scoped durable artifacts. Current code rejects project and non-active channel
+  prefixes instead of accepting arbitrary ids.
+  Access follows longest matching prefix; agents may create subdirs inside granted leaves,
+  but not new scopes by naming folders.
 - **Notes → artifact-canonical** (reverses the daily-driver chat-canonical-notes
   model). Chat = input + view; agents edit notes as artifacts. The voice/mobile
   braindump is preserved by an **append write-mode** → append-only log artifact

@@ -15,12 +15,13 @@
 > **C3 large-file** needs Centaur object store (16 MiB ceiling today); **C1
 > inbound-sync** is the next Centaur effort (`notes/inbound-sync-spec.md`).
 >
-> **DESIGN PASS 2026-06-19 (see §10):** identity went **workspace-scoped**
-> (`(workspace,fullpath)`, scope as a path prefix; `scratch/`=private); **notes →
-> artifact-canonical** (reverses daily-driver §2); **C1 live inbound now IN SCOPE**;
-> autonomous reconcile = **auto-rebase**; **diff3 gated by merge-class**; **code
-> repos excluded from sharing** (git owns them). v1's `(session,path)` blind-append
-> is now only the `scratch/` path.
+> **DESIGN PASS 2026-06-19, clarified 2026-06-25 (see §10):** identity went
+> **workspace-scoped** (`(workspace, canonical_path)`, scope as a reserved path prefix).
+> Active shared work is materialized at `~`; session scratch lives under
+> `scratch/<session-id>/...` with the same artifact machinery and a narrower ACL.
+> **notes → artifact-canonical** (reverses daily-driver §2); **C1 live inbound now IN
+> SCOPE**; autonomous reconcile = **auto-rebase**; **diff3 gated by merge-class**;
+> **code repos excluded from sharing** (git owns them).
 
 
 The durable artifact CAS-ledger decided in `spike-artifact-store.md` (own
@@ -606,7 +607,8 @@ former** — it's small, and it's what lets the chief-of-staff agent edit your n
 without silently clobbering your edits.
 
 > **RESOLVED in §10.1** — and went *broader* than `(channel,name)`: identity is
-> workspace-scoped (`(workspace, fullpath)`) with scope folded into a path prefix.
+> workspace-scoped (`(workspace, canonical_path)`) with scope folded into reserved
+> prefixes (`shared/...` and `scratch/...`).
 
 ## 10. Revised decisions — design pass after the build (2026-06-19)
 
@@ -615,11 +617,14 @@ reversed two earlier calls. **These supersede the narrower models above.**
 
 ### 10.1 Identity = workspace-scoped, path-prefix scoping (supersedes `(session,path)` / `(channel,name)`)
 
-> **UPDATE 2026-06-22 (design session): the DEFAULT below is FLIPPED to private-by-default.**
-> Agent-UX won: a naive `report.md` must never collide with strangers' files, so the agent's
-> bare working dir is **private** and sharing is the deliberate act of writing into `shared/`.
-> The `(workspace, fullpath)` identity is unchanged; only the *default scope* flips. Canonical:
-> `notes/shared-workspace-build-spec.md` §0.3. (Original §10.1 text below kept for lineage.)
+> **UPDATE 2026-06-25 (scope/mount clarification): the current canonical model is
+> active-shared-root + session scratch, both backed by `(workspace, canonical_path)`.** A naive
+> `report.md` in `~` maps to the session's **active shared leaf**
+> (`shared/channels/<active>/report.md`, or another Atrium-selected shared prefix). Private
+> durable files are explicit: `~/scratch/foo` maps to `scratch/<session-id>/foo`. Both use the
+> same artifact/CAS/version/GUI machinery; ACL comes from reserved path prefixes, not a new
+> `space_id` table in v1. Canonical: `notes/shared-workspace-build-spec.md` §0.1–§0.3.
+> (Original §10.1 text below kept for lineage.)
 
 Default is **shared across the whole Atrium workspace** — sessions share artifacts
 *across channels*, not just within one. The identity key is effectively
@@ -628,23 +633,23 @@ denormalized provenance/access metadata, if at all). "Scope" folds into the **pa
 prefix**, interpreted by the filter/access layer — no separate scope column, no
 per-artifact tag machinery:
 
-- `scratch/<session>/…` → **private** to the session (filter excludes it from the
-  shared pool; blind-append, zero merge cost). Preserves the private affordance Gary
-  flagged we'd otherwise lose by going fully public.
-- `proj-x/…` / `team-y/…` → **topic/team scope** — the realistic default altitude
-  (not everything is company-wide). Co-edited + conflict-stated.
-- `shared/…` / root → **workspace-wide**.
+- `scratch/<session>/…` → **session-scoped artifacts**. Same version/writeback machinery; narrower
+  ACL; not hydrated into sibling sessions by default.
+- `shared/global/…` → **workspace-wide artifacts**.
+- `shared/channels/<active-channel>/…` → **active channel-scoped artifacts** for the session.
+- `shared/projects/<project>/…` → **future project-scoped artifacts**, only once "project" is a
+  real product object with an ACL resolver. Current code rejects this prefix and non-active
+  channel ids rather than accepting arbitrary ids.
 
-To keep collisions *structural, not accidental*, each task/agent gets a **default
-working dir** (`proj-x/`) so files land namespaced without the agent thinking about
-it — otherwise two unrelated tasks both writing `report.md` collide on one chain.
-**Access-control follows scope**: anything past `scratch/` is gated by
-workspace/team membership, retiring the built channel-only `non-member→404` as the
-*only* gate. **Net vs §9:** the bifurcation "private=`(session,path)` /
-shared=`(channel,name)`" becomes "private=`scratch/` prefix / shared=everything
-else, workspace-default" — same base-aware-capture + conflict-state requirement,
-simpler key. Shared captures are base-aware (route through the built node-diff3
-path); only `scratch/` stays blind-append.
+To keep collisions *structural, not accidental*, Atrium selects one active shared
+leaf and materializes it at `~`; writes in cwd are therefore scoped without the
+agent learning the canonical prefix. **Access-control follows longest matching
+reserved prefix**; agents can create subdirs inside granted leaves, but cannot create
+new scopes by `mkdir shared/channels/foo`. **Net vs §9:** the bifurcation
+"private=`(session,path)` / shared=`(channel,name)`" becomes "all artifacts are
+`(workspace, canonical_path)`, with reserved prefixes deriving ACL." Shared and
+scratch captures both use the artifact version chain; scratch is private by ACL, not
+by a separate storage system.
 
 ### 10.2 Notes → artifact-canonical (REVERSES daily-driver §2)
 
@@ -757,7 +762,7 @@ the inbound-pull also lives.
 
 ### 10.8 Through-line: the path/filter layer carries the policy
 
-Scope (private/topic/workspace), code-vs-artifact, and diff3-eligibility are all
-**policy keyed off path + type + merge-class** — not new machinery. The path-prefix
-convention + the existing filter + `merge_class` do the work. That the model
-collapses onto one layer is a sign it's holding.
+Scope (session scratch / channel / project / global), code-vs-artifact, and
+diff3-eligibility are all **policy keyed off canonical path + type + merge-class** — not
+new machinery. The reserved-prefix convention + the existing filter + `merge_class` do
+the work. That the model collapses onto one layer is a sign it's holding.

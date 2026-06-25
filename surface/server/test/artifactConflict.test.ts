@@ -51,11 +51,15 @@ function write(path: string, text: string, baseSeq?: number, mergeable = false) 
   });
 }
 
+function activePath(path: string): string {
+  return `shared/channels/${fx.channelId}/${path}`;
+}
+
 /** Force the artifact's merge_class (write-back creates 'immutable-data'). */
 async function setMergeClass(path: string, cls: string) {
   await pool.query(`UPDATE artifacts SET merge_class = $3 WHERE workspace_id = $1 AND path = $2`, [
     fx.workspaceId,
-    path,
+    activePath(path),
     cls,
   ]);
 }
@@ -194,13 +198,13 @@ describe('diff3 content conflict detail', () => {
 
 describe('hydration scope (A4)', () => {
   it('lists the session artifact paths with latest seq', async () => {
-    await write('shared/a.md', 'x');
-    await write('shared/b.md', 'y');
-    await write('shared/a.md', 'x2', 1);
+    await write('shared/global/a.md', 'x');
+    await write('shared/global/b.md', 'y');
+    await write('shared/global/a.md', 'x2', 1);
     const scope = await ledger.sessionScope(sessionId);
     expect(scope).toEqual([
-      expect.objectContaining({ path: 'shared/a.md', latestSeq: 2, kind: 'modified' }),
-      expect.objectContaining({ path: 'shared/b.md', latestSeq: 1, kind: 'created' }),
+      expect.objectContaining({ path: 'shared/global/a.md', latestSeq: 2, kind: 'modified' }),
+      expect.objectContaining({ path: 'shared/global/b.md', latestSeq: 1, kind: 'created' }),
     ]);
   });
 

@@ -7,6 +7,7 @@ import {
   type VersionKind,
   type VersionStatus,
 } from './artifact-ledger.js';
+import { canonicalizeSessionArtifactPath } from './artifact-path.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 
@@ -132,9 +133,16 @@ function sha256(bytes: Buffer): string {
 }
 
 async function findArtifact(pool: Db, sessionId: string, path: string): Promise<ArtifactRow | null> {
+  const session = await pool.query<{ workspace_id: string; channel_id: string }>(
+    `SELECT workspace_id, channel_id FROM sessions WHERE id = $1`,
+    [sessionId],
+  );
+  const row = session.rows[0];
+  if (!row) return null;
+  const canonicalPath = canonicalizeSessionArtifactPath(path, { sessionId, channelId: row.channel_id });
   const res = await pool.query<ArtifactRow>(
-    `SELECT id, merge_class FROM artifacts WHERE session_id = $1 AND path = $2`,
-    [sessionId, path],
+    `SELECT id, merge_class FROM artifacts WHERE workspace_id = $1 AND path = $2`,
+    [row.workspace_id, canonicalPath],
   );
   return res.rows[0] ?? null;
 }

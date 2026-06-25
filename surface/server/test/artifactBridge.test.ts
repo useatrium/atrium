@@ -57,6 +57,10 @@ async function versionCount(): Promise<number> {
   return Number(r.rows[0]!.n);
 }
 
+function activePath(path: string): string {
+  return `shared/channels/${fx.channelId}/${path}`;
+}
+
 async function insertSessionArtifactRow(args: {
   artifactId: string;
   sha256: string;
@@ -136,7 +140,7 @@ describe('artifact capture bridge', () => {
     });
     const artifact = await pool.query<{ merge_class: string }>(
       'SELECT merge_class FROM artifacts WHERE workspace_id = $1 AND path = $2',
-      [fx.workspaceId, 'reports/summary.md'],
+      [fx.workspaceId, activePath('reports/summary.md')],
     );
     expect(artifact.rows[0]?.merge_class).toBe('mergeable-doc');
 
