@@ -213,6 +213,64 @@ describe('internal capture round-trip (PG + object storage)', () => {
     expect(raw.body).toBe('second');
   });
 
+  it('rejects divergent stale writes through active-channel aliases without creating a second chain', async () => {
+    const sid = await session();
+    const explicit = `shared/channels/${fx.channelId}/report.md`;
+    const initial = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=report.md`,
+      headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
+      payload: 'base',
+    });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({ seq: 1, status: 'normal' });
+
+    const aliasWrite = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(explicit)}`,
+      headers: {
+        'x-api-key': KEY,
+        'content-type': 'text/markdown',
+        'x-artifact-base-seq': '1',
+      },
+      payload: 'from explicit alias',
+    });
+    expect(aliasWrite.statusCode).toBe(200);
+    expect(aliasWrite.json()).toMatchObject({ seq: 2, status: 'normal' });
+
+    const staleBareWrite = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=report.md`,
+      headers: {
+        'x-api-key': KEY,
+        'content-type': 'text/markdown',
+        'x-artifact-base-seq': '1',
+      },
+      payload: 'from bare alias',
+    });
+    expect(staleBareWrite.statusCode).toBe(409);
+    expect(staleBareWrite.json()).toMatchObject({ error: 'stale_base', baseSeq: 1, latestSeq: 2 });
+
+    const rows = await pool.query<{ path: string; versions: number }>(
+      `SELECT a.path, count(v.*)::int AS versions
+         FROM artifacts a
+         JOIN artifact_versions v ON v.artifact_id = a.id
+        WHERE a.workspace_id = $1
+        GROUP BY a.path
+        ORDER BY a.path`,
+      [fx.workspaceId],
+    );
+    expect(rows.rows).toEqual([{ path: explicit, versions: 2 }]);
+
+    const raw = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=report.md`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.body).toBe('from explicit alias');
+  });
+
   it('raw 404s for an unknown path', async () => {
     const sid = await session();
     const res = await app.inject({

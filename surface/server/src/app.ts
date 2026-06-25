@@ -3994,7 +3994,13 @@ function rawSession(req: FastifyRequest): string | undefined {
             author,
             ...(baseSeq == null ? {} : { baseSeq }),
           });
-      if (!result.ok) return reply.code(409).send({ error: result.reason });
+      if (!result.ok) {
+        return reply.code(409).send({
+          error: result.reason,
+          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+        });
+      }
       return reply.send({ seq: result.seq, status: result.status });
     });
   });
