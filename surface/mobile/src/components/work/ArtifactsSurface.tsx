@@ -2,7 +2,7 @@
 // the RN counterpart of web's ArtifactsSurface. Pure/prop-driven (the session
 // screen supplies artifactUri + imageHeaders from the chat context) so it
 // renders in tests without a ChatProvider. Bytes are served by the same route
-// the web uses: GET /api/sessions/:id/artifacts/:id (302→S3 or Centaur proxy).
+// the web uses: GET /api/sessions/:id/artifacts/by-path?path=...
 import { useMemo } from 'react';
 import { Image, ScrollView, Text, View } from 'react-native';
 import type { Artifact, ArtifactKind } from '@atrium/centaur-client';
@@ -31,7 +31,7 @@ function ArtifactTile({
   imageHeaders,
 }: {
   artifact: Artifact;
-  artifactUri: (artifactId: string) => string;
+  artifactUri: (artifact: Artifact) => string;
   imageHeaders: Record<string, string>;
 }) {
   const { colors } = useTheme();
@@ -51,9 +51,9 @@ function ArtifactTile({
     >
       <View style={{ height: 96, backgroundColor: colors.bgInput, alignItems: 'center', justifyContent: 'center' }}>
         {isImage ? (
-          <Image
-            accessibilityLabel={basename(artifact.path)}
-            source={{ uri: artifactUri(artifact.id), headers: imageHeaders }}
+            <Image
+              accessibilityLabel={basename(artifact.path)}
+              source={{ uri: artifactUri(artifact), headers: imageHeaders }}
             style={{ width: '100%', height: '100%' }}
             resizeMode="cover"
           />
@@ -84,8 +84,8 @@ export function ArtifactsSurface({
   imageHeaders,
 }: {
   artifacts: Artifact[];
-  /** Build the byte URL for an artifact id (the session screen binds sessionId). */
-  artifactUri: (artifactId: string) => string;
+  /** Build the byte URL for an artifact path (the session screen binds sessionId). */
+  artifactUri: (artifact: Artifact) => string;
   imageHeaders: Record<string, string>;
 }) {
   const { colors } = useTheme();

@@ -1,8 +1,15 @@
 # Agent Data Architecture — logs, artifacts, workspaces
 
 Status: **DRAFT, architecture converged; store backing DECIDED (own CAS-ledger)**
-(updated 2026-06-19). Captures the research, explored ideas, discussion + Gary's
+(updated 2026-06-25). Captures the research, explored ideas, discussion + Gary's
 feedback, and the working conclusions.
+
+> **UPDATE 2026-06-25:** the storage implementation is one Atrium CAS-ledger write path, not
+> a long-lived `session_artifacts` staging/offload layer. Agent capture, human
+> write-back, uploads, hydration, and app publish all converge on `cas_blobs` with
+> S3-durable bytes before non-delete versions commit. `session_artifacts` remains
+> useful historical scaffolding from the first capture/offload build, but the
+> hard-cut branch deletes it rather than adding a third mechanism.
 
 Sister docs:
 - `spike-artifact-store.md` — the open lakeFS-vs-own-CAS-ledger spike (decides the
@@ -40,8 +47,10 @@ latency optimization, not a correctness requirement.
 - **CDC/chunk-dedup deferred** — not needed for v1; whole-object storage is fine;
   may add later for large/churny media.
 - **Store backing = own CAS-ledger** (DECIDED by live spike 2026-06-19, 39–29 over
-  lakeFS; lakeFS lost on conflict-fit + ops + paywalled RBAC). Extend the existing
-  `session_artifacts` pipeline; ~900 LOC mostly-glue. See `spike-artifact-store.md`.
+  lakeFS; lakeFS lost on conflict-fit + ops + paywalled RBAC). The 2026-06-25
+  refinement landed as a hard cut to a single Atrium CAS path: no durable dependence on
+  `session_artifacts`, artifact offload, or Centaur proxy fallback. See
+  `spike-artifact-store.md` and `cas-ledger-build-plan.md` §3b-§3d.
 
 ## Revised decisions (2026-06-19, design pass after CAS-ledger v1)
 
@@ -205,8 +214,10 @@ write throttle + Merkle keyspace locality).
 Centaur sandboxes are **no-ingress** — nothing connects *into* them — so **all
 sync is sandbox-initiated egress**:
 - **Startup hydration:** sandbox GETs its workspace from the durable store.
-- **Capture/promote:** sandbox POSTs out to api-rs → durable store (built today:
-  A1 egress policy + B1 offload).
+- **Capture/promote:** sandbox/node POSTs out to Atrium's internal capture/write-back
+  route, which writes durable CAS/S3 bytes before committing a ledger version. The
+  older sandbox → api-rs staging → Atrium offload path was proven, but is not the
+  target durable store.
 - **Mid-session inbound** (human/other-agent edited a shared artifact): there is
   **no push into the sandbox** —
   - **lazy pull-on-access:** the daemon GETs the current version when the agent
@@ -290,8 +301,10 @@ Code repos / structured data / docs / artifact pipelines / oversight converged:
   hybrid auto-detect→promote = filter-pass at checkpoints.
 - **Durable store:** content-addressed blobs + Merkle metadata → S3/MinIO; refs/
   pointers/ledger/lineage/index → Postgres. **Backing = own CAS-ledger** (decided
-  2026-06-19) — extend `session_artifacts`; net-new = ledger tables + write-back
-  PUT + conflict-state/3-way (use a real diff3 lib) + lineage + multipart + GC.
+  2026-06-19; storage hard-cut 2026-06-25) — one Atrium CAS write path for
+  capture/write-back/uploads/app publish, with `s3_key` present before non-delete
+  versions commit. `session_artifacts`/offload/proxy fallback are removed instead
+  of preserved as a second store.
 - **Sync:** egress-only (hydrate-GET, capture-POST, lazy-pull, invalidation via a
   **stdin directive** / egress-poll daemon — *not* an outbound stream). Mid-session
   inbound (C1) is **in scope** (target: running agent fresh within seconds).

@@ -13,7 +13,6 @@ import {
   isTerminalExecutionStatus,
   reduceSession,
   type Artifact,
-  type ArtifactBytes,
   type CentaurEventFrame,
   type ExecuteResponse,
   type FileChange,
@@ -26,12 +25,8 @@ import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { projectSessionIncremental, releaseSessionProjectionState } from './session-records.js';
 import { projectIncrementalAndEmit } from './session-record-changefeed.js';
-import { ArtifactLedger, casBlobKey, type MergeClass, type VersionRef } from './artifact-ledger.js';
-import {
-  canonicalizeSessionArtifactPath,
-  InvalidArtifactPathError,
-} from './artifact-path.js';
-import { presignGet as s3PresignGet, uploadObject as s3UploadObject } from './s3.js';
+import { ArtifactLedger, type VersionRef } from './artifact-ledger.js';
+import { presignGet as s3PresignGet } from './s3.js';
 import {
   appendEvent,
   canAccessChannel,
@@ -190,30 +185,7 @@ export interface QuestionAnswerBody {
   };
 }
 
-/** The bytes of a captured artifact plus the metadata the serve route needs to
- * set response headers (mime, path → filename). `bytes` is the proxied Centaur
- * stream; the route pipes it to the client. */
-export interface SessionArtifactStream {
-  artifact: Artifact;
-  bytes: ArtifactBytes;
-}
-
-/**
- * How the serve route should deliver a captured artifact (B1: S3 offload):
- * - `redirect`: bytes are durably in atrium's S3 → presigned 302.
- * - `proxy`: not yet offloaded but still staged in Centaur → proxy the stream.
- * The 404 cases (unknown / manifest-only) throw a DomainError instead.
- */
-export type ArtifactServePlan =
-  | { kind: 'redirect'; url: string }
-  | ({ kind: 'proxy' } & SessionArtifactStream);
-
-/** Outcome of one offload batch, for logging/observability. */
-export interface ArtifactOffloadResult {
-  offloaded: number;
-  evicted: number;
-  failed: number;
-}
+export type ArtifactServePlan = { kind: 'redirect'; url: string };
 
 export interface SessionListItem {
   id: string;
@@ -229,10 +201,9 @@ export interface SessionListItem {
   completedAt: string | null;
 }
 
-/** The S3 surface the artifact offload + serve paths need. Injectable in tests
+/** The S3 surface the artifact serve path needs. Injectable in tests
  * (the real impl is s3.ts; defaults to it). */
 export interface ArtifactStorage {
-  uploadObject: typeof s3UploadObject;
   presignGet: typeof s3PresignGet;
 }
 
@@ -240,10 +211,7 @@ export interface SessionRunsOptions {
   centaur?: CentaurClient;
   baseUrl?: string;
   apiKey?: string;
-  /** Auth key for Centaur's artifact-byte endpoint (distinct from `apiKey`).
-   * Falls back to `apiKey` when unset. */
-  artifactCaptureApiKey?: string;
-  /** Object store for artifact offload/serve. Defaults to the real s3.ts. */
+  /** Object store for artifact serve. Defaults to the real s3.ts. */
   artifactStorage?: ArtifactStorage;
   harness?: string;
   autoResume?: boolean;
@@ -289,19 +257,6 @@ interface SessionRow {
   cost_usd: string | number;
   created_at: Date;
   completed_at: Date | null;
-}
-
-interface SessionArtifactRow {
-  id: string;
-  session_id: string;
-  execution_id: string | null;
-  centaur_ref: string | null;
-  s3_key: string | null;
-  path: string;
-  mime: string;
-  size_bytes: string | number;
-  sha256: string;
-  offloaded_at: Date | null;
 }
 
 interface ChannelRow {
@@ -365,7 +320,6 @@ const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000
 
 export class SessionRuns {
   private readonly centaur: CentaurClient;
-  private readonly artifactCaptureApiKey: string;
   private readonly artifactStorage: ArtifactStorage;
   /** Durable CAS-ledger (notes/cas-ledger-build-plan.md). Shared by the
    * capture-bridge, serve, write-back, and GC paths. */
@@ -390,18 +344,7 @@ export class SessionRuns {
         baseUrl: options.baseUrl ?? config.centaurBaseUrl,
         apiKey: options.apiKey ?? config.centaurApiKey,
       });
-    // The artifact-byte endpoint authenticates with its own key; fall back to
-    // the session-API key when unset (treating '' as unset, since config env
-    // defaults are empty strings). Last resort is '' which Centaur will reject.
-    this.artifactCaptureApiKey =
-      firstNonEmpty(
-        options.artifactCaptureApiKey,
-        config.artifactCaptureApiKey,
-        options.apiKey,
-        config.centaurApiKey,
-      ) ?? '';
-    this.artifactStorage =
-      options.artifactStorage ?? { uploadObject: s3UploadObject, presignGet: s3PresignGet };
+    this.artifactStorage = options.artifactStorage ?? { presignGet: s3PresignGet };
     this.artifactLedger = new ArtifactLedger(this.pool);
     this.harness = options.harness ?? config.centaurHarness;
     this.autoResume = options.autoResume ?? true;
@@ -595,64 +538,6 @@ export class SessionRuns {
     };
   }
 
-  /**
-   * Decide how to serve a captured artifact (B1: S3 offload). Channel access is
-   * gated by the route (like {@link getSessionRecord}). The artifact metadata
-   * comes from the durable mirror ({@link collectArtifacts}); the offload state
-   * lives in `session_artifacts`:
-   *  - offloaded (s3_key set) → a presigned S3 redirect (durable, no Centaur hit);
-   *  - still staged (ref set, not yet offloaded) → proxy the bytes from Centaur.
-   *
-   * Throws a 404 DomainError when the artifact is unknown or has no staged bytes
-   * (`ref === null`, manifest-only), and a 502 when Centaur has no record of the
-   * execution. CentaurApiError (e.g. an evicted ref → 404 from Centaur) bubbles
-   * up to the route, which maps it to 410/502.
-   */
-  async getArtifactServePlan(sessionId: string, artifactId: string): Promise<ArtifactServePlan> {
-    const row = await this.getSessionRow(sessionId);
-    if (!row) {
-      throw new DomainError(404, 'session_not_found', 'session not found');
-    }
-    const mirrored = await this.readMirroredState(sessionId);
-    const artifact = collectArtifacts(mirrored).find((a) => a.id === artifactId);
-    if (!artifact) {
-      throw new DomainError(404, 'artifact_not_found', 'artifact not found');
-    }
-    if (artifact.ref == null) {
-      // Manifest-only: metadata captured, bytes never staged (too large/junk).
-      throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
-    }
-    // Already offloaded to atrium's store? Serve a presigned redirect — the
-    // bytes are durable there, so this works even after Centaur evicts the ref.
-    const offloaded = await this.pool.query<{ s3_key: string }>(
-      `SELECT s3_key FROM session_artifacts
-       WHERE session_id = $1 AND id = $2 AND s3_key IS NOT NULL`,
-      [sessionId, artifactId],
-    );
-    const s3Key = offloaded.rows[0]?.s3_key;
-    if (s3Key) {
-      const filename = basename(artifact.path) || 'artifact';
-      const inline = (artifact.mime || '').startsWith('image/');
-      const url = await this.artifactStorage.presignGet(s3Key, filename, inline);
-      return { kind: 'redirect', url };
-    }
-    // Not yet offloaded: proxy from Centaur staging. Fetch from the execution
-    // that captured the artifact (on the event since Centaur added
-    // execution_id); fall back to the session's current execution for artifacts
-    // captured before that, which only resolve while the session hasn't moved
-    // to a newer execution.
-    const executionId = artifact.executionId ?? row.current_execution_id;
-    if (!executionId) {
-      throw new DomainError(502, 'artifact_unavailable', 'session has no execution to serve artifacts from');
-    }
-    const bytes = await this.centaur.getArtifactBytes(executionId, artifact.ref, {
-      apiKey: this.artifactCaptureApiKey,
-    });
-    return { kind: 'proxy', artifact, bytes };
-  }
-
-  // === serve additions ===
-
   async getLedgerServePlan(sessionId: string, path: string, ref: VersionRef): Promise<ArtifactServePlan> {
     const v = await this.artifactLedger.resolveVersion(sessionId, path, ref);
     if (!v) {
@@ -661,173 +546,17 @@ export class SessionRuns {
     if (v.kind === 'deleted') {
       throw new DomainError(410, 'artifact_deleted', 'artifact was deleted');
     }
-    if (v.s3Key) {
-      const filename = basename(path) || 'artifact';
-      const inline = (v.mime || '').startsWith('image/');
-      const url = await this.artifactStorage.presignGet(v.s3Key, filename, inline);
-      return { kind: 'redirect', url };
+    if (!v.blobSha || !v.s3Key) {
+      throw new DomainError(
+        503,
+        'blob_unavailable',
+        'artifact bytes are not durable in CAS',
+      );
     }
-    if (!v.blobSha) {
-      throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
-    }
-    const staged = await this.pool.query<{ execution_id: string | null; centaur_ref: string }>(
-      `SELECT execution_id, centaur_ref FROM session_artifacts
-       WHERE session_id = $1 AND sha256 = $2 AND centaur_ref IS NOT NULL
-       ORDER BY captured_at DESC LIMIT 1`,
-      [sessionId, v.blobSha],
-    );
-    const stagingRef = staged.rows[0];
-    if (!stagingRef) {
-      throw new DomainError(404, 'artifact_not_captured', 'artifact bytes were not captured');
-    }
-    if (!stagingRef.execution_id) {
-      throw new DomainError(502, 'artifact_unavailable', 'session has no execution to serve artifacts from');
-    }
-    const bytes = await this.centaur.getArtifactBytes(stagingRef.execution_id, stagingRef.centaur_ref, {
-      apiKey: this.artifactCaptureApiKey,
-    });
-    return {
-      kind: 'proxy',
-      artifact: {
-        id: v.artifactId,
-        path,
-        kind: v.kind,
-        mime: v.mime || 'application/octet-stream',
-        size: Number(v.sizeBytes ?? 0),
-        sha256: v.blobSha,
-        ref: stagingRef.centaur_ref,
-        executionId: stagingRef.execution_id,
-        sourceEventIds: [],
-      },
-      bytes,
-    };
-  }
-
-  /**
-   * Offload one batch of staged artifacts (B1: S3 offload) from Centaur staging
-   * into atrium's durable store. Runs on an interval (see artifact-offload.ts).
-   *
-   * Claim-then-release (the lease): a batch is claimed in one SHORT transaction
-   * — `FOR UPDATE SKIP LOCKED` selects up-to-`limit` un-offloaded rows whose
-   * lease is free (never claimed, or claimed longer ago than the lease window)
-   * and stamps `claimed_at = now()` on them. The transaction commits and the row
-   * locks release immediately; the slow Centaur fetch + S3 upload then run
-   * OUTSIDE any transaction, one short tx per row to stamp the result. This is
-   * the key difference from the original single-transaction design, which held
-   * the row locks open across every network hop in the batch.
-   *
-   * Concurrency: `SKIP LOCKED` stops two workers grabbing the same row in the
-   * same instant; the lease stops a second worker re-claiming a row whose first
-   * claimant is still uploading. A worker that crashes mid-upload leaves a stale
-   * `claimed_at`; once it ages past the lease the row is reclaimable again.
-   *
-   * Per-row outcomes: success stamps `s3_key`/`offloaded_at` (terminal); a
-   * Centaur 404 (ref evicted from staging before we offloaded) stamps
-   * `evicted_at` (terminal — drops out of the queue rather than re-claiming
-   * every lease); any other error is logged + counted and leaves the lease in
-   * place so the row is retried after it expires. One bad row never stops the
-   * batch.
-   */
-  async offloadArtifactBatch(limit = config.artifactOffloadBatchSize): Promise<ArtifactOffloadResult> {
-    const result: ArtifactOffloadResult = { offloaded: 0, evicted: 0, failed: 0 };
-    const leaseSeconds = Math.max(1, Math.round(config.artifactOffloadClaimLeaseMs / 1000));
-    // Claim phase — one short transaction. The composite-key subquery takes the
-    // row locks (SKIP LOCKED) and the outer UPDATE stamps the lease on exactly
-    // those rows, then commits and releases the locks.
-    const claimed = await withTx(this.pool, (client) =>
-      client.query<SessionArtifactRow>(
-        `UPDATE session_artifacts SET claimed_at = now()
-         WHERE (session_id, id) IN (
-           SELECT session_id, id FROM session_artifacts
-           WHERE offloaded_at IS NULL AND evicted_at IS NULL AND centaur_ref IS NOT NULL
-             AND (claimed_at IS NULL OR claimed_at < now() - ($1::int * interval '1 second'))
-           ORDER BY captured_at ASC
-           LIMIT $2
-           FOR UPDATE SKIP LOCKED
-         )
-         RETURNING id, session_id, execution_id, centaur_ref, s3_key, path, mime,
-                   size_bytes, sha256, offloaded_at`,
-        [leaseSeconds, limit],
-      ),
-    );
-    // Work phase — outside any transaction. A per-row failure leaves the lease
-    // in place (reclaimed after it expires) and never blocks the rest.
-    for (const artifact of claimed.rows) {
-      try {
-        const outcome = await this.offloadOneArtifact(artifact);
-        if (outcome === 'offloaded') result.offloaded += 1;
-        else result.evicted += 1;
-      } catch (err) {
-        result.failed += 1;
-        console.warn('artifact offload failed', {
-          sessionId: artifact.session_id,
-          artifactId: artifact.id,
-          err,
-        });
-      }
-    }
-    return result;
-  }
-
-  /** Offload a single claimed artifact: fetch bytes from Centaur, upload to S3,
-   * then stamp `s3_key` + `offloaded_at` in a short transaction (well after the
-   * slow hops). Returns 'evicted' (stamping `evicted_at`, terminal) when Centaur
-   * 404s the ref; throws on any other failure so the caller counts it and leaves
-   * the lease in place to retry after it expires. */
-  private async offloadOneArtifact(
-    artifact: SessionArtifactRow,
-  ): Promise<'offloaded' | 'evicted'> {
-    if (!artifact.execution_id || !artifact.centaur_ref) {
-      // The queue excludes null refs, so this shouldn't be claimed — but if a
-      // stray row is, mark it terminal so it doesn't sit leased forever.
-      await this.markArtifactEvicted(artifact);
-      return 'evicted';
-    }
-    const s3Key = casBlobKey(artifact.sha256);
-    if (!(await this.artifactLedger.blobIsOffloaded(artifact.sha256))) {
-      let bytes: ArtifactBytes;
-      try {
-        bytes = await this.centaur.getArtifactBytes(artifact.execution_id, artifact.centaur_ref, {
-          apiKey: this.artifactCaptureApiKey,
-        });
-      } catch (err) {
-        if (err instanceof CentaurApiError && err.status === 404) {
-          // Ref evicted from staging before we offloaded — the bytes are gone for
-          // good. Mark terminal (evicted_at) so the row leaves the queue.
-          console.warn('artifact offload skipped: ref evicted from Centaur staging', {
-            sessionId: artifact.session_id,
-            artifactId: artifact.id,
-          });
-          await this.markArtifactEvicted(artifact);
-          return 'evicted';
-        }
-        throw err;
-      }
-      const body = bytes.body ? Buffer.from(await new Response(bytes.body).arrayBuffer()) : Buffer.alloc(0);
-      const contentType = bytes.contentType || artifact.mime || 'application/octet-stream';
-      await this.artifactStorage.uploadObject(s3Key, body, contentType);
-    }
-    await this.artifactLedger.stampBlobS3Key(artifact.sha256, s3Key);
-    // Single auto-committed statement — short, well after the network hops.
-    // Clearing claimed_at is tidy; offloaded_at already makes the row terminal.
-    await this.pool.query(
-      `UPDATE session_artifacts
-       SET s3_key = $1, offloaded_at = now(), claimed_at = NULL
-       WHERE session_id = $2 AND id = $3`,
-      [s3Key, artifact.session_id, artifact.id],
-    );
-    return 'offloaded';
-  }
-
-  /** Mark an artifact terminally evicted: its Centaur ref is gone, so it can
-   * never offload. Drops it out of the queue (the index excludes evicted_at). */
-  private async markArtifactEvicted(artifact: SessionArtifactRow): Promise<void> {
-    await this.pool.query(
-      `UPDATE session_artifacts
-       SET evicted_at = now(), claimed_at = NULL
-       WHERE session_id = $1 AND id = $2`,
-      [artifact.session_id, artifact.id],
-    );
+    const filename = basename(path) || 'artifact';
+    const inline = (v.mime || '').startsWith('image/');
+    const url = await this.artifactStorage.presignGet(v.s3Key, filename, inline);
+    return { kind: 'redirect', url };
   }
 
   /** Replay the durable mirror into a reduced session state (transcript items +
@@ -1849,106 +1578,6 @@ export class SessionRuns {
        ON CONFLICT (session_id, centaur_event_id) DO NOTHING`,
       [id, frame.event_id, frame.event, JSON.stringify(frame)],
     );
-    if (frame.event === 'artifact.captured') {
-      const data = await this.canonicalCapturedArtifactData(id, frame.data);
-      if (!data) return;
-      await this.recordArtifact(id, data);
-      await this.ingestCapturedArtifactToLedger(id, data);
-    }
-  }
-
-  private async canonicalCapturedArtifactData(
-    sessionId: string,
-    data: Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'],
-  ): Promise<Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'] | null> {
-    const session = await this.pool.query<{ channel_id: string }>(
-      'SELECT channel_id FROM sessions WHERE id = $1',
-      [sessionId],
-    );
-    const channelId = session.rows[0]?.channel_id;
-    if (!channelId) {
-      console.warn('artifact mirror skipped: session not found', { sessionId, path: data.path });
-      return null;
-    }
-    try {
-      return {
-        ...data,
-        path: canonicalizeSessionArtifactPath(data.path, { sessionId, channelId }),
-      };
-    } catch (err) {
-      if (err instanceof InvalidArtifactPathError) {
-        console.warn('artifact mirror skipped: invalid artifact path', {
-          sessionId,
-          path: data.path,
-          reason: err.message,
-        });
-        return null;
-      }
-      throw err;
-    }
-  }
-
-  /** Stage an `artifact.captured` frame into session_artifacts so the offload
-   * worker can durably copy its bytes into atrium's store. Keyed by (session,
-   * artifact_id); artifacts are immutable by content hash so a replayed capture
-   * is a no-op (DO NOTHING). Manifest-only artifacts (ref null) still get a row
-   * for the durable record but are never offloaded (the queue index filters
-   * them). */
-  private async recordArtifact(
-    id: string,
-    data: Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'],
-  ): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO session_artifacts
-         (id, session_id, execution_id, centaur_ref, path, mime, size_bytes, sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (session_id, id) DO NOTHING`,
-      [
-        data.artifact_id,
-        id,
-        data.execution_id ?? null,
-        data.ref ?? null,
-        data.path,
-        data.mime,
-        data.size_bytes,
-        data.sha256,
-      ],
-    );
-  }
-
-  // === bridge additions ===
-  private async ingestCapturedArtifactToLedger(
-    sessionId: string,
-    data: Extract<CentaurEventFrame, { event: 'artifact.captured' }>['data'],
-  ): Promise<void> {
-    try {
-      const session = await this.pool.query<{ channel_id: string }>(
-        'SELECT channel_id FROM sessions WHERE id = $1',
-        [sessionId],
-      );
-      const channelId = session.rows[0]?.channel_id;
-      if (!channelId) {
-        console.warn('artifact ledger ingest skipped: session not found', { sessionId, path: data.path });
-        return;
-      }
-      await this.artifactLedger.commitVersion({
-        sessionId,
-        channelId,
-        path: data.path,
-        blobSha: data.kind === 'deleted' ? null : data.sha256,
-        sizeBytes: data.size_bytes,
-        mime: data.mime,
-        author: `agent:${sessionId}`,
-        kind: data.kind,
-        mergeClass: mergeClassForMime(data.mime),
-      });
-    } catch (err) {
-      console.warn('artifact ledger ingest failed', {
-        sessionId,
-        path: data.path,
-        err,
-      });
-    }
   }
 
   private async foldFrame(id: string, frame: CentaurEventFrame): Promise<void> {
@@ -2762,26 +2391,6 @@ function isDemoHarness(harness: string): boolean {
 
 function isCentaurCode(err: unknown, code: string): boolean {
   return err instanceof CentaurApiError && err.code === code;
-}
-
-function mergeClassForMime(mime: string): MergeClass | undefined {
-  const normalized = mime.toLowerCase().split(';', 1)[0]?.trim() ?? '';
-  if (
-    normalized.startsWith('text/') ||
-    normalized.endsWith('/markdown') ||
-    normalized === 'application/json'
-  ) {
-    return 'mergeable-doc';
-  }
-  return undefined;
-}
-
-/** First defined, non-empty string in the list (config env defaults are ''). */
-function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return undefined;
 }
 
 /** Trim + cap optional git metadata; empty becomes null. */

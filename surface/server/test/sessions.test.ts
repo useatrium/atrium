@@ -1,11 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { addWorkspaceMember } from '../src/membership.js';
@@ -30,10 +31,6 @@ class FakeCentaur {
   readonly acceptedExecutions: string[] = [];
   readonly acceptedMessages: string[] = [];
   readonly streamAfterIds: number[] = [];
-  readonly artifactRequests: RecordedRequest[] = [];
-  /** Maps `${executionId}/${ref}` → bytes Centaur staging serves. Unknown keys 404. */
-  readonly artifactBytes = new Map<string, { body: Uint8Array; contentType: string }>();
-  artifactApiKeys: (string | null)[] = [];
   staleMessages = new Set<string>();
   streamHangOpen = false;
   streamResetBeyondHistory = false;
@@ -81,31 +78,6 @@ class FakeCentaur {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
     this.requests.push({ method: req.method ?? 'GET', path: url.pathname, body, query: url.searchParams });
-
-    const artifactMatch = /^\/agent\/executions\/([^/]+)\/artifacts\/([^/]+)$/.exec(url.pathname);
-    if (req.method === 'GET' && artifactMatch) {
-      const executionId = decodeURIComponent(artifactMatch[1]!);
-      const ref = decodeURIComponent(artifactMatch[2]!);
-      this.artifactRequests.push({
-        method: 'GET',
-        path: `/agent/executions/${executionId}/artifacts/${ref}`,
-        body,
-        query: url.searchParams,
-      });
-      this.artifactApiKeys.push(req.headers['x-api-key'] ? String(req.headers['x-api-key']) : null);
-      const staged = this.artifactBytes.get(`${executionId}/${ref}`);
-      if (!staged) {
-        res.writeHead(404, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'artifact_not_found' }));
-        return;
-      }
-      res.writeHead(200, {
-        'content-type': staged.contentType,
-        'content-length': String(staged.body.byteLength),
-      });
-      res.end(Buffer.from(staged.body));
-      return;
-    }
 
     const answerMatch = /^\/api\/session\/([^/]+)\/executions\/([^/]+)\/answer$/.exec(url.pathname);
     if (req.method === 'POST' && answerMatch) {
@@ -592,54 +564,44 @@ async function mirrorArtifactFrame(
   );
 }
 
-/** Stage a session_artifacts row (the offload worker's input). Mirrors what the
- * mirror path writes on an artifact.captured frame. */
-async function insertSessionArtifactRow(args: {
+async function commitDurableArtifact(args: {
   sessionId: string;
-  artifactId: string;
-  executionId?: string | null;
-  centaurRef: string | null;
   path: string;
-  mime: string;
-  sizeBytes?: number;
-  s3Key?: string | null;
-  offloadedAt?: string | null;
-  claimedAt?: string | null;
-  evictedAt?: string | null;
-}): Promise<void> {
+  body: Buffer | string;
+  mime?: string;
+}): Promise<{ s3Key: string; sha: string }> {
+  const body = Buffer.isBuffer(args.body) ? args.body : Buffer.from(args.body);
+  const sha = createHash('sha256').update(body).digest('hex');
+  const s3Key = casBlobKey(sha);
   await pool.query(
-    `INSERT INTO session_artifacts
-       (id, session_id, execution_id, centaur_ref, s3_key, path, mime, size_bytes, sha256, offloaded_at, claimed_at, evicted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    [
-      args.artifactId,
-      args.sessionId,
-      args.executionId ?? 'exe_fake',
-      args.centaurRef,
-      args.s3Key ?? null,
-      args.path,
-      args.mime,
-      args.sizeBytes ?? 1024,
-      `${args.artifactId}-sha`,
-      args.offloadedAt ?? null,
-      args.claimedAt ?? null,
-      args.evictedAt ?? null,
-    ],
+    `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (sha256) DO UPDATE
+           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
+    [sha, s3Key, body.byteLength, args.mime ?? 'application/octet-stream'],
   );
+  const session = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [
+    args.sessionId,
+  ]);
+  await new ArtifactLedger(pool).commitVersion({
+    sessionId: args.sessionId,
+    channelId: session.rows[0]!.channel_id,
+    path: args.path,
+    blobSha: sha,
+    sizeBytes: body.byteLength,
+    mime: args.mime ?? 'application/octet-stream',
+    author: `agent:${args.sessionId}`,
+    kind: 'created',
+  });
+  return { s3Key, sha };
 }
 
-/** In-memory S3 stand-in for the artifact offload/serve paths. Records uploads
- * and mints a recognizable presigned URL (the route 302s to it). */
+/** In-memory S3 stand-in for artifact serve. Mints a recognizable presigned URL. */
 function fakeArtifactStorage() {
-  const objects = new Map<string, { body: Buffer; contentType: string }>();
   const presignCalls: { key: string; filename: string; inline: boolean }[] = [];
   return {
-    objects,
     presignCalls,
     storage: {
-      uploadObject: async (key: string, body: Buffer | Uint8Array, contentType: string) => {
-        objects.set(key, { body: Buffer.from(body), contentType });
-      },
       presignGet: async (key: string, filename: string, inline: boolean) => {
         presignCalls.push({ key, filename, inline });
         return `https://storage.local/get/${encodeURIComponent(key)}?inline=${inline ? 1 : 0}`;
@@ -3174,491 +3136,49 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
-  it('GET /api/sessions/:id/artifacts/:artifactId proxies bytes from Centaur staging', async () => {
-    const app = await buildApp({
-      pool,
-      sessionRuns: {
-        baseUrl: fake.url,
-        apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
-        autoResume: false,
-      },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    // current_execution_id = 'exe_fake' (insertSessionRow default) keys the fetch.
-    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-img',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-      ref: 'blob-img',
-    });
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
-    fake.artifactBytes.set('exe_fake/blob-img', { body: png, contentType: 'image/png' });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-img`,
-      headers: { cookie },
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toBe('image/png');
-    expect(res.headers['x-content-type-options']).toBe('nosniff');
-    // Images render inline; the filename is the path basename.
-    expect(res.headers['content-disposition']).toBe('inline; filename="chart.png"');
-    expect(Buffer.from(res.rawPayload)).toEqual(Buffer.from(png));
-    // The proxy fetched the right (execution, ref) with the artifact-capture key.
-    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
-      '/agent/executions/exe_fake/artifacts/blob-img',
-    ]);
-    expect(fake.artifactApiKeys).toEqual(['artifact-key']);
-    await app.close();
-  });
-
-  it('fetches an artifact from the execution that captured it, not the session current one', async () => {
-    const app = await buildApp({
-      pool,
-      sessionRuns: {
-        baseUrl: fake.url,
-        apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
-        autoResume: false,
-      },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    // Session's current execution is the default 'exe_fake'; the artifact was
-    // captured in an earlier execution 'exe_old'. Bytes are staged only under
-    // exe_old — if the route used current_execution_id it would 410.
-    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-old',
-      path: '/home/agent/workspace/out/old.png',
-      mime: 'image/png',
-      ref: 'blob-old',
-      executionId: 'exe_old',
-    });
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    fake.artifactBytes.set('exe_old/blob-old', { body: png, contentType: 'image/png' });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-old`,
-      headers: { cookie },
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(Buffer.from(res.rawPayload)).toEqual(Buffer.from(png));
-    // Fetched from exe_old (the capturing execution), not the current exe_fake.
-    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
-      '/agent/executions/exe_old/artifacts/blob-old',
-    ]);
-    await app.close();
-  });
-
-  it('serves non-image artifacts as an attachment', async () => {
-    const app = await buildApp({
-      pool,
-      sessionRuns: { baseUrl: fake.url, apiKey: 'session-key', autoResume: false },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-csv',
-      path: '/home/agent/workspace/out/report.csv',
-      mime: 'text/csv',
-      ref: 'blob-csv',
-    });
-    fake.artifactBytes.set('exe_fake/blob-csv', {
-      body: new TextEncoder().encode('a,b\n1,2\n'),
-      contentType: 'text/csv',
-    });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-csv`,
-      headers: { cookie },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-disposition']).toBe('attachment; filename="report.csv"');
-    // No artifact-capture key configured → falls back to the session api key.
-    expect(fake.artifactApiKeys).toEqual(['session-key']);
-    await app.close();
-  });
-
-  it('returns 404 for an unknown artifact id', async () => {
-    const app = await buildApp({
-      pool,
-      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-real',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-      ref: 'blob-img',
-    });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-missing`,
-      headers: { cookie },
-    });
-    expect(res.statusCode).toBe(404);
-    expect(res.json().error).toBe('artifact_not_found');
-    // Never reached Centaur for an unknown artifact.
-    expect(fake.artifactRequests).toEqual([]);
-    await app.close();
-  });
-
-  it('returns 404 for a manifest-only artifact (ref null, no bytes staged)', async () => {
-    const app = await buildApp({
-      pool,
-      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-big',
-      path: '/home/agent/workspace/out/huge.bin',
-      mime: 'application/octet-stream',
-      ref: null,
-    });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-big`,
-      headers: { cookie },
-    });
-    expect(res.statusCode).toBe(404);
-    expect(res.json().error).toBe('artifact_not_captured');
-    expect(fake.artifactRequests).toEqual([]);
-    await app.close();
-  });
-
-  it('maps a Centaur 404 (evicted ref) to 410 Gone', async () => {
-    const app = await buildApp({
-      pool,
-      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    const id = await insertSessionRow({ title: 'artifacts', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-evicted',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-      ref: 'blob-gone',
-    });
-    // No bytes staged under exe_fake/blob-gone → FakeCentaur 404s.
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-evicted`,
-      headers: { cookie },
-    });
-    expect(res.statusCode).toBe(410);
-    expect(res.json().error).toBe('artifact_gone');
-    await app.close();
-  });
-
-  // ---- B1: S3 offload ------------------------------------------------------
-
-  it('the offload worker copies a staged artifact from Centaur into S3 and stamps the row', async () => {
+  it('GET /api/sessions/:id/artifacts/by-path redirects to durable CAS without Centaur fallback', async () => {
     const s3 = fakeArtifactStorage();
     const app = await buildApp({
       pool,
       sessionRuns: {
         baseUrl: fake.url,
         apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
-        artifactStorage: s3.storage,
-        autoResume: false,
-      },
-    });
-    await app.ready();
-    const id = await insertSessionRow({ title: 'offload', status: 'running' });
-    // A staged artifact (centaur_ref set, not yet offloaded) + bytes in Centaur.
-    await insertSessionArtifactRow({
-      sessionId: id,
-      artifactId: 'art-1',
-      executionId: 'exe_fake',
-      centaurRef: 'blob-1',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-    });
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
-    fake.artifactBytes.set('exe_fake/blob-1', { body: png, contentType: 'image/png' });
-
-    const result = await app.sessionRuns.offloadArtifactBatch();
-
-    expect(result).toEqual({ offloaded: 1, evicted: 0, failed: 0 });
-    // Fetched the (execution, ref) bytes with the artifact-capture key.
-    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
-      '/agent/executions/exe_fake/artifacts/blob-1',
-    ]);
-    expect(fake.artifactApiKeys).toEqual(['artifact-key']);
-    // Uploaded the bytes to the content-addressed CAS key (cas/<first2>/<sha>)
-    // with the reported mime — the offload re-key for global dedup.
-    const casKey = `cas/ar/art-1-sha`; // casBlobKey('art-1-sha')
-    const uploaded = s3.objects.get(casKey);
-    expect(uploaded).toBeDefined();
-    expect(Buffer.from(uploaded!.body)).toEqual(Buffer.from(png));
-    expect(uploaded!.contentType).toBe('image/png');
-    // The row is stamped offloaded with the CAS s3_key.
-    const row = await pool.query<{ s3_key: string | null; offloaded_at: Date | null }>(
-      'SELECT s3_key, offloaded_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
-      [id, 'art-1'],
-    );
-    expect(row.rows[0]!.s3_key).toBe(casKey);
-    expect(row.rows[0]!.offloaded_at).not.toBeNull();
-    await app.close();
-  });
-
-  it('the offload worker skips manifest-only + already-offloaded rows, and survives an evicted ref', async () => {
-    const s3 = fakeArtifactStorage();
-    const app = await buildApp({
-      pool,
-      sessionRuns: {
-        baseUrl: fake.url,
-        apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
-        artifactStorage: s3.storage,
-        autoResume: false,
-      },
-    });
-    await app.ready();
-    const id = await insertSessionRow({ title: 'offload edge', status: 'running' });
-    // Manifest-only (no ref): never offloaded, never fetched.
-    await insertSessionArtifactRow({
-      sessionId: id,
-      artifactId: 'art-manifest',
-      centaurRef: null,
-      path: '/home/agent/workspace/out/huge.bin',
-      mime: 'application/octet-stream',
-    });
-    // Already offloaded: skipped (offloaded_at set).
-    await insertSessionArtifactRow({
-      sessionId: id,
-      artifactId: 'art-done',
-      centaurRef: 'blob-done',
-      path: '/home/agent/workspace/out/done.png',
-      mime: 'image/png',
-      s3Key: `artifacts/${id}/art-done`,
-      offloadedAt: new Date().toISOString(),
-    });
-    // Staged but evicted from Centaur (FakeCentaur 404s an unknown ref).
-    await insertSessionArtifactRow({
-      sessionId: id,
-      artifactId: 'art-evicted',
-      centaurRef: 'blob-evicted',
-      path: '/home/agent/workspace/out/gone.png',
-      mime: 'image/png',
-    });
-
-    const result = await app.sessionRuns.offloadArtifactBatch();
-
-    // Only the evicted row was eligible; it counts as evicted, not failed, and
-    // is left un-offloaded (no s3_key) but stamped terminal (evicted_at).
-    expect(result).toEqual({ offloaded: 0, evicted: 1, failed: 0 });
-    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
-      '/agent/executions/exe_fake/artifacts/blob-evicted',
-    ]);
-    expect(s3.objects.size).toBe(0);
-    const evicted = await pool.query<{
-      s3_key: string | null;
-      offloaded_at: Date | null;
-      evicted_at: Date | null;
-      claimed_at: Date | null;
-    }>(
-      'SELECT s3_key, offloaded_at, evicted_at, claimed_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
-      [id, 'art-evicted'],
-    );
-    expect(evicted.rows[0]!.s3_key).toBeNull();
-    expect(evicted.rows[0]!.offloaded_at).toBeNull();
-    // Terminal mark set, lease cleared.
-    expect(evicted.rows[0]!.evicted_at).not.toBeNull();
-    expect(evicted.rows[0]!.claimed_at).toBeNull();
-
-    // A terminally-evicted row drops out of the queue: a second batch finds
-    // nothing eligible (no re-claim every lease) and makes no Centaur request.
-    fake.artifactRequests.length = 0;
-    const rerun = await app.sessionRuns.offloadArtifactBatch();
-    expect(rerun).toEqual({ offloaded: 0, evicted: 0, failed: 0 });
-    expect(fake.artifactRequests).toEqual([]);
-    await app.close();
-  });
-
-  it('the offload worker honors the claim lease: skips an active claim, reclaims a stale one', async () => {
-    const s3 = fakeArtifactStorage();
-    const app = await buildApp({
-      pool,
-      sessionRuns: {
-        baseUrl: fake.url,
-        apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
-        artifactStorage: s3.storage,
-        autoResume: false,
-      },
-    });
-    await app.ready();
-    const id = await insertSessionRow({ title: 'offload lease', status: 'running' });
-    // A staged row already claimed "just now" (another worker is mid-upload):
-    // its lease is active, so this batch must not re-claim it.
-    await insertSessionArtifactRow({
-      sessionId: id,
-      artifactId: 'art-leased',
-      executionId: 'exe_fake',
-      centaurRef: 'blob-leased',
-      path: '/home/agent/workspace/out/leased.png',
-      mime: 'image/png',
-      claimedAt: new Date().toISOString(),
-    });
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    fake.artifactBytes.set('exe_fake/blob-leased', { body: png, contentType: 'image/png' });
-
-    const skipped = await app.sessionRuns.offloadArtifactBatch();
-    expect(skipped).toEqual({ offloaded: 0, evicted: 0, failed: 0 });
-    expect(fake.artifactRequests).toEqual([]); // never fetched — lease active
-    expect(s3.objects.size).toBe(0);
-
-    // Simulate the claimant crashing mid-upload: backdate the lease past its
-    // window (default 5 min). The row becomes reclaimable and offloads.
-    await pool.query(
-      "UPDATE session_artifacts SET claimed_at = now() - interval '1 hour' WHERE session_id = $1 AND id = $2",
-      [id, 'art-leased'],
-    );
-    const reclaimed = await app.sessionRuns.offloadArtifactBatch();
-    expect(reclaimed).toEqual({ offloaded: 1, evicted: 0, failed: 0 });
-    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
-      '/agent/executions/exe_fake/artifacts/blob-leased',
-    ]);
-    const row = await pool.query<{ s3_key: string | null; claimed_at: Date | null }>(
-      'SELECT s3_key, claimed_at FROM session_artifacts WHERE session_id = $1 AND id = $2',
-      [id, 'art-leased'],
-    );
-    expect(row.rows[0]!.s3_key).toBe(`cas/ar/art-leased-sha`); // casBlobKey('art-leased-sha')
-    expect(row.rows[0]!.claimed_at).toBeNull(); // lease cleared on success
-    await app.close();
-  });
-
-  it('serve route 302-redirects to a presigned S3 URL once an artifact is offloaded (no Centaur fetch)', async () => {
-    const s3 = fakeArtifactStorage();
-    const app = await buildApp({
-      pool,
-      sessionRuns: {
-        baseUrl: fake.url,
-        apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
         artifactStorage: s3.storage,
         autoResume: false,
       },
     });
     await app.ready();
     const cookie = await loginCookie(app);
-    const id = await insertSessionRow({ title: 'serve offloaded', status: 'running' });
-    // Metadata in the mirror (for path/mime) + an offloaded session_artifacts row.
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-img',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-      ref: 'blob-img',
-    });
-    await insertSessionArtifactRow({
+    const id = await insertSessionRow({ title: 'serve cas', status: 'running' });
+    const { s3Key } = await commitDurableArtifact({
       sessionId: id,
-      artifactId: 'art-img',
-      centaurRef: 'blob-img',
-      path: '/home/agent/workspace/out/chart.png',
+      path: 'out/chart.png',
+      body: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
       mime: 'image/png',
-      s3Key: `artifacts/${id}/art-img`,
-      offloadedAt: new Date().toISOString(),
     });
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-img`,
+      url: `/api/sessions/${id}/artifacts/by-path?path=${encodeURIComponent('out/chart.png')}`,
       headers: { cookie },
     });
 
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toBe(
-      `https://storage.local/get/${encodeURIComponent(`artifacts/${id}/art-img`)}?inline=1`,
+      `https://storage.local/get/${encodeURIComponent(s3Key)}?inline=1`,
     );
-    // Presigned with the path basename + inline (image). Never hit Centaur.
     expect(s3.presignCalls).toEqual([
-      { key: `artifacts/${id}/art-img`, filename: 'chart.png', inline: true },
+      { key: s3Key, filename: 'chart.png', inline: true },
     ]);
-    expect(fake.artifactRequests).toEqual([]);
-    await app.close();
-  });
-
-  it('serve route still proxies from Centaur when the artifact is not yet offloaded', async () => {
-    const s3 = fakeArtifactStorage();
-    const app = await buildApp({
-      pool,
-      sessionRuns: {
-        baseUrl: fake.url,
-        apiKey: 'session-key',
-        artifactCaptureApiKey: 'artifact-key',
-        artifactStorage: s3.storage,
-        autoResume: false,
-      },
-    });
-    await app.ready();
-    const cookie = await loginCookie(app);
-    const id = await insertSessionRow({ title: 'serve staged', status: 'running' });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-img',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-      ref: 'blob-img',
-    });
-    // A session_artifacts row exists but is NOT offloaded (no s3_key).
-    await insertSessionArtifactRow({
-      sessionId: id,
-      artifactId: 'art-img',
-      centaurRef: 'blob-img',
-      path: '/home/agent/workspace/out/chart.png',
-      mime: 'image/png',
-    });
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    fake.artifactBytes.set('exe_fake/blob-img', { body: png, contentType: 'image/png' });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-img`,
-      headers: { cookie },
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toBe('image/png');
-    expect(Buffer.from(res.rawPayload)).toEqual(Buffer.from(png));
-    // Proxied from Centaur; no presign/redirect.
-    expect(fake.artifactRequests.map((r) => r.path)).toEqual([
-      '/agent/executions/exe_fake/artifacts/blob-img',
-    ]);
-    expect(s3.presignCalls).toEqual([]);
+    expect(fake.requests.some((r) => r.path.includes('/artifacts/'))).toBe(false);
     await app.close();
   });
 
   it('a non-member gets 404 for a DM session artifact (existence not leaked)', async () => {
+    const s3 = fakeArtifactStorage();
     const app = await buildApp({
       pool,
-      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', artifactStorage: s3.storage, autoResume: false },
     });
     await app.ready();
     const alice = await loginUser(app, 'alice', 'Alice');
@@ -3675,28 +3195,23 @@ describe('Phase 2 sessions', () => {
       status: 'running',
       spawnedBy: alice.userId,
     });
-    await mirrorArtifactFrame(id, {
-      eventId: 9,
-      artifactId: 'art-dm',
-      path: '/home/agent/workspace/out/chart.png',
+    await commitDurableArtifact({
+      sessionId: id,
+      path: 'out/chart.png',
+      body: Buffer.from([1, 2, 3]),
       mime: 'image/png',
-      ref: 'blob-img',
-    });
-    fake.artifactBytes.set('exe_fake/blob-img', {
-      body: new Uint8Array([1, 2, 3]),
-      contentType: 'image/png',
     });
 
     const member = await app.inject({
       method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-dm`,
+      url: `/api/sessions/${id}/artifacts/by-path?path=${encodeURIComponent('out/chart.png')}`,
       headers: { cookie: alice.cookie },
     });
-    expect(member.statusCode).toBe(200);
+    expect(member.statusCode).toBe(302);
 
     const outsider = await app.inject({
       method: 'GET',
-      url: `/api/sessions/${id}/artifacts/art-dm`,
+      url: `/api/sessions/${id}/artifacts/by-path?path=${encodeURIComponent('out/chart.png')}`,
       headers: { cookie: cara.cookie },
     });
     // 404, not 403 — a guessed session id in a DM must not leak existence,

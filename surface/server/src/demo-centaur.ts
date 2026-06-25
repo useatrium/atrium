@@ -1,11 +1,9 @@
 import {
   CentaurClient,
-  type ArtifactBytes,
   type CentaurEventFrame,
   type ExecuteOptions,
   type ExecuteResponse,
   type ExecutionResponse,
-  type GetArtifactBytesOptions,
   type JsonObject,
   type JsonValue,
   type MessagePart,
@@ -107,14 +105,6 @@ export class DemoCentaurClient extends CentaurClient {
       return Promise.resolve({ ok: true, demo: true });
     }
     return this.wrapped.answerQuestion(threadKey, executionId, questionId, answers);
-  }
-
-  getArtifactBytes(
-    executionId: string,
-    ref: string,
-    opts: GetArtifactBytesOptions = {},
-  ): Promise<ArtifactBytes> {
-    return this.wrapped.getArtifactBytes(executionId, ref, opts);
   }
 
   async *tailEvents(threadKey: string, options: TailOptions): AsyncGenerator<CentaurEventFrame> {

@@ -9,7 +9,10 @@
 > `/workspace/shared/hydrated.md`. Hydration is gated default-OFF (`NODE_SYNC_HYDRATE_ARTIFACTS`
 > / `--hydrate-artifacts`). **Correction vs the original plan: the Centaur overlay work WAS
 > doable from the Mac** (the kind/k3s node is a Linux VM; local `kind-centaur` + the fork's
-> GHA-kind CI — how 5B-1/2/3 all landed). **Still genuinely remaining (future, not blocking):**
+> GHA-kind CI — how 5B-1/2/3 all landed). **2026-06-25 hard-cut addendum: lane F
+> landed on `hardcut-single-cas`; fresh non-delete artifact versions require durable Atrium
+> CAS/S3 bytes before commit, and `session_artifacts`/Centaur staging/offload are removed
+> as normal paths.** Still genuinely remaining (future, not blocking):
 > the agent-FS ergonomic rename (`~`/`shared`/`repos`/`context`), live-controller production
 > wiring (mount the overlay + enable hydration by default; today prod still uses the git-clone +
 > 2.5s in-agent poll), a full-Atrium (non-mock) hydration e2e, retiring the in-agent poll once
@@ -130,9 +133,12 @@ chains for the same file.
   local view: `shared/channels/<active>/foo` → both `foo` and
   `shared/channels/<active>/foo` (same base seq, one canonical server path),
   `scratch/<session-id>/foo` → `scratch/foo`, all other shared scopes stay under `shared/...`.
-- **FOLLOW-ON (Centaur, needs a real cluster):** live agent FS layout wiring
-  (flat home, `context/` rename, active-root + `shared`/`scratch`/`repos` mount polish),
-  live overlay + daemon wiring (lane F), and full-Atrium hydration e2e. Tracked in
+- **DONE (2026-06-25 hard-cut branch):** the single-CAS capture hard cut (lane F);
+  fresh captures are durable in Atrium before commit and the old
+  Centaur-staging/offload path is gone.
+- **FOLLOW-ON:** Centaur live agent FS layout wiring (flat home, `context/` rename,
+  active-root + `shared`/`scratch`/`repos` mount polish), live overlay + daemon
+  wiring (lane G), and full-Atrium hydration e2e. Tracked in
   `c4-overlay-provisioning-plan.md` + [[c4-overlay-capture-build]].
 
 ---
@@ -214,6 +220,10 @@ repos today**.
   `ConflictSurface`) already handles concurrent human/agent edits; it just needs a *shared*
   identity to fire against (gated to text via `merge_class`; binaries → hard-conflict, ties to
   the file-types `media_kind` work).
+- **Byte durability invariant:** every non-delete committed version points at a
+  `cas_blobs` row with an S3 key. `session_artifacts`, Centaur staging, and artifact
+  offload are not a second storage mechanism in the target; they are removed in
+  lane F before live capture/cutover depends on them.
 
 ## 4. The keystone migration — `042_workspace_scoped_artifacts.sql`
 
@@ -247,16 +257,18 @@ firsthand → merges (the established C4 cadence).
 | **B — shared read + workspace feeds** | Atrium | Re-key the ledger fns: `resolveOrCreateArtifactLocked`→`(workspace_id,canonical_path)` `ON CONFLICT`; `sessionScope` returns canonical paths in the session's workspace (`shared/...` + own `scratch/<session-id>/...`). `changesSince` uses a workspace cursor filtered to `shared/...` + own scratch. Hydration/changefeed responses include `activePrefix=shared/channels/<channel-id>` plus display/canonical path metadata so clients can present the active scope at `~`. `serveResolution`/`resolveVersion` read by workspace+canonical path. | `artifact-path.ts`, `artifact-ledger.ts`, `app.ts` |
 | **C — shared/session write** | Atrium | Agent + human edits to a canonical path resolve to the **same** artifact → new version (base-aware OCC; diff3 on `mergeable-doc`, hard-conflict on `immutable-data`). Enforce prefix ACL on write: current code permits `shared/global`, the active channel, and own scratch; it rejects project/non-active channel prefixes until they have real ACLs. `scratch/<session-id>` is session-scoped, not a separate storage mechanism. | `artifact-writeback.ts`, `resolveOrCreateArtifactLocked`, `classifyScope` |
 | **D — upload on-ramp (auto-land, §0.2)** | Atrium | Every human upload auto-creates a `shared/channels/<channel-id>/uploads/<name>` artifact, `author: human:<uid>`, pointing at the **same** CAS blob as the `files` row (zero-copy via server-verified `content_hash` → `cas_blobs`). Collision: sha-dedup identical; suffix-disambiguate different-bytes-same-name. Chat message pins `(artifact, seq)` for immutability. `files` stays as the ingest record. (Supersedes the old "explicit add / attachments stay separate" — see §0.2.) | `app.ts:1994-2074,2057-2070` (uploads), `2084` (channel write-back), `artifact-writeback.ts`, `classifyScope` |
-| **E — Centaur subscription-set hydration = 5B-3, re-scoped** | Centaur | `http_client.rs` consumes the existing session-scoped internal routes and their `activePrefix`. **`hydrate_lower`** pulls canonical paths into the overlay RO lower as a CAS checkout after projecting local aliases: active shared prefix at `~` and also at `~/shared/channels/<active>` with the same base seq, own `scratch/<session-id>` at `~/scratch`, other shared scopes under `~/shared`. **Capture stays per-session** (`author=agent:<session>`; server resolves aliases to canonical paths). | `http_client.rs` |
-| **F — Centaur live overlay + daemon wiring** | Centaur | Mount the overlay in the **live** controller (replace the `/workspace` EmptyDir); wire `nodeSync.enabled` + the multi-session flags the daemon currently ignores; inbound node-side merge (`agent-sync-design §4`). **Needs a real cluster** (the `c4-overlay-provisioning-plan.md` "Remaining" list); gated default-OFF; the in-agent poll stays the live path until cutover + parity. | `lib.rs:903`; chart `nodeSync.*` |
+| **E — Centaur subscription-set hydration = 5B-3, re-scoped** | Centaur | `http_client.rs` consumes the existing session-scoped internal routes and their `activePrefix`. **`hydrate_lower`** pulls canonical paths into the overlay RO lower as a CAS checkout after projecting local aliases: active shared prefix at `~` and also at `~/shared/channels/<active>` with the same base seq, own `scratch/<session-id>` at `~/scratch`, other shared scopes under `~/shared`. **Capture stays session-authored** (`author=agent:<session>`; server resolves aliases to canonical workspace paths). | `http_client.rs` |
+| **F — single-CAS capture hard cut** | Atrium + Centaur | **LANDED 2026-06-25.** Make Atrium CAS the only normal artifact byte path: node/agent capture, upload auto-land, human write-back, hydration, and app publish all require durable `cas_blobs.s3_key` before a non-delete version commits. Delete Atrium `session_artifacts`, artifact offload worker, Centaur artifact proxy fallback, and Centaur staging as an Atrium dependency. Node-sync/direct Atrium capture is required for production capture; the old in-agent poll is retired, not bridged. | Atrium `session-runs.ts`, `app.ts`, `artifact-writeback.ts`; Centaur node-sync direct capture |
+| **G — Centaur live overlay + daemon wiring** | Centaur | Mount the overlay in the **live** controller (replace the `/workspace` EmptyDir); wire `nodeSync.enabled` + the multi-session flags the daemon currently ignores; inbound node-side merge (`agent-sync-design §4`). **Needs a real cluster** (the `c4-overlay-provisioning-plan.md` "Remaining" list); gated default-OFF; the in-agent poll stays the live path until cutover + parity. | `lib.rs:903`; chart `nodeSync.*` |
 
 ## 6. How this re-scopes 5B-3
 
 5B-3 was "wire `hydrate_lower` for Atrium-CAS artifacts into the lower" — single-session.
-Re-scoped, **5B-3 = lane E**: `hydrate_lower` pulls the **workspace subscription set**, not one
-session's feed. The only added Centaur surface vs. the single-session version is *which
-endpoint* it calls (`workspaces/{wid}` instead of `sessions/{id}`) and a subscription
-path-filter — the materialize-the-lower mechanics (manifest → blob GET → tree) are identical.
+Re-scoped, **5B-3 = lane E**: `hydrate_lower` pulls the **authorized workspace subscription
+set visible to the session**, not just that session's historical artifact feed. The landed
+surface stays session-scoped and carries `activePrefix`; the server owns canonical path
+resolution, active-channel filtering, and scratch filtering. The materialize-the-lower
+mechanics (manifest → blob GET → tree) are identical.
 So building lane B first means 5B-3 lands correctly-scoped the first time instead of being
 rebuilt when workspace-sharing arrives. **5B-4** (node-local CAS cache + tree-manifest warm
 tier, `agent-sync-design §5B` scale levers) is unchanged and rides after E.
@@ -264,15 +276,16 @@ tier, `agent-sync-design §5B` scale levers) is unchanged and rides after E.
 ## 7. Sequencing
 
 ```
-A (migration) ─┬─> B (workspace ledger fns + node endpoints) ─┬─> E (5B-3 node hydration) ─> F (live cluster) ─> 5B-4 (warm cache)
+A (migration) ─┬─> B (workspace ledger fns + node endpoints) ─┬─> E (5B-3 alias/hydration) ─> F (single CAS hard cut) ─> G (live cluster/cutover) ─> 5B-4
                │                                              └─> C (shared write) ─> D (human on-ramp)
                └─ B is the hinge: E, C, D all need workspace-keyed reads/writes.
 ```
 A → B are the load-bearing Atrium changes (and are independently shippable — they make the
 ledger workspace-shared even before Centaur catches up). E is the teed-up Centaur build, now
-correctly scoped. C/D deliver the human-visible product (co-edit + drop-a-file). F is the
-real-cluster finish from the C4 plan. **Cutover (disable in-agent poll) stays deliberate and
-last**, gated on parity (secret-scan / MIME filter).
+correctly scoped. C/D deliver the human-visible product (co-edit + drop-a-file). F removes
+the old two-path artifact storage before the live overlay/capture path depends on it. G is
+the real-cluster finish from the C4 plan. **Cutover (disable in-agent poll) stays deliberate
+and last**, gated on parity (secret-scan / MIME filter).
 
 ## 8. Risks & decisions to confirm before fan-out
 
@@ -298,7 +311,12 @@ last**, gated on parity (secret-scan / MIME filter).
 7. **Upload→artifact byte path (lane D)** — uploads use a presigned *client* PUT, so the server
    never sees the bytes to hash; rely on a **server-verified** `content_hash` before trusting it
    for `cas_blobs` dedup (file-types §9.5 caveat), else re-hash on promote.
-8. **Per-tenant blast radius (F)** — workspace-shared `/workspace` across containers raises the
+8. **Single-CAS hard cut (lane F) — LANDED 2026-06-25.** Fresh captures serve from
+   Atrium S3/CAS immediately without `session_artifacts`, the artifact offload worker,
+   or Centaur proxy fallback. The remaining risk is production rollout: node-sync/direct
+   Atrium capture must be enabled in the live cluster before removing the old in-agent
+   poll from deployed workloads.
+9. **Per-tenant blast radius (G)** — workspace-shared `/workspace` across containers raises the
    multi-tenant isolation bar; VM-per-tenant per the C4 remainder (#65).
 
 ## 9. Stress-test / UX walkthroughs (2026-06-25)
@@ -315,12 +333,15 @@ last**, gated on parity (secret-scan / MIME filter).
 Weaknesses found: the model is ergonomic for a context-free agent only if Atrium, not the
 agent, selects the active scope; `~` and `~/shared/<same-leaf>` canonicalization is the highest
 implementation risk; scratch is artifact storage with narrower ACL, not a separate private file
-system; and broad `shared/global` access should not be materialized by default.
+system; broad `shared/global` access should not be materialized by default; and storage is only
+simple if fresh captures have one durable path into Atrium CAS rather than a long-lived
+Centaur-staging/offload fork.
 
 ## 10. Grounding
 
-Atrium: `surface/server/migrations/{001,002,006,020,023,033,034,036}.sql`,
+Atrium: `surface/server/migrations/{001,002,006,020,023,033,034,036,042,043}.sql`,
 `src/{artifact-ledger.ts,artifact-writeback.ts,artifact-scope.ts,app.ts}`,
-`web/src/sessions/FilesSurface.tsx`. Centaur (`fork/main @ ebdf762`):
+`web/src/sessions/FilesSurface.tsx`. Centaur (`fork/main`, through active-prefix alias
+projection / node-sync fixes):
 `services/api-rs/crates/centaur-node-sync/src/http_client.rs`,
-`centaur-sandbox-agent-k8s/src/lib.rs`. Mapped 2026-06-22.
+`centaur-sandbox-agent-k8s/src/lib.rs`. Mapped 2026-06-22; refreshed 2026-06-25.

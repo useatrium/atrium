@@ -1,8 +1,7 @@
 // Artifacts surface (Phase 4): the work-product files a session produced,
-// surfaced by the sandbox capture sidecar as `artifact.captured` frames and
-// folded into SessionState.artifacts by the reducer. Unlike Changes (derived
-// from edit tool_calls) the bytes are captured out-of-band; `ref` keys them in
-// Centaur staging until atrium offloads them to its own store.
+// folded into SessionState.artifacts by the reducer. Modern byte serving goes
+// through Atrium's by-path CAS route; legacy `artifact.captured` frames remain
+// display metadata in older transcripts.
 
 import type { Artifact, SessionState } from "./reducer.js";
 import { displayPath } from "./fileChanges.js";

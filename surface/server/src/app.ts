@@ -95,7 +95,7 @@ import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { loadCallWire, type CallRow } from './calls.js';
 import { getVoipSender, sendIncomingCallVoipPushes, type VoipPushSender } from './voip.js';
-import { CentaurApiError, CentaurClient } from '@atrium/centaur-client';
+import { CentaurClient } from '@atrium/centaur-client';
 import { CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 
@@ -104,9 +104,7 @@ declare module 'fastify' {
     user: UserRef | null;
   }
   interface FastifyInstance {
-    /** The session runtime, exposed so startup can drive the artifact offload
-     * worker (B1: S3 offload) off the same instance that owns the Centaur
-     * client + offload config. */
+    /** The session runtime, exposed for tests and operational hooks. */
     sessionRuns: SessionRuns;
   }
 }
@@ -255,7 +253,8 @@ async function landUploadAttachmentAsArtifact(
   await pool.query(
     `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
      VALUES ($1, $2, $3, $4)
-     ON CONFLICT (sha256) DO NOTHING`,
+     ON CONFLICT (sha256) DO UPDATE
+           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
     [blobSha, params.file.s3_key, sizeBytes, params.file.content_type],
   );
 
@@ -2665,75 +2664,6 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { record };
   });
 
-  // Serve a captured artifact's bytes — unblocks the Artifacts gallery, which
-  // <img src>'s this URL. Channel-access gated like every session sub-resource
-  // (404, never leaking a foreign session's existence). Two delivery paths
-  // (B1: S3 offload): once the background worker has copied the bytes into
-  // atrium's durable store, we 302-redirect to a short-lived presigned S3 URL;
-  // until then we proxy the bytes from Centaur staging. The capture sidecar's
-  // mime is sandbox-controlled, so the proxy path forces nosniff +
-  // inline-only-for-images / attachment-otherwise (defense in depth against
-  // stored XSS, even though Centaur sets these too); the S3 path bakes the same
-  // inline/attachment choice into the presigned Content-Disposition.
-  app.get('/api/sessions/:id/artifacts/:artifactId', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id, artifactId } = req.params as { id: string; artifactId: string };
-    // The artifact is owned by THIS session (keyed by session_id), and
-    // requireSessionAccess already gated channel membership — so the member may
-    // read it regardless of path scope. Under the workspace-scoped model,
-    // private-vs-shared is a CROSS-session / listing concern, not an own-session
-    // read gate (that gate would now 404 a session's own bare-path files). scope
-    // is computed only for the X-Artifact-Scope header.
-    const meta = await pool.query<{ path: string }>(
-      `SELECT path FROM session_artifacts WHERE session_id = $1 AND id = $2`,
-      [id, artifactId],
-    );
-    let scope = meta.rows[0] ? classifyScope(meta.rows[0].path) : null;
-    let plan: Awaited<ReturnType<typeof sessionRuns.getArtifactServePlan>>;
-    try {
-      plan = await sessionRuns.getArtifactServePlan(id, artifactId);
-    } catch (err) {
-      if (err instanceof CentaurApiError) {
-        // The ref is unknown to Centaur (evicted from staging / never staged):
-        // 410 Gone so the gallery's <img onError> falls back to the type label.
-        if (err.status === 404) {
-          return reply
-            .code(410)
-            .send({ error: 'artifact_gone', message: 'artifact bytes are no longer available' });
-        }
-        return reply
-          .code(502)
-          .send({ error: 'artifact_upstream_error', message: 'failed to fetch artifact from Centaur' });
-      }
-      throw err;
-    }
-    if (plan.kind === 'redirect') {
-      // === ACL scope enforcement (#4) ===
-      reply.header('X-Artifact-Scope', scope ?? 'workspace');
-      // Durable bytes in atrium's store: short-lived presigned redirect (the
-      // presign carries the inline/attachment Content-Disposition). Matches the
-      // file-serve route's 302-to-S3 pattern.
-      return reply.redirect(plan.url, 302);
-    }
-    const { artifact, bytes } = plan;
-    scope ??= classifyScope(artifact.path); // own-session artifact; scope is for the header only
-    const mime = artifact.mime || 'application/octet-stream';
-    const inline = mime.startsWith('image/');
-    const filename = basename(artifact.path) || 'artifact';
-    reply.header('Content-Type', mime);
-    // === ACL scope enforcement (#4) ===
-    reply.header('X-Artifact-Scope', scope);
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header(
-      'Content-Disposition',
-      `${inline ? 'inline' : 'attachment'}; filename="${sanitizeFilename(filename)}"`,
-    );
-    if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
-    if (!bytes.body) return reply.send(Buffer.alloc(0));
-    return reply.send(Readable.fromWeb(bytes.body));
-  });
-
   async function sessionChannelId(sessionId: string): Promise<string | null> {
     const res = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
     return res.rows[0]?.channel_id ?? null;
@@ -3076,46 +3006,12 @@ function rawSession(req: FastifyRequest): string | undefined {
     } else {
       ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
     }
-    let plan: Awaited<ReturnType<typeof sessionRuns.getLedgerServePlan>>;
-    try {
-      plan = await sessionRuns.getLedgerServePlan(id, path, ref);
-    } catch (err) {
-      if (err instanceof CentaurApiError) {
-        if (err.status === 404) {
-          return reply
-            .code(410)
-            .send({ error: 'artifact_gone', message: 'artifact bytes are no longer available' });
-        }
-        return reply
-          .code(502)
-          .send({ error: 'artifact_upstream_error', message: 'failed to fetch artifact from Centaur' });
-      }
-      throw err;
-    }
-    if (plan.kind === 'redirect') {
-      // === ACL scope enforcement (#4) ===
-      reply.header('X-Artifact-Scope', scope);
-      reply.header('X-Artifact-Canonical-Path', path);
-      reply.header('X-Artifact-Display-Path', displayPath);
-      return reply.redirect(plan.url, 302);
-    }
-    const { artifact, bytes } = plan;
-    const mime = artifact.mime || 'application/octet-stream';
-    const inline = mime.startsWith('image/');
-    const filename = basename(artifact.path) || 'artifact';
-    reply.header('Content-Type', mime);
+    const plan = await sessionRuns.getLedgerServePlan(id, path, ref);
     // === ACL scope enforcement (#4) ===
     reply.header('X-Artifact-Scope', scope);
     reply.header('X-Artifact-Canonical-Path', path);
     reply.header('X-Artifact-Display-Path', displayPath);
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header(
-      'Content-Disposition',
-      `${inline ? 'inline' : 'attachment'}; filename="${sanitizeFilename(filename)}"`,
-    );
-    if (bytes.contentLength != null) reply.header('Content-Length', String(bytes.contentLength));
-    if (!bytes.body) return reply.send(Buffer.alloc(0));
-    return reply.send(Readable.fromWeb(bytes.body));
+    return reply.redirect(plan.url, 302);
   });
 
   // C1 inbound-sync source: the gap-free, egress-pollable change-feed the Centaur
@@ -3638,7 +3534,7 @@ function rawSession(req: FastifyRequest): string | undefined {
   });
 
   // Fetch a specific version's bytes (the daemon's inbound adopt fetch). Ledger
-  // blobs are offloaded to S3 in this path, so we serve straight from the store.
+  // blobs must already be durable in CAS/S3, so we serve straight from the store.
   app.get('/api/internal/sessions/:id/artifacts/raw', async (req, reply) => {
     if (!requireCaptureKey(req, reply)) return;
     const { id } = req.params as { id: string };
@@ -3652,8 +3548,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!path) return;
     const ref = typeof q.seq === 'string' && /^\d+$/.test(q.seq) ? { seq: Number(q.seq) } : { pointer: 'latest' };
     const v = await new ArtifactLedger(pool).resolveVersion(id, path, ref);
-    if (!v || v.kind === 'deleted' || !v.s3Key) {
+    if (!v || v.kind === 'deleted') {
       return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
+    }
+    if (!v.blobSha || !v.s3Key) {
+      return reply.code(503).send({ error: 'blob_unavailable', message: 'artifact bytes are not durable in CAS' });
     }
     const bytes = await getObjectBytes(v.s3Key);
     reply.header('Content-Type', v.mime || 'application/octet-stream');
@@ -3781,6 +3680,14 @@ function rawSession(req: FastifyRequest): string | undefined {
         stagingDeleted = true;
 
         const ledger = new ArtifactLedger(pool);
+        await withTx(pool, async (client) => {
+          await ledger.upsertBlob(client, {
+            sha256: sha,
+            sizeBytes,
+            mime,
+            s3Key: finalKey,
+          });
+        });
         // First version of a path is 'created', else 'modified' (mirrors the
         // buffered write-back path; kind is cosmetic but should be accurate).
         const prior = await pool.query(
@@ -3807,7 +3714,6 @@ function rawSession(req: FastifyRequest): string | undefined {
           // Large streamed files are immutable-class; stale OCC is rebased by the node daemon.
           return reply.code(409).send({ error: 'stale_base', latestSeq: result.latestSeq, baseSeq: result.baseSeq });
         }
-        await ledger.stampBlobS3Key(sha, finalKey);
         return reply.send({ seq: result.seq, status: 'normal' });
       } finally {
         if (!stagingDeleted) {

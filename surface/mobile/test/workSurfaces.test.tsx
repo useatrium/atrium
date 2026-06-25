@@ -28,7 +28,7 @@ function artifact(over: Partial<Artifact>): Artifact {
 
 describe('ArtifactsSurface (mobile)', () => {
   it('renders a tile per artifact: image thumbnail, type label, and manifest-only note', () => {
-    const artifactUri = vi.fn((aid: string) => `uri://${aid}`);
+    const artifactUri = vi.fn((a: Artifact) => `uri://${a.path}`);
     renderUI(
       <ArtifactsSurface
         artifacts={[
@@ -45,7 +45,7 @@ describe('ArtifactsSurface (mobile)', () => {
     expect(screen.getByText('data.csv')).toBeInTheDocument();
     expect(screen.getByText('huge.bin')).toBeInTheDocument();
     // image tile builds its byte URL from the bound artifactUri
-    expect(artifactUri).toHaveBeenCalledWith('img');
+    expect(artifactUri).toHaveBeenCalledWith(expect.objectContaining({ id: 'img', path: 'out/chart.png' }));
     // non-image → type label; manifest-only → "not captured"
     expect(screen.getByText('CSV')).toBeInTheDocument();
     expect(screen.getByText('NOT CAPTURED')).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe('ArtifactsSurface (mobile)', () => {
   });
 
   it('shows an empty state when there are no artifacts', () => {
-    renderUI(<ArtifactsSurface artifacts={[]} artifactUri={(a) => a} imageHeaders={{}} />);
+    renderUI(<ArtifactsSurface artifacts={[]} artifactUri={(a) => a.path} imageHeaders={{}} />);
     expect(screen.getByText('No artifacts captured.')).toBeInTheDocument();
   });
 });

@@ -103,10 +103,9 @@ export interface FileChange {
 
 export type ArtifactKind = "created" | "modified" | "deleted";
 
-/** A work-product file the sandbox capture sidecar surfaced — the unit of the
- * Artifacts work-surface. `ref` keys the bytes in Centaur staging (null =
- * manifest-only); atrium offloads them to its own store + serves. `path` may be
- * absolute; the surface strips the sandbox prefix for display. */
+/** A work-product file surfaced in the Artifacts work-surface. `ref` is legacy
+ * transcript metadata; current bytes are served by Atrium's by-path CAS route.
+ * `path` may be absolute; the surface strips the sandbox prefix for display. */
 export interface Artifact {
   id: string;
   path: string;

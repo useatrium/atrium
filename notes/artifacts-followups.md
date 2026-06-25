@@ -1,10 +1,16 @@
 # Artifacts — follow-up plan
 
-Status of the sandbox artifact-capture feature after the 2026-06-18 build-out +
-live end-to-end verification. The full pipeline (sandbox worker → api-rs capture
-routes → Postgres staging → `artifact.captured` event → byte serve) is **proven
-working in the live local cluster**; Atrium's serve route is implemented +
-test-green. This tracks what's left.
+Status of the sandbox artifact-capture feature after the 2026-06-18 build-out,
+the B1 offload proof, and the 2026-06-25 hard cut. The original pipeline
+(sandbox worker → api-rs capture routes → Postgres staging → `artifact.captured`
+event → byte serve) is **historical proof**, not the current storage path.
+
+> **UPDATE 2026-06-25:** B1 is now historical scaffolding, not the target storage
+> shape. The replacement is **B2 — single-CAS hard cut**: fresh artifact
+> capture writes durable Atrium CAS/S3 bytes before any non-delete ledger version
+> commits, and `session_artifacts`/artifact-offload/Centaur proxy fallback are
+> deleted rather than kept as a second mechanism. See `cas-ledger-build-plan.md`
+> §3b-§3d and `shared-workspace-build-spec.md` lane F.
 
 ## Resolved
 - **Centaur producer** (api-rs routes + sandbox `artifact_capture.py` worker +
@@ -60,8 +66,10 @@ artifact from `exe_old` fetched while current is `exe_fake`). **Live multi-turn
 verify deferred to D1** (needs the surface server + a cluster redeploy so the
 deployed api-rs emits `execution_id`).
 
-### B1 — S3 offload (durable storage) ✅ DONE (2026-06-18, Atrium `master` `dde26e6`)
-Periodic worker + presigned 302 + `session_artifacts` table (the chosen shape).
+### B1 — S3 offload (durable storage) ✅ DONE, SUPERSEDED (2026-06-18, Atrium `master` `dde26e6`)
+Periodic worker + presigned 302 + `session_artifacts` table. This proved the
+Centaur→Atrium→S3 durability path and locking model, but it is no longer the chosen
+long-term shape.
 - migration `031_session_artifacts.sql` (offload state; partial-index queue).
 - mirror path records each `artifact.captured` into the table.
 - worker `artifact-offload.ts` (off by default; `ARTIFACT_OFFLOAD_ENABLED=1`):
@@ -82,14 +90,34 @@ Periodic worker + presigned 302 + `session_artifacts` table (the chosen shape).
   out of the queue instead of re-claiming every lease. Queue index rebuilt to
   exclude `evicted_at IS NOT NULL`. 219 server tests green (added a lease test +
   extended the evicted-ref test); typecheck clean.
-- **Prod-hardening — Centaur staging GC after offload:** still deferred (needs a
-  Centaur retention API).
-- **Live verify** (enable the worker, confirm offload → 302) pending with D1.
+- **Prod-hardening — Centaur staging GC after offload:** dropped by B2; Centaur
+  staging is removed instead of retained behind a retention API.
+- **Live verify** (enable the worker, confirm offload → 302): superseded by B2;
+  the proxy/offload leg is intentionally gone.
 
-### D1 — Live-verify the Atrium serve route
-Centaur's byte endpoint is live-verified; the Atrium route → Centaur link is
-only test-verified. Bring the surface stack up with the dev key, drive a session,
-hit the route. **Fold into A1's redeploy.**
+### B2 — Single-CAS hard cut ✅ LANDED (2026-06-25, `hardcut-single-cas`)
+No committed non-delete artifact version depends on Centaur staging,
+`session_artifacts`, or an offload worker. Producers write bytes into Atrium CAS/S3
+first; only then does Atrium commit the ledger version.
+
+Implemented:
+- Agent/node capture uses Atrium internal capture endpoints directly and records the
+  ledger commit from that durable CAS write.
+- Human write-back, upload auto-land, and app publish all share the same invariant:
+  `artifact_versions.blob_sha` points at a `cas_blobs` row with `s3_key`.
+- `recordArtifact`, `offloadArtifactBatch`/`offloadOneArtifact`,
+  `session_artifacts` table references, Centaur artifact proxy fallback, and
+  artifact-offload env/docs are removed from the normal path.
+- The old live in-agent poll is retired; node-sync/direct Atrium capture is the
+  required production capture path before the Centaur staging dependency is deleted.
+- A corrupted/non-delete version missing `s3_key` returns an explicit
+  `blob_unavailable` error + metric; it is not served by proxy.
+
+### D1 — Live-verify the Atrium serve route ✅ SUPERSEDED
+The old verification goal was "Atrium route proxies from Centaur, then offload →
+302." Under B2 that proxy leg is intentionally deleted, so the live verification
+moves to the B2 acceptance: fresh capture commits durable CAS bytes and serves from
+Atrium S3/CAS immediately.
 
 ## Dropped
 - **D2 (split the api-server test module):** a fork-only split makes the whole
@@ -97,11 +125,14 @@ hit the route. **Fold into A1's redeploy.**
   Revisit only as an upstream proposal.
 
 ## Sequence
-**A1** (+ cluster migration reconcile + D1 verify, one deploy) → **A2** → **B1**.
+Historical: **A1** (+ cluster migration reconcile + D1 verify, one deploy) →
+**A2** → **B1** → **B2**. Forward work is live overlay/capture cutover and
+full Atrium/non-mock hydration e2e.
 
 ## Pointers
 - Deploy line: `fork/atrium/integration` (paradigm `origin/main` + topics). Build
   per `ATRIUM_FORK.md` / `notes/local-atrium-centaur-runbook.md`.
 - Dedicated artifact key: `ARTIFACT_CAPTURE_API_KEY` (Centaur `centaur-infra-env`
   secret ↔ Atrium `surface/deploy/.env`).
-- Cross-execution caveat is A2; durable storage is B1.
+- Cross-execution caveat is A2; old durable-storage scaffolding is B1; the target
+  durable path is B2.

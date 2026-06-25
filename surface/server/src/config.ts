@@ -47,17 +47,6 @@ export const config = {
   // sandbox-token key, distinct from CENTAUR_API_KEY. Unset falls back to
   // centaurApiKey (works only if Centaur accepts the session key there).
   artifactCaptureApiKey: process.env.ARTIFACT_CAPTURE_API_KEY ?? '',
-  // Background offload of captured artifact bytes from Centaur staging into
-  // atrium's S3 (durable). Disabled by default ('0') so a server without the
-  // artifact-capture key / object store doesn't hot-loop; flip to '1' to run.
-  artifactOffloadEnabled: (process.env.ARTIFACT_OFFLOAD_ENABLED ?? '0') === '1',
-  artifactOffloadIntervalMs: Number(process.env.ARTIFACT_OFFLOAD_INTERVAL_MS ?? 30_000),
-  artifactOffloadBatchSize: Number(process.env.ARTIFACT_OFFLOAD_BATCH_SIZE ?? 10),
-  // The claim lease: how long a claimed-but-not-yet-offloaded artifact stays off
-  // the queue before another worker may reclaim it. Must comfortably cover one
-  // row's Centaur fetch + S3 upload; a worker that crashes mid-upload reclaims
-  // the row after this window. Default 5 min.
-  artifactOffloadClaimLeaseMs: Number(process.env.ARTIFACT_OFFLOAD_CLAIM_LEASE_MS ?? 300_000),
   // === gc additions ===
   artifactGcEnabled: process.env.ARTIFACT_GC_ENABLED === '1',
   artifactGcIntervalMs: Number(process.env.ARTIFACT_GC_INTERVAL_MS ?? 300_000),

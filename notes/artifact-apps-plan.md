@@ -6,6 +6,12 @@ browser-security claims were proved with a live 3-origin + dev-browser POC (see
 §0). Sister docs: [[atrium-daily-driver-plan]] §3/§9, `agent-sync-design.md`
 (Files surface polymorphism), `cas-ledger-build-plan.md` (the ledger this rides on).
 
+> **UPDATE 2026-06-25:** the apps plan now assumes the single-CAS hard cut from
+> `cas-ledger-build-plan.md` §3b-§3d. Publish does **not** normally wait for an
+> artifact-offload worker; source versions are already durable in Atrium CAS/S3
+> before they can be published. `pending_offload` remains only as a legacy/defensive
+> state for pre-cutover rows or invariant repair, not as the target publish path.
+
 ## 0. Security model — POC-verified (2026-06-22)
 
 A live POC (three real origins, the exact §6 CSP, driven through Chromium with
@@ -48,9 +54,11 @@ surfaced one model-level correction + several route/GC/locking rules — all fol
 2. **Asset validation** — publish verifies the entry's relative asset refs exist in
    the snapshot + lints root-absolute refs → 400 (dangling/absolute). §5/§6.
 3. **Durability (the big one)** — the apps origin serves **S3-only**; the
-   Centaur-proxy fallback is **dropped** (evictable, no session ctx). Publish gates
-   on offload via `apps.status: pending_offload → published`; launch 409s until
-   published. §4/§6.
+   Centaur-proxy fallback is **dropped** (evictable, no session ctx). After the
+   single-CAS hard cut, publish can only freeze source versions whose blobs already
+   have `cas_blobs.s3_key`, so normal publish writes `apps.status='published'`
+   immediately. Legacy `pending_offload` rows 409 until repaired or republished.
+   §4/§6.
 4. **Stable old launches** — per-version freeze + version-in-the-signed-path means a
    re-publish (v2) never disturbs a live v1 launch. `app_versions.blob_sha` is a
    **GC root**. §4.
@@ -155,14 +163,15 @@ CREATE TABLE IF NOT EXISTS apps (
   created_by      uuid NOT NULL REFERENCES users(id),
   created_at      timestamptz NOT NULL DEFAULT now(),
   current_version int,                           -- latest published app_versions.version
-  status          text NOT NULL DEFAULT 'pending_offload',  -- pending_offload | published | unpublished
+  status          text NOT NULL DEFAULT 'published',  -- published | unpublished | pending_offload(legacy/repair)
   UNIQUE (workspace_id, name)
 );
--- status machine (hand-compute §0a): a publish freezes rows as 'pending_offload';
--- once every referenced blob has cas_blobs.s3_key, it flips to 'published'. launch
--- refuses non-'published' (409); serve gates on 'published'. unpublish → live apps
--- die within one asset-load. The apps origin serves ONLY from S3 (durable), never
--- proxies Centaur staging (evictable; no session ctx) — so publish MUST reach S3.
+-- status machine (2026-06-25 hard cut): normal publish freezes only already-durable
+-- CAS blobs and commits as 'published'. launch refuses non-'published' (409); serve
+-- gates on 'published'. unpublish → live apps die within one asset-load. The apps
+-- origin serves ONLY from S3 (durable), never proxies Centaur staging. A
+-- 'pending_offload' row is legacy/repair-only, not a state new publishes should
+-- create after the hard cut.
 
 -- One row per (app, version, file): freezes the EXACT artifact version served,
 -- decoupled from the live chain (later edits don't mutate a published app).
@@ -237,20 +246,19 @@ rewrite-to-relative pass could relax this.)
   from **one snapshot**, freeze `(artifact_id, version_seq, blob_sha, mime, size)`
   **by seq** into `app_versions` at `current_version+1`; **validate** `entry` exists
   + every relative asset ref in the entry resolves in the snapshot + **lint
-  root-absolute refs** (→ 400 on dangling/absolute); set `status='pending_offload'`,
-  bump `current_version`. Then ensure offload is enqueued for those blobs (the
-  **existing** artifact-offload worker stamps `s3_key`). `status` flips to
-  `published` **lazily** — no new worker (see launch). Membership + scope gated. →
+  root-absolute refs** (→ 400 on dangling/absolute); verify every frozen non-delete
+  blob already has `cas_blobs.s3_key` (else 409/503 `blob_unavailable`, because the
+  source violated the single-CAS invariant); set `status='published'`, bump
+  `current_version`. Membership + scope gated. →
   `{ appId, version, status }`.
 - **`GET /api/sessions/:id/apps`** — registry list for the session's workspace,
   scope-gated (`userCanReadScope`). → `[{ appId, name, entry, description,
   version, status, createdBy, createdAt }]`.
 - **`GET /api/sessions/:id/apps/:appId/launch?version=`** — membership+scope
-  gated. **Lazy status flip:** if `status='pending_offload'`, re-check whether all
-  referenced blobs now have `s3_key`; if so flip to `published`, else **409**. Then
-  mint the signed URL for `version` (default `current_version`). → `{ url, expiresAt }`.
-  (This is why no offload-flip worker is needed — durability is confirmed at the
-  moment of launch.)
+  gated. Refuse non-`published` apps with **409**; then mint the signed URL for
+  `version` (default `current_version`). → `{ url, expiresAt }`. The durability
+  check happened at publish time; launch is not an offload poller in the hard-cut
+  target.
 
 ### Apps origin (NO cookie; HMAC path grant — S3-only, durable)
 
@@ -307,8 +315,8 @@ surface **self-fetches** from the registry endpoint (FilesSurface pattern,
 state, so no reducer/stream coupling.
 
 - **`AppsSurface.tsx`** — gallery of `{name, description, version badge, status}`
-  tiles + "Launch". `pending_offload` apps show "publishing…" and Launch is
-  disabled. Launch → `GET …/launch` → render the returned `url` in a sandboxed
+  tiles + "Launch". Non-`published` apps show unavailable/republish-needed state and
+  Launch is disabled. Launch → `GET …/launch` → render the returned `url` in a sandboxed
   iframe (modal/expanded):
   ```tsx
   <iframe
@@ -346,22 +354,20 @@ Owns: `migrations/041_apps.sql`; `surface/server/src/app-registry.ts`
 `config.ts` additions (`appsOrigin`, `appsHost`, `appsPort`, `appLaunchTtlS`);
 shared `AppManifest` type + validator (in `@atrium/surface-client` next to `prefs`).
 `publishApp` does the §6 tx (`FOR UPDATE` + freeze-by-seq + asset/absolute-ref
-validation + `status='pending_offload'`); `markPublishedIfDurable(appId, version)`
-is the lazy-flip helper (all blobs `s3_key` → `published`); `resolveAppFile`
-returns blob_sha + `s3_key` only (no Centaur).
+validation + all non-delete blobs already durable + `status='published'`);
+`resolveAppFile` returns blob_sha + `s3_key` only (no Centaur).
 Tests: `surface/server/test/appRegistry.test.ts` — publish **freezes** the set (a
 later edit does NOT change a published app); `resolveAppFile` returns the frozen
 seq; `listApps` scope-gates; **concurrent publish → distinct versions** (hand-compute
-h); **pending→published only after all blobs durable** (hand-compute b); validation
-**rejects dangling + root-absolute refs** (hand-compute a). `appSign.test.ts`
+h); publish/resolve **rejects missing `s3_key` as `blob_unavailable`** (hard-cut
+invariant); validation **rejects dangling + root-absolute refs** (hand-compute a). `appSign.test.ts`
 (sign/verify, expiry, tamper). **The shared contract every other lane imports.**
 
 ### A — API-origin routes (codex)
 Owns: an appendix block `// === apps routes ===` in `app.ts` (the 3 routes in §6)
 + `surface/server/test/appsRoutes.test.ts` (publish→list→launch happy path;
-non-member → 404; `kind!=static` → 400; **launch 409 while `pending_offload`, then
-200 after blobs durable** (hand-compute b); launch URL verifies under
-`verifyAppSignature`).
+non-member → 404; `kind!=static` → 400; **launch 409 for non-`published`/legacy app
+rows**; launch URL verifies under `verifyAppSignature`).
 
 ### B — Apps-origin server + serve + CSP (codex)
 Owns: `surface/server/src/apps-origin.ts` (`buildAppsOrigin(deps)` + the serve
@@ -389,10 +395,10 @@ Owns: `surface/e2e/fixtures/sample-app/` (self-contained: `index.html` + `app.js
 under `connect-src 'none'`); a seed helper that writes the fixture into the ledger
 for a seeded session (mirror `conflicts.spec.ts` `writeArtifact`) then publishes
 via the API; `surface/e2e/tests/apps.spec.ts`. Beyond the §9 isolation assertions,
-exercise: **launch before offload → 409** then after → 200 (hand-compute b);
-**re-publish v2 while a v1 iframe is open → v1 keeps serving** (hand-compute d).
+exercise: **legacy/non-`published` launch → 409**; **re-publish v2 while a v1 iframe
+is open → v1 keeps serving** (hand-compute d).
 Config: set `APPS_PORT` in `playwright.config.ts` `webServer` env so the server
-boots the apps origin (`:3201` e2e) + MinIO for the offload path.
+boots the apps origin (`:3201` e2e) + MinIO/S3 for CAS reads.
 
 **Dependency graph:** F → {A, B, C} → D. C builds against F's contract types; D
 exercises A+B+C end to end.
@@ -405,7 +411,7 @@ exercises A+B+C end to end.
 | Integration (server) | routes: publish/list/launch authz; serve sig/expiry/tamper/traversal/CSP | same |
 | Unit (web) | AppsSurface list + launch iframe attrs | `pnpm --filter @atrium/web test` |
 | Whole suite | typecheck + lint + tests | `pnpm check` (from `surface/`) |
-| **E2E** | seed → publish → launch → iframe renders + **isolation** | `pnpm e2e` (needs PG `:5433` `atrium_e2e`; MinIO `:9000` for offload path) |
+| **E2E** | seed → publish → launch → iframe renders + **isolation** | `pnpm e2e` (needs PG `:5433` `atrium_e2e`; MinIO `:9000` for CAS/S3 reads) |
 | **Manual (orchestrator)** | dev-browser: launch app, screenshot, confirm render + sandbox | per `agent-fanout` final-QA |
 
 ### E2E spec outline (`apps.spec.ts`)
@@ -434,7 +440,7 @@ exercises A+B+C end to end.
 - [ ] Non-member can neither list an app nor mint a launch URL (membership + scope gated).
 - [ ] Unpublished/preview working files are **not** servable via the apps origin — only frozen published versions.
 - [ ] A later edit to a source file does **not** alter an already-published app version. *(hand-compute d)*
-- [ ] Launch **409s** while `status='pending_offload'`; serve is **S3-only** (never proxies Centaur). *(hand-compute b)*
+- [ ] Launch **409s** for non-`published`/legacy rows; serve is **S3-only** (never proxies Centaur). *(hand-compute b, updated by hard cut)*
 - [ ] A re-publish (v2) does **not** disturb a live v1 launch; `app_versions.blob_sha` is a blob-GC root. *(hand-compute d)*
 - [ ] Concurrent publishes of one name produce **distinct versions** (no PK collision; serialized via `FOR UPDATE`). *(hand-compute h)*
 - [ ] Serve **verifies the signature before any DB lookup** (bad sig → 403 whether or not the app exists). *(hand-compute f)*
@@ -453,16 +459,16 @@ exercises A+B+C end to end.
   Ops follow-up; not a v1 code blocker.
 - **CSP permissiveness** — `unsafe-inline/eval` accepted under isolation; harden
   to hashed CSP later.
-- **Durability vs offload — RESOLVED (hand-compute §0a):** apps serve **S3-only**;
-  no Centaur-proxy fallback. Publish freezes as `pending_offload`; launch **lazily
-  flips** to `published` once all blobs have `s3_key` (no new worker — reuses the
-  existing offload worker that stamps `s3_key`), else 409. So a launch never serves
-  evictable staging bytes.
+- **Durability vs offload — RESOLVED (hand-compute §0a, updated by hard cut):** apps
+  serve **S3-only**; no Centaur-proxy fallback. Normal publish freezes only source
+  versions whose blobs already have `s3_key` and commits as `published`; legacy or
+  repaired `pending_offload` rows 409 until republished/fixed. So a launch never
+  serves evictable staging bytes.
 - **Launch-URL TTL vs long sessions (hand-compute §0a)** — the URL is a ~6h **bearer
   capability**; post-expiry relative/lazy asset loads 403. Mitigate: bundle assets;
   gallery "Relaunch" on a dead iframe. v1.1: postMessage renew. Also note the bearer
   URL is shareable-within-TTL by design (membership enforced at mint, not fetch).
-- **Large/many-file apps** — reuse the ~16 MiB capture ceiling + offload; cap file
+- **Large/many-file apps** — reuse the capture/CAS ceiling; cap file
   count/total size at publish; surface a clear error.
 - **v1.1 hook** — `scopes` in the manifest + a `postMessage` capability-token SDK
   relax `connect-src` to a single data endpoint so apps can read live Atrium data

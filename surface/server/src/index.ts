@@ -8,7 +8,6 @@ import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
 import { deleteObject } from './s3.js';
-import { startArtifactOffloadWorker, type ArtifactOffloadWorker } from './artifact-offload.js';
 import { startArtifactGcWorker, type ArtifactGcWorker } from './artifact-ledger-gc.js';
 import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
@@ -49,14 +48,6 @@ async function main() {
     : false;
   const app = await buildApp({ pool, hub, stt: sttWorker, rateLimit });
 
-  // Single-instance background offload of captured artifact bytes into S3
-  // (B1). Off by default; enable with ARTIFACT_OFFLOAD_ENABLED=1 once the
-  // artifact-capture key + object store are configured.
-  let artifactOffload: ArtifactOffloadWorker | null = null;
-  if (config.artifactOffloadEnabled) {
-    artifactOffload = startArtifactOffloadWorker({ sessionRuns: app.sessionRuns });
-  }
-
   // === gc additions ===
   let artifactGc: ArtifactGcWorker | null = null;
   if (config.artifactGcEnabled) {
@@ -65,7 +56,6 @@ async function main() {
 
   const shutdown = async () => {
     sttWorker.stop();
-    artifactOffload?.stop();
     artifactGc?.stop();
     clearInterval(heartbeat);
     clearInterval(idempotencyPrune);

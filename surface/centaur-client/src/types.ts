@@ -305,10 +305,9 @@ export interface QuestionResolved {
   reason: "answered" | "cancelled" | "empty";
 }
 
-/** A file the sandbox capture sidecar surfaced as a work-product artifact. The
- * bytes (if any) live in Centaur staging keyed by `ref`; atrium offloads them to
- * its own object store and serves them. `ref: null` = manifest-only (the file was
- * too large or filtered as junk — metadata captured, bytes not staged). */
+/** Legacy transcript metadata for a file surfaced as a work-product artifact.
+ * Current artifact bytes are committed directly to Atrium CAS; `ref` remains
+ * for old events and display/backward compatibility. */
 export interface ArtifactCaptured {
   type: "artifact.captured";
   artifact_id: string;

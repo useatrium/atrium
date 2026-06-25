@@ -8,6 +8,12 @@ Status: brainstorm. Open decisions are collected at the bottom; some are being
 asked interactively and folded back in. Codex (xhigh) feedback pending → appended
 as its own section.
 
+> **UPDATE 2026-06-25:** artifact storage has moved past the original
+> capture/offload scaffolding. The implementation is the single Atrium CAS-ledger path:
+> capture/write-back/uploads/app publish only commit non-delete versions after bytes
+> are durable in S3/CAS. `session_artifacts`, artifact offload, and Centaur proxy
+> fallback are removed as normal paths, not retained as a second storage mechanism.
+
 ## Framing
 
 The daily-driver bar is set by `agentboard`/`tmux`: **near-instant** agent
@@ -103,11 +109,11 @@ S3 object store directly. So the two concerns separate cleanly:
   nothing on explorability and loses the chat ergonomics.
 - **One read-only mount** materializes *both* (rendered notes + S3 artifacts) as a
   real file tree in the sandbox. Agents `rg`/`cat`/`ls` it; they never touch S3.
-- **Agent writes** land in the sandbox's **`git clone --shared` workspace**; the
-  in-process 2.5 s watcher captures changed files → offloaded to the **S3
-  CAS-ledger** (`cas/<sha>`) → re-materialized into the read-only view as a new
-  version. (The earlier overlay-FS *and* object-FUSE/Archil models were both
-  dropped — see the §3 correction and [[agent-data-architecture]].)
+- **Agent writes** land in the sandbox's writable workspace; the target capture path
+  records durable bytes directly in the **Atrium S3 CAS-ledger** (`cas/<sha>`) before
+  committing a version → re-materialized into the read-only view. The old
+  in-process watcher + Centaur staging/offload path was useful scaffolding, but the
+  2026-06-25 hard cut removes it as a normal storage path.
 
 **Main trap.** Two different things, don't conflate them: **(a) notes** stay
 read-only because they're chat-canonical — agent contributions arrive as
@@ -132,25 +138,23 @@ clearly derived from event IDs and reversible) — a strong fast-follow.
 ## 3. Artifact detection / backup / preview / markdown editing
 
 **Current state.** Foundation merged (reducer + gallery as 3rd Work tab; record
-exposes artifacts). **Atrium-side capture/offload/serve now merged on master**
-(`session_artifacts` migs 031+032, `artifact-offload.ts` lease worker, serve route
-+ `ARTIFACT_CAPTURE_API_KEY`). The **Centaur producer** (`1000_artifact_blobs.sql`,
-`services/sandbox/artifact_capture.py`, api-rs capture routes, `artifact.captured`
-frames) is **merged into `atrium/integration`** — Atrium's Centaur deploy branch,
-18 commits ahead of `origin/main` (branch `gb/api-rs-artifact-capture`, pushed to
-`fork`). The only thing outstanding is **upstreaming to Centaur `origin/main`**,
-not integration. (Deploy status of `integration` not separately verified here.)
-Today's store is still a **capture-only, flat, content-hashed per-session log** —
-**missing write-back, version chains, global dedup, GC**. Blob store = Atrium's S3.
+exposes artifacts). The first durable-capture scaffolding also merged
+(`session_artifacts` migs 031+032, `artifact-offload.ts` lease worker, Centaur proxy
+serve route + `ARTIFACT_CAPTURE_API_KEY`) and proved the live Centaur→Atrium→S3
+path. Since then the CAS-ledger and workspace-scoped artifact identity have landed
+on Atrium `master` (migs `033`-`043`), and Centaur node-sync hydration/alias
+projection has landed on `gbasin/centaur` `fork/main`. The **single-CAS hard cut**
+now removes the old `session_artifacts`/offload/proxy route as a parallel mechanism:
+fresh captures write Atrium CAS/S3 before the ledger commit.
 
 **MVP cut.** Sandbox watcher captures allow-listed dirs → bytes to S3 → gallery
 preview (images, text, markdown, PDF). Markdown in-app edit writes back as a new
 version. remote-gallery parity = this.
 
-**Storage substrate — BUILDING NOW (`feat/cas-ledger`).** The live spike (both
-tracks run vs the dev stack incl. real lakeFS 1.82.0) settled the backing — **own
-CAS-ledger, beat lakeFS 39–29** (lakeFS lost on conflict-fit, ops, paywalled RBAC)
-— and v1 is now in build. **Schema (mig `033_artifact_ledger.sql`):** `cas_blobs`
+**Storage substrate — CAS-ledger built; hard-cut cleanup next.** The live spike
+(both tracks run vs the dev stack incl. real lakeFS 1.82.0) settled the backing —
+**own CAS-ledger, beat lakeFS 39–29** (lakeFS lost on conflict-fit, ops, paywalled
+RBAC). **Schema (mig `033_artifact_ledger.sql`):** `cas_blobs`
 (sha256→S3, global dedup) · `artifacts` (identity `UNIQUE(session_id,path)`,
 channel denormalized, `merge_class`) · `artifact_versions` (chain:
 `blob_sha`/`base_seq`/`author`/`kind`/`status`/`conflict`) · `artifact_pointers`
@@ -162,7 +166,9 @@ serve-latest-by-path route + by-path gallery view (one row/path, newest-wins);
 **(3)** human write-back PUT + **node-diff3** 3-way conflict-state (OCC base
 required); **(4)** blob-GC mark-sweep + **C1-ready hooks** (LISTEN/NOTIFY on
 pointer-advance — the invalidation source for inbound sync). So write-back +
-conflict-state, earlier "deferred," is **in this round**. Plan:
+conflict-state, earlier "deferred," is **in this round**. The 2026-06-25
+simplification is to enforce one invariant across all producers: every non-delete
+version points at a `cas_blobs` row whose `s3_key` already exists. Plan:
 `notes/cas-ledger-build-plan.md`; design [[agent-data-architecture]].
 
 **Main trap.** (1) "Artifact vs junk" → **layered filtering** (path-globs + type
@@ -543,11 +549,13 @@ lanes; e2e + dev-browser isolation assertions).
    leases. Wire BYO **Codex** via iron-proxy/broker; **Claude/Gemini** via the
    BYO-terminal pane.
 3. **Notebook + artifacts:** chief-of-staff channel, audio→STT, markdown editor,
-   `atrium-memory/` read-only mirror; the **CAS-ledger v1 is in build now**
-   (`feat/cas-ledger`: capture→versions, serve-latest, write-back+conflict-state,
-   GC) so capture→S3 + gallery preview/edit is durable, not capture-only. Confirm
-   the **Centaur producer** is deployed (merged to `atrium/integration`; upstream
-   when stable) + capture the rollout JSONL on the same pipeline.
+   `atrium-memory/` read-only mirror; the **CAS-ledger v1 is built and being
+   simplified** (capture→versions, serve-latest, write-back+conflict-state, GC,
+   workspace-scoped identity). The single-CAS hard cut makes capture→S3 + gallery
+   preview/edit durable without `session_artifacts` or a Centaur proxy fallback.
+   Production rollout still needs node-sync/direct Atrium capture enabled before
+   removing the old in-agent poll from deployed workloads, and rollout JSONL should
+   move onto the same pipeline.
 4. **Archival + watcher:** raw `session_events` + rollout-JSONL + external-jsonl
    blobs to S3, redaction-as-projection, normalized search; ship the watcher CLI
    (sink into `cass`).
@@ -585,10 +593,10 @@ sharpened the plan, it's already integrated above; the high-signal deltas:
 - **Archival:** **redaction must be a projection layer, not destructive mutation**
   (full-fidelity archives contain secrets); content-hash idempotency in the
   watcher. → §8.
-- **Artifacts trap:** current code still *proxies* artifact bytes from Centaur
-  staging in places (`getArtifactBytes` → `/agent/executions/.../artifacts/...`,
-  evictable) — that is **not an archive**. Offload to Atrium S3 on capture; add a
-  "promote artifact → durable channel item." → §3.
+- **Artifacts trap — closed by the hard cut:** the old code proxied artifact bytes
+  from Centaur staging, which was **not an archive**. Current code serves by path
+  from Atrium CAS/S3; the remaining product fast-follow is "promote artifact →
+  durable channel item." → §3.
 - **Bad/premature (codex's list):** custom Atrium doc/todo format; native desktop
   rewrite; desktop-app log scraping as MVP; multi-cloud k8s; full call recording;
   **Claude-subscription MITM as a product.**

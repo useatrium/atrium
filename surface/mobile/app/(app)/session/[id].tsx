@@ -678,7 +678,7 @@ export default function SessionScreen() {
         render: () => (
           <ArtifactsSurface
             artifacts={artifacts}
-            artifactUri={(artifactId) => chat.artifactUrl(id, artifactId)}
+            artifactUri={(artifact) => chat.artifactUrl(id, artifact)}
             imageHeaders={chat.fileHeaders}
           />
         ),

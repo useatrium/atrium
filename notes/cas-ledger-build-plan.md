@@ -22,6 +22,13 @@
 > **notes → artifact-canonical** (reverses daily-driver §2); **C1 live inbound now IN
 > SCOPE**; autonomous reconcile = **auto-rebase**; **diff3 gated by merge-class**;
 > **code repos excluded from sharing** (git owns them).
+>
+> **STORAGE SIMPLIFICATION 2026-06-25:** implementation = **one Atrium CAS write path**.
+> Agent capture, human write-back, upload auto-land, hydration, and app publish all
+> reference `cas_blobs`; a non-delete committed version must point at bytes already
+> durable in S3. `session_artifacts` is deleted along with the Centaur-proxy/offload
+> artifact path. This supersedes the older §3b-§3d
+> "keep `session_artifacts` as staging" plan below.
 
 
 The durable artifact CAS-ledger decided in `spike-artifact-store.md` (own
@@ -36,7 +43,7 @@ to `agent-data-architecture.md` (the deep design) and §3 of
 ```
 EXECUTION (in sandbox, Centaur)        DURABLE (Atrium)               SYNC (egress-only, no-ingress)
   /workspace = overlay merged            cas_blobs  (S3, global)        OUT: hydrate-GET at start
-   lower = base+deps+hydrated (RO)       artifacts  (PG, (session,path))      capture-POST  (built: 2.5s watcher)
+   lower = base+deps+hydrated (RO)       artifacts  (PG, (workspace,path))    capture-POST  (durable CAS first)
    upper = agent edits (RW) ── diff ──►  artifact_versions (chain)      IN : lazy pull-on-access  ┐ NEW
   artifact_capture.py (2.5s poll) ──────►artifact_pointers (latest…)         invalidation/subscribe┘ Centaur work
 ```
@@ -71,10 +78,10 @@ build.
   clean); trailing-newline safe. *Caveat:* adjacent independent edits conflict
   (standard diff3 conservatism) — design the resolve UX for "conflicts happen."
 - **Reusable infra (master):** `s3.ts` (`uploadObject`/`presignGet`/`presignPut`),
-  the claim-then-release offload lease worker (`artifact-offload.ts` +
-  `offloadArtifactBatch`), the 302-redirect serve route, `session_artifacts`
-  (migs 031/032). Migrations are sequential → **next = `033`** (this repo has no
-  upstream; the `1000+` rule is the api-rs fork's, not surface/server's).
+  the 302-redirect serve route shape, and the CAS ledger primitives. The older
+  `artifact-offload.ts`/`session_artifacts` path is proven but superseded by the
+  single-CAS hard cut. Migrations are sequential → **next = `033`** (this repo
+  has no upstream; the `1000+` rule is the api-rs fork's, not surface/server's).
 - **Consumer requirement (Gary):** always-latest is fine → **v1 pointer = `latest`
   only**; `official`/pin/promote are later.
 - **Centaur runtime (mapped this session, `centaur-wt/integration`):**
@@ -101,7 +108,7 @@ build.
 
 | Table | Key | Holds |
 |---|---|---|
-| `cas_blobs` | `sha256` | global content-addressed bytes → S3 (`s3_key` nullable until offloaded) |
+| `cas_blobs` | `sha256` | global content-addressed bytes → S3 (`s3_key` present before any non-delete version commits) |
 | `artifacts` | `id` uuid, `UNIQUE(session_id, path)` | logical artifact identity (+ denormalized `channel_id`, `merge_class`) |
 | `artifact_versions` | `(artifact_id, seq)` | chain: `blob_sha`, `base_seq`, `author`, `kind`, `status`, `conflict` |
 | `artifact_pointers` | `(artifact_id, name)` | movable refs; v1 ships only `latest` |
@@ -130,7 +137,7 @@ build.
 ```sql
 CREATE TABLE IF NOT EXISTS cas_blobs (
   sha256     text PRIMARY KEY,
-  s3_key     text,                                   -- NULL until offloaded (pending = proxy from Centaur)
+  s3_key     text,                                   -- target: NOT NULL before any non-delete version commits
   size_bytes bigint      NOT NULL,
   mime       text        NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
@@ -174,43 +181,65 @@ CREATE TABLE IF NOT EXISTS artifact_pointers (
 );
 ```
 
-### 3b. Capture-bridge (the ingest — `mirrorFrame` hook)
+### 3b. Capture ingest (hard-cut target — single CAS path)
 
-On each `artifact.captured` frame (where capture already records
-`session_artifacts`), additionally fold into the ledger, in one tx:
-1. `channel_id` = the session's channel.
-2. `INSERT cas_blobs(sha256, size, mime) ON CONFLICT (sha256) DO NOTHING` —
-   `s3_key` stays NULL (the offload worker fills it). Skip for `kind=deleted`.
-3. `INSERT artifacts(session,channel,path) ON CONFLICT (session_id,path) DO
-   UPDATE … RETURNING id`; `SELECT … FOR UPDATE` (serialize the chain).
-4. Read `latest`. **Content-dedup:** if `kind≠deleted` and `sha == latest's
-   blob_sha`, no-op (idempotent replay/mtime-touch). Else `seq=latest+1` (or 1),
-   `base_seq=latest`, `author='agent:'+session`, `kind` from the frame.
-5. `INSERT artifact_versions`; upsert `artifact_pointers('latest')=seq`.
+All artifact byte producers write through Atrium's CAS capture/write-back path
+before a version is committed:
 
-No OCC/`base` contract needed in v1: a session's captures are a **single ordered
-stream** (`centaur_event_id` order), so there are no concurrent writers to race.
-(That contract lands with human write-back — §6.)
+1. Agent capture calls the internal Atrium capture endpoints directly:
+   `/api/internal/sessions/:id/artifacts/capture` for buffered files and
+   `/capture-stream` for large files. The session route remains the right internal
+   surface because capture is session-authored and the server already resolves the
+   active-prefix alias to a workspace-scoped canonical path.
+2. Human write-back and upload auto-land reuse the same invariant: write or point
+   at durable CAS bytes first, then insert/update `cas_blobs` with `s3_key`, then
+   commit `artifact_versions`.
+3. Delete captures commit a tombstone (`blob_sha NULL`) and never touch blob
+   storage.
+4. The old `artifact.captured` event bridge stops being a storage ingress. If a
+   transcript/event needs to show "artifact captured," it is emitted or projected
+   from the ledger commit, not used as the source of truth for bytes.
 
-### 3c. Storage unification (offload → content-addressed)
+The key invariant is simple enough to test globally: **no non-delete
+`artifact_versions` row points at a `cas_blobs` row whose `s3_key` is NULL**. A
+missing `s3_key` is an invariant violation/backfill defect, not a normal pending
+state.
 
-Re-key the offload worker to write bytes to **`cas/<sha[0:2]>/<sha>`** and stamp
-`cas_blobs.s3_key` (global dedup: a `HeadObject`/row-exists check skips re-PUT of
-known bytes). `session_artifacts` stays as the **offload queue/staging record**
-(unchanged mechanics); it just learns the CAS key. Old per-session keys keep
-working via the existing serve path; new captures are CAS-keyed. (One-time
-backfill of old blobs into CAS = optional, deferred.)
+### 3c. Delete `session_artifacts`, don't replace it
+
+`session_artifacts` bundled four jobs: legacy gallery identity,
+temporary Centaur byte source, offload queue/lease, and S3 status mirror. In the
+hard-cut implementation each job has a cleaner owner:
+
+- identity/version/path → `artifacts` + `artifact_versions` + `artifact_pointers`;
+- durable bytes → `cas_blobs.s3_key`;
+- capture queuing/offload → none for artifacts, because the producer writes CAS
+  before commit;
+- legacy gallery rows → removed with the by-id gallery route/client reducer.
+
+The hard-cut branch deletes the Atrium mirror row (`recordArtifact`), artifact offload
+worker path (`offloadArtifactBatch` / `offloadOneArtifact`), Centaur artifact
+proxy fallback, `session_artifacts` migrations/table references, and the env/docs
+that make artifact offload a production worker. Centaur's old staging table and
+artifact byte routes are removed by the Centaur hard-cut migration; node-sync/direct
+Atrium capture is the production capture path, not an Atrium dependency.
+
+No transitional blob-source/outbox is in scope for the target implementation. If
+production capture is not on node-sync/direct Atrium capture yet, finish that
+cutover first rather than preserving a second artifact byte path.
 
 ### 3d. Serve-latest route
 
-`GET /api/sessions/:id/artifacts/by-path?path=…` (and/or collapse the gallery
-by path): resolve `(session,path)` → `latest` → version → `blob_sha` →
-`cas_blobs`. If `s3_key` set → presigned **302** (inline-for-images, nosniff,
-mirrors the existing route). If NULL (not yet offloaded) → **proxy from Centaur**
-via the version's `execution_id`+staging ref (exactly today's two-path serve). If
-`latest.kind='deleted'` → **410 Gone**. The existing per-`artifactId` route stays
-for back-compat; the reducer/`collectArtifacts` gains a by-path "current version"
-view so the gallery shows **one row per path, newest wins** (the always-latest UX).
+`GET /api/sessions/:id/artifacts/by-path?path=…` resolves the session-visible path
+through the active-prefix canonicalizer, then resolves `(workspace,path)` →
+`latest` → version → `blob_sha` → `cas_blobs.s3_key`. Non-delete versions serve
+from S3/CAS only: presigned **302** for browser reads, or server-side S3 fetch for
+internal raw/hydration routes. `latest.kind='deleted'` returns **410 Gone**.
+
+There is no Centaur proxy fallback. If a non-delete version lacks `s3_key`, return
+`503 blob_unavailable` (and alert/metric), because the writer broke the
+durable-before-commit contract. The legacy per-`artifactId` route is removed in
+the coordinated client cut; the gallery follows the by-path/current-version view.
 
 ### 3e. Tests
 1. capture v1 → `latest=1`, serve-by-path → v1 bytes.
@@ -218,10 +247,12 @@ view so the gallery shows **one row per path, newest wins** (the always-latest U
 3. content-dedup: re-capture identical bytes → no new version (idempotent).
 4. global blob dedup: same sha across two artifacts → one S3 PUT, one `cas_blobs`.
 5. `kind=deleted` → tombstone version, serve-by-path → 410.
-6. not-yet-offloaded (`s3_key` NULL) → proxy path; after offload → redirect.
+6. invariant guard: non-delete version with missing `s3_key` → `503
+   blob_unavailable` + metric; normal reads never proxy.
 7. channel access gate (non-member → 404, no existence leak).
 8. blob-insert race → `ON CONFLICT DO NOTHING`, no duplicate-key error.
-9. offload re-key writes `cas/<sha>` + stamps `cas_blobs.s3_key`.
+9. hard-cut cleanup: no `session_artifacts` rows, worker claims, or Centaur
+   artifact proxy calls are required for a fresh capture to serve.
 
 ## 4. Execution plane — workspace layout (context; Centaur-side, NOT in this build)
 
@@ -401,9 +432,9 @@ servers, no Autopilot):
   files bypass the `bytea` 1 MiB/16 MiB wall → **closes C3 in the same design**); map
   `session` via the `centaur.ai/{thread-key,execution-id}` annotations. The scan **is**
   the reconcile sweep (state diff → complete, no event-drop window).
-- **The in-container poll is retired** (kept only as a fallback for any future
-  managed-restricted node where privileged DaemonSets/overlay setup are disallowed —
-  not our environment).
+- **The in-container poll is retired** for the target environment. A future
+  managed-restricted node that cannot run privileged DaemonSets/overlay setup would
+  need a separate capture design rather than reviving Centaur staging.
 
 **Why this is the permanent scalable shape:** O(changes) scan (no `max_user_watches`
 ceiling, no full-tree walk) **and** O(nodes) scanner (scales with pod density, not

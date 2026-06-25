@@ -15,7 +15,6 @@ let sessionId: string;
 
 const presignCalls: { key: string; filename: string; inline: boolean }[] = [];
 const artifactStorage: ArtifactStorage = {
-  uploadObject: async () => undefined,
   presignGet: async (key: string, filename: string, inline: boolean) => {
     presignCalls.push({ key, filename, inline });
     return `https://storage.local/get/${encodeURIComponent(key)}?inline=${inline ? 1 : 0}`;
@@ -71,7 +70,7 @@ beforeEach(async () => {
 });
 
 describe('getLedgerServePlan', () => {
-  it('returns a redirect for an offloaded latest version', async () => {
+  it('returns a redirect for a durable latest version', async () => {
     const sha = 'a'.repeat(64);
     const s3Key = casBlobKey(sha);
     await capture('out/chart.png', sha, 'created', { mime: 'image/png', size: 6 });
@@ -104,6 +103,18 @@ describe('getLedgerServePlan', () => {
     ).rejects.toMatchObject({
       statusCode: 404,
       code: 'artifact_not_found',
+    } satisfies Partial<DomainError>);
+  });
+
+  it('throws 503 when a non-delete version is not durable in CAS', async () => {
+    const sha = 'c'.repeat(64);
+    await capture('out/pending.txt', sha, 'created', { mime: 'text/plain', size: 7 });
+
+    await expect(
+      sessionRuns.getLedgerServePlan(sessionId, 'out/pending.txt', { pointer: 'latest' }),
+    ).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'blob_unavailable',
     } satisfies Partial<DomainError>);
   });
 });

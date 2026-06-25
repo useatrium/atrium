@@ -136,13 +136,13 @@ describe('ArtifactLedger foundation', () => {
     expect(await versionCount()).toBe(3);
   });
 
-  it('tracks blob offload state + key', async () => {
+  it('tracks blob durability state + key', async () => {
     const sha = 'a'.repeat(64);
     await capture('report.md', sha, 'created');
-    expect(await ledger.blobIsOffloaded(sha)).toBe(false);
+    expect(await ledger.blobIsDurable(sha)).toBe(false);
 
     await ledger.stampBlobS3Key(sha, casBlobKey(sha));
-    expect(await ledger.blobIsOffloaded(sha)).toBe(true);
+    expect(await ledger.blobIsDurable(sha)).toBe(true);
 
     const latest = await ledger.resolveVersion(sessionId, 'report.md', { pointer: 'latest' });
     expect(latest?.s3Key).toBe(casBlobKey(sha));

@@ -165,7 +165,7 @@ async function ensureCasBlobStored(args: {
   client?: DbClient;
 }): Promise<void> {
   const key = casBlobKey(args.sha);
-  if (!(await args.ledger.blobIsOffloaded(args.sha))) {
+  if (!(await args.ledger.blobIsDurable(args.sha))) {
     await args.storage.uploadObject(key, args.bytes, args.mime);
     // #9: verify the PUT actually landed (right size) BEFORE we stamp s3_key —
     // so a committed version never references a blob that isn't durable in S3.
@@ -183,8 +183,8 @@ async function ensureCasBlobStored(args: {
       sha256: args.sha,
       sizeBytes: args.bytes.byteLength,
       mime: args.mime,
+      s3Key: key,
     });
-    await stampBlobS3Key(args.client, args.sha, key);
     return;
   }
   await withTx(args.pool, async (client) => {
@@ -192,16 +192,9 @@ async function ensureCasBlobStored(args: {
       sha256: args.sha,
       sizeBytes: args.bytes.byteLength,
       mime: args.mime,
+      s3Key: key,
     });
   });
-  await args.ledger.stampBlobS3Key(args.sha, key);
-}
-
-async function stampBlobS3Key(client: DbClient, sha: string, key: string): Promise<void> {
-  await client.query(
-    `UPDATE cas_blobs SET s3_key = $2 WHERE sha256 = $1 AND s3_key IS NULL`,
-    [sha, key],
-  );
 }
 
 async function mergeStaleWrite(args: WriteBackArtifactParams & {

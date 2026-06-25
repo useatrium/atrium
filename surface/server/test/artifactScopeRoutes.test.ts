@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CentaurClient } from '@atrium/centaur-client';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
-import { ArtifactLedger } from '../src/artifact-ledger.js';
+import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
 import { ensureBucket } from '../src/s3.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
@@ -100,13 +99,6 @@ beforeEach(async () => {
       baseUrl: 'http://127.0.0.1:1',
       apiKey: 'test',
       autoResume: false,
-      centaur: new CentaurClient({
-        baseUrl: 'http://centaur.test',
-        apiKey: 'test',
-        fetchImpl: async () => new Response('node captured this', {
-          headers: { 'content-type': 'text/markdown', 'content-length': '18' },
-        }),
-      }),
     },
   });
   await app.ready();
@@ -138,16 +130,14 @@ async function session(channelId = fx.channelId): Promise<string> {
 async function commit(sessionId: string, path: string, bytes: string) {
   const payload = Buffer.from(bytes);
   const sha = createHash('sha256').update(payload).digest('hex');
+  const s3Key = casBlobKey(sha);
+  mockedS3.storage.objects.set(s3Key, { body: payload, contentType: 'text/markdown' });
   await pool.query(
-    `INSERT INTO cas_blobs (sha256, size_bytes, mime)
-     VALUES ($1, $2, 'text/markdown')
-     ON CONFLICT (sha256) DO NOTHING`,
-    [sha, payload.byteLength],
-  );
-  await pool.query(
-    `INSERT INTO session_artifacts (id, session_id, execution_id, centaur_ref, path, mime, size_bytes, sha256)
-     VALUES ($1, $2, 'exec-1', $3, $4, 'text/markdown', $5, $6)`,
-    [`artifact-${sha.slice(0, 12)}`, sessionId, `ref-${sha.slice(0, 12)}`, path, payload.byteLength, sha],
+    `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
+     VALUES ($1, $2, $3, 'text/markdown')
+     ON CONFLICT (sha256) DO UPDATE
+           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
+    [sha, s3Key, payload.byteLength],
   );
   await ledger.commitVersion({
     sessionId,
@@ -174,9 +164,9 @@ describe('artifact scope route enforcement', () => {
       headers: { cookie },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(302);
     expect(res.headers['x-artifact-scope']).toBe('private');
-    expect(res.body).toBe('node captured this');
+    expect(res.headers.location).toBe('https://storage.local/get');
   });
 
   it('allows a user read of a shared artifact and exposes its scope', async () => {
@@ -190,9 +180,9 @@ describe('artifact scope route enforcement', () => {
       headers: { cookie },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(302);
     expect(res.headers['x-artifact-scope']).toBe('workspace');
-    expect(res.body).toBe('node captured this');
+    expect(res.headers.location).toBe('https://storage.local/get');
   });
 
   it('shows session scratch and shared artifacts in the user-facing files listing', async () => {

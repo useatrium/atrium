@@ -1,11 +1,7 @@
-// CAS-ledger foundation (notes/cas-ledger-build-plan.md). The shared, content-
-// addressed version-chain core that both ingestion paths build on:
-//   - the capture-bridge (Lane 1) calls `commitVersion` per `artifact.captured`
-//     frame — single ordered writer per session, so base is implicit/safe;
-//   - the human write-back (Lane 3) uses the lower-level primitives to run its
-//     own conflict-state transaction (3-way merge on a stale base).
-// Keeping the write core here (not duplicated in each lane) is what lets the two
-// ingestion paths share one definition of "append a version + advance latest".
+// CAS-ledger foundation (notes/cas-ledger-build-plan.md). Direct capture,
+// upload auto-land, and human write-back all commit versions through this
+// content-addressed chain. Non-delete versions are expected to reference a
+// cas_blobs row whose s3_key is already durable.
 
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
@@ -202,25 +198,25 @@ export class ArtifactLedger {
     return { workspaceId: row.workspace_id, channelId: row.channel_id };
   }
 
-  // === blob primitives (Lane 1 CAS re-key + offload) =======================
+  // === blob primitives ======================================================
 
-  /** Register a blob (idempotent). `s3_key` stays NULL until the offload worker
-   * uploads the bytes; `ON CONFLICT DO NOTHING` makes concurrent first-writes of
-   * the same sha safe (the hand-compute race). */
+  /** Register a blob (idempotent). Normal artifact writes pass `s3Key` only
+   * after bytes are durable in S3/CAS; legacy NULL rows are repair-only. */
   async upsertBlob(
     client: DbClient,
-    blob: { sha256: string; sizeBytes: number; mime: string },
+    blob: { sha256: string; sizeBytes: number; mime: string; s3Key?: string | null },
   ): Promise<void> {
     await client.query(
-      `INSERT INTO cas_blobs (sha256, size_bytes, mime)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (sha256) DO NOTHING`,
-      [blob.sha256, blob.sizeBytes, blob.mime],
+      `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (sha256) DO UPDATE
+             SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
+      [blob.sha256, blob.s3Key ?? null, blob.sizeBytes, blob.mime],
     );
   }
 
-  /** True if the blob's bytes are already durable in S3 (offload dedup skip). */
-  async blobIsOffloaded(sha256: string): Promise<boolean> {
+  /** True if the blob's bytes are already durable in S3/CAS. */
+  async blobIsDurable(sha256: string): Promise<boolean> {
     const res = await this.pool.query<{ s3_key: string | null }>(
       `SELECT s3_key FROM cas_blobs WHERE sha256 = $1`,
       [sha256],

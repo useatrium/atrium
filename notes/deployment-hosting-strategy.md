@@ -52,9 +52,9 @@ and mix providers freely.
   membership checks (`migrations/023_workspace_members.sql`, `surface/server`). **One
   deployment can host many small startups today** — no schema-per-tenant rework needed.
 - **State = Postgres + S3 only. No Redis.** Durable surface is small and well-defined.
-- **Constraint — client-reachable S3 for user files and offloaded artifact reads.**
-  Browser/phone file upload/download uses **presigned URLs**, and offloaded artifacts
-  are served with presigned GET redirects. The S3 endpoint must be reachable
+- **Constraint — client-reachable S3 for user files and artifact reads.**
+  Browser/phone file upload/download uses **presigned URLs**, and durable CAS
+  artifacts are served with presigned GET redirects. The S3 endpoint must be reachable
   *directly by phones/browsers*, not just the server (`surface/server/src/s3.ts`,
   `S3_ENDPOINT` must be "phone-reachable"). This is separate from node/agent capture
   paths, where Atrium may proxy or stream bytes into the object store to preserve
@@ -62,8 +62,9 @@ and mix providers freely.
 - **Constraint — WebSocket fan-out is in-process.** Presence/typing/calls live in an
   in-memory hub (`surface/server/src/hub.ts`). Horizontal scaling of the server
   needs **sticky sessions or a Redis/NATS pub-sub bridge** (not built yet). Background
-  workers (STT, artifact offload, GC) already use lease-based claims, so *those* scale
-  fine. → For v1, a single beefy server instance (or sticky LB) is the pragmatic answer.
+  workers (STT, blob-GC, and any future repair jobs) already use lease-based claims,
+  so *those* scale fine. → For v1, a single beefy server
+  instance (or sticky LB) is the pragmatic answer.
 - **Backups:** `pg_dump` + MinIO tarball today. Production wants managed-PG-style PITR.
 
 ### Plane B — Voice media (LiveKit)
@@ -98,11 +99,12 @@ and mix providers freely.
     agent↔human file sharing work. Requires **real nodes you control**.
 - **Strong multi-tenant isolation = VM-per-tenant / microVM (Kata/Firecracker).** Also
   needs nodes you control. Off by default; single-tenant deploys skip it.
-- **Network model:** egress-only, **zero inbound to sandboxes**. Current captured
-  artifacts are staged in Centaur, then Atrium fetches and offloads them into S3.
-  The node-sync/internal capture path can stream `node daemon -> Atrium -> S3`;
-  direct-to-S3 presigned PUTs from trusted node/sandbox code are a future
-  large-file optimization, not the current baseline.
+- **Network model:** egress-only, **zero inbound to sandboxes**. Captured
+  artifacts stream `node daemon/sandbox -> Atrium -> S3/CAS`, and Atrium commits
+  the ledger version only after bytes are durable. The older
+  Centaur-staging→Atrium-offload path was proven but is removed from the normal path.
+  Direct-to-S3 presigned PUTs from trusted node/sandbox code are
+  a future large-file optimization.
 - **Sizing:** ~2 CPU / 2–4 GB per sandbox; a **warm pool** (default 3) is standing
   capacity; reaper kills idle after 3h / 3-day max. Sandbox image is heavy (full
   toolchains) → node disk + pull bandwidth matter. **LLM egress RTT** is the real
@@ -128,7 +130,7 @@ and mix providers freely.
 | Managed Postgres + managed object store + server on VMs | Our cloud, prod | RDS/Cloud SQL/Neon + S3/R2/Wasabi + server on 1–2 instances behind sticky LB. R2/Backblaze = near-zero egress, and **presigned client paths hit S3 directly**, so egress is real money here. |
 | Fully managed PaaS (Fly/Render/Railway) | Fastest startup tier | Works for A; **B and C still need real VMs/k8s**, so PaaS only covers part of the stack. |
 
-**Egress note:** because clients pull user uploads and offloaded artifacts through
+**Egress note:** because clients pull user uploads and durable artifacts through
 presigned S3 URLs, object-store egress is a line item. Cloudflare R2 / Backblaze B2
 (free/cheap egress) > AWS S3 (expensive egress) for the multi-tenant tier.
 

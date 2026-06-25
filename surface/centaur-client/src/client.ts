@@ -40,22 +40,6 @@ export interface ExecutionResponse {
   [key: string]: JsonValue | undefined;
 }
 
-export interface ArtifactBytes {
-  /** Raw byte stream of the artifact (null only if Centaur returns an empty body). */
-  body: ReadableStream<Uint8Array> | null;
-  /** Content-Type Centaur reported for the staged bytes, if any. */
-  contentType: string | null;
-  /** Content-Length Centaur reported, if any. */
-  contentLength: number | null;
-}
-
-export interface GetArtifactBytesOptions {
-  /** Overrides the client's apiKey for this call. The artifact byte endpoint
-   * authenticates with ARTIFACT_CAPTURE_API_KEY, which differs from the
-   * session-API key the rest of the client uses. */
-  apiKey?: string;
-}
-
 export interface SpawnOptions {
   spawnId?: string;
 }
@@ -225,50 +209,6 @@ export class CentaurClient {
       question_id: questionId,
       answers: answers as JsonObject,
     });
-  }
-
-  /**
-   * Fetch a captured artifact's bytes from Centaur staging. The byte endpoint
-   * is keyed by `(executionId, ref)` and authenticates with the artifact-capture
-   * key (distinct from the session-API key), so `opts.apiKey` overrides the
-   * client default. Returns the raw stream + reported content metadata; throws
-   * {@link CentaurApiError} on a non-2xx response (e.g. 404 for an evicted ref).
-   */
-  async getArtifactBytes(
-    executionId: string,
-    ref: string,
-    opts: GetArtifactBytesOptions = {},
-  ): Promise<ArtifactBytes> {
-    const path = `/agent/executions/${encodeURIComponent(executionId)}/artifacts/${encodeURIComponent(ref)}`;
-    const response = await this.fetchImpl(new URL(path, withTrailingSlash(this.baseUrl)), {
-      method: "GET",
-      headers: { "x-api-key": opts.apiKey ?? this.apiKey },
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      const parsed = parseJson(text);
-      throw new CentaurApiError({
-        method: "GET",
-        path,
-        status: response.status,
-        statusText: response.statusText,
-        text,
-        code: parseErrorCode(parsed),
-        body: parsed,
-      });
-    }
-
-    const contentLengthHeader = response.headers.get("content-length");
-    const contentLength =
-      contentLengthHeader !== null && /^\d+$/.test(contentLengthHeader)
-        ? Number(contentLengthHeader)
-        : null;
-    return {
-      body: response.body,
-      contentType: response.headers.get("content-type"),
-      contentLength,
-    };
   }
 
   tailEvents(
