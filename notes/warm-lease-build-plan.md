@@ -12,7 +12,8 @@
 >
 > **Progress: Phase 0 ✅ (#118) + Phase 1 ✅ cut over default-ON (Centaur #27, 2026-06-25).**
 > Dep + compile cache live: node hostPath bind-mount + sccache, sccache e2e 100% warm hit.
-> Phase 2 (content-keyed CAS overlay tier) cluster-gated next. See §3 + §11.
+> Phase 2.1 ✅ (Atrium warm-cache CAS store, #124) — the daemon contract is live.
+> Phase 2.2 (Centaur node-sync lane) cluster-gated next. See §3 (Phase 2 decomposition) + §11.
 
 ---
 
@@ -156,6 +157,33 @@ The quick win, done overlay-safe (not the naive corruption-prone RWX share).
 ### Phase 2 — Medium v2: content-keyed warm-cache tier (5B-4), multi-tenant-safe (~weeks)
 
 Hardens v1 into the designed tier and makes it tenant-safe + compile-reusable.
+
+> **Decomposition + status (2026-06-25).** Split into landable sub-increments; key
+> decision locked from the recon: warm-cache is **machine state, kept OUT of the
+> artifact ledger** (dedicated `warmcache_blobs` table), not a path namespace in it.
+>
+> - **2.1 — Atrium CAS store ✅ DONE** (PR #124 = `239d861`, master, CI green;
+>   code-reviewer SHIP). `warmcache_blobs` table (mig 051) keyed by
+>   `(workspace_id, lockfile_hash, kind, path)` → shared `cas_blobs`; internal
+>   capture-key routes `PUT/GET /api/internal/cache/blob`, `PUT /api/internal/cache/manifest`,
+>   `GET /api/internal/cache/hydration`; `warmcache_blobs` is a blob-GC root. Bulk
+>   `unnest` insert, 100k-entry cap, NUL guard. 6 tests. **This is the stable contract
+>   the daemon builds against.**
+> - **2.2 — Centaur node-sync warm-cache lane (NEXT, cluster-gated).** Extension points
+>   (against `centaur-node-sync`, branch `warm-cache`): `AtriumClient` trait
+>   (`runtime.rs:21`, alongside `hydration_scope`) + new `hydration_warmcache(workspace,
+>   lockfile_hash, kind)`; `hydrate_warmcache_lower_into_plan` mirroring the artifact
+>   hydration in `cas.rs` (reflink → lower); `OverlayMountPlan.warmcache_lower` +
+>   stack it **before** the artifact lower in the colon-list (`overlay_mount.rs`); a
+>   `WarmCache` lane in the classifier (`runtime.rs` `EntryLane`) + capture for the
+>   write-back. **2.2a** = hydration read path (consume 2.1) · **2.2b** = capture/write
+>   lane · **2.2c** = kind-on-GHA pod-native e2e assertion (the live overlay proof).
+>   - **OPEN DESIGN Q (must resolve before 2.2a):** how does the node daemon know
+>     *which* `lockfile_hash` to hydrate for a session? It has to read the
+>     checked-out repo's lockfiles (pnpm-lock.yaml / Cargo.lock / uv.lock) **after**
+>     checkout, hash each, and query per `kind`. That's new daemon logic + ordering
+>     (hydrate must run post-checkout, unlike artifact hydration). Scope this first.
+> - **2.3 — eviction + repo+commit snapshot** (below) — after 2.2 proves out.
 
 - **Content-address dep/build blobs in Atrium CAS**, keyed per §4; hydrate
   node-local → **reflink into the overlay lower** (`hydrate_lower`, already shipped for
