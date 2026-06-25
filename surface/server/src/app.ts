@@ -113,6 +113,7 @@ import {
 import { AgentProfiles, providerFromProfileValue } from './agent-profiles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, classifyMediaFromMime, type MediaClassification } from './media-classifier.js';
+import { AppRegistry, type AppScope } from './app-registry.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -351,6 +352,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
   const voip = deps.voip ?? getVoipSender(config);
   const artifactCaptureApiKey = deps.artifactCaptureApiKey ?? config.artifactCaptureApiKey;
+  const appRegistry = new AppRegistry(pool, {
+    appsOrigin: config.appsOrigin,
+    signingSecret: config.appSigningSecret,
+    launchTtlSeconds: config.appsLaunchTtlSeconds,
+    storage: { getObjectBytes },
+  });
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   await app.register(fastifyCookie);
@@ -2809,6 +2816,15 @@ function rawSession(req: FastifyRequest): string | undefined {
     return res.rows[0]?.channel_id ?? null;
   }
 
+  async function sessionAppContext(sessionId: string): Promise<{ workspaceId: string; channelId: string } | null> {
+    const res = await pool.query<{ workspace_id: string; channel_id: string }>(
+      'SELECT workspace_id, channel_id FROM sessions WHERE id = $1',
+      [sessionId],
+    );
+    const row = res.rows[0];
+    return row ? { workspaceId: row.workspace_id, channelId: row.channel_id } : null;
+  }
+
   async function resolveInternalSessionRef(
     sessionRef: string,
   ): Promise<{ id: string; channelId: string } | null> {
@@ -2834,6 +2850,48 @@ function rawSession(req: FastifyRequest): string | undefined {
       writable: root.writable,
     }));
   }
+
+  app.post('/api/sessions/:id/apps', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { name?: unknown; entry?: unknown; scope?: unknown };
+    if (typeof body.name !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'name is required' });
+    }
+    const scope: AppScope = body.scope === 'workspace' ? 'workspace' : 'channel';
+    const entry = typeof body.entry === 'string' && body.entry.trim() ? body.entry : 'index.html';
+    const ctx = await sessionAppContext(id);
+    if (!ctx) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    const published = await appRegistry.publish({
+      sessionId: id,
+      workspaceId: ctx.workspaceId,
+      channelId: ctx.channelId,
+      userId: user.id,
+      name: body.name,
+      scope,
+      entry,
+    });
+    return reply.send(published);
+  });
+
+  app.get('/api/apps', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    return reply.send({ apps: await appRegistry.listForUser(user.id) });
+  });
+
+  app.post('/api/apps/:appId/launch', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { appId } = req.params as { appId: string };
+    const body = (req.body ?? {}) as { version?: unknown };
+    const version = body.version == null ? undefined : Number(body.version);
+    if (version !== undefined && (!Number.isSafeInteger(version) || version <= 0)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'version must be a positive integer' });
+    }
+    return reply.send(await appRegistry.launch(appId, user.id, version));
+  });
 
   // === Phase 3 unified Files routes ===
   {

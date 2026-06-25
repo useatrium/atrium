@@ -53,6 +53,14 @@ export const config = {
   artifactGcGraceMs: Number(process.env.ARTIFACT_GC_GRACE_MS ?? 3_600_000),
   artifactRetentionMs: Number(process.env.ARTIFACT_RETENTION_MS ?? 30 * 24 * 3_600_000),
   artifactGcBatchSize: Number(process.env.ARTIFACT_GC_BATCH_SIZE ?? 50),
+  appSigningSecret:
+    process.env.APP_SIGNING_SECRET ??
+    process.env.SESSION_SECRET ??
+    'atrium-dev-app-signing-secret-change-me',
+  appsOrigin: process.env.APPS_ORIGIN ?? 'http://127.0.0.1:3201',
+  appsPort: Number(process.env.APPS_PORT ?? 0),
+  appsHost: process.env.APPS_HOST ?? process.env.HOST ?? '127.0.0.1',
+  appsLaunchTtlSeconds: positiveIntEnv('APPS_LAUNCH_TTL_SECONDS', 300),
   // File uploads (MinIO in dev; any S3-compatible store in deployment).
   s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
   s3Bucket: process.env.S3_BUCKET ?? 'atrium-files',

@@ -4,6 +4,7 @@ import { ensureDefaultWorkspace } from './events.js';
 import { runMigrations } from './migrate.js';
 import { WsHub } from './hub.js';
 import { buildApp } from './app.js';
+import { buildAppsOrigin } from './apps-origin.js';
 import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
@@ -47,6 +48,7 @@ async function main() {
     ? { max: config.rateLimitMax, loginMax: config.rateLimitLoginMax }
     : false;
   const app = await buildApp({ pool, hub, stt: sttWorker, rateLimit });
+  const appsOrigin = config.appsPort > 0 ? await buildAppsOrigin({ pool }) : null;
 
   // === gc additions ===
   let artifactGc: ArtifactGcWorker | null = null;
@@ -61,6 +63,7 @@ async function main() {
     clearInterval(idempotencyPrune);
     clearInterval(filePrune);
     await app.close();
+    if (appsOrigin) await appsOrigin.close();
     await pool.end();
     process.exit(0);
   };
@@ -71,6 +74,10 @@ async function main() {
   console.log(
     `atrium surface server on http://${config.host}:${config.port} (workspace "${workspace.name}")`,
   );
+  if (appsOrigin) {
+    await appsOrigin.listen({ port: config.appsPort, host: config.appsHost });
+    console.log(`atrium apps origin on http://${config.appsHost}:${config.appsPort}`);
+  }
 }
 
 main().catch((err) => {

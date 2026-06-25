@@ -203,6 +203,44 @@ describe('artifact ledger GC', () => {
     expect(storage.deleteObject).toHaveBeenCalledWith(`cas/22/${orphanSha}`);
   });
 
+  it('keeps blobs pinned only by published app versions', async () => {
+    const appSha = '7'.repeat(64);
+    const orphanSha = '8'.repeat(64);
+    await pool.query(
+      `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime, created_at)
+       VALUES
+         ($1, $2, 10, 'text/html', now() - interval '2 hours'),
+         ($3, $4, 10, 'text/plain', now() - interval '2 hours')`,
+      [appSha, `cas/77/${appSha}`, orphanSha, `cas/88/${orphanSha}`],
+    );
+    await capture('apps/gc/index.html', appSha, 'created');
+    const artifactId = await artifactIdForPath('apps/gc/index.html');
+    const app = await pool.query<{ id: string }>(
+      `INSERT INTO apps (workspace_id, channel_id, name, scope, current_version, entry_path, created_by)
+       VALUES ($1, $2, 'gc', 'channel', 1, 'index.html', $3)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    await pool.query(
+      `INSERT INTO app_versions
+         (app_id, version, rel_path, artifact_id, artifact_seq, blob_sha, mime, size_bytes, entry)
+       VALUES ($1, 1, 'index.html', $2, 1, $3, 'text/html', 10, true)`,
+      [app.rows[0]!.id, artifactId, appSha],
+    );
+    await pool.query('DELETE FROM artifact_blob_refs WHERE sha = $1', [appSha]);
+    const storage = { deleteObject: vi.fn(async (_key: string) => {}) };
+
+    const result = await sweepUnreferencedBlobs(pool, storage, {
+      graceMs: 0,
+      limit: 10,
+    });
+
+    expect(result).toEqual({ swept: 1, failed: 0 });
+    expect(await blobExists(appSha)).toBe(true);
+    expect(await blobExists(orphanSha)).toBe(false);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`cas/88/${orphanSha}`);
+  });
+
   it('records artifact_blob_refs via trigger and backfills existing conflict refs', async () => {
     const baseSha = '3'.repeat(64);
     const markerSha = '4'.repeat(64);
