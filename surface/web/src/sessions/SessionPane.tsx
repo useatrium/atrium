@@ -8,6 +8,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
+  type SVGProps,
 } from 'react';
 import {
   artifactCount,
@@ -29,6 +31,7 @@ import { WorkDrawer, type WorkTab } from './WorkDrawer';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { Composer } from '../components/Composer';
+import { EntryComments } from '../components/EntryComments';
 import {
   ArrowUpIcon,
   ChevronDownIcon,
@@ -660,38 +663,40 @@ export function SessionPane({
                 <InlineFileChange change={a.change} />
               </div>
             ))}
-            {item.type === 'text' ? (
-              <div className="pl-3.5">
-                <TextBlock item={item} />
-              </div>
-            ) : item.type === 'user_message' ? (
-              <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
-                <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
-                  {item.text}
+            <AnnotatedTranscriptRow handle={item.handle ?? null}>
+              {item.type === 'text' ? (
+                <div className="pl-3.5">
+                  <TextBlock item={item} />
                 </div>
-              </div>
-            ) : item.type === 'question' ? (
-              <div className="pl-3.5">
-                <QuestionTranscriptCard
-                  item={item}
-                  events={questionEventsByQuestion.get(item.questionId) ?? []}
-                />
-              </div>
-            ) : (
-              <div className="pl-3.5">
-                <TranscriptTool
-                  item={item}
-                  expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                  onToggle={() =>
-                    setToolOpen((prev) => ({
-                      ...prev,
-                      [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                    }))
-                  }
-                />
-              </div>
-            )}
+              ) : item.type === 'user_message' ? (
+                <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
+                  <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
+                    {item.text}
+                  </div>
+                </div>
+              ) : item.type === 'question' ? (
+                <div className="pl-3.5">
+                  <QuestionTranscriptCard
+                    item={item}
+                    events={questionEventsByQuestion.get(item.questionId) ?? []}
+                  />
+                </div>
+              ) : (
+                <div className="pl-3.5">
+                  <TranscriptTool
+                    item={item}
+                    expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
+                    onToggle={() =>
+                      setToolOpen((prev) => ({
+                        ...prev,
+                        [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
+                      }))
+                    }
+                  />
+                </div>
+              )}
+            </AnnotatedTranscriptRow>
           </Fragment>
         ))}
         {seatLinesAt(stream.items.length).map((e) => (
@@ -872,6 +877,118 @@ export function SessionPane({
         </>
       )}
     </aside>
+  );
+}
+
+function AnnotatedTranscriptRow({
+  handle,
+  children,
+}: {
+  handle: string | null;
+  children: ReactNode;
+}) {
+  const commentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+    };
+  }, []);
+
+  if (!handle) return <>{children}</>;
+
+  const copyEntryLink = () => {
+    if (typeof navigator === 'undefined') return;
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) return;
+    const origin = typeof window === 'undefined' ? '' : window.location.origin;
+    void clipboard
+      .writeText(`${origin}/e/${handle}`)
+      .then(() => {
+        setLinkCopied(true);
+        if (copyResetRef.current) clearTimeout(copyResetRef.current);
+        copyResetRef.current = setTimeout(() => setLinkCopied(false), 1400);
+      })
+      .catch(() => {});
+  };
+
+  return (
+    <div className="group relative">
+      {children}
+      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+        <button
+          type="button"
+          onClick={copyEntryLink}
+          title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+          aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+          className={`rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs shadow-sm hover:bg-edge-strong hover:text-fg ${
+            linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+          }`}
+        >
+          <LinkIcon />
+        </button>
+        <button
+          ref={commentButtonRef}
+          type="button"
+          onClick={() => setCommentsOpen((v) => !v)}
+          title="Comment"
+          aria-label="Comment on entry"
+          aria-expanded={commentsOpen}
+          aria-haspopup="dialog"
+          className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+        >
+          <MessageCircleIcon />
+        </button>
+      </div>
+      <EntryComments
+        handle={handle}
+        open={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+        invokerRef={commentButtonRef}
+      />
+    </div>
+  );
+}
+
+function LinkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
+      <path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" />
+    </svg>
+  );
+}
+
+function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
+    </svg>
   );
 }
 

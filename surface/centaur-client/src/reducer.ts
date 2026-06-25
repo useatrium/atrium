@@ -23,6 +23,7 @@ export interface TextItem {
   text: string;
   messageId?: string;
   uuid?: string;
+  handle?: string | null;
   sourceEventIds: number[];
 }
 
@@ -35,6 +36,7 @@ export interface ToolCallItem {
     content: string;
     is_error: boolean;
   };
+  handle?: string | null;
   sourceEventIds: number[];
 }
 
@@ -46,6 +48,7 @@ export interface QuestionItem {
   questions: QuestionPrompt[];
   status: "pending" | "resolved";
   reason?: QuestionResolved["reason"];
+  handle?: string | null;
   sourceEventIds: number[];
 }
 
@@ -53,10 +56,18 @@ export interface UserMessageItem {
   type: "user_message";
   id: string;
   text: string;
+  handle?: string | null;
   sourceEventIds: number[];
 }
 
 export type SessionItem = TextItem | ToolCallItem | QuestionItem | UserMessageItem;
+
+interface RecordHandleHint {
+  handle: string;
+  kind?: string;
+  actor?: string;
+  meta: JsonObject;
+}
 
 export type FileChangeKind = "add" | "update" | "delete";
 
@@ -133,6 +144,7 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     models: [...state.models],
     lastEventId: Math.max(state.lastEventId, frame.event_id),
   };
+  const recordHandles = recordHandleHints(frame);
 
   if (frame.event === "execution_state") {
     next.status = frame.data.status;
@@ -152,13 +164,19 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
       ...(frame.data.turn_id !== undefined ? { turnId: frame.data.turn_id } : {}),
       questions: frame.data.questions,
     };
-    upsertQuestionItem(next, frame.event_id, frame.data);
+    upsertQuestionItem(next, frame.event_id, frame.data, handleForQuestion(recordHandles, frame.data.question_id));
     return next;
   }
 
   if (frame.event === "question_resolved") {
     next.pendingQuestion = null;
-    resolveQuestionItem(next, frame.event_id, frame.data.question_id, frame.data.reason);
+    resolveQuestionItem(
+      next,
+      frame.event_id,
+      frame.data.question_id,
+      frame.data.reason,
+      handleForQuestion(recordHandles, frame.data.question_id),
+    );
     return next;
   }
 
@@ -185,7 +203,7 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
 
   const raw = normalizeRawEvent(frame.data);
   if (raw.type === "assistant") {
-    reduceAssistant(next, frame.event_id, raw);
+    reduceAssistant(next, frame.event_id, raw, recordHandles);
   } else if (raw.type === "tool") {
     reduceToolResult(next, frame.event_id, raw);
   } else if (raw.type === "result") {
@@ -197,7 +215,7 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
   } else if (raw.type === "item.commandExecution.outputDelta") {
     reduceCodexCommandOutputDelta(next, frame.event_id, raw);
   } else if (raw.type === "item.completed") {
-    reduceCodexItemCompleted(next, frame.event_id, raw);
+    reduceCodexItemCompleted(next, frame.event_id, raw, recordHandles);
   }
 
   return next;
@@ -238,10 +256,85 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function recordHandleHints(frame: CentaurEventFrame): RecordHandleHint[] {
+  const raw = (frame.data as { recordHandles?: unknown }).recordHandles;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry): RecordHandleHint | null => {
+      if (!isJsonObject(entry)) return null;
+      const handle = stringValue(entry.handle);
+      if (!handle) return null;
+      return {
+        handle,
+        ...(typeof entry.kind === "string" ? { kind: entry.kind } : {}),
+        ...(typeof entry.actor === "string" ? { actor: entry.actor } : {}),
+        meta: isJsonObject(entry.meta) ? entry.meta : {},
+      };
+    })
+    .filter((entry): entry is RecordHandleHint => entry !== null);
+}
+
+function handleForQuestion(hints: RecordHandleHint[], questionId: string): string | undefined {
+  return handleForRecord(hints, (hint) =>
+    hint.kind === "question" && stringValue(hint.meta.questionId) === questionId,
+  );
+}
+
+function handleForAmpMessage(
+  hints: RecordHandleHint[],
+  actor: "agent" | "user",
+  messageId: string | undefined,
+  uuid: string | undefined,
+): string | undefined {
+  return handleForRecord(hints, (hint) => {
+    if (hint.kind !== "message" || hint.actor !== actor) return false;
+    const metaMessageId = stringValue(hint.meta.messageId);
+    const metaUuid = stringValue(hint.meta.uuid);
+    return (
+      (messageId !== undefined && metaMessageId === messageId) ||
+      (uuid !== undefined && metaUuid === uuid) ||
+      (messageId === undefined && uuid === undefined)
+    );
+  });
+}
+
+function handleForToolUse(hints: RecordHandleHint[], toolUseId: string): string | undefined {
+  return handleForRecord(hints, (hint) => {
+    const metaToolUseId = stringValue(hint.meta.toolUseId) ?? stringValue(hint.meta.tool_use_id);
+    return metaToolUseId === toolUseId;
+  });
+}
+
+function handleForCodexItem(
+  hints: RecordHandleHint[],
+  itemId: string | undefined,
+  kind: string,
+  actor?: "agent" | "user" | "system",
+): string | undefined {
+  if (!itemId) return undefined;
+  return handleForRecord(hints, (hint) =>
+    hint.kind === kind &&
+    (actor === undefined || hint.actor === actor) &&
+    stringValue(hint.meta.itemId) === itemId,
+  );
+}
+
+function handleForRecord(
+  hints: RecordHandleHint[],
+  predicate: (hint: RecordHandleHint) => boolean,
+): string | undefined {
+  return hints.find(predicate)?.handle;
+}
+
+function assignHandle(item: SessionItem, handle: string | undefined): void {
+  if (handle) item.handle = handle;
+}
+
 function upsertQuestionItem(
   state: SessionState,
   eventId: number,
   event: { question_id: string; turn_id?: string; questions: QuestionPrompt[] },
+  handle?: string,
 ): void {
   const existing = state.items.find(
     (item): item is QuestionItem => item.type === "question" && item.questionId === event.question_id,
@@ -256,6 +349,7 @@ function upsertQuestionItem(
     existing.questions = event.questions;
     existing.status = "pending";
     delete existing.reason;
+    assignHandle(existing, handle);
     pushSourceEventId(existing, eventId);
     return;
   }
@@ -267,6 +361,7 @@ function upsertQuestionItem(
     ...(event.turn_id !== undefined ? { turnId: event.turn_id } : {}),
     questions: event.questions,
     status: "pending",
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
@@ -276,6 +371,7 @@ function resolveQuestionItem(
   eventId: number,
   questionId: string,
   reason: QuestionResolved["reason"],
+  handle?: string,
 ): void {
   const existing = state.items.find(
     (item): item is QuestionItem => item.type === "question" && item.questionId === questionId,
@@ -283,6 +379,7 @@ function resolveQuestionItem(
   if (existing) {
     existing.status = "resolved";
     existing.reason = reason;
+    assignHandle(existing, handle);
     pushSourceEventId(existing, eventId);
     return;
   }
@@ -294,6 +391,7 @@ function resolveQuestionItem(
     questions: [],
     status: "resolved",
     reason,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
@@ -317,7 +415,12 @@ function pushSourceEventId(item: SessionItem, eventId: number): void {
   }
 }
 
-function reduceAssistant(state: SessionState, eventId: number, event: AmpAssistantEvent): void {
+function reduceAssistant(
+  state: SessionState,
+  eventId: number,
+  event: AmpAssistantEvent,
+  handles: RecordHandleHint[],
+): void {
   const text = event.message.content
     .filter(isTextBlock)
     .map((block) => block.text)
@@ -326,26 +429,44 @@ function reduceAssistant(state: SessionState, eventId: number, event: AmpAssista
 
   if (event.uuid) {
     if (text) {
-      reconcileCompleteText(state, eventId, event.uuid, event.message.id, text);
+      reconcileCompleteText(
+        state,
+        eventId,
+        event.uuid,
+        event.message.id,
+        text,
+        handleForAmpMessage(handles, "agent", event.message.id, event.uuid),
+      );
     }
     for (const block of toolBlocks) {
-      upsertToolCall(state, eventId, block);
+      upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id));
     }
     return;
   }
 
   if (text) {
-    appendStreamingText(state, eventId, text);
+    appendStreamingText(
+      state,
+      eventId,
+      text,
+      handleForAmpMessage(handles, "agent", event.message.id, event.uuid),
+    );
   }
   for (const block of toolBlocks) {
-    upsertToolCall(state, eventId, block);
+    upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id));
   }
 }
 
-function appendStreamingText(state: SessionState, eventId: number, text: string): void {
+function appendStreamingText(
+  state: SessionState,
+  eventId: number,
+  text: string,
+  handle?: string,
+): void {
   const last = state.items[state.items.length - 1];
   if (last?.type === "text" && !last.uuid) {
     last.text += text;
+    assignHandle(last, handle);
     last.sourceEventIds.push(eventId);
     return;
   }
@@ -354,6 +475,7 @@ function appendStreamingText(state: SessionState, eventId: number, text: string)
     type: "text",
     id: `text:${eventId}`,
     text,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
@@ -364,6 +486,7 @@ function reconcileCompleteText(
   uuid: string,
   messageId: string | undefined,
   text: string,
+  handle?: string,
 ): void {
   const existing = state.items.find((item) =>
     item.type === "text" && (item.uuid === uuid || item.messageId === messageId),
@@ -372,6 +495,7 @@ function reconcileCompleteText(
     existing.text = text;
     existing.uuid = uuid;
     existing.messageId = messageId;
+    assignHandle(existing, handle);
     existing.sourceEventIds.push(eventId);
     return;
   }
@@ -382,6 +506,7 @@ function reconcileCompleteText(
     last.text = text;
     last.uuid = uuid;
     last.messageId = messageId;
+    assignHandle(last, handle);
     last.sourceEventIds.push(eventId);
     return;
   }
@@ -392,11 +517,17 @@ function reconcileCompleteText(
     text,
     uuid,
     messageId,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
 
-function upsertToolCall(state: SessionState, eventId: number, block: AnthropicToolUseBlock): void {
+function upsertToolCall(
+  state: SessionState,
+  eventId: number,
+  block: AnthropicToolUseBlock,
+  handle?: string,
+): void {
   const existing = state.items.find((item) =>
     item.type === "tool_call" && item.id === block.id,
   ) as ToolCallItem | undefined;
@@ -404,6 +535,7 @@ function upsertToolCall(state: SessionState, eventId: number, block: AnthropicTo
   if (existing) {
     existing.name = block.name;
     existing.input = block.input;
+    assignHandle(existing, handle);
     existing.sourceEventIds.push(eventId);
     return;
   }
@@ -413,6 +545,7 @@ function upsertToolCall(state: SessionState, eventId: number, block: AnthropicTo
     id: block.id,
     name: block.name,
     input: block.input,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
@@ -475,11 +608,22 @@ function reduceCodexCommandOutputDelta(
   item.sourceEventIds.push(eventId);
 }
 
-function reduceCodexItemCompleted(state: SessionState, eventId: number, event: CodexItemCompletedEvent): void {
+function reduceCodexItemCompleted(
+  state: SessionState,
+  eventId: number,
+  event: CodexItemCompletedEvent,
+  handles: RecordHandleHint[],
+): void {
   if (event.item.type === "agentMessage") {
     const text = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
     if (text) {
-      reconcileCodexCompleteText(state, eventId, event.item.id, text);
+      reconcileCodexCompleteText(
+        state,
+        eventId,
+        event.item.id,
+        text,
+        handleForCodexItem(handles, event.item.id, "message", "agent"),
+      );
     }
     return;
   }
@@ -488,13 +632,24 @@ function reduceCodexItemCompleted(state: SessionState, eventId: number, event: C
     const raw = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
     const text = stripInjectedContext(raw);
     if (text) {
-      upsertUserMessage(state, eventId, event.item.id, text);
+      upsertUserMessage(
+        state,
+        eventId,
+        event.item.id,
+        text,
+        handleForCodexItem(handles, event.item.id, "message", "user"),
+      );
     }
     return;
   }
 
   if (event.item.type === "commandExecution") {
-    upsertCodexCommandExecution(state, eventId, event.item);
+    upsertCodexCommandExecution(
+      state,
+      eventId,
+      event.item,
+      handleForCodexItem(handles, event.item.id, "command", "agent"),
+    );
     completeCodexCommandExecution(state, eventId, event.item);
     return;
   }
@@ -599,12 +754,14 @@ function reconcileCodexCompleteText(
   eventId: number,
   itemId: string | undefined,
   text: string,
+  handle?: string,
 ): void {
   const existing = itemId
     ? (state.items.find((item) => item.type === "text" && item.messageId === itemId) as TextItem | undefined)
     : undefined;
   if (existing) {
     existing.text = text;
+    assignHandle(existing, handle);
     existing.sourceEventIds.push(eventId);
     return;
   }
@@ -616,6 +773,7 @@ function reconcileCodexCompleteText(
     lastCodexText.id = itemId ? `text:codex:${itemId}` : lastCodexText.id;
     lastCodexText.messageId = itemId;
     lastCodexText.text = text;
+    assignHandle(lastCodexText, handle);
     lastCodexText.sourceEventIds.push(eventId);
     return;
   }
@@ -625,11 +783,17 @@ function reconcileCodexCompleteText(
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
     messageId: itemId,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
 
-function upsertCodexCommandExecution(state: SessionState, eventId: number, item: CodexItem): ToolCallItem {
+function upsertCodexCommandExecution(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  handle?: string,
+): ToolCallItem {
   const id = item.id ? `tool:codex:${item.id}` : `tool:codex:${eventId}`;
   const input = codexCommandInput(item);
   const existing = state.items.find((candidate) =>
@@ -641,6 +805,7 @@ function upsertCodexCommandExecution(state: SessionState, eventId: number, item:
     if (hasCodexCommandInput(item)) {
       existing.input = input;
     }
+    assignHandle(existing, handle);
     existing.sourceEventIds.push(eventId);
     return existing;
   }
@@ -650,6 +815,7 @@ function upsertCodexCommandExecution(state: SessionState, eventId: number, item:
     id,
     name: "command",
     input,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   };
   state.items.push(created);
@@ -677,6 +843,7 @@ function upsertUserMessage(
   eventId: number,
   itemId: string | undefined,
   text: string,
+  handle?: string,
 ): UserMessageItem {
   const id = itemId ?? `user:${eventId}`;
   const existing = state.items.find((candidate) =>
@@ -685,6 +852,7 @@ function upsertUserMessage(
 
   if (existing) {
     existing.text = text;
+    assignHandle(existing, handle);
     pushSourceEventId(existing, eventId);
     return existing;
   }
@@ -693,6 +861,7 @@ function upsertUserMessage(
     type: "user_message",
     id,
     text,
+    ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   };
   state.items.push(created);
