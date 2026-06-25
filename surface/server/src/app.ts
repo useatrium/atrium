@@ -2780,6 +2780,20 @@ function rawSession(req: FastifyRequest): string | undefined {
     return res.rows[0]?.channel_id ?? null;
   }
 
+  async function resolveInternalSessionRef(
+    sessionRef: string,
+  ): Promise<{ id: string; channelId: string } | null> {
+    const res = await pool.query<{ id: string; channel_id: string }>(
+      `SELECT id, channel_id
+         FROM sessions
+        WHERE id::text = $1 OR centaur_thread_key = $1
+        LIMIT 1`,
+      [sessionRef],
+    );
+    const row = res.rows[0];
+    return row ? { id: row.id, channelId: row.channel_id } : null;
+  }
+
   // === Phase 3 unified Files routes ===
   {
     const { createGitSource } = await import('./git-source.js');
@@ -3504,11 +3518,11 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (!m) return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
       cursor = { xid: m[1]!, id: m[2]! };
     }
-    const page = await new ArtifactLedger(pool).changesSince(id, cursor, 500);
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const page = await new ArtifactLedger(pool).changesSince(session.id, cursor, 500);
     return reply.send({
-      activePrefix: `shared/channels/${channelId}`,
+      activePrefix: `shared/channels/${session.channelId}`,
       rows: page.rows,
       next_cursor: `${page.nextCursor.xid}.${page.nextCursor.id}`,
     });
@@ -3527,7 +3541,8 @@ function rawSession(req: FastifyRequest): string | undefined {
       `SELECT u.id, u.handle, u.display_name
        FROM sessions s
        JOIN users u ON u.id = s.spawned_by
-       WHERE s.id = $1`,
+       WHERE s.id::text = $1 OR s.centaur_thread_key = $1
+       LIMIT 1`,
       [viewerId],
     );
     const user = res.rows[0];
@@ -3653,12 +3668,12 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (typeof q.path !== 'string' || q.path.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
     }
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
-    const path = canonicalizeRouteArtifactPath(reply, q.path, { sessionId: id, channelId });
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const path = canonicalizeRouteArtifactPath(reply, q.path, { sessionId: session.id, channelId: session.channelId });
     if (!path) return;
     const ref = typeof q.seq === 'string' && /^\d+$/.test(q.seq) ? { seq: Number(q.seq) } : { pointer: 'latest' };
-    const v = await new ArtifactLedger(pool).resolveVersion(id, path, ref);
+    const v = await new ArtifactLedger(pool).resolveVersion(session.id, path, ref);
     if (!v || v.kind === 'deleted') {
       return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
     }
@@ -3680,13 +3695,13 @@ function rawSession(req: FastifyRequest): string | undefined {
   app.get('/api/internal/sessions/:id/hydration-scope', async (req, reply) => {
     if (!requireCaptureKey(req, reply)) return;
     const { id } = req.params as { id: string };
-    const channelId = await sessionChannelId(id);
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
-    const paths = await new ArtifactLedger(pool).sessionScope(id);
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const paths = await new ArtifactLedger(pool).sessionScope(session.id);
     return reply.send({
-      sessionId: id,
+      sessionId: session.id,
       scope: 'session',
-      activePrefix: `shared/channels/${channelId}`,
+      activePrefix: `shared/channels/${session.channelId}`,
       paths,
     });
   });
@@ -3705,13 +3720,12 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (typeof path !== 'string' || path.length === 0) {
         return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
       }
-      const sess = await pool.query<{ channel_id: string }>(
-        `SELECT channel_id FROM sessions WHERE id = $1`,
-        [id],
-      );
-      const channelId = sess.rows[0]?.channel_id;
-      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
-      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, { sessionId: id, channelId });
+      const session = await resolveInternalSessionRef(id);
+      if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
+        sessionId: session.id,
+        channelId: session.channelId,
+      });
       if (!canonicalPath) return;
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
@@ -3721,12 +3735,12 @@ function rawSession(req: FastifyRequest): string | undefined {
       const isDelete = firstHeader(req.headers['x-artifact-delete']) === 'true';
       const author = `node:${id}`;
       const result = isDelete
-        ? await writeBackDelete({ pool, channelId, sessionId: id, path: canonicalPath, author, ...(baseSeq == null ? {} : { baseSeq }) })
+        ? await writeBackDelete({ pool, channelId: session.channelId, sessionId: session.id, path: canonicalPath, author, ...(baseSeq == null ? {} : { baseSeq }) })
         : await writeBackArtifact({
             pool,
             storage: { uploadObject, getObjectBytes, headObject },
-            channelId,
-            sessionId: id,
+            channelId: session.channelId,
+            sessionId: session.id,
             path: canonicalPath,
             bytes: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
             mime: normalizeMime(firstHeader(req.headers['content-type'])),
@@ -3748,13 +3762,12 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (typeof path !== 'string' || path.length === 0) {
         return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
       }
-      const sess = await pool.query<{ channel_id: string }>(
-        `SELECT channel_id FROM sessions WHERE id = $1`,
-        [id],
-      );
-      const channelId = sess.rows[0]?.channel_id;
-      if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
-      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, { sessionId: id, channelId });
+      const session = await resolveInternalSessionRef(id);
+      if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
+        sessionId: session.id,
+        channelId: session.channelId,
+      });
       if (!canonicalPath) return;
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
@@ -3807,11 +3820,11 @@ function rawSession(req: FastifyRequest): string | undefined {
              JOIN artifacts a ON a.workspace_id = s.workspace_id
             WHERE s.id = $1 AND a.path = $2
             LIMIT 1`,
-          [id, canonicalPath],
+          [session.id, canonicalPath],
         );
         const result = await ledger.commitVersion({
-          sessionId: id,
-          channelId,
+          sessionId: session.id,
+          channelId: session.channelId,
           path: canonicalPath,
           blobSha: sha,
           sizeBytes,
@@ -3839,12 +3852,14 @@ function rawSession(req: FastifyRequest): string | undefined {
   // outside the artifact ledger — internal harness state, not a user work product.
   app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
     if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const t = await loadHarnessTranscript(pool, { getObjectBytes }, id, harness);
+      const { id } = req.params as { id: string };
+      const harness = (req.query as { harness?: string }).harness ?? '';
+      if (!isHarness(harness)) {
+        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+      }
+      const session = await resolveInternalSessionRef(id);
+      if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const t = await loadHarnessTranscript(pool, { getObjectBytes }, session.id, harness);
     if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
     reply.header('Content-Type', 'application/x-ndjson');
     reply.header('X-Transcript-Sha256', t.sha256);
@@ -3864,13 +3879,13 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (!isHarness(harness)) {
         return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
       }
-      const sess = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1`, [id]);
-      if (!sess.rows[0]) return reply.code(404).send({ error: 'session_not_found' });
+      const session = await resolveInternalSessionRef(id);
+      if (!session) return reply.code(404).send({ error: 'session_not_found' });
       const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       if (bytes.length === 0) {
         return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
       }
-      const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, id, harness, bytes);
+      const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, session.id, harness, bytes);
       return reply.send({ size_bytes: size, sha256 });
     });
   });
@@ -3981,12 +3996,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!Array.isArray(body.files) || body.files.length === 0) {
       return badManifest('files must be a non-empty array');
     }
-    const sess = await pool.query<{ channel_id: string }>(
-      `SELECT channel_id FROM sessions WHERE id = $1`,
-      [id],
-    );
-    const channelId = sess.rows[0]?.channel_id;
-    if (!channelId) return reply.code(404).send({ error: 'session_not_found' });
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
 
     const files: CommitVersionGroupFile[] = [];
     const seenPaths = new Set<string>();
@@ -4008,7 +4019,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       let path: string;
       try {
-        path = canonicalizeSessionArtifactPath(file.path, { sessionId: id, channelId });
+        path = canonicalizeSessionArtifactPath(file.path, {
+          sessionId: session.id,
+          channelId: session.channelId,
+        });
       } catch (err) {
         if (err instanceof InvalidArtifactPathError) return badManifest(err.message);
         throw err;
@@ -4061,8 +4075,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
 
     const result = await new ArtifactLedger(pool).commitVersionGroup({
-      sessionId: id,
-      channelId,
+      sessionId: session.id,
+      channelId: session.channelId,
       groupId: body.group_id,
       author: `node:${id}`,
       files,
