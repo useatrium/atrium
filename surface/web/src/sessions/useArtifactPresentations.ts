@@ -6,7 +6,10 @@ import {
 } from '@atrium/centaur-client';
 import { sessionsApi } from './api';
 
-const APP_MANIFEST_RE = /shared\/apps\/[^/]+\/atrium\.app\.json$/;
+// Presentation is automatic: any file captured under an app dir can change what
+// the presentations endpoint returns (a new index.html dir, or an atrium.app.json
+// metadata edit), so refetch whenever the set of shared/apps/<slug>/ files shifts.
+const APP_DIR_RE = /shared\/apps\/[^/]+\//;
 
 export function useArtifactPresentations(
   sessionId: string,
@@ -14,10 +17,10 @@ export function useArtifactPresentations(
 ): ArtifactPresentation[] {
   const [hydrated, setHydrated] = useState<ArtifactPresentation[]>([]);
 
-  const manifestKey = useMemo(
+  const appDirKey = useMemo(
     () =>
       stream.artifacts
-        .filter((artifact) => APP_MANIFEST_RE.test(artifact.path))
+        .filter((artifact) => APP_DIR_RE.test(artifact.path))
         .map((artifact) => artifact.path)
         .sort()
         .join('|'),
@@ -37,7 +40,7 @@ export function useArtifactPresentations(
     return () => {
       disposed = true;
     };
-  }, [sessionId, manifestKey]);
+  }, [sessionId, appDirKey]);
 
   const frameDerived = useMemo(
     () => collectArtifactPresentations(stream),

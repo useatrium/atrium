@@ -166,11 +166,66 @@ describe('artifact presentations route', () => {
     expect(preview.body).toBe('<h1>Demo</h1>');
   });
 
-  it('skips malformed manifests', async () => {
+  it('auto-detects an app dir with no manifest (defaults: title=slug, renderer by extension)', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commitArtifact(sid, 'shared/apps/plain/index.html', '<h1>Plain</h1>');
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/plain/index.html',
+          path: 'shared/apps/plain/index.html',
+          title: 'plain',
+          renderer: 'html-app',
+          description: null,
+          executionId: null,
+          sourceEventIds: [],
+        },
+      ],
+    });
+  });
+
+  it('still presents an app dir whose manifest is malformed (falls back to defaults)', async () => {
     const cookie = await loginCookie();
     const sid = await session();
     await commitArtifact(sid, 'shared/apps/bad/index.html', '<h1>Bad</h1>');
     await commitArtifact(sid, 'shared/apps/bad/atrium.app.json', '{bad json', 'application/json');
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/bad/index.html',
+          path: 'shared/apps/bad/index.html',
+          title: 'bad',
+          renderer: 'html-app',
+          description: null,
+          executionId: null,
+          sourceEventIds: [],
+        },
+      ],
+    });
+  });
+
+  it('does not present an app dir with no entry file (manifest only)', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    // a manifest but no index.html (or other entry) → nothing to preview, skip.
+    await commitArtifact(sid, 'shared/apps/empty/atrium.app.json', JSON.stringify({ title: 'Empty' }), 'application/json');
 
     const res = await app.inject({
       method: 'GET',
