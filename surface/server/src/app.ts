@@ -2927,16 +2927,18 @@ function rawSession(req: FastifyRequest): string | undefined {
 
   async function resolveInternalSessionRef(
     sessionRef: string,
-  ): Promise<{ id: string; channelId: string } | null> {
-    const res = await pool.query<{ id: string; channel_id: string }>(
-      `SELECT id, channel_id
+  ): Promise<{ id: string; channelId: string; workspaceId: string } | null> {
+    const res = await pool.query<{ id: string; channel_id: string; workspace_id: string }>(
+      `SELECT id, channel_id, workspace_id
          FROM sessions
         WHERE id::text = $1 OR centaur_thread_key = $1
         LIMIT 1`,
       [sessionRef],
     );
     const row = res.rows[0];
-    return row ? { id: row.id, channelId: row.channel_id } : null;
+    return row
+      ? { id: row.id, channelId: row.channel_id, workspaceId: row.workspace_id }
+      : null;
   }
 
   async function sessionArtifactAccess(sessionId: string, userId?: string | null) {
@@ -4525,6 +4527,49 @@ function rawSession(req: FastifyRequest): string | undefined {
       lockfileHash: String(q.lockfile_hash ?? ''),
       entries,
     });
+  });
+
+  // Session-scoped warm-cache variants: the node daemon holds a session id, not a
+  // workspace id, so resolve the workspace from the session (consistent with every
+  // other internal daemon route). Blob bytes still flow through the workspace-agnostic
+  // content-addressed /api/internal/cache/blob routes above.
+  app.get('/api/internal/sessions/:id/cache/hydration', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const q = req.query as { lockfile_hash?: string; kind?: string };
+    const entries = await loadWarmcacheManifest(pool, {
+      workspaceId: session.workspaceId,
+      lockfileHash: String(q.lockfile_hash ?? ''),
+      kind: String(q.kind ?? ''),
+    });
+    return reply.send({
+      workspaceId: session.workspaceId,
+      scope: 'warmcache',
+      kind: String(q.kind ?? ''),
+      lockfileHash: String(q.lockfile_hash ?? ''),
+      entries,
+    });
+  });
+
+  app.put('/api/internal/sessions/:id/cache/manifest', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const body = (req.body ?? {}) as { lockfile_hash?: unknown; kind?: unknown; entries?: unknown };
+    const entries = Array.isArray(body.entries) ? (body.entries as WarmcacheEntry[]) : [];
+    if (entries.length > MAX_WARMCACHE_MANIFEST_ENTRIES) {
+      return reply.code(413).send({ error: 'manifest_too_large', message: 'too many cache entries' });
+    }
+    const result = await registerWarmcacheManifest(pool, {
+      workspaceId: session.workspaceId,
+      lockfileHash: String(body.lockfile_hash ?? ''),
+      kind: String(body.kind ?? ''),
+      entries,
+    });
+    return reply.send(result);
   });
 
   app.put('/api/internal/sessions/:id/provider-credential-refresh', async (req, reply) => {
