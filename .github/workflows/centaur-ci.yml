@@ -6,17 +6,14 @@ name: Centaur CI
 # included but kept non-required (see centaur-ci-success allowed-skips).
 # See notes/centaur-vendoring.md.
 
+# Always runs (no top-level path filter) so the `Centaur CI success` check reports on
+# EVERY PR — required-check-safe. The heavy jobs gate on `ci_changes`, so a non-centaur PR
+# just runs the ~8s detector + the aggregator (heavy jobs skip) and reports green-fast.
 on:
   pull_request:
     branches: [master]
-    paths:
-      - 'centaur/**'
-      - '.github/workflows/centaur-ci.yml'
   push:
     branches: [master]
-    paths:
-      - 'centaur/**'
-      - '.github/workflows/centaur-ci.yml'
 
 concurrency:
   group: centaur-ci-${{ github.ref }}
@@ -307,11 +304,13 @@ jobs:
       - migration-order
       - rust-api
       - node-sync-overlay
-      - node-sync-pod-e2e
     timeout-minutes: 30
     steps:
+      # node-sync-pod-e2e (kind cluster) is intentionally NOT in `needs` — it still runs
+      # and reports its own status, but its flakier cluster/image-build path must not block
+      # merges. The required gate is the deterministic jobs above.
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
-          allowed-skips: migration-order, rust-api, node-sync-overlay, node-sync-pod-e2e
+          allowed-skips: migration-order, rust-api, node-sync-overlay
           jobs: ${{ toJSON(needs) }}
