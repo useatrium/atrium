@@ -28,12 +28,17 @@ Unchanged, just from the subtree now: `cd centaur && just build-one api-rs && ju
 Centaur's own workflows live at `centaur/.github/workflows/` and are **inert** here (GitHub
 only runs root `.github/workflows/`).
 
-**Ported → `.github/workflows/centaur-ci.yml`** (scoped to `centaur/**`): the runtime checks
-`migration-order` (the 1000+ guard), `rust-api` (fmt/clippy/test + postgres integration), the
-`node-sync-overlay` validation, and the heavy `node-sync-pod-e2e` (kind cluster). The
-`depot-*` runners upstream fall back to `ubuntu-latest` off `paradigmxyz`, and no secrets are
-needed. **Kept non-required for now** (observe green first, then add `Centaur CI success` to
-master's branch protection).
+**Ported → `.github/workflows/centaur-ci.yml`**: the runtime checks `migration-order` (the
+1000+ guard), `rust-api` (fmt/clippy/test + postgres integration), `node-sync-overlay`, and the
+heavy `node-sync-pod-e2e` (kind cluster). The `depot-*` runners upstream fall back to
+`ubuntu-latest` off `paradigmxyz`, and no secrets are needed.
+
+The workflow **always runs** (no top-level path filter) but the heavy jobs gate on a
+`ci_changes` detector — so a non-centaur PR just runs the detector + aggregator (heavy jobs
+skip, ~15s) and reports green. This makes **`Centaur CI success` a safe required check**
+(it reports on every PR). **`node-sync-pod-e2e` (kind) is excluded from the required
+aggregator** — it still runs and reports, but its flakier cluster path must not block merges.
+A centaur PR takes ~5–6 min (rust-api is the long pole), running in parallel with `Surface`.
 
 **Not ported (intentional):**
 - *Bot test jobs* (`slackbot/linearbot/discord/teams`) — deferred; peripheral to atrium. Add
