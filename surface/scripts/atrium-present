@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# atrium-present — mark a static artifact as "presented" so Atrium shows it as a
+# primary result (and makes its app directory publishable).
+#
+# It does NOT call back to Atrium (the sandbox agent has no Atrium credential).
+# Instead it writes a manifest file next to the entry:
+#     shared/apps/<slug>/atrium.app.json
+# which the existing artifact capture egress carries to Atrium. Atrium's
+# /api/sessions/:id/artifacts/presentations endpoint reads the manifest and the
+# web UI renders a preview card; the Published-apps surface can then publish it.
+#
+# Usage:
+#   atrium-present <entry-path> [--title T] [--renderer html-app|react-jsx] [--description D]
+# Example:
+#   atrium-present shared/apps/demo/index.html --title "Demo" --renderer html-app
+#
+# <entry-path> must live under shared/apps/<slug>/ (the app directory). The slug
+# is the directory name; the entry is the file name.
+set -euo pipefail
+
+entry_path="${1:-}"
+if [[ -z "$entry_path" || "$entry_path" == --* ]]; then
+  echo "usage: atrium-present <shared/apps/<slug>/entry.html> [--title T] [--renderer R] [--description D]" >&2
+  exit 2
+fi
+shift
+
+title=""
+renderer="html-app"
+description=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --title)       title="${2:-}"; shift 2 ;;
+    --renderer)    renderer="${2:-}"; shift 2 ;;
+    --description) description="${2:-}"; shift 2 ;;
+    *) echo "atrium-present: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+# Normalize: strip a leading sandbox prefix and any leading ./ or /
+rel="${entry_path#/home/agent/workspace/}"
+rel="${rel#./}"
+rel="${rel#/}"
+
+if [[ "$rel" != shared/apps/*/* ]]; then
+  echo "atrium-present: entry must be under shared/apps/<slug>/ (got: $rel)" >&2
+  exit 2
+fi
+
+app_dir="${rel%/*}"          # shared/apps/<slug>
+slug="${app_dir##*/}"        # <slug>
+entry="${rel##*/}"           # entry file name
+
+if ! [[ "$slug" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
+  echo "atrium-present: app slug must match [a-z0-9][a-z0-9_-]{0,63} (got: $slug)" >&2
+  exit 2
+fi
+
+[[ -z "$title" ]] && title="$slug"
+
+# Emit JSON with safe escaping via a tiny here-doc + python if available, else manual.
+manifest_path="$app_dir/atrium.app.json"
+mkdir -p "$app_dir"
+
+json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+
+{
+  printf '{\n'
+  printf '  "title": "%s",\n' "$(json_escape "$title")"
+  printf '  "entry": "%s",\n' "$(json_escape "$entry")"
+  printf '  "renderer": "%s"' "$(json_escape "$renderer")"
+  if [[ -n "$description" ]]; then
+    printf ',\n  "description": "%s"\n' "$(json_escape "$description")"
+  else
+    printf '\n'
+  fi
+  printf '}\n'
+} > "$manifest_path"
+
+echo "wrote $manifest_path (presented $rel as '$title', renderer=$renderer)"

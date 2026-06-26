@@ -11,8 +11,9 @@ import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { FilesSurface } from './FilesSurface';
 import { WhatChangedSurface } from './WhatChangedSurface';
+import { AppsSurface } from './AppsSurface';
 
-export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'files' | 'artifacts';
+export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'files' | 'artifacts' | 'apps';
 export type ActiveWorkTab = Exclude<WorkTab, 'artifacts'>;
 
 export function normalizeWorkTab(tab: WorkTab): ActiveWorkTab {
@@ -26,6 +27,7 @@ export const TAB_SLUG: Record<ActiveWorkTab, string> = {
   changes: 'changes',
   sideEffects: 'side-effects',
   files: 'files',
+  apps: 'apps',
 };
 export const SLUG_TAB: Record<string, ActiveWorkTab> = {
   conflicts: 'conflicts',
@@ -33,12 +35,14 @@ export const SLUG_TAB: Record<string, ActiveWorkTab> = {
   'side-effects': 'sideEffects',
   artifacts: 'changes',
   files: 'files',
+  apps: 'apps',
 };
 export const TAB_LABEL: Record<ActiveWorkTab, string> = {
   conflicts: 'Conflicts',
   changes: 'What changed',
   sideEffects: 'What it ran',
   files: 'Browse files',
+  apps: 'Published apps',
 };
 
 function Tab({
@@ -133,7 +137,10 @@ export function WorkDrawer({
   // Files is always available (it browses the whole git+ledger tree, count-less).
   const available = counted
     .filter((t) => (t.count ?? 0) > 0)
-    .concat([{ key: 'files', label: TAB_LABEL.files }]);
+    .concat([
+      { key: 'files', label: TAB_LABEL.files },
+      { key: 'apps', label: TAB_LABEL.apps },
+    ]);
   const normalizedTab = normalizeWorkTab(tab);
   const active: ActiveWorkTab = available.some((t) => t.key === normalizedTab)
     ? normalizedTab
@@ -210,6 +217,8 @@ export function WorkDrawer({
         ) : null
       ) : active === 'files' ? (
         <FilesSurface sessionId={sessionId} onClose={onClose} embedded />
+      ) : active === 'apps' ? (
+        <AppsSurface sessionId={sessionId} artifacts={artifacts} embedded />
       ) : active === 'changes' ? (
         <WhatChangedSurface
           changes={changes}

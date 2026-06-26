@@ -18,7 +18,7 @@ export interface WorkspaceArtifactPathContext {
 
 const EXCLUDED_ROOTS = new Set(['repo', 'repos', 'context']);
 const EXCLUDED_DOT_ROOTS = new Set(['.claude', '.codex', '.state']);
-const SHARED_ROOTS = new Set(['global', 'channels']);
+const SHARED_ROOTS = new Set(['global', 'channels', 'apps']);
 
 export function canonicalizeSessionArtifactPath(
   input: string,
@@ -106,10 +106,15 @@ function canonicalSharedPath(path: string, ctx: WorkspaceArtifactPathContext): s
   const parts = path.split('/');
   const root = parts[1];
   if (!root || !SHARED_ROOTS.has(root)) {
-    throw new InvalidArtifactPathError('shared paths must use shared/global or shared/channels');
+    throw new InvalidArtifactPathError('shared paths must use shared/global, shared/channels, or shared/apps');
   }
   if (root === 'global') {
     if (parts.length < 3) throw new InvalidArtifactPathError('shared/global path must include a file path');
+    return path;
+  }
+  if (root === 'apps') {
+    // Flat workspace app convention: shared/apps/<slug>/<file...>. Slug + file required.
+    if (parts.length < 4) throw new InvalidArtifactPathError('shared/apps path must be shared/apps/<slug>/<file>');
     return path;
   }
   const id = parts[2];

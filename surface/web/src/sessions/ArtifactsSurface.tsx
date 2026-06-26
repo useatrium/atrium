@@ -88,7 +88,10 @@ export function ArtifactTile({
 }) {
   const src = artifactSrc(sessionId, artifact);
   const isImage = artifact.mime.startsWith('image/') && src !== null;
-  const previewable = src !== null && canPreviewArtifact(artifact);
+  // Presented artifacts always preview via the ledger-backed preview route (which
+  // serves by path), even when the legacy capture `ref` is absent — hydration
+  // delivers presentations independent of capture. Plain tiles still need a src.
+  const previewable = canPreviewArtifact(artifact) && (src !== null || presentation != null);
   const name = presentation?.title ?? basename(artifact.path);
   const fileName = basename(artifact.path);
   const inner = (
@@ -161,9 +164,10 @@ export function ArtifactTile({
           )}
         </div>
       )}
-      {artifact.ref === null && (
+      {artifact.ref === null && !presentation && (
         // No bytes were staged (over the capture size limit). Be honest about why
-        // rather than implying a broken link.
+        // rather than implying a broken link. Presented artifacts are served from
+        // the ledger, so the note doesn't apply to them.
         <div className="border-t border-edge px-2 py-0.5 text-3xs text-fg-muted">
           Too large to capture — exceeds the size limit
         </div>

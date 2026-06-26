@@ -1,0 +1,241 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type pg from 'pg';
+import { buildApp } from '../src/app.js';
+import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
+import { createChannel } from '../src/events.js';
+import { addWorkspaceMember } from '../src/membership.js';
+import { createTestPool, seedFixture, seedMember, truncateAll, type Fixture } from './helpers.js';
+
+const mockedS3 = vi.hoisted(() => {
+  class FakeStorage {
+    readonly objects = new Map<string, { body: Buffer; contentType: string }>();
+
+    reset(): void {
+      this.objects.clear();
+    }
+
+    getObjectBytes = async (key: string): Promise<Buffer> => {
+      const object = this.objects.get(key);
+      if (!object) throw new Error(`missing object: ${key}`);
+      return Buffer.from(object.body);
+    };
+  }
+
+  return { storage: new FakeStorage() };
+});
+
+vi.mock('../src/s3.js', () => ({
+  copyObject: async () => {},
+  deleteObject: async () => {},
+  downloadObject: async () => {},
+  ensureBucket: async () => {},
+  getObjectBytes: mockedS3.storage.getObjectBytes,
+  headObject: async () => null,
+  presignGet: async () => 'https://storage.local/get',
+  presignPut: async () => 'https://storage.local/put',
+  uploadObject: async () => {},
+  uploadObjectStream: async () => {},
+}));
+
+let pool: pg.Pool;
+let fx: Fixture;
+let app: Awaited<ReturnType<typeof buildApp>>;
+let ledger: ArtifactLedger;
+
+beforeAll(async () => {
+  pool = await createTestPool();
+  ledger = new ArtifactLedger(pool);
+});
+
+afterAll(async () => {
+  await pool.end();
+});
+
+beforeEach(async () => {
+  mockedS3.storage.reset();
+  await pool.query(
+    'TRUNCATE artifact_changes, artifact_sync_state, cas_blobs, artifact_pointers, artifact_versions, artifacts CASCADE',
+  );
+  await truncateAll(pool);
+  fx = await seedFixture(pool);
+  app = await buildApp({
+    pool,
+    sessionRuns: {
+      baseUrl: 'http://127.0.0.1:1',
+      apiKey: 'test',
+      autoResume: false,
+    },
+  });
+  await app.ready();
+});
+
+afterEach(async () => {
+  await app.close();
+});
+
+async function loginCookie(): Promise<string> {
+  const login = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { handle: 'alice', displayName: 'Alice' },
+  });
+  await addWorkspaceMember(pool, fx.workspaceId, login.json().user.id);
+  return login.headers['set-cookie'] as string;
+}
+
+async function session(channelId = fx.channelId, spawnedBy = fx.userId): Promise<string> {
+  const r = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by, driver_id, current_execution_id)
+     VALUES ($1, $2, $3, 'claude-code', 'presentations-route-test', 'running', $4, $4, 'exec-1') RETURNING id`,
+    [fx.workspaceId, channelId, `thread-${randomUUID()}`, spawnedBy],
+  );
+  return r.rows[0]!.id;
+}
+
+async function commitArtifact(sessionId: string, path: string, bytes: string, mime = 'text/html') {
+  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+  const payload = Buffer.from(bytes);
+  const sha = createHash('sha256').update(payload).digest('hex');
+  const s3Key = casBlobKey(sha);
+  mockedS3.storage.objects.set(s3Key, { body: payload, contentType: mime });
+  await pool.query(
+    `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (sha256) DO UPDATE
+           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key)`,
+    [sha, s3Key, payload.byteLength, mime],
+  );
+  await ledger.commitVersion({
+    sessionId,
+    channelId: sessionRow.rows[0]!.channel_id,
+    path,
+    blobSha: sha,
+    sizeBytes: payload.byteLength,
+    mime,
+    author: `agent:${sessionId}`,
+    kind: 'created',
+  });
+}
+
+describe('artifact presentations route', () => {
+  it('returns presentations from shared app manifests', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commitArtifact(sid, 'shared/apps/demo/index.html', '<h1>Demo</h1>');
+    await commitArtifact(
+      sid,
+      'shared/apps/demo/atrium.app.json',
+      JSON.stringify({
+        title: 'Demo',
+        entry: 'index.html',
+        renderer: 'html-app',
+        description: 'Demo app',
+      }),
+      'application/json',
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/demo/index.html',
+          path: 'shared/apps/demo/index.html',
+          title: 'Demo',
+          renderer: 'html-app',
+          description: 'Demo app',
+          executionId: null,
+          sourceEventIds: [],
+        },
+      ],
+    });
+
+    const preview = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/preview?path=${encodeURIComponent('shared/apps/demo/index.html')}`,
+      headers: { cookie },
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers['x-artifact-scope']).toBe('workspace');
+    expect(preview.body).toBe('<h1>Demo</h1>');
+  });
+
+  it('skips malformed manifests', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commitArtifact(sid, 'shared/apps/bad/index.html', '<h1>Bad</h1>');
+    await commitArtifact(sid, 'shared/apps/bad/atrium.app.json', '{bad json', 'application/json');
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ presentations: [] });
+  });
+
+  it('does not return app manifests from unreadable channels', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    const bobId = await seedMember(pool, fx.workspaceId, `bob-${randomUUID().slice(0, 8)}`, 'Bob');
+    const { channel: privateChannel } = await createChannel(pool, {
+      workspaceId: fx.workspaceId,
+      name: `private-${randomUUID().slice(0, 8)}`,
+      actorId: bobId,
+      private: true,
+    });
+    const privateSid = await session(privateChannel.id, bobId);
+    await commitArtifact(privateSid, `shared/channels/${privateChannel.id}/apps/demo/index.html`, '<h1>Secret</h1>');
+    await commitArtifact(
+      privateSid,
+      `shared/channels/${privateChannel.id}/apps/demo/atrium.app.json`,
+      JSON.stringify({ title: 'Secret' }),
+      'application/json',
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ presentations: [] });
+  });
+
+  it('defaults manifest entry to index.html', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commitArtifact(sid, 'shared/apps/defaulted/index.html', '<h1>Default</h1>');
+    await commitArtifact(sid, 'shared/apps/defaulted/atrium.app.json', JSON.stringify({ title: 'Default' }), 'application/json');
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/defaulted/index.html',
+          path: 'shared/apps/defaulted/index.html',
+          title: 'Default',
+          renderer: 'html-app',
+          description: null,
+          executionId: null,
+          sourceEventIds: [],
+        },
+      ],
+    });
+  });
+});

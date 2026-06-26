@@ -1,0 +1,115 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Artifact } from '@atrium/centaur-client';
+import { AppsSurface } from '../src/sessions/AppsSurface';
+import { sessionsApi, type AppListRow } from '../src/sessions/api';
+
+function art(over: Partial<Artifact>): Artifact {
+  return {
+    id: 'a1',
+    path: 'shared/apps/demo/index.html',
+    kind: 'created',
+    mime: 'text/html',
+    size: 2048,
+    sha256: 'x',
+    ref: 'b1',
+    executionId: null,
+    sourceEventIds: [3],
+    ...over,
+  };
+}
+
+function app(over: Partial<AppListRow>): AppListRow {
+  return {
+    id: 'app-1',
+    workspaceId: 'w-1',
+    channelId: null,
+    name: 'demo',
+    scope: 'workspace',
+    status: 'published',
+    currentVersion: 2,
+    entryPath: 'shared/apps/demo/index.html',
+    updatedAt: '2026-06-25T12:00:00Z',
+    ...over,
+  };
+}
+
+describe('AppsSurface', () => {
+  beforeEach(() => {
+    vi.spyOn(sessionsApi, 'listApps').mockResolvedValue({ apps: [] });
+    vi.spyOn(sessionsApi, 'publishApp').mockResolvedValue({
+      appId: 'app-1',
+      version: 1,
+      files: ['shared/apps/demo/index.html'],
+      entry: 'index.html',
+    });
+    vi.spyOn(sessionsApi, 'launchApp').mockResolvedValue({
+      url: 'https://apps.example/demo',
+      expires: '2026-06-25T13:00:00Z',
+      version: 2,
+    });
+    vi.spyOn(window, 'open').mockImplementation(() => null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('detects app roots from captured shared/apps artifacts', async () => {
+    render(
+      <AppsSurface
+        sessionId="s-1"
+        artifacts={[
+          art({ path: '/home/agent/workspace/shared/apps/demo/atrium.app.json', mime: 'application/json' }),
+          art({ path: 'shared/apps/demo/index.html' }),
+        ]}
+        embedded
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText('Detected app directories')).toBeTruthy());
+    expect(screen.getByText('demo')).toBeTruthy();
+    expect(screen.getByText('shared/apps/demo/')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeTruthy();
+  });
+
+  it('publishes a detected root with workspace scope', async () => {
+    render(<AppsSurface sessionId="s-1" artifacts={[art({ path: 'shared/apps/demo/index.html' })]} embedded />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() =>
+      expect(sessionsApi.publishApp).toHaveBeenCalledWith(
+        's-1',
+        expect.objectContaining({ name: 'demo', scope: 'workspace', entry: 'index.html' }),
+      ),
+    );
+  });
+
+  it('launches a published app in a new tab', async () => {
+    vi.mocked(sessionsApi.listApps).mockResolvedValue({ apps: [app({ id: 'app-9', name: 'demo' })] });
+
+    render(<AppsSurface sessionId="s-1" artifacts={[art({ path: 'shared/apps/demo/index.html' })]} embedded />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Launch' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
+
+    await waitFor(() => expect(sessionsApi.launchApp).toHaveBeenCalledWith('app-9'));
+    expect(window.open).toHaveBeenCalledWith(
+      'https://apps.example/demo',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
+  it('shows an empty state when nothing is detected or published', async () => {
+    render(<AppsSurface sessionId="s-1" artifacts={[]} embedded />);
+
+    await waitFor(() => expect(screen.getByText('No published apps')).toBeTruthy());
+    expect(screen.getByText('Agent-built apps under shared/apps will appear here.')).toBeTruthy();
+  });
+});

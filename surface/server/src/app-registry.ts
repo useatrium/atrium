@@ -65,10 +65,10 @@ export class AppRegistry {
   async publish(args: PublishAppArgs): Promise<PublishedApp> {
     const name = normalizeAppName(args.name);
     const entry = normalizeAppRelPath(args.entry || 'index.html');
-    const prefix = appSourcePrefix(args.scope, args.channelId, name);
+    const prefixes = appSourcePrefixes(args.scope, args.channelId, name);
 
     return withTx(this.pool, async (client) => {
-      const frozen = await freezeSourceFiles(client, args.workspaceId, prefix);
+      const frozen = await freezeSourceFiles(client, args.workspaceId, prefixes);
       if (frozen.length === 0) {
         throw new DomainError(404, 'app_source_not_found', 'app source files not found');
       }
@@ -253,38 +253,42 @@ interface FrozenFile {
   s3_key: string | null;
 }
 
-async function freezeSourceFiles(client: DbClient, workspaceId: string, prefix: string): Promise<FrozenFile[]> {
-  const res = await client.query<{
-    artifact_id: string;
-    seq: number;
-    rel_path: string;
-    blob_sha: string | null;
-    kind: string;
-    mime: string | null;
-    size_bytes: string | number | null;
-    s3_key: string | null;
-  }>(
-    `SELECT a.id AS artifact_id, v.seq, substr(a.path, $3) AS rel_path,
-            v.blob_sha, v.kind, b.mime, b.size_bytes, b.s3_key
-       FROM artifacts a
-       JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
-       JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
-       LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
-      WHERE a.workspace_id = $1
-        AND a.path LIKE $2
-      ORDER BY a.path ASC`,
-    [workspaceId, `${prefix}/%`, prefix.length + 2],
-  );
-  return res.rows.map((row) => ({
-    artifact_id: row.artifact_id,
-    seq: row.seq,
-    rel_path: normalizeAppRelPath(row.rel_path),
-    blob_sha: row.blob_sha,
-    kind: row.kind,
-    mime: row.mime ?? 'application/octet-stream',
-    size_bytes: Number(row.size_bytes ?? 0),
-    s3_key: row.s3_key,
-  }));
+async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes: readonly string[]): Promise<FrozenFile[]> {
+  for (const prefix of prefixes) {
+    const res = await client.query<{
+      artifact_id: string;
+      seq: number;
+      rel_path: string;
+      blob_sha: string | null;
+      kind: string;
+      mime: string | null;
+      size_bytes: string | number | null;
+      s3_key: string | null;
+    }>(
+      `SELECT a.id AS artifact_id, v.seq, substr(a.path, $3) AS rel_path,
+              v.blob_sha, v.kind, b.mime, b.size_bytes, b.s3_key
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+         LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+        WHERE a.workspace_id = $1
+          AND a.path LIKE $2
+        ORDER BY a.path ASC`,
+      [workspaceId, `${prefix}/%`, prefix.length + 2],
+    );
+    if (res.rows.length === 0) continue;
+    return res.rows.map((row) => ({
+      artifact_id: row.artifact_id,
+      seq: row.seq,
+      rel_path: normalizeAppRelPath(row.rel_path),
+      blob_sha: row.blob_sha,
+      kind: row.kind,
+      mime: row.mime ?? 'application/octet-stream',
+      size_bytes: Number(row.size_bytes ?? 0),
+      s3_key: row.s3_key,
+    }));
+  }
+  return [];
 }
 
 async function findOrCreateApp(
@@ -327,9 +331,9 @@ async function findOrCreateApp(
   return inserted.rows[0]!;
 }
 
-function appSourcePrefix(scope: AppScope, channelId: string, name: string): string {
-  if (scope === 'workspace') return `shared/global/apps/${name}`;
-  return `shared/channels/${channelId}/apps/${name}`;
+function appSourcePrefixes(scope: AppScope, channelId: string, name: string): string[] {
+  if (scope === 'workspace') return [`shared/apps/${name}`, `shared/global/apps/${name}`];
+  return [`shared/channels/${channelId}/apps/${name}`];
 }
 
 function normalizeAppName(value: string): string {
