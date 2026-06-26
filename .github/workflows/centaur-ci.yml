@@ -102,7 +102,6 @@ jobs:
             fi
           else
             base="origin/${{ github.base_ref || 'master' }}"
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref || 'master' }}"
           fi
           .github/scripts/check-migration-order.sh "$base"
 
