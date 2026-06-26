@@ -96,6 +96,7 @@ import {
   canonicalizeSessionArtifactPath,
   displaySessionArtifactPath,
   InvalidArtifactPathError,
+  normalizeArtifactPathInput,
   sessionArtifactPathAliases,
 } from './artifact-path.js';
 import type { AttachmentMeta } from './events.js';
@@ -130,7 +131,7 @@ import {
 } from './warmcache-store.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, classifyMediaFromMime, type MediaClassification } from './media-classifier.js';
-import { AppRegistry, type AppScope } from './app-registry.js';
+import { AppRegistry, normalizeAppRelPath, type AppScope } from './app-registry.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -3447,6 +3448,76 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (version.textEncoding != null) reply.header('X-Text-Encoding', version.textEncoding);
     }
     return reply.redirect(plan.url, 302);
+  });
+
+  app.get('/api/sessions/:id/artifacts/presentations', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const access = await sessionArtifactAccess(id, user.id);
+    const res = await pool.query<{
+      path: string;
+      s3_key: string | null;
+    }>(
+      `SELECT a.path, b.s3_key
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+         LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+        WHERE a.workspace_id = $1
+          AND a.path LIKE 'shared/apps/%/atrium.app.json'
+          AND v.kind <> 'deleted'
+        ORDER BY a.path ASC`,
+      [access.workspaceId],
+    );
+    const presentations: Array<{
+      id: string;
+      path: string;
+      title: string | null;
+      renderer: string;
+      description: string | null;
+      executionId: string | null;
+      sourceEventIds: number[];
+    }> = [];
+    for (const row of res.rows) {
+      const manifestPath = canonicalizeRouteArtifactPath(reply, row.path, {
+        sessionId: id,
+        channelId: access.channelId,
+        readableChannelIds: access.readableChannelIds,
+      });
+      if (!manifestPath) return;
+      if (!artifactPathInRoots(manifestPath, access.readableRoots)) continue;
+      const match = /^shared\/apps\/([a-z0-9][a-z0-9_-]{0,63})\/atrium\.app\.json$/.exec(manifestPath);
+      if (!match || !row.s3_key) continue;
+      let manifest: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse((await getObjectBytes(row.s3_key)).toString('utf8'));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+        manifest = parsed as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      let entry: string;
+      try {
+        entry = normalizeAppRelPath(typeof manifest.entry === 'string' && manifest.entry.trim() ? manifest.entry : 'index.html');
+      } catch {
+        continue;
+      }
+      const slug = match[1]!;
+      const appDir = `shared/apps/${slug}`;
+      const path = `${appDir}/${entry}`;
+      presentations.push({
+        id: `artifact-presented:${path}`,
+        path,
+        title: typeof manifest.title === 'string' ? manifest.title : typeof manifest.name === 'string' ? manifest.name : slug,
+        renderer: typeof manifest.renderer === 'string' && manifest.renderer.trim() ? manifest.renderer : 'html-app',
+        description: typeof manifest.description === 'string' ? manifest.description : null,
+        executionId: null,
+        sourceEventIds: [],
+      });
+    }
+    presentations.sort((a, b) => a.path.localeCompare(b.path));
+    return reply.send({ presentations });
   });
 
   app.get('/api/sessions/:id/artifacts/preview', async (req, reply) => {

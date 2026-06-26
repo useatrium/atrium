@@ -3,7 +3,7 @@
 // Every function delegates to the DEV MOCK (./devMock) when the dev server is
 // started with VITE_SESSIONS_MOCK=1; otherwise it talks to the real endpoints.
 
-import type { CentaurEventFrame } from '@atrium/centaur-client';
+import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { sessionsMock } from './devMock';
 import type { SessionListItem, SessionWire } from './types';
@@ -29,6 +29,18 @@ export interface SessionStreamCallbacks {
   onOpen?: () => void;
   /** Stream broke — caller decides whether to recreate with a fresh cursor. */
   onError?: () => void;
+}
+
+export interface AppListRow {
+  id: string;
+  workspaceId: string;
+  channelId: string | null;
+  name: string;
+  scope: 'channel' | 'workspace';
+  status: string;
+  currentVersion: number | null;
+  entryPath: string | null;
+  updatedAt: string;
 }
 
 /** Every event name the Centaur durable stream emits (notes/build-history/phase0/results/event-schema.md). */
@@ -152,6 +164,36 @@ export const sessionsApi = {
     return reqAccepted(`/api/sessions/${id}/cancel`, {
       method: 'POST',
       body: JSON.stringify(opId ? { opId } : {}),
+    });
+  },
+
+  listPresentations(id: string): Promise<{ presentations: ArtifactPresentation[] }> {
+    return reqJson<{ presentations: ArtifactPresentation[] }>(
+      `/api/sessions/${id}/artifacts/presentations`,
+    );
+  },
+
+  listApps(): Promise<{ apps: AppListRow[] }> {
+    return reqJson<{ apps: AppListRow[] }>('/api/apps');
+  },
+
+  publishApp(
+    sessionId: string,
+    body: { name: string; entry?: string; scope?: 'channel' | 'workspace' },
+  ): Promise<{ appId: string; version: number; files: string[]; entry: string }> {
+    return reqJson<{ appId: string; version: number; files: string[]; entry: string }>(
+      `/api/sessions/${sessionId}/apps`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  launchApp(appId: string, version?: number): Promise<{ url: string; expires: string; version: number }> {
+    return reqJson<{ url: string; expires: string; version: number }>(`/api/apps/${appId}/launch`, {
+      method: 'POST',
+      body: JSON.stringify(version === undefined ? {} : { version }),
     });
   },
 

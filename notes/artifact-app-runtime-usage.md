@@ -3,15 +3,29 @@
 Status: pathfinder implementation note
 Date: 2026-06-25
 
-This branch adds a first end-to-end path for JavaScript applet-style artifacts:
+End-to-end path for static applet-style artifacts (preview + apps surfaces landed;
+producer is manifest-based):
 
-1. The agent creates a static HTML artifact.
-2. Centaur captures the file as an artifact.
-3. The agent explicitly presents it with `atrium-present`.
-4. Atrium receives `artifact.presented` and can preview captured `.html`/`.jsx`
-   artifacts from the Artifacts surface.
-5. A user can publish a detected `shared/apps/<slug>/` directory from the
-   Published apps work surface and launch the frozen app version.
+1. The agent creates a static app under `shared/apps/<slug>/` (e.g. `index.html`).
+2. The agent marks it presented by writing `shared/apps/<slug>/atrium.app.json` (the
+   `atrium-present` helper does this — no Atrium credential / back-channel needed).
+3. Centaur captures both files into the artifact ledger.
+4. Atrium derives presentations from committed manifests via
+   `GET /api/sessions/:id/artifacts/presentations` (NOT a synthetic stream frame — the
+   Centaur `event_id` space is gap-checked and can't take injected frames). The web
+   client hydrates that endpoint and shows the app as a "Presented app" tile with a
+   Preview that renders through `/api/sessions/:id/artifacts/preview`.
+5. A user can publish a detected `shared/apps/<slug>/` directory from the **Published
+   apps** work surface and launch the frozen version (served from the apps origin).
+
+`shared/apps/<slug>/` is a first-class workspace-scoped artifact root (recognized by
+the path canonicalizer + scope ACL), so the agent can write there and humans read it
+workspace-wide.
+
+Known limitations: the apps-origin CSP blocks the Tailwind CDN `<script>`, so launched
+apps that rely on it render unstyled (bundle CSS, or use the preview route which allows
+it). A first-class agent producer (an MCP `present_artifact` tool) is still deferred —
+today the manifest file IS the producer.
 
 ## Agent Happy Path
 

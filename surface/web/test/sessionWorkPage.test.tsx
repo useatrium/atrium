@@ -2,11 +2,12 @@
 // Detach rung (Phase 4): /s/:id/work/:slug route parsing + the standalone
 // single-surface page that folds the same live session stream.
 
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import { workRouteFromPath } from '../src/App';
 import { SessionWorkPage } from '../src/sessions/SessionWorkPage';
+import { sessionsApi } from '../src/sessions/api';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 describe('workRouteFromPath', () => {
@@ -14,6 +15,7 @@ describe('workRouteFromPath', () => {
     expect(workRouteFromPath('/s/abc/work/changes')).toEqual({ sessionId: 'abc', tab: 'changes' });
     expect(workRouteFromPath('/s/abc/work/side-effects')).toEqual({ sessionId: 'abc', tab: 'sideEffects' });
     expect(workRouteFromPath('/s/abc/work/artifacts')).toEqual({ sessionId: 'abc', tab: 'changes' });
+    expect(workRouteFromPath('/s/abc/work/apps')).toEqual({ sessionId: 'abc', tab: 'apps' });
   });
 
   it('returns null for an unknown slug, the bare permalink, or an over-long path', () => {
@@ -28,9 +30,11 @@ describe('SessionWorkPage', () => {
   beforeEach(() => {
     FakeEventSource.reset();
     installFakeEventSource();
+    vi.spyOn(sessionsApi, 'listPresentations').mockResolvedValue({ presentations: [] });
   });
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -91,5 +95,44 @@ describe('SessionWorkPage', () => {
     expect(within(page).getByText('Created artifacts')).toBeTruthy();
     const img = within(page).getByRole('img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/sessions/s-x/artifacts/by-path?path=%2Ftmp%2Fchart.png');
+  });
+
+  it('hydrates artifact presentations and promotes the presented app tile', async () => {
+    vi.mocked(sessionsApi.listPresentations).mockResolvedValue({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/demo/index.html',
+          path: 'shared/apps/demo/index.html',
+          title: 'Pipeline Dashboard',
+          renderer: 'html-app',
+          description: 'Live business view',
+          executionId: 'exe_a',
+          sourceEventIds: [9],
+        },
+      ],
+    });
+
+    await renderPage('changes', [
+      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' } },
+      {
+        event: 'artifact.captured',
+        event_id: 2,
+        data: {
+          type: 'artifact.captured',
+          artifact_id: 'app-1',
+          path: 'shared/apps/demo/index.html',
+          kind: 'created',
+          mime: 'text/html',
+          size_bytes: 4821,
+          sha256: 'app-1',
+          ref: 'blob-1',
+        },
+      },
+    ] as unknown as CentaurEventFrame[]);
+
+    const page = screen.getByTestId('session-work-page');
+    await waitFor(() => expect(within(page).getByText('Presented apps')).toBeTruthy());
+    expect(within(page).getByText('Pipeline Dashboard')).toBeTruthy();
+    expect(within(page).getByText('Presented app · Live business view')).toBeTruthy();
   });
 });

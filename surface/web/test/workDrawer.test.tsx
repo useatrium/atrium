@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
 import { WorkDrawer, type WorkTab } from '../src/sessions/WorkDrawer';
 
+vi.mock('../src/sessions/AppsSurface', () => ({
+  AppsSurface: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="apps-surface">Apps for {sessionId}</div>
+  ),
+}));
+
 function fc(over: Partial<FileChange>): FileChange {
   return { id: 'c1', path: 'src/a.ts', kind: 'update', diff: '- old\n+ new', toolName: 'Edit', sourceEventIds: [1], ...over };
 }
@@ -55,11 +61,12 @@ describe('WorkDrawer', () => {
   it('renders a tab per non-empty surface, with counts', () => {
     renderDrawer();
     const tabs = screen.getAllByRole('tab');
-    // what-changed + what-it-ran + the always-present Browse files tab.
-    expect(tabs).toHaveLength(3);
+    // what-changed + what-it-ran + the always-present Browse files/Published apps tabs.
+    expect(tabs).toHaveLength(4);
     expect(screen.getByRole('tab', { name: /What changed/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /What it ran/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
     // What changed tab is active → shows the file row, not the command.
     expect(screen.getByText('src/a.ts')).toBeTruthy();
     expect(screen.queryByText('npm install')).toBeNull();
@@ -67,9 +74,10 @@ describe('WorkDrawer', () => {
 
   it('omits the tab for an empty surface (but keeps the always-present Files tab)', () => {
     renderDrawer({ effects: [], sideEffectCount: 0 });
-    expect(screen.getAllByRole('tab')).toHaveLength(2); // changes + files
+    expect(screen.getAllByRole('tab')).toHaveLength(3); // changes + files + apps
     expect(screen.queryByRole('tab', { name: /What it ran/ })).toBeNull();
     expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
   });
 
   it('clicking the What it ran tab calls onTab', () => {
@@ -156,13 +164,19 @@ describe('WorkDrawer', () => {
       artifactCount: 1,
       tab: 'artifacts',
     });
-    expect(screen.getAllByRole('tab')).toHaveLength(3); // what changed + what it ran + browse files
+    expect(screen.getAllByRole('tab')).toHaveLength(4); // what changed + what it ran + browse files + apps
     expect(screen.queryByRole('tab', { name: /Artifacts/ })).toBeNull();
     expect(screen.getByRole('tab', { name: /What changed/ }).getAttribute('aria-selected')).toBe('true');
     // Back-compat tab=artifacts normalizes to What changed, where the gallery tile shows the filename.
     expect(screen.getByText('Created artifacts')).toBeTruthy();
     expect(screen.getByTestId('artifact-tile')).toBeTruthy();
     expect(screen.getByText('chart.png')).toBeTruthy();
+  });
+
+  it('renders AppsSurface from the Published apps tab', () => {
+    renderDrawer({ tab: 'apps' });
+    expect(screen.getByRole('tab', { name: /Published apps/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('apps-surface').textContent).toBe('Apps for s-1');
   });
 
   it('promotes artifact presentations inside the What changed surface', () => {
@@ -215,6 +229,12 @@ describe('WorkDrawer', () => {
     renderDrawer({ tab: 'sideEffects' });
     const detach = screen.getByRole('link', { name: /open what it ran in a new tab/i });
     expect(detach.getAttribute('href')).toBe('/s/s-1/work/side-effects');
+  });
+
+  it('the detach link supports the Published apps slug', () => {
+    renderDrawer({ tab: 'apps' });
+    const detach = screen.getByRole('link', { name: /open published apps in a new tab/i });
+    expect(detach.getAttribute('href')).toBe('/s/s-1/work/apps');
   });
 
   it('hides the detach control when canDetach is false (pending session)', () => {

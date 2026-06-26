@@ -8,6 +8,7 @@ import type { CentaurEventFrame } from '@atrium/centaur-client';
 import rawB from '../../centaur-client/test/fixtures/B_tooltest.json';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
 import { SessionPane } from '../src/sessions/SessionPane';
+import { sessionsApi } from '../src/sessions/api';
 import type { Session } from '../src/sessions/types';
 import type { UserRef, WireEvent } from '@atrium/surface-client';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
@@ -47,9 +48,11 @@ function bSession(overrides: Partial<Session> = {}): Session {
 beforeEach(() => {
   FakeEventSource.reset();
   installFakeEventSource();
+  vi.spyOn(sessionsApi, 'listPresentations').mockResolvedValue({ presentations: [] });
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });

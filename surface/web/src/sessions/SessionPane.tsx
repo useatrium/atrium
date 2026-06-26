@@ -15,7 +15,6 @@ import {
   artifactCount,
   changedPaths,
   codexInlineFileChanges,
-  collectArtifactPresentations,
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
@@ -76,6 +75,7 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
+import { useArtifactPresentations } from './useArtifactPresentations';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
 
@@ -144,10 +144,7 @@ export function SessionPane({
     [sideEffects],
   );
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
-  const artifactPresentations = useMemo(
-    () => collectArtifactPresentations(stream),
-    [stream.artifactPresentations],
-  );
+  const artifactPresentations = useArtifactPresentations(session.id, stream);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
   // Live conflict feed (A3): polls the ledger change-feed for status=conflict
   // versions and hydrates their both-sides detail for the Conflicts tab.

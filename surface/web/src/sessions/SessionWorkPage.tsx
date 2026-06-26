@@ -8,7 +8,6 @@ import { useMemo } from 'react';
 import {
   artifactCount,
   changedPaths,
-  collectArtifactPresentations,
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
@@ -19,9 +18,11 @@ import { ConflictSurface } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import { FilesSurface } from './FilesSurface';
 import { SideEffectsSurface } from './SideEffectsSurface';
+import { AppsSurface } from './AppsSurface';
 import { TAB_LABEL, normalizeWorkTab, type WorkTab } from './WorkDrawer';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { useConflicts } from './useConflicts';
+import { useArtifactPresentations } from './useArtifactPresentations';
 
 const noop = () => {};
 
@@ -37,10 +38,7 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
   const changes = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
   const effects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
-  const artifactPresentations = useMemo(
-    () => collectArtifactPresentations(stream),
-    [stream.artifactPresentations],
-  );
+  const artifactPresentations = useArtifactPresentations(sessionId, stream);
 
   const count = (() => {
     switch (activeTab) {
@@ -51,6 +49,8 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
       case 'sideEffects':
         return sideEffectCount(effects);
       case 'files':
+        return null;
+      case 'apps':
         return null;
       default:
         return assertNever(activeTab);
@@ -85,6 +85,8 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         return <SideEffectsSurface effects={effects} onClose={noop} embedded />;
       case 'files':
         return <FilesSurface sessionId={sessionId} onClose={noop} embedded />;
+      case 'apps':
+        return <AppsSurface sessionId={sessionId} artifacts={artifacts} embedded />;
       default:
         return assertNever(activeTab);
     }

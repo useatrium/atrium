@@ -21,7 +21,10 @@ export function userCanReadScope(scope: ArtifactScope): boolean {
 export function isCanonicalSharedPath(path: string): boolean {
   return (
     /^shared\/global\/.+/.test(path) ||
-    /^shared\/channels\/[^/]+\/.+/.test(path)
+    /^shared\/channels\/[^/]+\/.+/.test(path) ||
+    // Flat workspace app convention: shared/apps/<slug>/... (presented artifacts +
+    // the apps registry). Workspace-readable like shared/global.
+    /^shared\/apps\/[^/]+\/.+/.test(path)
   );
 }
 
@@ -92,6 +95,7 @@ export async function readableArtifactRootsForSession(
   const readableRoots: ArtifactScopeRoot[] = [
     { prefix: `scratch/${sessionId}`, kind: 'private', writable: true },
     { prefix: 'shared/global', kind: 'workspace', writable: true },
+    { prefix: 'shared/apps', kind: 'workspace', writable: true },
     ...readableChannelIds.map((id) => ({
       prefix: `shared/channels/${id}`,
       kind: 'workspace' as const,

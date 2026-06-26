@@ -195,6 +195,27 @@ describe('app registry publish/list/launch', () => {
     ]);
   });
 
+  it('publishes workspace apps from shared/apps/<slug>', async () => {
+    const registry = await appRegistry();
+    await capture('shared/apps/widget/index.html', '5'.repeat(64), 'flat workspace app');
+
+    const published = await registry.publish({
+      sessionId,
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      userId: fx.userId,
+      name: 'widget',
+      scope: 'workspace',
+      entry: 'index.html',
+    });
+    const listed = await registry.listForUser(fx.userId);
+
+    expect(published.files).toBe(1);
+    expect(listed).toEqual([
+      expect.objectContaining({ id: published.appId, name: 'widget', scope: 'workspace', currentVersion: 1 }),
+    ]);
+  });
+
   it('launch requires auth and returns a signed app-origin URL', async () => {
     const registry = await appRegistry();
     await capture('apps/launch/index.html', '3'.repeat(64), 'launch');
