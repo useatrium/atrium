@@ -212,4 +212,45 @@ describe('warm-cache internal endpoints', () => {
     const still = await pool.query('SELECT 1 FROM cas_blobs WHERE sha256 = $1', [shaA]);
     expect(still.rows).toHaveLength(1);
   });
+
+  it('session-scoped routes resolve the workspace and round-trip', async () => {
+    const sess = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, title, status, spawned_by)
+       VALUES ($1,$2,$3,'wc','running',$4) RETURNING id`,
+      [fx.workspaceId, fx.channelId, `tk-${randomUUID()}`, fx.userId],
+    );
+    const sid = sess.rows[0]!.id;
+    const a = Buffer.from('session-scoped blob');
+    const shaA = await putBlob(a);
+
+    const reg = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/cache/manifest`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/json' },
+      payload: {
+        lockfile_hash: 'slock',
+        kind: 'pnpm',
+        entries: [{ path: 'p/a', sha256: shaA, size_bytes: a.length }],
+      },
+    });
+    expect(reg.statusCode).toBe(200);
+    expect(reg.json()).toMatchObject({ count: 1 });
+
+    const hyd = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/cache/hydration?lockfile_hash=slock&kind=pnpm`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(hyd.statusCode).toBe(200);
+    const body = hyd.json();
+    expect(body.workspaceId).toBe(fx.workspaceId);
+    expect(body.entries).toEqual([{ path: 'p/a', sha256: shaA, size_bytes: a.length }]);
+
+    const miss = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${randomUUID()}/cache/hydration?lockfile_hash=slock&kind=pnpm`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(miss.statusCode).toBe(404);
+  });
 });
