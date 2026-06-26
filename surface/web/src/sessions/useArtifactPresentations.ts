@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  collectArtifactPresentations,
-  type ArtifactPresentation,
-  type SessionState,
-} from '@atrium/centaur-client';
+import type { ArtifactPresentation, SessionState } from '@atrium/centaur-client';
 import { sessionsApi } from './api';
 
 // Presentation is automatic: any file captured under an app dir can change what
@@ -42,15 +38,5 @@ export function useArtifactPresentations(
     };
   }, [sessionId, appDirKey]);
 
-  const frameDerived = useMemo(
-    () => collectArtifactPresentations(stream),
-    [stream.artifactPresentations],
-  );
-
-  return useMemo(() => {
-    const byPath = new Map<string, ArtifactPresentation>();
-    for (const presentation of frameDerived) byPath.set(presentation.path, presentation);
-    for (const presentation of hydrated) byPath.set(presentation.path, presentation);
-    return [...byPath.values()];
-  }, [frameDerived, hydrated]);
+  return hydrated;
 }

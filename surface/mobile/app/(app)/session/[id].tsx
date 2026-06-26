@@ -1061,26 +1061,6 @@ export default function SessionScreen() {
                   />
                 ) : item.type === 'reasoning' ? (
                   <ReasoningBlock item={item} />
-                ) : item.type === 'artifact_presentation' ? (
-                  <View
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.accent,
-                      borderRadius: radius.md,
-                      padding: space.sm,
-                      gap: 2,
-                    }}
-                  >
-                    <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '600' }}>
-                      Presented artifact
-                    </Text>
-                    <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '600' }}>
-                      {item.title ?? item.path.split('/').pop() ?? item.path}
-                    </Text>
-                    {item.description ? (
-                      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{item.description}</Text>
-                    ) : null}
-                  </View>
                 ) : item.type === 'tool_call' ? (
                   <TranscriptTool item={item} />
                 ) : null}
