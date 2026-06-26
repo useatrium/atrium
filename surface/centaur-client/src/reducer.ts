@@ -11,7 +11,6 @@ import type {
   AnthropicTextBlock,
   AnthropicToolUseBlock,
   ArtifactCaptured,
-  ArtifactPresented,
   CentaurEventFrame,
   ExecutionStatus,
   JsonObject,
@@ -73,25 +72,12 @@ export interface UserMessageItem {
   sourceEventIds: number[];
 }
 
-export interface ArtifactPresentationItem {
-  type: "artifact_presentation";
-  id: string;
-  path: string;
-  title: string | null;
-  renderer: string;
-  description: string | null;
-  executionId: string | null;
-  handle?: string | null;
-  sourceEventIds: number[];
-}
-
 export type SessionItem =
   | TextItem
   | ReasoningItem
   | ToolCallItem
   | QuestionItem
-  | UserMessageItem
-  | ArtifactPresentationItem;
+  | UserMessageItem;
 
 export interface TodoEntry {
   content: string;
@@ -139,9 +125,10 @@ export interface Artifact {
   sourceEventIds: number[];
 }
 
-/** An artifact the agent intentionally surfaced as a primary result, from an
- * `artifact.presented` frame. Matched to a captured Artifact by display path so
- * the surface can render it as "the answer" rather than one captured file. */
+/** An artifact the agent intentionally surfaced as a primary result. Derived by
+ * Atrium from a committed `shared/apps/<slug>/atrium.app.json` manifest (see the
+ * `/artifacts/presentations` endpoint) and matched to a captured Artifact by
+ * display path so the surface can render it as "the answer". */
 export interface ArtifactPresentation {
   id: string;
   path: string;
@@ -159,8 +146,6 @@ export interface SessionState {
   fileChanges: FileChange[];
   /** Captured work-product files (Artifacts surface), from artifact.captured frames. */
   artifacts: Artifact[];
-  /** Artifacts the agent intentionally surfaced as a primary result. */
-  artifactPresentations: ArtifactPresentation[];
   resultText: string;
   models: string[];
   costUsd: number;
@@ -183,7 +168,6 @@ export function initialSessionState(): SessionState {
     items: [],
     fileChanges: [],
     artifacts: [],
-    artifactPresentations: [],
     resultText: "",
     models: [],
     costUsd: 0,
@@ -199,10 +183,6 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
     items: state.items.map((item) => ({ ...item, sourceEventIds: [...item.sourceEventIds] })),
     fileChanges: [...state.fileChanges],
     artifacts: [...state.artifacts],
-    artifactPresentations: state.artifactPresentations.map((presentation) => ({
-      ...presentation,
-      sourceEventIds: [...presentation.sourceEventIds],
-    })),
     models: [...state.models],
     ...(state.todos ? { todos: state.todos.map((todo) => ({ ...todo })) } : {}),
     ...(state.plan !== undefined
@@ -248,11 +228,6 @@ export function reduceSession(state: SessionState, frame: CentaurEventFrame): Se
 
   if (frame.event === "artifact.captured") {
     reduceArtifactCaptured(next, frame.event_id, frame.data);
-    return next;
-  }
-
-  if (frame.event === "artifact.presented") {
-    reduceArtifactPresented(next, frame.event_id, frame.data);
     return next;
   }
 
@@ -948,50 +923,6 @@ function reduceArtifactCaptured(state: SessionState, eventId: number, event: Art
     executionId: event.execution_id ?? null,
     sourceEventIds: [eventId],
   });
-}
-
-/** Fold an `artifact.presented` frame into state. Keyed by display path (one
- * presentation per path); a re-present updates the existing entry and its
- * transcript item rather than appending a duplicate. */
-function reduceArtifactPresented(state: SessionState, eventId: number, event: ArtifactPresented): void {
-  const path = typeof event.path === "string" ? event.path : "";
-  if (!path) return;
-  const id = `artifact-presented:${path}`;
-  const title = typeof event.title === "string" && event.title.trim() ? event.title.trim() : null;
-  const renderer = typeof event.renderer === "string" && event.renderer.trim() ? event.renderer.trim() : "auto";
-  const description =
-    typeof event.description === "string" && event.description.trim() ? event.description.trim() : null;
-  const executionId = typeof event.execution_id === "string" ? event.execution_id : null;
-  const existing = state.artifactPresentations.find((presentation) => presentation.id === id);
-  if (existing) {
-    existing.title = title ?? existing.title;
-    existing.renderer = renderer;
-    existing.description = description ?? existing.description;
-    existing.executionId = executionId ?? existing.executionId;
-    existing.sourceEventIds.push(eventId);
-    const existingItem = state.items.find(
-      (item): item is ArtifactPresentationItem => item.type === "artifact_presentation" && item.id === id,
-    );
-    if (existingItem) {
-      existingItem.title = existing.title;
-      existingItem.renderer = existing.renderer;
-      existingItem.description = existing.description;
-      existingItem.executionId = existing.executionId;
-      existingItem.sourceEventIds.push(eventId);
-    }
-    return;
-  }
-  const presentation: ArtifactPresentation = {
-    id,
-    path,
-    title,
-    renderer,
-    description,
-    executionId,
-    sourceEventIds: [eventId],
-  };
-  state.artifactPresentations.push(presentation);
-  state.items.push({ type: "artifact_presentation", ...presentation });
 }
 
 function appendCodexStreamingText(

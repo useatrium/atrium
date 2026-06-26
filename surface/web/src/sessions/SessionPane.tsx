@@ -22,8 +22,6 @@ import {
   isTerminalExecutionStatus,
   sideEffectCount,
   toolDisplay,
-  type Artifact,
-  type ArtifactPresentationItem,
   type QuestionItem,
   type TextItem,
   type ToolCallItem,
@@ -37,7 +35,6 @@ import {
   type ProviderCredentialStatus,
 } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
-import { ArtifactPreviewModal } from './ArtifactsSurface';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { PlanPanel } from './PlanPanel';
@@ -762,14 +759,6 @@ export function SessionPane({
                   <QuestionTranscriptCard
                     item={item}
                     events={questionEventsByQuestion.get(item.questionId) ?? []}
-                  />
-                </div>
-              ) : item.type === 'artifact_presentation' ? (
-                <div className="pl-3.5">
-                  <ArtifactPresentationTranscriptCard
-                    item={item}
-                    sessionId={session.id}
-                    artifacts={artifacts}
                   />
                 </div>
               ) : item.type === 'reasoning' ? (
@@ -2037,73 +2026,6 @@ const TextBlock = memo(
   },
   (prev, next) => prev.item.text === next.item.text,
 );
-
-function displayArtifactPath(path: string): string {
-  const m = /\/workspace\/(.+)$/.exec(path);
-  if (m) return m[1]!;
-  return path.replace(/^\.\//, '');
-}
-
-function ArtifactPresentationTranscriptCard({
-  item,
-  sessionId,
-  artifacts,
-}: {
-  item: ArtifactPresentationItem;
-  sessionId: string;
-  artifacts: Artifact[];
-}) {
-  const [preview, setPreview] = useState(false);
-  const displayPath = displayArtifactPath(item.path);
-  const artifact = artifacts.find((candidate) => candidate.path === displayPath || candidate.path === item.path);
-  const title = item.title ?? displayPath.split('/').pop() ?? displayPath;
-  const ready = artifact && artifact.ref !== null;
-  return (
-    <article
-      data-testid="artifact-presentation-card"
-      className="my-2 overflow-hidden rounded-lg border border-accent-border bg-accent-tint/10"
-    >
-      <div className="flex items-start gap-3 px-3 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-accent-border bg-surface text-2xs font-semibold text-accent-text">
-          APP
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-3xs font-semibold uppercase tracking-wider text-accent-text">Presented artifact</div>
-          <div className="mt-0.5 truncate text-sm font-semibold text-fg">{title}</div>
-          <div className="mt-0.5 truncate font-mono text-2xs text-fg-muted">{displayPath}</div>
-          {item.description && <div className="mt-1 text-xs text-fg-body">{item.description}</div>}
-        </div>
-        {ready ? (
-          <button
-            type="button"
-            onClick={() => setPreview(true)}
-            className="rounded-md border border-accent-border px-2.5 py-1.5 text-xs font-semibold text-accent-text hover:bg-accent-soft"
-          >
-            Preview
-          </button>
-        ) : (
-          <span className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-fg-muted">Waiting for capture</span>
-        )}
-      </div>
-      {artifact && preview && (
-        <ArtifactPreviewModal
-          sessionId={sessionId}
-          artifact={artifact}
-          presentation={{
-            id: item.id,
-            path: artifact.path,
-            title: item.title,
-            renderer: item.renderer,
-            description: item.description,
-            executionId: item.executionId,
-            sourceEventIds: item.sourceEventIds,
-          }}
-          onClose={() => setPreview(false)}
-        />
-      )}
-    </article>
-  );
-}
 
 /** A transcript tool call: file edits (Edit/Write/MultiEdit/NotebookEdit) render
  * as an inline diff card — the actual change where it happened, not raw JSON —

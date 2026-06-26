@@ -245,9 +245,6 @@ function normalizeOutputLine(data: JsonValue, eventId: number): CentaurEventFram
     if (type === "artifact.captured") {
       return { event: "artifact.captured", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
     }
-    if (type === "artifact.presented") {
-      return { event: "artifact.presented", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
-    }
     return { event: "amp_raw_event", event_id: eventId, data: parsed as CentaurEventFrame["data"] } as CentaurEventFrame;
   }
 
@@ -310,7 +307,6 @@ function isLegacyCentaurEvent(event: string): boolean {
     "question_requested",
     "question_resolved",
     "artifact.captured",
-    "artifact.presented",
   ].includes(event);
 }
 
