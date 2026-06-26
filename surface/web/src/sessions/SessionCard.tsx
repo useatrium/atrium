@@ -9,6 +9,7 @@ import {
   type Session,
   type SessionStatus,
 } from './types';
+import { SessionAppPresentationCards } from './AppPresentationCard';
 
 /** Compact "repo@branch" label for the metadata line (branch optional). */
 export function repoBranchLabel(repo: string, branch?: string | null): string {
@@ -198,6 +199,7 @@ export function SessionCard({
           </a>
         </div>
       )}
+      {openable && <SessionAppPresentationCards session={session} surface="timeline" />}
     </div>
   );
 }

@@ -283,12 +283,26 @@ async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes
       rel_path: normalizeAppRelPath(row.rel_path),
       blob_sha: row.blob_sha,
       kind: row.kind,
-      mime: row.mime ?? 'application/octet-stream',
+      mime: appFileMime(row.rel_path, row.mime),
       size_bytes: Number(row.size_bytes ?? 0),
       s3_key: row.s3_key,
     }));
   }
   return [];
+}
+
+function appFileMime(relPath: string, storedMime: string | null | undefined): string {
+  const mime = (storedMime ?? '').split(';', 1)[0]!.trim().toLowerCase();
+  if (mime && mime !== 'application/octet-stream') return mime;
+  if (/\.html?$/i.test(relPath)) return 'text/html; charset=utf-8';
+  if (/\.css$/i.test(relPath)) return 'text/css; charset=utf-8';
+  if (/\.m?js$/i.test(relPath)) return 'text/javascript; charset=utf-8';
+  if (/\.json$/i.test(relPath)) return 'application/json; charset=utf-8';
+  if (/\.svg$/i.test(relPath)) return 'image/svg+xml';
+  if (/\.png$/i.test(relPath)) return 'image/png';
+  if (/\.jpe?g$/i.test(relPath)) return 'image/jpeg';
+  if (/\.webp$/i.test(relPath)) return 'image/webp';
+  return mime || 'application/octet-stream';
 }
 
 async function findOrCreateApp(

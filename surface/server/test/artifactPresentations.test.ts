@@ -146,15 +146,26 @@ describe('artifact presentations route', () => {
       presentations: [
         {
           id: 'artifact-presented:shared/apps/demo/index.html',
+          presentationId: expect.any(String),
+          version: 1,
+          appSlug: 'demo',
           path: 'shared/apps/demo/index.html',
           title: 'Demo',
           renderer: 'html-app',
           description: 'Demo app',
+          previewUrl: 'index.html?preview=1',
+          previewSizePolicy: expect.objectContaining({ enabled: true, defaultSize: 'card' }),
+          statePolicy: { mode: 'isolated' },
           executionId: null,
           sourceEventIds: [],
         },
       ],
     });
+    const persisted = await pool.query<{ version: number; app_slug: string }>(
+      'SELECT version, app_slug FROM app_presentations WHERE session_id = $1',
+      [sid],
+    );
+    expect(persisted.rows).toEqual([{ version: 1, app_slug: 'demo' }]);
 
     const preview = await app.inject({
       method: 'GET',
@@ -182,10 +193,16 @@ describe('artifact presentations route', () => {
       presentations: [
         {
           id: 'artifact-presented:shared/apps/plain/index.html',
+          presentationId: expect.any(String),
+          version: 1,
+          appSlug: 'plain',
           path: 'shared/apps/plain/index.html',
           title: 'plain',
           renderer: 'html-app',
           description: null,
+          previewUrl: 'index.html?preview=1',
+          previewSizePolicy: expect.objectContaining({ enabled: true }),
+          statePolicy: { mode: 'isolated' },
           executionId: null,
           sourceEventIds: [],
         },
@@ -210,10 +227,16 @@ describe('artifact presentations route', () => {
       presentations: [
         {
           id: 'artifact-presented:shared/apps/bad/index.html',
+          presentationId: expect.any(String),
+          version: 1,
+          appSlug: 'bad',
           path: 'shared/apps/bad/index.html',
           title: 'bad',
           renderer: 'html-app',
           description: null,
+          previewUrl: 'index.html?preview=1',
+          previewSizePolicy: expect.objectContaining({ enabled: true }),
+          statePolicy: { mode: 'isolated' },
           executionId: null,
           sourceEventIds: [],
         },
@@ -283,14 +306,56 @@ describe('artifact presentations route', () => {
       presentations: [
         {
           id: 'artifact-presented:shared/apps/defaulted/index.html',
+          presentationId: expect.any(String),
+          version: 1,
+          appSlug: 'defaulted',
           path: 'shared/apps/defaulted/index.html',
           title: 'Default',
           renderer: 'html-app',
           description: null,
+          previewUrl: 'index.html?preview=1',
+          previewSizePolicy: expect.objectContaining({ enabled: true }),
+          statePolicy: { mode: 'isolated' },
           executionId: null,
           sourceEventIds: [],
         },
       ],
     });
+  });
+
+  it('creates a new presentation version when the entry snapshot changes', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commitArtifact(sid, 'shared/apps/versioned/index.html', '<h1>v1</h1>');
+
+    const first = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().presentations[0]).toMatchObject({ appSlug: 'versioned', version: 1 });
+
+    const secondRead = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+    expect(secondRead.json().presentations[0]).toMatchObject({ appSlug: 'versioned', version: 1 });
+
+    await commitArtifact(sid, 'shared/apps/versioned/index.html', '<h1>v2</h1>');
+    const secondVersion = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/presentations`,
+      headers: { cookie },
+    });
+
+    expect(secondVersion.statusCode).toBe(200);
+    expect(secondVersion.json().presentations[0]).toMatchObject({ appSlug: 'versioned', version: 2 });
+    const persisted = await pool.query<{ version: number }>(
+      'SELECT version FROM app_presentations WHERE session_id = $1 ORDER BY version',
+      [sid],
+    );
+    expect(persisted.rows).toEqual([{ version: 1 }, { version: 2 }]);
   });
 });

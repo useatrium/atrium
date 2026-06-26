@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
 // (a) The session card transitions across session.* WS events without refetch.
 
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
 import { SessionCard } from '../src/sessions/SessionCard';
+import { sessionsApi } from '../src/sessions/api';
 import type { WireEvent } from '@atrium/surface-client';
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.spyOn(sessionsApi, 'listPresentations').mockResolvedValue({ presentations: [] });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const spawner = { id: 'u-kay', handle: 'kay', displayName: 'Kay' };
 const CH = 'ch-1';
@@ -195,5 +203,48 @@ describe('session card transitions across session.* events', () => {
       }),
     });
     expect(s.timelines[CH]!.main).toHaveLength(1);
+  });
+
+  it('renders generated app presentations under the timeline session card', async () => {
+    vi.mocked(sessionsApi.listPresentations).mockResolvedValue({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/support-triage-console/index.html',
+          presentationId: 'presentation-1',
+          version: 2,
+          appSlug: 'support-triage-console',
+          path: 'shared/apps/support-triage-console/index.html',
+          title: 'Support Triage Console',
+          renderer: 'html-app',
+          description: 'Embedded support queue demo.',
+          previewUrl: 'index.html?preview=1',
+          previewSizePolicy: { enabled: true, defaultSize: 'card' },
+          statePolicy: { mode: 'isolated' },
+          executionId: null,
+          sourceEventIds: [],
+        },
+      ],
+    });
+    const state = appReducer(spawned(loadedState()), {
+      type: 'server-event',
+      event: wire(104, 'session.completed', {
+        sessionId: 'sess-1',
+        status: 'completed',
+        resultExcerpt: 'Built app.',
+        permalink: '/s/sess-1',
+      }),
+    });
+
+    render(cardFor(state));
+
+    await waitFor(() => expect(screen.getByTestId('app-presentation-card')).toBeTruthy());
+    expect(screen.getByText('Support Triage Console')).toBeTruthy();
+    expect(screen.queryByText('Embedded support queue demo.')).toBeNull();
+    expect(screen.queryByText('html-app')).toBeNull();
+    expect(screen.queryByText('v2')).toBeNull();
+    const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
+    expect(frame.getAttribute('src')).toContain('path=shared%2Fapps%2Fsupport-triage-console%2Findex.html');
+    expect(frame.getAttribute('src')).toContain('preview=1');
+    expect(frame.className).toContain('h-[28rem]');
   });
 });

@@ -132,6 +132,7 @@ import {
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, classifyMediaFromMime, type MediaClassification } from './media-classifier.js';
 import { AppRegistry, normalizeAppRelPath, type AppScope } from './app-registry.js';
+import { listLatestAppPresentations, refreshAppPresentations } from './app-presentations.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -2954,6 +2955,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     }));
   }
 
+  function jsonNumberArray(value: unknown): number[] {
+    return Array.isArray(value) ? value.filter((item): item is number => typeof item === 'number') : [];
+  }
+
   app.post('/api/sessions/:id/apps', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
@@ -3455,6 +3460,35 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     const access = await sessionArtifactAccess(id, user.id);
+    await refreshAppPresentations(pool, { sessionId: id, getObjectBytes }).catch((err) => {
+      req.log.warn({ err, sessionId: id }, 'failed to refresh app presentations');
+    });
+    const persisted = await listLatestAppPresentations(pool, id);
+    if (persisted.length > 0) {
+      const presentations = persisted
+        .map((row) => {
+          const path = `shared/apps/${row.app_slug}/${row.entry_path}`;
+          if (!artifactPathInRoots(path, access.readableRoots)) return null;
+          return {
+            id: `artifact-presented:${path}`,
+            presentationId: row.id,
+            version: row.version,
+            appSlug: row.app_slug,
+            path,
+            title: row.title,
+            renderer: row.renderer,
+            description: row.description,
+            previewUrl: row.preview_url,
+            previewSizePolicy: row.preview_size_policy,
+            statePolicy: row.state_policy,
+            executionId: null,
+            sourceEventIds: jsonNumberArray(row.source_event_ids),
+          };
+        })
+        .filter((presentation): presentation is NonNullable<typeof presentation> => presentation !== null)
+        .sort((a, b) => a.path.localeCompare(b.path));
+      return reply.send({ presentations });
+    }
     // Presentation is automatic: every shared/apps/<slug>/ that has an entry file
     // (index.html by default) is a presented app. A sibling atrium.app.json is
     // OPTIONAL and only supplies metadata (title/description/renderer/entry).
@@ -3465,10 +3499,11 @@ function rawSession(req: FastifyRequest): string | undefined {
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
          LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
         WHERE a.workspace_id = $1
+          AND a.session_id = $2
           AND a.path LIKE 'shared/apps/%/%'
           AND v.kind <> 'deleted'
         ORDER BY a.path ASC`,
-      [access.workspaceId],
+      [access.workspaceId, id],
     );
     // Group the latest files under each app slug.
     const dirs = new Map<string, Map<string, string | null>>();

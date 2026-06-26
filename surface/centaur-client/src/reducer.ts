@@ -131,10 +131,16 @@ export interface Artifact {
  * display path so the surface can render it as "the answer". */
 export interface ArtifactPresentation {
   id: string;
+  presentationId?: string;
+  version?: number;
+  appSlug?: string;
   path: string;
   title: string | null;
   renderer: string;
   description: string | null;
+  previewUrl?: string | null;
+  previewSizePolicy?: unknown;
+  statePolicy?: unknown;
   executionId: string | null;
   sourceEventIds: number[];
 }

@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Artifact } from '@atrium/centaur-client';
+import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { AppsSurface } from '../src/sessions/AppsSurface';
 import { sessionsApi, type AppListRow } from '../src/sessions/api';
 
@@ -32,6 +32,19 @@ function app(over: Partial<AppListRow>): AppListRow {
     currentVersion: 2,
     entryPath: 'shared/apps/demo/index.html',
     updatedAt: '2026-06-25T12:00:00Z',
+    ...over,
+  };
+}
+
+function presentation(over: Partial<ArtifactPresentation>): ArtifactPresentation {
+  return {
+    id: 'artifact-presented:shared/apps/demo/index.html',
+    path: 'shared/apps/demo/index.html',
+    title: 'Pipeline Dashboard',
+    renderer: 'html-app',
+    description: 'Live business view',
+    executionId: 'exe-1',
+    sourceEventIds: [9],
     ...over,
   };
 }
@@ -90,6 +103,35 @@ describe('AppsSurface', () => {
     );
   });
 
+  it('renders and previews generated apps from presentations without live artifact rows', async () => {
+    render(<AppsSurface sessionId="s-1" artifacts={[]} presentations={[presentation({})]} embedded />);
+
+    await waitFor(() => expect(screen.getByText('Generated apps')).toBeTruthy());
+    expect(screen.getByText('Pipeline Dashboard')).toBeTruthy();
+    expect(screen.getByText('shared/apps/demo/index.html')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+
+    const frame = await screen.findByTitle('Artifact preview: index.html');
+    expect(frame.getAttribute('src')).toBe(
+      '/api/sessions/s-1/artifacts/preview?path=shared%2Fapps%2Fdemo%2Findex.html&renderer=html-app',
+    );
+  });
+
+  it('publishes a presentation-backed generated app root', async () => {
+    render(<AppsSurface sessionId="s-1" artifacts={[]} presentations={[presentation({})]} embedded />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() =>
+      expect(sessionsApi.publishApp).toHaveBeenCalledWith(
+        's-1',
+        expect.objectContaining({ name: 'demo', scope: 'workspace', entry: 'index.html' }),
+      ),
+    );
+  });
+
   it('launches a published app in a new tab', async () => {
     vi.mocked(sessionsApi.listApps).mockResolvedValue({ apps: [app({ id: 'app-9', name: 'demo' })] });
 
@@ -103,6 +145,22 @@ describe('AppsSurface', () => {
       'https://apps.example/demo',
       '_blank',
       'noopener,noreferrer',
+    );
+  });
+
+  it('keeps preview available after a generated app is published', async () => {
+    vi.mocked(sessionsApi.listApps).mockResolvedValue({ apps: [app({ id: 'app-9', name: 'demo' })] });
+
+    render(<AppsSurface sessionId="s-1" artifacts={[]} presentations={[presentation({})]} embedded />);
+
+    await waitFor(() => expect(screen.getByText('Published apps')).toBeTruthy());
+    expect(screen.queryByText('Generated apps')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+
+    const frame = await screen.findByTitle('Artifact preview: index.html');
+    expect(frame.getAttribute('src')).toBe(
+      '/api/sessions/s-1/artifacts/preview?path=shared%2Fapps%2Fdemo%2Findex.html&renderer=html-app',
     );
   });
 

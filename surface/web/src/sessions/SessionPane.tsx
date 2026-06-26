@@ -73,6 +73,7 @@ import {
 } from './types';
 import { useSessionStream } from './useSessionStream';
 import { useArtifactPresentations } from './useArtifactPresentations';
+import { AppPresentationCards } from './AppPresentationCard';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
 
@@ -790,6 +791,11 @@ export function SessionPane({
             <InlineFileChange change={a.change} />
           </div>
         ))}
+        {artifactPresentations.length > 0 && (
+          <div className="pl-3.5">
+            <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />
+          </div>
+        )}
         {displayStatus === 'completed' && (resultText || costUsd > 0) && (
           <div
             data-testid="turn-card"
