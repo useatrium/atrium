@@ -3455,21 +3455,30 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     const { id } = req.params as { id: string };
     const access = await sessionArtifactAccess(id, user.id);
-    const res = await pool.query<{
-      path: string;
-      s3_key: string | null;
-    }>(
+    // Presentation is automatic: every shared/apps/<slug>/ that has an entry file
+    // (index.html by default) is a presented app. A sibling atrium.app.json is
+    // OPTIONAL and only supplies metadata (title/description/renderer/entry).
+    const res = await pool.query<{ path: string; s3_key: string | null }>(
       `SELECT a.path, b.s3_key
          FROM artifacts a
          JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
          LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
         WHERE a.workspace_id = $1
-          AND a.path LIKE 'shared/apps/%/atrium.app.json'
+          AND a.path LIKE 'shared/apps/%/%'
           AND v.kind <> 'deleted'
         ORDER BY a.path ASC`,
       [access.workspaceId],
     );
+    // Group the latest files under each app slug.
+    const dirs = new Map<string, Map<string, string | null>>();
+    for (const row of res.rows) {
+      const m = /^shared\/apps\/([a-z0-9][a-z0-9_-]{0,63})\/(.+)$/.exec(row.path);
+      if (!m) continue;
+      const slug = m[1]!;
+      if (!dirs.has(slug)) dirs.set(slug, new Map());
+      dirs.get(slug)!.set(m[2]!, row.s3_key);
+    }
     const presentations: Array<{
       id: string;
       path: string;
@@ -3479,38 +3488,48 @@ function rawSession(req: FastifyRequest): string | undefined {
       executionId: string | null;
       sourceEventIds: number[];
     }> = [];
-    for (const row of res.rows) {
-      const manifestPath = canonicalizeRouteArtifactPath(reply, row.path, {
-        sessionId: id,
-        channelId: access.channelId,
-        readableChannelIds: access.readableChannelIds,
-      });
-      if (!manifestPath) return;
-      if (!artifactPathInRoots(manifestPath, access.readableRoots)) continue;
-      const match = /^shared\/apps\/([a-z0-9][a-z0-9_-]{0,63})\/atrium\.app\.json$/.exec(manifestPath);
-      if (!match || !row.s3_key) continue;
-      let manifest: Record<string, unknown>;
-      try {
-        const parsed = JSON.parse((await getObjectBytes(row.s3_key)).toString('utf8'));
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-        manifest = parsed as Record<string, unknown>;
-      } catch {
-        continue;
+    for (const [slug, files] of dirs) {
+      // Optional metadata manifest — malformed/absent falls back to defaults.
+      let manifest: Record<string, unknown> = {};
+      const manifestKey = files.get('atrium.app.json');
+      if (manifestKey) {
+        try {
+          const parsed = JSON.parse((await getObjectBytes(manifestKey)).toString('utf8'));
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            manifest = parsed as Record<string, unknown>;
+          }
+        } catch {
+          /* ignore malformed manifest; default metadata below */
+        }
       }
       let entry: string;
       try {
-        entry = normalizeAppRelPath(typeof manifest.entry === 'string' && manifest.entry.trim() ? manifest.entry : 'index.html');
+        entry = normalizeAppRelPath(
+          typeof manifest.entry === 'string' && manifest.entry.trim() ? manifest.entry : 'index.html',
+        );
       } catch {
-        continue;
+        entry = 'index.html';
       }
-      const slug = match[1]!;
-      const appDir = `shared/apps/${slug}`;
-      const path = `${appDir}/${entry}`;
+      // The entry must actually exist in the captured dir (so the preview has bytes).
+      if (!files.has(entry)) continue;
+      const path = `shared/apps/${slug}/${entry}`;
+      if (!artifactPathInRoots(path, access.readableRoots)) continue;
+      const renderer =
+        typeof manifest.renderer === 'string' && manifest.renderer.trim()
+          ? manifest.renderer
+          : /\.(jsx|tsx)$/i.test(entry)
+            ? 'react-jsx'
+            : 'html-app';
       presentations.push({
         id: `artifact-presented:${path}`,
         path,
-        title: typeof manifest.title === 'string' ? manifest.title : typeof manifest.name === 'string' ? manifest.name : slug,
-        renderer: typeof manifest.renderer === 'string' && manifest.renderer.trim() ? manifest.renderer : 'html-app',
+        title:
+          typeof manifest.title === 'string' && manifest.title.trim()
+            ? manifest.title
+            : typeof manifest.name === 'string' && manifest.name.trim()
+              ? manifest.name
+              : slug,
+        renderer,
         description: typeof manifest.description === 'string' ? manifest.description : null,
         executionId: null,
         sourceEventIds: [],
