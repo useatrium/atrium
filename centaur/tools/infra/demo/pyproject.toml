@@ -1,0 +1,10 @@
+[project]
+name = "demo"
+version = "0.1.0"
+description = "Demo tool for testing CD hot-reload"
+dependencies = []
+
+[tool.centaur]
+module = "client.py"
+hosts = []
+secrets = []

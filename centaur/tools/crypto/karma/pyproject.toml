@@ -1,0 +1,20 @@
+[project]
+name = "karma"
+description = "Karma — DAO delegate reputation, contributor scores, and governance analytics"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.centaur]
+module = "client.py"
+hosts = ["api.karmahq.xyz"]
+secrets = []

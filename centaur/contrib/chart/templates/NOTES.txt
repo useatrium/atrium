@@ -1,0 +1,18 @@
+Centaur K3s chart installed.
+
+Important follow-ups:
+
+1. This chart deploys the trusted control plane on K3s.
+2. Agent sandboxes run as Kubernetes Pods managed by api-rs.
+3. Infra Secrets must exist before install or upgrade; use `just bootstrap-secrets` for local dev.
+{{- if .Values.agentSandbox.enabled }}
+4. Agent Sandbox controller install is enabled through the optional bundled Helm dependency.
+{{- else }}
+4. Agent Sandbox controller install is disabled. Set `agentSandbox.enabled=true` only when this release should install the CRDs/controller.
+{{- end }}
+
+Useful commands:
+
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl get ingress -n {{ .Release.Namespace }}
+  helm template {{ .Release.Name }} {{ .Chart.Name }} -n {{ .Release.Namespace }} -f your-values.yaml

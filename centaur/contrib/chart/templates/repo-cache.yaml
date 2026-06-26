@@ -1,0 +1,246 @@
+{{- if .Values.repoCache.enabled }}
+{{- $overlaySources := include "centaur.overlaySources" . | fromJsonArray -}}
+{{- $repoCacheRepositories := list -}}
+{{- range .Values.repoCache.repositories }}
+{{- $repoCacheRepositories = append $repoCacheRepositories . -}}
+{{- end }}
+{{- range $source := $overlaySources }}
+{{- with (get $source "repo") }}
+{{- $repoCacheRepositories = append $repoCacheRepositories . -}}
+{{- end }}
+{{- end }}
+{{- $repoCacheRepositories = uniq $repoCacheRepositories -}}
+{{- if $repoCacheRepositories }}
+{{- $repoCacheHasGithubToken := or .Values.repoCache.githubToken.existingSecretName .Values.repoCache.githubToken.token -}}
+{{- $repoCacheImageRepository := default .Values.sandbox.image.repository .Values.repoCache.image.repository -}}
+{{- $repoCacheImageTag := default .Values.sandbox.image.tag .Values.repoCache.image.tag -}}
+{{- $repoCacheImagePullPolicy := default .Values.sandbox.image.pullPolicy .Values.repoCache.image.pullPolicy -}}
+{{- $repoCacheRepositoryRefs := list -}}
+{{- $repoCacheRepositoryRefRepos := list -}}
+{{- range $repo, $ref := .Values.repoCache.repositoryRefs }}
+{{- $repoCacheRepositoryRefs = append $repoCacheRepositoryRefs (printf "%s=%s" $repo $ref) -}}
+{{- $repoCacheRepositoryRefRepos = append $repoCacheRepositoryRefRepos $repo -}}
+{{- end }}
+{{- range $source := $overlaySources }}
+{{- $repo := get $source "repo" | default "" -}}
+{{- $ref := get $source "ref" | default "" -}}
+{{- if and $repo $ref (not (has $repo $repoCacheRepositoryRefRepos)) }}
+{{- $repoCacheRepositoryRefs = append $repoCacheRepositoryRefs (printf "%s=%s" $repo $ref) -}}
+{{- $repoCacheRepositoryRefRepos = append $repoCacheRepositoryRefRepos $repo -}}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" . "component" "repo-cache") }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" . "component" "repo-cache") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "repo-cache") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "repo-cache") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+{{- with .Values.repoCache.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.repoCache.affinity }}
+      affinity:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.repoCache.tolerations }}
+      tolerations:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+      containers:
+        - name: repo-cache
+          image: {{ printf "%s:%s" $repoCacheImageRepository $repoCacheImageTag | quote }}
+          imagePullPolicy: {{ $repoCacheImagePullPolicy }}
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              set -o pipefail
+              token_file=/github-token/token
+              if [ -s "$token_file" ]; then
+              cat > /tmp/git-askpass <<'EOF'
+              #!/bin/sh
+              case "$1" in
+                *Username*) printf '%s\n' x-access-token ;;
+                *Password*) cat /github-token/token ;;
+                *) printf '\n' ;;
+              esac
+              EOF
+              chmod 0700 /tmp/git-askpass
+              export GIT_ASKPASS=/tmp/git-askpass
+              fi
+              git config --global --add safe.directory '*'
+              git config --global init.defaultBranch main
+              umask 022
+              ready_file=/cache/.repo-cache-ready
+              ready_tmp="${ready_file}.tmp"
+
+              repository_fingerprint() {
+                printf 'repositories=%s\nrepository_refs=%s\n' "$REPOSITORIES" "$REPOSITORY_REFS"
+              }
+
+              repo_ref() {
+                local repo="$1"
+                for entry in $REPOSITORY_REFS; do
+                  case "$entry" in
+                    "$repo="*) printf '%s\n' "${entry#*=}"; return 0 ;;
+                  esac
+                done
+              }
+
+              checkout_repo() {
+                local repo="$1"
+                local target="$2"
+                local requested_ref
+                local default_branch
+                requested_ref="$(repo_ref "$repo")"
+                if [ -n "$requested_ref" ]; then
+                  if git -C "$target" rev-parse --verify --quiet "origin/${requested_ref}^{commit}" >/dev/null; then
+                    git -C "$target" checkout -q --detach "origin/${requested_ref}"
+                  elif git -C "$target" rev-parse --verify --quiet "${requested_ref}^{commit}" >/dev/null; then
+                    git -C "$target" checkout -q --detach "$requested_ref"
+                  else
+                    git -C "$target" -c gc.auto=0 fetch --prune --tags origin "$requested_ref"
+                    git -C "$target" checkout -q --detach FETCH_HEAD
+                  fi
+                  return
+                fi
+
+                default_branch="$(git -C "$target" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+                if [ -z "$default_branch" ] || [ "$default_branch" = "(unknown)" ]; then
+                  default_branch=main
+                fi
+                git -C "$target" checkout -q -B "$default_branch" "origin/$default_branch"
+              }
+
+              sync_repo() {
+                local repo="$1"
+                local repo_url="https://github.com/${repo}.git"
+                local target="/cache/${repo}"
+                local tmp
+                # Deterministic temp name. This script runs as a Kubernetes
+                # container command, and Kubernetes collapses a doubled dollar
+                # sign to a single one during its own $(VAR) expansion before
+                # bash sees it, so a PID-based suffix is neither unique nor
+                # valid. Sync is sequential per pod, so a fixed name plus the
+                # rm -rf below is enough.
+                tmp="${target}.tmp"
+
+                mkdir -p "$(dirname "$target")"
+                if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+                  echo "Updating $repo"
+                  git -C "$target" config gc.auto 0 || true
+                  git -C "$target" remote set-url origin "$repo_url" || git -C "$target" remote add origin "$repo_url"
+                  git -C "$target" -c gc.auto=0 fetch --prune --tags origin
+                  git -C "$target" remote set-head origin -a || true
+                  checkout_repo "$repo" "$target"
+                  git -C "$target" clean -fd
+                else
+                  echo "Cloning $repo"
+                  # Also sweep any stale "${target}.tmp.*" dirs left by the
+                  # previous PID-suffix scheme so they don't accumulate on disk.
+                  rm -rf "${target}".tmp* "$target"
+                  git clone --quiet "$repo_url" "$tmp"
+                  git -C "$tmp" config gc.auto 0
+                  git -C "$tmp" -c gc.auto=0 fetch --prune --tags origin
+                  git -C "$tmp" remote set-head origin -a || true
+                  checkout_repo "$repo" "$tmp"
+                  git -C "$tmp" clean -fd
+                  mv "$tmp" "$target"
+                fi
+              }
+
+              while true; do
+                sync_ok=1
+                for repo in $REPOSITORIES; do
+                  if ! sync_repo "$repo"; then
+                    echo "Failed to sync $repo" >&2
+                    sync_ok=0
+                  fi
+                done
+                if [ "$sync_ok" = "1" ]; then
+                  {
+                    repository_fingerprint
+                    printf 'synced_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  } > "$ready_tmp"
+                  mv "$ready_tmp" "$ready_file"
+                else
+                  rm -f "$ready_tmp" "$ready_file"
+                fi
+                sleep "$SYNC_INTERVAL_SECONDS"
+              done
+          env:
+            - name: REPOSITORIES
+              value: {{ join " " $repoCacheRepositories | quote }}
+            - name: REPOSITORY_REFS
+              value: {{ join " " $repoCacheRepositoryRefs | quote }}
+            - name: SYNC_INTERVAL_SECONDS
+              value: {{ .Values.repoCache.syncIntervalSeconds | quote }}
+            - name: GIT_TERMINAL_PROMPT
+              value: "0"
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  ready_file=/cache/.repo-cache-ready
+                  expected="$(printf 'repositories=%s\nrepository_refs=%s\n' "$REPOSITORIES" "$REPOSITORY_REFS")"
+                  actual="$(sed -n '1,2p' "$ready_file" 2>/dev/null || true)"
+                  [ "$actual" = "$expected" ] || exit 1
+                  for repo in $REPOSITORIES; do
+                    [ -d "/cache/$repo/.git" ] || exit 1
+                  done
+            initialDelaySeconds: {{ .Values.repoCache.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.repoCache.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.repoCache.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.repoCache.readinessProbe.failureThreshold }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsGroup: 0
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+{{ toYaml .Values.repoCache.resources | nindent 12 }}
+          volumeMounts:
+            - name: repo-cache
+              mountPath: /cache
+{{- if $repoCacheHasGithubToken }}
+            - name: github-token
+              mountPath: /github-token
+              readOnly: true
+{{- end }}
+      volumes:
+        - name: repo-cache
+          hostPath:
+            path: {{ .Values.repoCache.hostPath | quote }}
+            type: DirectoryOrCreate
+{{- if $repoCacheHasGithubToken }}
+        - name: github-token
+          secret:
+            secretName: {{ include "centaur.repoCacheGithubTokenSecretName" . }}
+            defaultMode: 256
+            items:
+              - key: {{ .Values.repoCache.githubToken.secretKey | quote }}
+                path: token
+{{- end }}
+{{- end }}
+{{- end }}

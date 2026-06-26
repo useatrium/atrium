@@ -1,0 +1,71 @@
+# Per-session overlay provisioning — the mountPropagation linchpin (Track C4).
+#
+# The runtime (api-rs sandbox controller) provisions ONE of these per session.
+# The key correction (k8s POC-confirmed): the PRIVILEGED setup mounts the overlay
+# `Bidirectional` (propagates to the node + persists there); the HARDENED agent
+# mounts the same hostPath `HostToContainer` — k8s FORBIDS `Bidirectional` on a
+# non-privileged container. The node-sync DaemonSet then reads the upper from the
+# node hostPath and writes through `merged` (both proven on a real overlay node).
+#
+# Validated mechanics (2026-06-20, kind node, real overlay):
+#   - agent writes through merged -> upper copy-up; node reads it  (capture)
+#   - node writes through merged (temp+rename, uid 1001/664) -> agent reads it (adopt)
+#   - char 0:0 whiteout -> Delete; symlink -> metadata-only, openat2 NO_SYMLINKS
+#     blocks `leak -> /etc/shadow` with ELOOP
+#
+# This is an ILLUSTRATIVE template (the controller renders the real one); apply it
+# in kind to re-smoke the linchpin.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: session-overlay-example
+  annotations:
+    centaur.ai/thread-key: "EXAMPLE_THREAD"
+    centaur.ai/execution-id: "EXAMPLE_EXEC"
+spec:
+  # The session-keyed persistent upper lives on a node-local PV (survives pause =
+  # pod delete; resume reattaches the same upper). hostPath shown for the smoke.
+  volumes:
+    - name: session-upper
+      hostPath:
+        path: /var/lib/centaur/overlays/EXAMPLE_SESSION
+        type: DirectoryOrCreate
+    - name: workspace          # the merged mount, shared host<->agent
+      hostPath:
+        path: /run/centaur/merged/EXAMPLE_SESSION
+        type: DirectoryOrCreate
+  initContainers:
+    # PRIVILEGED setup: builds lower (base+deps+repo RO + hydrated artifacts),
+    # mounts the overlay, and propagates `merged` to the node (Bidirectional).
+    - name: overlay-setup
+      image: centaur-node-sync:latest
+      command: ["/usr/local/bin/provision-overlay"]
+      args: ["--session", "EXAMPLE_SESSION"]
+      securityContext:
+        privileged: true       # mount(2) + Bidirectional propagation
+      volumeMounts:
+        - name: session-upper
+          mountPath: /var/lib/centaur/overlays/EXAMPLE_SESSION
+          mountPropagation: Bidirectional   # ONLY allowed on a privileged container
+        - name: workspace
+          mountPath: /run/centaur/merged/EXAMPLE_SESSION
+          mountPropagation: Bidirectional
+  containers:
+    # HARDENED agent: non-root, drop ALL caps, RuntimeDefault seccomp. Receives the
+    # already-mounted overlay via HostToContainer (rslave) — it never mounts.
+    - name: agent
+      image: centaur-agent:latest
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+          mountPropagation: HostToContainer   # receive the node's overlay; cannot be Bidirectional
+  # Ops detail: the init-mounted overlay persists on the node after the init exits
+  # → the controller must UNMOUNT on pod teardown (else orphaned node mounts).

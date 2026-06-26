@@ -1,0 +1,1 @@
+"""Invest intake normalization tool."""

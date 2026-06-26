@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "definitions": {
+    "consoleConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer" },
+        "railsEnv": { "type": "string" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "database": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" }
+          }
+        },
+        "slackDmSync": {
+          "type": "object",
+          "properties": {
+            "oauthAppSlug": { "type": "string" }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "httpPort": { "type": "integer" }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object" },
+            "defaultBackend": { "type": "boolean" },
+            "host": { "type": "string" },
+            "tls": { "type": "array" }
+          }
+        },
+        "worker": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "replicaCount": { "type": "integer" },
+            "resources": { "type": "object" }
+          }
+        },
+        "resources": { "type": "object" }
+      }
+    }
+  },
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "global": {
+      "type": "object",
+      "properties": {
+        "imagePullSecrets": { "type": "array" }
+      }
+    },
+    "firewall": {
+      "type": "object",
+      "properties": {
+        "existingCaSecretName": { "type": "string" },
+        "existingCaKeySecretName": { "type": "string" },
+        "ca": {
+          "type": "object",
+          "properties": {
+            "certPem": { "type": "string" },
+            "keyPem": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ironProxy": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "object",
+          "properties": {
+            "proxyPort": { "type": "integer" },
+            "managementPort": { "type": "integer" },
+            "healthPort": { "type": "integer" },
+            "pgPort": { "type": "integer" }
+          }
+        },
+        "secretSource": { "type": "string" },
+        "secretTtl": { "type": "string" }
+      }
+    },
+    "toolServer": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer" },
+        "repo": { "type": "string" },
+        "ref": { "type": "string" },
+        "subdir": { "type": "string" },
+        "extraSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": { "type": "string" },
+              "ref": { "type": "string" },
+              "subdir": { "type": "string" }
+            },
+            "required": ["repo"]
+          }
+        }
+      }
+    },
+    "console": { "$ref": "#/definitions/consoleConfig" },
+    "ironControl": { "$ref": "#/definitions/consoleConfig" },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "bootstrapSecretName": { "type": "string" }
+      }
+    },
+    "overlay": {
+      "type": "object",
+      "properties": {
+        "mountPath": { "type": "string" },
+        "systemPrompt": { "type": "string" }
+      }
+    },
+    "overlays": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": { "type": "string" },
+              "ref": { "type": "string" },
+              "toolsSubdir": { "type": "string" },
+              "workflowsSubdir": { "type": "string" },
+              "skillsSubdir": { "type": "string" },
+              "promptPath": { "type": "string" },
+              "personasSubdir": { "type": "string" }
+            },
+            "required": ["repo"]
+          }
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "runtimeClassName": { "type": "string" },
+        "reposPath": { "type": "string" },
+        "resources": { "type": "object" }
+      }
+    },
+    "repoCache": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "hostPath": { "type": "string" },
+        "repositories": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "repositoryRefs": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "syncIntervalSeconds": { "type": "integer" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "githubToken": {
+          "type": "object",
+          "properties": {
+            "existingSecretName": { "type": "string" },
+            "secretKey": { "type": "string" },
+            "token": { "type": "string" }
+          }
+        },
+        "egressPorts": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "readinessProbe": {
+          "type": "object",
+          "properties": {
+            "initialDelaySeconds": { "type": "integer" },
+            "periodSeconds": { "type": "integer" },
+            "timeoutSeconds": { "type": "integer" },
+            "failureThreshold": { "type": "integer" }
+          }
+        },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "resources": { "type": "object" }
+      }
+    },
+    "agentSandbox": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "namespace": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "name": { "type": "string" }
+          }
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "controller": {
+          "type": "object",
+          "properties": {
+            "extensions": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "apiRs": {
+      "type": "object",
+      "properties": {
+        "syncInfraSecrets": { "type": "boolean" },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "scrapeAnnotations": { "type": "boolean" },
+            "path": { "type": "string" },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "slackbotv2": {
+      "type": "object",
+      "properties": {
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "scrapeAnnotations": { "type": "boolean" },
+            "path": { "type": "string" },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "properties": {
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "subPath": { "type": "string" }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingressSourceNamespaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "apiIngressSourceNamespaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ingressControllerNamespaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

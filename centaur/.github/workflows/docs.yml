@@ -1,0 +1,127 @@
+name: Docs
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/docs.yml
+      - docs/**
+  push:
+    branches: [main, atrium/integration]
+    paths:
+      - .github/workflows/docs.yml
+      - docs/**
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  deployments: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy docs
+    runs-on: ${{ github.repository_owner == 'paradigmxyz' && 'depot-ubuntu-24.04-16' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        worker:
+          - name: docs
+            directory: docs
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build docs
+        run: npm run build
+
+      - name: Skip Cloudflare deploy
+        if: ${{ env.CLOUDFLARE_ACCOUNT_ID == '' || env.CLOUDFLARE_API_TOKEN == '' }}
+        run: echo "Cloudflare credentials are not configured; docs build completed without deployment."
+
+      - name: Deploy
+        if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'main') }}
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: ${{ matrix.worker.directory }}
+          command: deploy --config wrangler.ci.jsonc
+
+      - name: Preview
+        id: preview
+        if: ${{ github.event_name == 'pull_request' && env.CLOUDFLARE_ACCOUNT_ID != '' && env.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PREVIEW_ALIAS: pr-${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          npx wrangler versions upload --preview-alias "$PREVIEW_ALIAS" 2>&1 | tee "$RUNNER_TEMP/wrangler-preview.log"
+          deployment_url="$(grep -Eo 'https://[^[:space:]]+workers.dev[^[:space:]]*' "$RUNNER_TEMP/wrangler-preview.log" | tail -n 1)"
+          if [ -z "$deployment_url" ]; then
+            echo "No Cloudflare preview URL found in Wrangler output." >&2
+            exit 1
+          fi
+          echo "deployment-url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+      - name: Publish preview summary
+        if: ${{ github.event_name == 'pull_request' && steps.preview.outputs.deployment-url != '' }}
+        env:
+          DEPLOYMENT_URL: ${{ steps.preview.outputs.deployment-url }}
+        run: |
+          {
+            echo "### Cloudflare Workers docs preview"
+            echo
+            echo "$DEPLOYMENT_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish preview comment
+        if: ${{ github.event_name == 'pull_request' && steps.preview.outputs.deployment-url != '' }}
+        env:
+          DEPLOYMENT_URL: ${{ steps.preview.outputs.deployment-url }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- centaur-docs-preview-url -->"
+          body="$(cat <<EOF
+          $marker
+          ### Cloudflare Workers docs preview
+
+          $DEPLOYMENT_URL
+          EOF
+          )"
+          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" \
+            2>/dev/null | tail -n 1 || true)"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body"
+          fi

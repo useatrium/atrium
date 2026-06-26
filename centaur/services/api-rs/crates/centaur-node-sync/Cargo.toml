@@ -1,0 +1,38 @@
+[package]
+name = "centaur-node-sync"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The node-side sync component (Track C4 + the inbound complement). Privileged,
+# one-per-node: scans each session's overlay `upper` (the changed set), classifies
+# overlay encoding into capture ops, reads bytes with symlink-hardened + torn-read
+# safety, and (inbound) writes reconciled bytes back through `merged`. The
+# classifier + safety state-machines here are platform-neutral and unit-tested;
+# the actual syscalls (openat2, statx, xattr, /proc) live behind cfg(linux) and are
+# exercised by the on-node integration tests.
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+regex = "1"
+hex.workspace = true
+sha2.workspace = true
+# Daemon HTTP client (egress-only to Atrium). ureq = minimal, blocking, no tokio —
+# keeps the node daemon light + fast to compile.
+ureq = { version = "2", features = ["json"] }
+serde_json = "1"
+toml.workspace = true
+
+# Linux-only: the privileged node scanner's real syscalls (statx/rdev via std,
+# overlay xattrs via `xattr`, openat2 via a raw `libc` syscall).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+xattr = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

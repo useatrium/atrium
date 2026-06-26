@@ -1,0 +1,32 @@
+[project]
+name = "posthog"
+description = "PostHog product analytics — HogQL queries, pageviews, breakdowns"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+posthog = "centaur_tool_posthog.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.build.targets.wheel.sources]
+"." = "centaur_tool_posthog"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[tool.centaur]
+module = "client.py"
+secrets = [
+    {type = "http", name = "POSTHOG_API_KEY", mode = "inject", inject_header = "Authorization", inject_formatter = "Bearer {{ .Value }}", hosts = ["us.posthog.com"]},
+    {type = "http", name = "POSTHOG_PROJECT_ID", match_path = true, hosts = ["us.posthog.com"]},
+]

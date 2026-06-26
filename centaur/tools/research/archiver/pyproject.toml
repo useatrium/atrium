@@ -1,0 +1,34 @@
+[project]
+name = "archiver"
+description = "Document extraction via Reducto for investment materials"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12.0",
+    "browser-use-sdk>=2.0.14",
+    "httpx>=0.28.1",
+    "pillow>=12.1.0",
+    "playwright>=1.58.0",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+]
+
+[project.scripts]
+archiver = "centaur_tool_archiver.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.build.targets.wheel.sources]
+"." = "centaur_tool_archiver"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.centaur]
+module = "client.py"
+secrets = [
+    {type = "http", name = "REDUCTO_API_KEY", mode = "inject", inject_header = "Authorization", inject_formatter = "Bearer {{ .Value }}", hosts = ["platform.reducto.ai"]},
+    {type = "http", name = "BROWSER_USE_API_KEY", match_query = true, hosts = ["connect.browser-use.com"]},
+]

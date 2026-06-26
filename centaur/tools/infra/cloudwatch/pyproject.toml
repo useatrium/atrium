@@ -1,0 +1,47 @@
+[project]
+name = "cloudwatch"
+description = "AWS CloudWatch — Logs Insights queries, log events, metrics, and alarms (read-only)"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.34",
+    "typer>=0.12.0",
+    "python-dotenv>=1.0.0",
+]
+
+# The agent invokes every tool through the `cloudwatch` console-script shim that
+# install_tool_shims.py generates from [project.scripts] (`uvx --from . cloudwatch`);
+# client.py has no __main__, so without this entry the tool is invisible on the
+# shim-based (api-rs) path even though its [tool.centaur] metadata loads.
+[project.scripts]
+cloudwatch = "centaur_tool_cloudwatch.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.build.targets.wheel.sources]
+"." = "centaur_tool_cloudwatch"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+# AWS SigV4 rides iron-proxy's `aws_auth` transform: boto3 signs each request
+# with throwaway placeholder credentials, and iron-proxy re-signs it with the
+# real read-only IAM keys it resolves from `access_key_id`/`secret_access_key`
+# (stored in the secrets backend like any other tool credential). The real keys
+# never enter the tool process — same placeholder-swap model as the `secrets`
+# transform, just for SigV4. Scope the IAM user to read-only CloudWatch.
+[tool.centaur]
+module = "client.py"
+hosts = ["logs.*.amazonaws.com", "monitoring.*.amazonaws.com"]
+secrets = [
+    { type = "aws_auth", name = "cloudwatch", access_key_id = "AWS_ACCESS_KEY_ID", secret_access_key = "AWS_SECRET_ACCESS_KEY", hosts = [
+        "logs.*.amazonaws.com",
+        "monitoring.*.amazonaws.com",
+    ], allowed_services = [
+        "logs",
+        "monitoring",
+    ] },
+]
