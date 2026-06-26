@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+.env.local.*
+
+# Local-only dev scripts (not committed)
+scripts/local_invest_smoke.sh
+
+# Local-only Helm value overrides (not committed)
+contrib/chart/values.local.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Postgres data (local dev volume)
+pgdata/
+
+# Docker
+services/sandbox/repos/
+
+# Agent / AI IDE config
+.agents/*
+!.agents/skills/
+.amp/
+.claude/
+.cursor/
+.windsurf/
+skills-lock.json
+
+# Output artifacts
+dogfood-output/
+tool-qa-output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime artifacts
+logs/
+*.log
+
+# Node
+node_modules/
+.next/
+next-env.d.ts
+
+# TypeScript incremental build state
+*.tsbuildinfo
+_
+.notes

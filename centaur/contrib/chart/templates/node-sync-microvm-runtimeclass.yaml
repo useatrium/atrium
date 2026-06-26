@@ -1,0 +1,22 @@
+{{- /*
+NOT-VALIDATED-ON-MACOS (R2 / §8B #19): microVM RuntimeClasses (Kata/Firecracker)
+require a Linux node with the CRI handler installed — they cannot exist on Docker
+Desktop. This declares the RuntimeClass(es) the per-tenant DaemonSet references via
+runtimeClassName, giving each tenant's scanner a hardware-virtualization boundary.
+Gated off by default; enable per cluster once the node CRI has the handler.
+*/ -}}
+{{- if .Values.nodeSync.perTenant.microVM.enabled }}
+{{- range $rc := .Values.nodeSync.perTenant.microVM.runtimeClasses }}
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ $rc.name | quote }}
+handler: {{ $rc.handler | quote }}
+{{- with $rc.overhead }}
+overhead:
+  podFixed:
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

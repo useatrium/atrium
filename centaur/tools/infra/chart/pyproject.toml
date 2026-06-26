@@ -1,0 +1,12 @@
+[project]
+name = "chart"
+description = "Chart generation for Centaur. Single render_chart method returns base64 PNG images ready for Slack upload."
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.7.0",
+    "pandas>=2.0.0",
+]
+
+[tool.centaur]
+module = "client.py"

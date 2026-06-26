@@ -1,0 +1,23 @@
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TID", "T201"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# Tool CLIs are standalone entrypoints that use load_dotenv and print
+"*/cli.py" = ["TID251", "T201"]
+
+[lint.flake8-tidy-imports.banned-api]
+"os.getenv".msg = "Use `from centaur_sdk import secret; secret('KEY')` instead of os.getenv(). Secrets come from the secret manager, not environment variables."
+"os.environ.get".msg = "Use `from centaur_sdk import secret; secret('KEY')` instead of os.environ.get(). Secrets come from the secret manager, not environment variables."
+"dotenv.load_dotenv".msg = "Do not use load_dotenv() in tools. Secrets come from the secret manager sidecar."
+"requests.get".msg = "Use httpx instead of requests. httpx respects HTTPS_PROXY for firewall credential injection; requests has inconsistent proxy behavior."
+"requests.post".msg = "Use httpx instead of requests. httpx respects HTTPS_PROXY for firewall credential injection; requests has inconsistent proxy behavior."
+"requests.put".msg = "Use httpx instead of requests. httpx respects HTTPS_PROXY for firewall credential injection; requests has inconsistent proxy behavior."
+"requests.delete".msg = "Use httpx instead of requests. httpx respects HTTPS_PROXY for firewall credential injection; requests has inconsistent proxy behavior."
+"requests.Session".msg = "Use httpx instead of requests. httpx respects HTTPS_PROXY for firewall credential injection; requests has inconsistent proxy behavior."
+
+[lint.isort]
+known-first-party = ["centaur_sdk"]

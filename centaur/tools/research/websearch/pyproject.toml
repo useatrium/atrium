@@ -1,0 +1,40 @@
+[project]
+name = "websearch"
+description = "Web search and deep research via Parallel (free MCP or paid REST); optional Claude synthesis"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.54.0",
+    "httpx>=0.28.0",
+    "parallel-web>=0.6.0",
+    "pydantic>=2.10.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+    "typer>=0.12.0",
+]
+
+[project.scripts]
+websearch = "centaur_tool_websearch.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.build.targets.wheel.sources]
+"." = "centaur_tool_websearch"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[tool.centaur]
+module = "client.py"
+# `search` works anonymously through the hosted Parallel Search MCP. Set
+# PARALLEL_API_KEY to use the paid REST path and unlock `deep_research`.
+# Set ANTHROPIC_API_KEY to enable the Claude-backed synthesis pipeline on
+# top of search results (reviewer → writer → citation repair).
+optional_secrets = [
+    {type = "http", name = "PARALLEL_API_KEY", mode = "inject", inject_header = "Authorization", inject_formatter = "Bearer {{ .Value }}", hosts = ["api.parallel.ai", "search.parallel.ai"]},
+    {type = "http", name = "ANTHROPIC_API_KEY", mode = "inject", inject_header = "x-api-key", hosts = ["api.anthropic.com"]},
+]
+hosts = ["api.parallel.ai", "search.parallel.ai"]

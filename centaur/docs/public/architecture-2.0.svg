@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Centaur architecture 2.0</title>
+  <desc id="desc">Centaur request flow across ingress, control plane, execution, capabilities, and secret-managed egress.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M2 2 L10 6 L2 10 Z" fill="#00e100"/>
+    </marker>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#18181c"/>
+      <stop offset="100%" stop-color="#0d0d10"/>
+    </linearGradient>
+  </defs>
+  <rect width="1440" height="900" fill="#050506"/>
+  <g opacity="0.22">
+    <path d="M0 120H1440M0 240H1440M0 360H1440M0 480H1440M0 600H1440M0 720H1440" stroke="#ffffff" stroke-width="1"/>
+    <path d="M120 0V900M240 0V900M360 0V900M480 0V900M600 0V900M720 0V900M840 0V900M960 0V900M1080 0V900M1200 0V900M1320 0V900" stroke="#ffffff" stroke-width="1"/>
+  </g>
+  <rect x="68" y="58" width="1304" height="784" rx="34" fill="#0b0b0e" stroke="#2f2f35"/>
+  <text x="104" y="116" fill="#f7f7f2" font-family="Inter, Arial, sans-serif" font-size="42" font-weight="700">Centaur Architecture 2.0</text>
+  <text x="104" y="154" fill="#aaaab0" font-family="Inter, Arial, sans-serif" font-size="20">Durable agent control plane with isolated execution and controlled credential egress.</text>
+
+  <g font-family="Inter, Arial, sans-serif" filter="url(#softShadow)">
+    <g>
+      <rect x="104" y="224" width="250" height="144" rx="18" fill="url(#panel)" stroke="#3a3a42"/>
+      <text x="130" y="266" fill="#00e100" font-size="16" font-weight="700" letter-spacing="1.5">INGRESS</text>
+      <text x="130" y="304" fill="#f7f7f2" font-size="24" font-weight="700">Slack + API clients</text>
+      <text x="130" y="336" fill="#aaaab0" font-size="17">Slack webhooks, API</text>
+      <text x="130" y="360" fill="#aaaab0" font-size="17">clients, and automations.</text>
+    </g>
+
+    <g>
+      <rect x="438" y="196" width="314" height="200" rx="18" fill="url(#panel)" stroke="#3a3a42"/>
+      <text x="466" y="238" fill="#00e100" font-size="16" font-weight="700" letter-spacing="1.5">CONTROL PLANE</text>
+      <text x="466" y="276" fill="#f7f7f2" font-size="26" font-weight="700">Centaur API</text>
+      <text x="466" y="310" fill="#aaaab0" font-size="17">spawn, message, execute,</text>
+      <text x="466" y="334" fill="#aaaab0" font-size="17">stream, cancel, release</text>
+      <rect x="466" y="354" width="258" height="2" fill="#2f2f35"/>
+      <text x="466" y="380" fill="#f7f7f2" font-size="18" font-weight="650">Postgres is source of truth</text>
+    </g>
+
+    <g>
+      <rect x="844" y="196" width="314" height="200" rx="18" fill="url(#panel)" stroke="#3a3a42"/>
+      <text x="872" y="238" fill="#00e100" font-size="16" font-weight="700" letter-spacing="1.5">EXECUTION</text>
+      <text x="872" y="276" fill="#f7f7f2" font-size="26" font-weight="700">Sandbox runtime</text>
+      <text x="872" y="310" fill="#aaaab0" font-size="17">Docker locally, Kubernetes</text>
+      <text x="872" y="334" fill="#aaaab0" font-size="17">pods in production.</text>
+      <rect x="872" y="354" width="258" height="2" fill="#2f2f35"/>
+      <text x="872" y="380" fill="#f7f7f2" font-size="18" font-weight="650">Amp, Claude Code, Codex</text>
+    </g>
+
+    <g>
+      <rect x="438" y="500" width="314" height="184" rx="18" fill="url(#panel)" stroke="#3a3a42"/>
+      <text x="466" y="542" fill="#00e100" font-size="16" font-weight="700" letter-spacing="1.5">CAPABILITIES</text>
+      <text x="466" y="580" fill="#f7f7f2" font-size="26" font-weight="700">Tools + workflows</text>
+      <text x="466" y="614" fill="#aaaab0" font-size="17">REST tool plugins, durable</text>
+      <text x="466" y="638" fill="#aaaab0" font-size="17">workflows, and overlays.</text>
+    </g>
+
+    <g>
+      <rect x="844" y="500" width="314" height="184" rx="18" fill="url(#panel)" stroke="#3a3a42"/>
+      <text x="872" y="542" fill="#00e100" font-size="16" font-weight="700" letter-spacing="1.5">SECRETS + EGRESS</text>
+      <text x="872" y="580" fill="#f7f7f2" font-size="26" font-weight="700">Iron Proxy</text>
+      <text x="872" y="614" fill="#aaaab0" font-size="17">Injects real keys only for</text>
+      <text x="872" y="638" fill="#aaaab0" font-size="17">allowed upstream hosts.</text>
+    </g>
+
+    <g>
+      <rect x="1210" y="528" width="102" height="128" rx="16" fill="#121216" stroke="#3a3a42"/>
+      <text x="1261" y="574" fill="#f7f7f2" text-anchor="middle" font-size="18" font-weight="700">1PW</text>
+      <text x="1261" y="600" fill="#aaaab0" text-anchor="middle" font-size="15">env</text>
+      <text x="1261" y="624" fill="#aaaab0" text-anchor="middle" font-size="15">KMS</text>
+    </g>
+  </g>
+
+  <g fill="none" stroke="#00e100" stroke-width="4" marker-end="url(#arrow)">
+    <path d="M354 296H430"/>
+    <path d="M752 296H836"/>
+    <path d="M1001 396V492"/>
+    <path d="M844 592H760"/>
+    <path d="M1158 592H1200"/>
+  </g>
+
+  <g fill="none" stroke="#73737c" stroke-width="3" stroke-dasharray="8 8">
+    <path d="M596 396V492"/>
+    <path d="M752 592H836"/>
+  </g>
+
+  <g font-family="Inter, Arial, sans-serif" font-size="16" fill="#aaaab0">
+    <text x="380" y="276">signed events</text>
+    <text x="768" y="276">assigned run</text>
+    <text x="1018" y="452">tool calls</text>
+    <text x="768" y="572">API callbacks</text>
+    <text x="1168" y="572">secret refs</text>
+    <text x="614" y="452">checkpoints</text>
+  </g>
+</svg>

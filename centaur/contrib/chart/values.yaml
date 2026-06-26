@@ -1,0 +1,542 @@
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imagePullSecrets: []
+
+secretManager:
+  envPrefix: ""
+  existingSecretName: centaur-infra-env
+
+firewall:
+  existingCaSecretName: centaur-firewall-ca
+  existingCaKeySecretName: centaur-firewall-ca-key
+  ca:
+    certPem: ""
+    keyPem: ""
+
+ironProxy:
+  image:
+    repository: centaur-iron-proxy
+    tag: latest
+    pullPolicy: Always
+  service:
+    proxyPort: 8080
+    managementPort: 9092
+    healthPort: 9090
+    # Postgres listener port. iron-proxy multiplexes every pg_dsn secret through
+    # a single listener (routing by database name); NetworkPolicies allow this
+    # one port so callers can reach it.
+    pgPort: 5432
+  secretSource: onepassword
+  secretTtl: 10m
+
+# Base tools delivery for api-rs sandboxes. When enabled, repo-cache keeps `repo`
+# fresh on each node and a tools-bootstrap init container copies `subdir` into
+# each sandbox's /app/tools, so adding a tool is a push to the repo, not an image
+# rebuild. Prefer overlays.sources for new deployments; toolServer.* remains as
+# a compatibility input and maps to the first ordered overlay source when
+# overlays.sources is empty. `port` is legacy (the deprecated tool-server
+# sidecar) and unused here.
+toolServer:
+  enabled: true
+  port: 8001
+  # owner/name of the GitHub repo carrying the tools tree. REQUIRED when enabled;
+  # override for forks. Private repos additionally need githubToken below.
+  repo: paradigmxyz/centaur
+  # Branch, tag, or commit to check out; empty = the repo's default branch. Pin
+  # this to the tool set the api-rs image was built with so the creds api-rs
+  # grants match the tools the sandbox installs.
+  ref: ""
+  # Subdirectory in the repo holding the tools tree (mounted at /app/tools).
+  subdir: tools
+  # Additional repo/subdir sources copied after the base tools source. Duplicate
+  # tool names are skipped by the sandbox copy helper. These repos are cached
+  # automatically when repoCache.enabled=true.
+  extraSources: []
+  # - repo: tempoxyz/centaur-tempo
+  #   ref: ""
+  #   subdir: tools
+  # Image the tools-bootstrap init container runs in; empty fields fall back to
+  # sandbox.image, which carries git and install-tool-shims.
+  runnerImage:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  # GitHub token for direct private-repo clones when repoCache.enabled=false.
+  # With the default repo-cache path, configure repoCache.githubToken instead.
+  githubToken:
+    existingSecretName: ""
+    secretKey: token
+
+# console — Rails control plane (formerly "iron-control") for authenticated API
+# access + encrypted secret storage. Off by default; enable per-environment.
+# Uses a dedicated `iron_control_production` database on the bundled Postgres
+# (its own logical DB so its Rails schema_migrations table never collides with
+# the API's migration table); an init container creates the DB idempotently.
+# DATABASE_URL, bootstrap user/API-key, and the three ActiveRecord encryption
+# keys are injected from the shared infra Secret. Point IRON_CONTROL_DATABASE_URL
+# elsewhere to use an external DB.
+#
+# Backwards compatibility: this block used to be named `ironControl`. That key is
+# still honored as a deprecated alias — anything set under `ironControl` is merged
+# on top of these `console` defaults (see the `centaur.consoleValues` helper), so
+# existing values files keep working. Prefer `console` for new configuration.
+console:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: centaur-console
+    tag: latest
+    # Default Always: the image is published under the mutable `latest` tag, so
+    # IfNotPresent would pin pods to whatever digest a node already cached.
+    pullPolicy: Always
+  railsEnv: production
+  database:
+    # Logical DB created on the bundled Postgres by the create-db init
+    # container. Must match the primary connection's `database:` in the image's
+    # database.yml — the connection URL carries no database path, so Rails
+    # resolves the name from there.
+    name: iron_control_production
+  # Google as an OAuth identity provider for console sign-in (and the
+  # broker-credential refresh loop). Off by default — not every deployment uses
+  # Google to log in. When enabled, the IRON_CONTROL_GOOGLE_CLIENT_ID and
+  # IRON_CONTROL_GOOGLE_CLIENT_SECRET env vars are sourced from the shared infra
+  # Secret (keys <secretManager.envPrefix>IRON_CONTROL_GOOGLE_CLIENT_ID /
+  # _SECRET), which must exist or the console pods CreateContainerConfigError.
+  googleOauth:
+    enabled: false
+  # OAuth app slug whose user-level Slack credentials are used by the DM sync
+  # worker. Keep this aligned with the Console OAuth app users authorize.
+  slackDmSync:
+    oauthAppSlug: slack
+  service:
+    httpPort: 3000
+  # Optional Ingress for the console. Bring your own controller — Tailscale
+  # operator, Cloudflare, ingress-nginx, etc. — via className + annotations +
+  # tls. Mirrors the top-level `ingress` block (which is wired to the
+  # Slackbot). Add the controller's namespace to
+  # networkPolicy.ingressControllerNamespaces so its pods can reach the
+  # console; the console NetworkPolicy admits those namespaces when
+  # this is enabled.
+  #
+  # Tailscale operator example (serves https://console.<tailnet>.ts.net):
+  #   className: tailscale
+  #   defaultBackend: true
+  #   tls: [{hosts: [console]}]
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    # When true, render a single spec.defaultBackend instead of host/path
+    # rules. Required by the Tailscale operator; harmless otherwise.
+    defaultBackend: false
+    # Host for the path rule when not using defaultBackend; empty matches any
+    # host.
+    host: ""
+    tls: []
+  resources: {}
+  # Solid Queue worker (`bin/jobs`) that runs the console's background jobs —
+  # most importantly the broker-credential OAuth refresh loop that mints and
+  # refreshes the access tokens delivered inline via `token_broker` sources
+  # (e.g. the `openai-codex` brokered token). The web Puma pod runs no worker, so
+  # without this those jobs never execute. Active only when console.enabled.
+  worker:
+    enabled: true
+    replicaCount: 1
+    resources: {}
+
+# Values for the upstream 1Password Connect subchart
+# (https://github.com/1Password/connect-helm-charts/tree/main/charts/connect).
+# Deployment is gated on onepasswordConnect.connect.create AND on
+# ironProxy.secretSource == "onepassword-connect"; just up sets both when
+# OP_CONNECT_CREDENTIALS_FILE is present. The credentials Secret itself is
+# created externally by contrib/scripts/bootstrap-k8s-secrets.sh.
+onepasswordConnect:
+  connect:
+    create: false
+    credentialsName: centaur-onepassword-connect-credentials
+    credentialsKey: 1password-credentials.json
+
+secrets:
+  bootstrapSecretName: ""
+
+overlay:
+  mountPath: /app/overlay/org
+  systemPrompt: ""
+
+# Ordered repo-cache-backed overlays. Each source repo is synced by repo-cache;
+# api-rs reads tools/workflows from /var/lib/centaur/repos, while sandboxes read
+# matching workflow/skill paths from /home/agent/github. Later sources shadow
+# earlier ones when names collide. When sources is empty, toolServer.repo and
+# toolServer.extraSources are mapped into this shape for compatibility.
+#
+# Subdirs default to the conventional layout — toolsSubdir: tools,
+# workflowsSubdir: workflows, skillsSubdir: .agents/skills — so most sources
+# only need `repo`; set `ref` to a branch, tag, or commit when you do not want
+# the repo's default branch. Directories missing from a repo are skipped at
+# runtime. Set a subdir to "" to explicitly disable that surface for a source.
+overlays:
+  sources: []
+  # - repo: paradigmxyz/centaur
+  #   ref: ""
+  # - repo: your-org/centaur-overlay
+  #   ref: main
+  # - repo: your-org/workflows-only
+  #   ref: main
+  #   toolsSubdir: ""
+  #   skillsSubdir: ""
+
+sandbox:
+  controller: pod
+  image:
+    repository: centaur-agent
+    tag: latest
+    pullPolicy: Always
+  runtimeClassName: ""
+  reposPath: ""
+  # Node-local dep/compile cache root, bind-mounted read-write into every session
+  # + warm sandbox (pnpm store, cargo registry, uv, sccache). Shared across
+  # sessions on the node so installs/builds reuse prior work. Set "" to disable
+  # (sandboxes build cold). The node dir is hostPath DirectoryOrCreate (created
+  # root:root) and a root init container chmods the mount so the UID-1001 agent
+  # can populate it.
+  # SECURITY: this is a node-wide SHARED read-write cache — single-tenant only.
+  # TODO: namespace per tenant (or disable) before scheduling multi-tenant pods
+  # on shared nodes; a poisoned sccache entry would be consumed by other sessions.
+  depCachePath: /var/lib/centaur/depcache
+  # How the in-sandbox harness authenticates upstream. Single source of truth:
+  # the control plane reads it to register the matching iron-proxy credential
+  # AND propagates it into the sandbox, so the agent's auth.json and the
+  # injected credential always agree.
+  #   api_key      — codex/claude use an API key (proxy replaces the
+  #                  placeholder against api.openai.com / api.anthropic.com).
+  #   access_token — codex uses a ChatGPT token against chatgpt.com / claude a
+  #                  subscription token (proxy injects the brokered credential).
+  codexAuthMode: api_key
+  claudeCodeAuthMode: api_key
+  # The deployment's default harness: codex | amp | claudecode. Decides what
+  # warm sandboxes boot (SESSION_SANDBOX_HARNESS) and which harness auth
+  # fragment is required at startup (the other harnesses' fragments are
+  # registered too when available, so per-session --claude/--amp/--codex
+  # overrides keep working credentials). Per-session sandboxes always run
+  # their session's harness via container args; the sandbox image CMD only
+  # matters for containers started outside api-rs.
+  harnessEngine: codex
+  extraEnv: {}
+  stateVolume:
+    enabled: false
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    limits: {}
+    requests:
+      cpu: 100m
+      memory: 512Mi
+
+repoCache:
+  enabled: true
+  hostPath: /var/lib/centaur/repos
+  # Additional repos to cache. toolServer.repo is cached automatically when the
+  # tool server is enabled.
+  repositories: []
+  repositoryRefs: {}
+  syncIntervalSeconds: 30
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  githubToken:
+    # Optional for public repos; required for private repos.
+    existingSecretName: ""
+    secretKey: token
+    token: ""
+  egressPorts:
+    - 443
+  readinessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  resources: {}
+
+# Installs the upstream agent-sandbox controller + CRDs (subchart). Required by
+# apiRs when apiRs.sandboxBackend is agent-k8s, which is the default.
+agentSandbox:
+  enabled: true
+  namespace:
+    create: true
+    name: agent-sandbox-system
+  image:
+    repository: registry.k8s.io/agent-sandbox/agent-sandbox-controller
+    tag: v0.4.6
+    pullPolicy: IfNotPresent
+  controller:
+    extensions: false
+
+# Rust session control plane (services/api-rs). Owns sessions, agent-k8s
+# sandboxes (via the agents.x-k8s.io Sandbox CRD), and the per-sandbox
+# iron-proxy/firewall.
+apiRs:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: centaur-api-rs
+    tag: latest
+    pullPolicy: Always
+  port: 8080
+  runMigrations: true
+  sandboxBackend: agent-k8s
+  sandboxWorkload: codex-app-server
+  sandboxReadyTimeoutSecs: 90
+  sandboxWarmPoolSize: 3
+  sandboxWarmPoolReplenishIntervalSecs: 5
+  # When true, api-rs upserts the shared iron-control infra role and its
+  # backing secrets at startup and on tool-secret reconciliation intervals.
+  # Set false when multiple Centaur instances share one console/1Password
+  # Connect control plane and infra secrets are managed out of band.
+  syncInfraSecrets: true
+  # Workflow enablement policy. Production defaults to all workflows enabled.
+  # Set workflowEnableMode: allowlist in staging and list allowed workflow names
+  # in workflowAllowedNames as a comma/whitespace-separated string.
+  workflowEnableMode: all
+  workflowAllowedNames: ""
+  # Reaper: stop sandboxes idle-paused longer than the idle TTL or older than
+  # the max lifetime. 0 disables that sweep. Interval must be >= 1.
+  sandboxIdleStopTtlSecs: 10800 # 3 hours
+  sandboxMaxLifetimeSecs: 259200 # 3 days
+  sandboxReapIntervalSecs: 300
+  # Cleanup worker: stop unreferenced session/warm-pool sandboxes after two
+  # consecutive sweeps and restore idle-pauses lost across api-rs restarts.
+  # 0 disables the corresponding arm.
+  sandboxCleanupIntervalSecs: 300
+  sandboxIdleCleanupBackstopSecs: 21600 # 6 hours
+  ironProxy:
+    mode: enabled
+  metrics:
+    # The Rust API always serves Prometheus text metrics at /metrics. This flag
+    # only controls scrape annotations for Prometheus/VictoriaMetrics-style
+    # discovery.
+    scrapeAnnotations: true
+    path: /metrics
+    annotations: {}
+  # 1Password vault the iron-proxy secret source reads from when
+  # ironProxy.secretSource is "onepassword". Empty falls back to the binary
+  # default ("ai-agents").
+  opVault: ""
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+  livenessProbe:
+    failureThreshold: 6
+    periodSeconds: 10
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 6
+    periodSeconds: 10
+    timeoutSeconds: 5
+  terminationGracePeriodSeconds: 35
+  extraEnv: {}
+  resources: {}
+
+# Chat SDK Slackbot v2. Forwards Slack events to the api-rs control plane
+# (:8080) and streams responses back. Listens on :3001.
+slackbotv2:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: centaur-slackbotv2
+    tag: latest
+    pullPolicy: Always
+  userName: centaur
+  assistantStatus: ""
+  externalOrgAllowlist: ""
+  triggerBotAllowlist: ""
+  metrics:
+    # slackbotv2 serves Prometheus text metrics at /metrics. This flag only
+    # controls scrape annotations for Prometheus/VictoriaMetrics-style discovery.
+    scrapeAnnotations: true
+    path: /metrics
+    annotations: {}
+  extraEnv: {}
+  resources: {}
+
+# Chat SDK Linear bot — Linear agent (actor=app) ingress. Receives
+# AgentSessionEvent webhooks on /api/webhooks/linear, forwards sessions to the
+# api-rs control plane (:8080), and renders runs as Linear agent activities.
+# Disabled by default: requires the LINEAR_ACCESS_TOKEN / LINEARBOT_WEBHOOK_SECRET
+# secrets from the Linear OAuth app install (see contrib/scripts/bootstrap-k8s-secrets.sh).
+linearbot:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: centaur-linearbot
+    tag: latest
+    pullPolicy: Always
+  userName: centaur
+  extraEnv: {}
+  resources: {}
+
+# Discord chat ingress — mirrors slackbotv2, forwards to the api-rs control plane (:8080) over a
+# persistent Discord Gateway connection. Off by default; needs a Discord app + Message Content
+# Intent + a guild allowlist. Always exactly one replica (singleton Gateway session).
+discordbot:
+  enabled: false
+  image:
+    repository: centaur-discordbot
+    tag: latest
+    pullPolicy: Always
+  userName: centaur
+  # Comma/space-separated Discord guild IDs. The bot is INERT (ignores all messages) until set.
+  guildAllowlist: ""
+  # Comma/space-separated role IDs whose mentions also trigger the bot.
+  mentionRoleIds: ""
+  # Rename auto-created threads to the triggering message; set false to keep generic names.
+  nameThreads: true
+  extraEnv: {}
+  resources: {}
+
+# Microsoft Teams chat ingress. Forwards Teams Bot Framework activities to the
+# api-rs control plane (:8080) and renders session events back to Teams. Off by
+# default; needs a Teams app registration and Bot Framework endpoint routing.
+teamsbot:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: centaur-teamsbot
+    tag: latest
+    pullPolicy: Always
+  allowedTeamIds: ""
+  allowedChannelIds: ""
+  allowedTenantIds: ""
+  requireMention: true
+  downloadAttachments: false
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    host: ""
+    tls: []
+  extraEnv: {}
+  resources: {}
+
+postgres:
+  enabled: true
+  image:
+    repository: paradedb/paradedb
+    tag: 0.23.0-pg16
+    pullPolicy: IfNotPresent
+  args:
+    - "-c"
+    - "shared_preload_libraries=pg_search,pg_cron"
+    - "-c"
+    - "max_connections=500"
+  auth:
+    database: ai_v2
+    username: tempo
+    password: tempo_dev_change_me
+    existingSecretName: centaur-infra-env
+    existingSecretKey: POSTGRES_PASSWORD
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClassName: ""
+    subPath: ""
+  resources: {}
+
+ingress:
+  enabled: false
+  className: ""
+  # When true, render a single spec.defaultBackend instead of host/path rules.
+  # Required by the Tailscale operator's Funnel Ingress; harmless otherwise.
+  defaultBackend: false
+  annotations: {}
+  host: centaur.local
+  tls: []
+
+httpRoutes: []
+
+networkPolicy:
+  enabled: true
+  ingressSourceNamespaces: []
+  apiIngressSourceNamespaces: []
+  ingressControllerNamespaces:
+    - kube-system
+  # Port the kubernetes.default ClusterIP forwards to for the API server. The
+  # API needs egress to the control plane to manage sandboxes/proxies; under an
+  # enforcing CNI the ClusterIP (:443) is DNAT'd to this real endpoint port, so
+  # the egress rule must allow it. Defaults to 6443 (k3s, kubeadm). Set to 443
+  # on clusters whose API server endpoint already listens on 443.
+  apiServerPort: 6443
+  # Egress to an in-cluster OTLP trace collector (e.g. Laminar) in another
+  # namespace. api-rs needs this to export its own spans; sandboxes get their
+  # equivalent per-sandbox rule from api-rs, derived from the OTLP endpoint in
+  # sandbox.extraEnv. The collector's own namespace must also admit ingress
+  # from this namespace's pods.
+  otlpEgress:
+    enabled: false
+    # kubernetes.io/metadata.name of the collector's namespace, e.g. "laminar".
+    namespace: ""
+    port: 8000
+
+podSecurityContext:
+  fsGroupChangePolicy: OnRootMismatch
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# Node-sync (Track C4): the privileged per-node overlay scanner + inbound merger.
+# Enabled by default for the flat-~ agent filesystem; VM-per-tenant isolation can
+# be enabled per cluster once validated (the scanner reads every pod's upper on
+# its node — §8B #19). See centaur-node-sync crate + agent-sync-design.md.
+nodeSync:
+  enabled: true
+  overlayProvisioning:
+    enabled: true
+    # flat-~ agent FS: home IS the workspace
+    flatHome: true
+  image:
+    repository: centaur-node-sync
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Interval (floor) scan of each upper; node-side fanotify adds sub-second
+  # latency on top (the agent could never run it; the node is privileged).
+  scanIntervalSeconds: 2
+  hydrateArtifacts: true
+  # Atrium is reached egress-only; the node is trusted infra (not the sandbox),
+  # so it bypasses the per-sandbox egress NetworkPolicy → big files go direct to S3.
+  atriumBaseUrl: "http://atrium-server.atrium.svc:8080"
+  atriumEgress:
+    enabled: true
+    namespace: atrium
+    port: 8080
+    # Optional CIDR for local/dev installs where Atrium is outside Kubernetes
+    # (for example, a Docker bridge address in kind).
+    ipBlock: ""
+  apiKeySecret:
+    name: centaur-infra-env
+    key: ATRIUM_CAPTURE_API_KEY
+  # VM-per-tenant (R2 / §8B #19) — NOT-VALIDATED-ON-MACOS. Off by default: the
+  # single global DaemonSet above runs. Enable to render ONE DaemonSet per tenant,
+  # node-pinned + optionally under a microVM runtimeClass. See the per-tenant
+  # templates + notes/sync-hardening-plan.md. Example in values-per-tenant.example.yaml.
+  perTenant:
+    enabled: false
+    tenants: []
+    # - id: tenant-001
+    #   namespace: tenant-001        # default: release namespace
+    #   nodeSelector value is centaur.io/tenant=<id> (structural #19 boundary)
+    #   runtimeClassName: kata       # omit for shared-kernel
+    microVM:
+      enabled: false
+      runtimeClasses: []
+      # - name: kata
+      #   handler: kata
+      #   overhead: { cpu: "250m", memory: "160Mi" }

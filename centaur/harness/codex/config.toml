@@ -1,0 +1,35 @@
+model = "gpt-5.5"
+model_reasoning_effort = "low"
+personality = "pragmatic"
+model_verbosity = "low"
+service_tier = "fast"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+suppress_unstable_features_warning = true
+
+[features]
+goals = true
+fast_mode = true
+memories = true
+hooks = true
+multi_agent = false
+multi_agent_v2 = false
+enable_fanout = false
+runtime_metrics = true
+
+[agents]
+max_depth = 2
+job_max_runtime_seconds = 1800
+
+[tools]
+view_image = true
+
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+
+[projects."/"]
+trust_level = "trusted"

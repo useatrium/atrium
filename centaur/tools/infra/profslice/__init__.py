@@ -1,0 +1,1 @@
+"""Firefox Profiler data extraction."""

@@ -1,0 +1,48 @@
+{{- /*
+NOT-VALIDATED-ON-MACOS (R2 / §8B #19): per-tenant ServiceAccount + Role scoping —
+validate against a real RBAC-enforcing API server. Each per-tenant scanner gets its
+OWN ServiceAccount + a Role narrowed to the tenant namespace, so a scanner can only
+list pods/sessions belonging to its tenant (steady-state IAM narrowing, #19).
+Gated with the per-tenant DaemonSet.
+*/ -}}
+{{- if .Values.nodeSync.perTenant.enabled }}
+{{- range $tenant := .Values.nodeSync.perTenant.tenants }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" $ "component" "node-sync") | nindent 4 }}
+    centaur.io/tenant: {{ $tenant.id | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+  namespace: {{ $tenant.namespace | default $.Release.Namespace }}
+  labels:
+    centaur.io/tenant: {{ $tenant.id | quote }}
+rules:
+  # Narrowed: read only the pods/sessions in THIS tenant's namespace — never cluster-wide.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+  namespace: {{ $tenant.namespace | default $.Release.Namespace }}
+  labels:
+    centaur.io/tenant: {{ $tenant.id | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

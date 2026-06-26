@@ -1,0 +1,65 @@
+{{- range $index, $route := .Values.httpRoutes }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "centaur.httpRouteName" (dict "root" $ "route" $route "index" $index) }}
+  labels:
+{{ include "centaur.labels" $ | nindent 4 }}
+  {{- with $route.labels }}
+{{ toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $route.annotations }}
+  annotations:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+{{ toYaml $route.parentRefs | nindent 4 }}
+  {{- with $route.hostnames }}
+  hostnames:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+{{- range $rule := $route.rules }}
+    - {{- with $rule.matches }}
+      matches:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $rule.filters }}
+      filters:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $rule.backendRefs }}
+      backendRefs:
+{{- range $backend := . }}
+        - {{- if $backend.component }}
+          name: {{ include "centaur.componentName" (dict "root" $ "component" $backend.component) }}
+          {{- else }}
+          name: {{ $backend.name | quote }}
+          {{- end }}
+          {{- with $backend.namespace }}
+          namespace: {{ . | quote }}
+          {{- end }}
+          {{- with $backend.kind }}
+          kind: {{ . | quote }}
+          {{- else }}
+          kind: "Service"
+          {{- end }}
+          {{- with $backend.group }}
+          group: {{ . | quote }}
+          {{- else }}
+          group: ""
+          {{- end }}
+          {{- with $backend.port }}
+          port: {{ . }}
+          {{- end }}
+          {{- with $backend.weight }}
+          weight: {{ . }}
+          {{- else }}
+          weight: 1
+          {{- end }}
+{{- end }}
+      {{- end }}
+{{- end }}
+---
+{{- end }}

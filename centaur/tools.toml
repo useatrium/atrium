@@ -1,0 +1,5 @@
+# Tool directories — tools are discovered from each directory.
+# Later directories override earlier ones on name collision.
+plugin_dirs = [
+    "./tools",
+]

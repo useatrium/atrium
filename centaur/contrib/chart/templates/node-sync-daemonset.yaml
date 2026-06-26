@@ -1,0 +1,95 @@
+{{- /*
+Node-sync DaemonSet (Track C4): one privileged scanner per node. It reads each
+session's overlay `upper` from the node-local hostPath (O(changes) scan), captures
+changes direct to Atrium S3, and runs the inbound adopt (write-through-`merged`).
+Gated off by default — enable per cluster once the node-sync image is published.
+Multi-tenant note: gate this on VM-per-tenant (one node = one tenant) so the
+per-node scanner is structurally per-tenant (§8B #19).
+*/ -}}
+{{- if .Values.nodeSync.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" . "component" "node-sync") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" . "component" "node-sync") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "node-sync") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "centaur.componentSelectorLabels" (dict "root" . "component" "node-sync") | nindent 8 }}
+    spec:
+      # Privileged: it reads agent-owned files + interprets overlay encoding (rdev,
+      # trusted.overlay.* xattrs need CAP_SYS_ADMIN) and writes through `merged`.
+      hostPID: true
+      serviceAccountName: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+      containers:
+        - name: node-sync
+          image: "{{ .Values.nodeSync.image.repository }}:{{ .Values.nodeSync.image.tag }}"
+          imagePullPolicy: {{ .Values.nodeSync.image.pullPolicy }}
+          # Contract: the daemon discovers session manifests under --overlays-root,
+          # mounts each overlay on the node, then scans each mounted session upper.
+          args: ["--overlays-root", "/var/lib/centaur/overlays", "--interval", "{{ .Values.nodeSync.scanIntervalSeconds }}"]
+          securityContext:
+            privileged: true              # overlay xattr reads + write-through-merged
+            # Steady-state scan IAM is narrowed to session/tenant prefixes (#19);
+            # seccomp/AppArmor profiles are applied at the node level.
+          env:
+            - name: ATRIUM_BASE_URL
+              value: {{ .Values.nodeSync.atriumBaseUrl | quote }}
+            - name: ATRIUM_CAPTURE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nodeSync.apiKeySecret.name | quote }}
+                  key: {{ .Values.nodeSync.apiKeySecret.key | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NODE_SYNC_ATRIUM_ROOT
+              value: "/var/lib/centaur/atrium"
+{{- if .Values.nodeSync.hydrateArtifacts }}
+{{- printf "- name: NODE_SYNC_HYDRATE_ARTIFACTS\n  value: \"true\"" | nindent 12 }}
+{{- end }}
+          volumeMounts:
+            # ONE parent mount so overlayfs upperdir + workdir share a single
+            # vfsmount. Separate per-subdir hostPath binds are distinct mounts and
+            # overlayfs rejects them ("bad superblock", EINVAL). Children created
+            # under this root: overlays/<session> (upper), overlay-work,
+            # overlay-lower, repos, cas, atrium.
+            - name: centaur-state
+              mountPath: /var/lib/centaur
+            # The daemon mounts merged overlays here and propagates them to the node;
+            # agent pods receive the same hostPath with HostToContainer.
+            - name: merged
+              mountPath: /run/centaur/merged
+              mountPropagation: Bidirectional
+            - name: repo-cache
+              mountPath: /cache
+              readOnly: true
+      volumes:
+        - name: centaur-state
+          hostPath:
+            path: /var/lib/centaur
+            type: DirectoryOrCreate
+        - name: merged
+          hostPath:
+            path: /run/centaur/merged
+            type: DirectoryOrCreate
+        - name: repo-cache
+          hostPath:
+            path: {{ .Values.repoCache.hostPath | quote }}
+            type: DirectoryOrCreate
+      tolerations:
+        - operator: Exists                 # run on every node, incl. tainted ones
+{{- end }}

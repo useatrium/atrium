@@ -1,0 +1,9 @@
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TID", "T201"]
+ignore = ["E501", "TID251"]
+
+[lint.isort]
+known-first-party = ["centaur_sdk"]

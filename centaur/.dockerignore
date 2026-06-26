@@ -1,0 +1,86 @@
+# Version control
+.git/
+.git/**
+**/.git/
+**/.git/**
+
+# Virtual environments
+.venv/
+.venv/**
+**/.venv/
+**/.venv/**
+
+# Node
+node_modules/
+node_modules/**
+**/node_modules/
+**/node_modules/**
+
+# Build outputs
+target/
+target/**
+**/target/
+**/target/**
+dist/
+dist/**
+**/dist/
+**/dist/**
+build/
+build/**
+**/build/
+**/build/**
+.next/
+.next/**
+**/.next/
+**/.next/**
+coverage/
+coverage/**
+**/coverage/
+**/coverage/**
+
+# Sandbox cached repos (4GB+)
+services/sandbox/repos
+
+# Caches
+.ruff_cache/
+.ruff_cache/**
+**/.ruff_cache/
+**/.ruff_cache/**
+.pytest_cache/
+.pytest_cache/**
+**/.pytest_cache/
+**/.pytest_cache/**
+.mypy_cache/
+.mypy_cache/**
+**/.mypy_cache/
+**/.mypy_cache/**
+__pycache__/
+__pycache__/**
+**/__pycache__/
+**/__pycache__/**
+services/api-rs/target
+
+# Logs
+logs/
+
+# IDE / editor
+.claude
+.cursor
+.vscode
+.idea
+.amp
+.windsurf
+.DS_Store
+
+# Docker
+.dockerignore
+
+# Docs / non-runtime
+*.md
+!centaur_sdk/README.md
+!services/sandbox/SYSTEM_PROMPT.md
+!.agents/skills/**
+
+# Environment (secrets)
+.env
+.env.*

@@ -1,0 +1,29 @@
+# Example overlay values for VM-per-tenant node-sync (R2 / §8B #19).
+# NOT-VALIDATED-ON-MACOS — apply on a real Linux cluster:
+#   helm upgrade --install centaur contrib/chart -f contrib/chart/values-per-tenant.example.yaml
+#
+# Renders ONE node-sync DaemonSet per tenant, each pinned to that tenant's node pool
+# (label/taint centaur.io/tenant=<id>) and run under a microVM runtimeClass, so a
+# scanner's blast radius is one tenant behind a hypervisor boundary.
+nodeSync:
+  enabled: false        # the global single DaemonSet stays off when per-tenant is on
+  image:
+    repository: centaur-node-sync
+    tag: latest
+  perTenant:
+    enabled: true
+    tenants:
+      - id: tenant-001
+        namespace: tenant-001
+        runtimeClassName: kata
+      - id: tenant-002
+        namespace: tenant-002
+        runtimeClassName: kata
+    microVM:
+      enabled: true
+      runtimeClasses:
+        - name: kata
+          handler: kata
+          overhead:
+            cpu: "250m"
+            memory: "160Mi"

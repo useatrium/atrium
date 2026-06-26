@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "centaur-docs",
+  "compatibility_date": "2026-05-05",
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "centaur.run",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist/public",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "build": {
+    "command": "npm run build"
+  }
+}

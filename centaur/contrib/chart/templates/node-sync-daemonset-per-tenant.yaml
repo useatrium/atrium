@@ -1,0 +1,118 @@
+{{- /*
+NOT-VALIDATED-ON-MACOS (R2 / §8B #19): per-tenant VM isolation requires a real
+Linux cluster — privileged DaemonSet, mountPropagation, and microVM runtimeClasses
+(Kata/Firecracker) cannot be exercised on Docker Desktop. Validate on a real k8s
+cluster or GHA Linux runner. See notes/sync-hardening-plan.md.
+
+VM-per-tenant: instead of ONE node-scanner DaemonSet across all nodes, render ONE
+DaemonSet PER TENANT, pinned (nodeSelector + tolerations) to that tenant's node pool
+and optionally launched under a microVM runtimeClass — so a compromised/over-budget
+scanner's blast radius is a single tenant behind a hypervisor boundary. Gated off by
+default; enable with nodeSync.perTenant.enabled + a tenants list.
+*/ -}}
+{{- if .Values.nodeSync.perTenant.enabled }}
+{{- range $tenant := .Values.nodeSync.perTenant.tenants }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" $ "component" "node-sync") | nindent 4 }}
+    centaur.io/tenant: {{ $tenant.id | quote }}
+spec:
+  selector:
+    matchLabels:
+{{ include "centaur.componentSelectorLabels" (dict "root" $ "component" "node-sync") | nindent 6 }}
+      centaur.io/tenant: {{ $tenant.id | quote }}
+  template:
+    metadata:
+      labels:
+{{ include "centaur.componentSelectorLabels" (dict "root" $ "component" "node-sync") | nindent 8 }}
+        centaur.io/tenant: {{ $tenant.id | quote }}
+    spec:
+      hostPID: true
+      serviceAccountName: {{ include "centaur.componentName" (dict "root" $ "component" (printf "node-sync-%s" $tenant.id)) }}
+      {{- with $tenant.runtimeClassName }}
+      # microVM isolation (Kata/Firecracker) — the hypervisor boundary per tenant.
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
+      # Pin this tenant's scanner to this tenant's node pool only (one node = one
+      # tenant). The nodeSelector is the structural per-tenant boundary (#19).
+      nodeSelector:
+        centaur.io/tenant: {{ $tenant.id | quote }}
+      containers:
+        - name: node-sync
+          image: "{{ $.Values.nodeSync.image.repository }}:{{ $.Values.nodeSync.image.tag }}"
+          imagePullPolicy: {{ $.Values.nodeSync.image.pullPolicy }}
+          # Steady-state scan is narrowed to THIS tenant's overlay subtree.
+          args: ["--overlays-root", "/var/lib/centaur/overlays/{{ $tenant.id }}", "--interval", "{{ $.Values.nodeSync.scanIntervalSeconds }}"]
+          securityContext:
+            privileged: true
+          env:
+            - name: ATRIUM_BASE_URL
+              value: {{ $.Values.nodeSync.atriumBaseUrl | quote }}
+            - name: ATRIUM_CAPTURE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.nodeSync.apiKeySecret.name | quote }}
+                  key: {{ $.Values.nodeSync.apiKeySecret.key | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CENTAUR_TENANT_ID
+              value: {{ $tenant.id | quote }}
+          volumeMounts:
+            - name: overlays
+              mountPath: /var/lib/centaur/overlays/{{ $tenant.id }}
+            - name: overlay-work
+              mountPath: /var/lib/centaur/overlays/overlay-work
+            - name: overlay-lower
+              mountPath: /var/lib/centaur/overlays/overlay-lower
+            - name: repos
+              mountPath: /var/lib/centaur/repos
+            - name: merged
+              mountPath: /run/centaur/merged
+              mountPropagation: Bidirectional
+            - name: cas-cache
+              mountPath: /var/lib/centaur/cas
+            - name: repo-cache
+              mountPath: /cache
+              readOnly: true
+      volumes:
+        - name: overlays
+          hostPath:
+            path: /var/lib/centaur/overlays/{{ $tenant.id }}
+            type: DirectoryOrCreate
+        - name: overlay-work
+          hostPath:
+            path: /var/lib/centaur/overlays/overlay-work
+            type: DirectoryOrCreate
+        - name: overlay-lower
+          hostPath:
+            path: /var/lib/centaur/overlays/overlay-lower
+            type: DirectoryOrCreate
+        - name: repos
+          hostPath:
+            path: /var/lib/centaur/repos
+            type: DirectoryOrCreate
+        - name: merged
+          hostPath:
+            path: /run/centaur/merged
+            type: DirectoryOrCreate
+        - name: cas-cache
+          hostPath:
+            path: /var/lib/centaur/cas
+            type: DirectoryOrCreate
+        - name: repo-cache
+          hostPath:
+            path: {{ $.Values.repoCache.hostPath | quote }}
+            type: DirectoryOrCreate
+      tolerations:
+        - key: centaur.io/tenant
+          operator: Equal
+          value: {{ $tenant.id | quote }}
+          effect: NoSchedule
+{{- end }}
+{{- end }}

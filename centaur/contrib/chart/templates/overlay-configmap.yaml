@@ -1,0 +1,11 @@
+{{- if .Values.overlay.systemPrompt }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "centaur.componentName" (dict "root" . "component" "overlay") }}
+  labels:
+{{ include "centaur.componentLabels" (dict "root" . "component" "overlay") | nindent 4 }}
+data:
+  SYSTEM_PROMPT.md: |-
+{{- .Values.overlay.systemPrompt | trim | nindent 4 }}
+{{- end }}
