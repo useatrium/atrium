@@ -1008,8 +1008,16 @@ function isEnvVarNameKey(key: string, value: unknown): boolean {
 
 function looksSecretValue(value: string): boolean {
   if (SECRET_VALUE_RE.test(value)) return true;
+  // Pure-hex strings are content hashes / ids (sha256, sha1), not secrets — never
+  // treat them as credential-shaped, or every artifact/bundle manifest (which carry
+  // sha256 file hashes) would be wrongly rejected as containing a secret.
+  if (/^[0-9a-f]+$/i.test(value)) return false;
   if (value.length >= 32 && !/\s/.test(value) && /[A-Za-z]/.test(value) && /\d/.test(value)) {
-    return /token|secret|key|auth/i.test(value) || value.length >= 48;
+    if (/token|secret|key|auth/i.test(value)) return true;
+    // The length>=48 catch-all targets opaque high-entropy tokens. File paths (which
+    // contain '/') are not secrets — and bundle/harness-state manifests carry long
+    // paths. Opaque tokens (incl. raw JWTs) have no '/', so they're still caught.
+    return value.length >= 48 && !value.includes('/');
   }
   return false;
 }
@@ -1189,6 +1197,11 @@ function firstDeniedProfilePath(value: unknown): string | null {
   }
   if (!value || typeof value !== 'object') return null;
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    // `excluded`/`sourceHashes` legitimately record the denied paths the producer
+    // already filtered out — they are metadata, not active content. Only active
+    // content (settings/mcpServers/bundles) could smuggle a denied path in, so skip
+    // these branches or every correctly-sanitized baseline would be rejected.
+    if (/^(excluded|source_?hashes|source_file_hashes|warnings)$/i.test(key)) continue;
     if (
       /^(path|source_path)$/i.test(key)
       && typeof child === 'string'
