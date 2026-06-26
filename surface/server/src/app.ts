@@ -4411,7 +4411,9 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!isHarness(harness)) {
       return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
     }
-    const bundle = await loadHarnessStateBundle(pool, id, harness);
+    const ref = await resolveInternalSessionRef(id);
+    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
+    const bundle = await loadHarnessStateBundle(pool, ref.id, harness);
     if (!bundle) return reply.code(404).send({ error: 'not_found', message: 'no harness-state bundle captured' });
     return reply.send(bundle);
   });
@@ -4423,13 +4425,13 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!isHarness(harness)) {
       return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
     }
-    const sess = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1`, [id]);
-    if (!sess.rows[0]) return reply.code(404).send({ error: 'session_not_found' });
+    const ref = await resolveInternalSessionRef(id);
+    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
     try {
       const { size, sha256 } = await storeHarnessStateBundle(
         pool,
         { uploadObject },
-        id,
+        ref.id,
         harness,
         (req.body ?? {}) as { adapterVersion?: string; manifest?: unknown },
       );
@@ -4650,9 +4652,11 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!isHarness(harness)) {
       return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
     }
+    const ref = await resolveInternalSessionRef(id);
+    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
     const session = await pool.query<{ spawned_by: string }>(
       'SELECT spawned_by FROM sessions WHERE id = $1',
-      [id],
+      [ref.id],
     );
     const ownerId = session.rows[0]?.spawned_by;
     if (!ownerId) return reply.code(404).send({ error: 'session_not_found' });

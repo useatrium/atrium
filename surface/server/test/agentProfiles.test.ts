@@ -742,3 +742,67 @@ describe('harness-state bundle and credential refresh prerequisites', () => {
     expect(bad.statusCode).toBe(400);
   });
 });
+
+// Regression for the bugs the live producer E2E exposed: the real node-sync daemon
+// always addresses sessions by centaur_thread_key (not a uuid), and its real payloads
+// carry sha256 file hashes + an `excluded` list naming the denied auth.json.
+describe('#97 fix-forward: thread-key resolution + real producer payload shapes', () => {
+  it('provider-credential-refresh resolves the session by centaur_thread_key', async () => {
+    const sid = await session('codex');
+    const tk = await sessionThreadKey(sid);
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${tk}/provider-credential-refresh?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: { authJson: JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'tok-abc' } }) },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().provider).toMatchObject({ provider: 'codex', connected: true });
+  });
+
+  it('harness-state-bundle resolves by thread key and accepts a manifest of sha256 file hashes', async () => {
+    const sid = await session('codex');
+    const tk = await sessionThreadKey(sid);
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${tk}/harness-state-bundle?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: {
+        adapterVersion: 'centaur-test',
+        manifest: {
+          files: [
+            { path: '.codex/sessions/2026/06/25/rollout-thread.jsonl', sha256: SHA, sizeBytes: 120, role: 'transcript' },
+          ],
+        },
+      },
+    });
+    expect(put.statusCode).toBe(200);
+    const get = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${tk}/harness-state-bundle?harness=codex`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(get.statusCode).toBe(200);
+    expect(get.json().manifest.files[0].path).toContain('rollout-thread.jsonl');
+  });
+
+  it('profile-baseline (thread-key) accepts a payload whose excluded list names the denied auth.json', async () => {
+    const sid = await session('codex');
+    const tk = await sessionThreadKey(sid);
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${tk}/profile-baseline?harness=codex`,
+      headers: { 'x-api-key': KEY },
+      payload: {
+        provider: 'codex',
+        adapterVersion: 'centaur-test',
+        manifest: {
+          settings: { model: 'gpt-5' },
+          excluded: [{ path: '.codex/auth.json', reason: 'denied' }],
+          sourceHashes: [{ path: '.codex/config.toml', sha256: SHA }],
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});
