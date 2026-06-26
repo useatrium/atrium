@@ -24,11 +24,20 @@ one PR/CI run instead of two coordinated PRs across two repos.
 ## Deploy
 Unchanged, just from the subtree now: `cd centaur && just build-one api-rs && just build-one sandbox && just deploy`.
 
-## Deferred fast-follow: port Centaur CI
+## Centaur CI
 Centaur's own workflows live at `centaur/.github/workflows/` and are **inert** here (GitHub
-only runs root `.github/workflows/`). Porting the *check* workflows (cargo build/test,
-`check-migration-order.sh` — the 1000+ guard, console-ci) to root with `paths: ['centaur/**']`
-is a tracked fast-follow. **Do NOT port the publishing workflows** (`publish-images.yml`,
-`node-sync-image.yml`, `release-chart.yml`, `docs.yml`) blindly — firing those from atrium
-would push images/charts to Centaur's registries from the wrong repo; they need deliberate
-re-targeting or omission. Until ported, validate centaur changes locally (`cd centaur && just …`).
+only runs root `.github/workflows/`).
+
+**Ported → `.github/workflows/centaur-ci.yml`** (scoped to `centaur/**`): the runtime checks
+`migration-order` (the 1000+ guard), `rust-api` (fmt/clippy/test + postgres integration), the
+`node-sync-overlay` validation, and the heavy `node-sync-pod-e2e` (kind cluster). The
+`depot-*` runners upstream fall back to `ubuntu-latest` off `paradigmxyz`, and no secrets are
+needed. **Kept non-required for now** (observe green first, then add `Centaur CI success` to
+master's branch protection).
+
+**Not ported (intentional):**
+- *Bot test jobs* (`slackbot/linearbot/discord/teams`) — deferred; peripheral to atrium. Add
+  to `centaur-ci.yml` if their tests start mattering here.
+- *Publishing workflows* (`publish-images.yml`, `node-sync-image.yml`, `release-chart.yml`,
+  `docs.yml`) — **must not** run from atrium (they'd push images/charts to Centaur's
+  registries from the wrong repo). Deploys still happen via `cd centaur && just deploy`.
