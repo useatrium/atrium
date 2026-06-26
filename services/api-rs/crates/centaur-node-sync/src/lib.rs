@@ -31,6 +31,7 @@ pub mod secret;
 pub mod session_manifest;
 pub mod state;
 pub mod tornread;
+pub mod warmcache;
 pub mod wip;
 
 #[cfg(target_os = "linux")]

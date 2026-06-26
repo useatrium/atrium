@@ -208,6 +208,61 @@ impl AtriumClient for HttpAtriumClient {
         parse_hydration_scope(value, &self.session_id)
     }
 
+    fn warmcache_manifest(
+        &self,
+        lockfile_hash: &str,
+        kind: &str,
+    ) -> Result<Vec<crate::cas::WarmcacheManifestEntry>, String> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!(
+                "/cache/hydration?lockfile_hash={}&kind={}",
+                enc(lockfile_hash),
+                enc(kind)
+            )))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| format!("cache/hydration: {e}"))?;
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            entries: Vec<crate::cas::WarmcacheManifestEntry>,
+        }
+        let parsed: Resp = resp.into_json().map_err(|e| e.to_string())?;
+        Ok(parsed.entries)
+    }
+
+    fn fetch_cache_blob(&mut self, sha256: &str) -> Result<Vec<u8>, String> {
+        // The blob route is workspace-agnostic (content-addressed), not session-scoped.
+        let resp = self
+            .agent
+            .get(&format!(
+                "{}/api/internal/cache/blob?sha256={}",
+                self.base_url,
+                enc(sha256)
+            ))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| format!("cache/blob: {e}"))?;
+        // Defensive: read with a hard cap so an oversized/malicious body can't OOM
+        // the node daemon (into_reader() is a trait object, so cap manually).
+        let cap = crate::warmcache::MAX_WARMCACHE_BLOB_BYTES;
+        let mut reader = resp.into_reader();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            let n = std::io::Read::read(&mut reader, &mut chunk).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            if buf.len() as u64 + n as u64 > cap {
+                return Err(format!("cache blob {sha256} exceeds {cap} bytes"));
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        Ok(buf)
+    }
+
     fn put_harness_transcript(&mut self, harness: &str, bytes: &[u8]) -> Result<(), String> {
         self.agent
             .put(&self.url(&format!("/harness-transcript?harness={}", enc(harness))))

@@ -46,6 +46,20 @@ pub trait AtriumClient {
     fn hydration_scope(&self) -> Result<Vec<crate::cas::CasHydrateEntry>, String> {
         Ok(vec![])
     }
+    /// Fetch a warm-cache manifest (dep-store file paths + content hashes) for a
+    /// dependency set, keyed by lockfile-hash + kind. Default empty so test fakes
+    /// and legacy mocks keep compiling.
+    fn warmcache_manifest(
+        &self,
+        _lockfile_hash: &str,
+        _kind: &str,
+    ) -> Result<Vec<crate::cas::WarmcacheManifestEntry>, String> {
+        Ok(vec![])
+    }
+    /// Fetch a warm-cache blob's bytes by content sha (workspace-agnostic CAS).
+    fn fetch_cache_blob(&mut self, _sha256: &str) -> Result<Vec<u8>, String> {
+        Err("fetch_cache_blob not supported by this client".to_string())
+    }
     /// PUT the harness CLI's own transcript snapshot. This is internal harness
     /// state, not an artifact, so it bypasses the artifact ledger.
     fn put_harness_transcript(&mut self, _harness: &str, _bytes: &[u8]) -> Result<(), String> {
