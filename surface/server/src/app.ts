@@ -1,14 +1,11 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
-import fastifyCookie from '@fastify/cookie';
-import fastifyRateLimit from '@fastify/rate-limit';
-import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import type { Db } from './db.js';
-import { DomainError } from './events.js';
 import { clearReceiptTimers } from './push.js';
 import type { SessionRuns } from './session-runs.js';
 import { createAppAccessContext } from './app-access.js';
 import { installAppAuth } from './app-auth.js';
+import { type AppRateLimitConfig, installAppHttp } from './app-http.js';
 import { createAppMutationContext } from './app-mutations.js';
 import { createAppServices, type AppServiceDeps } from './app-services.js';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -46,7 +43,7 @@ export interface AppDeps {
   hub?: AppServiceDeps['hub'];
   sessionSecret?: AppServiceDeps['sessionSecret'];
   sessionRuns?: AppServiceDeps['sessionRuns'];
-  rateLimit?: false | { max?: number; loginMax?: number };
+  rateLimit?: AppRateLimitConfig;
   fileStorage?: AppServiceDeps['fileStorage'];
   stt?: {
     enqueue(): void;
@@ -78,58 +75,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   } = createAppServices(deps);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
-  await app.register(fastifyCookie);
-  await app.register(fastifyWebsocket, {
-    options: { maxPayload: 64 * 1024 },
-  });
-
   const rateLimit = deps.rateLimit;
-  if (rateLimit !== false) {
-    await app.register(fastifyRateLimit, {
-      max: rateLimit?.max ?? 600,
-      timeWindow: '1 minute',
-      errorResponseBuilder: (_req, context) => ({
-        statusCode: context.statusCode,
-        error: 'rate_limited',
-        message: `rate limit exceeded, retry in ${context.after}`,
-      }),
-    });
-  }
-
-  // CORS for allowlisted cross-origin clients (the Electron desktop shell at
-  // app://atrium uses an absolute origin + bearer token). The web SPA is
-  // same-origin and never sends an Origin header here. Token auth carries no
-  // cookies, so we echo only allowlisted origins and omit allow-credentials.
-  const corsOrigins = new Set(config.corsOrigins);
-  app.addHook('onRequest', async (req, reply) => {
-    const origin = req.headers.origin;
-    if (typeof origin !== 'string' || !corsOrigins.has(origin)) return;
-    reply.header('access-control-allow-origin', origin);
-    reply.header('vary', 'Origin');
-    reply.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    reply.header('access-control-allow-headers', 'authorization, content-type');
-    reply.header('access-control-max-age', '600');
-    if (req.method === 'OPTIONS') {
-      reply.code(204).send();
-      return reply;
-    }
-  });
-
-  app.setErrorHandler((err, _req, reply) => {
-    if (err instanceof DomainError) {
-      return reply.code(err.statusCode).send({ error: err.code, message: err.message });
-    }
-    const error = err as { statusCode?: number; message?: unknown };
-    if (error.statusCode === 429) {
-      return reply.code(429).send({
-        error: 'rate_limited',
-        message: typeof error.message === 'string' && error.message.length > 0 ? error.message : 'rate limit exceeded',
-      });
-    }
-    app.log.error(err);
-    const status = error.statusCode ?? 500;
-    return reply.code(status).send({ error: 'internal', message: 'internal error' });
-  });
+  await installAppHttp(app, rateLimit);
 
   const { rawSession, userFromSession, userFromRequest, requireUser } = installAppAuth(app, {
     pool,
