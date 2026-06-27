@@ -5,7 +5,6 @@ import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { verifySession } from './cookie.js';
 import { DomainError, type UserRef } from './events.js';
 import { workspaceIdsFor } from './membership.js';
 import { WsHub } from './hub.js';
@@ -23,6 +22,7 @@ import { ProviderCredentials } from './provider-credentials.js';
 import { AgentProfiles } from './agent-profiles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { AppRegistry } from './app-registry.js';
+import { installAppAuth } from './app-auth.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerAtriumRoutes } from './routes/atrium.js';
@@ -47,9 +47,6 @@ import { registerWebsocketRoutes } from './routes/websocket.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 declare module 'fastify' {
-  interface FastifyRequest {
-    user: UserRef | null;
-  }
   interface FastifyInstance {
     /** The session runtime, exposed for tests and operational hooks. */
     sessionRuns: SessionRuns;
@@ -166,58 +163,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
 
-  async function userFromSession(raw: string | undefined | null): Promise<UserRef | null> {
-    const sessionId = verifySession(raw, secret);
-    if (!sessionId) return null;
-    if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
-    const res = await pool.query<{
-      id: string;
-      handle: string;
-      display_name: string;
-      expires_at: Date;
-    }>(
-      `SELECT u.id, u.handle, u.display_name, s.expires_at
-       FROM auth_sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.id = $1 AND s.expires_at > now()`,
-      [sessionId],
-    );
-    const row = res.rows[0];
-    if (!row) return null;
-    // Sliding renewal: active sessions never expire, idle ones die in 30d.
-    if (new Date(row.expires_at).getTime() - Date.now() < 15 * 24 * 60 * 60 * 1000) {
-      void pool
-        .query(`UPDATE auth_sessions SET expires_at = now() + interval '30 days' WHERE id = $1`, [sessionId])
-        .catch(() => {});
-    }
-    return { id: row.id, handle: row.handle, displayName: row.display_name };
-  }
-
-  /** Signed session value from the request: bearer header (native) or cookie (web). */
-  function rawSession(req: FastifyRequest): string | undefined {
-    const auth = req.headers.authorization;
-    if (auth?.startsWith('Bearer ')) return auth.slice('Bearer '.length);
-    return req.cookies[config.sessionCookie];
-  }
+  const { rawSession, userFromSession, userFromRequest, requireUser } = installAppAuth(app, {
+    pool,
+    secret,
+    sessionCookie: config.sessionCookie,
+  });
 
   function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-  }
-
-  async function userFromRequest(req: FastifyRequest): Promise<UserRef | null> {
-    return userFromSession(rawSession(req));
-  }
-
-  app.decorateRequest('user', null);
-  app.addHook('preHandler', async (req) => {
-    req.user = await userFromRequest(req);
-  });
-
-  function requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null {
-    if (!req.user) {
-      reply.code(401).send({ error: 'unauthorized', message: 'login required' });
-      return null;
-    }
-    return req.user;
   }
 
   /** Full/raw view requires the deployment flag AND a per-user grant. Looked up
