@@ -3,8 +3,7 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
-import type { Db, DbClient } from './db.js';
-import { withTx } from './db.js';
+import type { Db } from './db.js';
 import { DomainError, type UserRef } from './events.js';
 import { workspaceIdsFor } from './membership.js';
 import { WsHub } from './hub.js';
@@ -13,7 +12,6 @@ import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut } fr
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
 import { firstHeader } from './artifact-route-utils.js';
-import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { getVoipSender, type VoipPushSender } from './voip.js';
@@ -23,6 +21,7 @@ import { AgentProfiles } from './agent-profiles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { AppRegistry } from './app-registry.js';
 import { installAppAuth } from './app-auth.js';
+import { createAppMutationContext } from './app-mutations.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerAtriumRoutes } from './routes/atrium.js';
@@ -168,10 +167,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     secret,
     sessionCookie: config.sessionCookie,
   });
-
-  function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-  }
+  const { optionalOpId, runMutation } = createAppMutationContext(pool);
 
   /** Full/raw view requires the deployment flag AND a per-user grant. Looked up
    * (not carried on UserRef) so raw_access never leaks into embedded user objects. */
@@ -183,35 +179,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   function fullViewForbidden(reply: FastifyReply) {
     return reply.code(403).send({ error: 'full_view_forbidden' });
-  }
-
-  function optionalOpId(body: unknown): string | undefined {
-    if (!isPlainObject(body) || body.opId == null) return undefined;
-    if (!isUuid(body.opId)) {
-      throw new DomainError(400, 'bad_request', 'opId must be a uuid');
-    }
-    return body.opId;
-  }
-
-  async function runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T> {
-    if (args.opId) {
-      return withIdempotency(
-        pool,
-        { userId: args.userId, opId: args.opId, opType: args.opType, body: args.body },
-        args.fn,
-        { onApplied: args.onApplied },
-      );
-    }
-    const response = await withTx(pool, args.fn);
-    if (args.onApplied) await args.onApplied(response);
-    return response;
   }
 
   const entryAnnotationRateLimit =
