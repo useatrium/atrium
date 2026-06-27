@@ -6,15 +6,14 @@ import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { verifySession } from './cookie.js';
-import { DomainError, canAccessChannel, type UserRef } from './events.js';
+import { DomainError, type UserRef } from './events.js';
 import { workspaceIdsFor } from './membership.js';
 import { WsHub } from './hub.js';
 import { clearReceiptTimers } from './push.js';
-import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, presignPut, uploadObject } from './s3.js';
+import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
-import { writeBackArtifact } from './artifact-writeback.js';
 import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
-import { canonicalizeRouteArtifactPath, firstHeader, normalizeMime, parseBaseSeq } from './artifact-route-utils.js';
+import { firstHeader } from './artifact-route-utils.js';
 import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
@@ -28,6 +27,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerAtriumRoutes } from './routes/atrium.js';
 import { registerCallRoutes } from './routes/calls.js';
+import { registerChannelArtifactWritebackRoutes } from './routes/channel-artifact-writeback.js';
 import { registerChannelRoutes } from './routes/channels.js';
 import { registerEntryRoutes } from './routes/entries.js';
 import { registerFileRoutes } from './routes/files.js';
@@ -334,76 +334,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   registerUploadRoutes(app, { pool, fileStorage, secret, requireUser, activeWorkspaceIdFor, noWorkspace });
 
-  // === writeback route ===
-  await app.register(async (writeback) => {
-    writeback.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
-      done(null, body),
-    );
-
-    writeback.put('/api/channels/:channelId/artifacts', async (req, reply) => {
-      const user = requireUser(req, reply);
-      if (!user) return;
-      const { channelId } = req.params as { channelId: string };
-      if (!(await canAccessChannel(pool, user.id, channelId))) {
-        return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
-      }
-
-      const query = req.query as { path?: unknown; session?: unknown };
-      const headerPath = firstHeader(req.headers['x-artifact-path']);
-      const queryPath = typeof query.path === 'string' ? query.path.trim() : '';
-      const path = (queryPath || headerPath?.trim() || '').trim();
-      if (!path) {
-        return reply.code(400).send({ error: 'bad_request', message: 'valid artifact path required' });
-      }
-
-      const sessionId = typeof query.session === 'string' ? query.session.trim() : '';
-      if (!/^[0-9a-f-]{36}$/i.test(sessionId)) {
-        return reply.code(400).send({ error: 'bad_request', message: 'session query parameter required' });
-      }
-      const session = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1 AND channel_id = $2`, [
-        sessionId,
-        channelId,
-      ]);
-      if (!session.rows[0]) {
-        return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-      }
-      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, { sessionId, channelId });
-      if (!canonicalPath) return;
-
-      const body = Buffer.isBuffer(req.body)
-        ? req.body
-        : req.body instanceof Uint8Array
-          ? Buffer.from(req.body)
-          : Buffer.alloc(0);
-      const mime = normalizeMime(firstHeader(req.headers['content-type']));
-      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
-      if (baseSeq === false) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
-      }
-
-      const result = await writeBackArtifact({
-        pool,
-        storage: { uploadObject, getObjectBytes, headObject },
-        channelId,
-        sessionId,
-        path: canonicalPath,
-        bytes: body,
-        mime,
-        author: `human:${user.id}`,
-        ...(baseSeq == null ? {} : { baseSeq }),
-      });
-      if (!result.ok) {
-        return reply.code(409).send({
-          error: result.reason === 'stale_base' ? 'stale_base' : result.reason,
-          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
-          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
-        });
-      }
-      return reply.send({ seq: result.seq, status: result.status });
-    });
-  });
+  await registerChannelArtifactWritebackRoutes(app, { pool, maxUploadBytes: config.maxUploadBytes, requireUser });
 
   registerSessionRoutes(app, {
     pool,
