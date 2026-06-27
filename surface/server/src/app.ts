@@ -1,17 +1,14 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import type { Db } from './db.js';
-import { DomainError, type UserRef } from './events.js';
-import { workspaceIdsFor } from './membership.js';
+import { DomainError } from './events.js';
 import { WsHub } from './hub.js';
 import { clearReceiptTimers } from './push.js';
 import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
-import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
-import { firstHeader } from './artifact-route-utils.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { getVoipSender, type VoipPushSender } from './voip.js';
@@ -20,6 +17,7 @@ import { ProviderCredentials } from './provider-credentials.js';
 import { AgentProfiles } from './agent-profiles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { AppRegistry } from './app-registry.js';
+import { createAppAccessContext } from './app-access.js';
 import { installAppAuth } from './app-auth.js';
 import { createAppMutationContext } from './app-mutations.js';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -168,18 +166,23 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     sessionCookie: config.sessionCookie,
   });
   const { optionalOpId, runMutation } = createAppMutationContext(pool);
-
-  /** Full/raw view requires the deployment flag AND a per-user grant. Looked up
-   * (not carried on UserRef) so raw_access never leaks into embedded user objects. */
-  async function canViewFull(userId: string): Promise<boolean> {
-    if (!config.fullViewEnabled) return false;
-    const res = await pool.query<{ raw_access: boolean }>(`SELECT raw_access FROM users WHERE id = $1`, [userId]);
-    return res.rows[0]?.raw_access === true;
-  }
-
-  function fullViewForbidden(reply: FastifyReply) {
-    return reply.code(403).send({ error: 'full_view_forbidden' });
-  }
+  const {
+    activeWorkspaceIdFor,
+    canViewFull,
+    fullViewForbidden,
+    noWorkspace,
+    requireCaptureKey,
+    requireSessionAccess,
+    resolveInternalSessionRef,
+    serializeArtifactRoots,
+    sessionArtifactAccess,
+  } = createAppAccessContext({
+    artifactCaptureApiKey,
+    fullViewEnabled: config.fullViewEnabled,
+    pool,
+    requireUser,
+    sessionRuns,
+  });
 
   const entryAnnotationRateLimit =
     rateLimit === false
@@ -193,14 +196,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             return user?.id ?? 'anonymous';
           },
         };
-
-  async function activeWorkspaceIdFor(userId: string): Promise<string | null> {
-    return (await workspaceIdsFor(pool, userId))[0] ?? null;
-  }
-
-  function noWorkspace(reply: FastifyReply) {
-    return reply.code(403).send({ error: 'no_workspace', message: 'user has no workspace' });
-  }
 
   registerAuthRoutes(app, {
     pool,
@@ -267,32 +262,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     runMutation,
   });
 
-  async function resolveInternalSessionRef(
-    sessionRef: string,
-  ): Promise<{ id: string; channelId: string; workspaceId: string } | null> {
-    const res = await pool.query<{ id: string; channel_id: string; workspace_id: string }>(
-      `SELECT id, channel_id, workspace_id
-         FROM sessions
-        WHERE id::text = $1 OR centaur_thread_key = $1
-        LIMIT 1`,
-      [sessionRef],
-    );
-    const row = res.rows[0];
-    return row ? { id: row.id, channelId: row.channel_id, workspaceId: row.workspace_id } : null;
-  }
-
-  async function sessionArtifactAccess(sessionId: string, userId?: string | null) {
-    return readableArtifactRootsForSession(pool, sessionId, userId);
-  }
-
-  function serializeArtifactRoots(roots: readonly ArtifactScopeRoot[]) {
-    return roots.map((root) => ({
-      prefix: root.prefix,
-      scope: root.kind,
-      writable: root.writable,
-    }));
-  }
-
   await registerFileRoutes(app, {
     pool,
     requireSessionAccess,
@@ -315,17 +284,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     canViewFull,
     fullViewForbidden,
   });
-
-  // === internal node-sync ingestion (x-api-key; the node daemon is trusted infra,
-  // not a cookie-bearing user). Reuses the shipped write-back + serve + change-feed.
-  const requireCaptureKey = (req: FastifyRequest, reply: FastifyReply): boolean => {
-    const key = firstHeader(req.headers['x-api-key']);
-    if (!artifactCaptureApiKey || key !== artifactCaptureApiKey) {
-      reply.code(401).send({ error: 'unauthorized', message: 'x-api-key required' });
-      return false;
-    }
-    return true;
-  };
 
   await registerInternalArtifactRoutes(app, {
     pool,
@@ -358,20 +316,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     requireCaptureKey,
     resolveInternalSessionRef,
   });
-
-  // Every session sub-resource is channel-access gated (404, like
-  // getSessionForUser) so a guessed session id in a private/DM channel can't
-  // be steered, seat-hijacked, or cancelled by a non-member.
-  async function requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null> {
-    const user = requireUser(req, reply);
-    if (!user) return null;
-    const { id } = req.params as { id: string };
-    if (!(await sessionRuns.userCanAccessSession(id, user.id))) {
-      reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-      return null;
-    }
-    return user;
-  }
 
   registerSessionInteractionRoutes(app, {
     sessionRuns,
