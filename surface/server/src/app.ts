@@ -7,29 +7,8 @@ import { createAppAccessContext } from './app-access.js';
 import { installAppAuth } from './app-auth.js';
 import { type AppRateLimitConfig, installAppHttp } from './app-http.js';
 import { createAppMutationContext } from './app-mutations.js';
+import { registerAppRoutes } from './app-routes.js';
 import { createAppServices, type AppServiceDeps } from './app-services.js';
-import { registerAuthRoutes } from './routes/auth.js';
-import { registerArtifactRoutes } from './routes/artifacts.js';
-import { registerAtriumRoutes } from './routes/atrium.js';
-import { registerCallRoutes } from './routes/calls.js';
-import { registerChannelArtifactWritebackRoutes } from './routes/channel-artifact-writeback.js';
-import { registerChannelRoutes } from './routes/channels.js';
-import { registerEntryRoutes } from './routes/entries.js';
-import { registerFileRoutes } from './routes/files.js';
-import { registerHealthRoutes } from './routes/health.js';
-import { registerInternalArtifactRoutes } from './routes/internal-artifacts.js';
-import { registerInternalAtriumRoutes } from './routes/internal-atrium.js';
-import { registerInternalSessionRuntimeRoutes } from './routes/internal-session-runtime.js';
-import { registerInternalWarmcacheRoutes } from './routes/internal-warmcache.js';
-import { registerMeRoutes } from './routes/me.js';
-import { registerMessageRoutes } from './routes/messages.js';
-import { registerPushRoutes } from './routes/push.js';
-import { registerSessionRoutes } from './routes/sessions.js';
-import { registerSessionInteractionRoutes } from './routes/session-interactions.js';
-import { registerSyncRoutes } from './routes/sync.js';
-import { registerUploadRoutes } from './routes/uploads.js';
-import { registerWebsocketRoutes } from './routes/websocket.js';
-import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -60,45 +39,24 @@ export interface AppDeps {
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
-  const {
-    agentProfiles,
-    appRegistry,
-    artifactCaptureApiKey,
-    calls,
-    emailFetch,
-    fileStorage,
-    hub,
-    providerCredentials,
-    secret,
-    sessionRuns,
-    voip,
-  } = createAppServices(deps);
+  const services = createAppServices(deps);
+  const { artifactCaptureApiKey, secret, sessionRuns } = services;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   const rateLimit = deps.rateLimit;
   await installAppHttp(app, rateLimit);
 
-  const { rawSession, userFromSession, userFromRequest, requireUser } = installAppAuth(app, {
+  const auth = installAppAuth(app, {
     pool,
     secret,
     sessionCookie: config.sessionCookie,
   });
-  const { optionalOpId, runMutation } = createAppMutationContext(pool);
-  const {
-    activeWorkspaceIdFor,
-    canViewFull,
-    fullViewForbidden,
-    noWorkspace,
-    requireCaptureKey,
-    requireSessionAccess,
-    resolveInternalSessionRef,
-    serializeArtifactRoots,
-    sessionArtifactAccess,
-  } = createAppAccessContext({
+  const mutation = createAppMutationContext(pool);
+  const access = createAppAccessContext({
     artifactCaptureApiKey,
     fullViewEnabled: config.fullViewEnabled,
     pool,
-    requireUser,
+    requireUser: auth.requireUser,
     sessionRuns,
   });
 
@@ -110,145 +68,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           timeWindow: '1 minute',
           hook: 'preHandler' as const,
           keyGenerator: async (req: FastifyRequest) => {
-            const user = req.user ?? (await userFromRequest(req));
+            const user = req.user ?? (await auth.userFromRequest(req));
             return user?.id ?? 'anonymous';
           },
         };
 
-  registerAuthRoutes(app, {
-    pool,
-    secret,
-    callsConfigured: calls !== null,
-    rateLimit,
-    emailFetch,
-    rawSession,
-    requireUser,
-  });
-
-  registerMeRoutes(app, {
-    hub,
-    requireUser,
-    optionalOpId,
-    runMutation,
-    providerCredentials,
-    agentProfiles,
-    sessionRuns,
-  });
-
-  // -------------------------------------------------------------------------
-  // Workspaces & channels
-  // -------------------------------------------------------------------------
-
-  registerWorkspaceRoutes(app, { pool, requireUser });
-
-  registerChannelRoutes(app, {
-    pool,
-    hub,
-    requireUser,
-    optionalOpId,
-    runMutation,
-    activeWorkspaceIdFor,
-    noWorkspace,
-  });
-
-  registerSyncRoutes(app, { pool, requireUser });
-
-  registerCallRoutes(app, { pool, hub, calls, voip, requireUser, optionalOpId, runMutation });
-  registerMessageRoutes(app, { pool, hub, stt: deps.stt, requireUser, optionalOpId, runMutation });
-  registerEntryRoutes(app, {
-    pool,
-    hub,
+  await registerAppRoutes({
+    access,
+    app,
+    auth,
     entryAnnotationRateLimit,
-    requireUser,
-    optionalOpId,
-    canViewFull,
-    fullViewForbidden,
-    runMutation,
-  });
-  registerUploadRoutes(app, { pool, fileStorage, secret, requireUser, activeWorkspaceIdFor, noWorkspace });
-
-  await registerChannelArtifactWritebackRoutes(app, { pool, maxUploadBytes: config.maxUploadBytes, requireUser });
-
-  registerSessionRoutes(app, {
+    mutation,
     pool,
-    sessionRuns,
-    agentProfiles,
-    appRegistry,
-    requireUser,
-    requireSessionAccess,
-    optionalOpId,
-    runMutation,
+    rateLimit,
+    services,
+    stt: deps.stt,
   });
-
-  await registerFileRoutes(app, {
-    pool,
-    requireSessionAccess,
-    sessionArtifactAccess,
-    serializeArtifactRoots,
-  });
-
-  await registerArtifactRoutes(app, {
-    pool,
-    sessionRuns,
-    requireSessionAccess,
-    sessionArtifactAccess,
-    serializeArtifactRoots,
-  });
-
-  registerAtriumRoutes(app, {
-    pool,
-    requireUser,
-    requireSessionAccess,
-    canViewFull,
-    fullViewForbidden,
-  });
-
-  await registerInternalArtifactRoutes(app, {
-    pool,
-    maxUploadBytes: config.maxUploadBytes,
-    requireCaptureKey,
-    resolveInternalSessionRef,
-    sessionArtifactAccess,
-    serializeArtifactRoots,
-  });
-
-  registerInternalAtriumRoutes(app, {
-    pool,
-    sessionRuns,
-    requireCaptureKey,
-    canViewFull,
-    fullViewForbidden,
-  });
-
-  await registerInternalWarmcacheRoutes(app, {
-    pool,
-    requireCaptureKey,
-    resolveInternalSessionRef,
-  });
-
-  await registerInternalSessionRuntimeRoutes(app, {
-    pool,
-    maxUploadBytes: config.maxUploadBytes,
-    agentProfiles,
-    providerCredentials,
-    requireCaptureKey,
-    resolveInternalSessionRef,
-  });
-
-  registerSessionInteractionRoutes(app, {
-    sessionRuns,
-    maxMessageBytes: config.maxMessageBytes,
-    requireUser,
-    requireSessionAccess,
-    optionalOpId,
-    runMutation,
-    publishEvent: (event) => hub.publishEvent(event),
-  });
-
-  registerPushRoutes(app, { pool, requireUser });
-  registerHealthRoutes(app);
-
-  registerWebsocketRoutes(app, { pool, hub, sessionRuns, userFromSession, userFromRequest });
 
   app.addHook('onReady', async () => {
     await sessionRuns.resumeActiveSessions();

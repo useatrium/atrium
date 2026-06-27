@@ -14,7 +14,7 @@ import { resolveEntry, tryDecodeHandle } from '../entries.js';
 import type { WsHub } from '../hub.js';
 import { searchSessionRecords } from '../session-search.js';
 
-type EntryAnnotationRateLimit =
+export type EntryAnnotationRateLimit =
   | false
   | {
       max: number;
@@ -81,46 +81,42 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     return foldAnnotations(pool, handle);
   });
 
-  app.post(
-    '/api/entries/:handle/comments',
-    { config: { rateLimit: entryAnnotationRateLimit } },
-    async (req, reply) => {
-      const user = requireUser(req, reply);
-      if (!user) return;
-      const { handle } = req.params as { handle: string };
-      if (!tryDecodeHandle(handle)) {
-        return reply.code(400).send({ error: 'bad_handle' });
-      }
-      const entry = await resolveEntry(pool, handle, user.id);
-      if (!entry) {
-        return reply.code(404).send({ error: 'entry_not_found' });
-      }
-      const body = (req.body ?? {}) as { text?: string; opId?: unknown; via?: unknown };
-      const opId = optionalOpId(body);
-      const text = typeof body.text === 'string' ? body.text : '';
-      const via = body.via === 'agent' ? ('agent' as const) : undefined;
-      if (text.trim().length === 0) {
-        return reply.code(400).send({ error: 'empty_comment', message: 'comment text is empty' });
-      }
-      if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
-        return reply.code(413).send({ error: 'comment_too_large', message: 'comment exceeds 8KB' });
-      }
-      const response = await runMutation({
-        userId: user.id,
-        opId,
-        opType: 'comment.post',
-        body: { handle, text, via },
-        fn: async (client) => {
-          const event = await postCommentTx(client, { handle, actorId: user.id, text, via });
-          return { event };
-        },
-        onApplied: (result) => {
-          hub.publishEvent(result.event);
-        },
-      });
-      return reply.code(201).send(response);
-    },
-  );
+  app.post('/api/entries/:handle/comments', { config: { rateLimit: entryAnnotationRateLimit } }, async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { handle } = req.params as { handle: string };
+    if (!tryDecodeHandle(handle)) {
+      return reply.code(400).send({ error: 'bad_handle' });
+    }
+    const entry = await resolveEntry(pool, handle, user.id);
+    if (!entry) {
+      return reply.code(404).send({ error: 'entry_not_found' });
+    }
+    const body = (req.body ?? {}) as { text?: string; opId?: unknown; via?: unknown };
+    const opId = optionalOpId(body);
+    const text = typeof body.text === 'string' ? body.text : '';
+    const via = body.via === 'agent' ? ('agent' as const) : undefined;
+    if (text.trim().length === 0) {
+      return reply.code(400).send({ error: 'empty_comment', message: 'comment text is empty' });
+    }
+    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
+      return reply.code(413).send({ error: 'comment_too_large', message: 'comment exceeds 8KB' });
+    }
+    const response = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'comment.post',
+      body: { handle, text, via },
+      fn: async (client) => {
+        const event = await postCommentTx(client, { handle, actorId: user.id, text, via });
+        return { event };
+      },
+      onApplied: (result) => {
+        hub.publishEvent(result.event);
+      },
+    });
+    return reply.code(201).send(response);
+  });
 
   app.post(
     '/api/entries/:handle/reactions',
@@ -141,9 +137,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
         return reply.code(400).send({ error: 'invalid_emoji', message: 'unsupported reaction emoji' });
       }
       if (body.action !== 'add' && body.action !== 'remove') {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
+        return reply.code(400).send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
       }
       const entry = await resolveEntry(pool, handle, user.id);
       if (!entry) {
