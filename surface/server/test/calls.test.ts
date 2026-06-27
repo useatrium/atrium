@@ -227,6 +227,57 @@ describe('call routes', () => {
     expect(rejectedAccept.statusCode).toBe(404);
   });
 
+  it('ends a ringing DM call when the callee declines', async () => {
+    const current = await startApp();
+    const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    const { cookie: aliceCookie, user: alice } = await login('alice', 'Alice');
+    const { cookie: benCookie, user: ben } = await login('ben', 'Ben');
+    expect(ben.id).toBe(benId);
+
+    const dmRes = await current.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: aliceCookie },
+      payload: { userId: ben.id },
+    });
+    expect(dmRes.statusCode).toBe(201);
+
+    const aliceSocket = fakeSocket();
+    const benSocket = fakeSocket();
+    hub.addClient(aliceSocket, alice);
+    hub.addClient(benSocket, ben);
+
+    const start = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: dmRes.json().channel.id },
+    });
+    expect(start.statusCode).toBe(200);
+    const callId = start.json().call.id as string;
+
+    const declined = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${callId}/decline`,
+      headers: { cookie: benCookie },
+    });
+    expect(declined.statusCode).toBe(200);
+    expect(declined.json()).toEqual({ ok: true });
+
+    for (const socket of [aliceSocket, benSocket]) {
+      expect(socket.received).toContainEqual(
+        expect.objectContaining({ type: 'call.declined', callId, userId: ben.id }),
+      );
+      expect(socket.received).toContainEqual(expect.objectContaining({ type: 'call.ended', callId }));
+    }
+    const state = await pool.query<{ status: string; ended_at: Date | null }>(
+      'SELECT status, ended_at FROM calls WHERE id = $1',
+      [callId],
+    );
+    expect(state.rows[0]).toMatchObject({ status: 'ended' });
+    expect(state.rows[0]?.ended_at).toBeTruthy();
+  });
+
   it('returns calls_unconfigured when LiveKit settings are absent', async () => {
     const current = await startApp(false);
     const { cookie } = await login('alice', 'Alice');

@@ -71,6 +71,11 @@ jobs:
         timeout-minutes: 2
         run: pnpm lint
 
+      - name: Check surface migration filenames
+        working-directory: surface
+        timeout-minutes: 1
+        run: pnpm check:migrations
+
       - name: Typecheck surface workspace
         working-directory: surface
         timeout-minutes: 4

@@ -53,8 +53,10 @@ the wire protocol between them can now land as **one PR** across both.
   worktree`s. **Before committing, confirm the checked-out branch** (`git branch
   --show-current`) — it may not be `master` and may belong to another session. For
   unrelated edits, make your own branch in a separate worktree.
-- Atrium CI (`surface/**`) runs on every PR. **Centaur's own CI is not yet wired into the
-  root `.github/workflows/`** — porting it (with `paths: ['centaur/**']`, and *excluding*
-  the image/chart **publishing** workflows) is a tracked fast-follow. Until then, validate
-  centaur changes locally (`cd centaur && just …`). The vendored `centaur/.github/` is inert
-  (GitHub only runs root workflows).
+- Atrium CI (`surface/**`) runs on every PR via `.github/workflows/ci.yml`.
+  Centaur CI has also been ported to the root repo in `.github/workflows/centaur-ci.yml`
+  because workflows under the vendored `centaur/.github/` tree are inert here (GitHub
+  only runs root workflows). The root Centaur success check runs on every PR; its heavy
+  jobs are gated on `centaur/**` or workflow changes. Image/chart publishing is
+  deliberately excluded. For runtime changes, still validate locally as needed with
+  `cd centaur && just …`.

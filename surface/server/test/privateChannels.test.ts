@@ -63,6 +63,22 @@ async function createPrivate(cookie: string, name = 'secret') {
 }
 
 describe('private channel access', () => {
+  it('lists workspace-visible users for authenticated callers', async () => {
+    const { cookie: alice } = await login('alice', 'Alice');
+    await login('ben', 'Ben');
+
+    const users = await app.inject({
+      method: 'GET',
+      url: '/api/users',
+      headers: { cookie: alice },
+    });
+    expect(users.statusCode).toBe(200);
+    expect(users.json().users.map((user: any) => user.handle)).toEqual(['alice', 'ben']);
+
+    const anonymous = await app.inject({ method: 'GET', url: '/api/users' });
+    expect(anonymous.statusCode).toBe(401);
+  });
+
   it('lists only members and returns 404 for non-member messages/read/mute', async () => {
     const { cookie: alice } = await login('alice', 'Alice');
     const { cookie: ben } = await login('ben', 'Ben');
