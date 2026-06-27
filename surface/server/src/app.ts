@@ -10,14 +10,7 @@ import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { verifySession } from './cookie.js';
-import {
-  DomainError,
-  canAccessChannel,
-  listChannelsFor,
-  listVisibleSyncEvents,
-  type UserRef,
-  type WireEvent,
-} from './events.js';
+import { DomainError, canAccessChannel, listChannelsFor, listVisibleSyncEvents, type UserRef } from './events.js';
 import { workspaceIdsFor, workspaceMemberExists } from './membership.js';
 import { WsHub } from './hub.js';
 import { clearReceiptTimers } from './push.js';
@@ -91,6 +84,7 @@ import { registerMeRoutes } from './routes/me.js';
 import { registerMessageRoutes } from './routes/messages.js';
 import { registerPushRoutes } from './routes/push.js';
 import { registerSessionRoutes } from './routes/sessions.js';
+import { registerSessionInteractionRoutes } from './routes/session-interactions.js';
 import { registerUploadRoutes } from './routes/uploads.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
@@ -252,18 +246,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return req.cookies[config.sessionCookie];
   }
 
-  function isAnswerBody(value: unknown): value is Record<string, { answers: string[] }> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    for (const entry of Object.values(value as Record<string, unknown>)) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-      const answers = (entry as { answers?: unknown }).answers;
-      if (!Array.isArray(answers) || !answers.every((answer) => typeof answer === 'string')) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === 'object' && !Array.isArray(value));
   }
@@ -338,10 +320,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             return user?.id ?? 'anonymous';
           },
         };
-
-  function isQuestionNotPendingError(err: unknown): boolean {
-    return err instanceof DomainError && err.code === 'question_not_pending';
-  }
 
   async function syncStateSnapshot(client: DbClient, userId: string) {
     const readRows = await client.query<{ channel_id: string; last_read_event_id: number }>(
@@ -1453,26 +1431,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.send(result);
   });
 
-  app.get('/api/sessions/:id/stream', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const q = req.query as { after_event_id?: string };
-    const afterEventId = q.after_event_id == null ? 0 : Number(q.after_event_id);
-    if (!Number.isSafeInteger(afterEventId) || afterEventId < 0) {
-      return reply.code(400).send({ error: 'bad_query', message: 'after_event_id must be a nonnegative integer' });
-    }
-    const session = await sessionRuns.getSessionForUser(id, user.id);
-    const abort = new AbortController();
-    req.raw.on('close', () => abort.abort());
-    reply.raw.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-    });
-    await sessionRuns.streamCentaurEvents(session, user.id, afterEventId, reply.raw, abort.signal);
-  });
-
   // Every session sub-resource is channel-access gated (404, like
   // getSessionForUser) so a guessed session id in a private/DM channel can't
   // be steered, seat-hijacked, or cancelled by a non-member.
@@ -1487,286 +1445,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return user;
   }
 
-  app.post('/api/sessions/:id/messages', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
-    const opId = optionalOpId(body);
-    const text = typeof body.text === 'string' ? body.text : '';
-    if (text.trim().length === 0) {
-      return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
-    }
-    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
-      return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
-    }
-    try {
-      await runMutation({
-        userId: user.id,
-        opId,
-        opType: 'session.steer',
-        body: { sessionId: id, text },
-        fn: async (client) => {
-          await sessionRuns.postUserMessageInTx(client, id, user.id, text);
-          return { ok: true as const };
-        },
-        onApplied: () => {
-          sessionRuns.afterPostUserMessage(id);
-        },
-      });
-    } catch (err) {
-      if (err instanceof DomainError && err.code === 'provider_auth_required') {
-        await sessionRuns.markClaudeAuthMissing(id).catch(() => {});
-      }
-      throw err;
-    }
-    return reply.code(202).send({ ok: true });
-  });
-
-  app.post('/api/sessions/:id/answer', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
-    const opId = optionalOpId(body);
-    if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
-      return reply.code(400).send({ error: 'bad_request', message: 'questionId and answers are required' });
-    }
-    if (opId) {
-      let event: WireEvent | null = null;
-      try {
-        await runMutation({
-          userId: user.id,
-          opId,
-          opType: 'session.answer',
-          body: { sessionId: id, questionId: body.questionId, answers: body.answers },
-          fn: async (client) => {
-            event = await sessionRuns.answerQuestionInTx(
-              client,
-              id,
-              user,
-              body.questionId as string,
-              body.answers as Record<string, { answers: string[] }>,
-            );
-            return { ok: true as const };
-          },
-          onApplied: () => {
-            if (event) hub.publishEvent(event);
-          },
-        });
-      } catch (err) {
-        if (isQuestionNotPendingError(err)) {
-          await sessionRuns.clearStalePendingQuestion(id, body.questionId);
-        }
-        throw err;
-      }
-    } else {
-      await sessionRuns.answerQuestion(id, user, body.questionId, body.answers);
-    }
-    return reply.code(202).send({ ok: true });
-  });
-
-  app.post('/api/sessions/:id/seat/request', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    await sessionRuns.requestSeat(id, user.id);
-    return reply.code(202).send({ ok: true });
-  });
-
-  app.post('/api/sessions/:id/seat/grant', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { userId?: string };
-    if (!body.userId || typeof body.userId !== 'string') {
-      return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
-    }
-    await sessionRuns.grantSeat(id, user.id, body.userId);
-    return reply.code(202).send({ ok: true });
-  });
-
-  app.post('/api/sessions/:id/seat/take', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    await sessionRuns.takeSeat(id, user.id);
-    return reply.code(202).send({ ok: true });
-  });
-
-  // A watcher proposes a steer; any member with session access may suggest.
-  app.post('/api/sessions/:id/suggestions', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
-    const opId = optionalOpId(body);
-    const text = typeof body.text === 'string' ? body.text : '';
-    if (text.trim().length === 0) {
-      return reply.code(400).send({ error: 'empty_message', message: 'suggestion text is empty' });
-    }
-    if (Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
-      return reply.code(413).send({ error: 'message_too_large', message: 'suggestion exceeds 8KB' });
-    }
-    let event: WireEvent | null = null;
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.suggestion.create',
-      body: { sessionId: id, text },
-      fn: async (client) => {
-        event = await sessionRuns.createSuggestionInTx(client, id, user.id, text);
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        if (event) hub.publishEvent(event);
-      },
-    });
-    return reply.code(202).send({ ok: true });
-  });
-
-  // Driver-only (enforced in the DAO): send / edit-then-send / dismiss.
-  app.post('/api/sessions/:id/suggestions/:suggestionId/resolve', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id, suggestionId } = req.params as { id: string; suggestionId: string };
-    // Guard the id shape so a non-UUID path param 404s instead of surfacing a
-    // Postgres cast error as a 500 (mirrors getSessionRow).
-    if (!/^[0-9a-f-]{36}$/i.test(suggestionId)) {
-      return reply.code(404).send({ error: 'suggestion_not_found', message: 'suggestion not found' });
-    }
-    const body = (req.body ?? {}) as { action?: unknown; text?: unknown; note?: unknown; opId?: unknown };
-    const opId = optionalOpId(body);
-    if (body.action !== 'send' && body.action !== 'dismiss') {
-      return reply.code(400).send({ error: 'bad_request', message: "action must be 'send' or 'dismiss'" });
-    }
-    const action = body.action;
-    // text only applies to send; note only to dismiss.
-    const text = action === 'send' && typeof body.text === 'string' ? body.text : undefined;
-    const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
-    if (text !== undefined && Buffer.byteLength(text, 'utf8') > config.maxMessageBytes) {
-      return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
-    }
-    let result: { event: WireEvent; postedSteer: boolean } | null = null;
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.suggestion.resolve',
-      body: {
-        sessionId: id,
-        suggestionId,
-        action,
-        ...(text !== undefined ? { text } : {}),
-        ...(note !== undefined ? { note } : {}),
-      },
-      fn: async (client) => {
-        result = await sessionRuns.resolveSuggestionInTx(client, id, user.id, suggestionId, action, { text, note });
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        if (!result) return;
-        if (result.postedSteer) sessionRuns.afterPostUserMessage(id);
-        hub.publishEvent(result.event);
-      },
-    });
-    return reply.code(202).send({ ok: true });
-  });
-
-  // A watcher proposes an answer to the pending question (any member; the DAO
-  // refuses the driver, who answers directly).
-  app.post('/api/sessions/:id/question-proposals', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
-    const opId = optionalOpId(body);
-    if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
-      return reply.code(400).send({ error: 'bad_request', message: 'questionId and answers are required' });
-    }
-    const questionId = body.questionId;
-    const answers = body.answers;
-    let event: WireEvent | null = null;
-    await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.answer.propose',
-      body: { sessionId: id, questionId, answers },
-      fn: async (client) => {
-        event = await sessionRuns.createAnswerProposalInTx(client, id, user.id, questionId, answers);
-        return { ok: true as const };
-      },
-      onApplied: () => {
-        if (event) hub.publishEvent(event);
-      },
-    });
-    return reply.code(202).send({ ok: true });
-  });
-
-  // Driver-only (enforced in the DAO): submit (answers the question) / dismiss.
-  app.post('/api/sessions/:id/question-proposals/:proposalId/resolve', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    if (!/^[0-9a-f-]{36}$/i.test(proposalId)) {
-      return reply.code(404).send({ error: 'proposal_not_found', message: 'proposal not found' });
-    }
-    const body = (req.body ?? {}) as { action?: unknown; note?: unknown; opId?: unknown };
-    const opId = optionalOpId(body);
-    if (body.action !== 'submit' && body.action !== 'dismiss') {
-      return reply.code(400).send({ error: 'bad_request', message: "action must be 'submit' or 'dismiss'" });
-    }
-    const action = body.action;
-    const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
-    let result: { events: WireEvent[]; postedAnswer: boolean } | null = null;
-    try {
-      await runMutation({
-        userId: user.id,
-        opId,
-        opType: 'session.answer.resolve',
-        body: { sessionId: id, proposalId, action, ...(note !== undefined ? { note } : {}) },
-        fn: async (client) => {
-          result = await sessionRuns.resolveAnswerProposalInTx(client, id, user, proposalId, action, { note });
-          return { ok: true as const };
-        },
-        onApplied: () => {
-          if (!result) return;
-          for (const event of result.events) hub.publishEvent(event);
-        },
-      });
-    } catch (err) {
-      if (action === 'submit' && isQuestionNotPendingError(err)) {
-        await sessionRuns.clearStalePendingQuestionForProposal(id, proposalId);
-      }
-      throw err;
-    }
-    return reply.code(202).send({ ok: true });
-  });
-
-  app.post('/api/sessions/:id/cancel', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { opId?: unknown };
-    const opId = optionalOpId(body);
-    if (opId) {
-      let events: WireEvent[] = [];
-      await runMutation({
-        userId: user.id,
-        opId,
-        opType: 'session.cancel',
-        body: { sessionId: id },
-        fn: async (client) => {
-          events = await sessionRuns.cancelSessionInTx(client, id, user.id);
-          return { ok: true as const };
-        },
-        onApplied: () => {
-          sessionRuns.afterCancelSession(id, events);
-        },
-      });
-    } else {
-      await sessionRuns.cancelSession(id, user.id);
-    }
-    return reply.code(202).send({ ok: true });
+  registerSessionInteractionRoutes(app, {
+    sessionRuns,
+    maxMessageBytes: config.maxMessageBytes,
+    requireUser,
+    requireSessionAccess,
+    optionalOpId,
+    runMutation,
+    publishEvent: (event) => hub.publishEvent(event),
   });
 
   registerPushRoutes(app, { pool, requireUser });
