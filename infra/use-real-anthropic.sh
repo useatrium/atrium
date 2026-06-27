@@ -2,7 +2,7 @@
 # Flip the local Centaur deployment from the Phase-0 LLM mock to the real
 # Anthropic API. Usage:
 #   ANTHROPIC_API_KEY=sk-ant-... ./infra/use-real-anthropic.sh
-# Then verify with:  cd ~/Code/centaur && just smoke claude-code
+# Then verify with:  cd ~/Code/atrium/centaur && just smoke claude-code
 set -euo pipefail
 
 : "${ANTHROPIC_API_KEY:?export ANTHROPIC_API_KEY first}"
@@ -24,10 +24,10 @@ sed '/ANTHROPIC_BASE_URL/d; /Mock serves a cert/d; /https through iron-proxy/d' 
   "$HERE/values.local.yaml" > "$TMP_VALUES"
 
 # 3. Redeploy and cycle pods so sandboxes/proxies pick up the change.
-helm upgrade --install centaur "$HOME/Code/centaur/contrib/chart" -n "$NS" \
-  -f "$HOME/Code/centaur/contrib/chart/values.dev.yaml" -f "$TMP_VALUES"
+helm upgrade --install centaur "$HOME/Code/atrium/centaur/contrib/chart" -n "$NS" \
+  -f "$HOME/Code/atrium/centaur/contrib/chart/values.dev.yaml" -f "$TMP_VALUES"
 kubectl -n "$NS" delete pods -l 'centaur.ai/managed=true' --wait=false || true
 kubectl -n "$NS" rollout status deploy/centaur-centaur-api --timeout=180s
 
-echo "Done. Run a real smoke:  cd ~/Code/centaur && just smoke claude-code"
+echo "Done. Run a real smoke:  cd ~/Code/atrium/centaur && just smoke claude-code"
 echo "To go back to the mock:  helm upgrade ... -f $HERE/values.local.yaml (original file)"

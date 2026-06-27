@@ -1,5 +1,14 @@
 # Local Atrium + Centaur Runbook
 
+> ⚠️ **Largely superseded (2026-06-26).** Centaur is now **vendored inside this repo at
+> `centaur/`** (via git subtree) — there is no separate `~/Code/centaur` clone, no `fork/main`
+> deploy line, and no `gb/*` upstream-PR branches. The **"Branch Model"** section below
+> describes that retired two-repo model and no longer applies. For how the fork works now,
+> see [`centaur/ATRIUM_FORK.md`](../centaur/ATRIUM_FORK.md) and
+> [`notes/centaur-vendoring.md`](centaur-vendoring.md). The local **build/deploy** steps below
+> still work, but run them from **`~/Code/atrium/centaur`** (this repo's `centaur/`), not
+> `~/Code/centaur`.
+
 This is the local Mac workflow for running Atrium against a local Centaur
 `api-rs` deployment in kind.
 
