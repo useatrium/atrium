@@ -58,6 +58,12 @@ spec:
                   fieldPath: spec.nodeName
             - name: NODE_SYNC_ATRIUM_ROOT
               value: "/var/lib/centaur/atrium"
+            - name: NODE_SYNC_DEPCACHE_MAX_BYTES
+              value: {{ default 10737418240 .Values.nodeSync.depcacheMaxBytes | quote }}
+            - name: NODE_SYNC_DEPCACHE_EVICT_ENABLED
+              value: {{ ternary "true" "false" (default false .Values.nodeSync.depcacheEvictEnabled) | quote }}
+            - name: NODE_SYNC_DEPCACHE_EVICT_EVERY_N
+              value: {{ default 30 .Values.nodeSync.depcacheEvictEveryN | quote }}
 {{- if .Values.nodeSync.hydrateArtifacts }}
 {{- printf "- name: NODE_SYNC_HYDRATE_ARTIFACTS\n  value: \"true\"" | nindent 12 }}
 {{- end }}

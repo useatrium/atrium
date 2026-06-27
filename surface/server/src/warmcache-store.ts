@@ -145,6 +145,107 @@ export async function loadWarmcacheManifest(
   }));
 }
 
+export async function bumpWarmcacheLastHydrated(
+  pool: Db,
+  args: { workspaceId: string; lockfileHash: string; kind: string },
+): Promise<{ updated: number }> {
+  const result = await pool.query(
+    `UPDATE warmcache_blobs
+        SET last_hydrated_at = now()
+      WHERE workspace_id = $1
+        AND lockfile_hash = $2
+        AND kind = $3`,
+    [args.workspaceId, normalizeLockfileHash(args.lockfileHash), normalizeKind(args.kind)],
+  );
+  return { updated: result.rowCount ?? 0 };
+}
+
+export async function sweepStaleWarmcacheManifests(
+  pool: Db,
+  args: { ttlMs: number; sizeCapBytes: number; batchLimit: number },
+): Promise<{ evicted: number }> {
+  const batchLimit = Math.max(0, Math.floor(args.batchLimit));
+  if (batchLimit === 0) return { evicted: 0 };
+
+  return withTx(pool, async (client) => {
+    const ttl = await client.query<{ evicted: number }>(
+      `WITH candidates AS (
+         SELECT workspace_id, lockfile_hash, kind
+           FROM warmcache_blobs
+          GROUP BY workspace_id, lockfile_hash, kind
+         HAVING max(last_hydrated_at) < now() - ($1::double precision * interval '1 millisecond')
+          ORDER BY max(last_hydrated_at) ASC, workspace_id ASC, lockfile_hash ASC, kind ASC
+          LIMIT $2
+       ),
+       deleted AS (
+         DELETE FROM warmcache_blobs w
+          USING candidates c
+          WHERE w.workspace_id = c.workspace_id
+            AND w.lockfile_hash = c.lockfile_hash
+            AND w.kind = c.kind
+          RETURNING w.workspace_id, w.lockfile_hash, w.kind
+       )
+       SELECT count(*)::int AS evicted
+         FROM (SELECT DISTINCT workspace_id, lockfile_hash, kind FROM deleted) d`,
+      [Math.max(0, args.ttlMs), batchLimit],
+    );
+    const ttlEvicted = Number(ttl.rows[0]?.evicted ?? 0);
+    const remainingLimit = batchLimit - ttlEvicted;
+    if (remainingLimit <= 0) return { evicted: ttlEvicted };
+
+    const cap = await client.query<{ evicted: number }>(
+      `WITH group_sizes AS (
+         SELECT workspace_id,
+                lockfile_hash,
+                kind,
+                min(last_hydrated_at) AS last_hydrated_at,
+                sum(size_bytes)::bigint AS group_bytes
+           FROM warmcache_blobs
+          GROUP BY workspace_id, lockfile_hash, kind
+       ),
+       workspace_totals AS (
+         SELECT workspace_id, sum(group_bytes)::bigint AS total_bytes
+           FROM group_sizes
+          GROUP BY workspace_id
+         HAVING sum(group_bytes) > $1::bigint
+       ),
+       ranked AS (
+         SELECT gs.workspace_id,
+                gs.lockfile_hash,
+                gs.kind,
+                sum(gs.group_bytes) OVER (
+                  PARTITION BY gs.workspace_id
+                  ORDER BY gs.last_hydrated_at ASC, gs.lockfile_hash ASC, gs.kind ASC
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS cumulative_evicted_bytes,
+                gs.group_bytes,
+                wt.total_bytes - $1::bigint AS excess_bytes
+           FROM group_sizes gs
+           JOIN workspace_totals wt ON wt.workspace_id = gs.workspace_id
+       ),
+       candidates AS (
+         SELECT workspace_id, lockfile_hash, kind
+           FROM ranked
+          WHERE cumulative_evicted_bytes - group_bytes < excess_bytes
+          ORDER BY workspace_id ASC, cumulative_evicted_bytes ASC, lockfile_hash ASC, kind ASC
+          LIMIT $2
+       ),
+       deleted AS (
+         DELETE FROM warmcache_blobs w
+          USING candidates c
+          WHERE w.workspace_id = c.workspace_id
+            AND w.lockfile_hash = c.lockfile_hash
+            AND w.kind = c.kind
+          RETURNING w.workspace_id, w.lockfile_hash, w.kind
+       )
+       SELECT count(*)::int AS evicted
+         FROM (SELECT DISTINCT workspace_id, lockfile_hash, kind FROM deleted) d`,
+      [Math.max(0, Math.floor(args.sizeCapBytes)), remainingLimit],
+    );
+    return { evicted: ttlEvicted + Number(cap.rows[0]?.evicted ?? 0) };
+  });
+}
+
 export function normalizeWarmcacheSha(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/i.test(value)) {
     throw new DomainError(400, 'bad_query', 'valid sha256 is required');

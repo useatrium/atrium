@@ -17,6 +17,7 @@
 pub mod adopt;
 pub mod backpressure;
 pub mod cas;
+pub mod depcache;
 pub mod echo;
 pub mod http_client;
 pub mod manifest;

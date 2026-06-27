@@ -4,6 +4,7 @@
 import { config } from './config.js';
 import type { Db } from './db.js';
 import { withTx } from './db.js';
+import { sweepStaleWarmcacheManifests } from './warmcache-store.js';
 
 export interface ArtifactBlobStorage {
   deleteObject(key: string): Promise<void>;
@@ -35,6 +36,8 @@ export interface ArtifactGcWorkerOptions {
   intervalMs?: number;
   graceMs?: number;
   retentionMs?: number;
+  warmcacheTtlMs?: number;
+  warmcacheWorkspaceSizeCapBytes?: number;
   batchSize?: number;
 }
 
@@ -167,6 +170,9 @@ export function startArtifactGcWorker(options: ArtifactGcWorkerOptions): Artifac
   const intervalMs = options.intervalMs ?? config.artifactGcIntervalMs;
   const graceMs = options.graceMs ?? config.artifactGcGraceMs;
   const retentionMs = options.retentionMs ?? config.artifactRetentionMs;
+  const warmcacheTtlMs = options.warmcacheTtlMs ?? config.warmcacheEvictTtlDays * 24 * 3_600_000;
+  const warmcacheWorkspaceSizeCapBytes =
+    options.warmcacheWorkspaceSizeCapBytes ?? config.warmcacheWorkspaceSizeCapBytes;
   const batchSize = options.batchSize ?? config.artifactGcBatchSize;
   let inFlight = false;
   let stopped = false;
@@ -176,6 +182,11 @@ export function startArtifactGcWorker(options: ArtifactGcWorkerOptions): Artifac
     inFlight = true;
     try {
       await sweepRetainedScratchVersions(pool, { retentionMs, limit: batchSize });
+      await sweepStaleWarmcacheManifests(pool, {
+        ttlMs: warmcacheTtlMs,
+        sizeCapBytes: warmcacheWorkspaceSizeCapBytes,
+        batchLimit: batchSize,
+      });
       await sweepUnreferencedBlobs(pool, storage, { graceMs, limit: batchSize });
     } catch (err) {
       // sweepUnreferencedBlobs handles per-row errors; this catches an
