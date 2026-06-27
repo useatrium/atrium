@@ -27,7 +27,8 @@
 > snapshot** (the other half of §3 2.3) and **Phase "Full"/per-repo warm pool (§7)** stay
 > DEFERRED — the plan gates both on production proof-out (§1/§7: Full is "not v1; do not
 > build until Medium proves out"). Medium (the content-keyed warm-cache tier) is now
-> operationally complete.
+> operationally complete. **Remaining/deferred work + prod-enablement steps are tracked in
+> [gbasin/atrium#141](https://github.com/gbasin/atrium/issues/141).**
 
 ---
 
