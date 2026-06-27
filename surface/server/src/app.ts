@@ -5,21 +5,12 @@ import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import type { Db } from './db.js';
 import { DomainError } from './events.js';
-import { WsHub } from './hub.js';
 import { clearReceiptTimers } from './push.js';
-import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut } from './s3.js';
-import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
-import type { CallTokenService } from './livekit.js';
-import { createLiveKitTokenService } from './livekit.js';
-import { getVoipSender, type VoipPushSender } from './voip.js';
-import { CentaurClient } from '@atrium/centaur-client';
-import { ProviderCredentials } from './provider-credentials.js';
-import { AgentProfiles } from './agent-profiles.js';
-import { DemoCentaurClient } from './demo-centaur.js';
-import { AppRegistry } from './app-registry.js';
+import type { SessionRuns } from './session-runs.js';
 import { createAppAccessContext } from './app-access.js';
 import { installAppAuth } from './app-auth.js';
 import { createAppMutationContext } from './app-mutations.js';
+import { createAppServices, type AppServiceDeps } from './app-services.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerAtriumRoutes } from './routes/atrium.js';
@@ -52,59 +43,39 @@ declare module 'fastify' {
 
 export interface AppDeps {
   pool: Db;
-  hub?: WsHub;
-  sessionSecret?: string;
-  sessionRuns?: SessionRunsOptions;
+  hub?: AppServiceDeps['hub'];
+  sessionSecret?: AppServiceDeps['sessionSecret'];
+  sessionRuns?: AppServiceDeps['sessionRuns'];
   rateLimit?: false | { max?: number; loginMax?: number };
-  fileStorage?: {
-    ensureBucket: typeof ensureBucket;
-    deleteObject: typeof deleteObject;
-    presignGet: typeof presignGet;
-    presignPut: typeof presignPut;
-  };
+  fileStorage?: AppServiceDeps['fileStorage'];
   stt?: {
     enqueue(): void;
   };
   /** Injectable in tests; false keeps call endpoints explicitly unconfigured. */
-  calls?: false | CallTokenService;
+  calls?: AppServiceDeps['calls'];
   /** Injectable in tests; defaults to env-selected APNs/FCM/noop transport. */
-  voip?: VoipPushSender;
+  voip?: AppServiceDeps['voip'];
   /** Injectable fetch for the email transport (tests mock Resend). */
-  emailFetch?: typeof fetch;
+  emailFetch?: AppServiceDeps['emailFetch'];
   /** Internal x-api-key override for tests; production reads config. */
-  artifactCaptureApiKey?: string;
+  artifactCaptureApiKey?: AppServiceDeps['artifactCaptureApiKey'];
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
-  const hub = deps.hub ?? new WsHub();
-  const secret = deps.sessionSecret ?? config.sessionSecret;
-  const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
-  const emailFetch = deps.emailFetch;
-  const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
-  const agentProfiles = new AgentProfiles(pool);
-  const sessionRunOptions = deps.sessionRuns ?? {};
-  const centaur =
-    sessionRunOptions.centaur ??
-    new CentaurClient({
-      baseUrl: sessionRunOptions.baseUrl ?? config.centaurBaseUrl,
-      apiKey: sessionRunOptions.apiKey ?? config.centaurApiKey,
-    });
-  const sessionRuns = new SessionRuns(pool, hub, {
-    ...sessionRunOptions,
-    centaur: new DemoCentaurClient(centaur),
-    providerCredentials,
+  const {
     agentProfiles,
-  });
-  const calls = deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
-  const voip = deps.voip ?? getVoipSender(config);
-  const artifactCaptureApiKey = deps.artifactCaptureApiKey ?? config.artifactCaptureApiKey;
-  const appRegistry = new AppRegistry(pool, {
-    appsOrigin: config.appsOrigin,
-    signingSecret: config.appSigningSecret,
-    launchTtlSeconds: config.appsLaunchTtlSeconds,
-    storage: { getObjectBytes },
-  });
+    appRegistry,
+    artifactCaptureApiKey,
+    calls,
+    emailFetch,
+    fileStorage,
+    hub,
+    providerCredentials,
+    secret,
+    sessionRuns,
+    voip,
+  } = createAppServices(deps);
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   await app.register(fastifyCookie);
