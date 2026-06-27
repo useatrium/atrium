@@ -20,7 +20,10 @@
 
 use centaur_node_sync::http_client::HttpAtriumClient;
 use centaur_node_sync::session_manifest::RepoMount;
-use centaur_node_sync::warmcache::{DEFAULT_KINDS, hydrate_depcache};
+use centaur_node_sync::warmcache::{
+    DEFAULT_KINDS, WarmcacheReceipt, WarmcacheReceiptEntry, hydrate_depcache,
+    write_warmcache_receipt,
+};
 use std::path::PathBuf;
 
 fn main() {
@@ -69,7 +72,8 @@ fn run() -> Result<(), String> {
         _ => return Ok(()), // no repos = nothing to hydrate
     };
 
-    let mut client = HttpAtriumClient::new(url, key, session);
+    let mut client = HttpAtriumClient::new(url, key, session.clone());
+    let mut receipt_entries = Vec::new();
     for repo in &repos {
         let git_ref = repo.r#ref.as_deref().unwrap_or("HEAD");
         let stats = hydrate_depcache(
@@ -82,20 +86,44 @@ fn run() -> Result<(), String> {
             DEFAULT_KINDS,
         );
         for k in &stats.kinds {
+            let hit = k.entries > 0;
             eprintln!(
-                "warmcache-hydrate: repo={} kind={} entries={} fetched={} reflinked={} errors={}{}",
+                "event=warmcache_hydrate session={} repo={} kind={} hit={} lockfile_hash={} entries={} reflinked={} fetched={} errors={}{}",
+                session,
                 repo.repo,
                 k.kind,
+                hit,
+                k.lockfile_hash,
                 k.entries,
-                k.fetched,
                 k.reflinked,
+                k.fetched,
                 k.errors,
                 k.error
                     .as_deref()
                     .map(|e| format!(" error={e}"))
                     .unwrap_or_default(),
             );
+            receipt_entries.push(WarmcacheReceiptEntry {
+                repo: repo.repo.clone(),
+                git_ref: git_ref.to_string(),
+                kind: k.kind.clone(),
+                dest_subdir: k.dest_subdir.clone(),
+                lockfile_hash: k.lockfile_hash.clone(),
+                hit,
+                errors: k.errors,
+            });
         }
+    }
+    if !receipt_entries.is_empty()
+        && let Err(e) = write_warmcache_receipt(
+            &depcache_root,
+            &WarmcacheReceipt {
+                session,
+                entries: receipt_entries,
+            },
+        )
+    {
+        eprintln!("warmcache-hydrate: receipt write: {e}");
     }
     Ok(())
 }

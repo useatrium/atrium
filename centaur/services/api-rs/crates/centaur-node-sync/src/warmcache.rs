@@ -53,6 +53,7 @@ pub const DEFAULT_KINDS: &[LockfileKind] = &[
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct KindStats {
     pub kind: String,
+    pub dest_subdir: String,
     pub lockfile_hash: String,
     pub entries: usize,
     pub fetched: u64,
@@ -66,6 +67,24 @@ pub struct KindStats {
 #[derive(Debug, Default)]
 pub struct HydrateStats {
     pub kinds: Vec<KindStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WarmcacheReceipt {
+    pub session: String,
+    pub entries: Vec<WarmcacheReceiptEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WarmcacheReceiptEntry {
+    pub repo: String,
+    pub git_ref: String,
+    pub kind: String,
+    pub dest_subdir: String,
+    pub lockfile_hash: String,
+    pub hit: bool,
+    #[serde(default)]
+    pub errors: usize,
 }
 
 /// Read a file at a git ref from the node repo-cache without checking it out.
@@ -121,10 +140,19 @@ pub fn hydrate_depcache(
         let lockfile_hash = sha256_hex(&lockfile_bytes);
         let manifest = match client.warmcache_manifest(&lockfile_hash, k.kind) {
             Ok(m) if !m.is_empty() => m,
-            Ok(_) => continue, // cold: no cache for this dep set yet
+            Ok(_) => {
+                stats.kinds.push(KindStats {
+                    kind: k.kind.to_string(),
+                    dest_subdir: k.dest_subdir.to_string(),
+                    lockfile_hash,
+                    ..Default::default()
+                });
+                continue;
+            } // cold: no cache for this dep set yet
             Err(err) => {
                 stats.kinds.push(KindStats {
                     kind: k.kind.to_string(),
+                    dest_subdir: k.dest_subdir.to_string(),
                     lockfile_hash,
                     errors: 1,
                     error: Some(err),
@@ -178,6 +206,7 @@ pub fn hydrate_depcache(
         };
         stats.kinds.push(KindStats {
             kind: k.kind.to_string(),
+            dest_subdir: k.dest_subdir.to_string(),
             lockfile_hash,
             entries: entries.len(),
             fetched: outcome.fetched,
@@ -188,6 +217,55 @@ pub fn hydrate_depcache(
         });
     }
     stats
+}
+
+pub fn warmcache_receipt_path(depcache_root: &Path, session: &str) -> PathBuf {
+    depcache_root
+        .join(".warmcache-receipts")
+        .join(format!("{}.json", safe_receipt_name(session)))
+}
+
+pub fn write_warmcache_receipt(
+    depcache_root: &Path,
+    receipt: &WarmcacheReceipt,
+) -> Result<(), String> {
+    let path = warmcache_receipt_path(depcache_root, &receipt.session);
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("receipt path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(receipt).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+pub fn read_warmcache_receipt(
+    depcache_root: &Path,
+    session: &str,
+) -> Result<Option<WarmcacheReceipt>, String> {
+    let path = warmcache_receipt_path(depcache_root, session);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+fn safe_receipt_name(session: &str) -> String {
+    session
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

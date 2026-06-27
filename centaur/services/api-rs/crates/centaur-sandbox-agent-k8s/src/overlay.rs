@@ -193,6 +193,80 @@ pub(crate) fn overlay_readiness_init_container_json(
     })
 }
 
+pub(crate) struct WarmcacheHydrateInitContainer<'a> {
+    pub(crate) session: &'a str,
+    pub(crate) repos_json: &'a str,
+    pub(crate) repo_cache_root: &'a str,
+    pub(crate) depcache_root: &'a str,
+    pub(crate) cas_dir: &'a str,
+    pub(crate) repo_cache_volume: &'a str,
+    pub(crate) depcache_volume: &'a str,
+    pub(crate) cas_volume: &'a str,
+    pub(crate) atrium_url: Option<&'a str>,
+    pub(crate) atrium_key: Option<&'a str>,
+}
+
+pub(crate) fn warmcache_hydrate_init_container_json(
+    overlay: &OverlayConfig,
+    init: WarmcacheHydrateInitContainer<'_>,
+) -> Value {
+    let mut env = Vec::new();
+    if let Some(atrium_url) = init.atrium_url {
+        env.push(json!({ "name": "ATRIUM_URL", "value": atrium_url }));
+    }
+    if let Some(atrium_key) = init.atrium_key {
+        env.push(json!({ "name": "ARTIFACT_CAPTURE_API_KEY", "value": atrium_key }));
+    }
+
+    let mut container = json!({
+        "name": "warmcache-hydrate",
+        "image": overlay.image,
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["/usr/local/bin/warmcache-hydrate"],
+        "args": [
+            "--session",
+            init.session,
+            "--repos-json",
+            init.repos_json,
+            "--repo-cache-root",
+            init.repo_cache_root,
+            "--depcache-root",
+            init.depcache_root,
+            "--cas-dir",
+            init.cas_dir,
+        ],
+        "securityContext": {
+            "privileged": false,
+            "allowPrivilegeEscalation": false,
+            "capabilities": {
+                "drop": ["ALL"],
+            },
+            "seccompProfile": {
+                "type": "RuntimeDefault",
+            },
+        },
+        "volumeMounts": [
+            {
+                "name": init.repo_cache_volume,
+                "mountPath": init.repo_cache_root,
+                "readOnly": true,
+            },
+            {
+                "name": init.depcache_volume,
+                "mountPath": init.depcache_root,
+            },
+            {
+                "name": init.cas_volume,
+                "mountPath": init.cas_dir,
+            },
+        ],
+    });
+    if !env.is_empty() {
+        container["env"] = json!(env);
+    }
+    container
+}
+
 pub(crate) fn overlay_volumes_json(overlay: &OverlayConfig, session: &str) -> Vec<Value> {
     vec![
         json!({
