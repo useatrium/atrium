@@ -12,13 +12,6 @@ import { workspaceIdsFor, workspaceMemberExists } from './membership.js';
 import { WsHub } from './hub.js';
 import { clearReceiptTimers } from './push.js';
 import { deleteObject, ensureBucket, getObjectBytes, headObject, presignGet, presignPut, uploadObject } from './s3.js';
-import {
-  isHarness,
-  loadHarnessStateBundle,
-  loadHarnessTranscript,
-  storeHarnessStateBundle,
-  storeHarnessTranscript,
-} from './harness-transcript.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { writeBackArtifact } from './artifact-writeback.js';
 import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
@@ -28,15 +21,8 @@ import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { getVoipSender, type VoipPushSender } from './voip.js';
 import { CentaurClient } from '@atrium/centaur-client';
-import { CLAUDE_CODE_PROVIDER, CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
+import { ProviderCredentials } from './provider-credentials.js';
 import { AgentProfiles } from './agent-profiles.js';
-import {
-  listSessionProfileBundles,
-  loadProfileBundleBlob,
-  MAX_PROFILE_BUNDLE_BLOB_BYTES,
-  normalizeBundleSha,
-  storeProfileBundleBlob,
-} from './profile-bundles.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { AppRegistry } from './app-registry.js';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -49,6 +35,7 @@ import { registerFileRoutes } from './routes/files.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerInternalArtifactRoutes } from './routes/internal-artifacts.js';
 import { registerInternalAtriumRoutes } from './routes/internal-atrium.js';
+import { registerInternalSessionRuntimeRoutes } from './routes/internal-session-runtime.js';
 import { registerInternalWarmcacheRoutes } from './routes/internal-warmcache.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMessageRoutes } from './routes/messages.js';
@@ -589,209 +576,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     fullViewForbidden,
   });
 
-  // Harness-resume (rollout-JSONL): capture the harness CLI transcript snapshot
-  // (the daemon PUTs it each turn) + serve it back for cold-start restore. Stored
-  // outside the artifact ledger — internal harness state, not a user work product.
-  app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const t = await loadHarnessTranscript(pool, { getObjectBytes }, session.id, harness);
-    if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
-    reply.header('Content-Type', 'application/x-ndjson');
-    reply.header('X-Transcript-Sha256', t.sha256);
-    return reply.send(t.bytes);
-  });
-
-  await app.register(async (ht) => {
-    ht.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
-      done(null, body),
-    );
-    ht.put('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
-      if (!requireCaptureKey(req, reply)) return;
-      const { id } = req.params as { id: string };
-      const harness = (req.query as { harness?: string }).harness ?? '';
-      if (!isHarness(harness)) {
-        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-      }
-      const session = await resolveInternalSessionRef(id);
-      if (!session) return reply.code(404).send({ error: 'session_not_found' });
-      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      if (bytes.length === 0) {
-        return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
-      }
-      const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, session.id, harness, bytes);
-      return reply.send({ size_bytes: size, sha256 });
-    });
-  });
-
-  app.get('/api/internal/sessions/:id/harness-state-bundle', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const ref = await resolveInternalSessionRef(id);
-    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
-    const bundle = await loadHarnessStateBundle(pool, ref.id, harness);
-    if (!bundle) return reply.code(404).send({ error: 'not_found', message: 'no harness-state bundle captured' });
-    return reply.send(bundle);
-  });
-
-  app.put('/api/internal/sessions/:id/harness-state-bundle', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const ref = await resolveInternalSessionRef(id);
-    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
-    try {
-      const { size, sha256 } = await storeHarnessStateBundle(
-        pool,
-        { uploadObject },
-        ref.id,
-        harness,
-        (req.body ?? {}) as { adapterVersion?: string; manifest?: unknown },
-      );
-      return reply.send({ size_bytes: size, sha256 });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'invalid harness-state bundle';
-      return reply.code(400).send({ error: 'bad_request', message });
-    }
-  });
-
-  app.put('/api/internal/sessions/:id/profile-candidates', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
-    const proposal = await agentProfiles.ingestSessionProposal(session.id, provider, req.body ?? {});
-    return reply.send({ proposal });
-  });
-
-  app.put('/api/internal/sessions/:id/profile-baseline', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
-    const { baselineHash } = await agentProfiles.putSessionBaseline(session.id, provider, req.body ?? {});
-    return reply.send({ baselineHash });
-  });
-
-  // === A2 bundle-CAS additions ===
-  app.get('/api/internal/sessions/:id/profile-bundles', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
-    const bundles = await listSessionProfileBundles(pool, session.id, provider);
-    return reply.send({ bundles });
-  });
-
-  app.get('/api/internal/sessions/:id/profile-bundle-blob', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const sha256 = normalizeBundleSha((req.query as { sha256?: string }).sha256);
-    const bytes = await loadProfileBundleBlob(pool, { getObjectBytes }, sha256);
-    if (!bytes) return reply.code(404).send({ error: 'not_found', message: 'profile bundle blob not found' });
-    reply.header('Content-Type', 'application/octet-stream');
-    reply.header('X-Profile-Bundle-Sha256', sha256);
-    return reply.send(bytes);
-  });
-
-  await app.register(async (profileBundleBlob) => {
-    profileBundleBlob.addContentTypeParser(
-      '*',
-      { parseAs: 'buffer', bodyLimit: MAX_PROFILE_BUNDLE_BLOB_BYTES },
-      (_req, body, done) => done(null, body),
-    );
-    profileBundleBlob.put('/api/internal/sessions/:id/profile-bundle-blob', async (req, reply) => {
-      if (!requireCaptureKey(req, reply)) return;
-      const { id } = req.params as { id: string };
-      const session = await resolveInternalSessionRef(id);
-      if (!session) return reply.code(404).send({ error: 'session_not_found' });
-      const q = req.query as { sha256?: string; path?: string };
-      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const result = await storeProfileBundleBlob(
-        pool,
-        { uploadObject, headObject },
-        { sha256: q.sha256 ?? '', path: q.path ?? '', bytes },
-      );
-      return reply.send(result);
-    });
-  });
-
   await registerInternalWarmcacheRoutes(app, {
     pool,
     requireCaptureKey,
     resolveInternalSessionRef,
   });
 
-  app.put('/api/internal/sessions/:id/provider-credential-refresh', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const ref = await resolveInternalSessionRef(id);
-    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
-    const session = await pool.query<{ spawned_by: string }>('SELECT spawned_by FROM sessions WHERE id = $1', [ref.id]);
-    const ownerId = session.rows[0]?.spawned_by;
-    if (!ownerId) return reply.code(404).send({ error: 'session_not_found' });
-
-    const body = (req.body ?? {}) as { token?: unknown; authJson?: unknown };
-    try {
-      if (harness === 'codex') {
-        const authJson =
-          typeof body.authJson === 'string'
-            ? body.authJson
-            : body.authJson && typeof body.authJson === 'object'
-              ? JSON.stringify(body.authJson)
-              : '';
-        if (!authJson.trim()) {
-          return reply.code(400).send({ error: 'bad_request', message: 'Codex authJson required' });
-        }
-        const provider = await providerCredentials.upsertCodexAuthJson(ownerId, authJson);
-        return reply.send({ provider });
-      }
-      const token = typeof body.token === 'string' ? body.token.trim() : '';
-      if (!token) {
-        return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
-      }
-      const provider = await providerCredentials.upsertClaudeToken(ownerId, token);
-      return reply.send({ provider });
-    } catch (err) {
-      const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
-      const message = err instanceof Error ? err.message : 'invalid refreshed credential';
-      await providerCredentials.markProviderAuthRequired(provider, ownerId, message);
-      return reply.code(400).send({ error: 'bad_request', message });
-    }
+  await registerInternalSessionRuntimeRoutes(app, {
+    pool,
+    maxUploadBytes: config.maxUploadBytes,
+    agentProfiles,
+    providerCredentials,
+    requireCaptureKey,
+    resolveInternalSessionRef,
   });
 
   // Every session sub-resource is channel-access gated (404, like
