@@ -9,7 +9,7 @@
 //! Atrium's `artifact_sync_state` is the durable authority; this is the node's
 //! fast local mirror, reconstructable by draining the feed (hydration).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::adopt::LocalState;
@@ -48,6 +48,21 @@ pub struct DaemonState {
     /// harness overlay.
     #[serde(default)]
     pub materialized_profile_bundles: HashMap<String, String>,
+    /// Warm-cache `(session, kind, lockfile_hash)` keys already captured from this
+    /// node's depcache. This keeps CAS write-back one-shot per dependency set.
+    #[serde(default)]
+    pub warmcache_captured: HashSet<String>,
+    /// Warm-cache store stability observations keyed by `(kind, dest_subdir)`.
+    /// Capture requires the same non-empty snapshot on two daemon ticks.
+    #[serde(default)]
+    pub warmcache_store_snapshots: HashMap<String, WarmcacheStoreSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WarmcacheStoreSnapshot {
+    pub file_count: u64,
+    pub total_size: u64,
+    pub max_mtime_nanos: u64,
 }
 
 impl Default for DaemonState {
@@ -61,6 +76,8 @@ impl Default for DaemonState {
             provider_credential_hashes: HashMap::new(),
             profile_baseline_sent: HashMap::new(),
             materialized_profile_bundles: HashMap::new(),
+            warmcache_captured: HashSet::new(),
+            warmcache_store_snapshots: HashMap::new(),
         }
     }
 }

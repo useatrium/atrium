@@ -48,6 +48,7 @@ const RUNTIME_THREAD_KEY_ANNOTATION: &str = "centaur.ai/thread-key";
 const RUNTIME_EXECUTION_ID_ANNOTATION: &str = "centaur.ai/execution-id";
 const RUNTIME_CONTEXT_VOLUME: &str = "runtime-context";
 const RUNTIME_CONTEXT_MOUNT_PATH: &str = "/etc/centaur/runtime-context";
+const WARMCACHE_CAS_VOLUME: &str = "warmcache-cas";
 // RFC 3339 instant stamped when the sandbox is paused for idleness and
 // cleared on resume. The reaper uses it to stop sandboxes whose pause
 // outlived the idle TTL, surviving api-rs restarts (the pause timer is
@@ -76,6 +77,9 @@ pub struct AgentSandboxConfig {
     /// node-sync daemon's ready marker, and mounts the daemon-owned workspace
     /// into the hardened agent container.
     pub overlay: Option<OverlayConfig>,
+    /// When set, repo-backed sandboxes with a dep-cache mount get a best-effort
+    /// `warmcache-hydrate` init container before the agent starts.
+    pub warmcache_hydrate: Option<WarmcacheHydrateConfig>,
     /// In-cluster OTLP collector (e.g. Laminar) the sandbox exports harness
     /// traces to directly. The per-sandbox egress NetworkPolicy denies all
     /// destinations except the proxy/control plane, so without this rule the
@@ -122,6 +126,7 @@ impl AgentSandboxConfig {
             iron_control: None,
             tools: None,
             overlay: None,
+            warmcache_hydrate: None,
             otlp_egress: None,
             ready_timeout: Duration::from_secs(60),
         }
@@ -150,6 +155,39 @@ impl AgentSandboxConfig {
     pub fn overlay(mut self, overlay: OverlayConfig) -> Self {
         self.overlay = Some(overlay);
         self
+    }
+
+    pub fn warmcache_hydrate(mut self, warmcache_hydrate: WarmcacheHydrateConfig) -> Self {
+        self.warmcache_hydrate = Some(warmcache_hydrate);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WarmcacheHydrateConfig {
+    pub repo_cache_mount_path: String,
+    pub depcache_mount_path: String,
+    pub cas_host_path: String,
+    pub cas_mount_path: String,
+    pub atrium_base_url: Option<String>,
+    pub atrium_capture_api_key: Option<String>,
+}
+
+impl WarmcacheHydrateConfig {
+    pub fn new(
+        repo_cache_mount_path: impl Into<String>,
+        depcache_mount_path: impl Into<String>,
+        cas_host_path: impl Into<String>,
+        cas_mount_path: impl Into<String>,
+    ) -> Self {
+        Self {
+            repo_cache_mount_path: repo_cache_mount_path.into(),
+            depcache_mount_path: depcache_mount_path.into(),
+            cas_host_path: cas_host_path.into(),
+            cas_mount_path: cas_mount_path.into(),
+            atrium_base_url: None,
+            atrium_capture_api_key: None,
+        }
     }
 }
 
@@ -730,6 +768,34 @@ fn build_agent_sandbox(
             overlay,
             id.as_str(),
         ));
+        if let Some(warmcache) = config
+            .warmcache_hydrate
+            .as_ref()
+            .and_then(|warmcache| warmcache_hydrate_wiring(id, spec, warmcache))
+        {
+            volumes.push(warmcache_cas_volume_json(&warmcache.cas_host_path));
+            init_containers.push(overlay::warmcache_hydrate_init_container_json(
+                overlay,
+                overlay::WarmcacheHydrateInitContainer {
+                    session: &warmcache.atrium_session,
+                    repos_json: &warmcache.repos_json,
+                    repo_cache_root: &warmcache.repo_cache_mount_path,
+                    depcache_root: &warmcache.depcache_mount_path,
+                    cas_dir: &warmcache.cas_mount_path,
+                    repo_cache_volume: &warmcache.repo_cache_volume,
+                    depcache_volume: &warmcache.depcache_volume,
+                    cas_volume: WARMCACHE_CAS_VOLUME,
+                    atrium_url: config
+                        .warmcache_hydrate
+                        .as_ref()
+                        .and_then(|config| config.atrium_base_url.as_deref()),
+                    atrium_key: config
+                        .warmcache_hydrate
+                        .as_ref()
+                        .and_then(|config| config.atrium_capture_api_key.as_deref()),
+                },
+            ));
+        }
     }
     volume_mounts.push(json!({
         "name": RUNTIME_CONTEXT_VOLUME,
@@ -882,6 +948,73 @@ fn mount_json(spec: &SandboxSpec) -> (Vec<Value>, Vec<Value>) {
         });
     }
     (volumes, mounts)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WarmcacheHydrateWiring {
+    atrium_session: String,
+    repos_json: String,
+    repo_cache_mount_path: String,
+    depcache_mount_path: String,
+    cas_host_path: String,
+    cas_mount_path: String,
+    repo_cache_volume: String,
+    depcache_volume: String,
+}
+
+fn warmcache_hydrate_wiring(
+    id: &SandboxId,
+    spec: &SandboxSpec,
+    config: &WarmcacheHydrateConfig,
+) -> Option<WarmcacheHydrateWiring> {
+    let repos_json = spec_env_value(spec, "AGENT_REPOS_JSON")?;
+    if repos_json.trim().is_empty() {
+        return None;
+    }
+    let repo_cache_volume = mount_volume_name_for_target(spec, &config.repo_cache_mount_path)?;
+    let depcache_volume = mount_volume_name_for_target(spec, &config.depcache_mount_path)?;
+    let atrium_session = spec_env_value(spec, "CENTAUR_THREAD_KEY")
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        // TODO: Warm-cache hydration routes resolve on the Atrium session ref.
+        // Normal session sandboxes carry it in CENTAUR_THREAD_KEY; only manual
+        // specs without that env fall back to the Centaur sandbox id.
+        .unwrap_or_else(|| id.as_str().to_owned());
+
+    Some(WarmcacheHydrateWiring {
+        atrium_session,
+        repos_json: repos_json.to_owned(),
+        repo_cache_mount_path: config.repo_cache_mount_path.clone(),
+        depcache_mount_path: config.depcache_mount_path.clone(),
+        cas_host_path: config.cas_host_path.clone(),
+        cas_mount_path: config.cas_mount_path.clone(),
+        repo_cache_volume,
+        depcache_volume,
+    })
+}
+
+fn mount_volume_name_for_target(spec: &SandboxSpec, target_path: &str) -> Option<String> {
+    spec.mounts
+        .iter()
+        .position(|mount| mount.target_path == target_path)
+        .map(|index| format!("mount-{index}"))
+}
+
+fn spec_env_value<'a>(spec: &'a SandboxSpec, name: &str) -> Option<&'a str> {
+    spec.env
+        .iter()
+        .find(|env| env.name == name)
+        .map(|env| env.value.as_str())
+}
+
+fn warmcache_cas_volume_json(cas_host_path: &str) -> Value {
+    json!({
+        "name": WARMCACHE_CAS_VOLUME,
+        "hostPath": {
+            "path": cas_host_path,
+            "type": "DirectoryOrCreate",
+        },
+    })
 }
 
 fn resources_json(spec: &SandboxSpec) -> Option<Value> {
@@ -1433,6 +1566,201 @@ mod tests {
         assert!(
             args.windows(2)
                 .any(|pair| pair[0] == "--repos-json" && pair[1] == repos_json)
+        );
+    }
+
+    #[test]
+    fn warmcache_hydrate_init_container_inserted_when_gated() {
+        let repos_json = r#"[{"repo":"acme/foo","ref":"main"}]"#;
+        let mut warmcache = WarmcacheHydrateConfig::new(
+            "/home/agent/github",
+            "/var/cache/centaur/depcache",
+            "/var/lib/centaur/cas",
+            "/var/lib/centaur/cas",
+        );
+        warmcache.atrium_base_url = Some("http://atrium-server.atrium.svc:8080".to_owned());
+        warmcache.atrium_capture_api_key = Some("server-side-key".to_owned());
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .env("CENTAUR_THREAD_KEY", "surface:session-1")
+            .env("AGENT_REPOS_JSON", repos_json)
+            .mount(
+                Mount::new(
+                    MountKind::Bind {
+                        source_path: "/var/lib/centaur/repos".to_owned(),
+                    },
+                    "/home/agent/github",
+                )
+                .read_only(),
+            )
+            .mount(
+                Mount::new(
+                    MountKind::Bind {
+                        source_path: "/var/lib/centaur/depcache".to_owned(),
+                    },
+                    "/var/cache/centaur/depcache",
+                )
+                .ensure_writable(),
+            );
+        let config = AgentSandboxConfig::new("centaur")
+            .overlay(OverlayConfig::new("centaur-node-sync:test"))
+            .warmcache_hydrate(warmcache)
+            .tools(ToolsConfig::new("paradigmxyz/centaur", "api:test"));
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        let init_containers = pod_spec.init_containers.as_ref().unwrap();
+        let names = init_containers
+            .iter()
+            .map(|container| container.name.as_str())
+            .collect::<Vec<_>>();
+        let readiness_index = names
+            .iter()
+            .position(|name| *name == "overlay-readiness-wait")
+            .expect("overlay-readiness-wait");
+        let warmcache_index = names
+            .iter()
+            .position(|name| *name == "warmcache-hydrate")
+            .expect("warmcache-hydrate");
+        let tools_index = names
+            .iter()
+            .position(|name| *name == "tools-bootstrap")
+            .expect("tools-bootstrap");
+        assert!(readiness_index < warmcache_index);
+        assert!(warmcache_index < tools_index);
+
+        let warmcache = &init_containers[warmcache_index];
+        assert_eq!(warmcache.image.as_deref(), Some("centaur-node-sync:test"));
+        assert_eq!(
+            warmcache.command.as_ref().unwrap(),
+            &vec!["/usr/local/bin/warmcache-hydrate".to_owned()]
+        );
+        assert_eq!(
+            warmcache
+                .args
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "--session",
+                "surface:session-1",
+                "--repos-json",
+                repos_json,
+                "--repo-cache-root",
+                "/home/agent/github",
+                "--depcache-root",
+                "/var/cache/centaur/depcache",
+                "--cas-dir",
+                "/var/lib/centaur/cas",
+            ]
+        );
+        assert_eq!(
+            container_env_value(warmcache, "ATRIUM_URL"),
+            Some("http://atrium-server.atrium.svc:8080".to_owned())
+        );
+        assert_eq!(
+            container_env_value(warmcache, "ARTIFACT_CAPTURE_API_KEY"),
+            Some("server-side-key".to_owned())
+        );
+        assert_eq!(
+            warmcache
+                .security_context
+                .as_ref()
+                .and_then(|context| context.privileged),
+            Some(false)
+        );
+
+        let mounts = warmcache.volume_mounts.as_ref().unwrap();
+        assert!(mounts.iter().any(|mount| {
+            mount.name == "mount-0"
+                && mount.mount_path == "/home/agent/github"
+                && mount.read_only == Some(true)
+        }));
+        assert!(mounts.iter().any(|mount| {
+            mount.name == "mount-1" && mount.mount_path == "/var/cache/centaur/depcache"
+        }));
+        assert!(mounts.iter().any(|mount| {
+            mount.name == WARMCACHE_CAS_VOLUME && mount.mount_path == "/var/lib/centaur/cas"
+        }));
+
+        let cas_volume = pod_spec
+            .volumes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|volume| volume.name == WARMCACHE_CAS_VOLUME)
+            .expect("warmcache CAS volume");
+        let cas_host_path = cas_volume.host_path.as_ref().unwrap();
+        assert_eq!(cas_host_path.path, "/var/lib/centaur/cas");
+        assert_eq!(cas_host_path.r#type.as_deref(), Some("DirectoryOrCreate"));
+        assert!(
+            pod_spec.containers[0]
+                .volume_mounts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|mount| mount.name != WARMCACHE_CAS_VOLUME)
+        );
+    }
+
+    #[test]
+    fn warmcache_hydrate_init_container_omitted_without_repos() {
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .env("CENTAUR_THREAD_KEY", "surface:session-1")
+            .mount(
+                Mount::new(
+                    MountKind::Bind {
+                        source_path: "/var/lib/centaur/repos".to_owned(),
+                    },
+                    "/home/agent/github",
+                )
+                .read_only(),
+            )
+            .mount(
+                Mount::new(
+                    MountKind::Bind {
+                        source_path: "/var/lib/centaur/depcache".to_owned(),
+                    },
+                    "/var/cache/centaur/depcache",
+                )
+                .ensure_writable(),
+            );
+        let config = AgentSandboxConfig::new("centaur")
+            .overlay(OverlayConfig::new("centaur-node-sync:test"))
+            .warmcache_hydrate(WarmcacheHydrateConfig::new(
+                "/home/agent/github",
+                "/var/cache/centaur/depcache",
+                "/var/lib/centaur/cas",
+                "/var/lib/centaur/cas",
+            ))
+            .tools(ToolsConfig::new("paradigmxyz/centaur", "api:test"));
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        let init_names = pod_spec
+            .init_containers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|container| container.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            init_names,
+            vec![
+                "ensure-writable-1",
+                "overlay-manifest-writer",
+                "overlay-readiness-wait",
+                "tools-bootstrap",
+            ]
+        );
+        assert!(
+            pod_spec
+                .volumes
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|volume| volume.name != WARMCACHE_CAS_VOLUME)
         );
     }
 

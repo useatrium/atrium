@@ -283,6 +283,18 @@ jobs:
           bash crates/centaur-node-sync/ci/build-and-load.sh
           NODE_SYNC_SKIP_BUILD_LOAD=1 bash crates/centaur-node-sync/ci/pod-native-e2e.sh
 
+      # Warm-cache real-pod e2e (warm-lease 2.2d-v): the shipped image's
+      # warmcache-hydrate init container warms the depcache for an agent pod.
+      # Informational — needs no overlay, reuses the cluster + loaded image.
+      - name: Warm-cache pod e2e (informational)
+        continue-on-error: true
+        working-directory: centaur/services/api-rs
+        env:
+          KIND_CLUSTER: centaur
+          NS: centaur
+          IMAGE: centaur-node-sync:e2e
+        run: bash crates/centaur-node-sync/ci/warmcache-pod-e2e.sh
+
       - name: Dump pod diagnostics
         if: ${{ failure() }}
         run: |

@@ -21,7 +21,7 @@ use centaur_iron_proxy::{
 };
 use centaur_sandbox_agent_k8s::{
     AgentSandboxBackend, AgentSandboxConfig, GitHubTokenRef, IronControlSettings, IronProxyConfig,
-    OtlpEgressTarget, OverlayConfig, ToolSource, ToolsConfig,
+    OtlpEgressTarget, OverlayConfig, ToolSource, ToolsConfig, WarmcacheHydrateConfig,
 };
 use centaur_sandbox_core::{Mount, MountKind, SandboxSpec};
 use centaur_sandbox_local::LocalSandboxBackend;
@@ -44,6 +44,8 @@ const SANDBOX_REPOS_MOUNT_PATH: &str = "/home/agent/github";
 // Node-local dependency/compile cache shared across sessions on the node
 // (pnpm store, cargo registry, uv, sccache). Read-write: the agent populates it.
 const SANDBOX_DEP_CACHE_MOUNT_PATH: &str = "/var/cache/centaur/depcache";
+const SANDBOX_CAS_MOUNT_PATH: &str = "/var/lib/centaur/cas";
+const DEFAULT_SANDBOX_CAS_HOST_PATH: &str = "/var/lib/centaur/cas";
 const DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE: &str = "centaur-node-sync:latest";
 
 /// OTLP env always forwarded from the api-rs process into codex sandboxes,
@@ -913,6 +915,21 @@ impl SandboxArgs {
         Some(overlay)
     }
 
+    fn warmcache_hydrate_config(&self) -> Option<WarmcacheHydrateConfig> {
+        clean_optional_value(self.dep_cache_path.as_deref())?;
+        let mut warmcache = WarmcacheHydrateConfig::new(
+            SANDBOX_REPOS_MOUNT_PATH,
+            SANDBOX_DEP_CACHE_MOUNT_PATH,
+            DEFAULT_SANDBOX_CAS_HOST_PATH,
+            SANDBOX_CAS_MOUNT_PATH,
+        );
+        warmcache.atrium_base_url =
+            clean_optional_value(env::var("ATRIUM_BASE_URL").ok().as_deref());
+        warmcache.atrium_capture_api_key =
+            clean_optional_value(env::var("ATRIUM_CAPTURE_API_KEY").ok().as_deref());
+        Some(warmcache)
+    }
+
     fn default_workflow_host_path(&self) -> String {
         match self.backend {
             SandboxBackendKind::Local => default_workflow_host_path(),
@@ -1398,6 +1415,7 @@ impl TryFrom<&SandboxArgs> for AgentSandboxConfig {
         config.iron_control = args.iron_control.settings();
         config.tools = args.tools_source.to_config();
         config.overlay = args.overlay_config();
+        config.warmcache_hydrate = args.warmcache_hydrate_config();
         // Direct harness OTLP export (codex usage/cost spans) needs a hole in
         // the per-sandbox egress NetworkPolicy; derived from the sandbox's own
         // OTLP endpoint env so there is a single source of truth.

@@ -17,6 +17,7 @@ RUN apt-get update \
 COPY --from=build /work/target/release/centaur-node-syncd /usr/local/bin/centaur-node-syncd
 COPY --from=build /work/target/release/scan-demo /usr/local/bin/scan-demo
 COPY --from=build /work/target/release/provision-overlay /usr/local/bin/provision-overlay
+COPY --from=build /work/target/release/warmcache-hydrate /usr/local/bin/warmcache-hydrate
 # Runs privileged (overlay xattr reads + write-through-merged); the DaemonSet sets
 # securityContext.privileged=true. No USER drop here — node-root is required.
 ENTRYPOINT ["/usr/local/bin/centaur-node-syncd"]

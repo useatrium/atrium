@@ -13,7 +13,13 @@
 > **Progress: Phase 0 ✅ (#118) + Phase 1 ✅ cut over default-ON (Centaur #27, 2026-06-25).**
 > Dep + compile cache live: node hostPath bind-mount + sccache, sccache e2e 100% warm hit.
 > Phase 2.1 ✅ (Atrium warm-cache CAS store, #124) — the daemon contract is live.
-> Phase 2.2 (Centaur node-sync lane) cluster-gated next. See §3 (Phase 2 decomposition) + §11.
+> Phase 2.2 ✅ **FULLY WIRED** (2026-06-26). 2.2a–c built the routes + hydrator + capture
+> fn + the `warmcache-hydrate` init-container binary; **2.2d wired it into the runtime**:
+> the gated init container in the agent pod spec (read path), the daemon receipt-driven
+> capture hook with a store-stability gate (write path), `event=warmcache_{hydrate,capture}`
+> hit/miss logs, the Dockerfile bin COPY, and a real-pod kind e2e. Read path proven by a
+> native binary e2e against a mock Atrium; capture covered by unit tests + the kind e2e.
+> Next is **Phase 2.3** (eviction + repo+commit snapshot — §3) now that 2.2 is complete.
 
 ---
 

@@ -121,6 +121,146 @@ fn repo_name(repo: &str) -> String {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn warmcache_capture_if_needed(
+    client: &mut dyn centaur_node_sync::runtime::AtriumClient,
+    session: &SessionConfig,
+    state: &mut centaur_node_sync::state::DaemonState,
+    depcache_root: &std::path::Path,
+) {
+    let receipt = match centaur_node_sync::warmcache::read_warmcache_receipt(
+        depcache_root,
+        &session.atrium_session,
+    ) {
+        Ok(Some(receipt)) => receipt,
+        Ok(None) => return,
+        Err(e) => {
+            eprintln!("session {}: warmcache receipt: {e}", session.session);
+            return;
+        }
+    };
+
+    for entry in receipt.entries {
+        if entry.hit || entry.errors > 0 {
+            continue;
+        }
+        let capture_key =
+            warmcache_capture_key(&session.atrium_session, &entry.kind, &entry.lockfile_hash);
+        if state.warmcache_captured.contains(&capture_key) {
+            continue;
+        }
+        let snapshot_key = warmcache_snapshot_key(&entry.kind, &entry.dest_subdir);
+        let snapshot = match warmcache_store_snapshot(depcache_root, &entry.dest_subdir) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => {
+                state.warmcache_store_snapshots.remove(&snapshot_key);
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "session {}: warmcache snapshot kind={} dest_subdir={}: {e}",
+                    session.session, entry.kind, entry.dest_subdir
+                );
+                continue;
+            }
+        };
+        let previous = state
+            .warmcache_store_snapshots
+            .insert(snapshot_key, snapshot.clone());
+        if snapshot.file_count == 0 || previous.as_ref() != Some(&snapshot) {
+            continue;
+        }
+
+        let stats = centaur_node_sync::warmcache::capture_depcache(
+            client,
+            depcache_root,
+            &entry.dest_subdir,
+            &entry.lockfile_hash,
+            &entry.kind,
+        );
+        eprintln!(
+            "event=warmcache_capture session={} kind={} lockfile_hash={} entries={} uploaded={} errors={}",
+            session.atrium_session,
+            stats.kind,
+            entry.lockfile_hash,
+            stats.entries,
+            stats.uploaded,
+            stats.errors
+        );
+        if let Some(error) = stats.error {
+            eprintln!(
+                "session {}: warmcache capture kind={} lockfile_hash={}: {error}",
+                session.atrium_session, entry.kind, entry.lockfile_hash
+            );
+        }
+        if stats.errors == 0 {
+            state.warmcache_captured.insert(capture_key);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn warmcache_capture_key(session: &str, kind: &str, lockfile_hash: &str) -> String {
+    format!("{session}|{kind}|{lockfile_hash}")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn warmcache_snapshot_key(kind: &str, dest_subdir: &str) -> String {
+    format!("{kind}|{dest_subdir}")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn warmcache_store_snapshot(
+    depcache_root: &std::path::Path,
+    dest_subdir: &str,
+) -> Result<Option<centaur_node_sync::state::WarmcacheStoreSnapshot>, String> {
+    if dest_subdir.starts_with('/') || dest_subdir.contains("..") {
+        return Err(format!("unsafe dest_subdir {dest_subdir:?}"));
+    }
+    let store = depcache_root.join(dest_subdir);
+    if !store.exists() {
+        return Ok(None);
+    }
+    let mut snapshot = centaur_node_sync::state::WarmcacheStoreSnapshot {
+        file_count: 0,
+        total_size: 0,
+        max_mtime_nanos: 0,
+    };
+    collect_warmcache_store_snapshot(&store, &mut snapshot)?;
+    Ok(Some(snapshot))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn collect_warmcache_store_snapshot(
+    dir: &std::path::Path,
+    snapshot: &mut centaur_node_sync::state::WarmcacheStoreSnapshot,
+) -> Result<(), String> {
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    for entry in rd {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let ft = entry.file_type().map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if ft.is_dir() {
+            collect_warmcache_store_snapshot(&path, snapshot)?;
+        } else if ft.is_file() {
+            let meta = entry.metadata().map_err(|e| e.to_string())?;
+            snapshot.file_count += 1;
+            snapshot.total_size = snapshot.total_size.saturating_add(meta.len());
+            snapshot.max_mtime_nanos = snapshot.max_mtime_nanos.max(warmcache_mtime_nanos(&meta));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn warmcache_mtime_nanos(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     linux_daemon::main();
@@ -128,7 +268,9 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux_daemon {
-    use super::{SessionConfig, repo_worktrees, session_config_from_discovered};
+    use super::{
+        SessionConfig, repo_worktrees, session_config_from_discovered, warmcache_capture_if_needed,
+    };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
     use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
@@ -163,6 +305,7 @@ mod linux_daemon {
         atrium_root: PathBuf,
         hydrate_artifacts: bool,
         cas_dir: PathBuf,
+        depcache_root: PathBuf,
         budget: Budget,
         large_threshold: u64,
     }
@@ -208,6 +351,10 @@ mod linux_daemon {
             cas_dir: non_empty_pathbuf(
                 &env("NODE_SYNC_CAS_DIR"),
                 overlays_root_for_defaults.join("cas"),
+            ),
+            depcache_root: non_empty_pathbuf(
+                &env("NODE_SYNC_DEPCACHE_ROOT"),
+                PathBuf::from("/var/lib/centaur/depcache"),
             ),
             budget: Budget {
                 max_dirty_bytes: env("NODE_SYNC_DIRTY_BUDGET")
@@ -539,6 +686,7 @@ mod linux_daemon {
         restore_repo_wip(session, state);
         inbound(session, state, echo, lease, &mut client);
         outbound(global, session, state, echo, &mut client);
+        warmcache_capture_if_needed(&mut client, session, state, &global.depcache_root);
         capture_repo_wip(session, state, &mut client);
         materialize_atrium(global, session, state, &client);
         state
@@ -1120,9 +1268,93 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use centaur_node_sync::cas::WarmcacheManifestEntry;
     use centaur_node_sync::overlay_mount::{LowerKind, LowerSource, plan_overlay_mount};
+    use centaur_node_sync::runtime::AtriumClient;
     use centaur_node_sync::session_manifest::{DiscoveredSession, RepoMount, SessionManifest};
+    use centaur_node_sync::warmcache::{
+        WarmcacheReceipt, WarmcacheReceiptEntry, warmcache_receipt_path, write_warmcache_receipt,
+    };
     use std::path::{Path, PathBuf};
+
+    #[derive(Default)]
+    struct FakeWarmcacheCaptureClient {
+        uploaded: Vec<String>,
+        registered: Vec<(String, String, Vec<WarmcacheManifestEntry>)>,
+    }
+
+    impl AtriumClient for FakeWarmcacheCaptureClient {
+        fn post_capture(&mut self, _: &str, _: u64, _: &[u8]) -> Result<u64, String> {
+            unreachable!()
+        }
+
+        fn post_delete(&mut self, _: &str, _: u64) -> Result<u64, String> {
+            unreachable!()
+        }
+
+        fn fetch_bytes(&mut self, _: &str, _: u64) -> Result<Vec<u8>, String> {
+            unreachable!()
+        }
+
+        fn put_cache_blob(&mut self, sha: &str, _: &[u8]) -> Result<(), String> {
+            self.uploaded.push(sha.to_string());
+            Ok(())
+        }
+
+        fn register_cache_manifest(
+            &mut self,
+            hash: &str,
+            kind: &str,
+            entries: &[WarmcacheManifestEntry],
+        ) -> Result<(), String> {
+            self.registered
+                .push((hash.to_string(), kind.to_string(), entries.to_vec()));
+            Ok(())
+        }
+
+        fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String> {
+            Ok((vec![], since.to_string()))
+        }
+
+        fn atrium_doc(&self, _: &str, _: &str) -> Result<Vec<u8>, String> {
+            unreachable!()
+        }
+    }
+
+    fn warmcache_test_session() -> SessionConfig {
+        SessionConfig {
+            session: "local-session".to_string(),
+            atrium_session: "surface:atrium-session".to_string(),
+            upper: PathBuf::from("/upper"),
+            merged: PathBuf::from("/merged"),
+            harness: None,
+            harness_thread_id: String::new(),
+            harness_home: String::new(),
+            flat_home: false,
+            repo_subdirs: Vec::new(),
+            repo_worktrees: Vec::new(),
+            state_file: PathBuf::from("/state.json"),
+        }
+    }
+
+    fn write_test_receipt(depcache: &Path, session: &SessionConfig, hit: bool) {
+        write_warmcache_receipt(
+            depcache,
+            &WarmcacheReceipt {
+                session: session.atrium_session.clone(),
+                entries: vec![WarmcacheReceiptEntry {
+                    repo: "acme/app".to_string(),
+                    git_ref: "main".to_string(),
+                    kind: "pnpm".to_string(),
+                    dest_subdir: "pnpm-store".to_string(),
+                    lockfile_hash: "lock123".to_string(),
+                    hit,
+                    errors: 0,
+                }],
+            },
+        )
+        .unwrap();
+    }
 
     #[test]
     fn scoped_atrium_root_is_scoped_under_viewer_session() {
@@ -1269,5 +1501,89 @@ mod tests {
                 path: PathBuf::from("/run/centaur/merged/sess-single"),
             }]
         );
+    }
+
+    #[test]
+    fn warmcache_capture_fires_for_miss_once_store_settles_and_records_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let depcache = tmp.path().join("depcache");
+        std::fs::create_dir_all(depcache.join("pnpm-store/react")).unwrap();
+        std::fs::write(depcache.join("pnpm-store/react/package.json"), b"react").unwrap();
+        let session = warmcache_test_session();
+        write_test_receipt(&depcache, &session, false);
+        let mut state = centaur_node_sync::state::DaemonState::default();
+        let mut client = FakeWarmcacheCaptureClient::default();
+
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+        assert!(client.registered.is_empty(), "first snapshot only observes");
+
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+        assert_eq!(client.registered.len(), 1);
+        assert_eq!(client.uploaded.len(), 1);
+        assert!(state.warmcache_captured.contains(&warmcache_capture_key(
+            &session.atrium_session,
+            "pnpm",
+            "lock123"
+        )));
+
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+        assert_eq!(client.registered.len(), 1, "captured key is not retried");
+    }
+
+    #[test]
+    fn warmcache_capture_does_not_fire_while_store_is_changing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let depcache = tmp.path().join("depcache");
+        std::fs::create_dir_all(depcache.join("pnpm-store")).unwrap();
+        std::fs::write(depcache.join("pnpm-store/pkg.tgz"), b"v1").unwrap();
+        let session = warmcache_test_session();
+        write_test_receipt(&depcache, &session, false);
+        let mut state = centaur_node_sync::state::DaemonState::default();
+        let mut client = FakeWarmcacheCaptureClient::default();
+
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+        std::fs::write(depcache.join("pnpm-store/pkg.tgz"), b"v2 changed").unwrap();
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+
+        assert!(client.registered.is_empty());
+        assert!(client.uploaded.is_empty());
+    }
+
+    #[test]
+    fn warmcache_capture_does_not_fire_for_hit_receipt_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let depcache = tmp.path().join("depcache");
+        std::fs::create_dir_all(depcache.join("pnpm-store")).unwrap();
+        std::fs::write(depcache.join("pnpm-store/pkg.tgz"), b"already cached").unwrap();
+        let session = warmcache_test_session();
+        write_test_receipt(&depcache, &session, true);
+        let mut state = centaur_node_sync::state::DaemonState::default();
+        let mut client = FakeWarmcacheCaptureClient::default();
+
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+
+        assert!(client.registered.is_empty());
+        assert!(client.uploaded.is_empty());
+    }
+
+    #[test]
+    fn warmcache_capture_missing_or_garbage_receipt_is_safe_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let depcache = tmp.path().join("depcache");
+        let session = warmcache_test_session();
+        let mut state = centaur_node_sync::state::DaemonState::default();
+        let mut client = FakeWarmcacheCaptureClient::default();
+
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+        assert!(client.registered.is_empty());
+
+        let receipt_path = warmcache_receipt_path(&depcache, &session.atrium_session);
+        std::fs::create_dir_all(receipt_path.parent().unwrap()).unwrap();
+        std::fs::write(receipt_path, b"{not-json").unwrap();
+        warmcache_capture_if_needed(&mut client, &session, &mut state, &depcache);
+
+        assert!(client.registered.is_empty());
+        assert!(client.uploaded.is_empty());
     }
 }
