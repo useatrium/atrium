@@ -218,7 +218,14 @@ describe('session card transitions across session.* events', () => {
           renderer: 'html-app',
           description: 'Embedded support queue demo.',
           previewUrl: 'index.html?preview=1',
-          previewSizePolicy: { enabled: true, defaultSize: 'card' },
+          previewSizePolicy: {
+            enabled: true,
+            defaultSize: 'card',
+            sizes: [
+              { id: 'card', minWidth: 420, height: 260 },
+              { id: 'wide', minWidth: 640, height: 420 },
+            ],
+          },
           statePolicy: { mode: 'isolated' },
           executionId: null,
           sourceEventIds: [],
@@ -245,6 +252,7 @@ describe('session card transitions across session.* events', () => {
     const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
     expect(frame.getAttribute('src')).toContain('path=shared%2Fapps%2Fsupport-triage-console%2Findex.html');
     expect(frame.getAttribute('src')).toContain('preview=1');
-    expect(frame.className).toContain('h-[28rem]');
+    expect(frame.getAttribute('src')).toContain('previewSize=wide');
+    expect(frame.style.height).toBe('420px');
   });
 });

@@ -83,7 +83,14 @@ describe('session pane folds the B_tooltest stream', () => {
           renderer: 'html-app',
           description: 'Embedded support queue demo.',
           previewUrl: 'index.html?preview=1',
-          previewSizePolicy: { enabled: true, defaultSize: 'card' },
+          previewSizePolicy: {
+            enabled: true,
+            defaultSize: 'card',
+            sizes: [
+              { id: 'card', minWidth: 420, height: 260 },
+              { id: 'expanded', minWidth: 640, height: 720 },
+            ],
+          },
           statePolicy: { mode: 'isolated' },
           executionId: null,
           sourceEventIds: [],
@@ -108,7 +115,16 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(screen.queryByText('v1')).toBeNull();
     const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
     expect(frame.getAttribute('src')).toContain('preview=1');
-    expect(frame.className).toContain('h-72');
+    expect(frame.getAttribute('src')).toContain('previewSize=card');
+    expect(frame.style.height).toBe('260px');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }));
+    expect(frame.getAttribute('src')).toContain('previewSize=expanded');
+    expect(frame.style.height).toBe('720px');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse preview' }));
+    expect(frame.getAttribute('src')).toContain('previewSize=card');
+    expect(frame.style.height).toBe('260px');
   });
 
   it('renders a Claude auth-required banner for the credential owner', () => {

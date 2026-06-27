@@ -96,6 +96,108 @@ kubectl apply -f ~/Code/atrium/infra/sandbox-egress-api-rs.yaml
 kubectl -n centaur port-forward deploy/centaur-centaur-api-rs 18000:8080
 ```
 
+### Restarting Centaur After Local Changes
+
+When changing Centaur images, Helm values, repo-cache refs, skills, or sandbox
+env, restart more than just the pods. Local failures can otherwise look like
+missing model auth even when the Kubernetes secret is correct.
+
+Use this checklist after a deploy or api-rs rollout:
+
+```sh
+kubectl -n centaur rollout status deploy/centaur-centaur-api-rs --timeout=180s
+kubectl -n centaur rollout status ds/centaur-centaur-repo-cache --timeout=180s
+kubectl -n centaur rollout status ds/centaur-centaur-node-sync --timeout=180s
+
+# Pod deletion alone is not enough: the Sandbox CR will recreate pods from the
+# old spec. Delete old Sandbox resources so the next session gets the current
+# api-rs sandbox template, env, repo-cache refs, and skill dirs.
+kubectl -n centaur delete sandboxes --all --wait=true || true
+
+# Rollouts kill kubectl port-forward. Recreate it before using Atrium.
+kubectl -n centaur port-forward deploy/centaur-centaur-api-rs 18000:8080
+```
+
+If the port-forward must run unattended:
+
+```sh
+nohup kubectl -n centaur port-forward deploy/centaur-centaur-api-rs 18000:8080 \
+  >/tmp/centaur-port-forward.log 2>&1 &
+echo $! >/tmp/centaur-port-forward.pid
+curl http://127.0.0.1:18000/healthz
+```
+
+Quick health checks:
+
+```sh
+curl http://127.0.0.1:18000/healthz
+kubectl -n centaur get sandboxes
+kubectl -n centaur get pods -o wide
+```
+
+There should be no stale `Sandbox` resources when you expect a clean first run.
+If a new agent fails before producing transcript output, inspect the sandbox log:
+
+```sh
+pod="$(kubectl -n centaur get pods -l centaur.ai/managed-by=api-rs \
+  --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')"
+kubectl -n centaur logs "$pod" --tail=200
+```
+
+Useful symptoms:
+
+- `missing Codex harness config: /home/agent/harness/codex/config.toml` usually
+  means a stale Sandbox spec or stale agent image/config. Delete `sandboxes`
+  and retry after the api-rs rollout is complete.
+- Atrium sessions that fail with no transcript events often mean Atrium cannot
+  reach Centaur. Check `127.0.0.1:18000`; api-rs rollouts commonly break the
+  port-forward.
+- `provider auth required` or a model-auth error after the sandbox is running is
+  different: then check the sandbox env/auth path, not the host port-forward.
+
+### API Keys And Local Secrets
+
+Keep local Centaur secrets in Centaur's ignored env file and Kubernetes secret,
+not in `/tmp`:
+
+- `/Users/allanniemerg/dev4/centaur/.env.local` is the local source file used
+  for bootstrap/deploy work.
+- `centaur-infra-env` is the Kubernetes secret consumed by the local deployment.
+
+Verify only key presence, never print secret values:
+
+```sh
+kubectl -n centaur get secret centaur-infra-env -o json \
+  | jq -r '.data | keys[]' | sort
+```
+
+For a freshly created sandbox, check presence without exposing values:
+
+```sh
+pod="$(kubectl -n centaur get pods -l centaur.ai/managed-by=api-rs \
+  --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')"
+kubectl -n centaur exec "$pod" -- /bin/sh -lc '
+  test -f /home/agent/harness/codex/config.toml && echo harness_config=present || echo harness_config=missing
+  test -f /home/agent/.codex/config.toml && echo codex_config=present || echo codex_config=missing
+  test -f /home/agent/.codex/auth.json && echo codex_auth=present || echo codex_auth=missing
+  for k in OPENAI_API_KEY ANTHROPIC_API_KEY CENTAUR_API_URL CENTAUR_SKILL_DIRS; do
+    eval v=\${$k:-}
+    printf "%s=%s\n" "$k" "$([ -n "$v" ] && echo set || echo unset)"
+  done
+'
+```
+
+Do not confuse these three key paths:
+
+- `CENTAUR_API_KEY`: control-plane/session API auth. In local dev the create
+  endpoint may accept requests without it, but do not rely on that outside this
+  setup.
+- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`: model-provider keys used by the
+  harness inside the sandbox.
+- `ARTIFACT_CAPTURE_API_KEY` / `ATRIUM_CAPTURE_API_KEY`: capture keys used by
+  node-sync / Atrium internal capture routes. These are separate from the
+  control-plane key.
+
 ### Node-sync -> Atrium local networking
 
 Node-sync runs inside the kind cluster and calls Atrium directly. The Atrium
