@@ -14,7 +14,6 @@ import { signSession, verifySession } from './cookie.js';
 import {
   DomainError,
   canAccessChannel,
-  canAccessFile,
   createWorkspace,
   ensureDefaultWorkspace,
   listChannelMessages,
@@ -32,7 +31,6 @@ import {
   workspaceMemberIds,
 } from './membership.js';
 import { WsHub } from './hub.js';
-import { FILE_URL_TTL_S, fileSignature, verifyFileSignature } from './filesign.js';
 import { clearReceiptTimers } from './push.js';
 import { emailDeliveryConfigured, sendLoginCode } from './email.js';
 import {
@@ -118,6 +116,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMessageRoutes } from './routes/messages.js';
 import { registerPushRoutes } from './routes/push.js';
+import { registerUploadRoutes } from './routes/uploads.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { sanitizeFilename } from './safe-filename.js';
 
@@ -1077,95 +1076,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     fullViewForbidden,
     runMutation,
   });
-
-  // -------------------------------------------------------------------------
-  // File uploads (presigned to S3/MinIO)
-  // -------------------------------------------------------------------------
-
-  app.post('/api/uploads', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const body = (req.body ?? {}) as {
-      filename?: string;
-      contentType?: string;
-      size?: number;
-      width?: number;
-      height?: number;
-      contentHash?: string;
-    };
-    const filename = String(body.filename ?? '').trim().slice(0, 200) || 'file';
-    const contentType =
-      typeof body.contentType === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(body.contentType)
-        ? body.contentType
-        : 'application/octet-stream';
-    const contentHash =
-      typeof body.contentHash === 'string' && body.contentHash.length > 0
-        ? body.contentHash.toLowerCase()
-        : null;
-    if (contentHash != null && !/^[0-9a-f]{64}$/.test(contentHash)) {
-      return reply
-        .code(400)
-        .send({ error: 'bad_request', message: 'contentHash must be sha-256 hex' });
-    }
-    const size = Number(body.size);
-    if (!Number.isFinite(size) || size <= 0) {
-      return reply.code(400).send({ error: 'bad_request', message: 'size required' });
-    }
-    if (size > config.maxUploadBytes) {
-      return reply.code(413).send({
-        error: 'file_too_large',
-        message: `file exceeds ${Math.round(config.maxUploadBytes / 1024 / 1024)}MB`,
-      });
-    }
-    const dim = (v: unknown) =>
-      Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : null;
-    const workspaceId = await activeWorkspaceIdFor(user.id);
-    if (!workspaceId) return noWorkspace(reply);
-    try {
-      await fileStorage.ensureBucket();
-    } catch {
-      return reply
-        .code(503)
-        .send({ error: 'storage_unavailable', message: 'file storage is not running' });
-    }
-
-    if (contentHash != null) {
-      const existing = await pool.query<{ id: string; s3_key: string }>(
-        `SELECT id, s3_key
-           FROM files
-          WHERE uploader_id = $1 AND content_hash = $2 AND size_bytes = $3
-          ORDER BY created_at ASC
-          LIMIT 1`,
-        [user.id, contentHash, size],
-      );
-      if (existing.rows[0]) {
-        const row = existing.rows[0];
-        const uploadUrl = await fileStorage.presignPut(row.s3_key, contentType);
-        return reply.send({ fileId: row.id, uploadUrl, existing: true });
-      }
-    }
-
-    const fileId = randomUUID();
-    const s3Key = `${fileId}/${filename}`;
-    await pool.query(
-      `INSERT INTO files (id, workspace_id, uploader_id, filename, content_type, size_bytes, width, height, s3_key, content_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [
-        fileId,
-        workspaceId,
-        user.id,
-        filename,
-        contentType,
-        size,
-        dim(body.width),
-        dim(body.height),
-        s3Key,
-        contentHash,
-      ],
-    );
-    const uploadUrl = await fileStorage.presignPut(s3Key, contentType);
-    return reply.code(201).send({ fileId, uploadUrl, existing: false });
-  });
+  registerUploadRoutes(app, { pool, fileStorage, secret, requireUser, activeWorkspaceIdFor, noWorkspace });
 
   // === writeback route ===
   await app.register(async (writeback) => {
@@ -1236,89 +1147,6 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       return reply.send({ seq: result.seq, status: result.status });
     });
-  });
-
-  app.post('/api/uploads/:fileId/refresh', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { fileId } = req.params as { fileId: string };
-    if (!/^[0-9a-f-]{36}$/i.test(fileId)) {
-      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    }
-    const row = await pool.query<{ content_type: string; s3_key: string }>(
-      `SELECT content_type, s3_key FROM files WHERE id = $1 AND uploader_id = $2`,
-      [fileId, user.id],
-    );
-    const file = row.rows[0];
-    if (!file) {
-      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    }
-    try {
-      await fileStorage.ensureBucket();
-    } catch {
-      return reply
-        .code(503)
-        .send({ error: 'storage_unavailable', message: 'file storage is not running' });
-    }
-    const uploadUrl = await fileStorage.presignPut(file.s3_key, file.content_type);
-    return reply.send({ uploadUrl });
-  });
-
-  // Mint a short-lived signed URL for opening a file outside an authenticated
-  // context (external browser, share sheet). File-scoped — never the session.
-  app.get('/api/files/:id/url', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    if (!/^[0-9a-f-]{36}$/i.test(id)) {
-      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    }
-    if (!(await canAccessFile(pool, user.id, id))) {
-      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    }
-    const expires = Math.floor(Date.now() / 1000) + FILE_URL_TTL_S;
-    const sig = fileSignature(id, expires, secret);
-    return {
-      url: `/api/files/${id}?expires=${expires}&sig=${encodeURIComponent(sig)}`,
-      expiresAt: new Date(expires * 1000).toISOString(),
-    };
-  });
-
-  app.get('/api/files/:id', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    if (!/^[0-9a-f-]{36}$/i.test(id)) {
-      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    }
-    // Either a valid short-lived file signature (the capability was minted by
-    // someone with access via /api/files/:id/url) or a logged-in caller who
-    // can access a channel the file is attached to. The signed path is the
-    // mobile/in-app image hot path's sibling; the authed path gates on
-    // canAccessFile so a non-member can't pull a file by its id.
-    const q = (req.query ?? {}) as { expires?: unknown; sig?: unknown };
-    const signed =
-      typeof q.sig === 'string' &&
-      typeof q.expires === 'string' &&
-      verifyFileSignature(id, Number(q.expires), q.sig, secret);
-    if (!signed) {
-      const user = requireUser(req, reply);
-      if (!user) return;
-      if (!(await canAccessFile(pool, user.id, id))) {
-        return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-      }
-    }
-    const res = await pool.query<{
-      filename: string;
-      content_type: string;
-      s3_key: string;
-    }>('SELECT filename, content_type, s3_key FROM files WHERE id = $1', [id]);
-    const file = res.rows[0];
-    if (!file || !file.s3_key) {
-      return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    }
-    const inline =
-      file.content_type.startsWith('image/') || file.content_type === 'application/pdf';
-    const url = await fileStorage.presignGet(file.s3_key, file.filename, inline);
-    return reply.redirect(url, 302);
   });
 
   // -------------------------------------------------------------------------
