@@ -110,7 +110,7 @@ import {
   CODEX_PROVIDER,
   ProviderCredentials,
 } from './provider-credentials.js';
-import { AgentProfiles, providerFromProfileValue } from './agent-profiles.js';
+import { AgentProfiles } from './agent-profiles.js';
 import {
   listSessionProfileBundles,
   loadProfileBundleBlob,
@@ -1215,98 +1215,14 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { user, prefs: normalizePrefs(res.rows[0]?.prefs) };
   });
 
-  app.get('/api/me/provider-credentials', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    return { providers: await providerCredentials.list(user.id) };
-  });
-
-  app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const body = (req.body ?? {}) as { token?: unknown };
-    const token = typeof body.token === 'string' ? body.token.trim() : '';
-    if (!token) {
-      return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
-    }
-    const provider = await providerCredentials.upsertClaudeToken(user.id, token);
-    await sessionRuns.clearClaudeAuthRequired(user.id);
-    return { provider };
-  });
-
-  app.put('/api/me/provider-credentials/codex', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const body = (req.body ?? {}) as { authJson?: unknown };
-    const authJson = typeof body.authJson === 'string' ? body.authJson.trim() : '';
-    if (!authJson) {
-      return reply.code(400).send({ error: 'bad_request', message: 'Codex auth.json required' });
-    }
-    try {
-      const provider = await providerCredentials.upsertCodexAuthJson(user.id, authJson);
-      await sessionRuns.clearProviderAuthRequired(user.id, CODEX_PROVIDER);
-      return { provider };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Invalid Codex auth.json';
-      return reply.code(400).send({ error: 'bad_request', message });
-    }
-  });
-
-  app.delete('/api/me/provider-credentials/claude-code', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    await providerCredentials.deleteClaudeToken(user.id);
-    return { ok: true };
-  });
-
-  app.delete('/api/me/provider-credentials/codex', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    await providerCredentials.deleteCodexAuthJson(user.id);
-    return { ok: true };
-  });
-
-  app.get('/api/me/agent-profiles', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    return { profiles: await agentProfiles.listProfiles(user.id) };
-  });
-
-  app.post('/api/me/agent-profiles', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const body = (req.body ?? {}) as { provider?: unknown; name?: unknown };
-    const provider = providerFromProfileValue(body.provider);
-    if (!provider) {
-      return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });
-    }
-    const name = typeof body.name === 'string' ? body.name : '';
-    return { profile: await agentProfiles.createProfile(user.id, provider, name) };
-  });
-
-  app.get('/api/me/agent-profiles/:id', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    return { profile: await agentProfiles.getProfile(user.id, id) };
-  });
-
-  app.post('/api/me/agent-profiles/:id/versions', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    return { version: await agentProfiles.createVersion(user.id, id, req.body ?? {}) };
-  });
-
-  app.post('/api/me/agent-profiles/import-local', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const body = (req.body ?? {}) as { provider?: unknown; proposal?: unknown };
-    const provider = providerFromProfileValue(body.provider);
-    if (!provider) {
-      return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });
-    }
-    return { proposal: await agentProfiles.createImportProposal(user.id, provider, body.proposal ?? req.body) };
+  registerMeRoutes(app, {
+    hub,
+    requireUser,
+    optionalOpId,
+    runMutation,
+    providerCredentials,
+    agentProfiles,
+    sessionRuns,
   });
 
   app.post('/auth/logout', async (req, reply) => {
@@ -1359,8 +1275,6 @@ function rawSession(req: FastifyRequest): string | undefined {
       client.release();
     }
   });
-
-  registerMeRoutes(app, { hub, requireUser, optionalOpId, runMutation });
 
   app.get('/api/users', async (req, reply) => {
     const user = requireUser(req, reply);
