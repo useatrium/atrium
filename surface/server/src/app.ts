@@ -93,7 +93,7 @@ import {
 } from './warmcache-store.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, type MediaClassification } from './media-classifier.js';
-import { AppRegistry, normalizeAppRelPath, type AppScope } from './app-registry.js';
+import { AppRegistry, normalizeAppRelPath } from './app-registry.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerCallRoutes } from './routes/calls.js';
 import { registerChannelRoutes } from './routes/channels.js';
@@ -102,6 +102,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMessageRoutes } from './routes/messages.js';
 import { registerPushRoutes } from './routes/push.js';
+import { registerSessionRoutes } from './routes/sessions.js';
 import { registerUploadRoutes } from './routes/uploads.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { sanitizeFilename } from './safe-filename.js';
@@ -697,184 +698,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Agent sessions
-  // -------------------------------------------------------------------------
-
-  app.post('/api/sessions', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const body = (req.body ?? {}) as {
-      channelId?: string;
-      threadRootEventId?: number;
-      task?: string;
-      harness?: string;
-      repo?: string;
-      branch?: string;
-      agentProfileId?: string;
-      agentProfileVersionId?: string;
-      opId?: unknown;
-    };
-    const opId = optionalOpId(body);
-    const task = typeof body.task === 'string' ? body.task : '';
-    const repo = typeof body.repo === 'string' && body.repo.trim() ? body.repo.trim() : undefined;
-    const branch = typeof body.branch === 'string' && body.branch.trim() ? body.branch.trim() : undefined;
-    if (!body.channelId || typeof body.channelId !== 'string') {
-      return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
-    }
-    if (task.trim().length === 0) {
-      return reply.code(400).send({ error: 'empty_task', message: 'task is empty' });
-    }
-    if (Buffer.byteLength(task, 'utf8') > config.maxMessageBytes) {
-      return reply.code(413).send({ error: 'task_too_large', message: 'task exceeds 8KB' });
-    }
-    const threadRootEventId = body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
-    if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
-      return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
-    }
-    if (!(await canAccessChannel(pool, user.id, body.channelId))) {
-      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
-    }
-    const bodySpawnId = (body as { clientSpawnId?: unknown }).clientSpawnId;
-    const clientSpawnId = typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined;
-    const agentProfileId =
-      typeof body.agentProfileId === 'string' && body.agentProfileId.trim() ? body.agentProfileId.trim() : undefined;
-    const agentProfileVersionId =
-      typeof body.agentProfileVersionId === 'string' && body.agentProfileVersionId.trim()
-        ? body.agentProfileVersionId.trim()
-        : undefined;
-    let createdSession: Awaited<ReturnType<typeof sessionRuns.createSessionInTx>> | null = null;
-    const result = await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.spawn',
-      body: {
-        channelId: body.channelId,
-        threadRootEventId,
-        task,
-        harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
-        repo,
-        branch,
-        agentProfileId,
-        agentProfileVersionId,
-        clientSpawnId,
-      },
-      fn: async (client) => {
-        createdSession = await sessionRuns.createSessionInTx(client, {
-          channelId: body.channelId as string,
-          threadRootEventId,
-          task,
-          harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
-          repo,
-          branch,
-          agentProfileId,
-          agentProfileVersionId,
-          clientSpawnId,
-          user,
-        });
-        return { session: createdSession.session, created: createdSession.created };
-      },
-      onApplied: () => {
-        if (createdSession) sessionRuns.afterCreateSession(createdSession, task);
-      },
-    });
-    return reply.code(result.created ? 201 : 200).send({ session: result.session });
+  registerSessionRoutes(app, {
+    pool,
+    sessionRuns,
+    agentProfiles,
+    appRegistry,
+    requireUser,
+    requireSessionAccess,
+    optionalOpId,
+    runMutation,
   });
-
-  app.get('/api/sessions', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const q = req.query as { status?: string; limit?: string };
-    const status =
-      q.status === 'running' || q.status === 'recent' || q.status === 'all'
-        ? q.status
-        : q.status == null
-          ? 'all'
-          : null;
-    if (!status) {
-      return reply.code(400).send({ error: 'bad_query', message: 'invalid status filter' });
-    }
-    const rawLimit = q.limit == null ? 50 : Number(q.limit);
-    if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
-      return reply.code(400).send({ error: 'bad_query', message: 'limit must be positive' });
-    }
-    const limit = Math.min(200, Math.floor(rawLimit));
-    return { sessions: await sessionRuns.listSessionsForUser({ userId: user.id, status, limit }) };
-  });
-
-  app.get('/api/sessions/:id', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    return { session: await sessionRuns.getSessionForUser(id, user.id) };
-  });
-
-  app.get('/api/sessions/:id/profile-change-proposals', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    return { proposals: await agentProfiles.listSessionProposals(id, user.id) };
-  });
-
-  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/discard', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    return { proposal: await agentProfiles.discardProposal(user.id, id, proposalId) };
-  });
-
-  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/apply-lineage', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    return { proposal: await agentProfiles.applyProposalToLineage(user.id, id, proposalId) };
-  });
-
-  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/save-current-profile', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    const body = (req.body ?? {}) as { profileId?: unknown; name?: unknown };
-    return await agentProfiles.saveProposalToCurrentProfile(user.id, id, proposalId, {
-      ...(typeof body.profileId === 'string' ? { profileId: body.profileId } : {}),
-      ...(typeof body.name === 'string' ? { name: body.name } : {}),
-    });
-  });
-
-  app.post('/api/sessions/:id/profile-change-proposals/:proposalId/save-new-profile', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    const body = (req.body ?? {}) as { name?: unknown };
-    const name = typeof body.name === 'string' ? body.name : '';
-    return await agentProfiles.saveProposalToNewProfile(user.id, id, proposalId, name);
-  });
-
-  // The durable session record (transcript + human-side overlay) for agents +
-  // async humans. Channel-access gated like every other session sub-resource.
-  app.get('/api/sessions/:id/record', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const record = await sessionRuns.getSessionRecord(id);
-    // Own-session work-product record: annotate scope but DON'T filter — the
-    // session owns these artifacts (private-vs-shared is a cross-session concern;
-    // a session always sees its own files, including bare/private-scoped paths).
-    record.artifacts = record.artifacts.map((artifact) => ({
-      ...artifact,
-      scope: classifyScope(artifact.path),
-    }));
-    return { record };
-  });
-
-  async function sessionAppContext(sessionId: string): Promise<{ workspaceId: string; channelId: string } | null> {
-    const res = await pool.query<{ workspace_id: string; channel_id: string }>(
-      'SELECT workspace_id, channel_id FROM sessions WHERE id = $1',
-      [sessionId],
-    );
-    const row = res.rows[0];
-    return row ? { workspaceId: row.workspace_id, channelId: row.channel_id } : null;
-  }
 
   async function resolveInternalSessionRef(
     sessionRef: string,
@@ -901,48 +734,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       writable: root.writable,
     }));
   }
-
-  app.post('/api/sessions/:id/apps', async (req, reply) => {
-    const user = await requireSessionAccess(req, reply);
-    if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { name?: unknown; entry?: unknown; scope?: unknown };
-    if (typeof body.name !== 'string') {
-      return reply.code(400).send({ error: 'bad_request', message: 'name is required' });
-    }
-    const scope: AppScope = body.scope === 'workspace' ? 'workspace' : 'channel';
-    const entry = typeof body.entry === 'string' && body.entry.trim() ? body.entry : 'index.html';
-    const ctx = await sessionAppContext(id);
-    if (!ctx) return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
-    const published = await appRegistry.publish({
-      sessionId: id,
-      workspaceId: ctx.workspaceId,
-      channelId: ctx.channelId,
-      userId: user.id,
-      name: body.name,
-      scope,
-      entry,
-    });
-    return reply.send(published);
-  });
-
-  app.get('/api/apps', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    return reply.send({ apps: await appRegistry.listForUser(user.id) });
-  });
-
-  app.post('/api/apps/:appId/launch', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const { appId } = req.params as { appId: string };
-    const body = (req.body ?? {}) as { version?: unknown };
-    const version = body.version == null ? undefined : Number(body.version);
-    if (version !== undefined && (!Number.isSafeInteger(version) || version <= 0)) {
-      return reply.code(400).send({ error: 'bad_request', message: 'version must be a positive integer' });
-    }
-    return reply.send(await appRegistry.launch(appId, user.id, version));
-  });
 
   // === Phase 3 unified Files routes ===
   {
