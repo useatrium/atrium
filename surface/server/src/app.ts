@@ -3,19 +3,17 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { normalizePrefs } from '@atrium/surface-client/prefs';
-import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { signSession, verifySession } from './cookie.js';
+import { verifySession } from './cookie.js';
 import {
   DomainError,
   canAccessChannel,
-  createWorkspace,
-  ensureDefaultWorkspace,
   listChannelMessages,
   listChannelsFor,
   listThreadMessages,
@@ -23,16 +21,9 @@ import {
   type WireEvent,
   type UserRef,
 } from './events.js';
-import {
-  addWorkspaceMember,
-  isWorkspaceMember,
-  workspaceIdsFor,
-  workspaceMemberExists,
-  workspaceMemberIds,
-} from './membership.js';
+import { workspaceIdsFor, workspaceMemberExists } from './membership.js';
 import { WsHub } from './hub.js';
 import { clearReceiptTimers } from './push.js';
-import { emailDeliveryConfigured, sendLoginCode } from './email.js';
 import {
   copyObject,
   deleteObject,
@@ -73,20 +64,14 @@ import {
   canonicalizeSessionArtifactPath,
   displaySessionArtifactPath,
   InvalidArtifactPathError,
-  normalizeArtifactPathInput,
   sessionArtifactPathAliases,
 } from './artifact-path.js';
 import { isUuid, withIdempotency } from './idempotency.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
-import { type CallRow } from './calls.js';
 import { getVoipSender, type VoipPushSender } from './voip.js';
 import { CentaurClient } from '@atrium/centaur-client';
-import {
-  CLAUDE_CODE_PROVIDER,
-  CODEX_PROVIDER,
-  ProviderCredentials,
-} from './provider-credentials.js';
+import { CLAUDE_CODE_PROVIDER, CODEX_PROVIDER, ProviderCredentials } from './provider-credentials.js';
 import { AgentProfiles } from './agent-profiles.js';
 import {
   listSessionProfileBundles,
@@ -109,6 +94,7 @@ import {
 import { DemoCentaurClient } from './demo-centaur.js';
 import { classifyMedia, type MediaClassification } from './media-classifier.js';
 import { AppRegistry, normalizeAppRelPath, type AppScope } from './app-registry.js';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerCallRoutes } from './routes/calls.js';
 import { registerChannelRoutes } from './routes/channels.js';
 import { registerEntryRoutes } from './routes/entries.js';
@@ -154,11 +140,6 @@ export interface AppDeps {
   /** Internal x-api-key override for tests; production reads config. */
   artifactCaptureApiKey?: string;
 }
-
-const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CODE_RE = /^\d{6}$/;
-const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -313,8 +294,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     providerCredentials,
     agentProfiles,
   });
-  const calls =
-    deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
+  const calls = deps.calls === false ? null : (deps.calls ?? createLiveKitTokenService(config));
   const voip = deps.voip ?? getVoipSender(config);
   const artifactCaptureApiKey = deps.artifactCaptureApiKey ?? config.artifactCaptureApiKey;
   const appRegistry = new AppRegistry(pool, {
@@ -370,10 +350,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (error.statusCode === 429) {
       return reply.code(429).send({
         error: 'rate_limited',
-        message:
-          typeof error.message === 'string' && error.message.length > 0
-            ? error.message
-            : 'rate limit exceeded',
+        message: typeof error.message === 'string' && error.message.length > 0 ? error.message : 'rate limit exceeded',
       });
     }
     app.log.error(err);
@@ -401,16 +378,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // Sliding renewal: active sessions never expire, idle ones die in 30d.
     if (new Date(row.expires_at).getTime() - Date.now() < 15 * 24 * 60 * 60 * 1000) {
       void pool
-        .query(`UPDATE auth_sessions SET expires_at = now() + interval '30 days' WHERE id = $1`, [
-          sessionId,
-        ])
+        .query(`UPDATE auth_sessions SET expires_at = now() + interval '30 days' WHERE id = $1`, [sessionId])
         .catch(() => {});
     }
     return { id: row.id, handle: row.handle, displayName: row.display_name };
   }
 
   /** Signed session value from the request: bearer header (native) or cookie (web). */
-function rawSession(req: FastifyRequest): string | undefined {
+  function rawSession(req: FastifyRequest): string | undefined {
     const auth = req.headers.authorization;
     if (auth?.startsWith('Bearer ')) return auth.slice('Bearer '.length);
     return req.cookies[config.sessionCookie];
@@ -453,10 +428,7 @@ function rawSession(req: FastifyRequest): string | undefined {
    * (not carried on UserRef) so raw_access never leaks into embedded user objects. */
   async function canViewFull(userId: string): Promise<boolean> {
     if (!config.fullViewEnabled) return false;
-    const res = await pool.query<{ raw_access: boolean }>(
-      `SELECT raw_access FROM users WHERE id = $1`,
-      [userId],
-    );
+    const res = await pool.query<{ raw_access: boolean }>(`SELECT raw_access FROM users WHERE id = $1`, [userId]);
     return res.rows[0]?.raw_access === true;
   }
 
@@ -470,12 +442,6 @@ function rawSession(req: FastifyRequest): string | undefined {
       throw new DomainError(400, 'bad_request', 'opId must be a uuid');
     }
     return body.opId;
-  }
-
-  function withoutOpId(body: Record<string, unknown>): Record<string, unknown> {
-    const rest = { ...body };
-    delete rest.opId;
-    return rest;
   }
 
   async function runMutation<T>(args: {
@@ -541,9 +507,7 @@ function rawSession(req: FastifyRequest): string | undefined {
        ORDER BY m.channel_id ASC`,
       [userId],
     );
-    const prefs = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
-      userId,
-    ]);
+    const prefs = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [userId]);
     const draftRows = await client.query<{
       draft_key: string;
       text: string;
@@ -577,65 +541,6 @@ function rawSession(req: FastifyRequest): string | undefined {
     };
   }
 
-  function codeHash(email: string, code: string): string {
-    return createHmac('sha256', secret).update(`${email}:${code}`).digest('base64url');
-  }
-
-  function safeEqual(a: string, b: string): boolean {
-    const left = Buffer.from(a);
-    const right = Buffer.from(b);
-    return left.length === right.length && timingSafeEqual(left, right);
-  }
-
-  async function createAuthSession(
-    reply: FastifyReply,
-    user: { id: string; handle: string; display_name: string },
-  ) {
-    // Opportunistic reaping — keeps the table from accumulating dead rows.
-    void pool.query('DELETE FROM auth_sessions WHERE expires_at < now()').catch(() => {});
-    const session = await pool.query<{ id: string }>(
-      `INSERT INTO auth_sessions (user_id, expires_at)
-       VALUES ($1, now() + interval '30 days') RETURNING id`,
-      [user.id],
-    );
-    const token = signSession(session.rows[0]!.id, secret);
-    reply.setCookie(config.sessionCookie, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30,
-    });
-    return {
-      user: { id: user.id, handle: user.handle, displayName: user.display_name },
-      token,
-    };
-  }
-
-  function normalizeEmail(input: unknown): string {
-    return String(input ?? '').trim().toLowerCase();
-  }
-
-  function displayNameFromEmail(email: string): string {
-    return email.split('@')[0] || email;
-  }
-
-  function handleBaseFromEmail(email: string): string {
-    const local = displayNameFromEmail(email).toLowerCase();
-    let handle = local
-      .replace(/[^a-z0-9_-]+/g, '-')
-      .replace(/^[^a-z0-9]+/, '')
-      .replace(/-+/g, '-')
-      .slice(0, 32);
-    if (!/^[a-z0-9]/.test(handle)) handle = 'user';
-    if (handle.length < 2) handle = `${handle}x`;
-    return handle;
-  }
-
-  async function joinDefaultWorkspace(userId: string): Promise<void> {
-    const workspace = await ensureDefaultWorkspace(pool);
-    await addWorkspaceMember(pool, workspace.id, userId);
-  }
-
   async function activeWorkspaceIdFor(userId: string): Promise<string | null> {
     return (await workspaceIdsFor(pool, userId))[0] ?? null;
   }
@@ -644,355 +549,14 @@ function rawSession(req: FastifyRequest): string | undefined {
     return reply.code(403).send({ error: 'no_workspace', message: 'user has no workspace' });
   }
 
-  async function createUserForEmail(email: string) {
-    const displayName = displayNameFromEmail(email);
-    const base = handleBaseFromEmail(email).slice(0, 29);
-    for (let i = 1; i <= 100; i += 1) {
-      const suffix = i === 1 ? '' : `-${i}`;
-      const handle = `${base.slice(0, 32 - suffix.length)}${suffix}`;
-      const inserted = await pool.query<{ id: string; handle: string; display_name: string }>(
-        `INSERT INTO users (handle, display_name, email)
-         VALUES ($1, $2, $3)
-         ON CONFLICT DO NOTHING
-         RETURNING id, handle, display_name`,
-        [handle, displayName, email],
-      );
-      if (inserted.rows[0]) {
-        await joinDefaultWorkspace(inserted.rows[0]!.id);
-        return inserted.rows[0]!;
-      }
-      const existingEmail = await pool.query<{ id: string; handle: string; display_name: string }>(
-        `SELECT id, handle, display_name FROM users WHERE email = $1`,
-        [email],
-      );
-      if (existingEmail.rows[0]) return existingEmail.rows[0]!;
-    }
-    throw new Error('could not allocate handle');
-  }
-
-  async function userForEmail(email: string) {
-    const existing = await pool.query<{ id: string; handle: string; display_name: string }>(
-      `SELECT id, handle, display_name FROM users WHERE email = $1`,
-      [email],
-    );
-    return existing.rows[0] ?? (await createUserForEmail(email));
-  }
-
-  function googleEnabled(): boolean {
-    return Boolean(config.googleClientId && config.googleClientSecret && config.googleRedirectUrl);
-  }
-
-  function signOAuthState(): string {
-    return signSession(`${Date.now()}:${randomUUID()}`, secret);
-  }
-
-  function verifyOAuthState(state: unknown): boolean {
-    const payload = verifySession(typeof state === 'string' ? state : null, secret);
-    if (!payload) return false;
-    const [ts] = payload.split(':');
-    const createdAt = Number(ts);
-    return Number.isFinite(createdAt) && Date.now() - createdAt <= 10 * 60 * 1000;
-  }
-
-  async function userForGoogleIdentity(claims: {
-    sub: string;
-    email?: string;
-    emailVerified: boolean;
-    name?: string;
-  }) {
-    const linked = await pool.query<{ id: string; handle: string; display_name: string }>(
-      `SELECT u.id, u.handle, u.display_name
-       FROM oauth_identities oi JOIN users u ON u.id = oi.user_id
-       WHERE oi.provider = 'google' AND oi.subject = $1`,
-      [claims.sub],
-    );
-    if (linked.rows[0]) return linked.rows[0]!;
-
-    let user: { id: string; handle: string; display_name: string };
-    if (claims.email && claims.emailVerified) {
-      const existing = await pool.query<{ id: string; handle: string; display_name: string }>(
-        `SELECT id, handle, display_name FROM users WHERE email = $1`,
-        [claims.email],
-      );
-      user = existing.rows[0] ?? (await createUserForEmail(claims.email));
-    } else {
-      user = await createUserForEmail(`${claims.sub}@google.oauth.local`);
-    }
-
-    await pool.query(
-      `INSERT INTO oauth_identities (provider, subject, user_id)
-       VALUES ('google', $1, $2)
-       ON CONFLICT (provider, subject) DO NOTHING`,
-      [claims.sub, user.id],
-    );
-    return user;
-  }
-
-  // -------------------------------------------------------------------------
-  // Auth
-  // -------------------------------------------------------------------------
-
-  app.get('/auth/methods', async () => {
-    // First-run capability honesty: only advertise email when a user can
-    // actually obtain a code — either dev-codes echo it in the response, or a
-    // real (resend) transport delivers it. Plain "log" mode writes the code to
-    // the server log only, so we don't offer it (the handle path leads instead).
-    const emailUsable =
-      config.authDevCodes ||
-      (config.emailMode === 'resend' &&
-        emailDeliveryConfigured({
-          mode: config.emailMode,
-          from: config.emailFrom,
-          resendApiKey: config.resendApiKey,
-        }));
-
-    return {
-      open: config.authOpen,
-      email: emailUsable,
-      google: googleEnabled(),
-      // First-run capability honesty: LiveKit-less installs cannot start calls.
-      calls: calls !== null,
-    };
-  });
-
-  app.post(
-    '/auth/email/request',
-    {
-      config: { rateLimit: rateLimit === false ? false : { max: 6 } },
-    },
-    async (req, reply) => {
-      const body = (req.body ?? {}) as { email?: string };
-      const email = normalizeEmail(body.email);
-      if (!EMAIL_RE.test(email) || email.length > 320) {
-        return reply
-          .code(400)
-          .send({ error: 'invalid_email', message: 'enter a valid email address' });
-      }
-      // Per-email cooldown: ignore rapid repeats (don't churn the pending code
-      // or spam delivery) while keeping the response uniform so it can't be
-      // used to probe which emails are active.
-      const recent = await pool.query(
-        `SELECT 1 FROM login_codes WHERE email = $1 AND created_at > now() - interval '30 seconds' LIMIT 1`,
-        [email],
-      );
-      if (recent.rowCount) return { ok: true };
-      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-      await pool.query('UPDATE login_codes SET consumed_at = now() WHERE email = $1 AND consumed_at IS NULL', [
-        email,
-      ]);
-      await pool.query(
-        `INSERT INTO login_codes (email, code_hash, expires_at)
-         VALUES ($1, $2, now() + interval '10 minutes')`,
-        [email, codeHash(email, code)],
-      );
-      // Deliver via the configured transport. A delivery failure is logged but
-      // never changes the response — the reply must not reveal whether the
-      // address is registered or whether sending succeeded. The actual code is
-      // only logged when dev codes are explicitly enabled.
-      try {
-        await sendLoginCode(email, code, {
-          config: {
-            mode: config.emailMode,
-            from: config.emailFrom,
-            resendApiKey: config.resendApiKey,
-          },
-          fetchImpl: emailFetch,
-          logCode: config.authDevCodes
-            ? (to, c) => req.log.warn({ email: to, code: c }, 'auth email code (dev)')
-            : undefined,
-        });
-      } catch (err) {
-        req.log.error({ err, email }, 'login code delivery failed');
-      }
-      return config.authDevCodes ? { ok: true, devCode: code } : { ok: true };
-    },
-  );
-
-  app.post('/auth/email/verify', async (req, reply) => {
-    const body = (req.body ?? {}) as { email?: string; code?: string };
-    const email = normalizeEmail(body.email);
-    const code = String(body.code ?? '').trim();
-    if (!EMAIL_RE.test(email) || email.length > 320 || !CODE_RE.test(code)) {
-      return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
-    }
-    // Atomic single-use redemption: consume the latest valid code ONLY if the
-    // hash matches, in one UPDATE. Concurrent verifies can't double-redeem or
-    // race past the lockout (the row lock serializes them, and a second
-    // correct guess sees consumed_at already set → rowCount 0).
-    const consumed = await pool.query<{ id: string }>(
-      `UPDATE login_codes SET consumed_at = now()
-       WHERE id = (
-         SELECT id FROM login_codes
-         WHERE email = $1 AND consumed_at IS NULL AND expires_at > now() AND attempts < 5
-         ORDER BY created_at DESC LIMIT 1
-       )
-       AND code_hash = $2
-       AND consumed_at IS NULL
-       AND expires_at > now()
-       AND attempts < 5
-       RETURNING id`,
-      [email, codeHash(email, code)],
-    );
-    if (consumed.rowCount === 1) {
-      const user = await userForEmail(email);
-      return createAuthSession(reply, user);
-    }
-    // Wrong (or no valid) code: atomically burn an attempt on the latest valid
-    // code, locking it after the 5th failure.
-    await pool.query(
-      `UPDATE login_codes
-       SET attempts = attempts + 1,
-           consumed_at = CASE WHEN attempts + 1 >= 5 THEN now() ELSE consumed_at END
-       WHERE id = (
-         SELECT id FROM login_codes
-         WHERE email = $1 AND consumed_at IS NULL AND expires_at > now() AND attempts < 5
-         ORDER BY created_at DESC LIMIT 1
-       )
-       AND consumed_at IS NULL
-       AND expires_at > now()
-       AND attempts < 5`,
-      [email],
-    );
-    return reply.code(400).send({ error: 'invalid_code', message: 'invalid email code' });
-  });
-
-  const OAUTH_STATE_COOKIE = 'atrium_oauth_state';
-
-  app.get('/auth/oauth/google', async (_req, reply) => {
-    if (!googleEnabled()) return reply.code(404).send({ error: 'not_found' });
-    const state = signOAuthState();
-    // Bind the state to THIS browser: the callback requires the same value
-    // back in an httpOnly cookie, so a valid signed state can't be replayed
-    // into a victim's session (login CSRF).
-    reply.setCookie(OAUTH_STATE_COOKIE, state, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/auth/oauth',
-      maxAge: 600,
-    });
-    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    url.searchParams.set('client_id', config.googleClientId);
-    url.searchParams.set('redirect_uri', config.googleRedirectUrl);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', 'openid email profile');
-    url.searchParams.set('state', state);
-    return reply.redirect(url.toString(), 302);
-  });
-
-  app.get('/auth/oauth/google/callback', async (req, reply) => {
-    if (!googleEnabled()) return reply.code(404).send({ error: 'not_found' });
-    const query = req.query as { code?: string; state?: string };
-    const cookieState = req.cookies[OAUTH_STATE_COOKIE];
-    reply.clearCookie(OAUTH_STATE_COOKIE, { path: '/auth/oauth' });
-    if (
-      !query.code ||
-      !verifyOAuthState(query.state) ||
-      !cookieState ||
-      query.state !== cookieState
-    ) {
-      return reply.code(400).send({ error: 'invalid_oauth_state' });
-    }
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code: query.code,
-        client_id: config.googleClientId,
-        client_secret: config.googleClientSecret,
-        redirect_uri: config.googleRedirectUrl,
-        grant_type: 'authorization_code',
-      }),
-    });
-    if (!tokenRes.ok) return reply.code(400).send({ error: 'oauth_exchange_failed' });
-    const tokenBody = (await tokenRes.json()) as { id_token?: string };
-    if (!tokenBody.id_token) return reply.code(400).send({ error: 'invalid_id_token' });
-    // Verify the id_token's SIGNATURE via Google's tokeninfo endpoint (server-
-    // side validation, no JWKS to hand-roll). The returned claims are trusted.
-    const infoRes = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(tokenBody.id_token)}`,
-    );
-    if (!infoRes.ok) return reply.code(400).send({ error: 'invalid_id_token' });
-    const claims = (await infoRes.json()) as Record<string, unknown>;
-    const exp = Number(claims.exp);
-    if (
-      typeof claims.sub !== 'string' ||
-      claims.aud !== config.googleClientId ||
-      typeof claims.iss !== 'string' ||
-      !GOOGLE_ISSUERS.has(claims.iss) ||
-      !Number.isFinite(exp) ||
-      exp * 1000 <= Date.now()
-    ) {
-      return reply.code(400).send({ error: 'invalid_id_token' });
-    }
-    const email = typeof claims.email === 'string' ? normalizeEmail(claims.email) : undefined;
-    const user = await userForGoogleIdentity({
-      sub: claims.sub,
-      email,
-      // tokeninfo returns claim values as strings ("true"); the token-exchange
-      // path returned a boolean — accept both.
-      emailVerified: claims.email_verified === true || claims.email_verified === 'true',
-      name: typeof claims.name === 'string' ? claims.name : undefined,
-    });
-    await createAuthSession(reply, user);
-    return reply.redirect('/', 302);
-  });
-
-  app.post(
-    '/auth/login',
-    {
-      config: { rateLimit: rateLimit === false ? false : { max: rateLimit?.loginMax ?? 30 } },
-    },
-    async (req, reply) => {
-      if (!config.authOpen) {
-        return reply.code(403).send({ error: 'auth_closed' });
-      }
-      const body = (req.body ?? {}) as { handle?: string; displayName?: string };
-      const handle = String(body.handle ?? '').trim().toLowerCase();
-      const displayName = String(body.displayName ?? '').trim();
-      if (!HANDLE_RE.test(handle)) {
-        return reply.code(400).send({
-          error: 'invalid_handle',
-          message: 'handle must be 2-32 chars: letters, digits, - or _',
-        });
-      }
-      if (displayName.length > 64) {
-        return reply
-          .code(400)
-          .send({ error: 'invalid_display_name', message: 'display name too long' });
-      }
-      // A blank display name means "keep what I had" for returning users —
-      // re-logins must not silently rewrite attribution across history.
-      let user = await pool.query<{ id: string; handle: string; display_name: string }>(
-        `INSERT INTO users (handle, display_name) VALUES ($1, COALESCE(NULLIF($2, ''), $1))
-         ON CONFLICT DO NOTHING
-         RETURNING id, handle, display_name`,
-        [handle, displayName],
-      );
-      if (user.rows[0]) {
-        await joinDefaultWorkspace(user.rows[0].id);
-      } else {
-        user = await pool.query<{ id: string; handle: string; display_name: string }>(
-          `UPDATE users
-           SET display_name = COALESCE(NULLIF($2, ''), display_name)
-           WHERE handle = $1
-           RETURNING id, handle, display_name`,
-          [handle, displayName],
-        );
-      }
-      const u = user.rows[0]!;
-      // Native clients can't rely on cookies — they store the token and send it
-      // as `Authorization: Bearer` (HTTP) or `?token=` (WS upgrade).
-      return createAuthSession(reply, u);
-    },
-  );
-
-  app.get('/auth/me', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const res = await pool.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
-      user.id,
-    ]);
-    return { user, prefs: normalizePrefs(res.rows[0]?.prefs) };
+  registerAuthRoutes(app, {
+    pool,
+    secret,
+    callsConfigured: calls !== null,
+    rateLimit,
+    emailFetch,
+    rawSession,
+    requireUser,
   });
 
   registerMeRoutes(app, {
@@ -1003,15 +567,6 @@ function rawSession(req: FastifyRequest): string | undefined {
     providerCredentials,
     agentProfiles,
     sessionRuns,
-  });
-
-  app.post('/auth/logout', async (req, reply) => {
-    const sessionId = verifySession(rawSession(req), secret);
-    if (sessionId && /^[0-9a-f-]{36}$/i.test(sessionId)) {
-      await pool.query('DELETE FROM auth_sessions WHERE id = $1', [sessionId]);
-    }
-    reply.clearCookie(config.sessionCookie, { path: '/' });
-    return { ok: true };
   });
 
   // -------------------------------------------------------------------------
@@ -1036,15 +591,8 @@ function rawSession(req: FastifyRequest): string | undefined {
     const q = req.query as { after?: string; limit?: string };
     const after = q.after == null ? 0 : Number(q.after);
     const rawLimit = q.limit == null ? 500 : Number(q.limit);
-    if (
-      !Number.isSafeInteger(after) ||
-      after < 0 ||
-      !Number.isSafeInteger(rawLimit) ||
-      rawLimit <= 0
-    ) {
-      return reply
-        .code(400)
-        .send({ error: 'bad_query', message: 'after must be non-negative and limit positive' });
+    if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(rawLimit) || rawLimit <= 0) {
+      return reply.code(400).send({ error: 'bad_query', message: 'after must be non-negative and limit positive' });
     }
     const limit = Math.min(rawLimit, 1000);
     const client = await pool.connect();
@@ -1080,10 +628,8 @@ function rawSession(req: FastifyRequest): string | undefined {
 
   // === writeback route ===
   await app.register(async (writeback) => {
-    writeback.addContentTypeParser(
-      '*',
-      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
-      (_req, body, done) => done(null, body),
+    writeback.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
+      done(null, body),
     );
 
     writeback.put('/api/channels/:channelId/artifacts', async (req, reply) => {
@@ -1106,10 +652,10 @@ function rawSession(req: FastifyRequest): string | undefined {
       if (!/^[0-9a-f-]{36}$/i.test(sessionId)) {
         return reply.code(400).send({ error: 'bad_request', message: 'session query parameter required' });
       }
-      const session = await pool.query<{ id: string }>(
-        `SELECT id FROM sessions WHERE id = $1 AND channel_id = $2`,
-        [sessionId, channelId],
-      );
+      const session = await pool.query<{ id: string }>(`SELECT id FROM sessions WHERE id = $1 AND channel_id = $2`, [
+        sessionId,
+        channelId,
+      ]);
       if (!session.rows[0]) {
         return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
       }
@@ -1124,7 +670,9 @@ function rawSession(req: FastifyRequest): string | undefined {
       const mime = normalizeMime(firstHeader(req.headers['content-type']));
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
-        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+        return reply
+          .code(400)
+          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
       }
 
       const result = await writeBackArtifact({
@@ -1170,8 +718,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     const opId = optionalOpId(body);
     const task = typeof body.task === 'string' ? body.task : '';
     const repo = typeof body.repo === 'string' && body.repo.trim() ? body.repo.trim() : undefined;
-    const branch =
-      typeof body.branch === 'string' && body.branch.trim() ? body.branch.trim() : undefined;
+    const branch = typeof body.branch === 'string' && body.branch.trim() ? body.branch.trim() : undefined;
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
     }
@@ -1181,8 +728,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (Buffer.byteLength(task, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'task_too_large', message: 'task exceeds 8KB' });
     }
-    const threadRootEventId =
-      body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
+    const threadRootEventId = body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
@@ -1190,12 +736,9 @@ function rawSession(req: FastifyRequest): string | undefined {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
     const bodySpawnId = (body as { clientSpawnId?: unknown }).clientSpawnId;
-    const clientSpawnId =
-      typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined;
+    const clientSpawnId = typeof bodySpawnId === 'string' && bodySpawnId.length <= 80 ? bodySpawnId : undefined;
     const agentProfileId =
-      typeof body.agentProfileId === 'string' && body.agentProfileId.trim()
-        ? body.agentProfileId.trim()
-        : undefined;
+      typeof body.agentProfileId === 'string' && body.agentProfileId.trim() ? body.agentProfileId.trim() : undefined;
     const agentProfileVersionId =
       typeof body.agentProfileVersionId === 'string' && body.agentProfileVersionId.trim()
         ? body.agentProfileVersionId.trim()
@@ -1221,8 +764,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           channelId: body.channelId as string,
           threadRootEventId,
           task,
-          harness:
-            typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+          harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
           repo,
           branch,
           agentProfileId,
@@ -1325,11 +867,6 @@ function rawSession(req: FastifyRequest): string | undefined {
     return { record };
   });
 
-  async function sessionChannelId(sessionId: string): Promise<string | null> {
-    const res = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
-    return res.rows[0]?.channel_id ?? null;
-  }
-
   async function sessionAppContext(sessionId: string): Promise<{ workspaceId: string; channelId: string } | null> {
     const res = await pool.query<{ workspace_id: string; channel_id: string }>(
       'SELECT workspace_id, channel_id FROM sessions WHERE id = $1',
@@ -1350,9 +887,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       [sessionRef],
     );
     const row = res.rows[0];
-    return row
-      ? { id: row.id, channelId: row.channel_id, workspaceId: row.workspace_id }
-      : null;
+    return row ? { id: row.id, channelId: row.channel_id, workspaceId: row.workspace_id } : null;
   }
 
   async function sessionArtifactAccess(sessionId: string, userId?: string | null) {
@@ -1605,13 +1140,14 @@ function rawSession(req: FastifyRequest): string | undefined {
         // === ACL scope enforcement (#4) ===
         const access = resolved.backing === 'ledger' ? await sessionArtifactAccess(id, user.id) : null;
         const channelId = access?.channelId ?? null;
-        const ledgerPath = resolved.backing === 'ledger'
-          ? canonicalizeRouteArtifactPath(reply, resolved.relPath, {
-              sessionId: id,
-              channelId: channelId!,
-              readableChannelIds: access!.readableChannelIds,
-            })
-          : resolved.relPath;
+        const ledgerPath =
+          resolved.backing === 'ledger'
+            ? canonicalizeRouteArtifactPath(reply, resolved.relPath, {
+                sessionId: id,
+                channelId: channelId!,
+                readableChannelIds: access!.readableChannelIds,
+              })
+            : resolved.relPath;
         if (!ledgerPath) return;
         const scope = classifyScope(ledgerPath);
         if (resolved.backing === 'ledger' && !artifactPathInRoots(ledgerPath, access!.readableRoots)) {
@@ -1685,7 +1221,12 @@ function rawSession(req: FastifyRequest): string | undefined {
             reply.header('X-Display-Path', path);
             reply.header('X-Size-Bytes', String(file.bytes.byteLength));
             for (const [name, value] of Object.entries(mediaHeaders(classification))) reply.header(name, value);
-            reply.header('Content-Type', classification.isText ? `${classification.detectedMime}; charset=${classification.textEncoding ?? 'utf-8'}` : classification.detectedMime);
+            reply.header(
+              'Content-Type',
+              classification.isText
+                ? `${classification.detectedMime}; charset=${classification.textEncoding ?? 'utf-8'}`
+                : classification.detectedMime,
+            );
             return reply.send(file.bytes);
           } catch (err) {
             if (unsafeGitPathError(err)) {
@@ -1701,9 +1242,14 @@ function rawSession(req: FastifyRequest): string | undefined {
         if (!res || res.servedSeq == null) {
           return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
         }
-        const version = await ledger.resolveVersion(id, ledgerPath, { seq: res.servedSeq }, {
-          readableChannelIds: ledgerAccess?.readableChannelIds,
-        });
+        const version = await ledger.resolveVersion(
+          id,
+          ledgerPath,
+          { seq: res.servedSeq },
+          {
+            readableChannelIds: ledgerAccess?.readableChannelIds,
+          },
+        );
         if (!version) return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
         if (version.kind === 'deleted') {
           return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
@@ -1725,10 +1271,18 @@ function rawSession(req: FastifyRequest): string | undefined {
         reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
         if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
         reply.header('X-Canonical-Path', ledgerPath);
-        reply.header('X-Display-Path', displaySessionArtifactPath(ledgerPath, { sessionId: id, channelId: ledgerChannelId! }));
+        reply.header(
+          'X-Display-Path',
+          displaySessionArtifactPath(ledgerPath, { sessionId: id, channelId: ledgerChannelId! }),
+        );
         reply.header('X-Size-Bytes', String(version.sizeBytes ?? bytes.byteLength));
         for (const [name, value] of Object.entries(mediaHeaders(classification))) reply.header(name, value);
-        reply.header('Content-Type', classification.isText ? `${classification.detectedMime}; charset=${classification.textEncoding ?? 'utf-8'}` : classification.detectedMime);
+        reply.header(
+          'Content-Type',
+          classification.isText
+            ? `${classification.detectedMime}; charset=${classification.textEncoding ?? 'utf-8'}`
+            : classification.detectedMime,
+        );
         return reply.send(bytes);
       });
 
@@ -1751,7 +1305,9 @@ function rawSession(req: FastifyRequest): string | undefined {
 
         const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
         if (baseSeq === false) {
-          return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+          return reply
+            .code(400)
+            .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
         }
         const access = await sessionArtifactAccess(id, user.id);
         const channelId = access.channelId;
@@ -1963,7 +1519,10 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     const access = await sessionArtifactAccess(id, user.id);
     const channelId = access.channelId;
-    const sharedChannelId = rawPath.trim().replace(/\\/g, '/').match(/^shared\/channels\/([^/]+)\//)?.[1];
+    const sharedChannelId = rawPath
+      .trim()
+      .replace(/\\/g, '/')
+      .match(/^shared\/channels\/([^/]+)\//)?.[1];
     if (sharedChannelId && sharedChannelId !== channelId && !access.readableChannelIds.includes(sharedChannelId)) {
       return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
     }
@@ -2206,10 +1765,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (channelId.length === 0) {
       return reply.code(400).send({ error: 'bad_query', message: 'channel is required' });
     }
-    const session = await pool.query<{ channel_id: string }>(
-      'SELECT channel_id FROM sessions WHERE id = $1',
-      [id],
-    );
+    const session = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [id]);
     if (session.rows[0]?.channel_id !== channelId) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
@@ -2232,9 +1788,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     } else if (typeof rawThread === 'string') {
       const threadRootEventId = Number(rawThread.trim());
       if (!Number.isSafeInteger(threadRootEventId) || threadRootEventId <= 0) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_query', message: 'thread must be a positive event id' });
+        return reply.code(400).send({ error: 'bad_query', message: 'thread must be a positive event id' });
       }
       const root = await pool.query<{ channel_id: string | null }>(
         `SELECT channel_id
@@ -2248,16 +1802,11 @@ function rawSession(req: FastifyRequest): string | undefined {
       events = (await listThreadMessages(pool, { rootEventId: threadRootEventId })).events;
       title = `${channelId}/${threadRootEventId}`;
     } else {
-      return reply
-        .code(400)
-        .send({ error: 'bad_query', message: 'thread must be a positive event id' });
+      return reply.code(400).send({ error: 'bad_query', message: 'thread must be a positive event id' });
     }
 
     const messages = events.filter(
-      (event) =>
-        event.type === 'message.posted' &&
-        event.channelId === channelId &&
-        event.payload.deleted !== true,
+      (event) => event.type === 'message.posted' && event.channelId === channelId && event.payload.deleted !== true,
     );
     const lines = [`# ${title}`, ''];
     for (const event of messages) {
@@ -2271,9 +1820,7 @@ function rawSession(req: FastifyRequest): string | undefined {
 
   // === /atrium session projection + change-feed (#72 P3) ===
   type AtriumSessionProjectionModule = typeof import('./atrium-session-projection.js');
-  type AtriumSessionRecords = Awaited<
-    ReturnType<AtriumSessionProjectionModule['loadSessionRecords']>
-  >;
+  type AtriumSessionRecords = Awaited<ReturnType<AtriumSessionProjectionModule['loadSessionRecords']>>;
   type AtriumMarkdownRenderer = (
     projection: AtriumSessionProjectionModule,
     records: AtriumSessionRecords,
@@ -2298,19 +1845,11 @@ function rawSession(req: FastifyRequest): string | undefined {
   }
 
   app.get('/api/sessions/:id/atrium/transcript', async (req, reply) =>
-    sendAtriumMarkdown(req, reply, 'lean', (projection, records) =>
-      projection.renderTranscriptMarkdown(records),
-    ),
+    sendAtriumMarkdown(req, reply, 'lean', (projection, records) => projection.renderTranscriptMarkdown(records)),
   );
 
   app.get('/api/sessions/:id/atrium/full', async (req, reply) =>
-    sendAtriumMarkdown(
-      req,
-      reply,
-      'full',
-      (projection, records) => projection.renderFullMarkdown(records),
-      true,
-    ),
+    sendAtriumMarkdown(req, reply, 'full', (projection, records) => projection.renderFullMarkdown(records), true),
   );
 
   app.get('/api/sessions/:id/atrium/summary', async (req, reply) =>
@@ -2328,21 +1867,15 @@ function rawSession(req: FastifyRequest): string | undefined {
   });
 
   app.get('/api/sessions/:id/atrium/changes-doc', async (req, reply) =>
-    sendAtriumMarkdown(req, reply, 'full', (projection, records) =>
-      projection.renderChangesMarkdown(records),
-    ),
+    sendAtriumMarkdown(req, reply, 'full', (projection, records) => projection.renderChangesMarkdown(records)),
   );
 
   app.get('/api/sessions/:id/atrium/tools', async (req, reply) =>
-    sendAtriumMarkdown(req, reply, 'full', (projection, records) =>
-      projection.renderToolsMarkdown(records),
-    ),
+    sendAtriumMarkdown(req, reply, 'full', (projection, records) => projection.renderToolsMarkdown(records)),
   );
 
   app.get('/api/sessions/:id/atrium/artifacts', async (req, reply) =>
-    sendAtriumMarkdown(req, reply, 'lean', (projection, records) =>
-      projection.renderArtifactsMarkdown(records),
-    ),
+    sendAtriumMarkdown(req, reply, 'lean', (projection, records) => projection.renderArtifactsMarkdown(records)),
   );
 
   app.get('/api/sessions/:id/atrium/events', async (req, reply) => {
@@ -2350,9 +1883,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     if (!user) return;
     if (!(await canViewFull(user.id))) return fullViewForbidden(reply);
     const { id } = req.params as { id: string };
-    const { loadSessionRecords, renderEventsJsonl } = await import(
-      './atrium-session-projection.js'
-    );
+    const { loadSessionRecords, renderEventsJsonl } = await import('./atrium-session-projection.js');
     const records = await loadSessionRecords(pool, id, 'full');
     return reply.type('application/jsonl; charset=utf-8').send(renderEventsJsonl(records));
   });
@@ -2434,10 +1965,7 @@ function rawSession(req: FastifyRequest): string | undefined {
   });
 
   // === /atrium internal node-facing routes (#72 P5a) ===
-  async function resolveViewer(
-    viewerId: string,
-    reply: FastifyReply,
-  ): Promise<UserRef | null> {
+  async function resolveViewer(viewerId: string, reply: FastifyReply): Promise<UserRef | null> {
     const res = await pool.query<{
       id: string;
       handle: string;
@@ -2514,50 +2042,36 @@ function rawSession(req: FastifyRequest): string | undefined {
     switch (doc) {
       case 'transcript': {
         const records = await projection.loadSessionRecords(pool, targetId, 'lean');
-        return reply
-          .type('text/markdown; charset=utf-8')
-          .send(projection.renderTranscriptMarkdown(records));
+        return reply.type('text/markdown; charset=utf-8').send(projection.renderTranscriptMarkdown(records));
       }
       case 'full': {
         if (!(await canViewFull(viewerUser.id))) return fullViewForbidden(reply);
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply
-          .type('text/markdown; charset=utf-8')
-          .send(projection.renderFullMarkdown(records));
+        return reply.type('text/markdown; charset=utf-8').send(projection.renderFullMarkdown(records));
       }
       case 'summary': {
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
         const meta = await projection.buildSessionMeta(pool, targetId);
-        return reply
-          .type('text/markdown; charset=utf-8')
-          .send(projection.renderSummaryMarkdown(records, meta));
+        return reply.type('text/markdown; charset=utf-8').send(projection.renderSummaryMarkdown(records, meta));
       }
       case 'meta':
         return reply.type('application/json').send(await projection.buildSessionMeta(pool, targetId));
       case 'tools': {
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply
-          .type('text/markdown; charset=utf-8')
-          .send(projection.renderToolsMarkdown(records));
+        return reply.type('text/markdown; charset=utf-8').send(projection.renderToolsMarkdown(records));
       }
       case 'artifacts': {
         const records = await projection.loadSessionRecords(pool, targetId, 'lean');
-        return reply
-          .type('text/markdown; charset=utf-8')
-          .send(projection.renderArtifactsMarkdown(records));
+        return reply.type('text/markdown; charset=utf-8').send(projection.renderArtifactsMarkdown(records));
       }
       case 'changes-doc': {
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply
-          .type('text/markdown; charset=utf-8')
-          .send(projection.renderChangesMarkdown(records));
+        return reply.type('text/markdown; charset=utf-8').send(projection.renderChangesMarkdown(records));
       }
       case 'events': {
         if (!(await canViewFull(viewerUser.id))) return fullViewForbidden(reply);
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply
-          .type('application/jsonl; charset=utf-8')
-          .send(projection.renderEventsJsonl(records));
+        return reply.type('application/jsonl; charset=utf-8').send(projection.renderEventsJsonl(records));
       }
       default:
         return reply.code(404).send({ error: 'doc_not_found', message: 'atrium doc not found' });
@@ -2626,10 +2140,8 @@ function rawSession(req: FastifyRequest): string | undefined {
 
   // Capture a change (the daemon's node-scan output). x-api-key + raw body.
   await app.register(async (capture) => {
-    capture.addContentTypeParser(
-      '*',
-      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
-      (_req, body, done) => done(null, body),
+    capture.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
+      done(null, body),
     );
     capture.post('/api/internal/sessions/:id/artifacts/capture', async (req, reply) => {
       if (!requireCaptureKey(req, reply)) return;
@@ -2653,12 +2165,21 @@ function rawSession(req: FastifyRequest): string | undefined {
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
-        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+        return reply
+          .code(400)
+          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
       }
       const isDelete = firstHeader(req.headers['x-artifact-delete']) === 'true';
       const author = `node:${id}`;
       const result = isDelete
-        ? await writeBackDelete({ pool, channelId: session.channelId, sessionId: session.id, path: canonicalPath, author, ...(baseSeq == null ? {} : { baseSeq }) })
+        ? await writeBackDelete({
+            pool,
+            channelId: session.channelId,
+            sessionId: session.id,
+            path: canonicalPath,
+            author,
+            ...(baseSeq == null ? {} : { baseSeq }),
+          })
         : await writeBackArtifact({
             pool,
             storage: { uploadObject, getObjectBytes, headObject },
@@ -2706,7 +2227,9 @@ function rawSession(req: FastifyRequest): string | undefined {
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
-        return reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+        return reply
+          .code(400)
+          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
       }
 
       const mime = normalizeMime(firstHeader(req.headers['content-type']));
@@ -2798,14 +2321,14 @@ function rawSession(req: FastifyRequest): string | undefined {
   // outside the artifact ledger — internal harness state, not a user work product.
   app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
     if (!requireCaptureKey(req, reply)) return;
-      const { id } = req.params as { id: string };
-      const harness = (req.query as { harness?: string }).harness ?? '';
-      if (!isHarness(harness)) {
-        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-      }
-      const session = await resolveInternalSessionRef(id);
-      if (!session) return reply.code(404).send({ error: 'session_not_found' });
-      const t = await loadHarnessTranscript(pool, { getObjectBytes }, session.id, harness);
+    const { id } = req.params as { id: string };
+    const harness = (req.query as { harness?: string }).harness ?? '';
+    if (!isHarness(harness)) {
+      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+    }
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const t = await loadHarnessTranscript(pool, { getObjectBytes }, session.id, harness);
     if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
     reply.header('Content-Type', 'application/x-ndjson');
     reply.header('X-Transcript-Sha256', t.sha256);
@@ -2813,10 +2336,8 @@ function rawSession(req: FastifyRequest): string | undefined {
   });
 
   await app.register(async (ht) => {
-    ht.addContentTypeParser(
-      '*',
-      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
-      (_req, body, done) => done(null, body),
+    ht.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
+      done(null, body),
     );
     ht.put('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
       if (!requireCaptureKey(req, reply)) return;
@@ -3104,10 +2625,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     }
     const ref = await resolveInternalSessionRef(id);
     if (!ref) return reply.code(404).send({ error: 'session_not_found' });
-    const session = await pool.query<{ spawned_by: string }>(
-      'SELECT spawned_by FROM sessions WHERE id = $1',
-      [ref.id],
-    );
+    const session = await pool.query<{ spawned_by: string }>('SELECT spawned_by FROM sessions WHERE id = $1', [ref.id]);
     const ownerId = session.rows[0]?.spawned_by;
     if (!ownerId) return reply.code(404).send({ error: 'session_not_found' });
 
@@ -3229,7 +2747,7 @@ function rawSession(req: FastifyRequest): string | undefined {
       }
       files.push({
         path,
-        blobSha: file.kind === 'deleted' ? null : blobSha as string,
+        blobSha: file.kind === 'deleted' ? null : (blobSha as string),
         sizeBytes: file.size_bytes as number,
         mime: normalizeMime(file.mime),
         baseSeq,
@@ -3272,10 +2790,7 @@ function rawSession(req: FastifyRequest): string | undefined {
   // Every session sub-resource is channel-access gated (404, like
   // getSessionForUser) so a guessed session id in a private/DM channel can't
   // be steered, seat-hijacked, or cancelled by a non-member.
-  async function requireSessionAccess(
-    req: FastifyRequest,
-    reply: FastifyReply,
-  ): Promise<UserRef | null> {
+  async function requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null> {
     const user = requireUser(req, reply);
     if (!user) return null;
     const { id } = req.params as { id: string };
@@ -3329,9 +2844,7 @@ function rawSession(req: FastifyRequest): string | undefined {
     const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
     const opId = optionalOpId(body);
     if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
-      return reply
-        .code(400)
-        .send({ error: 'bad_request', message: 'questionId and answers are required' });
+      return reply.code(400).send({ error: 'bad_request', message: 'questionId and answers are required' });
     }
     if (opId) {
       let event: WireEvent | null = null;
@@ -3453,7 +2966,13 @@ function rawSession(req: FastifyRequest): string | undefined {
       userId: user.id,
       opId,
       opType: 'session.suggestion.resolve',
-      body: { sessionId: id, suggestionId, action, ...(text !== undefined ? { text } : {}), ...(note !== undefined ? { note } : {}) },
+      body: {
+        sessionId: id,
+        suggestionId,
+        action,
+        ...(text !== undefined ? { text } : {}),
+        ...(note !== undefined ? { note } : {}),
+      },
       fn: async (client) => {
         result = await sessionRuns.resolveSuggestionInTx(client, id, user.id, suggestionId, action, { text, note });
         return { ok: true as const };
@@ -3591,9 +3110,7 @@ function rawSession(req: FastifyRequest): string | undefined {
           return;
         }
         if (msg.type === 'subscribe' && Array.isArray(msg.channelIds)) {
-          const ids = msg.channelIds
-            .filter((v): v is string => typeof v === 'string')
-            .slice(0, 500);
+          const ids = msg.channelIds.filter((v): v is string => typeof v === 'string').slice(0, 500);
           // Member-only channels (and session: presence keys) drop ids the
           // user can't access so fanout/presence can trust subscriptions. A
           // session: key is gated on the session's channel — otherwise a
