@@ -1,16 +1,30 @@
-# Atrium surface — "Places" (Phase 1)
+# Atrium product workspace
 
-Minimal, fast, multiplayer team chat: workspace → channels → threads → messages,
-with presence. Event-sourced from day one: every message is a row in an
-append-only `events` table; messages are read straight off the event log (no
-separate messages table). This is the substrate agent-session panes attach to
-in Phase 2.
+`surface/` is the pnpm workspace for the Atrium product. The name means
+"product surface," not frontend-only code: it contains the backend, web app,
+desktop shell, mobile app, shared client/state package, Centaur integration
+client, MCP server, deployment wrappers, and e2e tests.
+
+Atrium is event-sourced at the collaboration layer: messages, session lifecycle
+updates, reactions, calls, artifacts, and related product events flow through an
+append-only `events` table plus focused read models. The server owns durable
+product state; Centaur owns sandboxed agent execution.
 
 ## Stack
 
 - `server/` — Node + TypeScript, Fastify + @fastify/websocket, `pg` (no ORM),
-  plain SQL migrations with a tiny built-in runner.
+  plain SQL migrations with a tiny built-in runner. Owns auth, workspaces,
+  channels, messages, sessions, artifacts, calls, push, provider credentials,
+  app serving, and internal Centaur-facing routes.
 - `web/` — Vite + React 19 + TypeScript + Tailwind 4.
+- `desktop/` — Electron shell around the web app, including macOS packaging.
+- `mobile/` — Expo app sharing the product protocol/state package.
+- `shared/` — `@atrium/surface-client`: shared protocol types, timeline/app
+  state, API and WebSocket client code used by web/mobile.
+- `centaur-client/` — `@atrium/centaur-client`: typed Centaur control-plane
+  client plus durable event-stream reducer used by server/web/mobile.
+- `mcp/` — Atrium MCP server exposing addressable entries as resources.
+- `e2e/` — Playwright tests for product flows.
 - Postgres 16 in Docker on host port **5433** (db/user/password all `atrium`).
 - MinIO in Docker on **9000** (console **9001**, user `atrium` /
   `atrium-dev-secret`) for file uploads — presigned PUT/GET, bucket
@@ -18,6 +32,21 @@ in Phase 2.
   `S3_ACCESS_KEY`/`S3_SECRET_KEY`.
 - Auth is prototype-simple: `POST /auth/login {handle, displayName}` sets a
   signed (HMAC-SHA256) httpOnly cookie. No passwords.
+
+## Where code lives
+
+| Path | Purpose |
+|---|---|
+| `server/` | Atrium backend: REST, WebSocket, Postgres, migrations, S3/MinIO, sessions, artifacts, calls, push, provider auth, app serving. |
+| `web/` | Browser client: chat, threads, sessions, artifacts, calls, provider connection UI. |
+| `desktop/` | Electron wrapper and desktop packaging around the web client. |
+| `mobile/` | Expo client for mobile chat/session/call workflows. |
+| `shared/` | Shared product protocol types, reducers, API client, sync queue, prefs, formatting, and WebSocket helpers. |
+| `centaur-client/` | Centaur API/event-stream types and reducers. This is Atrium's integration layer with the vendored runtime. |
+| `mcp/` | MCP resources for addressable Atrium entries. |
+| `e2e/` | Playwright browser tests. |
+| `deploy/` | Production-oriented Docker/Caddy/Postgres deployment files. |
+| `scripts/` | Workspace utility scripts such as WebSocket smoke testing. |
 
 ## Run it
 
@@ -46,9 +75,11 @@ Useful:
 
 ```bash
 pnpm lint          # Biome lint, error diagnostics only
-pnpm test          # vitest: server (needs Postgres up) + web reducer tests
-pnpm typecheck     # tsc both packages
+pnpm test          # vitest across workspace packages
+pnpm typecheck     # typecheck packages that expose a typecheck script
+pnpm --filter @atrium/centaur-client build  # tsc build/typecheck for centaur-client
 pnpm check         # lint + typecheck + tests
+pnpm e2e           # Playwright e2e tests
 pnpm ws-smoke      # end-to-end WS proof + latency (needs `pnpm dev` running)
 node scripts/ws-smoke.mjs 50            # bigger sample
 BASE_URL=http://localhost:5173 node scripts/ws-smoke.mjs   # through the Vite proxy
@@ -91,6 +122,7 @@ cookie-based, two tabs in the same profile share one login).
 
 - `POST /auth/login {handle, displayName}` → sets `atrium_session` cookie
 - `GET /auth/me`, `POST /auth/logout`
+- `GET /auth/methods`
 - `GET /api/workspaces`, `GET /api/channels`, `POST /api/channels {name}`
 - `GET /api/channels/:id/messages?before_id=&after_id=&limit=` — newest-last;
   `before_id` pages history (root messages only); `after_id` is the reconnect
@@ -99,22 +131,33 @@ cookie-based, two tabs in the same profile share one login).
 - `POST /api/messages {channelId, text, clientMsgId?, threadRootEventId?}` —
   rejects empty and >8KB text; echoes `client_msg_id` in the event payload for
   optimistic reconciliation
+- `GET /api/sessions`, `POST /api/sessions`, `GET /api/sessions/:id`,
+  `GET /api/sessions/:id/stream`, `POST /api/sessions/:id/messages`
+- Artifact endpoints: `GET /api/sessions/:id/artifacts/by-path`,
+  `/presentations`, `/preview`, `/changes`, `/conflict`, plus
+  `POST /api/sessions/:id/artifacts/:artifactId/resolve`.
+  Raw artifact bytes for Centaur/node-sync use internal routes under
+  `/api/internal/sessions/:id/artifacts/*`.
+- `POST /api/uploads`, `GET /api/files/:id`, `GET /api/files/:id/url`
+- `POST /api/calls`, `POST /api/calls/:id/accept|decline|leave`
 - `WS /ws` — client sends `{type:"subscribe", channelIds:[...]}` (full
   replacement); server pushes `{type:"event", event}` for subscribed channels
   and `{type:"presence", channelId, users}` on join/leave. Protocol-level
   ping/pong heartbeat (30s) plus an app-level `{type:"ping"}` from the client.
 
-Presence semantics: "in the channel" = WS clients subscribed to it. The web
-client subscribes to all channels (needed for unread indicators), so presence
-currently reads as "online in the workspace" — see PROGRESS.md.
+Presence semantics: channel presence is focus-based ("who is actively viewing
+this channel"), because clients subscribe broadly for event fanout and unread
+counts. Session presence is subscription-based on `session:<id>` keys, because
+clients subscribe to those keys only while a session pane is open.
 
 ## Event model
 
 One append-only `events` table (`id bigserial`, `workspace_id`, `channel_id`,
 `thread_root_event_id`, `type`, `actor_id`, `payload jsonb`, `created_at`).
-Types so far: `workspace.created`, `channel.created`, `message.posted`,
-`message.edited`. Read models (`workspaces`, `channels`, `users`, `sessions`)
-are updated in the same transaction as the event insert. A message with
-`thread_root_event_id` set is a reply; roots render in the channel timeline
-with a reply count (computed from the log, edits folded via the latest
-`message.edited`).
+Event families include `workspace.*`, `channel.*`, `message.*`, `session.*`,
+`call.*`, reactions, drafts, and artifact-related product events. Read models
+(`workspaces`, `channels`, `users`, `sessions`, artifact/session projections,
+and related tables) are updated in the same transaction as the event insert
+where the route needs a durable projection. A message with
+`thread_root_event_id` set is a reply; roots render in the channel timeline with
+a reply count, with edits folded through the latest `message.edited` event.
