@@ -19,7 +19,15 @@
 > capture hook with a store-stability gate (write path), `event=warmcache_{hydrate,capture}`
 > hit/miss logs, the Dockerfile bin COPY, and a real-pod kind e2e. Read path proven by a
 > native binary e2e against a mock Atrium; capture covered by unit tests + the kind e2e.
-> Next is **Phase 2.3** (eviction + repo+commit snapshot — §3) now that 2.2 is complete.
+> Phase 2.3 **eviction ✅** (2026-06-26): Atrium TTL + per-workspace size-cap eviction of
+> `warmcache_blobs` (mig 052 `last_hydrated_at`, bumped on hydration; whole-group deletes
+> inside the existing GC worker → existing CAS GC reclaims), default-safe behind
+> `artifactGcEnabled` (30d / 50GiB defaults); Centaur node depcache LRU size-cap sweep
+> (node-global, throttled, **default-OFF**, 10GiB default). The **repo+commit working-set
+> snapshot** (the other half of §3 2.3) and **Phase "Full"/per-repo warm pool (§7)** stay
+> DEFERRED — the plan gates both on production proof-out (§1/§7: Full is "not v1; do not
+> build until Medium proves out"). Medium (the content-keyed warm-cache tier) is now
+> operationally complete.
 
 ---
 

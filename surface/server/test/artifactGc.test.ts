@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type pg from 'pg';
 import { ArtifactLedger } from '../src/artifact-ledger.js';
 import { sweepRetainedScratchVersions, sweepUnreferencedBlobs } from '../src/artifact-ledger-gc.js';
+import { registerWarmcacheManifest, sweepStaleWarmcacheManifests } from '../src/warmcache-store.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -118,7 +119,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pool.query('TRUNCATE cas_blobs, artifact_pointers, artifact_versions, artifacts CASCADE');
+  await pool.query('TRUNCATE cas_blobs, warmcache_blobs, artifact_pointers, artifact_versions, artifacts CASCADE');
   await truncateAll(pool);
   fx = await seedFixture(pool);
   sessionId = await seedSession();
@@ -463,6 +464,46 @@ describe('artifact ledger GC', () => {
       { seq: 1, blob_sha: oldSha, retention_blob_sha: null, tombstoned: false },
       { seq: 2, blob_sha: latestSha, retention_blob_sha: null, tombstoned: false },
     ]);
+  });
+
+  it('keeps a blob shared with a live artifact after its warm-cache manifest is evicted', async () => {
+    const sharedSha = 'a'.repeat(64);
+    await capture('shared/global/warmcache-root.md', sharedSha, 'created');
+    await pool.query(
+      `UPDATE cas_blobs
+          SET s3_key = $2,
+              created_at = now() - interval '40 days'
+        WHERE sha256 = $1`,
+      [sharedSha, `cas/aa/${sharedSha}`],
+    );
+    await registerWarmcacheManifest(pool, {
+      workspaceId: fx.workspaceId,
+      lockfileHash: 'sharedlock',
+      kind: 'npm',
+      entries: [{ path: 'node_modules/shared-root', sha256: sharedSha, size_bytes: 10 }],
+    });
+    await pool.query(
+      `UPDATE warmcache_blobs
+          SET last_hydrated_at = now() - interval '40 days'
+        WHERE workspace_id = $1
+          AND lockfile_hash = 'sharedlock'
+          AND kind = 'npm'`,
+      [fx.workspaceId],
+    );
+
+    const evicted = await sweepStaleWarmcacheManifests(pool, {
+      ttlMs: 30 * 24 * 3_600_000,
+      sizeCapBytes: 1024 * 1024,
+      batchLimit: 10,
+    });
+    const swept = await sweepUnreferencedBlobs(pool, { deleteObject: vi.fn(async (_key: string) => {}) }, {
+      graceMs: 0,
+      limit: 10,
+    });
+
+    expect(evicted).toEqual({ evicted: 1 });
+    expect(swept).toEqual({ swept: 0, failed: 0 });
+    expect(await blobExists(sharedSha)).toBe(true);
   });
 
   it('returns the latest changed version per path since a watermark', async () => {

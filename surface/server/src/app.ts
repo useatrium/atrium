@@ -120,6 +120,7 @@ import {
   storeProfileBundleBlob,
 } from './profile-bundles.js';
 import {
+  bumpWarmcacheLastHydrated,
   loadWarmcacheBlob,
   loadWarmcacheManifest,
   MAX_WARMCACHE_BLOB_BYTES,
@@ -4612,6 +4613,15 @@ function rawSession(req: FastifyRequest): string | undefined {
       lockfileHash: String(q.lockfile_hash ?? ''),
       kind: String(q.kind ?? ''),
     });
+    try {
+      await bumpWarmcacheLastHydrated(pool, {
+        workspaceId,
+        lockfileHash: String(q.lockfile_hash ?? ''),
+        kind: String(q.kind ?? ''),
+      });
+    } catch (err) {
+      req.log.warn({ err, workspaceId }, 'warm-cache last hydration bump failed');
+    }
     return reply.send({
       workspaceId,
       scope: 'warmcache',
@@ -4636,6 +4646,15 @@ function rawSession(req: FastifyRequest): string | undefined {
       lockfileHash: String(q.lockfile_hash ?? ''),
       kind: String(q.kind ?? ''),
     });
+    try {
+      await bumpWarmcacheLastHydrated(pool, {
+        workspaceId: session.workspaceId,
+        lockfileHash: String(q.lockfile_hash ?? ''),
+        kind: String(q.kind ?? ''),
+      });
+    } catch (err) {
+      req.log.warn({ err, workspaceId: session.workspaceId }, 'warm-cache last hydration bump failed');
+    }
     return reply.send({
       workspaceId: session.workspaceId,
       scope: 'warmcache',

@@ -274,6 +274,7 @@ mod linux_daemon {
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
     use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
+    use centaur_node_sync::depcache::{EvictStats, evict_depcache_lru};
     use centaur_node_sync::echo::EchoGuard;
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
@@ -306,6 +307,9 @@ mod linux_daemon {
         hydrate_artifacts: bool,
         cas_dir: PathBuf,
         depcache_root: PathBuf,
+        depcache_max_bytes: u64,
+        depcache_evict_enabled: bool,
+        depcache_evict_every_n_ticks: u64,
         budget: Budget,
         large_threshold: u64,
     }
@@ -356,6 +360,14 @@ mod linux_daemon {
                 &env("NODE_SYNC_DEPCACHE_ROOT"),
                 PathBuf::from("/var/lib/centaur/depcache"),
             ),
+            depcache_max_bytes: env("NODE_SYNC_DEPCACHE_MAX_BYTES")
+                .parse::<u64>()
+                .unwrap_or(10 * 1024 * 1024 * 1024),
+            depcache_evict_enabled: env_truthy(&env("NODE_SYNC_DEPCACHE_EVICT_ENABLED")),
+            depcache_evict_every_n_ticks: env("NODE_SYNC_DEPCACHE_EVICT_EVERY_N")
+                .parse::<u64>()
+                .unwrap_or(30)
+                .max(1),
             budget: Budget {
                 max_dirty_bytes: env("NODE_SYNC_DIRTY_BUDGET")
                     .parse::<u64>()
@@ -516,11 +528,14 @@ mod linux_daemon {
         let lease = LeaseGate::new();
         let mut echo = EchoGuard::new();
         let mut state = DaemonState::load(&session.state_file);
+        let mut tick: u64 = 0;
 
         loop {
+            tick = tick.saturating_add(1);
             if let Err(e) = run_one_session(&global, &session, &mut state, &mut echo, &lease) {
                 eprintln!("session {}: {e}", session.session);
             }
+            maybe_evict_depcache(&global, tick);
             if once {
                 break;
             }
@@ -538,8 +553,10 @@ mod linux_daemon {
         let mut states: HashMap<String, DaemonState> = HashMap::new();
         let mut echoes: HashMap<String, EchoGuard> = HashMap::new();
         let mut mounted_overlays: HashMap<String, OverlayMountPlan> = HashMap::new();
+        let mut tick: u64 = 0;
 
         loop {
+            tick = tick.saturating_add(1);
             match discover_sessions(&overlays_root) {
                 Ok(discovery) => {
                     for warning in discovery.warnings {
@@ -612,11 +629,32 @@ mod linux_daemon {
                 Err(e) => eprintln!("session discovery: {e}"),
             }
 
+            maybe_evict_depcache(&global, tick);
             if once {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(interval_secs));
         }
+    }
+
+    fn maybe_evict_depcache(global: &GlobalConfig, tick: u64) {
+        if !global.depcache_evict_enabled
+            || !tick.is_multiple_of(global.depcache_evict_every_n_ticks)
+        {
+            return;
+        }
+        let stats = evict_depcache_lru(&global.depcache_root, global.depcache_max_bytes);
+        log_depcache_evict_if_deleted(stats, global.depcache_max_bytes);
+    }
+
+    fn log_depcache_evict_if_deleted(stats: EvictStats, cap: u64) {
+        if stats.deleted_files == 0 {
+            return;
+        }
+        eprintln!(
+            "event=depcache_evict scanned_bytes={} cap={} deleted_files={} freed_bytes={}",
+            stats.scanned_bytes, cap, stats.deleted_files, stats.freed_bytes
+        );
     }
 
     fn hydrate_artifacts_if_enabled(

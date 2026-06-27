@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { sweepUnreferencedBlobs } from '../src/artifact-ledger-gc.js';
+import { bumpWarmcacheLastHydrated, sweepStaleWarmcacheManifests } from '../src/warmcache-store.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 const mockedS3 = vi.hoisted(() => {
@@ -88,6 +89,45 @@ async function putBlob(bytes: Buffer): Promise<string> {
   expect(res.statusCode).toBe(200);
   expect(res.json()).toMatchObject({ sha256: s, size_bytes: bytes.length });
   return s;
+}
+
+async function putManifest(
+  lockfileHash: string,
+  kind: string,
+  entries: Array<{ path: string; sha256: string; size_bytes: number }>,
+): Promise<void> {
+  const reg = await app.inject({
+    method: 'PUT',
+    url: '/api/internal/cache/manifest',
+    headers: { 'x-api-key': KEY, 'content-type': 'application/json' },
+    payload: {
+      workspace_id: fx.workspaceId,
+      lockfile_hash: lockfileHash,
+      kind,
+      entries,
+    },
+  });
+  expect(reg.statusCode).toBe(200);
+}
+
+async function manifestRowCount(lockfileHash: string, kind: string): Promise<number> {
+  const rows = await pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n
+       FROM warmcache_blobs
+      WHERE workspace_id = $1
+        AND lockfile_hash = $2
+        AND kind = $3`,
+    [fx.workspaceId, lockfileHash, kind],
+  );
+  return rows.rows[0]!.n;
+}
+
+async function blobExists(sha256: string): Promise<boolean> {
+  const res = await pool.query<{ exists: boolean }>(
+    'SELECT EXISTS (SELECT 1 FROM cas_blobs WHERE sha256 = $1)',
+    [sha256],
+  );
+  return res.rows[0]!.exists;
 }
 
 describe('warm-cache internal endpoints', () => {
@@ -211,6 +251,129 @@ describe('warm-cache internal endpoints', () => {
     expect(storage.deleteObject).not.toHaveBeenCalled();
     const still = await pool.query('SELECT 1 FROM cas_blobs WHERE sha256 = $1', [shaA]);
     expect(still.rows).toHaveLength(1);
+  });
+
+  it('bumpWarmcacheLastHydrated updates the manifest timestamp', async () => {
+    const a = Buffer.from('timestamp bump blob');
+    const shaA = await putBlob(a);
+    await putManifest('lockbump', 'npm', [{ path: 'node_modules/a', sha256: shaA, size_bytes: a.length }]);
+    await pool.query(
+      `UPDATE warmcache_blobs
+          SET last_hydrated_at = now() - interval '10 days'
+        WHERE workspace_id = $1
+          AND lockfile_hash = 'lockbump'
+          AND kind = 'npm'`,
+      [fx.workspaceId],
+    );
+
+    const result = await bumpWarmcacheLastHydrated(pool, {
+      workspaceId: fx.workspaceId,
+      lockfileHash: 'lockbump',
+      kind: 'npm',
+    });
+
+    expect(result.updated).toBe(1);
+    const rows = await pool.query<{ fresh: boolean }>(
+      `SELECT last_hydrated_at > now() - interval '1 minute' AS fresh
+         FROM warmcache_blobs
+        WHERE workspace_id = $1
+          AND lockfile_hash = 'lockbump'
+          AND kind = 'npm'`,
+      [fx.workspaceId],
+    );
+    expect(rows.rows[0]!.fresh).toBe(true);
+  });
+
+  it('TTL eviction drops stale manifests so CAS GC reclaims only their blobs', async () => {
+    const staleSha = await putBlob(Buffer.from('stale warmcache blob'));
+    const freshSha = await putBlob(Buffer.from('fresh warmcache blob'));
+    await putManifest('lockstale', 'npm', [{ path: 'node_modules/stale', sha256: staleSha, size_bytes: 20 }]);
+    await putManifest('lockfresh', 'npm', [{ path: 'node_modules/fresh', sha256: freshSha, size_bytes: 20 }]);
+    await pool.query(
+      `UPDATE warmcache_blobs
+          SET last_hydrated_at = now() - interval '40 days'
+        WHERE workspace_id = $1
+          AND lockfile_hash = 'lockstale'
+          AND kind = 'npm'`,
+      [fx.workspaceId],
+    );
+    await pool.query(`UPDATE cas_blobs SET created_at = now() - interval '2 days'`);
+
+    const evicted = await sweepStaleWarmcacheManifests(pool, {
+      ttlMs: 30 * 24 * 3_600_000,
+      sizeCapBytes: 1024 * 1024,
+      batchLimit: 10,
+    });
+    const swept = await sweepUnreferencedBlobs(pool, { deleteObject: vi.fn(async (_key: string) => {}) }, {
+      graceMs: 24 * 3_600_000,
+      limit: 10,
+    });
+
+    expect(evicted).toEqual({ evicted: 1 });
+    expect(await manifestRowCount('lockstale', 'npm')).toBe(0);
+    expect(await manifestRowCount('lockfresh', 'npm')).toBe(1);
+    expect(swept).toEqual({ swept: 1, failed: 0 });
+    expect(await blobExists(staleSha)).toBe(false);
+    expect(await blobExists(freshSha)).toBe(true);
+  });
+
+  it('size-cap eviction drops oldest whole manifests and keeps the newest under cap', async () => {
+    const oldSha = await putBlob(Buffer.from('old'));
+    const midSha = await putBlob(Buffer.from('middle'));
+    const newSha = await putBlob(Buffer.from('newest!'));
+    await putManifest('lockold', 'npm', [{ path: 'node_modules/old', sha256: oldSha, size_bytes: 5 }]);
+    await putManifest('lockmid', 'npm', [{ path: 'node_modules/mid', sha256: midSha, size_bytes: 6 }]);
+    await putManifest('locknew', 'npm', [{ path: 'node_modules/new', sha256: newSha, size_bytes: 7 }]);
+    await pool.query(
+      `UPDATE warmcache_blobs
+          SET last_hydrated_at =
+            CASE lockfile_hash
+              WHEN 'lockold' THEN now() - interval '3 days'
+              WHEN 'lockmid' THEN now() - interval '2 days'
+              ELSE now() - interval '1 day'
+            END
+        WHERE workspace_id = $1
+          AND kind = 'npm'`,
+      [fx.workspaceId],
+    );
+
+    const evicted = await sweepStaleWarmcacheManifests(pool, {
+      ttlMs: 365 * 24 * 3_600_000,
+      sizeCapBytes: 10,
+      batchLimit: 10,
+    });
+
+    expect(evicted).toEqual({ evicted: 2 });
+    expect(await manifestRowCount('lockold', 'npm')).toBe(0);
+    expect(await manifestRowCount('lockmid', 'npm')).toBe(0);
+    expect(await manifestRowCount('locknew', 'npm')).toBe(1);
+  });
+
+  it('does not evict recently hydrated manifests', async () => {
+    const shaA = await putBlob(Buffer.from('recently hydrated blob'));
+    await putManifest('lockrecent', 'npm', [{ path: 'node_modules/recent', sha256: shaA, size_bytes: 20 }]);
+    await pool.query(
+      `UPDATE warmcache_blobs
+          SET last_hydrated_at = now() - interval '45 days'
+        WHERE workspace_id = $1
+          AND lockfile_hash = 'lockrecent'
+          AND kind = 'npm'`,
+      [fx.workspaceId],
+    );
+    await bumpWarmcacheLastHydrated(pool, {
+      workspaceId: fx.workspaceId,
+      lockfileHash: 'lockrecent',
+      kind: 'npm',
+    });
+
+    const evicted = await sweepStaleWarmcacheManifests(pool, {
+      ttlMs: 30 * 24 * 3_600_000,
+      sizeCapBytes: 1024 * 1024,
+      batchLimit: 10,
+    });
+
+    expect(evicted).toEqual({ evicted: 0 });
+    expect(await manifestRowCount('lockrecent', 'npm')).toBe(1);
   });
 
   it('session-scoped routes resolve the workspace and round-trip', async () => {

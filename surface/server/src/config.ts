@@ -53,6 +53,11 @@ export const config = {
   artifactGcGraceMs: Number(process.env.ARTIFACT_GC_GRACE_MS ?? 3_600_000),
   artifactRetentionMs: Number(process.env.ARTIFACT_RETENTION_MS ?? 30 * 24 * 3_600_000),
   artifactGcBatchSize: Number(process.env.ARTIFACT_GC_BATCH_SIZE ?? 50),
+  warmcacheEvictTtlDays: positiveIntEnv('WARMCACHE_EVICT_TTL_DAYS', 30),
+  warmcacheWorkspaceSizeCapBytes: positiveIntEnv(
+    'WARMCACHE_WORKSPACE_SIZE_CAP_BYTES',
+    50 * 1024 ** 3,
+  ),
   appSigningSecret:
     process.env.APP_SIGNING_SECRET ??
     process.env.SESSION_SECRET ??
