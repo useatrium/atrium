@@ -2,7 +2,7 @@
   "name": "atrium-surface",
   "private": true,
   "version": "0.1.0",
-  "description": "Atrium Phase 1 — Places: minimal multiplayer team chat",
+  "description": "Atrium product workspace",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24"
@@ -13,9 +13,10 @@
     "lint": "biome lint . --diagnostic-level=error",
     "lint:fix": "biome lint --write .",
     "migrate": "pnpm --filter @atrium/server migrate",
+    "check:migrations": "node server/scripts/check-migration-filenames.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "check": "pnpm lint && pnpm check:migrations && pnpm typecheck && pnpm test",
     "ws-smoke": "node scripts/ws-smoke.mjs"
   },
   "devDependencies": {

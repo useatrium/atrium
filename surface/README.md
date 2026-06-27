@@ -75,10 +75,11 @@ Useful:
 
 ```bash
 pnpm lint          # Biome lint, error diagnostics only
+pnpm check:migrations  # migration filename guard
 pnpm test          # vitest across workspace packages
 pnpm typecheck     # typecheck packages that expose a typecheck script
 pnpm --filter @atrium/centaur-client build  # tsc build/typecheck for centaur-client
-pnpm check         # lint + typecheck + tests
+pnpm check         # lint + migration guard + typecheck + tests
 pnpm e2e           # Playwright e2e tests
 pnpm ws-smoke      # end-to-end WS proof + latency (needs `pnpm dev` running)
 node scripts/ws-smoke.mjs 50            # bigger sample
