@@ -306,6 +306,16 @@ pub fn classify_entry(
     {
         return EntryLane::Denied;
     }
+    // Reserved top-level workspace dirs that are never artifacts: `repos/` holds the
+    // session's git-managed working repos (nested `repos/<owner>/<repo>`, versioned by
+    // git) and `context/` is a read-only Atrium projection (chat/sibling/ledger).
+    // Reserving the whole prefix is what supersedes per-repo subdir matching above.
+    if path_components
+        .first()
+        .is_some_and(|first| first == "repos" || first == "context")
+    {
+        return EntryLane::Denied;
+    }
     if harness_homes
         .iter()
         .any(|home| starts_with_normalized_components(&path_components, home))
@@ -1425,6 +1435,27 @@ mod tests {
         // only the top-level (single-component) contract copy is excluded.
         assert_eq!(
             classify_entry(Path::new("notes/AGENTS.md"), &homes, &[]),
+            EntryLane::Artifact
+        );
+    }
+
+    #[test]
+    fn classify_entry_denies_reserved_repos_and_context_dirs() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        // repos/ holds git-managed working repos (nested repos/<owner>/<repo>) — never
+        // an artifact; context/ is a read-only Atrium projection.
+        assert_eq!(
+            classify_entry(Path::new("repos/acme/widget/src/main.rs"), &homes, &[]),
+            EntryLane::Denied
+        );
+        assert_eq!(
+            classify_entry(Path::new("context/thread.json"), &homes, &[]),
+            EntryLane::Denied
+        );
+        // A deliverable whose name merely starts similarly is still captured.
+        assert_eq!(
+            classify_entry(Path::new("reports/q3.md"), &homes, &[]),
             EntryLane::Artifact
         );
     }

@@ -1475,20 +1475,24 @@ mod tests {
         assert_eq!(session_config.harness_thread_id, "thread-123");
         assert_eq!(session_config.harness_home, ".codex");
         assert!(!session_config.flat_home);
+        // Repos now nest owner-scoped under repos/<owner>/<repo>.
         assert_eq!(
             session_config.repo_subdirs,
-            vec![PathBuf::from("foo"), PathBuf::from("bar")]
+            vec![
+                PathBuf::from("repos/acme/foo"),
+                PathBuf::from("repos/acme/bar")
+            ]
         );
         assert_eq!(
             session_config.repo_worktrees,
             vec![
                 RepoWorktree {
-                    key: "foo".to_string(),
-                    path: PathBuf::from("/run/centaur/merged/sess-multi/foo"),
+                    key: "repos_acme_foo".to_string(),
+                    path: PathBuf::from("/run/centaur/merged/sess-multi/repos/acme/foo"),
                 },
                 RepoWorktree {
-                    key: "bar".to_string(),
-                    path: PathBuf::from("/run/centaur/merged/sess-multi/bar"),
+                    key: "repos_acme_bar".to_string(),
+                    path: PathBuf::from("/run/centaur/merged/sess-multi/repos/acme/bar"),
                 },
             ]
         );

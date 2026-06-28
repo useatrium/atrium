@@ -13,6 +13,11 @@ use std::path::{Component, Path, PathBuf};
 pub const DEFAULT_AGENT_UID: u32 = 1001;
 pub const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
 pub const DEFAULT_REPO_CACHE_ROOT: &str = "/cache";
+/// Single top-level workspace dir that holds every session repo, nested as
+/// `repos/<owner>/<repo>`. Reserving one prefix keeps the rest of `~` for
+/// deliverables/config, avoids repo-basename collisions with reserved dirs, and
+/// lets capture exclude all git-managed code by excluding this one prefix.
+pub const REPOS_DIR: &str = "repos";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum LowerKind {
@@ -206,16 +211,22 @@ pub fn plan_repo_composition(
 }
 
 pub fn repo_target_subdir(mount: &RepoMount) -> Result<String, String> {
+    // Both forms nest under the reserved `repos/` prefix (see REPOS_DIR).
     if let Some(subdir) = mount.subdir.as_deref() {
         validate_repo_subdir_syntax(subdir)?;
-        return Ok(subdir.to_owned());
+        return Ok(format!("{REPOS_DIR}/{subdir}"));
     }
+    // Owner-scoped: `acme/widget` -> `repos/acme/widget`. Owner-scoping disambiguates
+    // same-basename repos from different owners (which used to collide on the basename).
     validate_repo_cache_path_syntax(&mount.repo)?;
-    Path::new(&mount.repo)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| format!("repo {:?} has no basename for workspace subdir", mount.repo))
+    let repo = mount.repo.trim_matches('/');
+    if repo.is_empty() {
+        return Err(format!(
+            "repo {:?} has no path for workspace subdir",
+            mount.repo
+        ));
+    }
+    Ok(format!("{REPOS_DIR}/{repo}"))
 }
 
 pub fn overlay_options(lower: &Path, upper: &Path, work: &Path) -> String {
@@ -877,32 +888,59 @@ mod tests {
         ];
         let plan = plan_repo_composition(Path::new("/lower"), Path::new("/cache"), &repos).unwrap();
 
-        assert_eq!(plan.entries[0].target_subdir, "foo");
+        // Default: nested owner-scoped under repos/. Explicit subdir: repos/<subdir>.
+        assert_eq!(plan.entries[0].target_subdir, "repos/acme/foo");
         assert_eq!(plan.entries[0].cache_path, PathBuf::from("/cache/acme/foo"));
-        assert_eq!(plan.entries[0].target_path, PathBuf::from("/lower/foo"));
-        assert_eq!(plan.entries[1].target_subdir, "vendor-bar");
+        assert_eq!(
+            plan.entries[0].target_path,
+            PathBuf::from("/lower/repos/acme/foo")
+        );
+        assert_eq!(plan.entries[1].target_subdir, "repos/vendor-bar");
         assert_eq!(plan.entries[1].cache_path, PathBuf::from("/cache/acme/bar"));
         assert_eq!(
             plan.entries[1].target_path,
-            PathBuf::from("/lower/vendor-bar")
+            PathBuf::from("/lower/repos/vendor-bar")
         );
     }
 
     #[test]
+    fn compose_plan_same_basename_different_owners_no_collision() {
+        // Used to collide on the shared basename "app"; owner-scoping under repos/ fixes it.
+        let repos = vec![
+            RepoMount {
+                repo: "acme/app".to_string(),
+                r#ref: None,
+                subdir: None,
+            },
+            RepoMount {
+                repo: "globex/app".to_string(),
+                r#ref: None,
+                subdir: None,
+            },
+        ];
+        let plan = plan_repo_composition(Path::new("/lower"), Path::new("/cache"), &repos).unwrap();
+        assert_eq!(plan.entries[0].target_subdir, "repos/acme/app");
+        assert_eq!(plan.entries[1].target_subdir, "repos/globex/app");
+    }
+
+    #[test]
     fn compose_plan_rejects_target_collisions_and_traversal() {
+        // Same-basename, different owners NO LONGER collide (owner-scoped under repos/);
+        // a collision now requires two repos targeting the same path — e.g. a shared
+        // explicit subdir.
         let err = plan_repo_composition(
             Path::new("/lower"),
             Path::new("/cache"),
             &[
                 RepoMount {
-                    repo: "acme/foo".to_string(),
+                    repo: "acme/bar".to_string(),
                     r#ref: None,
-                    subdir: None,
+                    subdir: Some("shared".to_string()),
                 },
                 RepoMount {
-                    repo: "other/foo".to_string(),
+                    repo: "globex/baz".to_string(),
                     r#ref: None,
-                    subdir: None,
+                    subdir: Some("shared".to_string()),
                 },
             ],
         )
