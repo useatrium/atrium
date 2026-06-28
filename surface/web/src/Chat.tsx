@@ -2,10 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import {
   ApiError,
   api,
-  type AgentProfile,
   type Channel,
-  type ProviderCredentialProvider,
-  type ProviderCredentialStatus,
   type Workspace,
 } from './api';
 import { isDesktop, desktopWsUrl } from './desktop';
@@ -74,7 +71,10 @@ import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-clie
 import { useDialog } from './useDialog';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
+import { useAgentProfiles } from './useAgentProfiles';
 import { useCall } from './useCall';
+import { useCallsAvailable } from './useCallsAvailable';
+import { useProviderCredentials } from './useProviderCredentials';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -158,7 +158,7 @@ export function Chat({
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const calls = useCall(me, state.channels);
-  const [callsAvailable, setCallsAvailable] = useState(false);
+  const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
   stateRef.current = state;
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
@@ -190,19 +190,6 @@ export function Chat({
     void eventCache.saveSyncCursor(cursor).catch((err: unknown) => {
       console.warn('failed to cache sync cursor', err);
     });
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .authMethods()
-      .then((methods) => {
-        if (!cancelled) setCallsAvailable(methods.calls === true);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const invalidateAuth = useCallback(() => {
@@ -741,32 +728,17 @@ export function Chat({
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [demoStarting, setDemoStarting] = useState(false);
-  const [providerCredentials, setProviderCredentials] = useState<
-    Record<string, ProviderCredentialStatus | undefined>
-  >({});
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
-  const [providerDialog, setProviderDialog] = useState<ProviderCredentialProvider | null>(null);
-
-  const loadProviderCredentials = useCallback(async () => {
-    try {
-      const { providers } = await api.providerCredentials();
-      setProviderCredentials(Object.fromEntries(providers.map((p) => [p.provider, p])));
-    } catch (err) {
-      console.warn('failed to load provider credentials', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadProviderCredentials();
-  }, [loadProviderCredentials]);
-
-  useEffect(() => {
-    api.agentProfiles()
-      .then(({ profiles }) => setAgentProfiles(profiles))
-      .catch((err: unknown) => {
-        console.warn('failed to load agent profiles', err);
-      });
-  }, []);
+  const agentProfiles = useAgentProfiles();
+  const {
+    disconnectClaude,
+    disconnectCodex,
+    openProviderConnect,
+    providerCredentials,
+    providerDialog,
+    saveClaudeToken,
+    saveCodexAuthJson,
+    setProviderDialog,
+  } = useProviderCredentials();
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -775,40 +747,6 @@ export function Chat({
     sync();
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
-  }, []);
-
-  const saveClaudeToken = useCallback(
-    async (token: string) => {
-      const { provider } = await api.connectClaudeCode(token);
-      setProviderCredentials((prev) => ({ ...prev, [provider.provider]: provider }));
-      await loadProviderCredentials();
-    },
-    [loadProviderCredentials],
-  );
-
-  const saveCodexAuthJson = useCallback(
-    async (authJson: string) => {
-      const { provider } = await api.connectCodex(authJson);
-      setProviderCredentials((prev) => ({ ...prev, [provider.provider]: provider }));
-      await loadProviderCredentials();
-    },
-    [loadProviderCredentials],
-  );
-
-  const disconnectClaude = useCallback(async () => {
-    await api.disconnectClaudeCode();
-    setProviderCredentials((prev) => ({
-      ...prev,
-      'claude-code': disconnectedProviderStatus('claude-code'),
-    }));
-  }, []);
-
-  const disconnectCodex = useCallback(async () => {
-    await api.disconnectCodex();
-    setProviderCredentials((prev) => ({
-      ...prev,
-      codex: disconnectedProviderStatus('codex'),
-    }));
   }, []);
 
   // ---- permalink (/s/:id): load the session, jump to its channel, open pane ----
@@ -1807,10 +1745,6 @@ export function Chat({
     }
   }, [active, demoStarting, onApiError]);
 
-  const openProviderConnect = useCallback(() => {
-    setProviderDialog(providerCredentials.codex?.connected ? 'claude-code' : 'codex');
-  }, [providerCredentials.codex?.connected]);
-
   const enqueueDraft = useCallback(
     (key: string, text: string) => {
       markDraftTouched(key);
@@ -2295,19 +2229,6 @@ export function Chat({
       )}
     </div>
   );
-}
-
-function disconnectedProviderStatus(
-  provider: ProviderCredentialProvider,
-): ProviderCredentialStatus {
-  return {
-    provider,
-    connected: false,
-    status: 'needs_auth',
-    lastValidatedAt: null,
-    lastError: null,
-    updatedAt: null,
-  };
 }
 
 /** Fixed-height "X is typing…" line — always present so the layout never shifts. */
