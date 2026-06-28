@@ -86,6 +86,8 @@ Done:
 - `surface/server/scripts/check-migration-filenames.mjs` enforces migration
   filename format, rejects new duplicate numeric prefixes, and documents the
   historical duplicate groups that are already allowed.
+- Generated local artifacts are ignored in the relevant places: root `dist/`,
+  desktop `out/`, mobile `.expo`/`dist`/native folders, and Playwright output.
 
 Remaining tasks:
 
@@ -93,9 +95,6 @@ Remaining tasks:
   tools: `typescript`, `vitest`, `@types/node`, `jsdom`, Testing Library, Vite.
 - Align easy package-version drift where there is no platform reason for
   divergence.
-- Add/verify ignore rules for generated local artifacts: `dist`, `out`,
-  `.expo`, Playwright output, iOS build output. Keep Electron packaging assets
-  under `surface/desktop/build` tracked.
 
 Validation:
 
@@ -268,7 +267,45 @@ Validation:
 
 Risk: low to medium.
 
-## Phase 7: optional directory rename decision
+## Phase 7: mobile chat decomposition
+
+Goal: make the mobile chat provider and primary session/channel screens easier
+to reason about without diverging from shared product behavior.
+
+Current hotspots:
+
+- `surface/mobile/src/lib/chat.tsx` owns the native chat provider API, sync
+  state, draft state, queue coordination, auth/base URL handling, and WebSocket
+  lifecycle.
+- Mobile channel/session screens own substantial screen behavior on top of that
+  provider state.
+
+Approach:
+
+- Extract provider hooks before moving screen UI:
+  - `useMobileChatBootstrap`
+  - `useMobileSync`
+  - `useMobileDrafts`
+  - `useMobileQueuedOps`
+  - `useMobileSessionState`
+- Keep platform-specific concerns, such as native base URL/token handling and
+  SQLite cache access, in mobile-only modules.
+- Prefer shared `@atrium/surface-client` logic for product reducers and wire
+  types instead of reimplementing web behavior in mobile.
+- Split screen-local presentational pieces only after provider concerns are
+  clearer.
+
+Validation:
+
+- Existing mobile tests.
+- Mobile typecheck.
+- Manual Expo smoke for login, channel open, message send, session open, and
+  reconnect/draft restore when practical.
+
+Risk: medium. The mobile provider is behavior-heavy, and effect timing matters
+for reconnect and offline queue recovery.
+
+## Phase 8: optional directory rename decision
 
 Goal: decide whether `surface/` should ever be renamed.
 
@@ -304,9 +341,8 @@ Current recommended sequence:
 4. Dev mock quarantine.
 5. Mobile chat provider/screen decomposition.
 6. Remaining toolchain/package-version policy.
-7. Remaining hygiene guardrails.
-8. Protocol/type ownership cleanup.
-9. Optional deeper server domain splits when a concrete change exposes the
+7. Protocol/type ownership cleanup.
+8. Optional deeper server domain splits when a concrete change exposes the
    boundary.
 
 Each PR should be intentionally boring: small surface area, existing tests, and
