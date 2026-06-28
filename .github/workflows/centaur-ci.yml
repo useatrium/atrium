@@ -3,7 +3,8 @@ name: Centaur CI
 # Ported from the vendored centaur/.github/workflows/ci.yml (which is inert here — GitHub
 # only runs root workflows). Scoped to centaur/** changes. Publishing workflows are NOT
 # ported (they'd push to Centaur's registries from the wrong repo). The heavy kind e2e is
-# included but kept non-required (see centaur-ci-success allowed-skips).
+# included on master pushes but kept out of the required PR gate (see
+# centaur-ci-success allowed-skips).
 # See docs/centaur-vendoring.md.
 
 # Always runs (no top-level path filter) so the `Centaur CI success` check reports on
@@ -236,7 +237,7 @@ jobs:
     name: node-sync pod-native overlay e2e
     runs-on: ubuntu-latest
     needs: ci_changes
-    if: needs.ci_changes.outputs.node_sync == 'true'
+    if: needs.ci_changes.outputs.node_sync == 'true' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

@@ -11,34 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  surface:
-    name: Surface
+  surface-static:
+    name: Surface static
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Run inside the official Playwright image: browsers + system deps are
-    # pre-installed, so there is no flaky azureedge browser download (which
-    # deterministically hung after the main artifact on GitHub runners). Tag
-    # MUST track the pinned @playwright/test version in surface/e2e.
-    container:
-      image: mcr.microsoft.com/playwright:v1.60.0-noble
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: atrium
-          POSTGRES_PASSWORD: atrium
-          POSTGRES_DB: atrium
-        options: >-
-          --health-cmd "pg_isready -U atrium -d atrium"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    timeout-minutes: 12
 
     env:
-      # Inside a job container, service containers are reached by their label
-      # hostname on the container port (not localhost:5433).
-      DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium
       # The mobile typecheck regenerates Expo typed routes; keep the CLI off
       # the network.
       EXPO_NO_TELEMETRY: "1"
@@ -88,10 +66,55 @@ jobs:
         run: pnpm --filter @atrium/centaur-client build
 
       # Production web build: Caddy serves web/dist in prod but nothing else
-      # exercises it (e2e uses the Vite dev server). ~3s, so verify it here.
+      # exercises it (e2e uses the Vite dev server). The workspace typecheck
+      # already ran above, so CI only needs the production bundle.
       - name: Build web production bundle
         working-directory: surface
-        run: pnpm --filter @atrium/web build
+        run: pnpm --filter @atrium/web build:ci
+
+  surface-unit:
+    name: Surface unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: atrium
+          POSTGRES_PASSWORD: atrium
+          POSTGRES_DB: atrium
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atrium -d atrium"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://atrium:atrium@localhost:5432/atrium
+      EXPO_NO_TELEMETRY: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: surface/pnpm-lock.yaml
+
+      - name: Install surface workspace
+        working-directory: surface
+        run: pnpm install --frozen-lockfile
 
       # The workspace root's test script recurses into packages, so exclude it
       # explicitly. Server tests are parallel-safe because each Vitest worker
@@ -100,6 +123,59 @@ jobs:
         working-directory: surface
         timeout-minutes: 6
         run: pnpm --filter '!atrium-surface' -r test
+
+  surface-e2e:
+    name: Surface Playwright e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    # Run inside the official Playwright image: browsers + system deps are
+    # pre-installed, so there is no flaky azureedge browser download (which
+    # deterministically hung after the main artifact on GitHub runners). Tag
+    # MUST track the pinned @playwright/test version in surface/e2e.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: atrium
+          POSTGRES_PASSWORD: atrium
+          POSTGRES_DB: atrium
+        options: >-
+          --health-cmd "pg_isready -U atrium -d atrium"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Inside a job container, service containers are reached by their label
+      # hostname on the container port (not localhost:5433).
+      DATABASE_URL: postgres://atrium:atrium@postgres:5432/atrium
+      EXPO_NO_TELEMETRY: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          # Must match the packageManager pin in surface/package.json (the
+          # action fails on mismatch, which is the point — one pnpm line
+          # everywhere, including Docker).
+          version: 10.33.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: surface/pnpm-lock.yaml
+
+      - name: Install surface workspace
+        working-directory: surface
+        run: pnpm install --frozen-lockfile
 
       # No browser-install step: the Playwright container already has Chromium.
       # Per-step timeout so a webServer/teardown hang is killed fast and
@@ -129,7 +205,7 @@ jobs:
           MINIO_ROOT_USER=atrium MINIO_ROOT_PASSWORD=atrium-dev-secret \
             "$RUNNER_TEMP/minio" server "$RUNNER_TEMP/minio-data" --address ':9000' \
             > "$RUNNER_TEMP/minio.log" 2>&1 &
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && break
             sleep 1
           done
@@ -144,3 +220,18 @@ jobs:
           name: playwright-report
           path: surface/e2e/playwright-report/
           if-no-files-found: ignore
+
+  surface:
+    name: Surface
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - surface-static
+      - surface-unit
+      - surface-e2e
+    timeout-minutes: 5
+    steps:
+      - name: Decide whether Surface jobs succeeded or failed
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
