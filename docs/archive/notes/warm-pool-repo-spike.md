@@ -61,6 +61,14 @@ kind CI job, which is **push-only**, so it re-runs on merge-to-master.
 Negative result captured in the script header so we don't relearn it: mounting AT the mountpoint (HOME)
 in place does not propagate post-start.
 
+A second POC, `ci/warmpool-home-compose-poc.sh`, validates the **HOME composition** (build step 3): it
+composes a generic-HOME-config lower (`~/.codex`/`~/.claude`/`~/.config` + centaur `~/AGENTS.md`) BENEATH a
+repo lower (with its own `AGENTS.md`), submounts the composed overlay at HOME post-start, and asserts the
+running pod's HOME has both the harness config and the repo with centaur's `AGENTS.md` winning — **green on
+kind, and again with the real `centaur-agent` image where `codex` + `claude` actually run in the composed
+HOME and read their config.** (Runs `alpine` in CI; the real-harness step auto-runs only when the agent
+image is used.)
+
 ## Verdict: GO (scoped) — submount-at-HOME under flat-home
 
 Remaining build, in order:
@@ -73,9 +81,20 @@ Remaining build, in order:
    upper, upper chowned to the agent uid) **at `/home/agent`** (a submount under `/home`), then a
    **readiness handshake** (block until the submount is visible) before the first turn. Mirror the
    iron-proxy "apply + wait" barrier.
-3. **Reconcile boot-time HOME setup** — under flat-home the entrypoint preps HOME at boot (tool shims,
-   `AGENTS.md`, dotfiles into `~`). A post-claim submount *at* HOME shadows that. Compose that setup into
-   the session overlay (lower/upper), or (re)run the HOME prep inside the submounted overlay post-claim.
+3. **Reconcile boot-time HOME setup — RESOLVED (compose generic HOME as a lower; POC'd with real harnesses).**
+   Under flat-home the entrypoint writes the agent's whole generic HOME into HOME (`~/.codex`, `~/.claude`,
+   `~/.config/amp`, `~/AGENTS.md` = the centaur system prompt; real creds are at the iron-proxy, NOT HOME — so
+   the HOME content is GENERIC). A submount *at* HOME would shadow it. **Decision: the daemon composes the
+   warm pod's generic HOME as a read-only LOWER beneath the repo** — `lowerdir=<generic-home>:<repo>` — so the
+   submounted HOME = repo files + harness config, merged. **lowerdir order is the `AGENTS.md` knob:**
+   generic-home topmost ⇒ centaur's `~/AGENTS.md` wins over a repo's own, matching today's flat-home (the
+   entrypoint copies `/opt/centaur/AGENTS.md` → `$HOME/AGENTS.md`, `entrypoint.sh:508-512`). Validated by
+   `ci/warmpool-home-compose-poc.sh` (green local + GHA, and again with the **real `centaur-agent` image**:
+   `codex` + `claude --version` both run in the composed overlay HOME and `~/.codex/config.toml`,
+   `~/.claude/settings.json`, `~/AGENTS.md` are all present + readable). Minor wrinkle to handle in the build:
+   `codex` startup logs `could not create PATH aliases: Permission denied` under the composed HOME (it
+   proceeds anyway) — ensure the dir it writes is writable, or it's harmless. (The `/home/agent/context` RO
+   `/atrium` mount, also under HOME, likewise composes as a lower or re-mounts under the bound HOME.)
 4. **Relax the filter** — drop only `session_repos_json.is_none()`; keep env/persona/resume exclusions
    (personas are unused in Atrium, so "repos only" is sufficient).
 5. **e2e** — promote this POC into a real-pod test driven by the actual daemon (Bidirectional volume) +
