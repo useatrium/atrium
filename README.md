@@ -62,6 +62,29 @@ pnpm dev                      # server on :3001, web on :5173
 Open http://localhost:5173. The first run creates a workspace called **atrium** with
 a **#general** channel.
 
+### Local observability
+
+Atrium has a self-hostable dogfood observability stack under
+[`infra/observability`](infra/observability/). It runs an OpenTelemetry Collector,
+Prometheus, Tempo, Loki, Alertmanager, and Grafana:
+
+```bash
+cd infra/observability
+docker compose up -d
+```
+
+Open Grafana at http://localhost:3000. Atrium server metrics are exposed at
+`/metrics`; to export local Atrium traces into the collector, run the server with:
+
+```bash
+OTEL_SERVICE_NAME=atrium-server \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+pnpm --filter @atrium/server dev
+```
+
+The observability contract and privacy rules are documented in
+[`docs/observability-strategy.md`](docs/observability-strategy.md).
+
 ## Core ideas
 
 - **Places** are channels and threads: the durable, named, human side of the app.

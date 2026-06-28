@@ -24,8 +24,13 @@ Open:
 
 - Prometheus retention is set to 30 days for dogfood.
 - The collector exposes converted OTLP metrics at `otel-collector:8889`.
+- Atrium server exposes Prometheus metrics at `/metrics`. For local trace export,
+  run it with `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`.
 - Centaur `api-rs` is scraped through `host.docker.internal:8080` by default. Adjust
   `prometheus.yml` if your local port differs.
+- Centaur `api-rs` exports OTLP traces when its `OTEL_EXPORTER_OTLP_ENDPOINT` or
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` points at a collector reachable from its
+  runtime environment.
 - Log routing to Loki is intentionally minimal until Atrium/Centaur JSON log shipping is
   wired.
 - Alerts route to `http://host.docker.internal:3209/alerts` as an external fallback.

@@ -7,6 +7,8 @@ Useful public docs:
 
 - [Surface workspace](../surface/README.md)
 - [Self-hosting the surface stack](../surface/deploy/README.md)
+- [Observability strategy](observability-strategy.md)
+- [Local observability stack](../infra/observability/README.md)
 - [Desktop app packaging](../surface/desktop/README.md)
 - [Centaur vendoring](centaur-vendoring.md)
 - [UI surfaces](surfaces.md)
