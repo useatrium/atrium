@@ -73,20 +73,26 @@ Risk: low.
 
 ## Phase 1: toolchain and hygiene baselines
 
+Status: partially complete as of the current `master` baseline.
+
 Goal: reduce upgrade churn and accidental inconsistency before moving code.
 
-Tasks:
+Done:
 
-- Add `surface/tsconfig.base.json` for common strict TypeScript defaults.
-- Have server, web, shared, e2e, mcp, and centaur-client extend the base config
-  where it fits. Leave Expo and Electron exceptions explicit.
+- `surface/tsconfig.base.json` exists for common strict TypeScript defaults.
+- Server, web, shared, e2e, mcp, and centaur-client extend the base config.
+- Expo and Electron remain explicit exceptions.
+- `surface/package.json` wires `check:migrations`.
+- `surface/server/scripts/check-migration-filenames.mjs` enforces migration
+  filename format, rejects new duplicate numeric prefixes, and documents the
+  historical duplicate groups that are already allowed.
+
+Remaining tasks:
+
 - Decide whether to use pnpm catalogs or root-level overrides for common dev
   tools: `typescript`, `vitest`, `@types/node`, `jsdom`, Testing Library, Vite.
 - Align easy package-version drift where there is no platform reason for
   divergence.
-- Add a small migration filename check for `surface/server/migrations`:
-  either enforce unique numeric prefixes or document and test the current
-  duplicate-prefix convention.
 - Add/verify ignore rules for generated local artifacts: `dist`, `out`,
   `.expo`, Playwright output, iOS build output. Keep Electron packaging assets
   under `surface/desktop/build` tracked.
@@ -101,47 +107,51 @@ Validation:
 Risk: low to medium. TypeScript config changes can surface latent issues, so
 keep this phase separate from route/component movement.
 
-## Phase 2: server route decomposition
+## Phase 2: server composition and route decomposition
+
+Status: complete as of the current `master` baseline.
 
 Goal: shrink `surface/server/src/app.ts` without changing behavior.
 
-Current hotspot:
+Current state:
 
-- `surface/server/src/app.ts` is over 5k lines and registers authentication,
-  workspace/channel/message APIs, uploads/files, calls, sessions, artifacts,
-  internal Centaur routes, apps, warmcache, push, and health endpoints.
+- `surface/server/src/app.ts` is now a small composition root.
+- Cross-cutting app setup lives in focused `app-*.ts` modules.
+- Route registration is centralized in `surface/server/src/app-routes.ts`.
+- Domain route handlers live under `surface/server/src/routes/`.
 
-Approach:
+Keep this shape:
 
-- Keep `createApp()` in `app.ts` as the composition root.
-- Introduce route plugin modules that receive the same dependencies and register
-  routes on a Fastify instance.
-- Move routes by domain, one PR at a time:
-  - `routes/auth.ts`
-  - `routes/workspaces.ts`
-  - `routes/channels.ts`
-  - `routes/messages.ts`
-  - `routes/uploads.ts`
-  - `routes/calls.ts`
-  - `routes/sessions.ts`
-  - `routes/artifacts.ts`
-  - `routes/internal-centaur.ts`
-  - `routes/apps.ts`
-  - `routes/push.ts`
-- Extract only pure helpers when they are used by more than one route module.
-  Avoid turning this into a service-layer rewrite.
+- Keep `buildApp()` in `app.ts` as the composition root.
+- Keep app-level dependency construction in `app-services.ts` and related
+  install helpers.
+- Keep route modules domain-oriented.
+- Extract server helpers only when a route module repeatedly reimplements the
+  same parsing, authorization, or projection logic.
+
+Remaining server hotspots are deeper than route registration:
+
+- `surface/server/src/session-runs.ts`
+- `surface/server/src/events.ts`
+- `surface/server/src/session-records.ts`
+- `surface/server/src/agent-profiles.ts`
+- `surface/server/src/artifact-ledger.ts`
+
+Do not split these just for line count. They should move only when the next
+change exposes a clear subdomain boundary, because they contain durable product
+and projection behavior.
 
 Validation:
 
-- Server tests after each route group move.
-- Full `surface` check at the end of the phase.
-- Spot-check route list before/after with a small Fastify route printer if
-  useful.
+- Preserve the full surface check.
+- For future server splits, run the affected server tests plus
+  `cd surface && pnpm --filter @atrium/server test`.
 
-Risk: medium. The change should be mechanical, but route auth, injected test
-deps, and shared helpers need careful movement.
+Risk: low for preserving the current shape; medium for deeper domain splits.
 
 ## Phase 3: web shell decomposition
+
+Status: next recommended implementation phase.
 
 Goal: make the main chat shell readable and easier to change.
 
@@ -174,6 +184,9 @@ Validation:
 Risk: medium. Hook extraction can accidentally change effect timing.
 
 ## Phase 4: session pane decomposition
+
+Status: next recommended implementation phase after the first `Chat.tsx` hook
+extractions.
 
 Goal: isolate session collaboration concepts from transcript rendering.
 
@@ -278,15 +291,23 @@ without improving runtime behavior.
 
 ## Suggested PR sequence
 
+Completed:
+
 1. Docs truth pass: AGENTS, surface README, repo map.
-2. Toolchain baseline: shared TS config and package-version policy.
-3. Migration/hygiene guardrails.
-4. Server route split: auth/workspaces/channels/messages.
-5. Server route split: sessions/artifacts/internal Centaur.
-6. Web `Chat.tsx` hook extraction.
-7. `SessionPane.tsx` presentational extraction.
+2. Server composition and route split.
+
+Current recommended sequence:
+
+1. Keep this plan current with the post-server-refactor architecture.
+2. Web `Chat.tsx` hook extraction.
+3. `SessionPane.tsx` presentational extraction.
+4. Dev mock quarantine.
+5. Mobile chat provider/screen decomposition.
+6. Remaining toolchain/package-version policy.
+7. Remaining hygiene guardrails.
 8. Protocol/type ownership cleanup.
-9. Dev mock quarantine.
+9. Optional deeper server domain splits when a concrete change exposes the
+   boundary.
 
 Each PR should be intentionally boring: small surface area, existing tests, and
 no unrelated product changes.
