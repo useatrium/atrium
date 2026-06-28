@@ -73,6 +73,7 @@ import { useCall } from './useCall';
 import { useCallsAvailable } from './useCallsAvailable';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
+import { useTypingIndicators } from './useTypingIndicators';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -871,54 +872,11 @@ export function Chat({
     if (hydrated) syncThenFlushQueuedOps();
   }, [hydrated, syncThenFlushQueuedOps]);
 
-  // ---- typing indicators (ephemeral, per viewed channel) ----
-  const [typing, setTyping] = useState<Record<string, { user: UserRef; until: number }>>({});
-  const onTyping = useCallback(
-    (channelId: string, user: UserRef) => {
-      if (user.id === me.id || channelId !== stateRef.current.activeChannelId) return;
-      setTyping((prev) => ({ ...prev, [user.id]: { user, until: Date.now() + 4000 } }));
-    },
-    [me.id],
-  );
-  // Session-pane typing, keyed by sessionId → userId (a steer or a suggestion in
-  // progress). Fans out over the `session:<id>` subscription, not the channel.
-  const [sessionTyping, setSessionTyping] = useState<
-    Record<string, Record<string, { user: UserRef; until: number }>>
-  >({});
-  const onSessionTyping = useCallback(
-    (sessionId: string, user: UserRef) => {
-      if (user.id === me.id) return;
-      setSessionTyping((prev) => ({
-        ...prev,
-        [sessionId]: {
-          ...(prev[sessionId] ?? {}),
-          [user.id]: { user, until: Date.now() + 4000 },
-        },
-      }));
-    },
-    [me.id],
-  );
-  useEffect(() => {
-    const t = setInterval(() => {
-      const now = Date.now();
-      setTyping((prev) => {
-        const live = Object.entries(prev).filter(([, v]) => v.until > now);
-        return live.length === Object.keys(prev).length ? prev : Object.fromEntries(live);
-      });
-      setSessionTyping((prev) => {
-        let changed = false;
-        const next: Record<string, Record<string, { user: UserRef; until: number }>> = {};
-        for (const [sid, typers] of Object.entries(prev)) {
-          const live = Object.entries(typers).filter(([, v]) => v.until > now);
-          if (live.length !== Object.keys(typers).length) changed = true;
-          if (live.length > 0) next[sid] = Object.fromEntries(live);
-        }
-        return changed ? next : prev;
-      });
-    }, 1000);
-    return () => clearInterval(t);
-  }, []);
-  useEffect(() => setTyping({}), [state.activeChannelId]);
+  const { clearTypingUser, onSessionTyping, onTyping, sessionTyping, typing } =
+    useTypingIndicators({
+      activeChannelId: state.activeChannelId,
+      meId: me.id,
+    });
 
   const ws = useWs(
     hydrated,
@@ -928,12 +886,7 @@ export function Chat({
         if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
         // A message landing ends that author's "is typing…" immediately.
         if (event.type === 'message.posted' && event.actorId) {
-          setTyping((prev) => {
-            if (!prev[event.actorId!]) return prev;
-            const next = { ...prev };
-            delete next[event.actorId!];
-            return next;
-          });
+          clearTypingUser(event.actorId);
         }
         maybeNotify(event);
         dispatch({ type: 'server-event', event });
