@@ -110,7 +110,7 @@ export function SessionCard({
     <div
       data-testid="session-card"
       onClick={onCardClick}
-      className={`group/card mt-1 max-w-xl rounded-lg border border-edge bg-surface-raised/70 px-3 py-2 ${
+      className={`group/card mt-1 max-w-2xl rounded-lg border border-edge bg-surface-raised/70 px-3 py-2 ${
         openable ? 'cursor-pointer hover:border-edge-strong' : ''
       }`}
     >

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ArtifactPresentation } from '@atrium/centaur-client';
-import { ExternalLinkIcon } from '../components/icons';
+import { ExpandIcon, ExternalLinkIcon } from '../components/icons';
 import { sessionsApi } from './api';
 import { isPendingSessionId, isTerminalSessionStatus, type Session } from './types';
 
@@ -54,7 +54,7 @@ export function AppPresentationCard({
       }`}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="flex min-w-0 items-center gap-3 border-b border-edge px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2 border-b border-edge px-3 py-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-fg">{title}</div>
         </div>
@@ -62,7 +62,18 @@ export function AppPresentationCard({
           href={src}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-edge-strong bg-surface px-2 py-1 text-2xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+          title={`Open ${title} preview in a new tab`}
+          aria-label={`Open ${title} preview in a new tab`}
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-edge-strong bg-surface text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <ExpandIcon size={14} />
+        </a>
+        <a
+          href={src}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-edge-strong bg-surface px-2 text-2xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
           onClick={(e) => e.stopPropagation()}
         >
           <ExternalLinkIcon className="size-3" />
