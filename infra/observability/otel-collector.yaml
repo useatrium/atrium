@@ -1,0 +1,33 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: basic
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlphttp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
