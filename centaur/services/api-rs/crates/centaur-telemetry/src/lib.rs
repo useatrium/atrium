@@ -1217,9 +1217,7 @@ mod tests {
     #[test]
     fn traceparent_parser_accepts_w3c_context() {
         assert_eq!(
-            traceparent_trace_ids(
-                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
-            ),
+            traceparent_trace_ids("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"),
             Some((
                 "0123456789abcdef0123456789abcdef".to_owned(),
                 "0123456789abcdef".to_owned()
@@ -1231,15 +1229,11 @@ mod tests {
     fn traceparent_parser_rejects_invalid_context() {
         assert_eq!(traceparent_trace_ids("not-a-traceparent"), None);
         assert_eq!(
-            traceparent_trace_ids(
-                "00-00000000000000000000000000000000-0123456789abcdef-01"
-            ),
+            traceparent_trace_ids("00-00000000000000000000000000000000-0123456789abcdef-01"),
             None
         );
         assert_eq!(
-            traceparent_trace_ids(
-                "00-0123456789abcdef0123456789abcdef-0000000000000000-01"
-            ),
+            traceparent_trace_ids("00-0123456789abcdef0123456789abcdef-0000000000000000-01"),
             None
         );
     }
