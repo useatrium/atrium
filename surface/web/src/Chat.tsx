@@ -13,16 +13,10 @@ import {
   dispatchSyncSnapshot,
   dispatchSyncResponse,
   initialAppState,
-  looksLikeAgentCommand,
   mentionsHandle,
-  parseAgentTask,
   randomId,
-  type AttachmentRef,
-  type ChatMessage,
   type EnqueueOpInput,
   type OpType,
-  type ReactionSetPayload,
-  type SessionSpawnPayload,
   type UploadPayload,
   useQueuedChangesCount,
 } from '@atrium/surface-client';
@@ -30,7 +24,6 @@ import { showNotification } from './notify';
 import {
   type CallWire,
   emptyTimeline,
-  type AttachmentMeta,
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
@@ -51,10 +44,9 @@ import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { SessionsRail } from './sessions/SessionsRail';
-import { SpawnDialog, type SpawnConfig } from './sessions/SpawnDialog';
+import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle, type SessionView } from './sessions/ViewToggle';
 import {
-  PENDING_SESSION_PREFIX,
   isPendingSessionId,
   isTerminalSessionStatus,
   sessionFromWire,
@@ -74,11 +66,9 @@ import {
   queuedFailureMessage,
 } from './chatQueue';
 import {
-  pendingMessageFromSendPayload,
-  pendingSpawnFromPayload,
   queuedOverlayAction,
-  type VoiceMsgSendPayload,
 } from './chatQueuedOverlays';
+import { useChatMessageActions } from './useChatMessageActions';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
@@ -91,7 +81,6 @@ const NO_WATCHERS: UserRef[] = [];
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
 
-type VoiceSendMeta = { fileId: string; durationMs: number; waveform?: number[] };
 type EnqueueOpOptions = {
   onStored?: () => void;
 };
@@ -834,228 +823,20 @@ export function Chat({
     return out;
   }, [state.presence]);
 
-  // ---- sending ----
-  const spawnQueuedSession = (
-    channelId: string,
-    task: string,
-    threadRootEventId?: number,
-    opts?: {
-      harness?: string;
-      repo?: string;
-      branch?: string;
-      agentProfileId?: string;
-      agentProfileVersionId?: string;
-    },
-  ) => {
-    const harness = opts?.harness?.trim() || 'codex';
-    const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
-    const payload: SessionSpawnPayload = {
-      channelId,
-      task,
-      clientSpawnId,
-      threadRootEventId,
-      harness,
-      ...(opts?.repo?.trim() ? { repo: opts.repo.trim() } : {}),
-      ...(opts?.branch?.trim() ? { branch: opts.branch.trim() } : {}),
-      ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
-      ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
-      createdAt: new Date().toISOString(),
-    };
-    const pending = pendingSpawnFromPayload(payload, me);
-    void enqueueOp(
-      {
-        opId: randomId(),
-        opType: 'session.spawn',
-        payload,
-      },
-      {
-        onStored: () =>
-          dispatch({
-            type: 'session-spawn-pending',
-            channelId,
-            message: pending.message,
-            session: pending.session,
-          }),
-      },
-    ).catch(() => {
-      dispatch({ type: 'session-spawn-failed', channelId, tempId: clientSpawnId });
-      showErrorToast("Couldn't queue the agent session.");
-    });
-  };
-
-  // From the spawn dialog: a configured spawn into the channel the dialog is
-  // showing (bind to render-time `active`, not the ref, so display and target
-  // can't diverge), then open the new session as a peek.
-  const startConfiguredSession = (config: SpawnConfig) => {
-    if (!active) return;
-    setSpawnOpen(false);
-    spawnQueuedSession(active.id, config.task, undefined, {
-      harness: config.harness,
-      ...(config.repo ? { repo: config.repo } : {}),
-      ...(config.branch ? { branch: config.branch } : {}),
-      ...(config.agentProfileId ? { agentProfileId: config.agentProfileId } : {}),
-      ...(config.agentProfileVersionId ? { agentProfileVersionId: config.agentProfileVersionId } : {}),
-    });
-  };
-
-  const send = (
-    channelId: string,
-    text: string,
-    threadRootEventId?: number,
-    attachments?: AttachmentMeta[],
-    attachmentRefs?: AttachmentRef[],
-    voice?: VoiceSendMeta,
-  ) => {
-    // Attachments can't ride along on a spawn — "@agent …" with files attached
-    // sends as a plain message instead of silently dropping them.
-    const noAttachments = !attachments || attachments.length === 0;
-    if (text && noAttachments) {
-      const task = parseAgentTask(text);
-      if (task != null) {
-        spawnQueuedSession(channelId, task, threadRootEventId);
-        return;
-      }
-      if (looksLikeAgentCommand(text.trim())) {
-        showErrorToast('Type @agent followed by the task to run.');
-        return;
-      }
-    }
-    const clientMsgId = randomId();
-    const createdAt = new Date().toISOString();
-    const pendingPayload: VoiceMsgSendPayload = {
-      channelId,
-      text,
-      clientMsgId,
-      threadRootEventId,
-      attachments,
-      attachmentRefs,
-      createdAt,
-      ...(voice
-        ? {
-            voice: {
-              fileId: voice.fileId,
-              durationMs: voice.durationMs,
-              ...(voice.waveform ? { waveform: voice.waveform } : {}),
-            },
-          }
-        : {}),
-    };
-    const payload = {
-      ...pendingPayload,
-      ...(pendingPayload.voice
-        ? {
-            voice: {
-              durationMs: pendingPayload.voice.durationMs,
-              ...(pendingPayload.voice.waveform ? { waveform: pendingPayload.voice.waveform } : {}),
-            },
-          }
-        : {}),
-    };
-    const message = pendingMessageFromSendPayload(pendingPayload, me);
-    void enqueueOp(
-      {
-        opId: randomId(),
-        opType: 'msg.send',
-        payload,
-      },
-      {
-        onStored: () => dispatch({ type: 'send-pending', channelId, message }),
-      },
-    ).catch(() => {
-      dispatch({ type: 'send-failed', channelId, clientMsgId });
-      showErrorToast("Couldn't queue the message.");
-    });
-  };
-
-  const editMessage = async (m: ChatMessage, text: string): Promise<void> => {
-    if (m.id == null) return;
-    const eventId = m.id;
-    const opId = randomId();
-    try {
-      await enqueueOp(
-        {
-          opId,
-          opType: 'msg.edit',
-          payload: { channelId: m.channelId, eventId, text },
-        },
-        {
-          onStored: () =>
-            dispatch({
-              type: 'edit-overlay-pending',
-              channelId: m.channelId,
-              opId,
-              targetEventId: eventId,
-              text,
-            }),
-        },
-      );
-    } catch {
-      dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
-      showErrorToast("Couldn't queue the edit.");
-    }
-  };
-
-  const removeMessage = async (m: ChatMessage): Promise<void> => {
-    if (m.id == null) return;
-    const eventId = m.id;
-    const opId = randomId();
-    try {
-      await enqueueOp(
-        {
-          opId,
-          opType: 'msg.delete',
-          payload: { channelId: m.channelId, eventId },
-        },
-        {
-          onStored: () =>
-            dispatch({
-              type: 'delete-overlay-pending',
-              channelId: m.channelId,
-              opId,
-              targetEventId: eventId,
-            }),
-        },
-      );
-    } catch {
-      dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
-      showErrorToast("Couldn't queue the delete.");
-    }
-  };
-
-  const reactToMessage = async (m: ChatMessage, emoji: string): Promise<void> => {
-    if (m.id == null) return;
-    const eventId = m.id;
-    const mine = m.reactions?.find((r) => r.emoji === emoji)?.userIds.includes(me.id) === true;
-    const action = mine ? 'remove' : 'add';
-    const opId = randomId();
-    const payload: ReactionSetPayload = {
-      channelId: m.channelId,
-      eventId,
-      emoji,
-      action,
-      userId: me.id,
-    };
-    try {
-      await enqueueOp(
-        { opId, opType: 'reaction.set', payload },
-        {
-          onStored: () =>
-            dispatch({
-              type: 'reaction-overlay-pending',
-              channelId: m.channelId,
-              opId,
-              targetEventId: eventId,
-              emoji,
-              userId: me.id,
-              action,
-            }),
-        },
-      );
-    } catch {
-      dispatch({ type: 'overlay-rejected', channelId: m.channelId, opId });
-      showErrorToast("Couldn't queue the reaction.");
-    }
-  };
+  const {
+    editMessage,
+    reactToMessage,
+    removeMessage,
+    retry,
+    send,
+    startConfiguredSession,
+  } = useChatMessageActions({
+    activeChannel: active,
+    dispatch,
+    enqueueOp,
+    me,
+    onSpawnDialogClose: () => setSpawnOpen(false),
+  });
 
   // ---- jump to a message from search: page history back until it's loaded ----
   const [highlightId, setHighlightId] = useState<number | null>(null);
@@ -1111,26 +892,6 @@ export function Chat({
         return;
       }
     }
-  };
-
-  const retry = (m: ChatMessage) => {
-    if (!m.clientMsgId) return;
-    dispatch({ type: 'retry-remove', channelId: m.channelId, clientMsgId: m.clientMsgId });
-    if (m.sessionId != null) {
-      // Failed spawn: re-run the @agent flow with the original task text.
-      spawnQueuedSession(m.channelId, m.text, m.threadRootEventId ?? undefined);
-      return;
-    }
-    send(
-      m.channelId,
-      m.text,
-      m.threadRootEventId ?? undefined,
-      m.attachments,
-      undefined,
-      m.voice
-        ? { fileId: m.voice.fileId, durationMs: m.voice.durationMs, waveform: m.voice.waveform }
-        : undefined,
-    );
   };
 
   const createChannel = async (name: string, isPrivate = false) => {
