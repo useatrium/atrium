@@ -82,6 +82,7 @@ import {
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
+import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 
 const PAGE_SIZE = 50;
@@ -135,8 +136,13 @@ export function Chat({
 }) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
-  const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
-  const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
+  const {
+    clearFailedCancel,
+    clearFailedSteer,
+    failedCancels,
+    failedSteers,
+    rememberRejectedSessionOp,
+  } = useSessionQueueFailures();
   const calls = useCall(me, state.channels);
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
@@ -223,27 +229,13 @@ export function Chat({
               .then(({ prefs }) => adoptPrefs(prefs))
               .catch(onApiError);
           }
-          if (op.opType === 'session.steer') {
-            const payload = op.payload as { sessionId?: unknown; text?: unknown };
-            if (typeof payload.sessionId === 'string' && typeof payload.text === 'string') {
-              const sessionId = payload.sessionId;
-              const text = payload.text;
-              setFailedSteers((prev) => ({ ...prev, [sessionId]: text }));
-            }
-          }
-          if (op.opType === 'session.cancel') {
-            const payload = op.payload as { sessionId?: unknown };
-            if (typeof payload.sessionId === 'string') {
-              const sessionId = payload.sessionId;
-              setFailedCancels((prev) => ({ ...prev, [sessionId]: true }));
-            }
-          }
+          rememberRejectedSessionOp(op);
           if (!(err instanceof ApiError && err.status === 401)) {
             showErrorToast(queuedFailureMessage(op.opType));
           }
         },
       }),
-    [cacheMute, onApiError, opRegistry, queueDispatch],
+    [cacheMute, onApiError, opRegistry, queueDispatch, rememberRejectedSessionOp],
   );
 
   const enqueueOp = useCallback(
@@ -262,15 +254,6 @@ export function Chat({
 
   const { markRead, noteReadCursor } = useReadMarks({ dispatch, enqueueOp, onApiError });
 
-  const clearFailedSteer = useCallback((sessionId: string) => {
-    setFailedSteers((prev) => {
-      if (!(sessionId in prev)) return prev;
-      const next = { ...prev };
-      delete next[sessionId];
-      return next;
-    });
-  }, []);
-
   const steerSession = useCallback(
     async (sessionId: string, text: string): Promise<void> => {
       clearFailedSteer(sessionId);
@@ -282,15 +265,6 @@ export function Chat({
     },
     [clearFailedSteer, enqueueOp],
   );
-
-  const clearFailedCancel = useCallback((sessionId: string) => {
-    setFailedCancels((prev) => {
-      if (!(sessionId in prev)) return prev;
-      const next = { ...prev };
-      delete next[sessionId];
-      return next;
-    });
-  }, []);
 
   const cancelSession = useCallback(
     async (sessionId: string): Promise<void> => {
