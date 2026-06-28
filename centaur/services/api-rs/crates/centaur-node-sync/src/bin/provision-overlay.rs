@@ -1,8 +1,9 @@
 //! provision-overlay — per-session overlay setup for C4 e2e pods and production.
 //!
 //! Contract:
-//! `provision-overlay --session <id> [--manifest-only]
+//! `provision-overlay --session <id> [--manifest-only] [--replace]
 //!   [--overlays-root /var/lib/centaur/overlays] [--merged-root /run/centaur/merged]
+//!   [--merged-path /run/centaur/merged/<id>]
 //!   [--lower <dir>] [--harness <kind>] [--harness-thread-id <id>]
 //!   [--harness-home <path>] [--flat-home] [--repo <path>] [--repos-json <json>] [--agent-uid <uid>]
 //!   [--hydrate-artifacts] [--atrium-url <url>] [--atrium-key <key>] [--cas-dir <dir>]`
@@ -24,6 +25,7 @@ use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
 use centaur_node_sync::http_client::HttpAtriumClient;
 use centaur_node_sync::overlay_mount::{
     DEFAULT_AGENT_UID, LowerKind, OverlayMountPlan, mount_overlay, plan_overlay_mount,
+    unmount_overlay,
 };
 use centaur_node_sync::session_manifest::{
     RepoMount, SessionManifest, normalize_harness, write_manifest,
@@ -36,8 +38,10 @@ struct Config {
     session: String,
     atrium_session: String,
     manifest_only: bool,
+    replace: bool,
     overlays_root: PathBuf,
     merged_root: PathBuf,
+    merged_path: Option<PathBuf>,
     lower: Option<PathBuf>,
     harness: Option<String>,
     harness_thread_id: String,
@@ -63,7 +67,10 @@ fn run() -> Result<(), String> {
     let cfg = parse_args(std::env::args_os().skip(1))?;
     validate_session(&cfg.session)?;
 
-    let merged = cfg.merged_root.join(&cfg.session);
+    let merged = cfg
+        .merged_path
+        .clone()
+        .unwrap_or_else(|| cfg.merged_root.join(&cfg.session));
     let mut plan = plan_overlay_mount(
         &cfg.overlays_root,
         &cfg.session,
@@ -92,6 +99,9 @@ fn run() -> Result<(), String> {
     if cfg.manifest_only {
         std::fs::create_dir_all(&plan.upper)
             .map_err(|e| format!("create upper {}: {e}", plan.upper.display()))?;
+    }
+    if cfg.manifest_only && cfg.replace {
+        unmount_overlay(&plan)?;
     }
 
     let manifest_repo = match plan.lower.kind {
@@ -125,6 +135,9 @@ fn run() -> Result<(), String> {
     }
 
     hydrate_artifacts_if_enabled(&cfg, &mut plan)?;
+    if cfg.replace {
+        unmount_overlay(&plan)?;
+    }
     let mounted = mount_overlay(plan, cfg.agent_uid)?;
     if mounted.lower.kind == LowerKind::Repo {
         write_manifest(
@@ -189,8 +202,10 @@ where
     let mut session = None;
     let mut atrium_session = String::new();
     let mut manifest_only = false;
+    let mut replace = false;
     let mut overlays_root = PathBuf::from("/var/lib/centaur/overlays");
     let mut merged_root = PathBuf::from("/run/centaur/merged");
+    let mut merged_path = None;
     let mut lower = None;
     let mut harness = None;
     let mut harness_thread_id = String::new();
@@ -223,6 +238,9 @@ where
             "--manifest-only" => {
                 manifest_only = true;
             }
+            "--replace" => {
+                replace = true;
+            }
             "--session" => {
                 session = Some(next_value(&mut iter, "--session")?);
             }
@@ -234,6 +252,9 @@ where
             }
             "--merged-root" => {
                 merged_root = PathBuf::from(next_value(&mut iter, "--merged-root")?);
+            }
+            "--merged-path" => {
+                merged_path = Some(PathBuf::from(next_value(&mut iter, "--merged-path")?));
             }
             "--lower" => {
                 lower = Some(PathBuf::from(next_value(&mut iter, "--lower")?));
@@ -290,13 +311,18 @@ where
     if atrium_session.trim().is_empty() {
         atrium_session = session.clone();
     }
+    if let Some(path) = merged_path.as_deref() {
+        validate_merged_path(path, &merged_root)?;
+    }
 
     Ok(Config {
         session,
         atrium_session,
         manifest_only,
+        replace,
         overlays_root,
         merged_root,
+        merged_path,
         lower,
         harness,
         harness_thread_id,
@@ -374,7 +400,7 @@ fn parse_bool(name: &str, value: &str) -> Result<bool, String> {
 
 fn print_help() {
     println!(
-        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--overlays-root PATH] [--merged-root PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
+        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--replace] [--overlays-root PATH] [--merged-root PATH] [--merged-path PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
     );
 }
 
@@ -397,6 +423,28 @@ fn validate_session(session: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_merged_path(path: &Path, merged_root: &Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err("--merged-path must be absolute".to_string());
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::CurDir | Component::ParentDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("--merged-path must not contain relative path components".to_string());
+    }
+    if !path.starts_with(merged_root) {
+        return Err(format!(
+            "--merged-path {} must be under --merged-root {}",
+            path.display(),
+            merged_root.display()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,9 +461,23 @@ mod tests {
         .unwrap();
 
         assert!(cfg.manifest_only);
+        assert!(!cfg.replace);
         assert_eq!(cfg.session, "sess-1");
         assert_eq!(cfg.agent_uid, Some(4242));
         assert!(!cfg.flat_home);
+    }
+
+    #[test]
+    fn parse_replace_flag() {
+        let cfg = parse_args([
+            OsString::from("--session"),
+            OsString::from("sess-1"),
+            OsString::from("--replace"),
+        ])
+        .unwrap();
+
+        assert!(cfg.replace);
+        assert!(!cfg.manifest_only);
     }
 
     #[test]
@@ -429,6 +491,41 @@ mod tests {
         .unwrap();
 
         assert!(cfg.flat_home);
+    }
+
+    #[test]
+    fn parse_merged_path_override() {
+        let cfg = parse_args([
+            OsString::from("--manifest-only"),
+            OsString::from("--session"),
+            OsString::from("sess-1"),
+            OsString::from("--merged-root"),
+            OsString::from("/run/centaur/merged"),
+            OsString::from("--merged-path"),
+            OsString::from("/run/centaur/merged/sess-1/agent"),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cfg.merged_path,
+            Some(PathBuf::from("/run/centaur/merged/sess-1/agent"))
+        );
+    }
+
+    #[test]
+    fn rejects_merged_path_outside_merged_root() {
+        let err = parse_args([
+            OsString::from("--manifest-only"),
+            OsString::from("--session"),
+            OsString::from("sess-1"),
+            OsString::from("--merged-root"),
+            OsString::from("/run/centaur/merged"),
+            OsString::from("--merged-path"),
+            OsString::from("/tmp/sess-1"),
+        ])
+        .unwrap_err();
+
+        assert!(err.contains("must be under --merged-root"));
     }
 
     #[test]

@@ -205,7 +205,32 @@ helm upgrade --install centaur "${HERE}/../../../../../contrib/chart" \
 	  --set nodeSync.image.pullPolicy=IfNotPresent \
 	  --set nodeSync.scanIntervalSeconds=1 \
 	  --set nodeSync.hydrateArtifacts=true \
-	  --set "nodeSync.atriumBaseUrl=http://${CAPTURE_SINK}.${NS}.svc.cluster.local:5678"
+	  --set "nodeSync.atriumBaseUrl=http://${CAPTURE_SINK}.${NS}.svc.cluster.local:5678" \
+	  --set "nodeSync.atriumEgress.namespace=${NS}" \
+	  --set nodeSync.atriumEgress.port=5678
+
+kubectl -n "${NS}" apply -f - <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ${CAPTURE_SINK}-allow-node-sync
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ${CAPTURE_SINK}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: centaur
+              app.kubernetes.io/instance: centaur
+              app.kubernetes.io/component: node-sync
+      ports:
+        - protocol: TCP
+          port: 5678
+YAML
 
 echo "==> [3/9] wait for the node-sync DaemonSet pod to be Ready"
 kubectl -n "${NS}" rollout status ds -l app.kubernetes.io/component=node-sync --timeout=180s
@@ -595,35 +620,35 @@ echo "--- DIAG: multi readiness wait log ---"
 kubectl -n "${NS}" logs "${MULTI_REPO_AGENT_POD}" -c overlay-readiness-wait 2>&1 || true
 echo "--- DIAG: multi agent view (id, /workspace, mounts) ---"
 kubectl -n "${NS}" exec "${MULTI_REPO_AGENT_POD}" -c agent -- /bin/sh -c \
-  'id; echo "ls -la /workspace:"; ls -la /workspace 2>&1; echo "foo:"; ls -la /workspace/foo 2>&1 || true; echo "bar:"; ls -la /workspace/bar 2>&1 || true; echo "overlay mounts:"; grep -E "centaur|overlay" /proc/mounts 2>&1 || true' || true
+  'id; echo "ls -la /workspace:"; ls -la /workspace 2>&1; echo "repos:"; find /workspace/repos -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "overlay mounts:"; grep -E "centaur|overlay" /proc/mounts 2>&1 || true' || true
 echo "--- DIAG: multi node view (cache, lower, upper, merged on ${KIND_CLUSTER}-control-plane) ---"
 docker exec "${KIND_CLUSTER}-control-plane" sh -c \
   'echo "repo-cache:"; find "/var/lib/centaur/repos/acme" -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "manifest:"; cat "/var/lib/centaur/overlays/.sessions/'"${MULTI_REPO_SESSION}"'.json" 2>&1 || true; echo "composed lower:"; find "/var/lib/centaur/overlay-lower/'"${MULTI_REPO_SESSION}"'.repos" -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "upper:"; find "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'" -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "merged:"; ls -la "/run/centaur/merged/'"${MULTI_REPO_SESSION}"'" 2>&1 || true' || true
 
 kubectl -n "${NS}" exec "${MULTI_REPO_AGENT_POD}" -c agent -- /bin/sh -ceu '
-  grep -q "foo repo base" /workspace/foo/foo.txt
-  grep -q "bar repo base" /workspace/bar/bar.txt
-  test ! -w /workspace/foo/foo.txt
-  test ! -w /workspace/bar/bar.txt
+  grep -q "foo repo base" /workspace/repos/acme/foo/foo.txt
+  grep -q "bar repo base" /workspace/repos/acme/bar/bar.txt
+  test ! -w /workspace/repos/acme/foo/foo.txt
+  test ! -w /workspace/repos/acme/bar/bar.txt
 '
 docker exec "${KIND_CLUSTER}-control-plane" sh -ceu \
-  'test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/foo/foo.txt";
-   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/bar/bar.txt"'
+  'test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo/foo.txt";
+   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/bar/bar.txt"'
 
 kubectl -n "${NS}" exec "${MULTI_REPO_AGENT_POD}" -c agent -- /bin/sh -ceu '
   echo "created outside composed repos" > /workspace/outside-deliverable.txt
-  echo "created through multi repo lower session" > /workspace/foo/agent-created.txt
+  echo "created through multi repo lower session" > /workspace/repos/acme/foo/agent-created.txt
   test -f /workspace/outside-deliverable.txt
-  test -f /workspace/foo/agent-created.txt
+  test -f /workspace/repos/acme/foo/agent-created.txt
 '
 docker exec "${KIND_CLUSTER}-control-plane" sh -ceu \
   'test -f "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/outside-deliverable.txt";
-   test -f "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/foo/agent-created.txt";
-   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/foo/foo.txt";
-   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/bar/bar.txt"'
+   test -f "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo/agent-created.txt";
+   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo/foo.txt";
+   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/bar/bar.txt"'
 echo "--- DIAG: multi node upper after nested write on ${KIND_CLUSTER}-control-plane ---"
 docker exec "${KIND_CLUSTER}-control-plane" sh -c \
-  'echo "upper after nested write:"; find "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'" -maxdepth 4 -mindepth 1 -print 2>&1 || true; echo "upper/foo:"; ls -la "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/foo" 2>&1 || true' || true
+  'echo "upper after nested write:"; find "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'" -maxdepth 6 -mindepth 1 -print 2>&1 || true; echo "upper/repos/acme/foo:"; ls -la "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo" 2>&1 || true' || true
 # The in-repo write is upper-local overlay state, but repo roots are excluded from artifact capture.
 wait_for_log "session ${MULTI_REPO_SESSION}: capture: 1 upserts \\(0 streamed\\), 0 deletes" \
   "multi-repo outside-deliverable-only capture"
@@ -711,11 +736,6 @@ spec:
       workingDir: /workspace
 YAML
 kubectl -n "${NS}" wait --for=condition=Ready "pod/${HYDRATE_POD}" --timeout=180s
-MOCK_URL="http://${CAPTURE_SINK}.${NS}.svc.cluster.local:5678"
-echo "--- DIAG: in-cluster mock /hydration-scope body (what the daemon's client sees) ---"
-kubectl -n "${NS}" run mockprobe --rm -i --restart=Never --image=curlimages/curl:8.9.1 --command -- \
-  curl -s "${MOCK_URL}/api/internal/sessions/${HYDRATE_SESSION}/hydration-scope" 2>&1 || true
-echo
 echo "--- DIAG: mock-atrium request log (the paths the daemon actually requested) ---"
 kubectl -n "${NS}" logs "deploy/${CAPTURE_SINK}" --tail=80 2>&1 || true
 # Assert the agent SEES the hydrated artifact directly. (We don't grep the daemon's

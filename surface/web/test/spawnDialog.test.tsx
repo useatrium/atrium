@@ -68,6 +68,7 @@ describe('SpawnDialog', () => {
       harness: 'codex',
       repo: 'acme/app',
       branch: 'dev',
+      repos: [{ repo: 'acme/app', ref: 'dev' }],
     });
   });
 
@@ -86,6 +87,47 @@ describe('SpawnDialog', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
     expect(onSpawn).toHaveBeenCalledWith({ task: 'do a thing', harness: 'codex' });
+  });
+
+  it('emits working and reference repo specs', () => {
+    const onSpawn = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'wire repos' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('owner/name'), {
+      target: { value: ' acme/app ' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('main'), { target: { value: ' dev ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add reference repo' }));
+    fireEvent.change(screen.getAllByPlaceholderText('owner/name')[1]!, {
+      target: { value: ' acme/docs ' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('ref'), { target: { value: ' docs-main ' } });
+    fireEvent.change(screen.getByPlaceholderText('subdir'), { target: { value: ' docs ' } });
+
+    expect(screen.getByText('Working repo + 1 reference repo')).toBeTruthy();
+    expect(screen.getByText('mounts under ~/repos')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+
+    expect(onSpawn).toHaveBeenCalledWith({
+      task: 'wire repos',
+      harness: 'codex',
+      repo: 'acme/app',
+      branch: 'dev',
+      repos: [
+        { repo: 'acme/app', ref: 'dev' },
+        { repo: 'acme/docs', ref: 'docs-main', subdir: 'docs' },
+      ],
+    });
   });
 
   it('emits selected profile ids', () => {

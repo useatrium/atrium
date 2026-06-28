@@ -10,7 +10,7 @@ mod io;
 mod lifecycle;
 mod spec;
 
-pub use backend::SandboxBackend;
+pub use backend::{PrepareClaimedOverlayHome, SandboxBackend};
 pub use error::{BoxedError, SandboxError, SandboxResult};
 pub use io::{SandboxIo, SandboxIoGuard, SandboxIoParts, SandboxRead, SandboxWrite};
 pub use lifecycle::{

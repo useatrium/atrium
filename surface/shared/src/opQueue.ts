@@ -1,7 +1,7 @@
 import { ApiError, type Api, type ReactionAction } from './api';
 import type { AppAction } from './appState';
 import type { UserPrefs } from './prefs';
-import { sessionFromWire } from './sessions';
+import { sessionFromWire, type SessionRepoSpec } from './sessions';
 import type { AttachmentMeta, WireEvent } from './timeline';
 
 export const VALID_OP_TYPES = [
@@ -112,6 +112,7 @@ export interface SessionSpawnPayload {
   /** Spawn-dialog git metadata (optional). */
   repo?: string;
   branch?: string;
+  repos?: SessionRepoSpec[];
   agentProfileId?: string;
   agentProfileVersionId?: string;
   createdAt?: string;
@@ -851,6 +852,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           harness: payload.harness,
           repo: payload.repo,
           branch: payload.branch,
+          repos: payload.repos,
           agentProfileId: payload.agentProfileId,
           agentProfileVersionId: payload.agentProfileVersionId,
           clientSpawnId: payload.clientSpawnId,

@@ -1,11 +1,10 @@
 // Configured spawn: the @agent grammar starts a session with defaults; this
-// dialog is the richer door — pick the harness and (optionally) the repo/branch
-// the agent targets. The git metadata is captured at spawn time and read by the
-// Phase 4 work surfaces + side-effect gate (Centaur doesn't consume it yet).
+// dialog captures the harness and optional repo specs Centaur mounts into the
+// sandbox for the run.
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { AgentProfile, ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
-import { XIcon } from '../components/icons';
+import { PlusIcon, XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
   { value: 'codex', label: 'Codex' },
@@ -17,9 +16,17 @@ export interface SpawnConfig {
   harness: string;
   repo?: string;
   branch?: string;
+  repos?: { repo: string; ref?: string; subdir?: string }[];
   agentProfileId?: string;
   agentProfileVersionId?: string;
 }
+
+type ReferenceRepoInput = {
+  id: string;
+  repo: string;
+  ref: string;
+  subdir: string;
+};
 
 export function SpawnDialog({
   channelName,
@@ -40,6 +47,7 @@ export function SpawnDialog({
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');
+  const [referenceRepos, setReferenceRepos] = useState<ReferenceRepoInput[]>([]);
   const [agentProfileId, setAgentProfileId] = useState('');
 
   const claudeStatus = providerStatuses?.['claude-code'];
@@ -51,15 +59,42 @@ export function SpawnDialog({
     (profile) => profile.provider === harness && profile.currentVersionId,
   );
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
+  const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
+  const repoMode = repo.trim()
+    ? activeReferenceCount > 0
+      ? `Working repo + ${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+      : 'Working repo'
+    : activeReferenceCount > 0
+      ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+      : 'No repo selected';
 
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!canSpawn) return;
+    const trimmedRepo = repo.trim();
+    const trimmedBranch = branch.trim();
+    const repos = [
+      ...(trimmedRepo ? [{ repo: trimmedRepo, ...(trimmedBranch ? { ref: trimmedBranch } : {}) }] : []),
+      ...referenceRepos.flatMap((item) => {
+        const itemRepo = item.repo.trim();
+        if (!itemRepo) return [];
+        const itemRef = item.ref.trim();
+        const itemSubdir = item.subdir.trim();
+        return [
+          {
+            repo: itemRepo,
+            ...(itemRef ? { ref: itemRef } : {}),
+            ...(itemSubdir ? { subdir: itemSubdir } : {}),
+          },
+        ];
+      }),
+    ];
     onSpawn({
       task: task.trim(),
       harness,
-      ...(repo.trim() ? { repo: repo.trim() } : {}),
-      ...(branch.trim() ? { branch: branch.trim() } : {}),
+      ...(trimmedRepo ? { repo: trimmedRepo } : {}),
+      ...(trimmedBranch ? { branch: trimmedBranch } : {}),
+      ...(repos.length ? { repos } : {}),
       ...(selectedProfile ? { agentProfileId: selectedProfile.id } : {}),
       ...(selectedProfile?.currentVersionId ? { agentProfileVersionId: selectedProfile.currentVersionId } : {}),
     });
@@ -68,6 +103,18 @@ export function SpawnDialog({
   // ⌘/Ctrl+Enter submits from the task textarea.
   function onTaskKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(e);
+  }
+
+  function addReferenceRepo() {
+    setReferenceRepos((items) => [...items, { id: crypto.randomUUID(), repo: '', ref: '', subdir: '' }]);
+  }
+
+  function updateReferenceRepo(id: string, patch: Partial<Omit<ReferenceRepoInput, 'id'>>) {
+    setReferenceRepos((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  function removeReferenceRepo(id: string) {
+    setReferenceRepos((items) => items.filter((item) => item.id !== id));
   }
 
   return (
@@ -162,29 +209,99 @@ export function SpawnDialog({
             </div>
           )}
 
-          <div className="flex gap-3">
-            <label className="block flex-1">
-              <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-                Repo <span className="font-normal normal-case text-fg-muted">· optional</span>
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+                Working repo <span className="font-normal normal-case text-fg-muted">· optional</span>
               </span>
-              <input
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                placeholder="owner/name"
-                className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
-              />
-            </label>
-            <label className="block flex-1">
-              <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-                Branch <span className="font-normal normal-case text-fg-muted">· optional</span>
+              <span className="text-2xs text-fg-muted">~/repos/&lt;owner&gt;/&lt;repo&gt;</span>
+            </div>
+            <div className="flex gap-3">
+              <label className="block flex-1">
+                <span className="sr-only">Working repo</span>
+                <input
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                  placeholder="owner/name"
+                  className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                />
+              </label>
+              <label className="block flex-1">
+                <span className="sr-only">Working ref</span>
+                <input
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  placeholder="main"
+                  className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+                Reference repos <span className="font-normal normal-case text-fg-muted">· optional</span>
               </span>
-              <input
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                placeholder="main"
-                className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
-              />
-            </label>
+              <button
+                type="button"
+                onClick={addReferenceRepo}
+                aria-label="Add reference repo"
+                title="Add reference repo"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg"
+              >
+                <PlusIcon size={14} />
+              </button>
+            </div>
+            {referenceRepos.length > 0 && (
+              <div className="space-y-2">
+                {referenceRepos.map((item) => (
+                  <div key={item.id} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_2rem] gap-2">
+                    <label>
+                      <span className="sr-only">Reference repo</span>
+                      <input
+                        value={item.repo}
+                        onChange={(e) => updateReferenceRepo(item.id, { repo: e.target.value })}
+                        placeholder="owner/name"
+                        className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                      />
+                    </label>
+                    <label>
+                      <span className="sr-only">Reference ref</span>
+                      <input
+                        value={item.ref}
+                        onChange={(e) => updateReferenceRepo(item.id, { ref: e.target.value })}
+                        placeholder="ref"
+                        className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                      />
+                    </label>
+                    <label>
+                      <span className="sr-only">Reference subdir</span>
+                      <input
+                        value={item.subdir}
+                        onChange={(e) => updateReferenceRepo(item.id, { subdir: e.target.value })}
+                        placeholder="subdir"
+                        className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => removeReferenceRepo(item.id)}
+                      aria-label="Remove reference repo"
+                      title="Remove reference repo"
+                      className="inline-flex h-9 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg"
+                    >
+                      <XIcon size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-md border border-edge bg-surface px-3 py-2 text-2xs">
+            <span className="font-medium text-fg-secondary">{repoMode}</span>
+            <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
           </div>
 
           {providerProfiles.length > 0 && (

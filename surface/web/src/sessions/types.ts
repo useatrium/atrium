@@ -18,6 +18,7 @@ export type {
   SessionAnswerProposal,
   AnswerProposalStatus,
   SessionProviderAuthRequired,
+  SessionRepoSpec,
   SessionWire,
   SessionListItem,
   Session,

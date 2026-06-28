@@ -1031,13 +1031,21 @@ describe('Phase 2 sessions', () => {
     // Trimmed on the wire.
     expect(session).toMatchObject({ repo: 'acme/app', branch: 'dev' });
 
-    const row = await pool.query('SELECT repo, branch FROM sessions WHERE id = $1', [session.id]);
-    expect(row.rows[0]).toEqual({ repo: 'acme/app', branch: 'dev' });
+    const row = await pool.query('SELECT repo, branch, session_repos FROM sessions WHERE id = $1', [session.id]);
+    expect(row.rows[0]).toEqual({
+      repo: 'acme/app',
+      branch: 'dev',
+      session_repos: [{ repo: 'acme/app', ref: 'dev' }],
+    });
 
     const events = await pool.query('SELECT payload FROM events WHERE type = $1', [
       'session.spawned',
     ]);
-    expect(events.rows[0].payload).toMatchObject({ repo: 'acme/app', branch: 'dev' });
+    expect(events.rows[0].payload).toMatchObject({
+      repo: 'acme/app',
+      branch: 'dev',
+      repos: [{ repo: 'acme/app', ref: 'dev' }],
+    });
     await app.close();
   });
 
@@ -1070,6 +1078,52 @@ describe('Phase 2 sessions', () => {
     const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
     // Trimmed repo/branch become the RepoSpec Centaur folds into AGENT_REPOS_JSON.
     expect(spawn?.body).toMatchObject({ repos: [{ repo: 'acme/app', ref: 'dev' }] });
+    await app.close();
+  });
+
+  it('persists and forwards multi-repo checkout specs', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [
+          { repo: ' acme/app ', ref: ' main ' },
+          { repo: 'acme/docs', subdir: 'docs' },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().session).toMatchObject({
+      repo: 'acme/app',
+      branch: 'main',
+      repos: [
+        { repo: 'acme/app', ref: 'main' },
+        { repo: 'acme/docs', subdir: 'docs' },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    expect(spawn?.body).toMatchObject({
+      repos: [
+        { repo: 'acme/app', ref: 'main' },
+        { repo: 'acme/docs', subdir: 'docs' },
+      ],
+    });
     await app.close();
   });
 

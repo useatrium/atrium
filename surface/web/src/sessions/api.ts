@@ -6,13 +6,16 @@
 import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { sessionsMock } from './devMock';
-import type { SessionListItem, SessionWire } from './types';
+import type { SessionListItem, SessionRepoSpec, SessionWire } from './types';
 
 export interface CreateSessionBody {
   channelId: string;
   threadRootEventId?: number;
   task: string;
   harness?: string;
+  repo?: string;
+  branch?: string;
+  repos?: SessionRepoSpec[];
   /** Optimistic id echoed on session.spawned for lost-response reconcile. */
   clientSpawnId?: string;
   agentProfileId?: string;
