@@ -9,8 +9,8 @@ use std::{
 
 use centaur_iron_control::SessionRegistrar;
 use centaur_sandbox_core::{
-    Mount, MountKind, SandboxBackend, SandboxError, SandboxId, SandboxIoGuard, SandboxRead,
-    SandboxSpec, SandboxStatus, SandboxWrite,
+    Mount, MountKind, PrepareClaimedOverlayHome, SandboxBackend, SandboxError, SandboxId,
+    SandboxIoGuard, SandboxRead, SandboxSpec, SandboxStatus, SandboxWrite,
 };
 use centaur_sandbox_manager::{
     SandboxManager, SandboxReaper, SandboxReaperConfig, WarmPoolConfig, WarmPoolError,
@@ -1956,6 +1956,20 @@ impl SessionRuntime {
             if !warm_persona_matches && self.warm_pool.is_some() {
                 record_sandbox_warm_pool_claim("persona_specific");
             }
+            let mut spec = (self.sandbox_runtime.spec_factory)(
+                thread_key,
+                execution_id,
+                harness_type,
+                persona_context.as_ref(),
+            );
+            let composed_repos_json =
+                compose_spec_repos_json(&mut spec, session_repos_json.as_deref());
+            let needs_claimed_overlay_home = composed_repos_json.is_some();
+            let claimed_overlay_supported = !needs_claimed_overlay_home
+                || self
+                    .sandbox_runtime
+                    .manager
+                    .supports_claimed_overlay_home();
             if let Some(warm_pool) = self
                 .warm_pool
                 .as_ref()
@@ -1964,7 +1978,7 @@ impl SessionRuntime {
                         && warm_persona_matches
                         && environment.is_empty()
                         && resume_thread_id.is_none()
-                        && session_repos_json.is_none()
+                        && claimed_overlay_supported
                 })
             {
                 match warm_pool
@@ -1972,48 +1986,114 @@ impl SessionRuntime {
                     .await
                 {
                     Ok(Some(sandbox_id)) => {
-                        record_sandbox_warm_pool_claim("hit");
-                        span.record("centaur.sandbox_id", sandbox_id.as_str());
-                        span.record("sandbox_id", sandbox_id.as_str());
-                        let ready_duration = ensure_started.elapsed();
-                        self.store
-                            .update_sandbox_id(thread_key, Some(sandbox_id.as_str()))
-                            .await?;
-                        self.store
-                            .append_event(
+                        if let Some(repos_json) = composed_repos_json.as_deref()
+                            && needs_claimed_overlay_home
+                        {
+                            let id = SandboxId::new(sandbox_id.as_str());
+                            if let Err(error) = self
+                                .sandbox_runtime
+                                .manager
+                                .prepare_claimed_overlay_home(
+                                    &id,
+                                    PrepareClaimedOverlayHome {
+                                        thread_key: thread_key.as_str(),
+                                        execution_id,
+                                        repos_json,
+                                    },
+                                )
+                                .await
+                            {
+                                record_sandbox_warm_pool_claim("post_claim_bind_error");
+                                let error_text = error.to_string();
+                                warn!(
+                                    component = COMPONENT_SESSION_RUNTIME,
+                                    event = "sandbox_ensure_warm_post_claim_bind_failed",
+                                    thread_key = %thread_key,
+                                    execution_id,
+                                    sandbox_id = %sandbox_id,
+                                    error = %error_text,
+                                    "retiring claimed warm sandbox after post-claim overlay preparation failed"
+                                );
+                                if let Err(mark_error) = self
+                                    .store
+                                    .mark_warm_sandbox_failed(&sandbox_id, &error_text)
+                                    .await
+                                {
+                                    warn!(
+                                        component = COMPONENT_SESSION_RUNTIME,
+                                        event = "sandbox_ensure_warm_mark_failed_error",
+                                        thread_key = %thread_key,
+                                        execution_id,
+                                        sandbox_id = %sandbox_id,
+                                        error = %mark_error,
+                                        "failed to mark claimed warm sandbox failed"
+                                    );
+                                }
+                                if let Err(stop_error) =
+                                    self.sandbox_runtime.manager.stop(&id).await
+                                {
+                                    warn!(
+                                        component = COMPONENT_SESSION_RUNTIME,
+                                        event = "sandbox_ensure_warm_retire_stop_failed",
+                                        thread_key = %thread_key,
+                                        execution_id,
+                                        sandbox_id = %sandbox_id,
+                                        error = %stop_error,
+                                        "failed to stop claimed warm sandbox after post-claim overlay preparation failed"
+                                    );
+                                }
+                                self.store
+                                    .append_event(
+                                        thread_key,
+                                        Some(execution_id),
+                                        "session.warm_sandbox_post_claim_bind_failed",
+                                        json!({
+                                            "execution_id": execution_id,
+                                            "thread_key": thread_key.as_str(),
+                                            "sandbox_id": sandbox_id.as_str(),
+                                            "error": error_text,
+                                            "fallback": "cold_create",
+                                        }),
+                                    )
+                                    .await?;
+                                // Fall through to cold creation below. The cold
+                                // path uses the same composed repo JSON.
+                            } else {
+                                record_sandbox_warm_pool_claim("hit");
+                                span.record("centaur.sandbox_id", sandbox_id.as_str());
+                                span.record("sandbox_id", sandbox_id.as_str());
+                                let ready_duration = ensure_started.elapsed();
+                                self.record_claimed_warm_sandbox(
+                                    thread_key,
+                                    execution_id,
+                                    sandbox_id.as_str(),
+                                    harness_type,
+                                    warm_pool.workload_key(),
+                                    iron_control_principal,
+                                    ready_duration,
+                                    true,
+                                )
+                                .await?;
+                                return Ok(sandbox_id);
+                            }
+                        } else {
+                            record_sandbox_warm_pool_claim("hit");
+                            span.record("centaur.sandbox_id", sandbox_id.as_str());
+                            span.record("sandbox_id", sandbox_id.as_str());
+                            let ready_duration = ensure_started.elapsed();
+                            self.record_claimed_warm_sandbox(
                                 thread_key,
-                                None,
-                                "session.warm_sandbox_claimed",
-                                json!({
-                                    "sandbox_id": sandbox_id.as_str(),
-                                    "workload_key": warm_pool.workload_key(),
-                                    "iron_control_principal": iron_control_principal,
-                                }),
+                                execution_id,
+                                sandbox_id.as_str(),
+                                harness_type,
+                                warm_pool.workload_key(),
+                                iron_control_principal,
+                                ready_duration,
+                                false,
                             )
                             .await?;
-                        self.record_sandbox_ready(SandboxReadyObservation {
-                            thread_key,
-                            execution_id,
-                            sandbox_id: sandbox_id.as_str(),
-                            harness_type,
-                            source: "warm_pool",
-                            ready_duration,
-                            startup_duration: None,
-                        })
-                        .await;
-                        info!(
-                            component = COMPONENT_SESSION_RUNTIME,
-                            event = "sandbox_ensure_warm_claimed",
-                            thread_key = %thread_key,
-                            execution_id,
-                            sandbox_id = %sandbox_id,
-                            harness_type = %harness_type,
-                            sandbox_ready_source = "warm_pool",
-                            sandbox_ready_duration_ms = duration_millis_u64(ready_duration),
-                            workload_key = warm_pool.workload_key(),
-                            "claimed warm session sandbox"
-                        );
-                        return Ok(sandbox_id);
+                            return Ok(sandbox_id);
+                        }
                     }
                     Ok(None) => record_sandbox_warm_pool_claim("miss"),
                     Err(error) => {
@@ -2023,15 +2103,7 @@ impl SessionRuntime {
                 }
             }
 
-            let mut spec = (self.sandbox_runtime.spec_factory)(
-                thread_key,
-                execution_id,
-                harness_type,
-                persona_context.as_ref(),
-            );
-            if let Some(repos_json) =
-                compose_spec_repos_json(&mut spec, session_repos_json.as_deref())
-            {
+            if let Some(repos_json) = composed_repos_json {
                 spec = spec.env(AGENT_REPOS_JSON_ENV, repos_json);
             }
             for (name, value) in environment {
@@ -2089,6 +2161,59 @@ impl SessionRuntime {
             );
         }
         result
+    }
+
+    async fn record_claimed_warm_sandbox(
+        &self,
+        thread_key: &ThreadKey,
+        execution_id: &str,
+        sandbox_id: &str,
+        harness_type: &HarnessType,
+        workload_key: &str,
+        iron_control_principal: Option<&str>,
+        ready_duration: Duration,
+        post_claim_overlay_home: bool,
+    ) -> Result<(), SessionRuntimeError> {
+        self.store
+            .update_sandbox_id(thread_key, Some(sandbox_id))
+            .await?;
+        self.store
+            .append_event(
+                thread_key,
+                None,
+                "session.warm_sandbox_claimed",
+                json!({
+                    "sandbox_id": sandbox_id,
+                    "workload_key": workload_key,
+                    "iron_control_principal": iron_control_principal,
+                    "post_claim_overlay_home": post_claim_overlay_home,
+                }),
+            )
+            .await?;
+        self.record_sandbox_ready(SandboxReadyObservation {
+            thread_key,
+            execution_id,
+            sandbox_id,
+            harness_type,
+            source: "warm_pool",
+            ready_duration,
+            startup_duration: None,
+        })
+        .await;
+        info!(
+            component = COMPONENT_SESSION_RUNTIME,
+            event = "sandbox_ensure_warm_claimed",
+            thread_key = %thread_key,
+            execution_id,
+            sandbox_id,
+            harness_type = %harness_type,
+            sandbox_ready_source = "warm_pool",
+            sandbox_ready_duration_ms = duration_millis_u64(ready_duration),
+            workload_key,
+            post_claim_overlay_home,
+            "claimed warm session sandbox"
+        );
+        Ok(())
     }
 
     async fn record_sandbox_ready(&self, observation: SandboxReadyObservation<'_>) {
@@ -6709,6 +6834,10 @@ mod adoption_tests {
     struct MockBackend {
         ios: Mutex<VecDeque<SandboxIo>>,
         recorded_output: std::sync::Mutex<Vec<String>>,
+        created_specs: std::sync::Mutex<Vec<SandboxSpec>>,
+        prepared_homes: std::sync::Mutex<Vec<PreparedHomeCall>>,
+        prepare_home_error: std::sync::Mutex<Option<String>>,
+        supports_prepare_home: AtomicBool,
         open_count: AtomicUsize,
         stop_count: AtomicUsize,
         stop_error: std::sync::Mutex<Option<String>>,
@@ -6718,6 +6847,14 @@ mod adoption_tests {
         resume_fails: AtomicBool,
         stopped: std::sync::Mutex<Vec<String>>,
         missing_on_stop: std::sync::Mutex<BTreeSet<String>>,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct PreparedHomeCall {
+        sandbox_id: String,
+        thread_key: String,
+        execution_id: String,
+        repos_json: String,
     }
 
     struct CreateGate {
@@ -6739,6 +6876,10 @@ mod adoption_tests {
             Self {
                 ios: Mutex::new(VecDeque::new()),
                 recorded_output: std::sync::Mutex::new(recorded_output),
+                created_specs: std::sync::Mutex::new(Vec::new()),
+                prepared_homes: std::sync::Mutex::new(Vec::new()),
+                prepare_home_error: std::sync::Mutex::new(None),
+                supports_prepare_home: AtomicBool::new(false),
                 open_count: AtomicUsize::new(0),
                 stop_count: AtomicUsize::new(0),
                 stop_error: std::sync::Mutex::new(None),
@@ -6761,6 +6902,22 @@ mod adoption_tests {
 
         fn stops(&self) -> usize {
             self.stop_count.load(Ordering::SeqCst)
+        }
+
+        fn created_specs(&self) -> Vec<SandboxSpec> {
+            self.created_specs.lock().unwrap().clone()
+        }
+
+        fn prepared_homes(&self) -> Vec<PreparedHomeCall> {
+            self.prepared_homes.lock().unwrap().clone()
+        }
+
+        fn support_prepare_home(&self) {
+            self.supports_prepare_home.store(true, Ordering::SeqCst);
+        }
+
+        fn fail_prepare_home(&self, error: impl Into<String>) {
+            *self.prepare_home_error.lock().unwrap() = Some(error.into());
         }
 
         fn fail_stop(&self, error: impl Into<String>) {
@@ -6803,12 +6960,13 @@ mod adoption_tests {
             "mock"
         }
 
-        async fn create(&self, _spec: SandboxSpec) -> SandboxResult<SandboxHandle> {
+        async fn create(&self, spec: SandboxSpec) -> SandboxResult<SandboxHandle> {
             let gate = self.create_gate.lock().unwrap().clone();
             if let Some(gate) = gate {
                 gate.entered.wait().await;
                 gate.release.wait().await;
             }
+            self.created_specs.lock().unwrap().push(spec);
             Ok(SandboxHandle::new(
                 SandboxId::new(self.create_id.clone()),
                 "mock",
@@ -6855,6 +7013,27 @@ mod adoption_tests {
             }
             self.stopped.lock().unwrap().push(id.as_str().to_owned());
             *self.status.lock().unwrap() = SandboxStatus::Stopped;
+            Ok(())
+        }
+
+        fn supports_claimed_overlay_home(&self) -> bool {
+            self.supports_prepare_home.load(Ordering::SeqCst)
+        }
+
+        async fn prepare_claimed_overlay_home(
+            &self,
+            id: &SandboxId,
+            request: PrepareClaimedOverlayHome<'_>,
+        ) -> SandboxResult<()> {
+            self.prepared_homes.lock().unwrap().push(PreparedHomeCall {
+                sandbox_id: id.as_str().to_owned(),
+                thread_key: request.thread_key.to_owned(),
+                execution_id: request.execution_id.to_owned(),
+                repos_json: request.repos_json.to_owned(),
+            });
+            if let Some(error) = self.prepare_home_error.lock().unwrap().clone() {
+                return Err(SandboxError::backend(error));
+            }
             Ok(())
         }
 
@@ -6929,10 +7108,10 @@ mod adoption_tests {
             let pool = sqlx::PgPool::connect(&url)
                 .await
                 .expect("connect to reset test executions");
-            sqlx::query("truncate table session_executions cascade")
+            sqlx::query("truncate table session_executions, session_warm_sandboxes cascade")
                 .execute(&pool)
                 .await
-                .expect("reset session_executions");
+                .expect("reset session runtime test tables");
             pool.close().await;
         }
         guard
@@ -6998,6 +7177,320 @@ mod adoption_tests {
             store.clone(),
             SandboxRuntime::backend(backend, SandboxSpec::new("mock")),
         )
+    }
+
+    fn spec_env_value<'a>(spec: &'a SandboxSpec, name: &str) -> Option<&'a str> {
+        spec.env
+            .iter()
+            .find(|env| env.name == name)
+            .map(|env| env.value.as_str())
+    }
+
+    fn spec_env_json(spec: &SandboxSpec, name: &str) -> Value {
+        serde_json::from_str(spec_env_value(spec, name).expect("env value")).expect("env json")
+    }
+
+    fn runtime_with_warm_pool(
+        store: &PgSessionStore,
+        backend: Arc<MockBackend>,
+        spec: SandboxSpec,
+    ) -> SessionRuntime {
+        let warm_spec = spec.clone();
+        let sandbox_runtime = SandboxRuntime::backend_with_warm_spec_factory(
+            backend,
+            move |_, _, _, _| spec.clone(),
+            move || warm_spec.clone(),
+        );
+        let mut runtime = SessionRuntime::new(store.clone(), sandbox_runtime);
+        let warm_pool = Arc::new(WarmPoolManager::new(
+            runtime.sandbox_runtime.manager.clone(),
+            store.clone(),
+            runtime
+                .sandbox_runtime
+                .warm_spec_factory
+                .clone()
+                .expect("warm spec factory"),
+            runtime
+                .sandbox_runtime
+                .workload_key
+                .clone()
+                .expect("workload key"),
+            WarmPoolConfig {
+                target_size: 1,
+                replenish_interval: Duration::from_secs(60 * 60),
+                bootstrap_iron_control_principal: None,
+            },
+        ));
+        runtime.warm_pool = Some(warm_pool);
+        runtime
+    }
+
+    async fn create_test_session(store: &PgSessionStore, thread_key: &ThreadKey, metadata: Value) {
+        store
+            .create_or_get_session(thread_key, &HarnessType::Codex, None, metadata)
+            .await
+            .expect("create session");
+    }
+
+    async fn create_test_execution(store: &PgSessionStore, thread_key: &ThreadKey) -> String {
+        store
+            .create_execution(thread_key, None, json!({}))
+            .await
+            .expect("create execution")
+            .execution
+            .execution_id
+    }
+
+    async fn insert_ready_warm_for_runtime(
+        store: &PgSessionStore,
+        runtime: &SessionRuntime,
+        sandbox_id: &str,
+    ) {
+        let workload_key = runtime
+            .sandbox_runtime
+            .workload_key
+            .as_deref()
+            .expect("warm workload key");
+        store
+            .insert_ready_warm_sandbox(sandbox_id, workload_key)
+            .await
+            .expect("insert warm sandbox");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repo_session_claims_warm_when_post_claim_home_supported() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:warm-repo-hit-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend.support_prepare_home();
+        let runtime = runtime_with_warm_pool(
+            &store,
+            backend.clone(),
+            SandboxSpec::new("mock").env(
+                AGENT_REPOS_JSON_ENV,
+                r#"[{"repo":"acme/work","ref":"main"},{"repo":"acme/default","ref":"main"}]"#,
+            ),
+        );
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-repo-hit").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "warm-repo-hit");
+        assert!(backend.created_specs().is_empty());
+        assert_eq!(
+            backend.prepared_homes(),
+            vec![PreparedHomeCall {
+                sandbox_id: "warm-repo-hit".to_owned(),
+                thread_key: thread_key.as_str().to_owned(),
+                execution_id: execution_id.clone(),
+                repos_json: json!([
+                    {"repo":"acme/work","ref":"feature"},
+                    {"repo":"acme/default","ref":"main"}
+                ])
+                .to_string(),
+            }]
+        );
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            Some("warm-repo-hit".to_owned())
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(all.iter().any(|event| {
+            event.event_type == "session.warm_sandbox_claimed"
+                && event.payload["post_claim_overlay_home"] == json!(true)
+        }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn default_repo_session_claims_warm_after_post_claim_home_prepare() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:warm-default-repo-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend.support_prepare_home();
+        let runtime = runtime_with_warm_pool(
+            &store,
+            backend.clone(),
+            SandboxSpec::new("mock").env(
+                AGENT_REPOS_JSON_ENV,
+                r#"[{"repo":"acme/default","ref":"main"}]"#,
+            ),
+        );
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-default-repo").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: None,
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "warm-default-repo");
+        assert!(backend.created_specs().is_empty());
+        assert_eq!(
+            backend.prepared_homes(),
+            vec![PreparedHomeCall {
+                sandbox_id: "warm-default-repo".to_owned(),
+                thread_key: thread_key.as_str().to_owned(),
+                execution_id: execution_id.clone(),
+                repos_json: json!([{"repo":"acme/default","ref":"main"}]).to_string(),
+            }]
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(all.iter().any(|event| {
+            event.event_type == "session.warm_sandbox_claimed"
+                && event.payload["post_claim_overlay_home"] == json!(true)
+        }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repo_session_skips_warm_claim_when_post_claim_home_unsupported() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key = ThreadKey::parse(format!(
+            "test:warm-repo-unsupported-{}",
+            uuid::Uuid::new_v4()
+        ))
+        .unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let runtime = runtime_with_warm_pool(
+            &store,
+            backend.clone(),
+            SandboxSpec::new("mock").env(
+                AGENT_REPOS_JSON_ENV,
+                r#"[{"repo":"acme/default","ref":"main"}]"#,
+            ),
+        );
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-unsupported").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "mock-sbx");
+        assert!(backend.prepared_homes().is_empty());
+        let created_specs = backend.created_specs();
+        assert_eq!(created_specs.len(), 1);
+        assert_eq!(
+            spec_env_json(&created_specs[0], AGENT_REPOS_JSON_ENV),
+            json!([
+                {"repo":"acme/default","ref":"main"},
+                {"repo":"acme/work","ref":"feature"}
+            ])
+        );
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            Some("mock-sbx".to_owned())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn post_claim_home_failure_retires_warm_and_cold_spawns() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:warm-repo-fallback-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend.support_prepare_home();
+        backend.fail_prepare_home("bind failed");
+        let runtime = runtime_with_warm_pool(
+            &store,
+            backend.clone(),
+            SandboxSpec::new("mock").env(
+                AGENT_REPOS_JSON_ENV,
+                r#"[{"repo":"acme/default","ref":"main"}]"#,
+            ),
+        );
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-bind-fails").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "mock-sbx");
+        assert_eq!(backend.prepared_homes().len(), 1);
+        assert_eq!(backend.stopped(), vec!["warm-bind-fails".to_owned()]);
+        let created_specs = backend.created_specs();
+        assert_eq!(created_specs.len(), 1);
+        assert_eq!(
+            spec_env_json(&created_specs[0], AGENT_REPOS_JSON_ENV),
+            json!([
+                {"repo":"acme/default","ref":"main"},
+                {"repo":"acme/work","ref":"feature"}
+            ])
+        );
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            Some("mock-sbx".to_owned())
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(all.iter().any(|event| {
+            event.event_type == "session.warm_sandbox_post_claim_bind_failed"
+                && event.payload["sandbox_id"] == json!("warm-bind-fails")
+                && event.payload["fallback"] == json!("cold_create")
+        }));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

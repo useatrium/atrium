@@ -4,6 +4,12 @@ use crate::{
     ObservedSandbox, SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
 };
 
+pub struct PrepareClaimedOverlayHome<'a> {
+    pub thread_key: &'a str,
+    pub execution_id: &'a str,
+    pub repos_json: &'a str,
+}
+
 #[async_trait]
 /// Backend-neutral lifecycle and byte-I/O operations for one sandbox runtime.
 ///
@@ -78,6 +84,25 @@ pub trait SandboxBackend: Send + Sync {
         Err(crate::SandboxError::Unsupported {
             backend: self.name(),
             operation: "set_runtime_context",
+        })
+    }
+
+    /// Return true when this backend can prepare an already-running warm pod's
+    /// `/home/agent` for a claimed repo-bearing session.
+    fn supports_claimed_overlay_home(&self) -> bool {
+        false
+    }
+
+    /// Compose and bind a claimed warm pod's HOME for a repo-bearing session
+    /// before the control plane opens the session pipe and sends the first turn.
+    async fn prepare_claimed_overlay_home(
+        &self,
+        _id: &SandboxId,
+        _request: PrepareClaimedOverlayHome<'_>,
+    ) -> SandboxResult<()> {
+        Err(crate::SandboxError::Unsupported {
+            backend: self.name(),
+            operation: "prepare_claimed_overlay_home",
         })
     }
 
