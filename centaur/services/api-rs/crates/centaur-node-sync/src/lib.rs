@@ -12,6 +12,11 @@
 //! This crate is platform-neutral logic + state machines (unit-tested everywhere);
 //! the syscalls (openat2/statx/xattr/`/proc`) are in fs_linux.rs behind cfg(linux)
 //! and exercised by the on-node integration tests.
+//!
+//! Warm-pool-for-repos spike: `ci/warmpool-rebind-poc.sh` +
+//! `docs/archive/notes/warm-pool-repo-spike.md` prove a per-pod-slot overlay can be
+//! re-mounted into an already-running pod (HostToContainer post-start) — the basis for
+//! binding a repo session's workspace post-claim.
 #![allow(clippy::doc_lazy_continuation)]
 
 pub mod adopt;

@@ -202,6 +202,17 @@ moves forward; it's just flagged as conflicting and keeps both edits, so a perso
 agent can sort it out later like any other change. (This follows how the Jujutsu
 version-control system handles conflicts.)
 
+### Starting fast
+
+Spinning up an agent is warmed in layers, so it's productive in seconds rather than
+minutes: a pool of pre-booted sandboxes (no wait for a machine), a pre-baked toolchain
+image, a per-machine mirror of Git repos, and — unique to Atrium — a shared cache of
+installed dependencies and compiled output, content-addressed so any machine can reuse
+it. The runtime (Centaur, upstream) provides the pool, image, and repo mirror; Atrium
+adds the dependency/build cache on top. The full breakdown of what's upstream vs. what
+Atrium adds is in
+[`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md#sandbox-warming--cold-start-lifecycle).
+
 ## Repo layout
 
 | Path | What's there |

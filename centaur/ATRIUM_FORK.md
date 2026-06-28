@@ -49,6 +49,51 @@ The substantive Atrium-only work this fork carries on top of upstream:
   covered by harness-server tests (fake SDK).
   **Open:** the watched live-cluster e2e (real-SDK question round-trip).
 - **Subscription auth** — per-execution Codex/Claude OAuth env injection.
+- **Warm-lease dep/build cache** — sandboxes reuse dependency + compile caches across
+  sessions (upstream Centaur has none): a node-local depcache (pnpm store / cargo registry /
+  uv) + sccache, plus a content-addressed cross-node tier in Atrium CAS keyed by lockfile
+  hash — hydrated by a `warmcache-hydrate` init container, captured by the node-sync daemon,
+  bounded by TTL/size-cap (Atrium GC) + node LRU. See `docs/archive/notes/warm-lease-build-plan.md`.
+
+## Sandbox warming / cold-start lifecycle
+
+A cold session start decomposes into ~five serial costs. What pre-pays each, and who owns it:
+
+| Cold-start cost | Mechanism | Source |
+|---|---|---|
+| Pod schedule + container start | warm **pool** of generic pods, keyed `(harness, persona)`, repo-agnostic | **upstream** |
+| Image pull | fat pre-baked toolchain image (Rust/Node/Python/uv/Foundry/agent CLIs) | **upstream** |
+| Repo clone | per-node repo-cache mirror (DaemonSet) + `git clone --shared` | **upstream** |
+| Dependency install (pnpm/cargo/uv) | node depcache + content-keyed Atrium-CAS tier | **Atrium** |
+| Build / compile | sccache compiler cache (`RUSTC_WRAPPER`) | **Atrium** |
+| Cache growth (both tiers) | TTL + per-workspace size-cap (Atrium GC) · node depcache LRU | **Atrium** |
+
+**The warm pool and the warm-cache are orthogonal and compose cleanly.** The pool only
+serves *generic* sessions (repo-less, default-persona, no custom env, no resume) — see the
+`session_repos_json.is_none()` claim filter in `centaur-session-runtime`. Repo-bearing
+sessions *always cold-spawn* a fresh pod whose spec carries `AGENT_REPOS_JSON`, which is
+exactly what gates the `warmcache-hydrate` init container. So the two never collide, and the
+warm-cache never perturbs the upstream pool (it never touches the warm spec, never forces a
+cold start on a claim). Reflink (FICLONE) makes node-local hydration near-free; a cache-cold
+node pulls the store from Atrium CAS over the network (bounded, amortized per node).
+
+**Why dependency/build caching isn't upstream:** the warm pool *can't* bake repo/deps in —
+that's combinatorial idle cost (one pool per repo×branch×harness×persona) — and upstream
+Centaur's original workload (Slack tool-calling bots) rarely runs `pnpm install`/`cargo
+build`, so the cost never bit. It bites for Atrium's repo software-engineering sessions, so
+this fork adds dep/build caching as a *separate*, content-addressed, post-claim-hydratable
+layer rather than baking it into the pool.
+
+**Future (not built; tracked in gbasin/atrium#141):**
+- **Warm pool for repo-bearing sessions** — let a repo session claim a generic warm pod and
+  bind its repo + cache *post-claim* via the overlay daemon, so it gets warm pod-boot too
+  (the build-plan §5 path). Spike: `docs/archive/notes/warm-pool-repo-spike.md`.
+- **Per-repo prebuilt pool** (build-plan §7 "Full") — pools keyed by repo+branch with
+  deps+build pre-done; combinatorial idle cost, hot repos only.
+- **Eager cross-node cache replication** — at large multi-node scale, proactively replicate
+  the hot dep-store set to every node (bounded by disk + LRU) so every node is always warm:
+  the container-image-p2p pattern (Dragonfly/Kraken). Content-addressed blobs let this drop
+  in without touching cache logic.
 
 ## Migrations
 Use the **`1000+`** range (e.g. `1000_artifact_blobs.sql`). Upstream numbers migrations
