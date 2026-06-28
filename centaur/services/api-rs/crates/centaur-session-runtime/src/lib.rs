@@ -335,6 +335,17 @@ struct SandboxReadyObservation<'a> {
     startup_duration: Option<Duration>,
 }
 
+struct ClaimedWarmSandboxObservation<'a> {
+    thread_key: &'a ThreadKey,
+    execution_id: &'a str,
+    sandbox_id: &'a str,
+    harness_type: &'a HarnessType,
+    workload_key: &'a str,
+    iron_control_principal: Option<&'a str>,
+    ready_duration: Duration,
+    post_claim_overlay_home: bool,
+}
+
 struct EnsureSessionSandboxInput<'a> {
     thread_key: &'a ThreadKey,
     harness_type: &'a HarnessType,
@@ -1963,8 +1974,7 @@ impl SessionRuntime {
                 harness_type,
                 persona_context.as_ref(),
             );
-            let composed_repos_json =
-                compose_spec_repos_json(&mut spec, session_repos_json.as_deref());
+            let composed_repos_json = compose_spec_repos_json(&mut spec, session_repos_json);
             let needs_claimed_overlay_home = composed_repos_json.is_some();
             let claimed_overlay_supported = !needs_claimed_overlay_home
                 || self
@@ -2001,7 +2011,7 @@ impl SessionRuntime {
                                         execution_id,
                                         repos_json,
                                         harness: Some(harness_server_subcommand(harness_type)),
-                                        harness_thread_id: resume_thread_id.as_deref(),
+                                        harness_thread_id: resume_thread_id,
                                         harness_home: harness_home_for_spec(harness_type),
                                     },
                                 )
@@ -2067,16 +2077,16 @@ impl SessionRuntime {
                                 span.record("centaur.sandbox_id", sandbox_id.as_str());
                                 span.record("sandbox_id", sandbox_id.as_str());
                                 let ready_duration = ensure_started.elapsed();
-                                self.record_claimed_warm_sandbox(
+                                self.record_claimed_warm_sandbox(ClaimedWarmSandboxObservation {
                                     thread_key,
                                     execution_id,
-                                    sandbox_id.as_str(),
+                                    sandbox_id: sandbox_id.as_str(),
                                     harness_type,
-                                    warm_pool.workload_key(),
+                                    workload_key: warm_pool.workload_key(),
                                     iron_control_principal,
                                     ready_duration,
-                                    true,
-                                )
+                                    post_claim_overlay_home: true,
+                                })
                                 .await?;
                                 return Ok(sandbox_id);
                             }
@@ -2085,16 +2095,16 @@ impl SessionRuntime {
                             span.record("centaur.sandbox_id", sandbox_id.as_str());
                             span.record("sandbox_id", sandbox_id.as_str());
                             let ready_duration = ensure_started.elapsed();
-                            self.record_claimed_warm_sandbox(
+                            self.record_claimed_warm_sandbox(ClaimedWarmSandboxObservation {
                                 thread_key,
                                 execution_id,
-                                sandbox_id.as_str(),
+                                sandbox_id: sandbox_id.as_str(),
                                 harness_type,
-                                warm_pool.workload_key(),
+                                workload_key: warm_pool.workload_key(),
                                 iron_control_principal,
                                 ready_duration,
-                                false,
-                            )
+                                post_claim_overlay_home: false,
+                            })
                             .await?;
                             return Ok(sandbox_id);
                         }
@@ -2169,15 +2179,18 @@ impl SessionRuntime {
 
     async fn record_claimed_warm_sandbox(
         &self,
-        thread_key: &ThreadKey,
-        execution_id: &str,
-        sandbox_id: &str,
-        harness_type: &HarnessType,
-        workload_key: &str,
-        iron_control_principal: Option<&str>,
-        ready_duration: Duration,
-        post_claim_overlay_home: bool,
+        observation: ClaimedWarmSandboxObservation<'_>,
     ) -> Result<(), SessionRuntimeError> {
+        let ClaimedWarmSandboxObservation {
+            thread_key,
+            execution_id,
+            sandbox_id,
+            harness_type,
+            workload_key,
+            iron_control_principal,
+            ready_duration,
+            post_claim_overlay_home,
+        } = observation;
         self.store
             .update_sandbox_id(thread_key, Some(sandbox_id))
             .await?;
