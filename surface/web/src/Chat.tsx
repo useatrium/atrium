@@ -44,7 +44,7 @@ import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
-import { ViewToggle, type SessionView } from './sessions/ViewToggle';
+import { ViewToggle } from './sessions/ViewToggle';
 import {
   isPendingSessionId,
   isTerminalSessionStatus,
@@ -73,13 +73,13 @@ import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
 import { useSessionActions } from './useSessionActions';
+import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
-const NO_WATCHERS: UserRef[] = [];
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
 
@@ -337,9 +337,6 @@ export function Chat({
     };
   }, [applyQueuedOp, onApiError, opQueue]);
 
-  // Layout-grammar focus flag (see the derived `view` below). Kept up here so the
-  // permalink effect can set it; the invariant is `focused` ⇒ a session is open.
-  const [focused, setFocused] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
@@ -712,58 +709,25 @@ export function Chat({
       .then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }));
   };
 
-  // ---- session pane + layout grammar (channel / split / focus) ----
-  // `focused` (declared above) is the only extra bit of layout state; the view
-  // is derived. A permalink (/s/:id) lands in Focus; a card click opens a peek.
-  const view: SessionView = state.openSessionId ? (focused ? 'focus' : 'split') : 'channel';
-
-  // Closing the pane (X, Esc, channel switch, not-found) always resets focus so
-  // the next open starts as a peek.
-  useEffect(() => {
-    if (!state.openSessionId) setFocused(false);
-  }, [state.openSessionId]);
-
-  const setView = useCallback(
-    (next: SessionView) => {
-      if (next === 'channel') dispatch({ type: 'close-session' });
-      else if (stateRef.current.openSessionId) setFocused(next === 'focus');
-    },
-    [],
-  );
-
-  const openSession = (sessionId: string) => {
-    if (isPendingSessionId(sessionId)) return;
-    setFocused(false); // a fresh open is a peek, even when arriving from another focused session
-    dispatch({ type: 'open-session', sessionId });
-    sessionsApi
-      .get(sessionId)
-      .then(({ session }) => dispatch({ type: 'session-upsert', session: sessionFromWire(session) }))
-      // Without this the pane sits on "Loading session…" forever on failure;
-      // session-load-failed flips it to the recoverable not-found state.
-      .catch(() => dispatch({ type: 'session-load-failed', sessionId }));
-  };
-
-  const paneSession = state.openSessionId ? state.sessions[state.openSessionId] ?? null : null;
-  // The Sessions rail (channel view's right slot) appears only once the channel
-  // has at least one session — progressive disclosure, not chrome by default.
-  const hasChannelSessions = useMemo(
-    () =>
-      active != null && Object.values(state.sessions).some((s) => s.channelId === active.id),
-    [active, state.sessions],
-  );
-  // Watching presence for the open pane (drives seat take-vs-request UX).
-  const paneWatchers = paneSession
-    ? state.presence[`session:${paneSession.id}`] ?? NO_WATCHERS
-    : NO_WATCHERS;
-
-  // Spectator counts ride the existing presence map under `session:<id>` keys.
-  const spectators = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const [key, users] of Object.entries(state.presence)) {
-      if (key.startsWith('session:')) out[key.slice('session:'.length)] = users.length;
-    }
-    return out;
-  }, [state.presence]);
+  const {
+    hasChannelSessions,
+    openSession,
+    paneSession,
+    paneWatchers,
+    sessionPaneLayout,
+    setFocused,
+    setView,
+    spectators,
+    toggleFocus,
+    view,
+  } = useSessionPaneState({
+    activeChannel: active,
+    dispatch,
+    isMobileViewport,
+    openSessionId: state.openSessionId,
+    presence: state.presence,
+    sessions: state.sessions,
+  });
 
   const {
     editMessage,
@@ -910,8 +874,6 @@ export function Chat({
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
-  const sessionPaneLayout: SessionView = isMobileViewport ? 'focus' : focused ? 'focus' : 'split';
-
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -1152,7 +1114,7 @@ export function Chat({
           session={paneSession}
           me={me}
           layout={sessionPaneLayout}
-          onToggleFocus={() => setFocused((f) => !f)}
+          onToggleFocus={toggleFocus}
           watchers={paneWatchers}
           typers={Object.values(sessionTyping[paneSession.id] ?? {}).map((t) => t.user)}
           onComposerTyping={() => notifySessionTyping(paneSession.id)}
@@ -1170,7 +1132,7 @@ export function Chat({
       ) : state.openSessionId ? (
         <aside
           className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
-            isMobileViewport || focused ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
+            isMobileViewport || view === 'focus' ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
           }`}
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
