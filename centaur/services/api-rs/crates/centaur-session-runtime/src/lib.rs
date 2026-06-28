@@ -2029,7 +2029,9 @@ impl SessionRuntime {
                 harness_type,
                 persona_context.as_ref(),
             );
-            if let Some(repos_json) = session_repos_json {
+            if let Some(repos_json) =
+                compose_spec_repos_json(&mut spec, session_repos_json.as_deref())
+            {
                 spec = spec.env(AGENT_REPOS_JSON_ENV, repos_json);
             }
             for (name, value) in environment {
@@ -5285,6 +5287,53 @@ fn session_repos_json(metadata: &Value) -> Option<String> {
     }
 }
 
+fn compose_spec_repos_json(
+    spec: &mut SandboxSpec,
+    session_repos_json: Option<&str>,
+) -> Option<String> {
+    let workload_repos_json = take_spec_env(spec, AGENT_REPOS_JSON_ENV);
+    merge_repos_json(workload_repos_json.as_deref(), session_repos_json)
+}
+
+fn take_spec_env(spec: &mut SandboxSpec, name: &str) -> Option<String> {
+    let index = spec.env.iter().position(|env| env.name == name)?;
+    Some(spec.env.remove(index).value)
+}
+
+fn merge_repos_json(
+    default_repos_json: Option<&str>,
+    session_repos_json: Option<&str>,
+) -> Option<String> {
+    let mut repos = parse_repo_array(default_repos_json);
+    let session_repos = parse_repo_array(session_repos_json);
+    for repo in session_repos {
+        let Some(repo_name) = repo.get("repo").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(existing) = repos.iter_mut().find(|existing| {
+            existing
+                .get("repo")
+                .and_then(Value::as_str)
+                .is_some_and(|existing_repo| existing_repo == repo_name)
+        }) {
+            *existing = repo;
+        } else {
+            repos.push(repo);
+        }
+    }
+    (!repos.is_empty()).then(|| Value::Array(repos).to_string())
+}
+
+fn parse_repo_array(repos_json: Option<&str>) -> Vec<Value> {
+    let Some(repos_json) = repos_json.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Value>(repos_json) {
+        Ok(Value::Array(entries)) => entries,
+        Ok(_) | Err(_) => Vec::new(),
+    }
+}
+
 fn idle_timeout_from_execution(execution: &SessionExecution) -> Option<Duration> {
     execution
         .metadata
@@ -5666,6 +5715,63 @@ mod tests {
             None
         );
         assert_eq!(session_repos_json(&json!({})), None);
+    }
+
+    #[test]
+    fn compose_spec_repos_json_preserves_org_default_only_repos() {
+        let mut spec = SandboxSpec::new("centaur-agent:latest").env(
+            AGENT_REPOS_JSON_ENV,
+            r#"[{"repo":"acme/default","ref":"main"}]"#,
+        );
+
+        let repos_json = compose_spec_repos_json(&mut spec, None).unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&repos_json).unwrap(),
+            json!([{"repo":"acme/default","ref":"main"}])
+        );
+        assert!(
+            spec.env
+                .iter()
+                .all(|env| env.name.as_str() != AGENT_REPOS_JSON_ENV)
+        );
+    }
+
+    #[test]
+    fn compose_spec_repos_json_preserves_session_only_repos() {
+        let mut spec = SandboxSpec::new("centaur-agent:latest");
+
+        let repos_json =
+            compose_spec_repos_json(&mut spec, Some(r#"[{"repo":"acme/work","ref":"feature"}]"#))
+                .unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&repos_json).unwrap(),
+            json!([{"repo":"acme/work","ref":"feature"}])
+        );
+    }
+
+    #[test]
+    fn compose_spec_repos_json_merges_with_session_repo_winning_collision() {
+        let mut spec = SandboxSpec::new("centaur-agent:latest").env(
+            AGENT_REPOS_JSON_ENV,
+            r#"[
+                {"repo":"acme/work","ref":"main"},
+                {"repo":"acme/default","ref":"main"}
+            ]"#,
+        );
+
+        let repos_json =
+            compose_spec_repos_json(&mut spec, Some(r#"[{"repo":"acme/work","ref":"feature"}]"#))
+                .unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&repos_json).unwrap(),
+            json!([
+                {"repo":"acme/work","ref":"feature"},
+                {"repo":"acme/default","ref":"main"}
+            ])
+        );
     }
 
     #[test]

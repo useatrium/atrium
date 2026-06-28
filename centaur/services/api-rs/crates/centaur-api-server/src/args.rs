@@ -40,6 +40,8 @@ use crate::{
     },
 };
 
+const AGENT_REPOS_JSON_ENV: &str = "AGENT_REPOS_JSON";
+const OVERLAY_REPOS_JSON_ENV: &str = "CENTAUR_OVERLAY_REPOS_JSON";
 const SANDBOX_REPOS_MOUNT_PATH: &str = "/home/agent/github";
 // Node-local dependency/compile cache shared across sessions on the node
 // (pnpm store, cargo registry, uv, sccache). Read-write: the agent populates it.
@@ -605,6 +607,13 @@ struct SandboxArgs {
     centaur_api_url: Option<String>,
     #[arg(long = "repos-path", env = "REPOS_PATH")]
     repos_path: Option<String>,
+    /// Deployment-default repos composed into every sandbox via AGENT_REPOS_JSON.
+    /// Rendered by the chart from overlays.sources.
+    #[arg(
+        long = "centaur-overlay-repos-json",
+        env = "CENTAUR_OVERLAY_REPOS_JSON"
+    )]
+    overlay_repos_json: Option<String>,
     // Node-local dep/compile cache root (hostPath) bind-mounted read-write into
     // every session + warm sandbox. When unset, sandboxes build cold.
     #[arg(
@@ -1076,6 +1085,10 @@ impl SandboxArgs {
             }
         }
 
+        if let Some(repos_json) = self.normalized_overlay_repos_json() {
+            upsert_env_pair(&mut envs, AGENT_REPOS_JSON_ENV, repos_json);
+        }
+
         for name in self.passthrough_env_names() {
             if let Ok(value) = env::var(name) {
                 if let Some((_, existing_value)) = envs
@@ -1105,6 +1118,29 @@ impl SandboxArgs {
         }
 
         Ok(envs)
+    }
+
+    fn normalized_overlay_repos_json(&self) -> Option<String> {
+        let raw = clean_optional_value(self.overlay_repos_json.as_deref())?;
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                warn!(
+                    %error,
+                    "{OVERLAY_REPOS_JSON_ENV} is not valid JSON; ignoring org-default repos"
+                );
+                return None;
+            }
+        };
+        let Some(items) = parsed.as_array() else {
+            warn!("{OVERLAY_REPOS_JSON_ENV} is not a JSON array; ignoring org-default repos");
+            return None;
+        };
+        let repos = items
+            .iter()
+            .filter_map(repo_mount_json_from_overlay_source)
+            .collect::<Vec<_>>();
+        (!repos.is_empty()).then(|| serde_json::Value::Array(repos).to_string())
     }
 
     /// `SESSION_SANDBOX_EXTRA_ENV` parsed as a JSON list of `{"name","value"}`
@@ -1974,6 +2010,17 @@ fn clean_optional_value(value: Option<&str>) -> Option<String> {
     non_empty(value).map(ToOwned::to_owned)
 }
 
+fn upsert_env_pair(envs: &mut Vec<(String, String)>, name: &str, value: String) {
+    if let Some((_, existing_value)) = envs
+        .iter_mut()
+        .find(|(existing_name, _)| existing_name == name)
+    {
+        *existing_value = value;
+    } else {
+        envs.push((name.to_owned(), value));
+    }
+}
+
 fn upsert_spec_env(spec: &mut SandboxSpec, name: String, value: String) {
     if let Some(existing) = spec.env.iter_mut().find(|env| env.name == name) {
         existing.value = value;
@@ -1981,6 +2028,42 @@ fn upsert_spec_env(spec: &mut SandboxSpec, name: String, value: String) {
         spec.env
             .push(centaur_sandbox_core::EnvVar::new(name, value));
     }
+}
+
+fn repo_mount_json_from_overlay_source(source: &serde_json::Value) -> Option<serde_json::Value> {
+    let object = source.as_object()?;
+    let repo = object.get("repo")?.as_str()?.trim();
+    if repo.is_empty() {
+        return None;
+    }
+    let mut mount = serde_json::Map::new();
+    mount.insert(
+        "repo".to_owned(),
+        serde_json::Value::String(repo.to_owned()),
+    );
+    if let Some(value) = object
+        .get("ref")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        mount.insert(
+            "ref".to_owned(),
+            serde_json::Value::String(value.to_owned()),
+        );
+    }
+    if let Some(value) = object
+        .get("subdir")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        mount.insert(
+            "subdir".to_owned(),
+            serde_json::Value::String(value.to_owned()),
+        );
+    }
+    Some(serde_json::Value::Object(mount))
 }
 
 fn parse_label_selector_arg(value: &str) -> Result<BTreeMap<String, String>, String> {
@@ -2816,6 +2899,46 @@ mod tests {
                         source_path: "/var/lib/centaur/repos".to_owned(),
                     })
         }));
+    }
+
+    #[test]
+    fn codex_workload_adds_overlay_repos_as_agent_repos_json() {
+        let args = Args::try_parse_from([
+            "centaur-api-server",
+            "--database-url",
+            "postgres://postgres:postgres@localhost/centaur",
+            "--session-sandbox-workload",
+            "codex-app-server",
+            "--centaur-overlay-repos-json",
+            r#"[
+                {
+                    "repo":"acme/default",
+                    "ref":"main",
+                    "toolsSubdir":"tools",
+                    "workflowsSubdir":"workflows",
+                    "skillsSubdir":".agents/skills"
+                },
+                {"repo":"acme/other"}
+            ]"#,
+        ])
+        .unwrap();
+
+        let workload = args.sandbox.container_workload_mode().unwrap();
+        let SandboxWorkloadMode::CodexAppServer { env, .. } = workload else {
+            panic!("expected codex app server workload");
+        };
+        let repos_json = env
+            .iter()
+            .find_map(|(name, value)| (name == AGENT_REPOS_JSON_ENV).then_some(value))
+            .expect("AGENT_REPOS_JSON env");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(repos_json).unwrap(),
+            serde_json::json!([
+                {"repo":"acme/default","ref":"main"},
+                {"repo":"acme/other"}
+            ])
+        );
     }
 
     #[test]
