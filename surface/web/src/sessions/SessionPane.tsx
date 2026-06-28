@@ -41,7 +41,6 @@ import { PlanPanel } from './PlanPanel';
 import { Composer } from '../components/Composer';
 import { EntryComments } from '../components/EntryComments';
 import {
-  ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ExpandIcon,
@@ -75,6 +74,7 @@ import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
+import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
 import { SuggestionStrip } from './SessionSuggestions';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
@@ -1581,97 +1581,6 @@ function AnswerProposalRow({
   );
 }
 
-// ---- seat audit lines --------------------------------------------------------
-
-function seatLineLabel(e: SeatAuditEntry, nameFor: (id: string | null) => string): string {
-  const to = e.toName ?? nameFor(e.to);
-  const from = e.from ? (e.fromName ?? nameFor(e.from)) : null;
-  return e.reason === 'taken'
-    ? `${to} took the seat${from ? ` from ${from}` : ''}`
-    : `${from ?? 'the driver'} granted the seat to ${to}`;
-}
-
-function hhmm(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-/** ChatGPT-style turn spine: ticks at the right edge, hover → floating turn list. */
-function TurnRail({
-  turns,
-  onJump,
-}: {
-  turns: { id: string; text: string }[];
-  onJump: (id: string) => void;
-}) {
-  if (turns.length === 0) return null;
-  const shown = turns.slice(-14); // cap to the most recent turns
-  return (
-    <div data-testid="turn-rail" className="group absolute right-1.5 top-1/2 z-10 -translate-y-1/2">
-      <div className="flex flex-col items-end gap-1.5 py-1 transition-opacity group-hover:opacity-0">
-        {shown.map((t) => (
-          <span key={t.id} className="block h-0.5 w-4 rounded-full bg-fg-faint" />
-        ))}
-      </div>
-      <div className="absolute right-0 top-1/2 hidden -translate-y-1/2 group-hover:block">
-        <div className="max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-edge bg-surface-raised py-1 shadow-lg">
-          {shown.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => onJump(t.id)}
-              className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-body hover:bg-surface-overlay"
-              title={t.text}
-            >
-              {t.text}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** "X is composing…" line above the session composer (calm, ephemeral). */
-function SessionTypingLine({ typers }: { typers: UserRef[] }) {
-  const names = typers.map((u) => u.displayName);
-  const label =
-    names.length === 0
-      ? ''
-      : names.length === 1
-        ? `${names[0]} is composing…`
-        : names.length === 2
-          ? `${names[0]} and ${names[1]} are composing…`
-          : 'Several people are composing…';
-  return (
-    <div aria-live="polite" className="h-4 shrink-0 px-4 text-3xs leading-4 text-fg-muted">
-      {label}
-    </div>
-  );
-}
-
-function SeatAuditLine({
-  entry,
-  nameFor,
-}: {
-  entry: SeatAuditEntry;
-  nameFor: (id: string | null) => string;
-}) {
-  return (
-    <div
-      data-testid="seat-audit-line"
-      className="my-1 flex items-center gap-1.5 text-2xs text-fg-muted"
-    >
-      <span aria-hidden className="text-fg-faint">
-        <ArrowUpIcon size={12} />
-      </span>
-      <span className="truncate">{seatLineLabel(entry, nameFor)}</span>
-      <span className="text-fg-faint">·</span>
-      <span className="tabular-nums">{hhmm(entry.at)}</span>
-    </div>
-  );
-}
-
 // ---- transcript items -------------------------------------------------------
 
 function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<string, SessionQuestionEvent[]> {
@@ -1728,6 +1637,11 @@ function questionStatusLabel(
 function answerValueText(summary: SessionQuestionAnswerSummary): string {
   if (summary.answers.length > 0) return summary.answers.join('\n');
   return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
+}
+
+function hhmm(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function QuestionTranscriptCard({
