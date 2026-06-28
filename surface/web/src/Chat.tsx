@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   ApiError,
-  type Channel,
   type Workspace,
   api,
 } from './api';
@@ -13,7 +12,6 @@ import {
   dispatchSyncSnapshot,
   dispatchSyncResponse,
   initialAppState,
-  mentionsHandle,
   randomId,
   type EnqueueOpInput,
   type OpType,
@@ -21,13 +19,14 @@ import {
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
-  type CallWire,
   emptyTimeline,
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
+import { labelForCallChannel, userForCall } from './callPresentation';
+import { notificationForWireEvent } from './chatNotifications';
 import { ChannelMembersMenu } from './components/ChannelMembersMenu';
 import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
@@ -87,30 +86,10 @@ type EnqueueOpOptions = {
   onStored?: () => void;
 };
 
-function fallbackUser(id: string): UserRef {
-  return { id, handle: id, displayName: id };
-}
-
 function isMobileViewportNow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
     : false;
-}
-
-function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
-  return (
-    call.participants.find((u) => u.id === userId) ??
-    channels
-      .find((c) => c.id === call.channelId)
-      ?.members?.find((u) => u.id === userId) ??
-    fallbackUser(userId)
-  );
-}
-
-function labelForCallChannel(call: CallWire, channels: Channel[], meId: string): string {
-  const channel = channels.find((c) => c.id === call.channelId);
-  if (!channel) return 'Unknown channel';
-  return channel.kind === 'private' ? `#${channel.name}` : channelLabel(channel, meId);
 }
 
 export function Chat({
@@ -613,40 +592,27 @@ export function Chat({
   // Desktop notifications: mentions of me, and my agent sessions finishing.
   // Live WS events only (catch-up misses land in badges instead).
   function maybeNotify(event: WireEvent) {
-    if (event.type === 'message.posted' && event.actorId && event.actorId !== me.id) {
-      const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
-      const ch = stateRef.current.channels.find((c) => c.id === event.channelId);
-      if (ch?.muted) return;
-      const isDm = ch?.kind === 'dm' || ch?.kind === 'gdm';
-      if (!isDm && !mentionsHandle(text, me.handle)) return;
-      const author = event.author?.displayName ?? 'Someone';
+    const notification = notificationForWireEvent(
+      event,
+      me,
+      stateRef.current.channels,
+      stateRef.current.sessions,
+    );
+    if (!notification) return;
+    if (notification.kind === 'message') {
       showNotification(
-        isDm ? `${author} (direct message)` : `${author} mentioned you in #${ch?.name ?? 'a channel'}`,
-        text.slice(0, 140),
-        `evt-${event.id}`,
+        notification.title,
+        notification.body,
+        notification.tag,
         () => {
-          if (event.channelId) selectChannel(event.channelId);
+          if (notification.channelId) selectChannel(notification.channelId);
         },
       );
       return;
     }
-    if (event.type === 'session.completed') {
-      const sessionId =
-        typeof event.payload?.sessionId === 'string' ? event.payload.sessionId : null;
-      const session = sessionId ? stateRef.current.sessions[sessionId] : undefined;
-      if (!session || session.spawnedBy !== me.id) return;
-      const status = typeof event.payload?.status === 'string' ? event.payload.status : 'done';
-      const excerpt =
-        typeof event.payload?.resultExcerpt === 'string' ? event.payload.resultExcerpt : '';
-      showNotification(
-        `Agent session ${status}: ${session.title}`,
-        excerpt.slice(0, 140),
-        `evt-${event.id}`,
-        () => {
-          if (sessionId) dispatch({ type: 'open-session', sessionId });
-        },
-      );
-    }
+    showNotification(notification.title, notification.body, notification.tag, () => {
+      dispatch({ type: 'open-session', sessionId: notification.sessionId });
+    });
   }
 
   // ---- channel selection & history ----
