@@ -15,6 +15,7 @@ Open:
 
 - Grafana: <http://127.0.0.1:3000>
 - Prometheus: <http://127.0.0.1:9090>
+- Alertmanager: <http://127.0.0.1:9093>
 - Tempo: <http://127.0.0.1:3200>
 - Loki: <http://127.0.0.1:3100>
 - OTel Collector OTLP HTTP: <http://127.0.0.1:4318>
@@ -27,3 +28,6 @@ Open:
   `prometheus.yml` if your local port differs.
 - Log routing to Loki is intentionally minimal until Atrium/Centaur JSON log shipping is
   wired.
+- Alerts route to `http://host.docker.internal:3209/alerts` as an external fallback.
+  Replace that receiver with email/pager config for dogfood, or run a tiny local
+  webhook relay while developing.

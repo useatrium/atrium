@@ -1,0 +1,42 @@
+groups:
+  - name: atrium-dogfood
+    rules:
+      - alert: AtriumServerDown
+        expr: up{job="atrium-server"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Atrium server metrics scrape is down.
+
+      - alert: CentaurApiDown
+        expr: up{job="centaur-api-rs"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Centaur api-rs metrics scrape is down.
+
+      - alert: AtriumHighServerErrorRate
+        expr: |
+          sum(rate(atrium_http_requests_total{status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(atrium_http_requests_total[5m])), 1)
+          > 0.05
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Atrium 5xx response rate is above 5%.
+
+      - alert: CentaurHighServerErrorRate
+        expr: |
+          sum(rate(http_server_requests_total{job="centaur-api-rs",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_requests_total{job="centaur-api-rs"}[5m])), 1)
+          > 0.05
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Centaur api-rs 5xx response rate is above 5%.
