@@ -5,7 +5,7 @@
 import type { CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
-import type { SessionListItem, SessionWire } from './sessions';
+import type { SessionListItem, SessionRepoSpec, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
 import type {
   AgentProfile,
@@ -308,6 +308,7 @@ export function createApi(opts: ApiOptions = {}) {
       /** Spawn-dialog git metadata (optional). */
       repo?: string;
       branch?: string;
+      repos?: SessionRepoSpec[];
       agentProfileId?: string;
       agentProfileVersionId?: string;
       threadRootEventId?: number;

@@ -149,6 +149,7 @@ export interface SessionWire {
   /** Spawn-dialog git metadata (optional; absent on older payloads). */
   repo?: string | null;
   branch?: string | null;
+  repos?: SessionRepoSpec[] | null;
   spawnedBy: string;
   driverId: string | null;
   /** Driver display info (Phase 3 server; may be absent on older payloads). */
@@ -195,6 +196,7 @@ export interface Session {
   /** Spawn-dialog git metadata, captured at spawn time (optional). */
   repo?: string | null;
   branch?: string | null;
+  repos?: SessionRepoSpec[] | null;
   spawnedBy: string;
   /** Display name of the spawner when known (from WS author / me). */
   spawnerName?: string;
@@ -220,6 +222,12 @@ export interface Session {
   completedAt: string | null;
   lastEventId: number;
   permalink: string;
+}
+
+export interface SessionRepoSpec {
+  repo: string;
+  ref?: string;
+  subdir?: string;
 }
 
 /**
@@ -305,6 +313,7 @@ export function sessionFromWire(w: SessionWire): Session {
     harness: w.harness,
     repo: w.repo ?? null,
     branch: w.branch ?? null,
+    repos: Array.isArray(w.repos) ? w.repos : null,
     spawnedBy: w.spawnedBy,
     driverId: w.driverId ?? w.driver?.userId ?? null,
     driverName: w.driver?.displayName,
@@ -338,6 +347,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     // not echo repo/branch).
     repo: resp.repo ?? live.repo ?? null,
     branch: resp.branch ?? live.branch ?? null,
+    repos: resp.repos ?? live.repos ?? null,
     status: maxSessionStatus(live.status, resp.status),
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
@@ -385,6 +395,7 @@ export function applySessionEvent(
       harness: typeof p.harness === 'string' ? p.harness : 'codex',
       repo: typeof p.repo === 'string' ? p.repo : null,
       branch: typeof p.branch === 'string' ? p.branch : null,
+      repos: Array.isArray(p.repos) ? (p.repos as SessionRepoSpec[]) : null,
       spawnedBy: typeof p.by === 'string' ? p.by : (ev.actorId ?? ''),
       driverId: null,
       pendingSeatRequests: [],
@@ -406,7 +417,8 @@ export function applySessionEvent(
     // entry built before the payload was known, keep whichever side has it.
     const repo = base.repo ?? (typeof p.repo === 'string' ? p.repo : null);
     const branch = base.branch ?? (typeof p.branch === 'string' ? p.branch : null);
-    return { ...sessions, [sessionId]: { ...base, spawnerName, repo, branch } };
+    const repos = base.repos ?? (Array.isArray(p.repos) ? (p.repos as SessionRepoSpec[]) : null);
+    return { ...sessions, [sessionId]: { ...base, spawnerName, repo, branch, repos } };
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore

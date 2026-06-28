@@ -63,6 +63,7 @@ export interface SessionJson {
   harness: string;
   repo: string | null;
   branch: string | null;
+  repos: SessionRepoSpec[] | null;
   spawnedBy: string;
   driverId: string | null;
   driver: SessionUserJson | null;
@@ -245,6 +246,7 @@ interface SessionRow {
   harness: string;
   repo: string | null;
   branch: string | null;
+  session_repos: unknown | null;
   title: string;
   status: SessionStatus;
   spawned_by: string;
@@ -267,6 +269,12 @@ interface SessionRow {
   cost_usd: string | number;
   created_at: Date;
   completed_at: Date | null;
+}
+
+interface SessionRepoSpec {
+  repo: string;
+  ref?: string;
+  subdir?: string;
 }
 
 interface ChannelRow {
@@ -374,6 +382,7 @@ export class SessionRuns {
     harness?: string;
     repo?: string | null;
     branch?: string | null;
+    repos?: unknown;
     agentProfileId?: string | null;
     agentProfileVersionId?: string | null;
     /** Client's optimistic id, echoed on session.spawned so a spawn whose
@@ -395,6 +404,7 @@ export class SessionRuns {
       harness?: string;
       repo?: string | null;
       branch?: string | null;
+      repos?: unknown;
       agentProfileId?: string | null;
       agentProfileVersionId?: string | null;
       clientSpawnId?: string;
@@ -409,8 +419,9 @@ export class SessionRuns {
     const harness = args.harness ?? this.harness;
     const demo = isDemoHarness(harness);
     const title = demo ? DEMO_TITLE : args.task.trim().slice(0, 80);
-    const repo = normalizeGitMeta(args.repo);
-    const branch = normalizeGitMeta(args.branch);
+    const repos = normalizeSessionRepos(args.repos, args.repo, args.branch);
+    const repo = repos[0]?.repo ?? normalizeGitMeta(args.repo);
+    const branch = repos[0]?.ref ?? normalizeGitMeta(args.branch);
     const provider = providerForHarness(harness);
     const selectedProfileVersion = await this.agentProfiles.resolveVersionForSpawn(client, {
       userId: args.user.id,
@@ -431,12 +442,12 @@ export class SessionRuns {
       : '';
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
-         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch,
+         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,
          title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id,
          agent_profile_version_id
        )
-       -- driver_id starts as the spawner ($9 used for both spawned_by + driver_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'spawning', $9, $9, $10, $11, $12)
+       -- driver_id starts as the spawner ($10 used for both spawned_by + driver_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13)
        ${conflictClause}
        RETURNING *`,
       [
@@ -447,6 +458,7 @@ export class SessionRuns {
         harness,
         repo,
         branch,
+        repos.length ? JSON.stringify(repos) : null,
         title,
         args.user.id,
         args.clientSpawnId ?? null,
@@ -473,6 +485,7 @@ export class SessionRuns {
         by: args.user.id,
         ...(row.repo ? { repo: row.repo } : {}),
         ...(row.branch ? { branch: row.branch } : {}),
+        ...(repos.length ? { repos } : {}),
         ...(row.agent_profile_version_id ? { agent_profile_version_id: row.agent_profile_version_id } : {}),
         ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
       },
@@ -937,6 +950,7 @@ export class SessionRuns {
         row.harness,
         row.repo,
         row.branch,
+        parseSessionRepos(row.session_repos),
         client,
       );
       generation = spawned.assignment_generation;
@@ -1487,6 +1501,7 @@ export class SessionRuns {
           row.harness,
           row.repo,
           row.branch,
+          parseSessionRepos(row.session_repos),
         );
         generation = spawned.assignment_generation;
         row = spawned.row;
@@ -2123,12 +2138,13 @@ export class SessionRuns {
     harness: string,
     repo: string | null,
     branch: string | null,
+    sessionRepos: SessionRepoSpec[] | null,
     client: Db | DbClient = this.pool,
   ): Promise<{ row: SessionRow; assignment_generation: number }> {
     const spawnId = await this.reserveSpawnId(id, client);
     // Forward the session's checkout target so Centaur hydrates it from the node
     // repo-cache (centaur_session_repos → AGENT_REPOS_JSON → entrypoint clone).
-    const repos = repo ? [{ repo, ...(branch ? { ref: branch } : {}) }] : [];
+    const repos = sessionRepos ?? (repo ? [{ repo, ...(branch ? { ref: branch } : {}) }] : []);
     const spawned = await this.centaur.spawn(threadKey, harness, {
       spawnId,
       ...(repos.length ? { repos } : {}),
@@ -2516,6 +2532,51 @@ function normalizeGitMeta(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeSessionRepos(
+  value: unknown,
+  fallbackRepo?: string | null,
+  fallbackBranch?: string | null,
+): SessionRepoSpec[] {
+  const raw = Array.isArray(value) ? value : [];
+  const repos: SessionRepoSpec[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const repo = normalizeGitMeta(typeof record.repo === 'string' ? record.repo : null);
+    if (!repo) continue;
+    const ref = normalizeGitMeta(typeof record.ref === 'string' ? record.ref : null);
+    const subdir = normalizeGitMeta(typeof record.subdir === 'string' ? record.subdir : null);
+    const key = `${repo}\0${ref ?? ''}\0${subdir ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    repos.push({
+      repo,
+      ...(ref ? { ref } : {}),
+      ...(subdir ? { subdir } : {}),
+    });
+    if (repos.length >= 8) break;
+  }
+  if (repos.length > 0) return repos;
+  const repo = normalizeGitMeta(fallbackRepo);
+  if (!repo) return [];
+  const ref = normalizeGitMeta(fallbackBranch);
+  return [{ repo, ...(ref ? { ref } : {}) }];
+}
+
+function parseSessionRepos(value: unknown): SessionRepoSpec[] | null {
+  const repos = normalizeSessionRepos(typeof value === 'string' ? safeJsonParse(value) : value);
+  return repos.length ? repos : null;
+}
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 function toJson(
   row: SessionRow,
   seatInfo: {
@@ -2536,6 +2597,7 @@ function toJson(
     harness: row.harness,
     repo: row.repo,
     branch: row.branch,
+    repos: parseSessionRepos(row.session_repos),
     spawnedBy: row.spawned_by,
     driverId: row.driver_id,
     driver: seatInfo.driver ?? null,

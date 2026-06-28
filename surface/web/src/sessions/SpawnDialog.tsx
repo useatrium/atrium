@@ -17,6 +17,7 @@ export interface SpawnConfig {
   harness: string;
   repo?: string;
   branch?: string;
+  repos?: { repo: string; ref?: string; subdir?: string }[];
   agentProfileId?: string;
   agentProfileVersionId?: string;
 }
@@ -55,11 +56,17 @@ export function SpawnDialog({
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!canSpawn) return;
+    const trimmedRepo = repo.trim();
+    const trimmedBranch = branch.trim();
+    const repos = trimmedRepo
+      ? [{ repo: trimmedRepo, ...(trimmedBranch ? { ref: trimmedBranch } : {}) }]
+      : [];
     onSpawn({
       task: task.trim(),
       harness,
-      ...(repo.trim() ? { repo: repo.trim() } : {}),
-      ...(branch.trim() ? { branch: branch.trim() } : {}),
+      ...(trimmedRepo ? { repo: trimmedRepo } : {}),
+      ...(trimmedBranch ? { branch: trimmedBranch } : {}),
+      ...(repos.length ? { repos } : {}),
       ...(selectedProfile ? { agentProfileId: selectedProfile.id } : {}),
       ...(selectedProfile?.currentVersionId ? { agentProfileVersionId: selectedProfile.currentVersionId } : {}),
     });

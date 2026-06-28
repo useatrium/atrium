@@ -48,6 +48,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       harness?: string;
       repo?: string;
       branch?: string;
+      repos?: { repo?: unknown; ref?: unknown; subdir?: unknown }[];
       agentProfileId?: string;
       agentProfileVersionId?: string;
       clientSpawnId?: unknown;
@@ -93,6 +94,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
         repo,
         branch,
+        repos: Array.isArray(body.repos) ? body.repos : undefined,
         agentProfileId,
         agentProfileVersionId,
         clientSpawnId,
@@ -105,6 +107,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
           repo,
           branch,
+          repos: Array.isArray(body.repos) ? body.repos : undefined,
           agentProfileId,
           agentProfileVersionId,
           clientSpawnId,

@@ -242,6 +242,7 @@ describe('useChatMessageActions', () => {
           task: 'ship it',
           repo: 'gbasin/atrium',
           branch: 'feature/refactor',
+          repos: [{ repo: 'gbasin/atrium', ref: 'feature/refactor' }],
         }),
       }),
       expect.anything(),

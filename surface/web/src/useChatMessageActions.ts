@@ -78,11 +78,20 @@ export function useChatMessageActions({
         harness?: string;
         repo?: string;
         branch?: string;
+        repos?: { repo: string; ref?: string; subdir?: string }[];
         agentProfileId?: string;
         agentProfileVersionId?: string;
       },
     ) => {
       const harness = opts?.harness?.trim() || 'codex';
+      const repo = opts?.repo?.trim();
+      const branch = opts?.branch?.trim();
+      const repos =
+        opts?.repos?.length
+          ? opts.repos
+          : repo
+            ? [{ repo, ...(branch ? { ref: branch } : {}) }]
+            : [];
       const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
       const payload: SessionSpawnPayload = {
         channelId,
@@ -90,8 +99,9 @@ export function useChatMessageActions({
         clientSpawnId,
         threadRootEventId,
         harness,
-        ...(opts?.repo?.trim() ? { repo: opts.repo.trim() } : {}),
-        ...(opts?.branch?.trim() ? { branch: opts.branch.trim() } : {}),
+        ...(repo ? { repo } : {}),
+        ...(branch ? { branch } : {}),
+        ...(repos.length ? { repos } : {}),
         ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
         ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
         createdAt: new Date().toISOString(),
@@ -130,6 +140,7 @@ export function useChatMessageActions({
         harness: config.harness,
         ...(config.repo ? { repo: config.repo } : {}),
         ...(config.branch ? { branch: config.branch } : {}),
+        ...(config.repos?.length ? { repos: config.repos } : {}),
         ...(config.agentProfileId ? { agentProfileId: config.agentProfileId } : {}),
         ...(config.agentProfileVersionId ? { agentProfileVersionId: config.agentProfileVersionId } : {}),
       });

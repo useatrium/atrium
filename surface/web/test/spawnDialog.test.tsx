@@ -68,6 +68,7 @@ describe('SpawnDialog', () => {
       harness: 'codex',
       repo: 'acme/app',
       branch: 'dev',
+      repos: [{ repo: 'acme/app', ref: 'dev' }],
     });
   });
 
