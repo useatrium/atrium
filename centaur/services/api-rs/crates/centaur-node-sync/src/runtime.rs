@@ -291,6 +291,15 @@ pub fn classify_entry(
     if matches!(path_components.as_slice(), [file] if file == ".claude.json") {
         return EntryLane::HarnessState;
     }
+    // Centaur's operating-contract prompt is written to the workspace root by the
+    // entrypoint (`~/AGENTS.md`, plus the amp `~/AGENT.md` symlink). It is sandbox
+    // plumbing — the agent's system instructions — not a deliverable, so it must
+    // never be captured as an artifact. Only the top-level (single-component) copy
+    // is excluded; a repo's own nested `AGENTS.md` lives under a repo subdir and is
+    // handled by the repo-subdir denial below.
+    if matches!(path_components.as_slice(), [file] if file == "agents.md" || file == "agent.md") {
+        return EntryLane::Denied;
+    }
     if repo_subdirs
         .iter()
         .any(|subdir| first_component_matches_normalized_subdir(&path_components, subdir))
@@ -1390,6 +1399,32 @@ mod tests {
         );
         assert_eq!(
             classify_entry(Path::new("src/app.ts"), &homes, &[]),
+            EntryLane::Artifact
+        );
+    }
+
+    #[test]
+    fn classify_entry_denies_top_level_centaur_prompt_files() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        // The entrypoint-written operating contract at the workspace root is plumbing,
+        // never a captured artifact — case-insensitively, and including amp's AGENT.md.
+        assert_eq!(
+            classify_entry(Path::new("AGENTS.md"), &homes, &[]),
+            EntryLane::Denied
+        );
+        assert_eq!(
+            classify_entry(Path::new("AGENT.md"), &homes, &[]),
+            EntryLane::Denied
+        );
+        assert_eq!(
+            classify_entry(Path::new("agents.md"), &homes, &[]),
+            EntryLane::Denied
+        );
+        // A genuine deliverable the agent authors deeper in the tree is still captured;
+        // only the top-level (single-component) contract copy is excluded.
+        assert_eq!(
+            classify_entry(Path::new("notes/AGENTS.md"), &homes, &[]),
             EntryLane::Artifact
         );
     }
