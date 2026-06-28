@@ -4,7 +4,7 @@
 # Usage:  git-branch <org/repo> <branch slug>
 # Example: git-branch owner/centaur fix-flaky-slack-delivery
 #
-# Creates ~/branches/<org>/<repo> as a --shared clone from ~/github/<org>/<repo>
+# Creates ~/branches/<org>/<repo> as a --shared clone from ~/repos/<org>/<repo>
 # with a unique agent branch checked out. The resulting directory is fully writable
 # and supports commit, push, and PR workflows.
 
@@ -28,7 +28,6 @@ fi
 
 REPO="$1"
 SLUG="$2"
-SRC="$HOME/github/$REPO"
 DEST="$HOME/branches/$REPO"
 
 if [[ ! "$SLUG" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$ ]]; then
@@ -37,8 +36,16 @@ if [[ ! "$SLUG" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$ ]]; then
     exit 1
 fi
 
-if [ ! -d "$SRC/.git" ] && ! git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1; then
-    echo "Error: $SRC is not a valid git repository" >&2
+SRC=""
+for candidate in "$HOME/repos/$REPO" "$HOME/github/$REPO"; do
+    if git -C "$candidate" rev-parse --git-dir >/dev/null 2>&1; then
+        SRC="$candidate"
+        break
+    fi
+done
+
+if [ -z "$SRC" ]; then
+    echo "Error: $REPO is not available as a git repository under ~/repos or ~/github" >&2
     exit 1
 fi
 

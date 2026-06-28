@@ -473,9 +473,15 @@ else
     WORKSPACE_DIR="$HOME_DIR/workspace"
 fi
 if [ -n "${AGENT_REPO:-}" ]; then
-    REPO_PATH="$HOME_DIR/github/$AGENT_REPO"
-    if ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
-        echo "AGENT_REPO is not a valid git repository: $REPO_PATH" >&2
+    REPO_PATH=""
+    for candidate in "$HOME_DIR/repos/$AGENT_REPO" "$HOME_DIR/github/$AGENT_REPO"; do
+        if git -C "$candidate" rev-parse --git-dir >/dev/null 2>&1; then
+            REPO_PATH="$candidate"
+            break
+        fi
+    done
+    if [ -z "$REPO_PATH" ]; then
+        echo "AGENT_REPO is not a valid git repository under ~/repos or ~/github: $AGENT_REPO" >&2
         exit 1
     fi
 
@@ -513,7 +519,7 @@ if [ -f "$HOME_DIR/AGENTS_OVERLAY.md" ] && [ -f "$TARGET_PROMPT" ]; then
     printf '\n\n---\n\n' >> "$TARGET_PROMPT"
     cat "$HOME_DIR/AGENTS_OVERLAY.md" >> "$TARGET_PROMPT"
 # Repo-cache-era org prompt: with overlay images gone, point CENTAUR_OVERLAY_DIR
-# at the org repo's clone under the repos mount (e.g. ~/github/<owner>/<repo>)
+# at the org repo's clone under the repos mount (e.g. ~/repos/<owner>/<repo>)
 # and its SYSTEM_PROMPT.md is appended here, same contract the overlay-bootstrap
 # init container used to fulfil by staging $HOME/AGENTS_OVERLAY.md.
 elif [ -n "${CENTAUR_OVERLAY_DIR:-}" ] \

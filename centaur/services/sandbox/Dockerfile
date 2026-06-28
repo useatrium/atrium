@@ -237,7 +237,7 @@ RUN --mount=type=cache,target=/home/agent/.npm,uid=1001,gid=1001,sharing=locked 
 # Global git config must live OUTSIDE /home/agent so it survives the flat-~ overlay
 # (which shadows the baked home). git reads $GIT_CONFIG_GLOBAL at runtime.
 ENV GIT_CONFIG_GLOBAL=/opt/centaur/gitconfig
-RUN mkdir -p ~/.config/amp ~/.codex ~/.pi/agent ~/github ~/workspace \
+RUN mkdir -p ~/.config/amp ~/.codex ~/.pi/agent ~/github ~/repos ~/workspace \
     && git config --global init.defaultBranch main \
     && git config --global push.autoSetupRemote true \
     && git config --global --add safe.directory '*' \
