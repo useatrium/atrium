@@ -296,3 +296,5 @@ export const sessionsApi = {
     return { close: () => es.close() };
   },
 };
+
+export type SessionApi = typeof sessionsApi;
