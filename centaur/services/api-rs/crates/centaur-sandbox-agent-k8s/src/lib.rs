@@ -1211,7 +1211,7 @@ mod tests {
             MountKind::Bind {
                 source_path: "/var/lib/centaur/repos".to_owned(),
             },
-            "/home/agent/github",
+            "/cache",
         ));
         let plain_sandbox =
             build_agent_sandbox(&SandboxId::new("asbx-test"), &plain, &config).unwrap();
@@ -1573,7 +1573,7 @@ mod tests {
     fn warmcache_hydrate_init_container_inserted_when_gated() {
         let repos_json = r#"[{"repo":"acme/foo","ref":"main"}]"#;
         let mut warmcache = WarmcacheHydrateConfig::new(
-            "/home/agent/github",
+            "/cache",
             "/var/cache/centaur/depcache",
             "/var/lib/centaur/cas",
             "/var/lib/centaur/cas",
@@ -1588,7 +1588,7 @@ mod tests {
                     MountKind::Bind {
                         source_path: "/var/lib/centaur/repos".to_owned(),
                     },
-                    "/home/agent/github",
+                    "/cache",
                 )
                 .read_only(),
             )
@@ -1648,7 +1648,7 @@ mod tests {
                 "--repos-json",
                 repos_json,
                 "--repo-cache-root",
-                "/home/agent/github",
+                "/cache",
                 "--depcache-root",
                 "/var/cache/centaur/depcache",
                 "--cas-dir",
@@ -1673,9 +1673,7 @@ mod tests {
 
         let mounts = warmcache.volume_mounts.as_ref().unwrap();
         assert!(mounts.iter().any(|mount| {
-            mount.name == "mount-0"
-                && mount.mount_path == "/home/agent/github"
-                && mount.read_only == Some(true)
+            mount.name == "mount-0" && mount.mount_path == "/cache" && mount.read_only == Some(true)
         }));
         assert!(mounts.iter().any(|mount| {
             mount.name == "mount-1" && mount.mount_path == "/var/cache/centaur/depcache"
@@ -1713,7 +1711,7 @@ mod tests {
                     MountKind::Bind {
                         source_path: "/var/lib/centaur/repos".to_owned(),
                     },
-                    "/home/agent/github",
+                    "/cache",
                 )
                 .read_only(),
             )
@@ -1729,7 +1727,7 @@ mod tests {
         let config = AgentSandboxConfig::new("centaur")
             .overlay(OverlayConfig::new("centaur-node-sync:test"))
             .warmcache_hydrate(WarmcacheHydrateConfig::new(
-                "/home/agent/github",
+                "/cache",
                 "/var/cache/centaur/depcache",
                 "/var/lib/centaur/cas",
                 "/var/lib/centaur/cas",

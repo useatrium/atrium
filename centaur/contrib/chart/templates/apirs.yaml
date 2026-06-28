@@ -20,10 +20,10 @@
 {{- end -}}
 {{- with (get $source "workflowsSubdir") -}}
 {{- $apiWorkflowDirList = append $apiWorkflowDirList (printf "%s/%s/%s" $.Values.repoCache.hostPath $repo .) -}}
-{{- $sandboxWorkflowDirList = append $sandboxWorkflowDirList (printf "/home/agent/github/%s/%s" $repo .) -}}
+{{- $sandboxWorkflowDirList = append $sandboxWorkflowDirList (printf "/home/agent/repos/%s/%s" $repo .) -}}
 {{- end -}}
 {{- with (get $source "skillsSubdir") -}}
-{{- $skillDirs = append $skillDirs (printf "/home/agent/github/%s/%s" $repo .) -}}
+{{- $skillDirs = append $skillDirs (printf "/home/agent/repos/%s/%s" $repo .) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -227,6 +227,10 @@ spec:
 {{- if $reposPath }}
             - name: REPOS_PATH
               value: {{ $reposPath | quote }}
+{{- end }}
+{{- if and .Values.repoCache.enabled (gt (len $overlaySources) 0) }}
+            - name: CENTAUR_OVERLAY_REPOS_JSON
+              value: {{ $overlaySources | toJson | quote }}
 {{- end }}
             - name: KUBERNETES_SANDBOX_IRON_PROXY_MODE
               value: {{ .Values.apiRs.ironProxy.mode | quote }}

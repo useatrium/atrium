@@ -42,7 +42,8 @@ use crate::{
 
 const AGENT_REPOS_JSON_ENV: &str = "AGENT_REPOS_JSON";
 const OVERLAY_REPOS_JSON_ENV: &str = "CENTAUR_OVERLAY_REPOS_JSON";
-const SANDBOX_REPOS_MOUNT_PATH: &str = "/home/agent/github";
+const SANDBOX_REPOS_MOUNT_PATH: &str = "/home/agent/repos";
+const SANDBOX_REPO_CACHE_MOUNT_PATH: &str = "/cache";
 // Node-local dependency/compile cache shared across sessions on the node
 // (pnpm store, cargo registry, uv, sccache). Read-write: the agent populates it.
 const SANDBOX_DEP_CACHE_MOUNT_PATH: &str = "/var/cache/centaur/depcache";
@@ -927,7 +928,7 @@ impl SandboxArgs {
     fn warmcache_hydrate_config(&self) -> Option<WarmcacheHydrateConfig> {
         clean_optional_value(self.dep_cache_path.as_deref())?;
         let mut warmcache = WarmcacheHydrateConfig::new(
-            SANDBOX_REPOS_MOUNT_PATH,
+            SANDBOX_REPO_CACHE_MOUNT_PATH,
             SANDBOX_DEP_CACHE_MOUNT_PATH,
             DEFAULT_SANDBOX_CAS_HOST_PATH,
             SANDBOX_CAS_MOUNT_PATH,
@@ -991,7 +992,7 @@ impl SandboxArgs {
                             MountKind::Bind {
                                 source_path: repos_path,
                             },
-                            SANDBOX_REPOS_MOUNT_PATH,
+                            SANDBOX_REPO_CACHE_MOUNT_PATH,
                         )
                         .read_only(),
                     );
@@ -2359,9 +2360,9 @@ mod tests {
         // colon-joined. The tools `subdir` does not affect the workflows path.
         assert_eq!(
             args.sandbox.agent_k8s_workflow_dirs(),
-            "/home/agent/github/paradigmxyz/centaur/workflows:\
-             /home/agent/github/acme/overlay/workflows:\
-             /home/agent/github/acme/other/workflows",
+            "/home/agent/repos/paradigmxyz/centaur/workflows:\
+             /home/agent/repos/acme/overlay/workflows:\
+             /home/agent/repos/acme/other/workflows",
         );
     }
 
@@ -2397,11 +2398,11 @@ mod tests {
             "--repos-path",
             "/var/lib/centaur/repos",
             "--tools-path",
-            "/home/agent/github/paradigmxyz/centaur/tools",
+            "/home/agent/repos/paradigmxyz/centaur/tools",
             "--tools-overlay-path",
-            "/home/agent/github/tempoxyz/centaur-tempo/tools",
+            "/home/agent/repos/tempoxyz/centaur-tempo/tools",
             "--kubernetes-workflow-dirs",
-            "/home/agent/github/paradigmxyz/centaur/workflows:/home/agent/github/tempoxyz/centaur-tempo/workflows",
+            "/home/agent/repos/paradigmxyz/centaur/workflows:/home/agent/repos/tempoxyz/centaur-tempo/workflows",
             "--session-sandbox-passthrough-env",
             "TOOLS_PATH,TOOLS_OVERLAY_PATH",
         ])
@@ -2422,14 +2423,14 @@ mod tests {
                 .iter()
                 .find(|env| env.name == "TOOLS_PATH")
                 .map(|env| env.value.as_str()),
-            Some("/home/agent/github/paradigmxyz/centaur/tools")
+            Some("/home/agent/repos/paradigmxyz/centaur/tools")
         );
         assert_eq!(
             spec.env
                 .iter()
                 .find(|env| env.name == "TOOLS_OVERLAY_PATH")
                 .map(|env| env.value.as_str()),
-            Some("/home/agent/github/tempoxyz/centaur-tempo/tools")
+            Some("/home/agent/repos/tempoxyz/centaur-tempo/tools")
         );
         assert_eq!(
             spec.env
@@ -2437,7 +2438,7 @@ mod tests {
                 .find(|env| env.name == "WORKFLOW_DIRS")
                 .map(|env| env.value.as_str()),
             Some(
-                "/home/agent/github/paradigmxyz/centaur/workflows:/home/agent/github/tempoxyz/centaur-tempo/workflows"
+                "/home/agent/repos/paradigmxyz/centaur/workflows:/home/agent/repos/tempoxyz/centaur-tempo/workflows"
             )
         );
     }
@@ -2870,7 +2871,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_workload_mounts_repos_path_read_only() {
+    fn codex_workload_mounts_repo_cache_read_only_outside_agent_repos() {
         let args = Args::try_parse_from([
             "centaur-api-server",
             "--database-url",
@@ -2892,13 +2893,18 @@ mod tests {
 
         assert_eq!(harness, HarnessType::Codex);
         assert!(mounts.iter().any(|mount| {
-            mount.target_path == SANDBOX_REPOS_MOUNT_PATH
+            mount.target_path == SANDBOX_REPO_CACHE_MOUNT_PATH
                 && mount.read_only
                 && mount.kind
                     == (MountKind::Bind {
                         source_path: "/var/lib/centaur/repos".to_owned(),
                     })
         }));
+        assert!(
+            mounts
+                .iter()
+                .all(|mount| mount.target_path != SANDBOX_REPOS_MOUNT_PATH)
+        );
     }
 
     #[test]
