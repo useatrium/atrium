@@ -18,6 +18,7 @@ import {
   parseAgentTask,
   randomId,
   type AttachmentRef,
+  type ChatMessage,
   type EnqueueOpInput,
   type MsgSendPayload,
   type OpType,
@@ -32,7 +33,6 @@ import {
   type CallWire,
   emptyTimeline,
   type AttachmentMeta,
-  type ChatMessage,
   type UserRef,
   type WireEvent,
 } from '@atrium/surface-client';
@@ -59,7 +59,6 @@ import {
   isPendingSessionId,
   isTerminalSessionStatus,
   sessionFromWire,
-  type Session,
 } from './sessions/types';
 import { adoptPrefs } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
@@ -76,6 +75,7 @@ import {
   createQueueLockProvider,
   queuedFailureMessage,
 } from './chatQueue';
+import { queuedOverlayAction, pendingSpawnFromPayload } from './chatQueuedOverlays';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useTypingIndicators } from './useTypingIndicators';
@@ -372,161 +372,19 @@ export function Chat({
     [enqueueOp, waitForUpload],
   );
 
-  const pendingMessageFromSendPayload = useCallback(
-    (msg: MsgSendPayload): ChatMessage => {
-      const voice = (msg as VoiceMsgSendPayload).voice;
-      const voiceFileId = msg.attachments?.[0]?.id;
-      return {
-        id: null,
-        clientMsgId: msg.clientMsgId,
-        channelId: msg.channelId,
-        threadRootEventId: msg.threadRootEventId ?? null,
-        text: msg.text,
-        edited: false,
-        author: me,
-        createdAt: msg.createdAt ?? new Date().toISOString(),
-        replyCount: 0,
-        lastReplyId: 0,
-        status: 'pending',
-        ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
-        ...(voice && voiceFileId
-          ? {
-              voice: {
-                fileId: voiceFileId,
-                durationMs: voice.durationMs,
-                ...(voice.waveform ? { waveform: voice.waveform } : {}),
-                transcript: { status: 'pending' },
-              },
-            }
-          : {}),
-      };
-    },
-    [me],
-  );
-
-  const pendingSpawnFromPayload = useCallback(
-    (payload: SessionSpawnPayload): { message: ChatMessage; session: Session } => {
-      const createdAt = payload.createdAt ?? new Date().toISOString();
-      return {
-        session: {
-          id: payload.clientSpawnId,
-          workspaceId: '',
-          channelId: payload.channelId,
-          threadRootEventId: payload.threadRootEventId ?? null,
-          title: payload.task.slice(0, 80),
-          status: 'spawning',
-          harness: payload.harness ?? 'codex',
-          repo: payload.repo ?? null,
-          branch: payload.branch ?? null,
-          spawnedBy: me.id,
-          spawnerName: me.displayName,
-          driverId: null,
-          pendingSeatRequests: [],
-          suggestions: [],
-          answerProposals: [],
-          providerAuthRequired: null,
-          seatEvents: [],
-          costUsd: 0,
-          resultText: null,
-          createdAt,
-          completedAt: null,
-          lastEventId: 0,
-          permalink: '',
-        },
-        message: {
-          id: null,
-          clientMsgId: payload.clientSpawnId,
-          channelId: payload.channelId,
-          threadRootEventId: payload.threadRootEventId ?? null,
-          text: payload.task,
-          edited: false,
-          author: me,
-          createdAt,
-          replyCount: 0,
-          lastReplyId: 0,
-          status: 'pending',
-          sessionId: payload.clientSpawnId,
-        },
-      };
-    },
-    [me],
-  );
-
   const applyQueuedOp = useCallback(
-    (op: { opType: OpType; payload: unknown; opId: string }) => {
-      if (op.opType === 'msg.send') {
-        const payload = op.payload as MsgSendPayload;
-        dispatch({
-          type: 'send-pending',
-          channelId: payload.channelId,
-          message: pendingMessageFromSendPayload(payload),
-        });
-        return;
-      }
-      if (op.opType === 'session.spawn') {
-        const payload = op.payload as SessionSpawnPayload;
-        const pending = pendingSpawnFromPayload(payload);
-        dispatch({
-          type: 'session-spawn-pending',
-          channelId: payload.channelId,
-          message: pending.message,
-          session: pending.session,
-        });
-        return;
-      }
-      if (op.opType === 'msg.edit') {
-        const payload = op.payload as { channelId: string; eventId: number; text: string };
-        dispatch({
-          type: 'edit-overlay-pending',
-          channelId: payload.channelId,
-          opId: op.opId,
-          targetEventId: payload.eventId,
-          text: payload.text,
-        });
-        return;
-      }
-      if (op.opType === 'msg.delete') {
-        const payload = op.payload as { channelId: string; eventId: number };
-        dispatch({
-          type: 'delete-overlay-pending',
-          channelId: payload.channelId,
-          opId: op.opId,
-          targetEventId: payload.eventId,
-        });
-        return;
-      }
-      if (op.opType === 'reaction.set') {
-        const payload = op.payload as ReactionSetPayload;
-        dispatch({
-          type: 'reaction-overlay-pending',
-          channelId: payload.channelId,
-          opId: op.opId,
-          targetEventId: payload.eventId,
-          emoji: payload.emoji,
-          userId: payload.userId,
-          action: payload.action,
-        });
-        return;
-      }
-      if (op.opType === 'mute.set') {
-        const payload = op.payload as { channelId: string; muted: boolean };
-        dispatch({ type: 'mute-changed', channelId: payload.channelId, muted: payload.muted });
-        return;
-      }
-      if (op.opType === 'read.mark') {
-        const payload = op.payload as { channelId: string; lastReadEventId: number };
-        lastReadSentRef.current[payload.channelId] = Math.max(
-          lastReadSentRef.current[payload.channelId] ?? 0,
-          payload.lastReadEventId,
+    (op: Parameters<typeof queuedOverlayAction>[0]) => {
+      const overlay = queuedOverlayAction(op, me);
+      if (!overlay) return;
+      if (overlay.readCursor) {
+        lastReadSentRef.current[overlay.readCursor.channelId] = Math.max(
+          lastReadSentRef.current[overlay.readCursor.channelId] ?? 0,
+          overlay.readCursor.lastReadEventId,
         );
-        dispatch({
-          type: 'read-cursor',
-          channelId: payload.channelId,
-          lastReadEventId: payload.lastReadEventId,
-        });
       }
+      dispatch(overlay.action);
     },
-    [pendingMessageFromSendPayload, pendingSpawnFromPayload],
+    [me],
   );
 
   // ---- initial data ----
@@ -1070,7 +928,7 @@ export function Chat({
       ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
       createdAt: new Date().toISOString(),
     };
-    const pending = pendingSpawnFromPayload(payload);
+    const pending = pendingSpawnFromPayload(payload, me);
     void enqueueOp(
       {
         opId: randomId(),
