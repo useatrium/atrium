@@ -10,6 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  security_changes:
+    name: Detect security-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      dependencies: ${{ steps.filter.outputs.dependencies }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: filter
+        name: Detect changed paths
+        shell: bash
+        run: |
+          dependencies=false
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            changed_files="$(git diff --name-only "${base}...HEAD")"
+
+            if printf '%s\n' "${changed_files}" | grep -Eq \
+              '(^|/)package\.json$|(^|/)pnpm-lock\.yaml$|(^|/)Cargo\.toml$|(^|/)Cargo\.lock$|^\.github/workflows/security\.yml$'; then
+              dependencies=true
+            fi
+          fi
+
+          echo "dependencies=${dependencies}" >>"${GITHUB_OUTPUT}"
+
   secret-scan:
     name: Gitleaks
     runs-on: ubuntu-latest
@@ -31,7 +61,8 @@ jobs:
   dependency-review:
     name: Dependency review
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && !github.event.repository.private
+    needs: security_changes
+    if: github.event_name == 'pull_request' && !github.event.repository.private && needs.security_changes.outputs.dependencies == 'true'
     permissions:
       contents: read
       pull-requests: read
