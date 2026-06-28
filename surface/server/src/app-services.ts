@@ -10,6 +10,7 @@ import { createLiveKitTokenService } from './livekit.js';
 import { ProviderCredentials } from './provider-credentials.js';
 import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
+import { currentTraceHeaders } from './telemetry.js';
 import { getVoipSender, type VoipPushSender } from './voip.js';
 
 export type FileStorageDeps = {
@@ -62,6 +63,7 @@ export function createAppServices(deps: AppServiceDeps): AppServices {
     new CentaurClient({
       baseUrl: sessionRunOptions.baseUrl ?? config.centaurBaseUrl,
       apiKey: sessionRunOptions.apiKey ?? config.centaurApiKey,
+      headers: currentTraceHeaders,
     });
   const sessionRuns = new SessionRuns(pool, hub, {
     ...sessionRunOptions,

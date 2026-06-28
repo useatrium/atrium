@@ -1,3 +1,4 @@
+import { context, propagation } from '@opentelemetry/api';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
@@ -37,6 +38,12 @@ export async function shutdownServerTelemetry(): Promise<void> {
   const current = sdk;
   sdk = null;
   await current.shutdown();
+}
+
+export function currentTraceHeaders(): Record<string, string | undefined> {
+  const headers: Record<string, string> = {};
+  propagation.inject(context.active(), headers);
+  return headers;
 }
 
 const httpRequests = new client.Counter({

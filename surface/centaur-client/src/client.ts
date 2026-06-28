@@ -7,6 +7,7 @@ export interface CentaurClientOptions {
   baseUrl: string;
   apiKey: string;
   fetchImpl?: FetchLike;
+  headers?: () => Record<string, string | undefined>;
 }
 
 export interface SpawnResponse {
@@ -97,6 +98,7 @@ export class CentaurClient {
   readonly baseUrl: string;
   readonly apiKey: string;
   private readonly fetchImpl: FetchLike;
+  private readonly headers: () => Record<string, string | undefined>;
 
   constructor(options: CentaurClientOptions);
   constructor(baseUrl: string, apiKey: string);
@@ -108,12 +110,14 @@ export class CentaurClient {
       this.baseUrl = optionsOrBaseUrl;
       this.apiKey = apiKey;
       this.fetchImpl = fetch;
+      this.headers = () => ({});
       return;
     }
 
     this.baseUrl = optionsOrBaseUrl.baseUrl;
     this.apiKey = optionsOrBaseUrl.apiKey;
     this.fetchImpl = optionsOrBaseUrl.fetchImpl ?? fetch;
+    this.headers = optionsOrBaseUrl.headers ?? (() => ({}));
   }
 
   spawn(threadKey: string, harness: string, opts: SpawnOptions = {}): Promise<SpawnResponse> {
@@ -233,15 +237,18 @@ export class CentaurClient {
       baseUrl: this.baseUrl,
       apiKey: this.apiKey,
       fetchImpl: this.fetchImpl,
+      headers: this.headers,
     });
   }
 
   private async request<T>(method: string, path: string, body?: JsonObject): Promise<T> {
+    const extraHeaders = cleanHeaders(this.headers());
     const response = await this.fetchImpl(new URL(path, withTrailingSlash(this.baseUrl)), {
       method,
       headers: {
         "content-type": "application/json",
         "x-api-key": this.apiKey,
+        ...extraHeaders,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -266,6 +273,14 @@ export class CentaurClient {
 
     return (await response.json()) as T;
   }
+}
+
+function cleanHeaders(headers: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
 }
 
 function toApiRsHarness(harness: string): string {

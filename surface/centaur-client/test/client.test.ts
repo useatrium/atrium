@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { CentaurApiError, CentaurClient } from "../src/client.js";
 import { parseSseStream } from "../src/stream.js";
 
-function captureFetch(captured: { url?: string; body?: unknown }) {
+function captureFetch(captured: { url?: string; body?: unknown; headers?: Headers }) {
   return (async (url: URL | RequestInfo, init?: RequestInit) => {
     captured.url = String(url);
     captured.body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    captured.headers = new Headers(init?.headers);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -63,6 +64,27 @@ describe("CentaurClient endpoint paths", () => {
         input_lines: ['{"type":"user"}'],
       },
     ]);
+  });
+
+  it("adds caller-provided trace headers to requests", async () => {
+    const captured: { headers?: Headers } = {};
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: captureFetch(captured),
+      headers: () => ({
+        traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+        empty: undefined,
+      }),
+    });
+
+    await client.spawn("thread:1", "codex");
+
+    expect(captured.headers?.get("x-api-key")).toBe("k");
+    expect(captured.headers?.get("traceparent")).toBe(
+      "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+    );
+    expect(captured.headers?.has("empty")).toBe(false);
   });
 
   it("includes repos in the spawn body when provided, omits the key otherwise", async () => {

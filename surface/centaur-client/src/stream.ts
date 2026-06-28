@@ -8,6 +8,7 @@ export interface TailEventsOptions {
   afterEventId?: number;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  headers?: () => Record<string, string | undefined>;
   initialBackoffMs?: number;
   maxBackoffMs?: number;
 }
@@ -76,7 +77,10 @@ async function* openEventStream(
   url.searchParams.set("after_event_id", String(options.afterEventId ?? 0));
 
   const response = await fetchImpl(url, {
-    headers: { "x-api-key": options.apiKey },
+    headers: {
+      "x-api-key": options.apiKey,
+      ...cleanHeaders(options.headers?.() ?? {}),
+    },
     signal: options.signal,
   });
 
@@ -94,6 +98,14 @@ async function* openEventStream(
       yield frame;
     }
   }
+}
+
+function cleanHeaders(headers: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
 }
 
 export async function* parseSseStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<ParsedSseFrame> {

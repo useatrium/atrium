@@ -446,6 +446,14 @@ pub fn set_span_parent_trace(span: &tracing::Span, trace_id: &str, parent_span_i
     span.set_parent(parent_context).is_ok()
 }
 
+/// Assign a W3C `traceparent` remote parent to a not-yet-entered tracing span.
+pub fn set_span_parent_traceparent(span: &tracing::Span, traceparent: &str) -> bool {
+    let Some((trace_id, parent_span_id)) = traceparent_trace_ids(traceparent) else {
+        return false;
+    };
+    set_span_parent_trace(span, &trace_id, &parent_span_id)
+}
+
 pub async fn export_thread_trace_root_span(
     trace_id: &str,
     root_span_id: &str,
@@ -802,6 +810,32 @@ fn remote_parent_context(trace_id: &str, parent_span_id: &str) -> Option<Context
         TraceState::default(),
     );
     Some(Context::new().with_remote_span_context(span_context))
+}
+
+fn traceparent_trace_ids(traceparent: &str) -> Option<(String, String)> {
+    let traceparent = traceparent.trim();
+    let parts = traceparent.split('-').collect::<Vec<_>>();
+    if parts.len() != 4 {
+        return None;
+    }
+    let [version, trace_id, parent_span_id, flags] = parts.as_slice() else {
+        return None;
+    };
+    if version.len() != 2
+        || trace_id.len() != 32
+        || parent_span_id.len() != 16
+        || flags.len() != 2
+        || !version.chars().all(|ch| ch.is_ascii_hexdigit())
+        || !trace_id.chars().all(|ch| ch.is_ascii_hexdigit())
+        || !parent_span_id.chars().all(|ch| ch.is_ascii_hexdigit())
+        || !flags.chars().all(|ch| ch.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    if trace_id.chars().all(|ch| ch == '0') || parent_span_id.chars().all(|ch| ch == '0') {
+        return None;
+    }
+    Some(((*trace_id).to_owned(), (*parent_span_id).to_owned()))
 }
 
 fn normalize_trace_id_hex(trace_id: &str) -> Option<String> {
@@ -1178,6 +1212,36 @@ mod tests {
             r#"http_server_request_duration_seconds_count{method="POST",route="/api/session/{thread_key}/execute_test",status_class="2xx"}"#
         ));
         assert!(metrics.contains("http_server_requests_in_flight 0"));
+    }
+
+    #[test]
+    fn traceparent_parser_accepts_w3c_context() {
+        assert_eq!(
+            traceparent_trace_ids(
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+            ),
+            Some((
+                "0123456789abcdef0123456789abcdef".to_owned(),
+                "0123456789abcdef".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn traceparent_parser_rejects_invalid_context() {
+        assert_eq!(traceparent_trace_ids("not-a-traceparent"), None);
+        assert_eq!(
+            traceparent_trace_ids(
+                "00-00000000000000000000000000000000-0123456789abcdef-01"
+            ),
+            None
+        );
+        assert_eq!(
+            traceparent_trace_ids(
+                "00-0123456789abcdef0123456789abcdef-0000000000000000-01"
+            ),
+            None
+        );
     }
 
     #[test]
