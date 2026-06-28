@@ -307,6 +307,18 @@ jobs:
           IMAGE: centaur-node-sync:e2e
         run: bash crates/centaur-node-sync/ci/warmpool-rebind-poc.sh
 
+      # SPIKE: flat-home HOME composition — generic harness-config lower + repo lower compose into a
+      # flat HOME on a running pod, with centaur's AGENTS.md precedence. Informational. (Real-harness
+      # sub-step auto-runs only with the centaur-agent image; here the node-sync image just provides sh.)
+      - name: Warm-pool HOME-composition spike POC (informational)
+        continue-on-error: true
+        working-directory: centaur/services/api-rs
+        env:
+          KIND_CLUSTER: centaur
+          NS: centaur
+          IMAGE: centaur-node-sync:e2e
+        run: bash crates/centaur-node-sync/ci/warmpool-home-compose-poc.sh
+
       - name: Dump pod diagnostics
         if: ${{ failure() }}
         run: |
