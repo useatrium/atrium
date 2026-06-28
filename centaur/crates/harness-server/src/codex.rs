@@ -323,32 +323,52 @@ fn run_codex_user_turn<W: Write>(
         params["effort"] = Value::String(reasoning);
     }
 
-    let turn_request_id = next_request_id(ctx.request_id);
-    ctx.codex.send_request(
-        turn_request_id,
-        "turn/start",
-        params,
-        turn.traceparent.as_deref(),
-    )?;
-    let result = ctx
-        .codex
-        .read_response_or_forward(turn_request_id, ctx.stdout)?;
-    let turn_id = result
-        .pointer("/turn/id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            HarnessServerError::Protocol("turn/start response missing turn.id".to_string())
-        })?
-        .to_string();
-    ctx.codex.read_until_turn_terminal(
-        ctx.stdout,
-        ctx.thread_id.as_deref().unwrap_or_default(),
-        &turn_id,
-        ctx.input_rx,
-        ctx.blocks_state,
-        ctx.request_id,
-        turn.traceparent.as_deref(),
-    )
+    let max_retries = engine_retry_max();
+    let mut retries = 0u32;
+    loop {
+        let turn_request_id = next_request_id(ctx.request_id);
+        ctx.codex.send_request(
+            turn_request_id,
+            "turn/start",
+            params.clone(),
+            turn.traceparent.as_deref(),
+        )?;
+        let result = ctx
+            .codex
+            .read_response_or_forward(turn_request_id, ctx.stdout)?;
+        let turn_id = result
+            .pointer("/turn/id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HarnessServerError::Protocol("turn/start response missing turn.id".to_string())
+            })?
+            .to_string();
+        match ctx.codex.read_until_turn_terminal(
+            ctx.stdout,
+            ctx.thread_id.as_deref().unwrap_or_default(),
+            &turn_id,
+            ctx.input_rx,
+            ctx.blocks_state,
+            ctx.request_id,
+            turn.traceparent.as_deref(),
+        )? {
+            TurnTermination::Done => return Ok(()),
+            TurnTermination::RetriableEngineError { withheld } => {
+                if retries >= max_retries {
+                    for value in &withheld {
+                        write_value(ctx.stdout, value)?;
+                    }
+                    return Ok(());
+                }
+                retries += 1;
+                eprintln!(
+                    "codex turn hit a transient engine-registration error; \
+                     retrying ({retries}/{max_retries})"
+                );
+                thread::sleep(retry_backoff(retries));
+            }
+        }
+    }
 }
 
 fn start_or_resume_thread<W: Write>(
@@ -531,7 +551,8 @@ impl CodexJsonRpcChild {
         blocks_state: &mut BlocksState,
         request_id: &mut i64,
         traceparent: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<TurnTermination> {
+        let mut guard = TurnGuard::default();
         loop {
             self.drain_active_turn_input(
                 stdout,
@@ -556,19 +577,31 @@ impl CodexJsonRpcChild {
                 }
                 continue;
             }
-            if notification_method(&value).is_some() {
-                if maybe_handle_server_request_resolved(stdout, blocks_state, &value)? {
-                    continue;
+            if notification_method(&value).is_none() {
+                continue;
+            }
+            if maybe_handle_server_request_resolved(stdout, blocks_state, &value)? {
+                continue;
+            }
+            let terminal = is_terminal_notification(&value, thread_id, turn_id);
+            match guard.observe(value, terminal) {
+                GuardStep::Retry(withheld) => {
+                    return Ok(TurnTermination::RetriableEngineError { withheld });
                 }
-                let terminal = is_terminal_notification(&value, thread_id, turn_id);
-                write_value(stdout, &value)?;
-                if terminal {
+                GuardStep::Forward(values) => {
+                    for value in &values {
+                        write_value(stdout, value)?;
+                    }
+                }
+                GuardStep::ForwardThenDone(values) => {
+                    for value in &values {
+                        write_value(stdout, value)?;
+                    }
                     emit_questions_resolved(stdout, blocks_state, "empty")?;
-                    break;
+                    return Ok(TurnTermination::Done);
                 }
             }
         }
-        Ok(())
     }
 
     fn drain_active_turn_input<W: Write>(
@@ -825,6 +858,96 @@ fn string_field<'a>(value: &'a Value, fields: &[&str]) -> Option<&'a str> {
         .find_map(|field| value.get(*field).and_then(Value::as_str))
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+/// Outcome of driving a single codex turn attempt.
+enum TurnTermination {
+    /// The turn reached a terminal state; everything needed has been forwarded.
+    Done,
+    /// The turn failed with a transient engine-registration error before
+    /// streaming output. The caller can retry or forward the withheld failure.
+    RetriableEngineError { withheld: Vec<Value> },
+}
+
+#[derive(Default)]
+struct TurnGuard {
+    pending_system_error: Option<Value>,
+    streamed: bool,
+}
+
+enum GuardStep {
+    Forward(Vec<Value>),
+    ForwardThenDone(Vec<Value>),
+    Retry(Vec<Value>),
+}
+
+impl TurnGuard {
+    fn observe(&mut self, value: Value, terminal: bool) -> GuardStep {
+        let method = notification_method(&value).unwrap_or_default().to_owned();
+        if terminal && method == "error" && !self.streamed && is_retriable_engine_error(&value) {
+            let mut withheld = Vec::new();
+            if let Some(status) = self.pending_system_error.take() {
+                withheld.push(status);
+            }
+            withheld.push(value);
+            return GuardStep::Retry(withheld);
+        }
+
+        let mut out = Vec::new();
+        if let Some(status) = self.pending_system_error.take() {
+            out.push(status);
+        }
+
+        if !self.streamed && is_system_error_status(&value) {
+            self.pending_system_error = Some(value);
+            return GuardStep::Forward(out);
+        }
+
+        if streams_turn_output(&method) {
+            self.streamed = true;
+        }
+        out.push(value);
+        if terminal {
+            GuardStep::ForwardThenDone(out)
+        } else {
+            GuardStep::Forward(out)
+        }
+    }
+}
+
+fn engine_retry_max() -> u32 {
+    parse_engine_retry_max(env::var("CODEX_ENGINE_RETRY_MAX").ok().as_deref())
+}
+
+fn parse_engine_retry_max(raw: Option<&str>) -> u32 {
+    const DEFAULT: u32 = 2;
+    raw.and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT)
+}
+
+fn retry_backoff(retry: u32) -> Duration {
+    let shift = retry.saturating_sub(1).min(4);
+    Duration::from_millis((500u64 << shift).min(5_000))
+}
+
+fn is_retriable_engine_error(value: &Value) -> bool {
+    let Some(message) = value
+        .pointer("/params/error/message")
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    message.contains("Engine not found")
+        || (message.contains("Job registration failed") && message.contains("404"))
+}
+
+fn is_system_error_status(value: &Value) -> bool {
+    notification_method(value) == Some("thread/status/changed")
+        && value.pointer("/params/status/type").and_then(Value::as_str) == Some("systemError")
+}
+
+fn streams_turn_output(method: &str) -> bool {
+    method.starts_with("item/") || method == "thread/tokenUsage/updated"
 }
 
 fn next_request_id(request_id: &mut i64) -> i64 {

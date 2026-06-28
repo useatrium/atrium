@@ -608,6 +608,8 @@ struct SandboxArgs {
     centaur_api_url: Option<String>,
     #[arg(long = "repos-path", env = "REPOS_PATH")]
     repos_path: Option<String>,
+    #[arg(long = "repos-pvc", env = "REPOS_PVC")]
+    repos_pvc: Option<String>,
     /// Deployment-default repos composed into every sandbox via AGENT_REPOS_JSON.
     /// Rendered by the chart from overlays.sources.
     #[arg(
@@ -881,13 +883,7 @@ impl SandboxArgs {
             && let Some(repos_path) = clean_optional_value(self.repos_path.as_deref())
         {
             spec = spec.mount(
-                Mount::new(
-                    MountKind::Bind {
-                        source_path: repos_path,
-                    },
-                    SANDBOX_REPOS_MOUNT_PATH,
-                )
-                .read_only(),
+                Mount::new(self.repos_mount_kind(repos_path), SANDBOX_REPOS_MOUNT_PATH).read_only(),
             );
         }
         for (name, value) in self.workflow_host_env_template()? {
@@ -989,9 +985,7 @@ impl SandboxArgs {
                 if let Some(repos_path) = clean_optional_value(self.repos_path.as_deref()) {
                     workload = workload.mount(
                         Mount::new(
-                            MountKind::Bind {
-                                source_path: repos_path,
-                            },
+                            self.repos_mount_kind(repos_path),
                             SANDBOX_REPO_CACHE_MOUNT_PATH,
                         )
                         .read_only(),
@@ -1014,6 +1008,19 @@ impl SandboxArgs {
                     );
                 }
                 Ok(workload)
+            }
+        }
+    }
+
+    fn repos_mount_kind(&self, repos_path: String) -> MountKind {
+        if let Some(claim_name) = clean_optional_value(self.repos_pvc.as_deref()) {
+            MountKind::PersistentVolumeClaim {
+                claim_name,
+                sub_path: Some(repos_path),
+            }
+        } else {
+            MountKind::Bind {
+                source_path: repos_path,
             }
         }
     }

@@ -19,11 +19,11 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
   push back.
 - **Pulling upstream (maintainer task, from the Atrium repo root):**
   ```bash
-  git remote add centaur-upstream https://github.com/paradigmxyz/centaur.git   # one-time
-  git fetch centaur-upstream main
-  git update-index -q --refresh
-  git subtree pull --prefix=centaur centaur-upstream main -m "Pull upstream Centaur $(date +%F)"
+  scripts/centaur-sync.sh
   ```
+  The script creates a sibling integration worktree from `origin/master`, adds/fetches
+  `centaur-upstream` as needed, and runs the non-squash subtree pull there so the
+  checkout you launched it from is not disturbed.
   - **Never `--squash`** — it silently drops our diverged edits with no conflict shown.
   - Conflicts land on the files we've changed (resolve keeping our edits). The `1000+`
     migration discipline below is what keeps DB migrations conflict-free across pulls.

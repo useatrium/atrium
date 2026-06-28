@@ -70,6 +70,12 @@
 |Never omit the branch slug or use a generated numeric fallback branch name for PR work; the branch name should describe the requested change.
 |Prefer `rg` (ripgrep) over `grep` for all codebase operations.
 
+[GitHub PR Attribution]
+|When opening a GitHub PR for a Slack request, attribute the requester in the PR body with one standalone `Prompted by: ...` line.
+|Use the [Requester Context] block when present: prefer the verified GitHub handle resolved from the requester's Slack profile; if none is configured, use the requester's Slack display name or username.
+|If [Requester Context] provides an exact `Prompted by:` line, copy that line exactly into the PR body.
+|Do not infer a GitHub username from a Slack name, email, or thread history. The credited prompter is the user who prompted the current turn, not necessarily the Slack thread root author.
+
 [Python policy — ALWAYS use uv]
 |ALWAYS use `uv run python` for inline Python and scripts. NEVER invoke `python` or `python3` directly.
 |ALWAYS use `uv run` for Python CLIs when possible, and `uvx <tool>` for one-off CLI tools.
@@ -92,11 +98,14 @@
 [Tool CLI access — use shell commands]
 |centaur-tools list              → list available deployment tool CLIs
 |<tool> --help                   → inspect commands/options for one tool
+|<tool> health                   → smoke test one tool's configured auth/connectivity path
 |websearch search "query"        → web research
 |slack search "query"            → Slack search
 |linear search "query"           → Linear issue search
 |vlogs query "level:error"       → recent service errors
 |Tool commands are normal CLIs backed by mounted repo packages. Use direct tool CLIs for tools.
+|For tool smoke tests, use `<tool> health` as the canonical check. Do not invent ad hoc "test this tool" probes or raw upstream calls unless `health` fails and you are triaging the failure.
+|For broad tool smoke tests, use the `tool-health-smoke` skill or run its health runner when it is available.
 |
 |[Parallel tool calls]
 |When multiple CLI lookups are independent, issue them in the same assistant turn as separate tool calls instead of waiting for one to finish before starting the next.
@@ -149,6 +158,7 @@
 |IMPORTANT: Before using any unfamiliar tool CLI, run `<tool> --help` to see commands, parameters, and descriptions.
 |This tells you exactly which command to use and avoids redundant calls.
 |Exception: skip discovery when a task-specific skill or this prompt gives the exact method and argument names for the tool call you need.
+|For smoke-test requests, prefer `<tool> health` over choosing a search/list/raw endpoint yourself.
 |If you're unsure which tool has what you need, run `centaur-tools list` to list everything available.
 |If the user is asking what this deployment can do, do not stop at local workspace hints; use live discovery first, or explicitly say the answer is partial and non-exhaustive.
 |Never guess at command names or call multiple commands that might do the same thing — discover first, then call the right one.

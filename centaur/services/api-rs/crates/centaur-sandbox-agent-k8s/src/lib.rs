@@ -676,6 +676,15 @@ impl SandboxBackend for AgentSandboxBackend {
         self.run_claimed_overlay_home_helper(id, request).await
     }
 
+    async fn ensure_iron_control_proxy_resources(
+        &self,
+        id: &SandboxId,
+        principal_id: &str,
+    ) -> SandboxResult<()> {
+        self.ensure_proxy_resources_for_principal(id, principal_id)
+            .await
+    }
+
     async fn pause(&self, id: &SandboxId) -> SandboxResult<()> {
         self.patch_sandbox_merge(id, sandbox_pause_patch(jiff::Timestamp::now()))
             .await
@@ -1258,11 +1267,11 @@ fn mount_json(spec: &SandboxSpec) -> (Vec<Value>, Vec<Value>) {
     let mut mounts = Vec::with_capacity(spec.mounts.len());
     for (index, mount) in spec.mounts.iter().enumerate() {
         let name = format!("mount-{index}");
-        mounts.push(json!({
+        let mut volume_mount = json!({
             "name": name,
             "mountPath": mount.target_path,
             "readOnly": mount.read_only,
-        }));
+        });
         volumes.push(match &mount.kind {
             MountKind::EmptyDir => json!({
                 "name": name,
@@ -1275,6 +1284,21 @@ fn mount_json(spec: &SandboxSpec) -> (Vec<Value>, Vec<Value>) {
                     "readOnly": mount.read_only,
                 },
             }),
+            MountKind::PersistentVolumeClaim {
+                claim_name,
+                sub_path,
+            } => {
+                if let Some(sub_path) = sub_path {
+                    volume_mount["subPath"] = Value::String(sub_path.clone());
+                }
+                json!({
+                    "name": name,
+                    "persistentVolumeClaim": {
+                        "claimName": claim_name,
+                        "readOnly": mount.read_only,
+                    },
+                })
+            }
             MountKind::Bind { source_path } => json!({
                 "name": name,
                 "hostPath": {
@@ -1285,6 +1309,7 @@ fn mount_json(spec: &SandboxSpec) -> (Vec<Value>, Vec<Value>) {
                 },
             }),
         });
+        mounts.push(volume_mount);
     }
     (volumes, mounts)
 }

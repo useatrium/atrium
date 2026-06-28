@@ -23,6 +23,7 @@ import {
 import { conflateChatSdkStream } from './conflate'
 import { observeSeconds, slackbotMetrics } from './metrics'
 import { renderSlackDisplayText, slackMessagePromptText } from './slack-display-text'
+import { slackUserIdForMessage } from './slack-user'
 import {
   collectInitialContext,
   forwardToSessionApi,
@@ -351,6 +352,7 @@ function createHandoffTrace(
     messageId: message.id,
     mode,
     openStream: mode === 'execute',
+    slackUserId: slackUserIdForMessage(message),
     startedAtMs: nowMs(),
     threadId: thread.id
   }
@@ -516,6 +518,7 @@ async function syncThreadMessageToSession(
     messageId: message.id,
     mode: input.mode,
     openStream: shouldStartExecution,
+    slackUserId: slackUserIdForMessage(message),
     startedAtMs: traceStartedAtMs,
     threadId: thread.id
   }

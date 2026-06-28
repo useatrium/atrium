@@ -18,6 +18,7 @@ import type {
   SlackbotV2SessionMessage
 } from './types'
 import { observeSeconds, slackbotMetrics } from './metrics'
+import { rawSlackUserId } from './slack-user'
 import {
   elapsedMs,
   errorMessage,
@@ -728,19 +729,6 @@ function messageRequesterUserId(message: SlackbotV2ApiMessage | undefined): stri
   return authorUserId ?? rawUserId
 }
 
-function rawSlackUserId(raw: unknown): string | undefined {
-  if (!isJsonObject(raw)) return undefined
-  const directUser = stringValue(raw.user)
-  if (directUser) return directUser
-  const user = raw.user
-  if (isJsonObject(user)) {
-    return stringValue(user.id) ?? stringValue(user.user_id)
-  }
-  const botProfile = raw.bot_profile
-  if (isJsonObject(botProfile)) return stringValue(botProfile.user_id)
-  return undefined
-}
-
 async function resolveRequesterIdentity(
   options: SlackbotV2Options,
   message: SlackbotV2ApiMessage
@@ -1385,6 +1373,7 @@ function stagedAttachmentInputLines(
 
 function requesterIdentityContext(identity: RequesterIdentity | undefined): string | undefined {
   if (!identity?.slackUserId && !identity?.slackUserName && !identity?.githubHandle) return undefined
+  const slackAttributionName = requesterSlackAttributionName(identity)
 
   const lines = [
     '# Requester Context',
@@ -1412,6 +1401,7 @@ function requesterIdentityContext(identity: RequesterIdentity | undefined): stri
       `- Assign the PR to the requester when possible: \`${githubLogin}\``
     )
   } else {
+    const promptedBy = slackAttributionName ?? 'unknown Slack requester'
     lines.push(
       '- GitHub handle from Slack profile: unavailable',
       `- GitHub handle unavailable reason: ${identity.githubUnavailableReason ?? 'not resolved'}`,
@@ -1419,14 +1409,32 @@ function requesterIdentityContext(identity: RequesterIdentity | undefined): stri
       '',
       '## GitHub PR Attribution',
       '',
-      '- If you create a GitHub PR for this Slack request, do not infer a GitHub '
-        + 'username from Slack display name, real name, or email.',
-      '- Omit the `Prompted by` line unless a verified GitHub handle is present.'
+      '- If you create a GitHub PR for this Slack request, '
+        + `the PR body MUST contain this standalone line: \`Prompted by: ${promptedBy}\``,
+      '- Use the requester\'s Slack display name or username because no verified GitHub '
+        + 'handle is available.',
+      '- Do not infer a GitHub username from Slack display name, real name, or email.',
+      '- The credited prompter is the requester in this section, not the Slack thread OP/root author.',
+      '- This is a GitHub PR body requirement, not a Slack response mention rule.'
     )
   }
 
   lines.push('', 'The user message follows in the next content block.', '---')
   return lines.join('\n')
+}
+
+function requesterSlackAttributionName(identity: RequesterIdentity): string | undefined {
+  return (
+    nonEmptyString(identity.slackDisplayName)
+    ?? nonEmptyString(identity.slackUserName)
+    ?? nonEmptyString(identity.slackMention)
+    ?? nonEmptyString(identity.slackUserId)
+  )
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
 }
 
 function codexInputContent(
@@ -1437,6 +1445,10 @@ function codexInputContent(
   contextPreamble?: string
 ): JsonValue[] {
   const content: JsonValue[] = []
+  const slackSessionContext = slackUploadSessionContext(message.threadId)
+  if (slackSessionContext) {
+    content.push({ type: 'text', text: slackSessionContext })
+  }
   const requesterContext = requesterIdentityContext(requesterIdentity)
   if (requesterContext) {
     content.push({ type: 'text', text: requesterContext })
@@ -1468,6 +1480,45 @@ function codexInputContent(
     content.push(codexAttachmentInput(attachment, staged.get(attachment)))
   }
   return content.length > 0 ? content : [{ type: 'text', text: 'continue' }]
+}
+
+type SlackThreadDestination = {
+  channelId: string
+  teamId?: string
+  threadTs: string
+}
+
+function slackUploadSessionContext(threadId: string): string | undefined {
+  const destination = slackThreadDestination(threadId)
+  if (!destination) return undefined
+
+  const lines = [
+    '# Slack Session Context',
+    '',
+    'API-owned Slack upload destination for this turn:',
+    ...(destination.teamId ? [`- session_context.slack.team_id: ${destination.teamId}`] : []),
+    `- session_context.slack.channel_id: ${destination.channelId}`,
+    `- session_context.slack.thread_ts: ${destination.threadTs}`,
+    `- thread_key: ${threadId}`,
+    '',
+    'Use these exact IDs for Slack file uploads in this thread.',
+    `Example: slack upload ${destination.channelId} /path/to/file --thread ${destination.threadTs}`,
+    'Do not recover this destination with Slack search.',
+    '---'
+  ]
+  return lines.join('\n')
+}
+
+function slackThreadDestination(threadId: string): SlackThreadDestination | undefined {
+  const parts = threadId.split(':')
+  if (parts[0] !== 'slack') return undefined
+  if (parts.length === 3 && parts[1] && parts[2]) {
+    return { channelId: parts[1], threadTs: parts[2] }
+  }
+  if (parts.length === 4 && parts[1] && parts[2] && parts[3]) {
+    return { teamId: parts[1], channelId: parts[2], threadTs: parts[3] }
+  }
+  return undefined
 }
 
 function slackThreadContext(

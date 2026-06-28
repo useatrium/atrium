@@ -3,8 +3,8 @@
 use std::str::FromStr;
 
 use centaur_session_core::{
-    ExecutionStatus, HarnessType, Session, SessionEvent, SessionExecution, SessionMessage,
-    SessionMessageInput, SessionStatus, ThreadKey, empty_object,
+    ExecutionStatus, HarnessType, SandboxCapabilities, Session, SessionEvent, SessionExecution,
+    SessionMessage, SessionMessageInput, SessionStatus, ThreadKey, empty_object,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -126,7 +126,7 @@ impl PgSessionStore {
     pub async fn get_session(&self, thread_key: &ThreadKey) -> Result<Session, SessionStoreError> {
         let row = sqlx::query_as::<_, SessionRow>(
             r#"
-            select thread_key, sandbox_id, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
+            select thread_key, sandbox_id, sandbox_repo_cache_enabled, sandbox_observability_enabled, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
             from sessions
             where thread_key = $1
             "#,
@@ -712,13 +712,45 @@ impl PgSessionStore {
         let row = sqlx::query_as::<_, SessionRow>(
             r#"
             update sessions
-            set sandbox_id = $2, updated_at = now()
+            set
+                sandbox_id = $2,
+                sandbox_repo_cache_enabled = null,
+                sandbox_observability_enabled = null,
+                updated_at = now()
             where thread_key = $1
-            returning thread_key, sandbox_id, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
+            returning thread_key, sandbox_id, sandbox_repo_cache_enabled, sandbox_observability_enabled, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
             "#,
         )
         .bind(thread_key.as_str())
         .bind(sandbox_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        row.try_into()
+    }
+
+    pub async fn update_sandbox_assignment(
+        &self,
+        thread_key: &ThreadKey,
+        sandbox_id: &str,
+        capabilities: &SandboxCapabilities,
+    ) -> Result<Session, SessionStoreError> {
+        let row = sqlx::query_as::<_, SessionRow>(
+            r#"
+            update sessions
+            set
+                sandbox_id = $2,
+                sandbox_repo_cache_enabled = $3,
+                sandbox_observability_enabled = $4,
+                updated_at = now()
+            where thread_key = $1
+            returning thread_key, sandbox_id, sandbox_repo_cache_enabled, sandbox_observability_enabled, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
+            "#,
+        )
+        .bind(thread_key.as_str())
+        .bind(sandbox_id)
+        .bind(capabilities.repo_cache_enabled)
+        .bind(capabilities.observability_enabled)
         .fetch_one(&self.pool)
         .await?;
 
@@ -733,7 +765,11 @@ impl PgSessionStore {
         let result = sqlx::query(
             r#"
             update sessions
-            set sandbox_id = null, updated_at = now()
+            set
+                sandbox_id = null,
+                sandbox_repo_cache_enabled = null,
+                sandbox_observability_enabled = null,
+                updated_at = now()
             where thread_key = $1 and sandbox_id = $2
             "#,
         )
@@ -759,10 +795,12 @@ impl PgSessionStore {
             set harness_type = $2,
                 harness_thread_id = null,
                 sandbox_id = null,
+                sandbox_repo_cache_enabled = null,
+                sandbox_observability_enabled = null,
                 status = $3,
                 updated_at = now()
             where thread_key = $1
-            returning thread_key, sandbox_id, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
+            returning thread_key, sandbox_id, sandbox_repo_cache_enabled, sandbox_observability_enabled, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
             "#,
         )
         .bind(thread_key.as_str())
@@ -787,7 +825,7 @@ impl PgSessionStore {
             update sessions
             set iron_control_principal = $2, updated_at = now()
             where thread_key = $1
-            returning thread_key, sandbox_id, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
+            returning thread_key, sandbox_id, sandbox_repo_cache_enabled, sandbox_observability_enabled, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
             "#,
         )
         .bind(thread_key.as_str())
@@ -895,7 +933,7 @@ impl PgSessionStore {
             update sessions
             set harness_thread_id = $2, updated_at = now()
             where thread_key = $1
-            returning thread_key, sandbox_id, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
+            returning thread_key, sandbox_id, sandbox_repo_cache_enabled, sandbox_observability_enabled, harness_type, harness_thread_id, persona_id, status, iron_control_principal, created_at, updated_at
             "#,
         )
         .bind(thread_key.as_str())
@@ -996,6 +1034,8 @@ pub enum SessionStoreError {
 struct SessionRow {
     thread_key: String,
     sandbox_id: Option<String>,
+    sandbox_repo_cache_enabled: Option<bool>,
+    sandbox_observability_enabled: Option<bool>,
     harness_type: String,
     harness_thread_id: Option<String>,
     persona_id: Option<String>,
@@ -1012,6 +1052,18 @@ impl TryFrom<SessionRow> for Session {
         Ok(Self {
             thread_key: parse_persisted(row.thread_key)?,
             sandbox_id: row.sandbox_id,
+            sandbox_capabilities: match (
+                row.sandbox_repo_cache_enabled,
+                row.sandbox_observability_enabled,
+            ) {
+                (Some(repo_cache_enabled), Some(observability_enabled)) => {
+                    Some(SandboxCapabilities {
+                        repo_cache_enabled,
+                        observability_enabled,
+                    })
+                }
+                _ => None,
+            },
             harness_type: parse_persisted(row.harness_type)?,
             harness_thread_id: row.harness_thread_id,
             persona_id: row.persona_id,

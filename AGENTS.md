@@ -43,8 +43,10 @@ the wire protocol between them can now land as **one PR** across both.
   Put fork-specific guidance in `centaur/ATRIUM_FORK.md` (upstream doesn't have it).
 - **DB migrations** under `centaur/` use the **`1000+`** range (never `0001`-style) so an
   upstream migration can't collide with ours. See `centaur/ATRIUM_FORK.md`.
-- **Pulling upstream** is a maintainer task: `git subtree pull --prefix=centaur centaur-upstream main`
-  from the repo root. **Never `--squash`** (it silently drops our diverged edits).
+- **Pulling upstream** is a maintainer task: use `scripts/centaur-sync.sh` from the
+  repo root. It creates a sibling integration worktree and runs
+  `git subtree pull --prefix=centaur centaur-upstream main` there. **Never
+  `--squash`** (it silently drops our diverged edits).
 
 ## Contributing (people and agents)
 
