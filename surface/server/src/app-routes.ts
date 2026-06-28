@@ -12,6 +12,7 @@ import { registerAtriumRoutes } from './routes/atrium.js';
 import { registerCallRoutes } from './routes/calls.js';
 import { registerChannelArtifactWritebackRoutes } from './routes/channel-artifact-writeback.js';
 import { registerChannelRoutes } from './routes/channels.js';
+import { registerClientErrorRoutes } from './routes/client-errors.js';
 import type { EntryAnnotationRateLimit } from './routes/entries.js';
 import { registerEntryRoutes } from './routes/entries.js';
 import { registerFileRoutes } from './routes/files.js';
@@ -200,6 +201,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
 
   registerPushRoutes(app, { pool, requireUser });
   registerHealthRoutes(app);
+  registerClientErrorRoutes(app, { pool, userFromRequest });
 
   registerWebsocketRoutes(app, { pool, hub, sessionRuns, userFromSession, userFromRequest });
 }
