@@ -2,8 +2,13 @@
 
 > **Status: SPIKE (2026-06-28).** De-risks the last piece of "warm the whole lease" — giving
 > repo-bearing sessions the warm pool's pod-boot saving (they already get warm deps/git/toolchain).
-> Builds on `docs/archive/notes/warm-lease-build-plan.md` §5. **Verdict: GO**
-> (pending the POC going green on kind-on-GHA). This is a real Centaur runtime change, not a flag flip.
+> Builds on `docs/archive/notes/warm-lease-build-plan.md` §5. **Verdict: GO.** The verdict rests
+> on the existing `pod-native-e2e` (already proves daemon-overlay-mount → `HostToContainer` →
+> agent-sees-it) + the documented `HostToContainer` (rslave) semantics, which propagate host mounts
+> into a running container at any time, and the recon below. The POC (`ci/warmpool-rebind-poc.sh`)
+> adds belt-and-suspenders confirmation of the *post-start remount* case; it's wired into the kind
+> e2e, which is **push-only** (kept out of the required PR gate), so it runs on merge-to-master, not
+> on the spike PR. This is a real Centaur runtime change, not a flag flip.
 
 ## The question
 
