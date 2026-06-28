@@ -2,4 +2,5 @@
 
 ## Report a Vulnerability
 
-Contact [security@tempo.xyz](mailto:security@tempo.xyz).
+For Atrium's vendored Centaur subtree, report vulnerabilities through the root
+repository security policy: [../SECURITY.md](../SECURITY.md).

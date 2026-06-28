@@ -4,7 +4,7 @@ name: Centaur CI
 # only runs root workflows). Scoped to centaur/** changes. Publishing workflows are NOT
 # ported (they'd push to Centaur's registries from the wrong repo). The heavy kind e2e is
 # included but kept non-required (see centaur-ci-success allowed-skips).
-# See notes/centaur-vendoring.md.
+# See docs/centaur-vendoring.md.
 
 # Always runs (no top-level path filter) so the `Centaur CI success` check reports on
 # EVERY PR — required-check-safe. The heavy jobs gate on `ci_changes`, so a non-centaur PR

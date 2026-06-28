@@ -1,0 +1,37 @@
+title = "Atrium gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Centaur client recorded event fixtures use thread_key identifiers that are not credentials."
+paths = [
+  '''^(surface|packages)/centaur-client/test/fixtures/(A_pong|B_tooltest|C_longstream)\.json$''',
+]
+
+[[allowlists]]
+description = "Centaur tests and examples intentionally contain dummy secret-shaped values."
+paths = [
+  '''^(centaur/)?contrib/chart/values\.yaml$''',
+  '''^(centaur/)?services/api-rs/crates/centaur-api-integration-test/src/main\.rs$''',
+  '''^(centaur/)?services/api-rs/crates/centaur-node-sync/src/secret\.rs$''',
+  '''^(centaur/)?services/api-rs/crates/centaur-perms/src/tests\.rs$''',
+  '''^(centaur/)?services/api-rs/crates/centaur-session-runtime/src/lib\.rs$''',
+  '''^(centaur/)?services/console/justfile$''',
+]
+
+[[allowlists]]
+description = "Sandbox auth files contain dummy JWT-shaped tokens for local broker tests."
+paths = [
+  '''^(centaur/)?services/sandbox/claude-credentials\.json$''',
+  '''^(centaur/)?services/sandbox/codex-auth\.json$''',
+]
+
+[[allowlists]]
+description = "Surface tests and constants intentionally contain secret-shaped fixture strings."
+paths = [
+  '''^surface/mobile/src/lib/prefsStorage\.ts$''',
+  '''^surface/server/scripts/check-migration-filenames\.mjs$''',
+  '''^surface/server/src/session-records\.test\.ts$''',
+  '''^surface/server/test/artifactGc\.test\.ts$''',
+]

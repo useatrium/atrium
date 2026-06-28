@@ -1,6 +1,7 @@
 {
   "name": "@atrium/surface-client",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "version": "0.1.0",
   "description": "Shared protocol types, timeline state, API and WS client for Atrium surface clients",
   "type": "module",

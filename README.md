@@ -87,7 +87,7 @@ Four layers do four different jobs. They're easy to mix up, so here's each one:
 | Layer | What it is | What it does |
 |---|---|---|
 | **Atrium** | the product in this repo: the web, desktop, and mobile apps plus the server | Keeps **all the data that lasts**: the message log, every file version, the database, and file storage. This is what the team uses. |
-| **Centaur** | the engine that runs the agents (our fork of [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur), MIT — vendored in [`centaur/`](centaur/)) | Starts a locked-down, throwaway sandbox and runs the agent a turn at a time, streaming results back. Each turn is a clean sandbox; the conversation persists in Atrium, so a session keeps going across turns. Keeps **nothing** permanently. |
+| **Centaur** | the engine that runs the agents (our fork of [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur), Apache-2.0 OR MIT — vendored in [`centaur/`](centaur/)) | Starts a locked-down, throwaway sandbox and runs the agent a turn at a time, streaming results back. Each turn is a clean sandbox; the conversation persists in Atrium, so a session keeps going across turns. Keeps **nothing** permanently. |
 | **Harness** | the agent program inside the sandbox | The "hands": it reads the task, runs tools, and edits files. Atrium doesn't care which one you use (**Claude Code**, **Codex**, **amp**, and so on). |
 | **Model** | the AI model the harness talks to | The "brain" (Claude, GPT, and so on). You can swap it per session. Billing and login follow the credentials the harness actually uses. |
 
@@ -209,15 +209,15 @@ version-control system handles conflicts.)
 | `surface/` | the product: `server/` (Node + TypeScript, Fastify, Postgres), `web/` (Vite + React + Tailwind), `desktop/` (Electron shell around `web/` — signed + notarized macOS build), `mobile/` (Expo), `shared/`, plus tests and deploy config. |
 | `centaur/` | the agent runtime — **our fork of `paradigmxyz/centaur`**, vendored via `git subtree`. Rust + Python + Helm; self-contained (`just`, cargo). See [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md). |
 | `infra/` | local cluster, a stand-in model server for testing, and deployment setup. |
-| `notes/` | design docs, build plans, and decisions. |
-| `notes/build-history/` | archived initial build plan, journal, test suites, and scorecards from the phase0–phase5 buildout. |
+| `docs/` | public documentation entry points. |
+| `docs/archive/notes/` | archived design scratchpads and build logs from early development; useful context, not canonical user docs. |
 
 ## Links
 
 - **Architecture walkthrough:** https://gbasin.github.io/atrium-architecture/
-- **UI surfaces:** the screens and how they compose — [notes/surfaces.md](notes/surfaces.md).
+- **UI surfaces:** the screens and how they compose — [docs/surfaces.md](docs/surfaces.md).
 - **Desktop app:** build, signing, and auto-update — [surface/desktop/README.md](surface/desktop/README.md).
-- **Agent engine:** our Centaur fork in [`centaur/`](centaur/) — upstream [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (MIT), pulled via subtree (see [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md)).
+- **Agent engine:** our Centaur fork in [`centaur/`](centaur/) — upstream [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (Apache-2.0 OR MIT), pulled via subtree (see [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md)).
 - **Contributing:** branch and PR/merge flow in [CONTRIBUTING.md](CONTRIBUTING.md).
-- **License:** MIT, see [LICENSE](LICENSE).
-- Archived initial build history: [plan](notes/build-history/initial-build-plan.md), [journal](notes/build-history/initial-build-journal.md), and phase scorecards in [notes/build-history/](notes/build-history/).
+- **Security:** report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+- **License:** Atrium is AGPL-3.0-or-later; vendored Centaur remains Apache-2.0 OR MIT. See [LICENSE](LICENSE), [NOTICE](NOTICE), and [centaur/LICENSE](centaur/LICENSE).

@@ -183,7 +183,7 @@ describe('ArtifactLedger foundation', () => {
 });
 
 // CHARACTERIZATION (green in CI on purpose): documents a KNOWN gap, not a desired
-// behavior — the blind-append clobber from notes/cas-ledger-build-plan.md §9
+// behavior — the blind-append clobber from docs/archive/notes/cas-ledger-build-plan.md §9
 // finding 1. capture() passes no baseSeq, so commitVersion linearizes every writer
 // onto `latest` regardless of the base it actually edited. Two agents that both
 // fork v1 → the second silently buries the first, with NO conflict recorded.

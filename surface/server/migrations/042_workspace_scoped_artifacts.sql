@@ -1,5 +1,5 @@
 -- Re-key artifact identity from (session_id, path) to (workspace_id, path) — the
--- "shared workspace" keystone. See notes/shared-workspace-build-spec.md (lane A) and
+-- "shared workspace" keystone. See docs/archive/notes/shared-workspace-build-spec.md (lane A) and
 -- cas-ledger-build-plan.md §10.1. After this, artifacts are workspace-shared (two sessions
 -- in one workspace co-edit the same chain) and OUTLIVE their originating session.
 --

@@ -8,7 +8,7 @@
 # DaemonSet mounts the overlay on the node and the hardened agent sees it via
 # HostToContainer — requires a real Linux kernel + multi-process node setup. It
 # cannot run on Docker Desktop. Run on a real cluster or a GHA ubuntu runner with
-# kind. See notes/sync-hardening-plan.md + agent-sync-design.md.
+# kind. See docs/archive/notes/sync-hardening-plan.md + docs/archive/notes/agent-sync-design.md.
 set -euo pipefail
 
 NS="${NS:-centaur}"

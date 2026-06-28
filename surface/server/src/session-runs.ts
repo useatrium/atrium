@@ -331,7 +331,7 @@ const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000
 export class SessionRuns {
   private readonly centaur: CentaurClient;
   private readonly artifactStorage: ArtifactStorage;
-  /** Durable CAS-ledger (notes/cas-ledger-build-plan.md). Shared by the
+  /** Durable CAS-ledger (docs/archive/notes/cas-ledger-build-plan.md). Shared by the
    * capture-bridge, serve, write-back, and GC paths. */
   private readonly artifactLedger: ArtifactLedger;
   private readonly harness: string;

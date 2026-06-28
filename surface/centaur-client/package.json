@@ -2,6 +2,15 @@
   "name": "@atrium/centaur-client",
   "version": "0.1.0",
   "description": "Typed Centaur control-plane client and durable event-stream reducer.",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gbasin/atrium.git",
+    "directory": "surface/centaur-client"
+  },
+  "bugs": {
+    "url": "https://github.com/gbasin/atrium/issues"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -18,7 +27,7 @@
   },
   "files": [
     "dist",
-    "src",
+    "!dist/**/*.test.*",
     "README.md"
   ],
   "scripts": {

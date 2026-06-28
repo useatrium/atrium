@@ -1,4 +1,4 @@
-# Atrium Surface Production Deployment
+# Atrium Surface Self-Hosting
 
 This package runs the Atrium surface stack with Postgres, MinIO, the Fastify API server, and optional Caddy for the built web SPA.
 
@@ -29,6 +29,15 @@ Put generated values into `DB_PASSWORD`, `MINIO_PASSWORD`, and `SESSION_SECRET`.
 
 Critical: `S3_ENDPOINT` is embedded into presigned file upload/download URLs. Set it to a URL the phone can reach. `http://minio:9000` works inside Docker but fails on the phone.
 
+Before exposing Atrium beyond your own machine:
+
+- keep `AUTH_OPEN=0` unless anyone who can reach the host may create an account
+- configure email-code or OAuth login
+- keep `BIND_HOST=127.0.0.1` for internet-facing hosts and put Caddy/TLS in front
+- set long random values for every secret in `.env`
+- rotate any secret that was ever pasted into logs, notes, issues, or chat
+- back up Postgres and MinIO together
+
 ## Scenario A: Always-On Mac Behind Tailscale
 
 Use plain HTTP on the tailnet. In `.env`:
@@ -36,8 +45,12 @@ Use plain HTTP on the tailnet. In `.env`:
 ```sh
 SITE_ADDRESS=:80
 HTTP_HOST_PORT=80
+BIND_HOST=0.0.0.0
 S3_ENDPOINT=http://<mac-tailscale-ip-or-magicdns-name>:9000
 ```
+
+Only use `BIND_HOST=0.0.0.0` when the host firewall or network boundary prevents
+non-tailnet access to the API and MinIO ports.
 
 If port 80 is unavailable locally, use:
 
@@ -140,6 +153,6 @@ Frontend shows 404 on refresh: Caddy's `try_files {path} /index.html` is the SPA
 ## Port exposure
 
 Postgres always binds to `127.0.0.1` on the host (`DB_BIND_HOST`). The API
-server and MinIO bind to `BIND_HOST` (default `0.0.0.0` for the Tailscale
-scenario). On an internet-facing VPS set `BIND_HOST=127.0.0.1` so only Caddy
-(80/443) is reachable — it proxies to the services over the compose network.
+server and MinIO bind to `BIND_HOST` (default `127.0.0.1`). Keep that default on
+an internet-facing VPS so only Caddy (80/443) is reachable; set
+`BIND_HOST=0.0.0.0` only for a private tailnet-style deployment.

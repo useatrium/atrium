@@ -1,6 +1,6 @@
 -- C1 inbound-sync source: a durable, egress-pollable, GAP-FREE change-feed over
 -- artifact version commits, plus the per-path sync-state record (the "one root"
--- fix from notes/agent-sync-design.md §8A takeaway #1 / §8B #2).
+-- fix from docs/archive/notes/agent-sync-design.md §8A takeaway #1 / §8B #2).
 --
 -- WHY an outbox + a transaction-id watermark (not a naive max(id) cursor):
 --   A bigserial id is allocated at INSERT but only becomes visible at COMMIT, so

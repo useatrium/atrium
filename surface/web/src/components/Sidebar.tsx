@@ -38,6 +38,9 @@ const BELL_TITLES: Record<NotifyState, string> = {
   unsupported: 'Notifications not supported here',
 };
 
+const SOURCE_URL = 'https://github.com/gbasin/atrium';
+const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`;
+
 export function Sidebar({
   workspaceName,
   channels,
@@ -638,6 +641,27 @@ function SettingsPopover({
             <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
           </button>
         </SettingRow>
+
+        <div className="border-t border-edge pt-3 text-2xs leading-5 text-fg-muted">
+          Atrium is AGPL-3.0-or-later.{' '}
+          <a
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-accent-text hover:underline"
+          >
+            Source
+          </a>
+          {' · '}
+          <a
+            href={LICENSE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-accent-text hover:underline"
+          >
+            License
+          </a>
+        </div>
       </div>
     </div>
   );

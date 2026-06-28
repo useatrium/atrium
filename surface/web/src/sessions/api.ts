@@ -43,7 +43,7 @@ export interface AppListRow {
   updatedAt: string;
 }
 
-/** Every event name the Centaur durable stream emits (notes/build-history/phase0/results/event-schema.md). */
+/** Every event name the Centaur durable stream emits (docs/archive/notes/build-history/phase0/results/event-schema.md). */
 export const FRAME_EVENT_NAMES = [
   'execution_state',
   'execution_started',
