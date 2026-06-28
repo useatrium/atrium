@@ -167,7 +167,7 @@ overlay:
 
 # Ordered repo-cache-backed overlays. Each source repo is synced by repo-cache;
 # api-rs reads tools/workflows from /var/lib/centaur/repos, while sandboxes read
-# matching workflow/skill paths from /home/agent/github. Later sources shadow
+# matching workflow/skill paths from /home/agent/repos. Later sources shadow
 # earlier ones when names collide. When sources is empty, toolServer.repo and
 # toolServer.extraSources are mapped into this shape for compatibility.
 #
