@@ -72,6 +72,7 @@ import { useChatMessageActions } from './useChatMessageActions';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
+import { useSessionActions } from './useSessionActions';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
@@ -244,29 +245,11 @@ export function Chat({
 
   const { markRead, noteReadCursor } = useReadMarks({ dispatch, enqueueOp, onApiError });
 
-  const steerSession = useCallback(
-    async (sessionId: string, text: string): Promise<void> => {
-      clearFailedSteer(sessionId);
-      await enqueueOp({
-        opId: randomId(),
-        opType: 'session.steer',
-        payload: { sessionId, text },
-      });
-    },
-    [clearFailedSteer, enqueueOp],
-  );
-
-  const cancelSession = useCallback(
-    async (sessionId: string): Promise<void> => {
-      clearFailedCancel(sessionId);
-      await enqueueOp({
-        opId: randomId(),
-        opType: 'session.cancel',
-        payload: { sessionId },
-      });
-    },
-    [clearFailedCancel, enqueueOp],
-  );
+  const { answerSessionQuestion, cancelSession, steerSession } = useSessionActions({
+    clearFailedCancel,
+    clearFailedSteer,
+    enqueueOp,
+  });
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -859,18 +842,6 @@ export function Chat({
     getChannels: () => stateRef.current.channels,
     selectChannel,
   });
-
-  const answerSessionQuestion = async (
-    sessionId: string,
-    questionId: string,
-    answers: Record<string, { answers: string[] }>,
-  ): Promise<void> => {
-    await enqueueOp({
-      opId: randomId(),
-      opType: 'session.answer',
-      payload: { sessionId, questionId, answers },
-    });
-  };
 
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
 
