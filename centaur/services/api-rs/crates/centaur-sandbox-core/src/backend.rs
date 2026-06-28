@@ -8,6 +8,9 @@ pub struct PrepareClaimedOverlayHome<'a> {
     pub thread_key: &'a str,
     pub execution_id: &'a str,
     pub repos_json: &'a str,
+    pub harness: Option<&'a str>,
+    pub harness_thread_id: Option<&'a str>,
+    pub harness_home: Option<&'a str>,
 }
 
 #[async_trait]

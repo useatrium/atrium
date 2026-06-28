@@ -2000,6 +2000,9 @@ impl SessionRuntime {
                                         thread_key: thread_key.as_str(),
                                         execution_id,
                                         repos_json,
+                                        harness: Some(harness_server_subcommand(harness_type)),
+                                        harness_thread_id: resume_thread_id.as_deref(),
+                                        harness_home: harness_home_for_spec(harness_type),
                                     },
                                 )
                                 .await
@@ -2839,6 +2842,25 @@ fn harness_server_subcommand(harness: &HarnessType) -> &'static str {
         HarnessType::Codex => "codex",
         HarnessType::ClaudeCode => "claude-code",
         HarnessType::Amp => "amp",
+    }
+}
+
+fn harness_home_for_spec(harness: &HarnessType) -> Option<&'static str> {
+    let flat_home = std::env::var("CENTAUR_SANDBOX_OVERLAY_FLAT_HOME")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "True" | "TRUE" | "yes" | "on"))
+        .unwrap_or(false);
+    match harness {
+        HarnessType::Codex => Some(if flat_home {
+            "/home/agent/.codex"
+        } else {
+            SANDBOX_CODEX_HOME
+        }),
+        HarnessType::ClaudeCode => Some(if flat_home {
+            "/home/agent/.claude"
+        } else {
+            SANDBOX_CLAUDE_CONFIG_DIR
+        }),
+        HarnessType::Amp => None,
     }
 }
 

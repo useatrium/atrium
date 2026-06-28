@@ -1,7 +1,7 @@
 //! provision-overlay — per-session overlay setup for C4 e2e pods and production.
 //!
 //! Contract:
-//! `provision-overlay --session <id> [--manifest-only]
+//! `provision-overlay --session <id> [--manifest-only] [--replace]
 //!   [--overlays-root /var/lib/centaur/overlays] [--merged-root /run/centaur/merged]
 //!   [--merged-path /run/centaur/merged/<id>]
 //!   [--lower <dir>] [--harness <kind>] [--harness-thread-id <id>]
@@ -25,6 +25,7 @@ use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
 use centaur_node_sync::http_client::HttpAtriumClient;
 use centaur_node_sync::overlay_mount::{
     DEFAULT_AGENT_UID, LowerKind, OverlayMountPlan, mount_overlay, plan_overlay_mount,
+    unmount_overlay,
 };
 use centaur_node_sync::session_manifest::{
     RepoMount, SessionManifest, normalize_harness, write_manifest,
@@ -37,6 +38,7 @@ struct Config {
     session: String,
     atrium_session: String,
     manifest_only: bool,
+    replace: bool,
     overlays_root: PathBuf,
     merged_root: PathBuf,
     merged_path: Option<PathBuf>,
@@ -120,6 +122,9 @@ fn run() -> Result<(), String> {
     )?;
 
     if cfg.manifest_only {
+        if cfg.replace {
+            unmount_overlay(&plan)?;
+        }
         println!(
             "provision-overlay: wrote manifest for session {} at {}",
             cfg.session,
@@ -130,6 +135,9 @@ fn run() -> Result<(), String> {
     }
 
     hydrate_artifacts_if_enabled(&cfg, &mut plan)?;
+    if cfg.replace {
+        unmount_overlay(&plan)?;
+    }
     let mounted = mount_overlay(plan, cfg.agent_uid)?;
     if mounted.lower.kind == LowerKind::Repo {
         write_manifest(
@@ -194,6 +202,7 @@ where
     let mut session = None;
     let mut atrium_session = String::new();
     let mut manifest_only = false;
+    let mut replace = false;
     let mut overlays_root = PathBuf::from("/var/lib/centaur/overlays");
     let mut merged_root = PathBuf::from("/run/centaur/merged");
     let mut merged_path = None;
@@ -228,6 +237,9 @@ where
         match arg.as_str() {
             "--manifest-only" => {
                 manifest_only = true;
+            }
+            "--replace" => {
+                replace = true;
             }
             "--session" => {
                 session = Some(next_value(&mut iter, "--session")?);
@@ -307,6 +319,7 @@ where
         session,
         atrium_session,
         manifest_only,
+        replace,
         overlays_root,
         merged_root,
         merged_path,
@@ -387,7 +400,7 @@ fn parse_bool(name: &str, value: &str) -> Result<bool, String> {
 
 fn print_help() {
     println!(
-        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--overlays-root PATH] [--merged-root PATH] [--merged-path PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
+        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--replace] [--overlays-root PATH] [--merged-root PATH] [--merged-path PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
     );
 }
 
@@ -448,9 +461,23 @@ mod tests {
         .unwrap();
 
         assert!(cfg.manifest_only);
+        assert!(!cfg.replace);
         assert_eq!(cfg.session, "sess-1");
         assert_eq!(cfg.agent_uid, Some(4242));
         assert!(!cfg.flat_home);
+    }
+
+    #[test]
+    fn parse_replace_flag() {
+        let cfg = parse_args([
+            OsString::from("--session"),
+            OsString::from("sess-1"),
+            OsString::from("--replace"),
+        ])
+        .unwrap();
+
+        assert!(cfg.replace);
+        assert!(!cfg.manifest_only);
     }
 
     #[test]
