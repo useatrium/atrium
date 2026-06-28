@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import {
   ApiError,
   api,
-  type AgentProfile,
   type Channel,
   type Workspace,
 } from './api';
@@ -72,7 +71,9 @@ import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-clie
 import { useDialog } from './useDialog';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
+import { useAgentProfiles } from './useAgentProfiles';
 import { useCall } from './useCall';
+import { useCallsAvailable } from './useCallsAvailable';
 import { useProviderCredentials } from './useProviderCredentials';
 
 const PAGE_SIZE = 50;
@@ -157,7 +158,7 @@ export function Chat({
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const calls = useCall(me, state.channels);
-  const [callsAvailable, setCallsAvailable] = useState(false);
+  const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
   stateRef.current = state;
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
@@ -189,19 +190,6 @@ export function Chat({
     void eventCache.saveSyncCursor(cursor).catch((err: unknown) => {
       console.warn('failed to cache sync cursor', err);
     });
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .authMethods()
-      .then((methods) => {
-        if (!cancelled) setCallsAvailable(methods.calls === true);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const invalidateAuth = useCallback(() => {
@@ -740,7 +728,7 @@ export function Chat({
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [demoStarting, setDemoStarting] = useState(false);
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  const agentProfiles = useAgentProfiles();
   const {
     disconnectClaude,
     disconnectCodex,
@@ -751,14 +739,6 @@ export function Chat({
     saveCodexAuthJson,
     setProviderDialog,
   } = useProviderCredentials();
-
-  useEffect(() => {
-    api.agentProfiles()
-      .then(({ profiles }) => setAgentProfiles(profiles))
-      .catch((err: unknown) => {
-        console.warn('failed to load agent profiles', err);
-      });
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
