@@ -14,6 +14,7 @@ const DEFAULT_MERGED_ROOT: &str = "/run/centaur/merged";
 const DEFAULT_ATRIUM_ROOT: &str = "/var/lib/centaur/atrium";
 const DEFAULT_WORKSPACE_MOUNT_PATH: &str = "/workspace";
 pub(crate) const DEFAULT_HOME_MOUNT_PATH: &str = "/home/agent";
+pub(crate) const DEFAULT_HOME_PARENT_MOUNT_PATH: &str = "/home";
 const DEFAULT_ATRIUM_MOUNT_PATH: &str = "/atrium";
 const DEFAULT_CONTEXT_MOUNT_PATH: &str = "/home/agent/context";
 const DEFAULT_AGENT_UID: u32 = 1001;
@@ -63,6 +64,7 @@ pub(crate) struct OverlayMetadata {
     pub(crate) harness_home: Option<String>,
     pub(crate) repo: Option<String>,
     pub(crate) repos_json: Option<String>,
+    pub(crate) warm_sandbox: bool,
 }
 
 impl OverlayMetadata {
@@ -94,6 +96,7 @@ impl OverlayMetadata {
             harness_home,
             repo: env_value(spec, "AGENT_REPO").map(str::to_owned),
             repos_json: env_value(spec, "AGENT_REPOS_JSON").map(str::to_owned),
+            warm_sandbox: env_value(spec, "CENTAUR_WARM_SANDBOX").is_some_and(truthy_env_value),
         }
     }
 }
@@ -114,6 +117,10 @@ pub(crate) fn overlay_manifest_init_container_json(
         "--agent-uid".to_owned(),
         metadata.agent_uid.to_string(),
     ];
+    if warm_flat_home_claim_slot(overlay, metadata) {
+        args.push("--merged-path".to_owned());
+        args.push(warm_flat_home_path(overlay, session));
+    }
     push_optional_arg(
         &mut args,
         "--atrium-session",
@@ -167,12 +174,18 @@ pub(crate) fn overlay_manifest_init_container_json(
 pub(crate) fn overlay_readiness_init_container_json(
     overlay: &OverlayConfig,
     session: &str,
+    metadata: &OverlayMetadata,
 ) -> Value {
+    let ready_path = if warm_flat_home_claim_slot(overlay, metadata) {
+        warm_flat_home_path(overlay, session)
+    } else {
+        merged_session_path(overlay, session)
+    };
     json!({
         "name": "overlay-readiness-wait",
         "image": overlay.image,
         "imagePullPolicy": "IfNotPresent",
-        "command": ["/bin/sh", "-ceu", readiness_wait_script(overlay, session)],
+        "command": ["/bin/sh", "-ceu", readiness_wait_script(&ready_path)],
         "securityContext": {
             "privileged": false,
             "allowPrivilegeEscalation": false,
@@ -268,6 +281,11 @@ pub(crate) fn warmcache_hydrate_init_container_json(
 }
 
 pub(crate) fn overlay_volumes_json(overlay: &OverlayConfig, session: &str) -> Vec<Value> {
+    let workspace_host_path = if overlay.flat_home {
+        path_string(&overlay.merged_root.join(session))
+    } else {
+        merged_session_path(overlay, session)
+    };
     vec![
         json!({
             "name": SESSION_UPPER_VOLUME,
@@ -279,16 +297,24 @@ pub(crate) fn overlay_volumes_json(overlay: &OverlayConfig, session: &str) -> Ve
         json!({
             "name": WORKSPACE_VOLUME,
             "hostPath": {
-                "path": merged_session_path(overlay, session),
+                "path": workspace_host_path,
                 "type": "DirectoryOrCreate",
             },
         }),
     ]
 }
 
-pub(crate) fn overlay_agent_volume_mount_json(overlay: &OverlayConfig, _session: &str) -> Value {
+pub(crate) fn overlay_agent_volume_mount_json(
+    overlay: &OverlayConfig,
+    _session: &str,
+    metadata: &OverlayMetadata,
+) -> Value {
     let mount_path = if overlay.flat_home {
-        DEFAULT_HOME_MOUNT_PATH
+        if warm_flat_home_claim_slot(overlay, metadata) {
+            DEFAULT_HOME_PARENT_MOUNT_PATH
+        } else {
+            DEFAULT_HOME_MOUNT_PATH
+        }
     } else {
         overlay.workspace_mount_path.as_str()
     };
@@ -324,8 +350,8 @@ pub(crate) fn atrium_volume_json(session: &str) -> Value {
     })
 }
 
-fn readiness_wait_script(overlay: &OverlayConfig, session: &str) -> String {
-    let marker = Path::new(&merged_session_path(overlay, session)).join(READY_MARKER_FILE);
+fn readiness_wait_script(ready_path: &str) -> String {
+    let marker = Path::new(ready_path).join(READY_MARKER_FILE);
     format!(
         "marker={marker:?}\n\
          deadline=$(( $(date +%s) + {READINESS_TIMEOUT_SECS} ))\n\
@@ -362,8 +388,20 @@ fn supported_provisioner_harness(value: &str) -> Option<String> {
     }
 }
 
+fn truthy_env_value(value: &str) -> bool {
+    matches!(value.trim(), "1" | "true" | "True" | "TRUE" | "yes" | "on")
+}
+
 fn merged_session_path(overlay: &OverlayConfig, session: &str) -> String {
     path_string(&overlay.merged_root.join(session))
+}
+
+fn warm_flat_home_claim_slot(overlay: &OverlayConfig, metadata: &OverlayMetadata) -> bool {
+    overlay.flat_home && metadata.warm_sandbox
+}
+
+fn warm_flat_home_path(overlay: &OverlayConfig, session: &str) -> String {
+    path_string(&overlay.merged_root.join(session).join("agent"))
 }
 
 fn atrium_session_path(session: &str) -> String {
@@ -383,9 +421,10 @@ mod tests {
     #[test]
     fn agent_mount_json_defaults_to_workspace_and_atrium() {
         let overlay = OverlayConfig::new("centaur-node-sync:test");
+        let metadata = OverlayMetadata::default();
 
         assert_eq!(
-            overlay_agent_volume_mount_json(&overlay, "asbx-test"),
+            overlay_agent_volume_mount_json(&overlay, "asbx-test", &metadata),
             json!({
                 "name": WORKSPACE_VOLUME,
                 "mountPath": "/workspace",
@@ -406,9 +445,13 @@ mod tests {
     fn agent_mount_json_uses_flat_home_paths_when_enabled() {
         let mut overlay = OverlayConfig::new("centaur-node-sync:test");
         overlay.flat_home = true;
+        let metadata = OverlayMetadata {
+            atrium_session: Some("thread-1".to_owned()),
+            ..OverlayMetadata::default()
+        };
 
         assert_eq!(
-            overlay_agent_volume_mount_json(&overlay, "asbx-test"),
+            overlay_agent_volume_mount_json(&overlay, "asbx-test", &metadata),
             json!({
                 "name": WORKSPACE_VOLUME,
                 "mountPath": "/home/agent",
@@ -421,6 +464,25 @@ mod tests {
                 "name": ATRIUM_CONTEXT_VOLUME,
                 "mountPath": "/home/agent/context",
                 "readOnly": true,
+            })
+        );
+    }
+
+    #[test]
+    fn agent_mount_json_uses_home_parent_for_warm_flat_home() {
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let metadata = OverlayMetadata {
+            warm_sandbox: true,
+            ..OverlayMetadata::default()
+        };
+
+        assert_eq!(
+            overlay_agent_volume_mount_json(&overlay, "asbx-test", &metadata),
+            json!({
+                "name": WORKSPACE_VOLUME,
+                "mountPath": "/home",
+                "mountPropagation": "HostToContainer",
             })
         );
     }

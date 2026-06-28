@@ -755,6 +755,7 @@ fn build_agent_sandbox(
         volume_mounts.push(overlay::overlay_agent_volume_mount_json(
             overlay,
             id.as_str(),
+            &metadata,
         ));
         volume_mounts.push(overlay::atrium_agent_volume_mount_json(overlay));
         volumes.extend(overlay::overlay_volumes_json(overlay, id.as_str()));
@@ -767,6 +768,7 @@ fn build_agent_sandbox(
         init_containers.push(overlay::overlay_readiness_init_container_json(
             overlay,
             id.as_str(),
+            &metadata,
         ));
         if let Some(warmcache) = config
             .warmcache_hydrate
@@ -1485,6 +1487,76 @@ mod tests {
         assert_eq!(context_mount.mount_path, "/home/agent/context");
         assert_eq!(context_mount.read_only, Some(true));
         assert_eq!(context_mount.mount_propagation, None);
+    }
+
+    #[test]
+    fn warm_flat_home_mounts_shared_home_parent_and_targets_agent_subpath() {
+        let spec = SandboxSpec::new("centaur-agent:latest").env("CENTAUR_WARM_SANDBOX", "1");
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay);
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-warm"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        assert_eq!(
+            pod_spec.containers[0].working_dir.as_deref(),
+            Some("/home/agent")
+        );
+
+        let agent_mounts = pod_spec.containers[0].volume_mounts.as_ref().unwrap();
+        let workspace_mount = agent_mounts
+            .iter()
+            .find(|mount| mount.name == "workspace")
+            .expect("workspace mount");
+        assert_eq!(workspace_mount.mount_path, "/home");
+        assert_eq!(
+            workspace_mount.mount_propagation.as_deref(),
+            Some("HostToContainer")
+        );
+
+        let workspace_volume = pod_spec
+            .volumes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|volume| volume.name == "workspace")
+            .expect("workspace volume");
+        assert_eq!(
+            workspace_volume
+                .host_path
+                .as_ref()
+                .expect("workspace hostPath")
+                .path,
+            "/run/centaur/merged/asbx-warm"
+        );
+
+        let manifest = pod_spec
+            .init_containers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|container| container.name == "overlay-manifest-writer")
+            .expect("manifest writer");
+        let args = manifest.args.as_ref().expect("manifest args");
+        assert!(args.windows(2).any(|pair| {
+            pair == [
+                "--merged-path".to_owned(),
+                "/run/centaur/merged/asbx-warm/agent".to_owned(),
+            ]
+        }));
+
+        let readiness = pod_spec
+            .init_containers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|container| container.name == "overlay-readiness-wait")
+            .expect("readiness wait");
+        let readiness_command = readiness.command.as_ref().unwrap().join(" ");
+        assert!(
+            readiness_command
+                .contains("/run/centaur/merged/asbx-warm/agent/.centaur-workspace-ready")
+        );
     }
 
     #[test]

@@ -57,6 +57,7 @@ const CLAUDE_CODE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 const CODEX_AUTH_JSON_ENV: &str = "CODEX_AUTH_JSON";
 const SESSION_REPOS_METADATA_KEY: &str = "centaur_session_repos";
 const AGENT_REPOS_JSON_ENV: &str = "AGENT_REPOS_JSON";
+const CENTAUR_WARM_SANDBOX_ENV: &str = "CENTAUR_WARM_SANDBOX";
 const SANDBOX_STATE_DIR: &str = "/home/agent/state";
 const SANDBOX_CODEX_HOME: &str = "/home/agent/state/codex";
 const SANDBOX_CLAUDE_CONFIG_DIR: &str = "/home/agent/state/claude";
@@ -2756,10 +2757,11 @@ impl SandboxWorkloadMode {
     }
 
     fn warm_spec(&self) -> SandboxSpec {
-        match self {
+        let spec = match self {
             Self::MockAppServer { .. } => self.spec_for(None, &HarnessType::Codex, None),
             Self::CodexAppServer { harness, .. } => self.spec_for(None, harness, None),
-        }
+        };
+        spec.env(CENTAUR_WARM_SANDBOX_ENV, "1")
     }
 
     fn spec_for(
@@ -6520,6 +6522,8 @@ mod tests {
             Some(thread_key.as_str())
         );
         assert_eq!(env_value(&warm_spec, "CENTAUR_THREAD_KEY"), None);
+        assert_eq!(env_value(&warm_spec, CENTAUR_WARM_SANDBOX_ENV), Some("1"));
+        assert_eq!(env_value(&claimed_spec, CENTAUR_WARM_SANDBOX_ENV), None);
     }
 
     #[test]
