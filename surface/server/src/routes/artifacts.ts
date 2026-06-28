@@ -10,6 +10,7 @@ import { displaySessionArtifactPath } from '../artifact-path.js';
 import { canonicalizeRouteArtifactPath, firstHeader, normalizeMime } from '../artifact-route-utils.js';
 import { writeBackArtifact, writeBackDelete } from '../artifact-writeback.js';
 import { normalizeAppRelPath } from '../app-registry.js';
+import { listLatestAppPresentations, refreshAppPresentations } from '../app-presentations.js';
 import type { ArtifactServePlan, SessionRuns } from '../session-runs.js';
 import { sanitizeFilename } from '../safe-filename.js';
 import { getObjectBytes, headObject, uploadObject } from '../s3.js';
@@ -116,6 +117,10 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function jsonNumberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === 'number') : [];
+}
+
 export async function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRouteDeps): Promise<void> {
   const { pool, sessionRuns, requireSessionAccess, sessionArtifactAccess, serializeArtifactRoots } = deps;
 
@@ -181,6 +186,35 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
     if (!user) return;
     const { id } = req.params as { id: string };
     const access = await sessionArtifactAccess(id, user.id);
+    await refreshAppPresentations(pool, { sessionId: id, getObjectBytes }).catch((err) => {
+      req.log.warn({ err, sessionId: id }, 'failed to refresh app presentations');
+    });
+    const persisted = await listLatestAppPresentations(pool, id);
+    if (persisted.length > 0) {
+      const presentations = persisted
+        .map((row) => {
+          const path = `shared/apps/${row.app_slug}/${row.entry_path}`;
+          if (!artifactPathInRoots(path, access.readableRoots)) return null;
+          return {
+            id: `artifact-presented:${path}`,
+            presentationId: row.id,
+            version: row.version,
+            appSlug: row.app_slug,
+            path,
+            title: row.title,
+            renderer: row.renderer,
+            description: row.description,
+            previewUrl: row.preview_url,
+            previewSizePolicy: row.preview_size_policy,
+            statePolicy: row.state_policy,
+            executionId: null,
+            sourceEventIds: jsonNumberArray(row.source_event_ids),
+          };
+        })
+        .filter((presentation): presentation is NonNullable<typeof presentation> => presentation !== null)
+        .sort((a, b) => a.path.localeCompare(b.path));
+      return reply.send({ presentations });
+    }
     const res = await pool.query<{ path: string; s3_key: string | null }>(
       `SELECT a.path, b.s3_key
          FROM artifacts a
@@ -188,10 +222,11 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
          JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
          LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
         WHERE a.workspace_id = $1
+          AND a.session_id = $2
           AND a.path LIKE 'shared/apps/%/%'
           AND v.kind <> 'deleted'
         ORDER BY a.path ASC`,
-      [access.workspaceId],
+      [access.workspaceId, id],
     );
     const dirs = new Map<string, Map<string, string | null>>();
     for (const row of res.rows) {

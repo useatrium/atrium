@@ -302,4 +302,37 @@ describe('apps origin', () => {
       await origin.close();
     }
   });
+
+  it('serves html extensions inline even when captured with generic mime', async () => {
+    const registry = await appRegistry();
+    await capture('apps/generic-html/index.html', '6'.repeat(64), '<h1>generic</h1>', 'application/octet-stream');
+    const published = await registry.publish({
+      sessionId,
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      userId: fx.userId,
+      name: 'generic-html',
+      scope: 'channel',
+      entry: 'index.html',
+    });
+    const launch = await registry.launch(published.appId, fx.userId);
+    const origin = await buildAppsOrigin({
+      pool,
+      signingSecret: secret,
+      storage: {
+        getObjectStream: async (key) => Readable.from([bytesByKey.get(key) ?? Buffer.alloc(0)]),
+      },
+    });
+    await origin.ready();
+    try {
+      const url = new URL(launch.url);
+      const res = await origin.inject({ method: 'GET', url: `${url.pathname}${url.search}` });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.payload).toBe('<h1>generic</h1>');
+    } finally {
+      await origin.close();
+    }
+  });
 });

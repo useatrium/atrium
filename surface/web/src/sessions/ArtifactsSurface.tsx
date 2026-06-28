@@ -44,9 +44,27 @@ function canPreviewArtifact(artifact: Artifact): boolean {
   return artifact.mime === 'text/html' || /\.(html?|jsx|tsx)$/i.test(artifact.path);
 }
 
-function previewUrl(sessionId: string, artifact: Artifact): string {
+function previewArtifactPath(artifact: Artifact, presentation?: ArtifactPresentation): string {
+  const appPreviewUrl = presentation?.previewUrl;
+  if (!appPreviewUrl) return artifact.path;
+  const pathPart = appPreviewUrl.split(/[?#]/, 1)[0];
+  if (!pathPart) return artifact.path;
+  const match = /^shared\/apps\/([a-z0-9][a-z0-9_-]*)\/(.+)$/i.exec(artifact.path);
+  if (!match) return artifact.path;
+  return `shared/apps/${match[1]}/${pathPart}`;
+}
+
+function previewUrl(sessionId: string, artifact: Artifact, presentation?: ArtifactPresentation): string {
   const renderer = /\.(jsx|tsx)$/i.test(artifact.path) ? 'react-jsx' : 'html-app';
-  return `/api/sessions/${sessionId}/artifacts/preview?path=${encodeURIComponent(artifact.path)}&renderer=${renderer}`;
+  const params = new URLSearchParams({ path: previewArtifactPath(artifact, presentation), renderer });
+  const appPreviewUrl = presentation?.previewUrl;
+  if (appPreviewUrl) {
+    const query = appPreviewUrl.split('?', 2)[1] ?? '';
+    for (const [key, value] of new URLSearchParams(query)) {
+      if (!params.has(key)) params.set(key, value);
+    }
+  }
+  return `/api/sessions/${sessionId}/artifacts/preview?${params.toString()}`;
 }
 
 /** URL atrium serves the bytes from (presigned-GET redirect server-side). Null
@@ -221,7 +239,7 @@ export function ArtifactPreviewModal({
           <div className="truncate font-mono text-3xs text-fg-muted">{artifact.path}</div>
         </div>
         <a
-          href={previewUrl(sessionId, artifact)}
+          href={previewUrl(sessionId, artifact, presentation)}
           target="_blank"
           rel="noopener noreferrer"
           className="rounded-md border border-edge px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
@@ -239,7 +257,7 @@ export function ArtifactPreviewModal({
       </header>
       <iframe
         title={`Artifact preview: ${basename(artifact.path)}`}
-        src={previewUrl(sessionId, artifact)}
+        src={previewUrl(sessionId, artifact, presentation)}
         sandbox="allow-scripts allow-forms allow-popups allow-modals"
         className="min-h-0 flex-1 bg-white"
       />
