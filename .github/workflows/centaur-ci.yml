@@ -296,6 +296,17 @@ jobs:
           IMAGE: centaur-node-sync:e2e
         run: bash crates/centaur-node-sync/ci/warmcache-pod-e2e.sh
 
+      # SPIKE (warm-pool for repo sessions): proves the post-claim in-place overlay remount
+      # propagates into an already-running pod (HostToContainer post-start). Informational.
+      - name: Warm-pool repo-rebind spike POC (informational)
+        continue-on-error: true
+        working-directory: centaur/services/api-rs
+        env:
+          KIND_CLUSTER: centaur
+          NS: centaur
+          IMAGE: centaur-node-sync:e2e
+        run: bash crates/centaur-node-sync/ci/warmpool-rebind-poc.sh
+
       - name: Dump pod diagnostics
         if: ${{ failure() }}
         run: |
