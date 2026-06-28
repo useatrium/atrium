@@ -6483,6 +6483,35 @@ mod tests {
     }
 
     #[test]
+    fn warm_spec_carries_workload_repo_defaults() {
+        let workload = SandboxWorkloadMode::codex_app_server(
+            "centaur-agent:latest",
+            [(
+                AGENT_REPOS_JSON_ENV.to_owned(),
+                r#"[{"repo":"acme/default","ref":"main"}]"#.to_owned(),
+            )],
+            HarnessType::Codex,
+        );
+
+        let warm_spec = workload.warm_spec();
+
+        assert_eq!(
+            warm_spec
+                .env
+                .iter()
+                .find(|env| env.name == AGENT_REPOS_JSON_ENV)
+                .map(|env| env.value.as_str()),
+            Some(r#"[{"repo":"acme/default","ref":"main"}]"#)
+        );
+        assert!(
+            warm_spec
+                .env
+                .iter()
+                .all(|env| env.name != "CENTAUR_THREAD_KEY")
+        );
+    }
+
+    #[test]
     fn input_line_with_session_context_enriches_json_objects() {
         let thread_key = ThreadKey::parse("chat:C123:1780000000.000000").unwrap();
         let trace = SessionTraceContext::new(&thread_key, None);
