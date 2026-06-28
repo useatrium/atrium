@@ -2,6 +2,15 @@
   "name": "@atrium/mcp",
   "version": "0.1.0",
   "description": "Atrium MCP server — exposes addressable entries as resources (atrium://entry/<handle>).",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gbasin/atrium.git",
+    "directory": "surface/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/gbasin/atrium/issues"
+  },
   "type": "module",
   "bin": {
     "atrium-mcp": "./dist/index.js"
@@ -9,6 +18,20 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "tsx src/index.ts",

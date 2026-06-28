@@ -70,7 +70,7 @@ Examples:
 ```
 feat(sync): inbound node-daemon hydration
 fix(web): stop session pane flicker on reconnect
-docs: add top-level README and MIT LICENSE
+docs: add top-level README and license
 ci: enforce Conventional Commit PR titles for squash merges
 ```
 

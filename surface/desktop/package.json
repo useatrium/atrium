@@ -1,6 +1,7 @@
 {
   "name": "@atrium/desktop",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "version": "0.1.0",
   "description": "Atrium desktop app — Electron shell around @atrium/web (bundle-local + token auth)",
   "type": "module",

@@ -1,0 +1,11 @@
+Atrium
+Copyright (C) 2026 Gary Basin
+
+Atrium is licensed under the GNU Affero General Public License, version 3 or
+later. See LICENSE.
+
+The vendored Centaur runtime under centaur/ is derived from
+paradigmxyz/centaur and retains its upstream license terms:
+Apache-2.0 OR MIT. See centaur/LICENSE.
+
+Third-party dependencies retain their own license terms.

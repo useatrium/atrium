@@ -46,9 +46,7 @@ mac:
 afterAllArtifactBuild: build/notarize-dmg.cjs
 
 # Update feed for electron-updater (see surface/desktop/README.md → Auto-update).
-# The source repo is PRIVATE: for real distribution, point `repo` at a dedicated
-# PUBLIC releases repo (e.g. atrium-releases) so the app needs no embedded token.
-# `repo: atrium` here works for a personal self-test (run the app with GH_TOKEN set).
+# Public releases can be served directly from this repository's GitHub Releases.
 publish:
   provider: github
   owner: gbasin
