@@ -86,7 +86,7 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
       case 'files':
         return <FilesSurface sessionId={sessionId} onClose={noop} embedded />;
       case 'apps':
-        return <AppsSurface sessionId={sessionId} artifacts={artifacts} embedded />;
+        return <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />;
       default:
         return assertNever(activeTab);
     }

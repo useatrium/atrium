@@ -218,7 +218,7 @@ export function WorkDrawer({
       ) : active === 'files' ? (
         <FilesSurface sessionId={sessionId} onClose={onClose} embedded />
       ) : active === 'apps' ? (
-        <AppsSurface sessionId={sessionId} artifacts={artifacts} embedded />
+        <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />
       ) : active === 'changes' ? (
         <WhatChangedSurface
           changes={changes}

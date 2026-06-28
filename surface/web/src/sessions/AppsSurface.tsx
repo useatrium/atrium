@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Artifact } from '@atrium/centaur-client';
+import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { EmptyState } from './EmptyState';
+import { ArtifactPreviewModal } from './ArtifactsSurface';
 import { sessionsApi, type AppListRow } from './api';
 
 interface DetectedAppRoot {
@@ -35,22 +36,66 @@ function versionLabel(version: number | null): string {
   return version == null ? 'v-' : `v${version}`;
 }
 
+function presentationRoot(presentation: ArtifactPresentation): DetectedAppRoot | null {
+  const match = /^shared\/apps\/([a-z0-9][a-z0-9_-]*)\/(.+)$/i.exec(presentation.path);
+  if (!match) return null;
+  const [, name, entry] = match;
+  return {
+    name: name!.toLowerCase(),
+    rootPath: `shared/apps/${name!.toLowerCase()}/`,
+    entry: entry!,
+  };
+}
+
+function presentationArtifact(presentation: ArtifactPresentation): Artifact {
+  return {
+    id: presentation.id,
+    path: presentation.path,
+    kind: 'created',
+    mime: /\.(jsx|tsx)$/i.test(presentation.path) ? 'text/jsx' : 'text/html',
+    size: 0,
+    sha256: '',
+    ref: null,
+    executionId: presentation.executionId,
+    sourceEventIds: presentation.sourceEventIds,
+  };
+}
+
 export function AppsSurface({
   sessionId,
   artifacts = [],
+  presentations = [],
   embedded = false,
 }: {
   sessionId: string;
   artifacts?: Artifact[];
+  presentations?: ArtifactPresentation[];
   embedded?: boolean;
 }) {
   const [apps, setApps] = useState<AppListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ArtifactPresentation | null>(null);
   const detected = useMemo(() => detectAppRoots(artifacts), [artifacts]);
+  const presented = useMemo(
+    () =>
+      presentations
+        .map((presentation) => {
+          const root = presentationRoot(presentation);
+          return root ? { presentation, root } : null;
+        })
+        .filter((row): row is { presentation: ArtifactPresentation; root: DetectedAppRoot } => row !== null),
+    [presentations],
+  );
   const publishedNames = useMemo(() => new Set(apps.map((app) => app.name)), [apps]);
-  const unpublishedDetected = detected.filter((root) => !publishedNames.has(root.name));
+  const presentedNames = useMemo(() => new Set(presented.map(({ root }) => root.name)), [presented]);
+  const presentedByName = useMemo(
+    () => new Map(presented.map(({ root, presentation }) => [root.name, presentation])),
+    [presented],
+  );
+  const unpublishedDetected = detected.filter((root) => !publishedNames.has(root.name) && !presentedNames.has(root.name));
+  const unpublishedPresented = presented.filter(({ root }) => !publishedNames.has(root.name));
 
   async function refresh() {
     setLoading(true);
@@ -106,6 +151,41 @@ export function AppsSurface({
           {error}
         </div>
       )}
+      {unpublishedPresented.length > 0 && (
+        <section className="border-b border-edge">
+          <div className="bg-surface-raised/40 px-3 py-2 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
+            Generated apps
+          </div>
+          <div className="divide-y divide-edge">
+            {unpublishedPresented.map(({ presentation, root }) => (
+              <div key={presentation.path} className="flex items-center gap-3 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-fg">{presentation.title ?? root.name}</div>
+                  <div className="truncate font-mono text-3xs text-fg-muted">{presentation.path}</div>
+                  {presentation.description && (
+                    <div className="mt-0.5 truncate text-3xs text-fg-muted">{presentation.description}</div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreview(presentation)}
+                  className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => publish(root)}
+                  disabled={busy != null}
+                  className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
+                >
+                  {busy === `publish:${root.name}` ? 'Publishing' : 'Publish'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       {unpublishedDetected.length > 0 && (
         <section className="border-b border-edge">
           <div className="bg-surface-raised/40 px-3 py-2 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
@@ -133,7 +213,7 @@ export function AppsSurface({
       )}
       {loading ? (
         <div className="px-3 py-4 text-xs text-fg-muted">Loading apps...</div>
-      ) : apps.length === 0 && unpublishedDetected.length === 0 ? (
+      ) : apps.length === 0 && unpublishedDetected.length === 0 && unpublishedPresented.length === 0 ? (
         <EmptyState title="No published apps" hint="Agent-built apps under shared/apps will appear here." />
       ) : (
         <section>
@@ -141,34 +221,54 @@ export function AppsSurface({
             Published apps
           </div>
           <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2">
-            {apps.map((app) => (
-              <article key={app.id} className="rounded-md border border-edge bg-surface-raised/50 p-3">
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-fg">{app.name}</div>
-                    <div className="mt-0.5 truncate font-mono text-3xs text-fg-muted">
-                      {app.entryPath ?? 'index.html'}
+            {apps.map((app) => {
+              const appPresentation = presentedByName.get(app.name);
+              return (
+                <article key={app.id} className="rounded-md border border-edge bg-surface-raised/50 p-3">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-fg">{app.name}</div>
+                      <div className="mt-0.5 truncate font-mono text-3xs text-fg-muted">
+                        {app.entryPath ?? 'index.html'}
+                      </div>
                     </div>
+                    <span className="rounded bg-accent-surface px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent-text">
+                      {versionLabel(app.currentVersion)}
+                    </span>
                   </div>
-                  <span className="rounded bg-accent-surface px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent-text">
-                    {versionLabel(app.currentVersion)}
-                  </span>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => launch(app)}
-                    disabled={busy != null}
-                    className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {busy === `launch:${app.id}` ? 'Launching' : 'Launch'}
-                  </button>
-                  <span className="text-3xs uppercase tracking-wide text-fg-muted">{statusLabel(app.status)}</span>
-                </div>
-              </article>
-            ))}
+                  <div className="mt-3 flex items-center gap-2">
+                    {appPresentation && (
+                      <button
+                        type="button"
+                        onClick={() => setPreview(appPresentation)}
+                        className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
+                      >
+                        Preview
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => launch(app)}
+                      disabled={busy != null}
+                      className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {busy === `launch:${app.id}` ? 'Launching' : 'Launch'}
+                    </button>
+                    <span className="text-3xs uppercase tracking-wide text-fg-muted">{statusLabel(app.status)}</span>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
+      )}
+      {preview && (
+        <ArtifactPreviewModal
+          sessionId={sessionId}
+          artifact={presentationArtifact(preview)}
+          presentation={preview}
+          onClose={() => setPreview(null)}
+        />
       )}
     </div>
   );

@@ -70,6 +70,47 @@ async function renderPaneWithB() {
 }
 
 describe('session pane folds the B_tooltest stream', () => {
+  it('renders generated app presentations in the transcript', async () => {
+    vi.mocked(sessionsApi.listPresentations).mockResolvedValue({
+      presentations: [
+        {
+          id: 'artifact-presented:shared/apps/support-triage-console/index.html',
+          presentationId: 'presentation-1',
+          version: 1,
+          appSlug: 'support-triage-console',
+          path: 'shared/apps/support-triage-console/index.html',
+          title: 'Support Triage Console',
+          renderer: 'html-app',
+          description: 'Embedded support queue demo.',
+          previewUrl: 'index.html?preview=1',
+          previewSizePolicy: { enabled: true, defaultSize: 'card' },
+          statePolicy: { mode: 'isolated' },
+          executionId: null,
+          sourceEventIds: [],
+        },
+      ],
+    });
+
+    render(
+      <SessionPane
+        session={bSession({ status: 'completed', completedAt: new Date().toISOString() })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('app-presentation-card')).toBeTruthy());
+    expect(screen.getByText('Support Triage Console')).toBeTruthy();
+    expect(screen.queryByText('Embedded support queue demo.')).toBeNull();
+    expect(screen.queryByText('html-app')).toBeNull();
+    expect(screen.queryByText('v1')).toBeNull();
+    const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
+    expect(frame.getAttribute('src')).toContain('preview=1');
+    expect(frame.className).toContain('h-72');
+  });
+
   it('renders a Claude auth-required banner for the credential owner', () => {
     const onConnect = vi.fn();
     render(
