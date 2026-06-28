@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   ApiError,
-  api,
   type Channel,
   type Workspace,
+  api,
 } from './api';
 import { isDesktop, desktopWsUrl } from './desktop';
 import {
@@ -67,6 +67,7 @@ import {
 import {
   queuedOverlayAction,
 } from './chatQueuedOverlays';
+import { useChannelActions } from './useChannelActions';
 import { useChatMessageActions } from './useChatMessageActions';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
@@ -852,39 +853,12 @@ export function Chat({
     }
   };
 
-  const createChannel = async (name: string, isPrivate = false) => {
-    try {
-      const { channel } = await api.createChannel(name, { private: isPrivate });
-      dispatch({ type: 'channel-added', channel });
-      selectChannel(channel.id);
-    } catch (err) {
-      showErrorToast("Couldn't create the channel — try again.");
-      throw err;
-    }
-  };
-
-  const startDm = (userIds: string[]) => {
-    api
-      .createDmWithUsers(userIds)
-      .then(({ channel }) => {
-        dispatch({ type: 'channel-added', channel });
-        selectChannel(channel.id);
-      })
-      .catch(() => showErrorToast("Couldn't start the conversation — try again."));
-  };
-
-  const setMute = (channelId: string, muted: boolean) => {
-    const previousMuted = stateRef.current.channels.find((c) => c.id === channelId)?.muted === true;
-    dispatch({ type: 'mute-changed', channelId, muted });
-    void enqueueOp({
-      opId: randomId(),
-      opType: 'mute.set',
-      payload: { channelId, muted, previousMuted },
-    }).catch(() => {
-      dispatch({ type: 'mute-changed', channelId, muted: previousMuted });
-      showErrorToast("Couldn't queue the mute change.");
-    });
-  };
+  const { createChannel, setMute, startDm } = useChannelActions({
+    dispatch,
+    enqueueOp,
+    getChannels: () => stateRef.current.channels,
+    selectChannel,
+  });
 
   const answerSessionQuestion = async (
     sessionId: string,
