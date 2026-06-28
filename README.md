@@ -136,12 +136,12 @@ machine (the **node daemon**) does the copying in both directions:
        │     node daemon  (runs on the host machine)     │
        │     copies files out   ·   syncs updates in     │
        └───────▲────────────────────────┬──────────────┘
-               │ read the changes        │ write into /workspace
+               │ read changes/files      │ write into session files
        ┌───────┴────────────────────────▼──────────────┐
        │   Centaur sandbox   (nothing can connect in)    │
        │   ┌─────────────────────────────────────────┐  │
        │   │ harness  (Claude Code · Codex · amp · …) │  │
-       │   │ /workspace = the agent's files            │  │
+       │   │ HOME/work = session-visible files         │  │
        │   │ /atrium    = read-only team context       │  │
        │   └───────────────────┬─────────────────────┘  │
        └───────────────────────┼────────────────────────┘
@@ -174,11 +174,19 @@ Atrium stores each kind of thing the way that suits it:
 
 ### The agent's workspace
 
-Inside the sandbox the agent works in an ordinary folder, `/workspace`. It sees the
-shared files as a read-only base with its own changes layered on top, so its edits
-never touch anyone else's copy. Noisy folders (`node_modules`, `.venv`, caches,
-checked-out Git repos) are kept out of the shared pool so they don't get copied
-around by accident.
+Inside the sandbox the agent works in ordinary directories under its home folder.
+Durable work products are backed by Atrium's artifact ledger and scoped by path:
+
+- `scratch/<session-id>/...` is private durable scratch for that session.
+- `shared/global/...` is workspace-wide shared work.
+- `shared/apps/...` contains static app artifacts and publishable app bundles.
+- `shared/channels/<channel-id>/...` is channel-scoped shared work.
+
+The active channel root is writable for the session. Other public channels that a
+user can read may be listed and previewed, but they are read-only from that
+session. Noisy folders (`node_modules`, `.venv`, caches, checked-out Git repos)
+stay out of the artifact ledger; source code is synchronized through Git, not
+artifact capture.
 
 The agent also gets `/atrium`, a read-only view of team context: chat history, other
 agents' transcripts, a list of available files, and a search tool. It's prepared
@@ -191,9 +199,10 @@ Since nothing can connect into a sandbox, the host-side node daemon moves the da
 - **Out:** it reads what the agent changed from the host side, so the locked-down
   agent never has to expose anything. This grows with the number of machines, not
   the number of agents.
-- **In:** it writes fresh versions into the agent's workspace. If the agent also
-  changed that file, the two versions are merged; otherwise the update just lands.
-  Team context stays current by simply being added to, usually within seconds.
+- **In:** it hydrates the session-visible artifact roots from the ledger. If the
+  agent also changed a shared file, the two versions are recorded and flagged for
+  resolution instead of silently overwriting each other. Team context stays current
+  by being added to the read-only `/atrium` view.
 
 ### Conflicts don't block
 

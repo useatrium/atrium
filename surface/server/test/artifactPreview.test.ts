@@ -153,6 +153,24 @@ describe('artifact preview route', () => {
     expect(res.body).toBe(source);
   });
 
+  it('rejects top-level browser navigations to executable previews', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    await commitArtifact(sid, 'shared/global/preview.html', '<script>window.top.location="/"</script>', 'text/html');
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/preview?path=${encodeURIComponent('shared/global/preview.html')}`,
+      headers: { cookie, 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      error: 'preview_embed_required',
+      message: 'artifact previews must be embedded',
+    });
+  });
+
   it('wraps a jsx artifact in the react preview scaffold', async () => {
     const cookie = await loginCookie();
     const sid = await session();

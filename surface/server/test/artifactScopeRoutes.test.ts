@@ -243,6 +243,9 @@ describe('artifact scope route enforcement', () => {
     };
     expect(listBody.activePrefix).toBe(`shared/channels/${fx.channelId}`);
     expect(listBody.readableRoots.map((root) => root.prefix)).toContain(`shared/channels/${fx.otherChannelId}`);
+    expect(
+      listBody.readableRoots.find((root) => root.prefix === `shared/channels/${fx.otherChannelId}`)?.writable,
+    ).toBe(false);
     expect(listBody.rows.map((row) => row.path)).toContain(`shared/channels/${fx.otherChannelId}`);
 
     const res = await app.inject({
@@ -254,6 +257,38 @@ describe('artifact scope route enforcement', () => {
     expect(res.statusCode).toBe(302);
     expect(res.headers['x-artifact-canonical-path']).toBe(otherPath);
     expect(res.headers['x-artifact-display-path']).toBe(otherPath);
+  });
+
+  it('rejects writes into readable non-active public channels', async () => {
+    const cookie = await loginCookie();
+    const sid = await session();
+    const otherPath = `shared/channels/${fx.otherChannelId}/other.md`;
+
+    const userWrite = await app.inject({
+      method: 'PUT',
+      url: `/api/sessions/${sid}/files?path=${encodeURIComponent(otherPath)}`,
+      headers: { cookie, 'content-type': 'text/markdown' },
+      payload: 'should not land',
+    });
+
+    expect(userWrite.statusCode).toBe(403);
+    expect(userWrite.json()).toMatchObject({
+      error: 'artifact_read_only',
+      message: 'artifact path is not writable',
+    });
+
+    const agentCapture = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(otherPath)}`,
+      headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
+      payload: 'should not land',
+    });
+
+    expect(agentCapture.statusCode).toBe(403);
+    expect(agentCapture.json()).toMatchObject({
+      error: 'artifact_read_only',
+      message: 'artifact path is not writable',
+    });
   });
 
   it('keeps the internal raw path able to read a scratch artifact', async () => {

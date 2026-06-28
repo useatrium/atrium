@@ -57,6 +57,12 @@ function resolveArtifactPreviewRenderer(path: string, mime: string | null, hint?
   return 'html-app';
 }
 
+function isTopLevelDocumentNavigation(req: FastifyRequest): boolean {
+  const dest = firstHeader(req.headers['sec-fetch-dest'])?.toLowerCase();
+  const mode = firstHeader(req.headers['sec-fetch-mode'])?.toLowerCase();
+  return dest === 'document' && mode === 'navigate';
+}
+
 function reactJsxPreviewDocument(source: string, filename: string): string {
   const sourceJson = JSON.stringify(source);
   const titleJson = JSON.stringify(filename);
@@ -297,6 +303,11 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
   app.get('/api/sessions/:id/artifacts/preview', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
+    if (isTopLevelDocumentNavigation(req)) {
+      return reply
+        .code(403)
+        .send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
+    }
     const { id } = req.params as { id: string };
     const q = req.query as { path?: string; at?: string; renderer?: string };
     const rawPath = q.path;

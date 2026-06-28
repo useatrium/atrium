@@ -139,6 +139,8 @@ cookie-based, two tabs in the same profile share one login).
   `POST /api/sessions/:id/artifacts/:artifactId/resolve`.
   Raw artifact bytes for Centaur/node-sync use internal routes under
   `/api/internal/sessions/:id/artifacts/*`.
+  Executable artifact previews are served only for embedded previews; use
+  `/by-path` for raw download/open flows.
 - `POST /api/uploads`, `GET /api/files/:id`, `GET /api/files/:id/url`
 - `POST /api/calls`, `POST /api/calls/:id/accept|decline|leave`
 - `WS /ws` — client sends `{type:"subscribe", channelIds:[...]}` (full
@@ -162,3 +164,18 @@ and related tables) are updated in the same transaction as the event insert
 where the route needs a durable projection. A message with
 `thread_root_event_id` set is a reply; roots render in the channel timeline with
 a reply count, with edits folded through the latest `message.edited` event.
+
+## Artifact workspace model
+
+Artifact identity is workspace-scoped by canonical path. The reserved prefixes
+are:
+
+- `scratch/<session-id>/...` — private durable files for one session.
+- `shared/global/...` — workspace-wide artifacts.
+- `shared/apps/...` — static app artifacts and app bundles.
+- `shared/channels/<channel-id>/...` — channel-scoped artifacts.
+
+A session can write its scratch, `shared/global`, `shared/apps`, and its active
+channel root. Other readable channel roots remain visible for context but are
+read-only from that session. Git repos and build/cache directories are not
+artifact-synced; repo state is handled by Git and session WIP snapshots.

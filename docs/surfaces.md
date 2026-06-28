@@ -78,13 +78,21 @@ opened from the transcript and following peek → pin → detach. Tabs:
 - **Browse files** (`sessions/FilesSurface.tsx`) — read-only tree of the session's
   repo (git-backed) and captured artifacts (ledger-backed), with version history.
 - **Artifacts** (`sessions/ArtifactsSurface.tsx`) — the work-product gallery,
-  served via presigned URLs from the session's CAS ledger.
+  served via presigned URLs from the session's CAS ledger. Executable previews
+  render inside sandboxed iframes; raw open/download flows use the non-executing
+  artifact byte route.
 - **Conflicts** (`sessions/ConflictSurface.tsx`, `useConflicts.ts`) — appears only
   when two actors edited the same artifact concurrently; shows base/left/right
   (jj-style, both sides preserved) and lets you resolve.
 
 A **detached work tab** (`sessions/SessionWorkPage.tsx`, `/s/:id/work/:slug`)
 renders any one of these full-page, folding the same live session stream.
+
+Artifact roots are path-scoped: session-private scratch under
+`scratch/<session-id>`, workspace/global work under `shared/global`, app bundles
+under `shared/apps`, and channel work under `shared/channels/<channel-id>`. The
+active channel is writable for a session; other readable channels are browsable
+context, not write targets.
 
 ## Settings & connectors
 

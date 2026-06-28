@@ -238,14 +238,6 @@ export function ArtifactPreviewModal({
           <div className="truncate text-xs font-semibold text-fg">{title}</div>
           <div className="truncate font-mono text-3xs text-fg-muted">{artifact.path}</div>
         </div>
-        <a
-          href={previewUrl(sessionId, artifact, presentation)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-md border border-edge px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
-        >
-          Open
-        </a>
         <button
           type="button"
           onClick={onClose}

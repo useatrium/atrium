@@ -99,7 +99,7 @@ export async function readableArtifactRootsForSession(
     ...readableChannelIds.map((id) => ({
       prefix: `shared/channels/${id}`,
       kind: 'workspace' as const,
-      writable: true,
+      writable: id === row.channel_id,
     })),
   ];
   const deduped = dedupeRoots(readableRoots);
