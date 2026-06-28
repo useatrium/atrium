@@ -1,0 +1,67 @@
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    target_label = "job"
+    replacement  = "docker"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  labels           = { job = "docker" }
+  targets          = discovery.relabel.docker_logs.output
+  refresh_interval = "5s"
+  forward_to       = [loki.process.docker_guardrails.receiver]
+}
+
+loki.process "docker_guardrails" {
+  forward_to = [loki.relabel.low_cardinality.receiver]
+
+  stage.drop {
+    older_than          = "1h"
+    drop_counter_reason = "older_than_1h"
+  }
+
+  stage.limit {
+    rate  = 500
+    burst = 1000
+    drop  = true
+  }
+}
+
+loki.relabel "low_cardinality" {
+  forward_to = [loki.write.local.receiver]
+
+  rule {
+    action = "labelkeep"
+    regex  = "^(job|container|service|compose_project)$"
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

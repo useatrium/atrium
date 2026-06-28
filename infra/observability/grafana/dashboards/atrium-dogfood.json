@@ -80,6 +80,18 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "type": "logs",
+      "title": "Docker logs",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 10 },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "Loki" },
+          "expr": "{job=\"docker\"}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

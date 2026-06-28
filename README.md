@@ -65,8 +65,9 @@ a **#general** channel.
 ### Local observability
 
 Atrium has a self-hostable dogfood observability stack under
-[`infra/observability`](infra/observability/). It runs an OpenTelemetry Collector,
-Prometheus, Tempo, Loki, Alertmanager, and Grafana:
+[`infra/observability`](infra/observability/). It runs Grafana Alloy for Docker
+log shipping, an OpenTelemetry Collector, Prometheus, Tempo, Loki, Alertmanager,
+and Grafana:
 
 ```bash
 cd infra/observability
@@ -74,7 +75,9 @@ docker compose up -d
 ```
 
 Open Grafana at http://localhost:3000. Atrium server metrics are exposed at
-`/metrics`; to export local Atrium traces into the collector, run the server with:
+`/metrics`; local Docker logs are shipped by Alloy into Loki and show up in the
+`Docker logs` panel. To export local Atrium traces into the collector, run the
+server with:
 
 ```bash
 OTEL_SERVICE_NAME=atrium-server \
@@ -83,7 +86,17 @@ pnpm --filter @atrium/server dev
 ```
 
 The observability contract and privacy rules are documented in
-[`docs/observability-strategy.md`](docs/observability-strategy.md).
+[`docs/observability-strategy.md`](docs/observability-strategy.md). Stack details,
+ports, Centaur Kubernetes log shipping notes, and operational commands live in
+[`infra/observability/README.md`](infra/observability/README.md). Useful local
+commands:
+
+```bash
+cd infra/observability
+docker compose ps
+docker compose logs -f alloy loki grafana
+docker compose down
+```
 
 ## Core ideas
 
