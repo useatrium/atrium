@@ -100,6 +100,9 @@ fn run() -> Result<(), String> {
         std::fs::create_dir_all(&plan.upper)
             .map_err(|e| format!("create upper {}: {e}", plan.upper.display()))?;
     }
+    if cfg.manifest_only && cfg.replace {
+        unmount_overlay(&plan)?;
+    }
 
     let manifest_repo = match plan.lower.kind {
         LowerKind::Repo => plan.lower.path.to_string_lossy().into_owned(),
@@ -122,9 +125,6 @@ fn run() -> Result<(), String> {
     )?;
 
     if cfg.manifest_only {
-        if cfg.replace {
-            unmount_overlay(&plan)?;
-        }
         println!(
             "provision-overlay: wrote manifest for session {} at {}",
             cfg.session,

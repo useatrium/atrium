@@ -206,6 +206,44 @@ pub(crate) fn overlay_readiness_init_container_json(
     })
 }
 
+pub(crate) fn warm_flat_home_init_container_json(
+    overlay: &OverlayConfig,
+    session: &str,
+    metadata: &OverlayMetadata,
+) -> Value {
+    let home = warm_flat_home_path(overlay, session);
+    json!({
+        "name": "warm-home-placeholder",
+        "image": overlay.image,
+        "imagePullPolicy": "IfNotPresent",
+        "command": [
+            "/bin/sh",
+            "-ceu",
+            format!(
+                "home={home:?}\nmkdir -p \"$home\"\nchown {uid}:{uid} \"$home\"\nchmod 0755 \"$home\"",
+                uid = metadata.agent_uid,
+            ),
+        ],
+        "securityContext": {
+            "privileged": false,
+            "allowPrivilegeEscalation": false,
+            "runAsUser": 0,
+            "capabilities": {
+                "drop": ["ALL"],
+            },
+            "seccompProfile": {
+                "type": "RuntimeDefault",
+            },
+        },
+        "volumeMounts": [
+            {
+                "name": WORKSPACE_VOLUME,
+                "mountPath": merged_session_path(overlay, session),
+            },
+        ],
+    })
+}
+
 pub(crate) struct WarmcacheHydrateInitContainer<'a> {
     pub(crate) session: &'a str,
     pub(crate) repos_json: &'a str,

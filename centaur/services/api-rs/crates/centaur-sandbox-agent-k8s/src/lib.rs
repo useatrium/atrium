@@ -893,6 +893,7 @@ fn build_agent_sandbox(
     if let Some(overlay) = &config.overlay {
         let agent_uid = agent_run_as_user(&container).unwrap_or(overlay.agent_uid);
         let metadata = overlay::OverlayMetadata::from_sandbox_spec(spec, agent_uid);
+        let warm_flat_home = overlay.flat_home && metadata.warm_sandbox;
         container["workingDir"] = if overlay.flat_home {
             json!(overlay::DEFAULT_HOME_MOUNT_PATH)
         } else {
@@ -906,16 +907,24 @@ fn build_agent_sandbox(
         volume_mounts.push(overlay::atrium_agent_volume_mount_json(overlay));
         volumes.extend(overlay::overlay_volumes_json(overlay, id.as_str()));
         volumes.push(overlay::atrium_volume_json(id.as_str()));
-        init_containers.push(overlay::overlay_manifest_init_container_json(
-            overlay,
-            id.as_str(),
-            &metadata,
-        ));
-        init_containers.push(overlay::overlay_readiness_init_container_json(
-            overlay,
-            id.as_str(),
-            &metadata,
-        ));
+        if warm_flat_home {
+            init_containers.push(overlay::warm_flat_home_init_container_json(
+                overlay,
+                id.as_str(),
+                &metadata,
+            ));
+        } else {
+            init_containers.push(overlay::overlay_manifest_init_container_json(
+                overlay,
+                id.as_str(),
+                &metadata,
+            ));
+            init_containers.push(overlay::overlay_readiness_init_container_json(
+                overlay,
+                id.as_str(),
+                &metadata,
+            ));
+        }
         if let Some(warmcache) = config
             .warmcache_hydrate
             .as_ref()
@@ -1073,9 +1082,12 @@ fn build_claimed_overlay_home_helper_pod(
     let merged_slot = overlay.merged_root.join(id.as_str());
     let merged_home = merged_slot.join("agent");
     let ready_marker = merged_home.join(".centaur-workspace-ready");
+    let manifest_path = overlay
+        .overlays_root
+        .join(".sessions")
+        .join(format!("{}.json", id.as_str()));
     let mut provision_args = vec![
         "--manifest-only".to_owned(),
-        "--replace".to_owned(),
         "--session".to_owned(),
         id.as_str().to_owned(),
         "--atrium-session".to_owned(),
@@ -1103,7 +1115,11 @@ fn build_claimed_overlay_home_helper_pod(
     let script = format!(
         "{}\n{}",
         shell_join_provision_overlay(&provision_args),
-        readiness_wait_script(&path_string(&ready_marker), config.ready_timeout),
+        readiness_wait_script(
+            &path_string(&ready_marker),
+            config.ready_timeout,
+            Some(&path_string(&manifest_path)),
+        ),
     );
 
     let mut pod_spec = json!({
@@ -1190,13 +1206,21 @@ fn claimed_overlay_home_helper_name(id: &SandboxId) -> String {
     name.trim_end_matches('-').to_owned()
 }
 
-fn readiness_wait_script(marker: &str, timeout: Duration) -> String {
+fn readiness_wait_script(
+    marker: &str,
+    timeout: Duration,
+    cleanup_manifest: Option<&str>,
+) -> String {
+    let cleanup = cleanup_manifest
+        .map(|path| format!("rm -f {path:?}\n"))
+        .unwrap_or_default();
     format!(
         "marker={marker:?}\n\
          deadline=$(( $(date +%s) + {} ))\n\
          while [ ! -f \"$marker\" ]; do\n\
          \tif [ \"$(date +%s)\" -ge \"$deadline\" ]; then\n\
          \t\techo \"timed out waiting for $marker\" >&2\n\
+         \t\t{cleanup}\
          \t\texit 1\n\
          \tfi\n\
          \tsleep 0.2\n\
@@ -1843,32 +1867,32 @@ mod tests {
             "/run/centaur/merged/asbx-warm"
         );
 
-        let manifest = pod_spec
-            .init_containers
-            .as_ref()
-            .unwrap()
-            .iter()
-            .find(|container| container.name == "overlay-manifest-writer")
-            .expect("manifest writer");
-        let args = manifest.args.as_ref().expect("manifest args");
-        assert!(args.windows(2).any(|pair| {
-            pair == [
-                "--merged-path".to_owned(),
-                "/run/centaur/merged/asbx-warm/agent".to_owned(),
-            ]
-        }));
-
-        let readiness = pod_spec
-            .init_containers
-            .as_ref()
-            .unwrap()
-            .iter()
-            .find(|container| container.name == "overlay-readiness-wait")
-            .expect("readiness wait");
-        let readiness_command = readiness.command.as_ref().unwrap().join(" ");
+        let init_containers = pod_spec.init_containers.as_ref().unwrap();
         assert!(
-            readiness_command
-                .contains("/run/centaur/merged/asbx-warm/agent/.centaur-workspace-ready")
+            init_containers
+                .iter()
+                .all(|container| container.name != "overlay-manifest-writer")
+        );
+        assert!(
+            init_containers
+                .iter()
+                .all(|container| container.name != "overlay-readiness-wait")
+        );
+        let placeholder = init_containers
+            .iter()
+            .find(|container| container.name == "warm-home-placeholder")
+            .expect("warm home placeholder");
+        let placeholder_command = placeholder.command.as_ref().unwrap().join(" ");
+        assert!(placeholder_command.contains("/run/centaur/merged/asbx-warm/agent"));
+        assert!(placeholder_command.contains("chown 1001:1001"));
+        assert!(
+            placeholder
+                .volume_mounts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|mount| mount.name == "workspace"
+                    && mount.mount_path == "/run/centaur/merged/asbx-warm")
         );
     }
 
@@ -1919,11 +1943,12 @@ mod tests {
         let script = container.args.as_ref().unwrap()[0].as_str();
         assert!(script.contains("/usr/local/bin/provision-overlay"));
         assert!(script.contains("'--manifest-only'"));
-        assert!(script.contains("'--replace'"));
+        assert!(!script.contains("'--replace'"));
         assert!(script.contains("'--atrium-session' 'thread-1'"));
         assert!(script.contains("'--merged-path' '/run/centaur/merged/asbx-test/agent'"));
         assert!(script.contains("'--repos-json' '[{\"repo\":\"acme/widget\",\"ref\":\"main\"}]'"));
         assert!(script.contains("/run/centaur/merged/asbx-test/agent/.centaur-workspace-ready"));
+        assert!(script.contains("rm -f \"/var/lib/centaur/overlays/.sessions/asbx-test.json\""));
 
         let mounts = container.volume_mounts.as_ref().unwrap();
         assert!(mounts.iter().any(|mount| {
