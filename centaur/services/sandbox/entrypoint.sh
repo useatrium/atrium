@@ -495,9 +495,6 @@ else
 fi
 fi
 
-# ── Ensure uploads directory exists ──────────────────────────────────────────
-mkdir -p "$HOME_DIR/uploads"
-
 # ── Copy project skills into workspace (so `skill` tool discovers them) ──────
 WORKSPACE_DIR="$WORKSPACE_DIR" install-tool-shims --refresh-skills \
     || echo "warning: failed to reload Centaur skills" >&2
