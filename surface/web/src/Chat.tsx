@@ -9,7 +9,6 @@ import { isDesktop, desktopWsUrl } from './desktop';
 import {
   DurableOpQueue,
   appReducer,
-  createDefaultOpRegistry,
   queuedChangesLabel,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
@@ -21,7 +20,6 @@ import {
   type AttachmentRef,
   type EnqueueOpInput,
   type MsgSendPayload,
-  type OpQueueLockProvider,
   type OpType,
   type ReactionSetPayload,
   type SessionSpawnPayload,
@@ -71,6 +69,13 @@ import { hydrateCachedTimelines } from './hydration';
 import { useAgentProfiles } from './useAgentProfiles';
 import { useCall } from './useCall';
 import { useCallsAvailable } from './useCallsAvailable';
+import {
+  QUEUE_NUDGE_KEY,
+  broadcastQueueNudge,
+  createChatOpRegistry,
+  createQueueLockProvider,
+  queuedFailureMessage,
+} from './chatQueue';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useTypingIndicators } from './useTypingIndicators';
@@ -78,7 +83,6 @@ import { useTypingIndicators } from './useTypingIndicators';
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const NO_WATCHERS: UserRef[] = [];
-const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
 
@@ -114,29 +118,6 @@ function labelForCallChannel(call: CallWire, channels: Channel[], meId: string):
   const channel = channels.find((c) => c.id === call.channelId);
   if (!channel) return 'Unknown channel';
   return channel.kind === 'private' ? `#${channel.name}` : channelLabel(channel, meId);
-}
-
-function createQueueLockProvider(): OpQueueLockProvider | undefined {
-  if (typeof navigator === 'undefined') return undefined;
-  const locks = (
-    navigator as Navigator & {
-      locks?: {
-        request<T>(name: string, callback: () => T | PromiseLike<T>): Promise<T>;
-      };
-    }
-  ).locks;
-  if (!locks) return undefined;
-  return {
-    request: <T,>(name: string, callback: () => Promise<T>) => locks.request<T>(name, callback),
-  };
-}
-
-function broadcastQueueNudge(): void {
-  try {
-    window.localStorage.setItem(QUEUE_NUDGE_KEY, `${Date.now()}:${Math.random()}`);
-  } catch {
-    // Best-effort multi-tab wake-up only.
-  }
 }
 
 export function Chat({
@@ -220,73 +201,7 @@ export function Chat({
     [cacheMute, cacheSyncCursor],
   );
 
-  const queuedFailureMessage = useCallback((opType: OpType): string => {
-    switch (opType) {
-      case 'msg.send':
-        return "Couldn't send the message.";
-      case 'upload':
-        return "Couldn't upload the file.";
-      case 'msg.edit':
-        return "Couldn't save the edit.";
-      case 'msg.delete':
-        return "Couldn't delete the message.";
-      case 'reaction.set':
-        return "Couldn't update the reaction.";
-      case 'read.mark':
-        return "Couldn't mark the channel read.";
-      case 'mute.set':
-        return "Couldn't update the mute setting.";
-      case 'session.spawn':
-        return "Couldn't start the agent session.";
-      case 'session.answer':
-        return "Couldn't submit the answer.";
-      case 'session.steer':
-        return "Couldn't send the session message.";
-      case 'session.cancel':
-        return "Couldn't cancel the session.";
-      case 'prefs.set':
-        return "Couldn't sync settings.";
-      case 'draft.set':
-        return "Couldn't sync the draft.";
-      case 'channel.join':
-        return "Couldn't add the person.";
-      case 'channel.leave':
-        return "Couldn't leave the channel.";
-    }
-  }, []);
-
-  const opRegistry = useMemo(() => {
-    const registry = createDefaultOpRegistry();
-    const baseSend = registry['msg.send'];
-    registry['msg.send'] = {
-      ...baseSend,
-      execute: async (apiClient, payload, op, context) => {
-        const voicePayload = (payload as VoiceMsgSendPayload).voice;
-        let attachments = payload.attachments?.map((a) => a.id);
-        if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
-          const ops = await context.listOps();
-          attachments = payload.attachmentRefs.map((ref) => {
-            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
-            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
-            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
-              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
-            }
-            return uploadPayload.fileId;
-          });
-        }
-        return apiClient.postMessage({
-          channelId: payload.channelId,
-          text: payload.text,
-          clientMsgId: payload.clientMsgId,
-          threadRootEventId: payload.threadRootEventId,
-          attachments,
-          ...(voicePayload ? { voice: voicePayload } : {}),
-          opId: op.opId,
-        });
-      },
-    };
-    return registry;
-  }, []);
+  const opRegistry = useMemo(() => createChatOpRegistry(), []);
 
   const opQueue = useMemo(
     () =>
@@ -330,7 +245,7 @@ export function Chat({
           }
         },
       }),
-    [cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
+    [cacheMute, onApiError, opRegistry, queueDispatch],
   );
 
   const enqueueOp = useCallback(
