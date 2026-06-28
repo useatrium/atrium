@@ -1,7 +1,6 @@
 // Configured spawn: the @agent grammar starts a session with defaults; this
-// dialog is the richer door — pick the harness and (optionally) the repo/branch
-// the agent targets. The git metadata is captured at spawn time and read by the
-// Phase 4 work surfaces + side-effect gate (Centaur doesn't consume it yet).
+// dialog captures the harness and optional repo specs Centaur mounts into the
+// sandbox for the run.
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { AgentProfile, ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
@@ -60,6 +59,14 @@ export function SpawnDialog({
     (profile) => profile.provider === harness && profile.currentVersionId,
   );
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
+  const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
+  const repoMode = repo.trim()
+    ? activeReferenceCount > 0
+      ? `Working repo + ${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+      : 'Working repo'
+    : activeReferenceCount > 0
+      ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+      : 'No repo selected';
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -290,6 +297,11 @@ export function SpawnDialog({
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-md border border-edge bg-surface px-3 py-2 text-2xs">
+            <span className="font-medium text-fg-secondary">{repoMode}</span>
+            <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
           </div>
 
           {providerProfiles.length > 0 && (

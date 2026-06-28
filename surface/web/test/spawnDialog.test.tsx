@@ -113,6 +113,9 @@ describe('SpawnDialog', () => {
     fireEvent.change(screen.getByPlaceholderText('ref'), { target: { value: ' docs-main ' } });
     fireEvent.change(screen.getByPlaceholderText('subdir'), { target: { value: ' docs ' } });
 
+    expect(screen.getByText('Working repo + 1 reference repo')).toBeTruthy();
+    expect(screen.getByText('mounts under ~/repos')).toBeTruthy();
+
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
 
     expect(onSpawn).toHaveBeenCalledWith({
