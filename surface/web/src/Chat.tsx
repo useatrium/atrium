@@ -18,10 +18,7 @@ import {
   mentionsHandle,
   parseAgentTask,
   randomId,
-  reconcileDraftSnapshot,
   type AttachmentRef,
-  type DraftDeletionSnapshot,
-  type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
   type OpQueueLockProvider,
@@ -74,6 +71,7 @@ import { hydrateCachedTimelines } from './hydration';
 import { useAgentProfiles } from './useAgentProfiles';
 import { useCall } from './useCall';
 import { useCallsAvailable } from './useCallsAvailable';
+import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 
 const PAGE_SIZE = 50;
@@ -156,12 +154,10 @@ export function Chat({
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const [failedSteers, setFailedSteers] = useState<Record<string, string>>({});
   const [failedCancels, setFailedCancels] = useState<Record<string, true>>({});
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const calls = useCall(me, state.channels);
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
   stateRef.current = state;
-  const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -348,61 +344,6 @@ export function Chat({
       return op;
     },
     [markQueueNudged, opQueue],
-  );
-
-  const activeDraftKeysForSync = useCallback((): ReadonlySet<string> => {
-    const current = stateRef.current;
-    const keys = new Set<string>();
-    if (current.activeChannelId) {
-      keys.add(`channel:${current.activeChannelId}`);
-      if (current.openThreadRootId != null) {
-        keys.add(`channel:${current.activeChannelId}:thread:${current.openThreadRootId}`);
-      }
-    }
-    return keys;
-  }, []);
-
-  const reconcileDraftsFromSnapshot = useCallback(
-    (snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
-      void eventCache
-        .listDrafts()
-        .then(async (local) => {
-          const { hydrate, remove } = reconcileDraftSnapshot({
-            snapshot,
-            deletions,
-            local,
-            touchedThisSession: touchedDraftKeysRef.current,
-            activeDraftKeys: activeDraftKeysForSync(),
-          });
-          const entries = Object.entries(hydrate);
-          await Promise.all(
-            entries
-              .map(([draftKey, draft]) =>
-                eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
-              )
-              .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
-          );
-          if (entries.length === 0 && remove.length === 0) return;
-          setDrafts((prev) => {
-            let next = prev;
-            for (const [draftKey, draft] of entries) {
-              if (!(draftKey in prev) || prev[draftKey] === draft.text) continue;
-              if (next === prev) next = { ...prev };
-              next[draftKey] = draft.text;
-            }
-            for (const draftKey of remove) {
-              if (!(draftKey in prev) || prev[draftKey] === '') continue;
-              if (next === prev) next = { ...prev };
-              next[draftKey] = '';
-            }
-            return next;
-          });
-        })
-        .catch((err: unknown) => {
-          console.warn('failed to reconcile draft snapshot', err);
-        });
-    },
-    [activeDraftKeysForSync],
   );
 
   const clearFailedSteer = useCallback((sessionId: string) => {
@@ -799,6 +740,43 @@ export function Chat({
     [],
   );
 
+  const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
+  const timeline = (active && state.timelines[active.id]) || emptyTimeline;
+  const openThreadRoot =
+    state.openThreadRootId != null
+      ? timeline.main.find((m) => m.id === state.openThreadRootId) ?? null
+      : null;
+  const threadReplies =
+    state.openThreadRootId != null ? timeline.threads[state.openThreadRootId] ?? [] : [];
+  const threadLoaded =
+    state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
+  const activeDraftKey = active ? `channel:${active.id}` : '';
+  const threadDraftKey =
+    active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
+  const activeDraftKeysForSync = useMemo((): ReadonlySet<string> => {
+    const keys = new Set<string>();
+    if (state.activeChannelId) {
+      keys.add(`channel:${state.activeChannelId}`);
+      if (state.openThreadRootId != null) {
+        keys.add(`channel:${state.activeChannelId}:thread:${state.openThreadRootId}`);
+      }
+    }
+    return keys;
+  }, [state.activeChannelId, state.openThreadRootId]);
+  const {
+    drafts,
+    enqueueDraft,
+    markDraftTouched,
+    putTextInComposer,
+    reconcileDraftsFromSnapshot,
+    saveDraft,
+  } = useDraftState({
+    activeDraftKeysForSync,
+    activeDraftKey,
+    enqueueOp,
+    threadDraftKey,
+  });
+
   // ---- websocket ----
   // Channels for fanout + a `session:<id>` presence key while spectating a pane.
   const wsKeys = useMemo(() => {
@@ -1050,9 +1028,6 @@ export function Chat({
   }
 
   // ---- channel selection & history ----
-  const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
-  const timeline = (active && state.timelines[active.id]) || emptyTimeline;
-
   const markRead = useCallback((channelId: string, lastEventId: number) => {
     if (lastEventId <= 0 || (lastReadSentRef.current[channelId] ?? 0) >= lastEventId) return;
     const fire = () => {
@@ -1138,13 +1113,6 @@ export function Chat({
   };
 
   // ---- thread panel ----
-  const openThreadRoot =
-    state.openThreadRootId != null
-      ? timeline.main.find((m) => m.id === state.openThreadRootId) ?? null
-      : null;
-  const threadReplies =
-    state.openThreadRootId != null ? timeline.threads[state.openThreadRootId] ?? [] : [];
-
   const openThread = (rootEventId: number) => {
     if (!active) return;
     dispatch({ type: 'open-thread', rootEventId });
@@ -1664,63 +1632,6 @@ export function Chat({
     };
   }, [unreadCount]);
 
-  const threadLoaded =
-    state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
-  const activeDraftKey = active ? `channel:${active.id}` : '';
-  const threadDraftKey =
-    active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
-
-  const loadDraft = useCallback((key: string, label: string) => {
-    let disposed = false;
-    setDrafts((prev) => ({ ...prev, [key]: '' }));
-    void eventCache
-      .getDraft(key)
-      .then((draft) => {
-        if (!disposed) setDrafts((prev) => ({ ...prev, [key]: draft ?? '' }));
-      })
-      .catch((err: unknown) => {
-        console.warn(`failed to load ${label} draft`, err);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!activeDraftKey) return;
-    return loadDraft(activeDraftKey, 'channel');
-  }, [activeDraftKey, loadDraft]);
-
-  useEffect(() => {
-    if (!threadDraftKey) return;
-    return loadDraft(threadDraftKey, 'thread');
-  }, [loadDraft, threadDraftKey]);
-
-  const saveDraft = useCallback((key: string, text: string) => eventCache.setDraft(key, text), []);
-
-  const markDraftTouched = useCallback((key: string) => {
-    touchedDraftKeysRef.current.add(key);
-  }, []);
-
-  const putTextInComposer = useCallback(
-    (text: string) => {
-      if (!activeDraftKey) return;
-      markDraftTouched(activeDraftKey);
-      setDrafts((prev) => ({ ...prev, [activeDraftKey]: text }));
-      void saveDraft(activeDraftKey, text);
-      requestAnimationFrame(() => {
-        const el = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message input"]');
-        if (!el) return;
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-        setter?.call(el, text);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.focus();
-        el.setSelectionRange(text.length, text.length);
-      });
-    },
-    [activeDraftKey, markDraftTouched, saveDraft],
-  );
-
   const startDemoSession = useCallback(async () => {
     if (!active || demoStarting) return;
     setDemoStarting(true);
@@ -1744,20 +1655,6 @@ export function Chat({
       setDemoStarting(false);
     }
   }, [active, demoStarting, onApiError]);
-
-  const enqueueDraft = useCallback(
-    (key: string, text: string) => {
-      markDraftTouched(key);
-      void enqueueOp({
-        opId: randomId(),
-        opType: 'draft.set',
-        payload: { draftKey: key, text },
-      }).catch((err: unknown) => {
-        console.warn('failed to queue draft sync', err);
-      });
-    },
-    [enqueueOp, markDraftTouched],
-  );
 
   const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
   const incomingCaller = calls.incomingCall
