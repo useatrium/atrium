@@ -36,6 +36,7 @@ import {
 } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
+import { ChannelMembersMenu } from './components/ChannelMembersMenu';
 import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
 import { CodexConnectDialog } from './components/CodexConnectDialog';
@@ -60,7 +61,6 @@ import {
 } from './sessions/types';
 import { adoptPrefs } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
-import { useDialog } from './useDialog';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
 import { useAgentProfiles } from './useAgentProfiles';
@@ -1247,79 +1247,6 @@ export function Chat({
   };
 
   const presentUsers = active ? state.presence[active.id] ?? [] : [];
-  const [membersOpen, setMembersOpen] = useState(false);
-  const [members, setMembers] = useState<UserRef[] | null>(null);
-  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
-  const [memberPeople, setMemberPeople] = useState<UserRef[] | null>(null);
-  const membersButtonRef = useRef<HTMLButtonElement | null>(null);
-  const membersPopoverRef = useRef<HTMLDivElement | null>(null);
-  const addMemberButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [leaveAsk, setLeaveAsk] = useState(false);
-
-  const loadMembers = useCallback(() => {
-    if (!active || (active.kind !== 'private' && active.kind !== 'gdm')) return;
-    api
-      .channelMembers(active.id)
-      .then(({ members }) => setMembers(members))
-      .catch(() => setMembers([]));
-  }, [active?.id, active?.kind]);
-
-  useEffect(() => {
-    setMembers(null);
-    setMembersOpen(false);
-    setMemberPickerOpen(false);
-    setLeaveAsk(false);
-  }, [active?.id]);
-
-  const closeMembers = useCallback(() => {
-    setMembersOpen(false);
-    setMemberPickerOpen(false);
-    setLeaveAsk(false);
-  }, []);
-
-  useDialog({
-    open: membersOpen,
-    containerRef: membersPopoverRef,
-    initialFocusRef: addMemberButtonRef,
-    invokerRef: membersButtonRef,
-    closeOnOutsidePointer: true,
-    onClose: closeMembers,
-  });
-
-  useEffect(() => {
-    if (!leaveAsk) return;
-    const t = setTimeout(() => setLeaveAsk(false), 5000);
-    return () => clearTimeout(t);
-  }, [leaveAsk]);
-
-  const inviteMember = (userId: string) => {
-    if (!active) return;
-    void enqueueOp({
-      opId: randomId(),
-      opType: 'channel.join',
-      payload: { channelId: active.id, userId },
-    })
-      .then((op) => {
-        if (!op) return;
-        loadMembers();
-        setMemberPickerOpen(false);
-      })
-      .catch(() => showErrorToast("Couldn't queue the invite."));
-  };
-
-  const leaveActive = () => {
-    if (!active) return;
-    if (!leaveAsk) {
-      setLeaveAsk(true);
-      return;
-    }
-    setLeaveAsk(false);
-    void enqueueOp({
-      opId: randomId(),
-      opType: 'channel.leave',
-      payload: { channelId: active.id, userId: me.id },
-    }).catch(() => showErrorToast("Couldn't queue the channel leave."));
-  };
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -1453,79 +1380,7 @@ export function Chat({
             )}
           </h1>
           {active && (active.kind === 'private' || active.kind === 'gdm') && (
-            <div className="relative">
-              <button
-                ref={membersButtonRef}
-                onClick={() => {
-                  setMembersOpen((v) => !v);
-                  if (!members) loadMembers();
-                }}
-                aria-expanded={membersOpen}
-                aria-haspopup="dialog"
-                aria-controls="members-popover"
-                className="rounded-md px-2 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-              >
-                Members
-              </button>
-              {membersOpen && (
-                <div
-                  ref={membersPopoverRef}
-                  id="members-popover"
-                  role="dialog"
-                  aria-label="Channel members"
-                  className="absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl"
-                >
-                  <div className="mb-2 flex items-center justify-between">
-                    <h2 className="text-xs font-semibold text-fg-secondary">Members</h2>
-                    <button
-                      ref={addMemberButtonRef}
-                      onClick={() => {
-                        setMemberPickerOpen((v) => !v);
-                        if (!memberPeople) {
-                          api.users().then(({ users }) => setMemberPeople(users)).catch(() => setMemberPeople([]));
-                        }
-                      }}
-                      className="rounded px-2 py-0.5 text-xs text-fg-tertiary hover:bg-surface-overlay"
-                    >
-                      Add
-                    </button>
-                  </div>
-                  {memberPickerOpen && (
-                    <div className="mb-2 max-h-32 overflow-y-auto border-b border-edge pb-2">
-                      {(memberPeople ?? []).filter((u) => !members?.some((m) => m.id === u.id)).map((u) => (
-                        <button
-                          key={u.id}
-                          onClick={() => inviteMember(u.id)}
-                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
-                        >
-                          <Avatar name={u.displayName} seed={u.id} size={16} />
-                          <span className="truncate">{u.displayName}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <ul className="max-h-48 overflow-y-auto">
-                    {(members ?? active.members ?? []).map((u) => (
-                      <li key={u.id} className="flex items-center gap-2 px-2 py-1 text-xs text-fg-secondary">
-                        <Avatar name={u.displayName} seed={u.id} size={16} />
-                        <span className="truncate">{u.displayName}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <button
-                    onClick={leaveActive}
-                    aria-label={leaveAsk ? 'Confirm leave channel' : 'Leave channel'}
-                    className={`mt-2 w-full rounded border px-2 py-1 text-xs ${
-                      leaveAsk
-                        ? 'border-danger-border-strong bg-danger-tint/60 font-medium text-danger-text-strong hover:bg-danger-surface/60'
-                        : 'border-danger-border/60 text-danger-text hover:bg-danger-tint/40'
-                    }`}
-                  >
-                    {leaveAsk ? 'Confirm leave' : 'Leave'}
-                  </button>
-                </div>
-              )}
-            </div>
+            <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
           )}
           <button
             onClick={() => setSpawnOpen(true)}
