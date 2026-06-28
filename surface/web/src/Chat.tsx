@@ -17,7 +17,6 @@ import {
   randomId,
   type EnqueueOpInput,
   type OpType,
-  type UploadPayload,
   useQueuedChangesCount,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
@@ -74,6 +73,7 @@ import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
+import { useUploadQueue } from './useUploadQueue';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -291,49 +291,7 @@ export function Chat({
     return () => document.removeEventListener('visibilitychange', flushHiddenCache);
   }, []);
 
-  const waitForUpload = useCallback(
-    (uploadKey: string): Promise<{ fileId: string }> =>
-      new Promise((resolve, reject) => {
-        let settled = false;
-        const finish = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
-          clearInterval(timer);
-          fn();
-        };
-        const check = () => {
-          void eventCache
-            .listOps()
-            .then((ops) => {
-              const op = ops.find((candidate) => candidate.queueKey === `upload:${uploadKey}`);
-              if (!op) {
-                finish(() => reject(new Error('upload was rejected')));
-                return;
-              }
-              const payload = op.payload as Partial<UploadPayload>;
-              if (op.status === 'completed' && payload.uploaded && payload.fileId) {
-                finish(() => resolve({ fileId: payload.fileId! }));
-              }
-            })
-            .catch((err: unknown) => finish(() => reject(err)));
-        };
-        const timer = setInterval(check, 250);
-        check();
-      }),
-    [],
-  );
-
-  const queueUpload = useCallback(
-    async (payload: UploadPayload): Promise<{ fileId: string }> => {
-      await enqueueOp({
-        opId: randomId(),
-        opType: 'upload',
-        payload,
-      });
-      return waitForUpload(payload.uploadKey);
-    },
-    [enqueueOp, waitForUpload],
-  );
+  const { queueUpload } = useUploadQueue({ enqueueOp, storage: eventCache });
 
   const applyQueuedOp = useCallback(
     (op: Parameters<typeof queuedOverlayAction>[0]) => {
