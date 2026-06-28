@@ -11,7 +11,7 @@ import {
 export const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
 
 type VoiceMsgSendPayload = MsgSendPayload & {
-  voice?: Pick<VoiceMeta, 'durationMs' | 'waveform'>;
+  voice?: Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
 };
 
 export function createQueueLockProvider(): OpQueueLockProvider | undefined {
@@ -79,6 +79,13 @@ export function createChatOpRegistry(): OpRegistry {
     ...baseSend,
     execute: async (apiClient, payload, op, context) => {
       const voicePayload = (payload as VoiceMsgSendPayload).voice;
+      const voice =
+        voicePayload !== undefined
+          ? {
+              durationMs: voicePayload.durationMs,
+              ...(voicePayload.waveform ? { waveform: voicePayload.waveform } : {}),
+            }
+          : undefined;
       let attachments = payload.attachments?.map((attachment) => attachment.id);
       if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
         const ops = await context.listOps();
@@ -97,7 +104,7 @@ export function createChatOpRegistry(): OpRegistry {
         clientMsgId: payload.clientMsgId,
         threadRootEventId: payload.threadRootEventId,
         attachments,
-        ...(voicePayload ? { voice: voicePayload } : {}),
+        ...(voice ? { voice } : {}),
         opId: op.opId,
       });
     },

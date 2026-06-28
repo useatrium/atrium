@@ -55,6 +55,35 @@ describe('chatQueuedOverlays', () => {
     });
   });
 
+  it('builds pending voice rows from local voice file metadata before attachments resolve', () => {
+    const payload: MsgSendPayload & {
+      voice: { fileId: string; durationMs: number; waveform: number[] };
+    } = {
+      channelId: 'ch-1',
+      text: '',
+      clientMsgId: 'client-msg-voice',
+      createdAt: '2026-06-28T13:45:00.000Z',
+      attachmentRefs: [{ uploadKey: 'upload-1' }],
+      voice: { fileId: 'file-from-voice', durationMs: 900, waveform: [0.2, 0.8] },
+    };
+
+    expect(pendingMessageFromSendPayload(payload, me)).toMatchObject({
+      id: null,
+      clientMsgId: 'client-msg-voice',
+      channelId: 'ch-1',
+      text: '',
+      author: me,
+      createdAt: '2026-06-28T13:45:00.000Z',
+      status: 'pending',
+      voice: {
+        fileId: 'file-from-voice',
+        durationMs: 900,
+        waveform: [0.2, 0.8],
+        transcript: { status: 'pending' },
+      },
+    });
+  });
+
   it('builds pending session rows with defaults and spawner metadata', () => {
     const payload: SessionSpawnPayload = {
       channelId: 'ch-1',
