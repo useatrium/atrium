@@ -20,12 +20,10 @@ import {
   type AttachmentRef,
   type ChatMessage,
   type EnqueueOpInput,
-  type MsgSendPayload,
   type OpType,
   type ReactionSetPayload,
   type SessionSpawnPayload,
   type UploadPayload,
-  type VoiceMeta,
   useQueuedChangesCount,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
@@ -75,7 +73,12 @@ import {
   createQueueLockProvider,
   queuedFailureMessage,
 } from './chatQueue';
-import { queuedOverlayAction, pendingSpawnFromPayload } from './chatQueuedOverlays';
+import {
+  pendingMessageFromSendPayload,
+  pendingSpawnFromPayload,
+  queuedOverlayAction,
+  type VoiceMsgSendPayload,
+} from './chatQueuedOverlays';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useTypingIndicators } from './useTypingIndicators';
@@ -86,10 +89,7 @@ const NO_WATCHERS: UserRef[] = [];
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
 
-type VoiceSendMeta = Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
-type VoiceMsgSendPayload = MsgSendPayload & {
-  voice?: Pick<VoiceMeta, 'durationMs' | 'waveform'>;
-};
+type VoiceSendMeta = { fileId: string; durationMs: number; waveform?: number[] };
 type EnqueueOpOptions = {
   onStored?: () => void;
 };
@@ -989,31 +989,7 @@ export function Chat({
     }
     const clientMsgId = randomId();
     const createdAt = new Date().toISOString();
-    const message: ChatMessage = {
-      id: null,
-      clientMsgId,
-      channelId,
-      threadRootEventId: threadRootEventId ?? null,
-      text,
-      edited: false,
-      author: me,
-      createdAt,
-      replyCount: 0,
-      lastReplyId: 0,
-      status: 'pending',
-      ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      ...(voice
-        ? {
-            voice: {
-              fileId: voice.fileId,
-              durationMs: voice.durationMs,
-              ...(voice.waveform ? { waveform: voice.waveform } : {}),
-              transcript: { status: 'pending' },
-            },
-          }
-        : {}),
-    };
-    const payload: VoiceMsgSendPayload = {
+    const pendingPayload: VoiceMsgSendPayload = {
       channelId,
       text,
       clientMsgId,
@@ -1022,14 +998,32 @@ export function Chat({
       attachmentRefs,
       createdAt,
       ...(voice
-        ? { voice: { durationMs: voice.durationMs, ...(voice.waveform ? { waveform: voice.waveform } : {}) } }
+        ? {
+            voice: {
+              fileId: voice.fileId,
+              durationMs: voice.durationMs,
+              ...(voice.waveform ? { waveform: voice.waveform } : {}),
+            },
+          }
         : {}),
     };
+    const payload = {
+      ...pendingPayload,
+      ...(pendingPayload.voice
+        ? {
+            voice: {
+              durationMs: pendingPayload.voice.durationMs,
+              ...(pendingPayload.voice.waveform ? { waveform: pendingPayload.voice.waveform } : {}),
+            },
+          }
+        : {}),
+    };
+    const message = pendingMessageFromSendPayload(pendingPayload, me);
     void enqueueOp(
       {
         opId: randomId(),
         opType: 'msg.send',
-        payload: payload as MsgSendPayload,
+        payload,
       },
       {
         onStored: () => dispatch({ type: 'send-pending', channelId, message }),

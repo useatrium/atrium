@@ -30,13 +30,15 @@ describe('chatQueue', () => {
   it('resolves upload refs and voice metadata before posting a queued message', async () => {
     const postMessage = vi.fn().mockResolvedValue({ event: { id: 1 } });
     const registry = createChatOpRegistry();
-    const payload: MsgSendPayload & { voice: { durationMs: 1200; waveform: number[] } } = {
+    const payload: MsgSendPayload & {
+      voice: { fileId: string; durationMs: 1200; waveform: number[] };
+    } = {
       channelId: 'ch-1',
       text: 'voice note',
       clientMsgId: 'client-1',
       threadRootEventId: 42,
       attachmentRefs: [{ uploadKey: 'upload-1' }],
-      voice: { durationMs: 1200, waveform: [0, 1, 0.5] },
+      voice: { fileId: 'local-file-id', durationMs: 1200, waveform: [0, 1, 0.5] },
     };
 
     await registry['msg.send'].execute(

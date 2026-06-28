@@ -10,15 +10,15 @@ import type {
 } from '@atrium/surface-client';
 import type { Session } from './sessions/types';
 
-type VoiceMsgSendPayload = MsgSendPayload & {
-  voice?: Pick<VoiceMeta, 'durationMs' | 'waveform'>;
+export type VoiceMsgSendPayload = MsgSendPayload & {
+  voice?: Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
 };
 
 export type QueuedOverlayOp = { opType: OpType; payload: unknown; opId: string };
 
 export function pendingMessageFromSendPayload(msg: MsgSendPayload, me: UserRef): ChatMessage {
   const voice = (msg as VoiceMsgSendPayload).voice;
-  const voiceFileId = msg.attachments?.[0]?.id;
+  const voiceFileId = voice?.fileId ?? msg.attachments?.[0]?.id;
   return {
     id: null,
     clientMsgId: msg.clientMsgId,
