@@ -81,6 +81,7 @@ import {
 } from './chatQueuedOverlays';
 import { useDraftState } from './useDraftState';
 import { useProviderCredentials } from './useProviderCredentials';
+import { useReadMarks } from './useReadMarks';
 import { useTypingIndicators } from './useTypingIndicators';
 
 const PAGE_SIZE = 50;
@@ -140,9 +141,6 @@ export function Chat({
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
   stateRef.current = state;
-  const lastReadSentRef = useRef<Record<string, number>>({});
-  const lastReadAtRef = useRef<Record<string, number>>({});
-  const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const authInvalidatedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
   const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
@@ -262,6 +260,8 @@ export function Chat({
     [markQueueNudged, opQueue],
   );
 
+  const { markRead, noteReadCursor } = useReadMarks({ dispatch, enqueueOp, onApiError });
+
   const clearFailedSteer = useCallback((sessionId: string) => {
     setFailedSteers((prev) => {
       if (!(sessionId in prev)) return prev;
@@ -377,14 +377,11 @@ export function Chat({
       const overlay = queuedOverlayAction(op, me);
       if (!overlay) return;
       if (overlay.readCursor) {
-        lastReadSentRef.current[overlay.readCursor.channelId] = Math.max(
-          lastReadSentRef.current[overlay.readCursor.channelId] ?? 0,
-          overlay.readCursor.lastReadEventId,
-        );
+        noteReadCursor(overlay.readCursor.channelId, overlay.readCursor.lastReadEventId);
       }
       dispatch(overlay.action);
     },
-    [me],
+    [me, noteReadCursor],
   );
 
   // ---- initial data ----
@@ -671,10 +668,7 @@ export function Chat({
       onSessionTyping,
       onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
-        lastReadSentRef.current[channelId] = Math.max(
-          lastReadSentRef.current[channelId] ?? 0,
-          lastReadEventId,
-        );
+        noteReadCursor(channelId, lastReadEventId);
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
       },
       onMuted: (channelId, muted) => {
@@ -754,44 +748,9 @@ export function Chat({
   }
 
   // ---- channel selection & history ----
-  const markRead = useCallback((channelId: string, lastEventId: number) => {
-    if (lastEventId <= 0 || (lastReadSentRef.current[channelId] ?? 0) >= lastEventId) return;
-    const fire = () => {
-      const previous = lastReadSentRef.current[channelId] ?? 0;
-      if (previous >= lastEventId) return;
-      lastReadAtRef.current[channelId] = Date.now();
-      lastReadSentRef.current[channelId] = lastEventId;
-      dispatch({ type: 'read-cursor', channelId, lastReadEventId: lastEventId });
-      void enqueueOp({
-        opId: randomId(),
-        opType: 'read.mark',
-        payload: { channelId, lastReadEventId: lastEventId },
-      }).catch((err: unknown) => {
-          if (lastReadSentRef.current[channelId] === lastEventId) {
-            lastReadSentRef.current[channelId] = previous;
-          }
-          onApiError(err);
-        });
-    };
-    const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
-    if (elapsed >= 2000) {
-      fire();
-      return;
-    }
-    if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
-    readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
-  }, [enqueueOp, onApiError]);
-
   useEffect(() => {
     if (active) markRead(active.id, timeline.lastEventId);
   }, [active?.id, markRead, timeline.lastEventId]);
-
-  useEffect(
-    () => () => {
-      for (const timer of Object.values(readTimersRef.current)) clearTimeout(timer);
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!active) return;
