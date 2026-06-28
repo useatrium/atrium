@@ -86,9 +86,16 @@ Remaining build, in order:
    `~/.config/amp`, `~/AGENTS.md` = the centaur system prompt; real creds are at the iron-proxy, NOT HOME — so
    the HOME content is GENERIC). A submount *at* HOME would shadow it. **Decision: the daemon composes the
    warm pod's generic HOME as a read-only LOWER beneath the repo** — `lowerdir=<generic-home>:<repo>` — so the
-   submounted HOME = repo files + harness config, merged. **lowerdir order is the `AGENTS.md` knob:**
-   generic-home topmost ⇒ centaur's `~/AGENTS.md` wins over a repo's own, matching today's flat-home (the
-   entrypoint copies `/opt/centaur/AGENTS.md` → `$HOME/AGENTS.md`, `entrypoint.sh:508-512`). Validated by
+   submounted HOME = repo files + harness config, merged. The entrypoint copies
+   `/opt/centaur/AGENTS.md` → `$HOME/AGENTS.md`. **Correction (2026-06-28):** an earlier draft said
+   "centaur's `~/AGENTS.md` *wins over a repo's own*, matching today's flat-home" — that premise is
+   **wrong**. Production flat-home nests session repos at `~/repos/<owner>/<repo>` (see the
+   `flat-home-dir-cleanup-plan.md` empirical trace), so centaur's `~/AGENTS.md` and a repo's
+   `~/repos/<owner>/<repo>/AGENTS.md` are *distinct paths that never collide* — there is no clobber,
+   and no lowerdir-order "knob" is needed for it. The real `~/AGENTS.md` issue was *capture
+   pollution* (it landed in the captured overlay upper), now fixed by excluding it in `classify_entry`
+   (#170); relocating it into a read-only lower so it is read-only too is the part bundled with this
+   warm-pool build. Validated by
    `ci/warmpool-home-compose-poc.sh` (green local + GHA, and again with the **real `centaur-agent` image**:
    `codex` + `claude --version` both run in the composed overlay HOME and `~/.codex/config.toml`,
    `~/.claude/settings.json`, `~/AGENTS.md` are all present + readable). Minor wrinkle to handle in the build:

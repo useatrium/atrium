@@ -1,9 +1,15 @@
 # Flat-home `~` directory cleanup + capture-pollution fix — build plan
 
-> **Status: PLAN (2026-06-28).** Pre-work for the warm-pool-repo build (gbasin/atrium#141).
+> **Status: LANDING (2026-06-28).** Pre-work for the warm-pool-repo build (gbasin/atrium#141).
 > Grounded in: live-cluster empirical confirmation (kind `centaur`, flat-home default),
 > committed code review, and design-intent archaeology via `cass` over prior agent sessions
 > (git history was flattened by the subtree vendor `a25fb9e`, so `cass` is the intent record).
+>
+> **Progress:** Phase 1 (capture denylist) landed `#170`. Phase 2 (`~/repos/<owner>/<repo>`)
+> landed `#171`. Phase 3 (drop vestigial `~/uploads`) + Phase 4 (doc reconciliation) in this PR.
+> `~/state` needed no change (current flat-home never creates it — the dir seen on an old session
+> was a stale-image artifact). Fixture-seed gating deferred (its `seed.txt`/`delete-me.txt` are
+> consumed by `ci/pod-native-e2e.sh`). Move-AGENTS.md-to-read-only-lower deferred to #141.
 
 ## Why this exists
 
