@@ -9,6 +9,7 @@ import { type AppRateLimitConfig, installAppHttp } from './app-http.js';
 import { createAppMutationContext } from './app-mutations.js';
 import { registerAppRoutes } from './app-routes.js';
 import { createAppServices, type AppServiceDeps } from './app-services.js';
+import { installServerTelemetry } from './telemetry.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -42,6 +43,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const services = createAppServices(deps);
   const { artifactCaptureApiKey, secret, sessionRuns } = services;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
+  await installServerTelemetry(app);
 
   const rateLimit = deps.rateLimit;
   await installAppHttp(app, rateLimit);
