@@ -1,4 +1,4 @@
-// CAS-ledger foundation (notes/cas-ledger-build-plan.md). Direct capture,
+// CAS-ledger foundation (docs/archive/notes/cas-ledger-build-plan.md). Direct capture,
 // upload auto-land, and human write-back all commit versions through this
 // content-addressed chain. Non-delete versions are expected to reference a
 // cas_blobs row whose s3_key is already durable.

@@ -1,5 +1,5 @@
 // Speech-to-text adapter seam. Selected by env STT_PROVIDER so the model is a
-// pluggable, swappable detail (CPU now, GPU later) — see notes/voice-support.md.
+// pluggable, swappable detail (CPU now, GPU later) — see docs/archive/notes/voice-support.md.
 //
 // Foundation ships the interface + a `noop` adapter (returns empty text) so the
 // pipeline and CI are exercisable without downloading a model. Lane A adds the

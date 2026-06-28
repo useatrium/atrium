@@ -1,6 +1,6 @@
 // Voice-call signaling types shared by the web/mobile clients and the server.
 //
-// Split of responsibilities (see notes/voice-support.md):
+// Split of responsibilities (see docs/archive/notes/voice-support.md):
 //  - Actions are HTTP: POST /api/calls (start), /api/calls/:id/accept|decline|leave.
 //  - Receipt/lifecycle is WS: the hub fans out ephemeral `call.*` frames (NOT
 //    timeline events, like presence/typing).

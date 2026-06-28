@@ -8,4 +8,8 @@ The vendored Centaur runtime under centaur/ is derived from
 paradigmxyz/centaur and retains its upstream license terms:
 Apache-2.0 OR MIT. See centaur/LICENSE.
 
+The Expo template notice retained under surface/mobile/LICENSE applies to the
+Expo template material credited there. The Atrium mobile app code is part of
+Atrium and is licensed under AGPL-3.0-or-later.
+
 Third-party dependencies retain their own license terms.

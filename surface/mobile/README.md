@@ -4,6 +4,11 @@ iOS + Android client for the Atrium surface. Shares its protocol types,
 timeline state, reducer, API client and WebSocket layer with the web app via
 `@atrium/surface-client` (../shared).
 
+License note: Atrium mobile is part of Atrium and is licensed under
+AGPL-3.0-or-later. The local `LICENSE` file is the Expo template notice retained
+for the template material credited there; see the repository root `LICENSE` and
+`NOTICE` files for the project license.
+
 ## Run it (development)
 
 Prereqs: the surface stack running (see ../README.md), plus Xcode (iOS

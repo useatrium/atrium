@@ -526,7 +526,7 @@ nodeSync:
   # VM-per-tenant (R2 / §8B #19) — NOT-VALIDATED-ON-MACOS. Off by default: the
   # single global DaemonSet above runs. Enable to render ONE DaemonSet per tenant,
   # node-pinned + optionally under a microVM runtimeClass. See the per-tenant
-  # templates + notes/sync-hardening-plan.md. Example in values-per-tenant.example.yaml.
+  # templates + docs/archive/notes/sync-hardening-plan.md. Example in values-per-tenant.example.yaml.
   perTenant:
     enabled: false
     tenants: []

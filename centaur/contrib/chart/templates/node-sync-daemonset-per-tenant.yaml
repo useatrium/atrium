@@ -2,7 +2,7 @@
 NOT-VALIDATED-ON-MACOS (R2 / §8B #19): per-tenant VM isolation requires a real
 Linux cluster — privileged DaemonSet, mountPropagation, and microVM runtimeClasses
 (Kata/Firecracker) cannot be exercised on Docker Desktop. Validate on a real k8s
-cluster or GHA Linux runner. See notes/sync-hardening-plan.md.
+cluster or GHA Linux runner. See docs/archive/notes/sync-hardening-plan.md.
 
 VM-per-tenant: instead of ONE node-scanner DaemonSet across all nodes, render ONE
 DaemonSet PER TENANT, pinned (nodeSelector + tolerations) to that tenant's node pool

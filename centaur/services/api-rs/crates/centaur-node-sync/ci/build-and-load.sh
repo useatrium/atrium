@@ -5,7 +5,7 @@
 #
 # NOT-VALIDATED-ON-MACOS: needs a real Linux Docker daemon + kind on overlayfs.
 # Docker Desktop's privileged/overlay semantics are not equivalent; run on a GHA
-# ubuntu runner or a real Linux host. See notes/sync-hardening-plan.md.
+# ubuntu runner or a real Linux host. See docs/archive/notes/sync-hardening-plan.md.
 set -euo pipefail
 
 IMAGE="${IMAGE:-centaur-node-sync:e2e}"

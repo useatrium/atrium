@@ -4,7 +4,7 @@
 //! changed set) and must translate overlayfs's on-disk encoding into logical
 //! file operations. This module is the pure, platform-neutral classifier; the
 //! syscalls that produce a `RawEntry` (statx/listxattr) live behind cfg(linux).
-//! See notes/agent-sync-design.md §3 and cas-ledger-build-plan.md Track C4.
+//! See docs/archive/notes/agent-sync-design.md §3 and docs/archive/notes/cas-ledger-build-plan.md Track C4.
 
 use std::path::{Component, Path, PathBuf};
 

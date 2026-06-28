@@ -7,7 +7,7 @@
 //   rec_<entry_uid>   -> session_records row   (transcript entry)
 //   run_<...>         -> child / sub-agent run (RESERVED — P3, not implemented)
 //
-// Design (see notes/addressable-entries-and-annotations.md):
+// Design (see docs/archive/notes/addressable-entries-and-annotations.md):
 //   - `evt_*` is a TRANSPARENT, derivable handle: `evt_<events.id>` (decision H8).
 //     Only the chat half; events.id is already a stable immutable key, so there is
 //     nothing to gain from wrapping it. Authz at resolve is the access control.

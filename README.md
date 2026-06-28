@@ -210,7 +210,7 @@ version-control system handles conflicts.)
 | `centaur/` | the agent runtime — **our fork of `paradigmxyz/centaur`**, vendored via `git subtree`. Rust + Python + Helm; self-contained (`just`, cargo). See [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md). |
 | `infra/` | local cluster, a stand-in model server for testing, and deployment setup. |
 | `docs/` | public documentation entry points. |
-| `notes/` | archived design scratchpads and build logs from early development; useful context, not canonical user docs. |
+| `docs/archive/notes/` | archived design scratchpads and build logs from early development; useful context, not canonical user docs. |
 
 ## Links
 

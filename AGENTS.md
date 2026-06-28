@@ -19,7 +19,7 @@ the wire protocol between them can now land as **one PR** across both.
 | `centaur/` | the agent runtime (our vendored fork — see `centaur/ATRIUM_FORK.md`) | `just`, cargo, Helm/k8s |
 | `infra/` | local cluster, stand-in model server, deploy config | — |
 | `docs/` | public docs | — |
-| `notes/` | archived design scratchpads and build logs | — |
+| `docs/archive/notes/` | archived design scratchpads and build logs | — |
 
 ## Where to work / how to build
 

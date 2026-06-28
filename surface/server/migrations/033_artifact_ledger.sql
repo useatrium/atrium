@@ -1,6 +1,6 @@
 -- CAS-ledger v1 foundation: the durable, versioned artifact substrate that turns
 -- the capture-only `session_artifacts` log into a content-addressed version chain
--- with movable pointers. See notes/cas-ledger-build-plan.md.
+-- with movable pointers. See docs/archive/notes/cas-ledger-build-plan.md.
 --
 -- Four tables:
 --   cas_blobs          global content-addressed bytes (sha256 -> S3); dedup across

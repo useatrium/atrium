@@ -10,7 +10,8 @@ Useful public docs:
 - [Desktop app packaging](../surface/desktop/README.md)
 - [Centaur vendoring](centaur-vendoring.md)
 - [UI surfaces](surfaces.md)
+- [Archived notes](archive/README.md)
 
-The historical `notes/` directory contains design scratchpads and build logs
-from early development. Treat it as archival context, not current user
+The historical notes under `archive/notes/` are design scratchpads and build
+logs from early development. Treat them as archival context, not current user
 documentation.
