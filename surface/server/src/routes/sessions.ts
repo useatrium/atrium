@@ -9,7 +9,7 @@ import { githubConnectionId, type Connections } from '../connections.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
-import { convergeGitHubExistingIdentityGrant } from '../github-iron-control.js';
+import { convergeExistingGitHubDirectGrant, convergeGitHubExistingIdentityGrant } from '../github-iron-control.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 
@@ -75,8 +75,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     };
     const opId = optionalOpId(body);
     const task = typeof body.task === 'string' ? body.task : '';
-    const repo = typeof body.repo === 'string' && body.repo.trim() ? body.repo.trim() : undefined;
+    const repo =
+      typeof body.repo === 'string' && body.repo.trim()
+        ? normalizeGitHubRepoInput(body.repo.trim()) ?? body.repo.trim()
+        : undefined;
     const branch = typeof body.branch === 'string' && body.branch.trim() ? body.branch.trim() : undefined;
+    const repos = normalizeSessionRepos(body.repos);
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
     }
@@ -103,7 +107,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     }
     const githubIdentityId =
       typeof body.githubIdentityId === 'string' && body.githubIdentityId.trim() ? body.githubIdentityId.trim() : null;
-    const privateRepos = privateGitHubRepos(body);
+    const privateRepos = privateGitHubRepos(repos);
     const privateRepoRequested = privateRepos.length > 0;
     const spawnWithGitHubState = async () => {
       let githubConnection =
@@ -238,6 +242,17 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           });
         }
       }
+      if (
+        privateRepoRequested &&
+        githubConnection &&
+        !githubIdentityId &&
+        (githubConnection.token_kind === 'app_user' || githubConnection.token_kind === 'pat')
+      ) {
+        await convergeExistingGitHubDirectGrant(ironControl, {
+          workspaceId: githubConnection.workspace_id,
+          userId: githubConnection.user_id,
+        });
+      }
       const resolvedGitHubIdentityMode =
         githubIdentityMode === 'automatic' && githubConnection?.token_kind
           ? githubConnection.token_kind
@@ -264,7 +279,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
           repo,
           branch,
-          repos: Array.isArray(body.repos) ? body.repos : undefined,
+          repos,
           githubIdentityMode: resolvedGitHubIdentityMode,
           githubIdentityId: githubConnection?.connection_id ?? null,
           providerConnectionId,
@@ -281,7 +296,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
             harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
             repo,
             branch,
-            repos: Array.isArray(body.repos) ? body.repos : undefined,
+            repos,
             githubIdentityMode: resolvedGitHubIdentityMode,
             providerConnectionId,
             providerCredentialUserId: credentialOwnerUserId,
@@ -430,18 +445,46 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   });
 }
 
-function privateGitHubRepos(body: {
-  repo?: string;
-  repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
-}): string[] {
-  if (!Array.isArray(body.repos)) return [];
+function normalizeSessionRepos(
+  repos: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined,
+): { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined {
+  if (!Array.isArray(repos)) return undefined;
+  return repos.map((entry) => {
+    if (typeof entry?.repo !== 'string') return entry;
+    const repo = entry.repo.trim();
+    return { ...entry, repo: normalizeGitHubRepoInput(repo) ?? repo };
+  });
+}
+
+function privateGitHubRepos(reposInput: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined): string[] {
+  if (!Array.isArray(reposInput)) return [];
   const repos = new Set<string>();
-  for (const repo of body.repos) {
+  for (const repo of reposInput) {
     if (repo?.private !== true || typeof repo.repo !== 'string') continue;
     const normalized = repo.repo.trim();
     if (normalized) repos.add(normalized);
   }
   return [...repos];
+}
+
+function normalizeGitHubRepoInput(repo: string): string | null {
+  let raw = repo.trim();
+  raw = raw.replace(/\.git$/i, '');
+  raw = raw.replace(/^ssh:\/\/git@github\.com[:/]/i, '');
+  raw = raw.replace(/^git@github\.com:/i, '');
+  if (/^https?:\/\//i.test(raw)) {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return null;
+    }
+    if (url.hostname.toLowerCase() !== 'github.com') return null;
+    raw = url.pathname.replace(/^\/+/, '').replace(/\.git$/i, '');
+  }
+  const parts = raw.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return `${parts[0]}/${parts[1]}`;
 }
 
 async function workspaceIdForChannel(pool: Db, channelId: string): Promise<string | null> {

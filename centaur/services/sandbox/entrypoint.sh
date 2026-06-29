@@ -665,10 +665,9 @@ touch "$HOME_DIR/.ready"
 # ── Background: slow auth tasks ─────────────────────────────────────────────
 {
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-        git config --global credential.helper store
-        printf 'https://oauth2:%s@github.com\n' "$GITHUB_TOKEN" > "$HOME_DIR/.git-credentials"
         echo "${GITHUB_TOKEN}" | gh auth login --with-token 2>/dev/null || true
         gh auth setup-git 2>/dev/null || true
+        git config --global http.https://github.com/.extraheader "Authorization: GITHUB_TOKEN"
     fi
 } &
 

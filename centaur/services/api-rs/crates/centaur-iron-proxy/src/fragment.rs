@@ -158,6 +158,9 @@ transforms:
 
 const CODEX_API_KEY_FRAGMENT: &str = r#"
 transforms:
+  - name: allowlist
+    config:
+      domains: ["chatgpt.com"]
   - name: secrets
     config:
       secrets:
@@ -188,6 +191,9 @@ transforms:
 // iron-control and provisioned out of band (see `centaur-perms broker create`).
 const CODEX_ACCESS_TOKEN_FRAGMENT: &str = r#"
 transforms:
+  - name: allowlist
+    config:
+      domains: ["chatgpt.com"]
   - name: secrets
     config:
       secrets:

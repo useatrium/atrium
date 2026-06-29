@@ -62,6 +62,21 @@ describe('IronControlAdminClient', () => {
     });
   });
 
+  it('looks up roles by namespace and foreign id', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test',
+      apiKey: 'iak_test',
+      namespace: 'default',
+      fetchImpl: okFetch(calls),
+    });
+
+    await client.lookupRole('infra');
+
+    expect(calls[0]!.url).toBe('http://iron.test/api/v1/roles/lookup/default/infra');
+    expect(calls[0]!.init.headers).toMatchObject({ authorization: 'Bearer iak_test' });
+  });
+
   it('upserts GitHub PAT replacement secrets as write-only control-plane source', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = new IronControlAdminClient({
@@ -92,7 +107,7 @@ describe('IronControlAdminClient', () => {
         source: {
           source_type: 'control_plane',
           secret: 'ghp_secret',
-          config: {},
+          config: { authorization_format: 'github_basic' },
         },
         rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
       },
@@ -127,7 +142,7 @@ describe('IronControlAdminClient', () => {
         source: {
           source_type: 'control_plane',
           secret: 'github-public-token',
-          config: {},
+          config: { authorization_format: 'github_basic' },
         },
         rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
       },
@@ -162,7 +177,7 @@ describe('IronControlAdminClient', () => {
         },
         source: {
           source_type: 'token_broker',
-          config: { credential_id: 'bcr_installation' },
+          config: { credential_id: 'bcr_installation', authorization_format: 'github_basic' },
         },
         rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
       },
@@ -190,6 +205,7 @@ describe('IronControlAdminClient', () => {
       config: {
         credential_id: 'github-app-user-atrium-workspace-ws-user-user',
         credential_namespace: 'atrium',
+        authorization_format: 'github_basic',
       },
     });
   });

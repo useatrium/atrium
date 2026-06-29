@@ -70,6 +70,27 @@ class SecretSourceTest < ActiveSupport::TestCase
     assert_not_equal "rotated-secret", raw, "expected ciphertext, not plaintext, at rest"
   end
 
+  test "control_plane source can format GitHub Basic authorization for proxy replacement" do
+    s = new_source(source_type: "control_plane",
+                   secret: "live-token",
+                   config: { "authorization_format" => "github_basic" })
+
+    assert_equal({ "type" => "control_plane", "value" => "Basic #{Base64.strict_encode64("x-access-token:live-token")}" },
+                 s.to_proxy_source)
+  end
+
+  test "legacy GitHub replacement source formats Basic authorization from static secret labels" do
+    secret = StaticSecret.create!(namespace: "default",
+                                  name: "GitHub token",
+                                  labels: { "provider" => "github" },
+                                  replace_config: { "proxy_value" => "GITHUB_TOKEN", "match_headers" => [ "Authorization" ] },
+                                  created_by: users(:acme_admin))
+    source = SecretSource.create!(source_type: "control_plane", secret: "live-token", static_secret: secret)
+
+    assert_equal({ "type" => "control_plane", "value" => "Basic #{Base64.strict_encode64("x-access-token:live-token")}" },
+                 source.to_proxy_source)
+  end
+
   test "requires source_type" do
     s = new_source(config: { "var" => "FOO" })
     assert_not s.valid?
@@ -182,6 +203,15 @@ class SecretSourceTest < ActiveSupport::TestCase
     s = new_source(source_type: "token_broker", config: { "credential_id" => cred.oid })
     assert_equal({ "type" => "control_plane", "value" => "live-token" }, s.to_proxy_source)
     assert s.deliverable?
+  end
+
+  test "token_broker source can format GitHub Basic authorization at sync" do
+    cred = make_broker_credential(access_token: "live-token")
+    s = new_source(source_type: "token_broker",
+                   config: { "credential_id" => cred.oid, "authorization_format" => "github_basic" })
+
+    assert_equal({ "type" => "control_plane", "value" => "Basic #{Base64.strict_encode64("x-access-token:live-token")}" },
+                 s.to_proxy_source)
   end
 
   test "token_broker foreign_id reference resolves at sync" do

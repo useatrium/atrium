@@ -1,3 +1,5 @@
+require "base64"
+
 class SecretSource < ApplicationRecord
   oid_prefix "scs"
 
@@ -13,8 +15,8 @@ class SecretSource < ApplicationRecord
     "aws_ssm" => { required: %w[name], optional: %w[region with_decryption] },
     "1password" => { required: %w[secret_ref], optional: %w[token_env] },
     "1password_connect" => { required: %w[secret_ref], optional: %w[host_env token_env] },
-    "control_plane" => { required: [], optional: [] },
-    "token_broker" => { required: %w[credential_id], optional: %w[credential_namespace] }
+    "control_plane" => { required: [], optional: %w[authorization_format] },
+    "token_broker" => { required: %w[credential_id], optional: %w[credential_namespace authorization_format] }
   }.freeze
 
   # A source belongs to exactly one owner. static_secret feeds the `secrets`
@@ -42,19 +44,24 @@ class SecretSource < ApplicationRecord
 
   # Maps this source to the iron-proxy `secrets` transform `source` block,
   # discriminated by `type`. For control_plane sources the decrypted value is
-  # delivered inline; all other types pass their config through (the proxy's
-  # backend resolvers read the matching keys and ignore unknown ones).
+  # delivered inline; all other types pass their config through (the
+  # proxy's backend resolvers read the matching keys and ignore unknown ones).
   #
   # A token_broker source is resolved server-side: control mints and rotates the
   # access token, so it is delivered inline exactly like control_plane (the proxy
   # injects it directly, and Principal.redact_live_secrets redacts it, with no
   # special handling for either). The credential reference never reaches the proxy.
   def to_proxy_source
-    return { "type" => "control_plane", "value" => brokered_credential&.access_token } if source_type == "token_broker"
+    if source_type == "token_broker"
+      return { "type" => "control_plane", "value" => formatted_secret_value(brokered_credential&.access_token) }
+    end
 
     source = config.is_a?(Hash) ? config.dup : {}
+    source.delete("authorization_format")
     source["type"] = source_type
-    source["value"] = secret if source_type == "control_plane"
+    if source_type == "control_plane"
+      source["value"] = formatted_secret_value(secret)
+    end
     source
   end
 
@@ -119,6 +126,23 @@ class SecretSource < ApplicationRecord
     elsif config["credential_namespace"].present?
       BrokerCredential.find_by(namespace: config["credential_namespace"], foreign_id: ref)
     end
+  end
+
+  def formatted_secret_value(value)
+    return value unless github_basic_authorization?
+    return value if value.blank?
+
+    "Basic #{Base64.strict_encode64("x-access-token:#{value}")}"
+  end
+
+  def github_basic_authorization?
+    return true if config.is_a?(Hash) && config["authorization_format"] == "github_basic"
+    return false unless static_secret
+
+    static_secret.labels.is_a?(Hash) &&
+      static_secret.labels["provider"] == "github" &&
+      static_secret.replace_config.is_a?(Hash) &&
+      static_secret.replace_config["proxy_value"] == "GITHUB_TOKEN"
   end
 
   # A token_broker source must point at a real credential. credential_namespace

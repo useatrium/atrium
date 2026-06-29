@@ -675,7 +675,7 @@ fn private_repo_clone_command_env_and_args(
         ],
         vec![
             "-c".to_string(),
-            "http.https://github.com/.extraheader=Authorization: Bearer GITHUB_TOKEN".to_string(),
+            "http.https://github.com/.extraheader=Authorization: GITHUB_TOKEN".to_string(),
             "clone".to_string(),
             "--filter=blob:none".to_string(),
             "--quiet".to_string(),
@@ -1170,7 +1170,7 @@ mod tests {
         assert!(envs.contains(&("HTTP_PROXY", "http://session-proxy:8080".to_string())));
         assert!(envs.contains(&("GIT_SSL_CAINFO", "/proxy/ca.crt".to_string())));
         assert!(args.contains(
-            &"http.https://github.com/.extraheader=Authorization: Bearer GITHUB_TOKEN".to_string()
+            &"http.https://github.com/.extraheader=Authorization: GITHUB_TOKEN".to_string()
         ));
         assert!(args.contains(&"https://github.com/acme/private.git".to_string()));
         assert!(
@@ -1244,7 +1244,7 @@ mkdir -p "$last/.git"
         assert!(log.contains("HTTPS_PROXY=http://session-proxy:8080"));
         assert!(log.contains("HTTP_PROXY=http://session-proxy:8080"));
         assert!(log.contains("GIT_SSL_CAINFO=/proxy/ca.crt"));
-        assert!(log.contains("Authorization: Bearer GITHUB_TOKEN"));
+        assert!(log.contains("Authorization: GITHUB_TOKEN"));
         assert!(log.contains("https://github.com/acme/private.git"));
         assert!(!log.contains("ghp_"));
         assert!(!log.contains("github_pat_"));

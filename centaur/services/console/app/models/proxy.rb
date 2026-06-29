@@ -95,6 +95,7 @@ class Proxy < ApplicationRecord
 
   def self.merge_proxy_policy(config, namespace:)
     baseline = ProxyBaseline.effective_for(namespace)
+    static_secrets = Array(config["secrets"])
     credential_transforms = Array(config["transforms"])
     baseline_transforms = Array(baseline["transforms"])
 
@@ -105,10 +106,15 @@ class Proxy < ApplicationRecord
     transforms = []
     transforms << { "name" => "allowlist", "config" => { "domains" => allowlist } } if allowlist.any?
     transforms += other_baseline_transforms
+    transforms << { "name" => "secrets", "config" => { "secrets" => static_secrets } } if static_secrets.any?
     transforms += credential_transforms
 
     {
-      "secrets" => Array(config["secrets"]),
+      # Keep the proxy sync `secrets` field empty so static secrets are applied
+      # in the explicit transform order above. iron-proxy evaluates the legacy
+      # top-level `secrets` field before `transforms`, which rejects CONNECT
+      # tunnels before the synthesized allowlist can authorize them.
+      "secrets" => [],
       "transforms" => transforms,
       "postgres" => Array(config["postgres"])
     }

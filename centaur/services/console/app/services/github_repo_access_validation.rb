@@ -45,10 +45,21 @@ class GithubRepoAccessValidation
 
   def parse_repo(repo)
     raw = repo.to_s.strip
+    raw = raw.delete_suffix(".git")
+    raw = raw.sub(/\Assh:\/\/git@github\.com[:\/]/i, "")
+    raw = raw.sub(/\Agit@github\.com:/i, "")
+    if raw.match?(%r{\Ahttps?://}i)
+      uri = URI.parse(raw)
+      return nil unless uri.host&.downcase == "github.com"
+
+      raw = uri.path.delete_prefix("/")
+    end
     parts = raw.split("/")
     return nil unless parts.length == 2 && parts[0].present? && parts[1].present?
 
     { owner: parts[0], name: parts[1] }
+  rescue URI::InvalidURIError
+    nil
   end
 
   def repo_status(owner, name)

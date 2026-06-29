@@ -73,6 +73,9 @@ class ProxyTest < ActiveSupport::TestCase
     assert_equal "allowlist", transforms.first.fetch("name")
     assert_equal [ "api.github.com", "static.example.com" ], transforms.first.dig("config", "domains")
     assert_equal "header_allowlist", transforms.second.fetch("name")
+    assert_equal "secrets", transforms.third.fetch("name")
+    assert_equal 1, transforms.third.dig("config", "secrets").length
+    assert_empty proxy.sync_config.fetch("secrets")
   end
 
   test "config_hash changes when proxy baseline changes" do

@@ -6,6 +6,7 @@ class RequestRule < ApplicationRecord
   include SyncConfigOwnerInvalidation
 
   HTTP_METHODS = %w[GET HEAD POST PUT PATCH DELETE OPTIONS CONNECT].freeze
+  PROXY_DEFAULT_METHODS = (HTTP_METHODS - [ "CONNECT" ]).freeze
   METHOD_WILDCARD = "*".freeze
 
   # A rule hangs off exactly one credential type.
@@ -29,7 +30,7 @@ class RequestRule < ApplicationRecord
     rule = {}
     rule["host"] = host if host.present?
     rule["cidr"] = cidr if cidr.present?
-    rule["methods"] = http_methods if http_methods.present?
+    rule["methods"] = http_methods.presence || PROXY_DEFAULT_METHODS
     rule["paths"] = paths if paths.present?
     rule
   end

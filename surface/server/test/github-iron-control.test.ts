@@ -55,6 +55,8 @@ describe('GitHub iron-control convergence', () => {
 
     expect(callMethodsAndPaths(calls)).toEqual([
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/roles/lookup/default/infra'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1-github-pat'],
       ['GET', '/api/v1/principals/prn_atrium/grants'],
       ['POST', '/api/v1/grants'],
@@ -62,14 +64,14 @@ describe('GitHub iron-control convergence', () => {
       ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
       ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
     ]);
-    expect(JSON.parse(String(calls[1]!.init.body))).toMatchObject({
+    expect(JSON.parse(String(calls[3]!.init.body))).toMatchObject({
       data: {
         foreign_id: 'github-token-atrium-workspace-ws1-user-user1-github-pat',
         source: { source_type: 'control_plane', secret: 'ghp_secret' },
         labels: { source: 'atrium', provider: 'github', atrium_workspace_id: 'ws1', atrium_user_id: 'user1' },
       },
     });
-    expect(JSON.parse(String(calls[3]!.init.body))).toEqual({
+    expect(JSON.parse(String(calls[5]!.init.body))).toEqual({
       data: { principal_id: 'prn_atrium', static_secret_id: 'ssr_github_user' },
     });
   });
@@ -89,13 +91,15 @@ describe('GitHub iron-control convergence', () => {
 
     expect(callMethodsAndPaths(calls)).toEqual([
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/roles/lookup/default/infra'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1-github-app_user'],
       ['GET', '/api/v1/principals/prn_atrium/grants'],
       ['PUT', '/api/v1/roles/github-default'],
       ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
       ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
     ]);
-    expect(JSON.parse(String(calls[1]!.init.body))).toMatchObject({
+    expect(JSON.parse(String(calls[3]!.init.body))).toMatchObject({
       data: {
         source: {
           source_type: 'token_broker',
@@ -132,6 +136,8 @@ describe('GitHub iron-control convergence', () => {
 
     expect(callMethodsAndPaths(calls)).toEqual([
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/roles/lookup/default/infra'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1-github-app_installation-12345'],
       ['GET', '/api/v1/principals/prn_atrium/grants'],
       ['DELETE', '/api/v1/grants/grant_old'],
@@ -150,6 +156,8 @@ describe('GitHub iron-control convergence', () => {
 
     expect(callMethodsAndPaths(calls)).toEqual([
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/roles/lookup/default/infra'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/roles/github-default'],
       ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
       ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
@@ -164,6 +172,8 @@ describe('GitHub iron-control convergence', () => {
 
     expect(callMethodsAndPaths(calls)).toEqual([
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/roles/lookup/default/infra'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['DELETE', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1'],
       ['PUT', '/api/v1/roles/github-default'],
       ['POST', '/api/v1/principals/prn_atrium/roles'],
@@ -200,6 +210,9 @@ function fakeIronControl(
       }
       if (path.endsWith('/principals/prn_atrium/grants')) {
         return json({ data: options.principalGrants ?? [] });
+      }
+      if (path.endsWith('/roles/lookup/default/infra')) {
+        return json({ data: { id: 'role_infra', namespace: 'default', foreign_id: 'infra' } });
       }
       if (path.includes('/static_secrets/github-public-read-token')) {
         return json({ data: { id: 'ssr_public_read', namespace: 'default', foreign_id: 'github-public-read-token' } });
