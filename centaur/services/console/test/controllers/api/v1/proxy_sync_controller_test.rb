@@ -226,10 +226,28 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ { "host" => "hooks.example.com", "methods" => [ "POST" ] } ], hmac.dig("config", "rules")
   end
 
-  test "transforms is an empty array when no transform grants exist" do
+  test "transforms includes dynamic allowlist when credential rules exist" do
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
-    assert_equal [], json_body.fetch("transforms")
+    transforms = json_body.fetch("transforms")
+    assert_equal "allowlist", transforms.first.fetch("name")
+    assert_equal [ "api.example.com" ], transforms.first.dig("config", "domains")
+  end
+
+  test "proxy baseline transforms are delivered with dynamic allowlist" do
+    ProxyBaseline.create!(
+      namespace: "acme", foreign_id: "infra", name: "Infra",
+      transforms: [ { "name" => "header_allowlist", "config" => { "headers" => [ "authorization" ] } } ],
+      created_by: users(:acme_admin)
+    )
+
+    post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
+    assert_response :ok
+
+    transforms = json_body.fetch("transforms")
+    assert_equal "allowlist", transforms.first.fetch("name")
+    assert_equal [ "api.example.com" ], transforms.first.dig("config", "domains")
+    assert_equal "header_allowlist", transforms.second.fetch("name")
   end
 
   test "postgres carries a DSN entry per granted PgDsnSecret with foreign_id" do

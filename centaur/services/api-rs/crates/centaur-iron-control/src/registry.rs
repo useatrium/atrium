@@ -26,8 +26,8 @@ use crate::error::IronControlError;
 use crate::models::{
     AwsAuthSecretInput, GcpAuthSecretInput, GcpIdTokenSecretInput, GrantSecret, Grantee,
     HmacSecretInput, IdentityInput, InjectConfig, OAuthTokenSecretInput, PgDsnSecretInput,
-    PgDsnSettingInput, PgDsnSettingValueFromInput, ReplaceConfig, RequestRule, SecretSource,
-    StaticSecretInput,
+    PgDsnSettingInput, PgDsnSettingValueFromInput, ProxyBaselineInput, ReplaceConfig, RequestRule,
+    SecretSource, StaticSecretInput,
 };
 use crate::util::{managed_labels, slugify};
 
@@ -53,6 +53,24 @@ impl RoleSpec {
         Self {
             foreign_id: format!("tool-{}", slugify(name)),
             name: format!("Tool {name}"),
+        }
+    }
+}
+
+/// A managed proxy baseline policy. ``foreign_id`` is stable across startup and
+/// reconciliation so the policy converges instead of appending duplicate rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProxyBaselineSpec {
+    pub foreign_id: String,
+    pub name: String,
+}
+
+impl ProxyBaselineSpec {
+    /// The baseline that accompanies the shared infra role.
+    pub fn infra() -> Self {
+        Self {
+            foreign_id: "infra".to_owned(),
+            name: "Infra proxy baseline".to_owned(),
         }
     }
 }
@@ -125,6 +143,56 @@ pub async fn register_role(
         .await?;
     grant_inputs_to_role(client, &role_record.id, inputs).await?;
     Ok(role_record.id)
+}
+
+/// Upsert the non-secret proxy policy that must be present before any principal
+/// credentials can work in managed proxy mode.
+pub async fn register_proxy_baseline(
+    client: &IronControlClient,
+    namespace: &str,
+    spec: &ProxyBaselineSpec,
+    fragment: &ProxyFragment,
+) -> Result<String, RegisterError> {
+    let input = proxy_baseline_input_from_fragment(namespace, spec, fragment)?;
+    Ok(client.upsert_proxy_baseline(&input).await?.id)
+}
+
+/// Pure translation: a fragment's non-secret transforms → baseline policy.
+///
+/// Secret-bearing transforms are deliberately excluded here. Their rule hosts
+/// are represented by typed credential resources and are turned into per-proxy
+/// allowlist policy at sync time by iron-control.
+pub fn proxy_baseline_input_from_fragment(
+    namespace: &str,
+    spec: &ProxyBaselineSpec,
+    fragment: &ProxyFragment,
+) -> Result<ProxyBaselineInput, TranslateError> {
+    let transforms = fragment
+        .transforms
+        .iter()
+        .filter(|transform| !is_secret_bearing_transform(transform.name.as_str()))
+        .map(|transform| {
+            serde_json::to_value(transform).map_err(|error| TranslateError::Malformed {
+                role: spec.foreign_id.clone(),
+                detail: format!("failed to serialize baseline transform: {error}"),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(ProxyBaselineInput {
+        namespace: namespace.to_owned(),
+        foreign_id: spec.foreign_id.clone(),
+        name: spec.name.clone(),
+        labels: managed_labels(),
+        transforms,
+    })
+}
+
+fn is_secret_bearing_transform(name: &str) -> bool {
+    matches!(
+        name,
+        "secrets" | "oauth_token" | "gcp_auth" | "gcp_id_token" | "hmac_sign" | "aws_auth"
+    )
 }
 
 /// Upsert each secret in ``inputs`` and grant it to the role identified by
@@ -960,6 +1028,48 @@ mod tests {
 
     fn env_policy() -> SourcePolicy {
         SourcePolicy::env()
+    }
+
+    #[test]
+    fn proxy_baseline_translation_keeps_only_non_secret_transforms() {
+        let fragment = load_fragment_str(
+            r#"
+transforms:
+  - name: allowlist
+    config:
+      domains: ["github.com"]
+  - name: header_allowlist
+    config:
+      headers: ["authorization"]
+  - name: secrets
+    config:
+      secrets:
+        - replace: { proxy_value: GITHUB_TOKEN }
+          rules: [{ host: github.com }]
+  - name: oauth_token
+    config:
+      tokens:
+        - credentials: {}
+          rules: [{ host: api.example.com }]
+  - name: aws_auth
+    config:
+      credentials: {}
+      rules: [{ host: logs.us-east-1.amazonaws.com }]
+"#,
+        )
+        .unwrap();
+
+        let input =
+            proxy_baseline_input_from_fragment("acme", &ProxyBaselineSpec::infra(), &fragment)
+                .unwrap();
+
+        assert_eq!(input.foreign_id, "infra");
+        let names: Vec<_> = input
+            .transforms
+            .iter()
+            .map(|transform| transform["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["allowlist", "header_allowlist"]);
     }
 
     #[test]

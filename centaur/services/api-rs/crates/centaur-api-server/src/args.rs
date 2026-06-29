@@ -13,8 +13,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use centaur_api_server::SandboxRuntime;
 use centaur_iron_control::{
-    IdentityInput, IronControlClient, IronControlError, RegisterError, RoleSpec, SessionRegistrar,
-    register_role,
+    IdentityInput, IronControlClient, IronControlError, ProxyBaselineSpec, RegisterError, RoleSpec,
+    SessionRegistrar, register_proxy_baseline, register_role,
 };
 use centaur_iron_proxy::{
     ProxyFragment, SourceKind, SourcePolicy, bedrock_enabled, harness_auth_fragment, infra_fragment,
@@ -166,6 +166,13 @@ impl IronControlToolReconciler {
             &RoleSpec::infra(),
             &infra,
             &self.source_policy,
+        )
+        .await?;
+        register_proxy_baseline(
+            &self.client,
+            &self.namespace,
+            &ProxyBaselineSpec::infra(),
+            &infra,
         )
         .await?;
         info!(
@@ -690,9 +697,25 @@ impl SandboxArgs {
                     register_role_with_retry(&client, &namespace, spec, fragment, &policy).await?,
                 );
             }
+            if let Some((_, fragment)) = roles.iter().find(|(spec, _)| spec == &RoleSpec::infra()) {
+                register_proxy_baseline_with_retry(
+                    &client,
+                    &namespace,
+                    &ProxyBaselineSpec::infra(),
+                    fragment,
+                )
+                .await?;
+            }
             role_ids
         } else {
             let spec = RoleSpec::infra();
+            register_proxy_baseline_with_retry(
+                &client,
+                &namespace,
+                &ProxyBaselineSpec::infra(),
+                &self.iron_proxy.infra_fragment()?,
+            )
+            .await?;
             vec![
                 client
                     .upsert_role(&IdentityInput {
@@ -1382,6 +1405,37 @@ async fn register_role_with_retry(
                     max_attempts = IRON_CONTROL_REGISTER_MAX_ATTEMPTS,
                     backoff_ms = backoff.as_millis(),
                     "iron-control role registration failed; retrying"
+                );
+                tokio::time::sleep(backoff).await;
+                backoff *= 2;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("iron-control registration retry loop always returns");
+}
+
+async fn register_proxy_baseline_with_retry(
+    client: &IronControlClient,
+    namespace: &str,
+    spec: &ProxyBaselineSpec,
+    fragment: &ProxyFragment,
+) -> Result<String, RegisterError> {
+    let mut backoff = IRON_CONTROL_REGISTER_INITIAL_BACKOFF;
+    for attempt in 1..=IRON_CONTROL_REGISTER_MAX_ATTEMPTS {
+        match register_proxy_baseline(client, namespace, spec, fragment).await {
+            Ok(baseline_id) => return Ok(baseline_id),
+            Err(error)
+                if attempt < IRON_CONTROL_REGISTER_MAX_ATTEMPTS
+                    && should_retry_iron_control_register(&error) =>
+            {
+                warn!(
+                    %error,
+                    baseline = %spec.foreign_id,
+                    attempt,
+                    max_attempts = IRON_CONTROL_REGISTER_MAX_ATTEMPTS,
+                    backoff_ms = backoff.as_millis(),
+                    "iron-control proxy baseline registration failed; retrying"
                 );
                 tokio::time::sleep(backoff).await;
                 backoff *= 2;

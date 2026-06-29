@@ -42,10 +42,48 @@ class ProxyTest < ActiveSupport::TestCase
 
   test "an unassigned proxy delivers an empty config" do
     proxy = Proxy.create!(name: "idle", principal: nil)
+    ProxyBaseline.create!(
+      namespace: "acme", foreign_id: "infra", name: "Infra",
+      transforms: [ { "name" => "header_allowlist", "config" => { "headers" => [ "authorization" ] } } ],
+      created_by: users(:acme_admin)
+    )
+
     config = proxy.sync_config
     assert_empty config["secrets"]
     assert_empty config["transforms"]
     assert_empty config["postgres"]
+  end
+
+  test "assigned proxy merges baseline transforms and dynamic allowlist domains" do
+    proxy = proxies(:acme_proxy)
+    ProxyBaseline.create!(
+      namespace: "acme", foreign_id: "infra", name: "Infra",
+      transforms: [
+        { "name" => "allowlist", "config" => { "domains" => [ "static.example.com" ] } },
+        { "name" => "header_allowlist", "config" => { "headers" => [ "authorization" ] } }
+      ],
+      created_by: users(:acme_admin)
+    )
+    SecretSource.create!(source_type: "env", config: { "var" => "GITHUB_TOKEN" },
+                         static_secret: static_secrets(:github_token_inject))
+    RequestRule.create!(host: "api.github.com", position: 0,
+                        static_secret: static_secrets(:github_token_inject))
+
+    transforms = proxy.sync_config.fetch("transforms")
+    assert_equal "allowlist", transforms.first.fetch("name")
+    assert_equal [ "api.github.com", "static.example.com" ], transforms.first.dig("config", "domains")
+    assert_equal "header_allowlist", transforms.second.fetch("name")
+  end
+
+  test "config_hash changes when proxy baseline changes" do
+    proxy = proxies(:acme_proxy)
+    before = proxy.config_hash
+    ProxyBaseline.create!(
+      namespace: "acme", foreign_id: "infra", name: "Infra",
+      transforms: [ { "name" => "header_allowlist", "config" => { "headers" => [ "authorization" ] } } ],
+      created_by: users(:acme_admin)
+    )
+    refute_equal before, proxy.config_hash
   end
 
   test "config_hash changes when the principal is swapped" do

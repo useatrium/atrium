@@ -21,15 +21,16 @@ pub use models::{
     EffectivePgDsn, EffectiveReplace, EffectiveSecret, GCP_ID_TOKEN_ALLOWED_HEADERS,
     GcpAuthSecretInput, GcpIdTokenSecretInput, Grant, GrantSecret, Grantee, HmacSecretHeader,
     HmacSecretInput, IdentityInput, InjectConfig, OAuthTokenSecretInput, PgDsnSecretInput,
-    PgDsnSettingInput, PgDsnSettingValueFromInput, Principal, Proxy, ProxyInput, ReplaceConfig,
-    RequestRule, Role, SECRET_TYPES, SecretRecord, SecretSource, StaticSecretInput,
-    normalize_gcp_id_token_header,
+    PgDsnSettingInput, PgDsnSettingValueFromInput, Principal, Proxy, ProxyBaseline,
+    ProxyBaselineInput, ProxyInput, ReplaceConfig, RequestRule, Role, SECRET_TYPES, SecretRecord,
+    SecretSource, StaticSecretInput, normalize_gcp_id_token_header,
 };
 pub use principal::{PrincipalRef, derive_principal};
 pub use registry::{
-    GCP_AUTH_DEFAULT_SCOPE, RegisterError, RoleSpec, SecretInput, TranslateError,
-    gcp_auth_scopes_or_default, grant_inputs_to_role, register_role, secret_inputs_from_fragment,
-    source_from_placeholder, unique_foreign_id,
+    GCP_AUTH_DEFAULT_SCOPE, ProxyBaselineSpec, RegisterError, RoleSpec, SecretInput,
+    TranslateError, gcp_auth_scopes_or_default, grant_inputs_to_role,
+    proxy_baseline_input_from_fragment, register_proxy_baseline, register_role,
+    secret_inputs_from_fragment, source_from_placeholder, unique_foreign_id,
 };
 pub use session::SessionRegistrar;
 pub use util::{managed_labels, slugify};

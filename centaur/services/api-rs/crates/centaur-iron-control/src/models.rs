@@ -707,6 +707,35 @@ pub struct Proxy {
     pub token: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Proxy baselines
+// ---------------------------------------------------------------------------
+
+/// Request body for ``POST``/``PUT /api/v1/proxy_baselines``.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProxyBaselineInput {
+    pub namespace: String,
+    pub foreign_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transforms: Vec<Value>,
+}
+
+/// A managed proxy baseline policy record.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ProxyBaseline {
+    pub id: String,
+    pub namespace: String,
+    pub foreign_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+    #[serde(default)]
+    pub transforms: Vec<Value>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::normalize_gcp_id_token_header;
