@@ -105,6 +105,7 @@ Rails.application.routes.draw do
       # explicit namespace + foreign_id via the namespaced lookup route.
       resources :static_secrets, only: %i[index show create update destroy] do
         collection { get "lookup/:namespace/:foreign_id", action: :lookup, as: :lookup }
+        member { post "validate_github_repos" }
       end
       resources :gcp_auth_secrets, only: %i[index show create update destroy] do
         collection { get "lookup/:namespace/:foreign_id", action: :lookup, as: :lookup }

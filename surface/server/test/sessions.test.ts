@@ -11,7 +11,7 @@ import { config } from '../src/config.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { addWorkspaceMember } from '../src/membership.js';
-import { IronControlAdminClient } from '../src/iron-control.js';
+import { githubPatSecretForeignId, IronControlAdminClient } from '../src/iron-control.js';
 import { SeededPrng } from './chaosHarness.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -933,6 +933,75 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('validates private repo access for GitHub PAT credentials before spawning', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const secretForeignId = githubPatSecretForeignId(fx.workspaceId, fx.userId);
+    const validationCall = ironCalls.find((call) =>
+      call.url.endsWith(`/api/v1/static_secrets/${secretForeignId}/validate_github_repos`),
+    );
+    expect(validationCall).toBeDefined();
+    expect(JSON.parse(String(validationCall?.init.body))).toEqual({
+      data: { namespace: 'default', repos: ['acme/private'] },
+    });
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    await app.close();
+  });
+
+  it('rejects private repo spawn when GitHub PAT credentials cannot access the repo', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls, { inaccessibleGitHubRepos: ['acme/private'] }),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'github_repo_inaccessible', repos: ['acme/private'] });
+    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    await app.close();
+  });
+
   it('POST /api/sessions allows Claude Code without a subscription token', async () => {
     const app = await buildApp({
       pool,
@@ -1435,8 +1504,10 @@ describe('Phase 2 sessions', () => {
   });
 
   it('persists and forwards multi-repo checkout specs', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
     const app = await buildApp({
       pool,
+      ironControl: fakeIronControl(ironCalls),
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
     });
     await app.ready();
@@ -1459,6 +1530,10 @@ describe('Phase 2 sessions', () => {
       },
     });
     expect(res.statusCode).toBe(201);
+    const validationCall = ironCalls.find((call) => call.url.includes('/validate_github_repos'));
+    expect(JSON.parse(String(validationCall?.init.body))).toMatchObject({
+      data: { repos: ['acme/app'] },
+    });
     expect(res.json().session).toMatchObject({
       repo: 'acme/app',
       branch: 'main',

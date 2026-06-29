@@ -130,7 +130,7 @@ export function GitHubConnectionDialog({
                 <summary className="cursor-pointer font-medium text-fg-secondary">Personal access token</summary>
                 <div className="mt-3 space-y-2">
                   <p className="text-fg-muted">
-                    Uses your pasted PAT. Private repo access is reported during checkout.
+                    Uses your pasted PAT. Private repo access is checked before sessions start.
                   </p>
                   <input
                     value={token}

@@ -249,6 +249,29 @@ describe('IronControlAdminClient', () => {
     });
   });
 
+  it('validates GitHub repo access through a static secret without returning token material', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test/',
+      apiKey: 'iak_test',
+      fetchImpl: vi.fn(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        calls.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({ data: { inaccessible: ['acme/missing'] } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    await expect(client.validateGitHubStaticSecretRepos('github-token-user', ['acme/private', 'acme/missing'])).resolves.toEqual({
+      inaccessible: ['acme/missing'],
+    });
+    expect(calls[0]!.url).toBe('http://iron.test/api/v1/static_secrets/github-token-user/validate_github_repos');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      data: { namespace: 'default', repos: ['acme/private', 'acme/missing'] },
+    });
+  });
+
   it('exposes iron-control response status and body on request failures', async () => {
     const client = new IronControlAdminClient({
       baseUrl: 'http://iron.test/',

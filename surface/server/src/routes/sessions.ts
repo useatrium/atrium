@@ -7,7 +7,7 @@ import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
-import { IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
+import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 
@@ -172,6 +172,33 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           });
         }
         req.log.warn({ err }, 'github broker repo access validation failed');
+        return reply.code(502).send({
+          error: 'github_repo_validation_failed',
+          message: 'Could not validate GitHub repository access.',
+        });
+      }
+    }
+    if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
+      try {
+        const validation = await ironControl.validateGitHubStaticSecretRepos(
+          githubPatSecretForeignId(githubConnection.workspace_id, user.id),
+          privateRepos,
+        );
+        if (validation.inaccessible.length > 0) {
+          return reply.code(409).send({
+            error: 'github_repo_inaccessible',
+            message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
+            repos: validation.inaccessible,
+          });
+        }
+      } catch (err) {
+        if (err instanceof IronControlRequestError && err.status === 409) {
+          return reply.code(409).send({
+            error: 'github_repo_access_unverified',
+            message: 'Reconnect GitHub before starting a session with private repositories.',
+          });
+        }
+        req.log.warn({ err }, 'github PAT repo access validation failed');
         return reply.code(502).send({
           error: 'github_repo_validation_failed',
           message: 'Could not validate GitHub repository access.',
@@ -370,9 +397,9 @@ async function connectedGitHubForChannel(
   pool: Db,
   userId: string,
   channelId: string,
-): Promise<{ token_kind: string | null; metadata: unknown } | null> {
-  const res = await pool.query<{ token_kind: string | null; metadata: unknown }>(
-    `SELECT uc.token_kind, uc.metadata
+): Promise<{ workspace_id: string; token_kind: string | null; metadata: unknown } | null> {
+  const res = await pool.query<{ workspace_id: string; token_kind: string | null; metadata: unknown }>(
+    `SELECT uc.workspace_id, uc.token_kind, uc.metadata
        FROM channels c
        JOIN user_connections uc
          ON uc.workspace_id = c.workspace_id

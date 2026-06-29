@@ -13,6 +13,14 @@ module Api
         JSON.parse(response.body)
       end
 
+      setup do
+        GithubRepoAccessValidation.github_api_http = nil
+      end
+
+      teardown do
+        GithubRepoAccessValidation.github_api_http = nil
+      end
+
       test "rejects requests without an Authorization header" do
         get api_v1_static_secret_url(id: "ssr_unknown")
         assert_response :unauthorized
@@ -516,6 +524,55 @@ module Api
 
         assert_not response.body.include?("new-secret"), "rotated secret must not appear in response"
         assert_equal "new-secret", ref.reload.source.secret
+      end
+
+      test "validate_github_repos checks access using the control-plane secret without returning it" do
+        ref = static_secrets(:github_token_inject)
+        ref.update!(namespace: "acme", foreign_id: "github-token-user")
+        SecretSource.create!(source_type: "control_plane", secret: "ghp-live-token", static_secret: ref)
+        seen = []
+        GithubRepoAccessValidation.github_api_http = ->(url:, access_token:) {
+          seen << [ url, access_token ]
+          url.ends_with?("/repos/acme/private") ? 200 : 404
+        }
+
+        post validate_github_repos_api_v1_static_secret_url(id: ref.oid),
+             params: { data: { repos: [ "acme/private", "acme/missing" ] } }.to_json,
+             headers: auth_headers
+
+        assert_response :ok
+        assert_equal [ "acme/missing" ], json_body.dig("data", "inaccessible")
+        assert_equal [ "ghp-live-token", "ghp-live-token" ], seen.map(&:second)
+        refute_includes response.body, "ghp-live-token"
+      end
+
+      test "validate_github_repos resolves namespaced static secret foreign ids" do
+        ref = static_secrets(:github_token_inject)
+        ref.update!(namespace: "atrium", foreign_id: "github-token-user")
+        SecretSource.create!(source_type: "control_plane", secret: "ghp-live-token", static_secret: ref)
+        GithubRepoAccessValidation.github_api_http = ->(url:, access_token:) {
+          assert_equal "ghp-live-token", access_token
+          url.ends_with?("/repos/acme/private") ? 200 : 404
+        }
+
+        post validate_github_repos_api_v1_static_secret_url(id: "github-token-user"),
+             params: { data: { namespace: "atrium", repos: [ "acme/private", "acme/missing" ] } }.to_json,
+             headers: auth_headers
+
+        assert_response :ok
+        assert_equal [ "acme/missing" ], json_body.dig("data", "inaccessible")
+      end
+
+      test "validate_github_repos rejects non-control-plane static secrets" do
+        ref = static_secrets(:github_token_inject)
+        SecretSource.create!(source_type: "env", config: { "var" => "GITHUB_TOKEN" }, static_secret: ref)
+
+        post validate_github_repos_api_v1_static_secret_url(id: ref.oid),
+             params: { data: { repos: [ "acme/private" ] } }.to_json,
+             headers: auth_headers
+
+        assert_response :conflict
+        assert_equal "credential_unavailable", json_body.dig("error", "code")
       end
 
       test "POST rejects a control_plane source without a secret" do

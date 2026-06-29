@@ -196,6 +196,17 @@ export class IronControlAdminClient {
     );
   }
 
+  async validateGitHubStaticSecretRepos(
+    staticSecretId: string,
+    repos: readonly string[],
+  ): Promise<{ inaccessible: string[] }> {
+    return this.write<{ inaccessible: string[] }>(
+      'POST',
+      `/api/v1/static_secrets/${encodeURIComponent(staticSecretId)}/validate_github_repos`,
+      { namespace: this.namespace, repos },
+    );
+  }
+
   async createPrincipalStaticGrant(principalId: string, staticSecretId: string): Promise<IronControlGrant> {
     return this.write<IronControlGrant>('POST', '/api/v1/grants', {
       principal_id: principalId,

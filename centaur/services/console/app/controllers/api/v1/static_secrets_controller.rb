@@ -43,7 +43,35 @@ module Api
         head :no_content
       end
 
+      def validate_github_repos
+        ref = resolve_static_secret_ref!
+        unless ref.source&.source_type == "control_plane"
+          return render status: :conflict,
+                        json: { error: { code: "credential_unavailable", message: "static secret is not control-plane backed" } }
+        end
+
+        repos = Array(data_params[:repos]).filter_map { |repo| repo.to_s.presence }
+        result = GithubRepoAccessValidation.call(access_token: ref.source.secret, repos: repos)
+        render json: { data: result }
+      rescue GithubRepoAccessValidation::CredentialUnavailable => e
+        render status: :conflict, json: { error: { code: "credential_unavailable", message: e.message } }
+      rescue GithubRepoAccessValidation::RetryableFailure => e
+        render status: :bad_gateway, json: { error: { code: "github_validation_failed", message: e.message } }
+      end
+
       private
+
+      def resolve_static_secret_ref!
+        identifier = params[:id].to_s
+        if StaticSecret.decode_oid(identifier)
+          StaticSecret.find_by_oid!(identifier)
+        else
+          StaticSecret.find_by!(
+            namespace: data_params[:namespace].presence || "default",
+            foreign_id: identifier,
+          )
+        end
+      end
 
       def assign_upsert_with_retry
         attempts = 0
