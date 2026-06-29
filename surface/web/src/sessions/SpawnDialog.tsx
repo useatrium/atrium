@@ -16,12 +16,15 @@ const HARNESSES: { value: string; label: string }[] = [
   { value: 'claude-code', label: 'Claude Code' },
 ];
 
+type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
+
 export interface SpawnConfig {
   task: string;
   harness: string;
   repo?: string;
   branch?: string;
   repos?: { repo: string; ref?: string; subdir?: string; private?: boolean }[];
+  githubIdentityMode?: GitHubIdentityMode;
   agentProfileId?: string;
   agentProfileVersionId?: string;
 }
@@ -61,6 +64,7 @@ export function SpawnDialog({
   const [branch, setBranch] = useState('');
   const [repoPrivate, setRepoPrivate] = useState(false);
   const [referenceRepos, setReferenceRepos] = useState<ReferenceRepoInput[]>([]);
+  const [githubIdentityMode, setGitHubIdentityMode] = useState<GitHubIdentityMode>('automatic');
   const [agentProfileId, setAgentProfileId] = useState('');
 
   const claudeStatus = providerStatuses?.['claude-code'];
@@ -78,6 +82,16 @@ export function SpawnDialog({
   );
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
+  const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
+  const availableGitHubIdentity = githubConnection?.connected
+    ? githubIdentityModeForTokenKind(githubConnection.tokenKind)
+    : null;
+  const githubIdentityOptions = [
+    { value: 'automatic' as const, label: 'Automatic' },
+    ...(availableGitHubIdentity
+      ? [{ value: availableGitHubIdentity, label: githubIdentityModeLabel(availableGitHubIdentity) }]
+      : []),
+  ];
   const repoMode = repo.trim()
     ? activeReferenceCount > 0
       ? `Working repo + ${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
@@ -114,6 +128,7 @@ export function SpawnDialog({
       ...(trimmedRepo ? { repo: trimmedRepo } : {}),
       ...(trimmedBranch ? { branch: trimmedBranch } : {}),
       ...(repos.length ? { repos } : {}),
+      ...(githubIdentityMode !== 'automatic' ? { githubIdentityMode } : {}),
       ...(selectedProfile ? { agentProfileId: selectedProfile.id } : {}),
       ...(selectedProfile?.currentVersionId ? { agentProfileVersionId: selectedProfile.currentVersionId } : {}),
     });
@@ -355,10 +370,30 @@ export function SpawnDialog({
             )}
           </div>
 
-          <div className="flex items-center justify-between gap-3 rounded-md border border-edge bg-surface px-3 py-2 text-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-edge bg-surface px-3 py-2 text-2xs">
             <span className="font-medium text-fg-secondary">{repoMode}</span>
             <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
+            <span className="shrink-0 text-fg-muted">GitHub: {githubIdentityModeLabel(githubIdentityMode)}</span>
           </div>
+
+          {(repoScoped || githubConnection?.connected) && (
+            <label className="block">
+              <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+                GitHub identity <span className="font-normal normal-case text-fg-muted">· advanced</span>
+              </span>
+              <select
+                value={githubIdentityMode}
+                onChange={(e) => setGitHubIdentityMode(e.target.value as GitHubIdentityMode)}
+                className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg outline-none focus:border-edge-strong"
+              >
+                {githubIdentityOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {privateRepoBlocked && (
             <div className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-2xs text-fg-secondary">
@@ -413,4 +448,30 @@ export function SpawnDialog({
       </form>
     </div>
   );
+}
+
+function githubIdentityModeForTokenKind(tokenKind: ConnectionStatus['tokenKind']): GitHubIdentityMode | null {
+  switch (tokenKind) {
+    case 'app_installation':
+      return 'app_installation';
+    case 'app_user':
+      return 'app_user';
+    case 'pat':
+      return 'pat';
+    default:
+      return null;
+  }
+}
+
+function githubIdentityModeLabel(mode: GitHubIdentityMode): string {
+  switch (mode) {
+    case 'app_installation':
+      return 'App installation';
+    case 'app_user':
+      return 'GitHub user';
+    case 'pat':
+      return 'PAT';
+    default:
+      return 'Automatic';
+  }
 }

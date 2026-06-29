@@ -78,7 +78,7 @@ describe('SpawnDialog', () => {
       target: { value: ' acme/app ' },
     });
     fireEvent.change(screen.getByPlaceholderText('main'), { target: { value: ' dev ' } });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'codex' } });
+    fireEvent.change(screen.getAllByRole('combobox')[0]!, { target: { value: 'codex' } });
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
     expect(onSpawn).toHaveBeenCalledWith({
       task: 'ship it',
@@ -303,6 +303,37 @@ describe('SpawnDialog', () => {
       expect.objectContaining({
         repo: 'acme/private',
         repos: [{ repo: 'acme/private', private: true }],
+      }),
+    );
+  });
+
+  it('emits a selected GitHub identity override', () => {
+    const onSpawn = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+        githubConnection={{ ...connectedGitHub, tokenKind: 'app_installation' }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'work with app identity' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('owner/name'), {
+      target: { value: 'acme/private' },
+    });
+    fireEvent.change(screen.getByLabelText(/GitHub identity/), {
+      target: { value: 'app_installation' },
+    });
+    expect(screen.getByText('GitHub: App installation')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        githubIdentityMode: 'app_installation',
       }),
     );
   });

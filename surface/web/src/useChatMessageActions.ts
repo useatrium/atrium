@@ -141,6 +141,7 @@ export function useChatMessageActions({
         ...(config.repo ? { repo: config.repo } : {}),
         ...(config.branch ? { branch: config.branch } : {}),
         ...(config.repos?.length ? { repos: config.repos } : {}),
+        ...(config.githubIdentityMode ? { githubIdentityMode: config.githubIdentityMode } : {}),
         ...(config.agentProfileId ? { agentProfileId: config.agentProfileId } : {}),
         ...(config.agentProfileVersionId ? { agentProfileVersionId: config.agentProfileVersionId } : {}),
       });

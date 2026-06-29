@@ -72,6 +72,8 @@ export interface SessionJson {
   answerProposals: SessionAnswerProposalJson[];
   pendingQuestion: SessionPendingQuestionJson | null;
   providerAuthRequired: ProviderAuthRequiredJson | null;
+  githubIdentityMode: string | null;
+  providerConnectionId: string | null;
   agentProfileVersionId: string | null;
   viewerCount: number;
   costUsd: number;
@@ -386,6 +388,7 @@ export class SessionRuns {
     repo?: string | null;
     branch?: string | null;
     repos?: unknown;
+    githubIdentityMode?: string | null;
     agentProfileId?: string | null;
     agentProfileVersionId?: string | null;
     /** Client's optimistic id, echoed on session.spawned so a spawn whose
@@ -408,6 +411,7 @@ export class SessionRuns {
       repo?: string | null;
       branch?: string | null;
       repos?: unknown;
+      githubIdentityMode?: string | null;
       agentProfileId?: string | null;
       agentProfileVersionId?: string | null;
       clientSpawnId?: string;
@@ -447,10 +451,10 @@ export class SessionRuns {
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,
          title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id,
-         agent_profile_version_id
+         provider_connection_id, github_identity_mode, agent_profile_version_id
        )
        -- driver_id starts as the spawner ($10 used for both spawned_by + driver_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13, $14, $15)
        ${conflictClause}
        RETURNING *`,
       [
@@ -466,6 +470,8 @@ export class SessionRuns {
         args.user.id,
         args.clientSpawnId ?? null,
         providerCredentialUserId,
+        args.githubIdentityMode && args.githubIdentityMode !== 'automatic' ? 'github' : null,
+        args.githubIdentityMode ?? 'automatic',
         selectedProfileVersion?.id ?? null,
       ],
     );
@@ -489,6 +495,8 @@ export class SessionRuns {
         ...(row.repo ? { repo: row.repo } : {}),
         ...(row.branch ? { branch: row.branch } : {}),
         ...(repos.length ? { repos } : {}),
+        github_identity_mode: row.github_identity_mode ?? 'automatic',
+        ...(row.provider_connection_id ? { provider_connection_id: row.provider_connection_id } : {}),
         ...(row.agent_profile_version_id ? { agent_profile_version_id: row.agent_profile_version_id } : {}),
         ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
       },
@@ -2599,6 +2607,8 @@ function toJson(
     answerProposals: seatInfo.answerProposals ?? [],
     pendingQuestion: parsePendingQuestion(row.pending_question),
     providerAuthRequired: parseProviderAuthRequired(row.provider_auth_required),
+    githubIdentityMode: row.github_identity_mode ?? 'automatic',
+    providerConnectionId: row.provider_connection_id,
     agentProfileVersionId: row.agent_profile_version_id,
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),

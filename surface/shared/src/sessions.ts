@@ -161,6 +161,8 @@ export interface SessionWire {
   answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
   providerAuthRequired?: SessionProviderAuthRequired | null;
+  githubIdentityMode?: string | null;
+  providerConnectionId?: string | null;
   agentProfileVersionId?: string | null;
   costUsd: number | string | null;
   resultText: string | null;

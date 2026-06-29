@@ -428,17 +428,17 @@ async function connectCodex(
   expect(res.statusCode).toBe(200);
 }
 
-async function connectGitHubMetadata(workspaceId: string, userId: string): Promise<void> {
+async function connectGitHubMetadata(workspaceId: string, userId: string, tokenKind = 'pat'): Promise<void> {
   await pool.query(
     `INSERT INTO user_connections
        (workspace_id, user_id, provider, status, token_kind, account_login)
-     VALUES ($1, $2, 'github', 'connected', 'pat', 'octo-user')
+     VALUES ($1, $2, 'github', 'connected', $3, 'octo-user')
      ON CONFLICT (workspace_id, user_id, provider) DO UPDATE
      SET status = EXCLUDED.status,
          token_kind = EXCLUDED.token_kind,
          account_login = EXCLUDED.account_login,
          updated_at = now()`,
-    [workspaceId, userId],
+    [workspaceId, userId, tokenKind],
   );
 }
 
@@ -1175,6 +1175,84 @@ describe('Phase 2 sessions', () => {
         { repo: 'acme/docs', subdir: 'docs' },
       ],
     });
+    await app.close();
+  });
+
+  it('persists and forwards a selected GitHub identity override', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repo: 'acme/app',
+        githubIdentityMode: 'app_installation',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const session = res.json().session;
+    expect(session).toMatchObject({
+      githubIdentityMode: 'app_installation',
+      providerConnectionId: 'github',
+    });
+
+    const row = await pool.query(
+      'SELECT provider_connection_id, github_identity_mode FROM sessions WHERE id = $1',
+      [session.id],
+    );
+    expect(row.rows[0]).toEqual({
+      provider_connection_id: 'github',
+      github_identity_mode: 'app_installation',
+    });
+
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    expect(spawn?.body.metadata).toMatchObject({
+      github_identity_mode: 'app_installation',
+      provider_connection_id: 'github',
+    });
+    await app.close();
+  });
+
+  it('rejects a GitHub identity override that is not connected for the user', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repo: 'acme/app',
+        githubIdentityMode: 'app_user',
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'github_identity_unavailable' });
+    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
     await app.close();
   });
 

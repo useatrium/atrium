@@ -16,6 +16,7 @@ export interface CreateSessionBody {
   repo?: string;
   branch?: string;
   repos?: SessionRepoSpec[];
+  githubIdentityMode?: 'automatic' | 'app_installation' | 'app_user' | 'pat';
   /** Optimistic id echoed on session.spawned for lost-response reconcile. */
   clientSpawnId?: string;
   agentProfileId?: string;

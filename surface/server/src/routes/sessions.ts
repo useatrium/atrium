@@ -7,6 +7,8 @@ import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
 import type { SessionRuns } from '../session-runs.js';
 
+type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
+
 export interface SessionRouteDeps {
   pool: Db;
   sessionRuns: SessionRuns;
@@ -49,6 +51,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       repo?: string;
       branch?: string;
       repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
+      githubIdentityMode?: unknown;
       agentProfileId?: string;
       agentProfileVersionId?: string;
       clientSpawnId?: unknown;
@@ -74,14 +77,32 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!(await canAccessChannel(deps.pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    if (requestHasPrivateRepos(body)) {
-      const hasGitHubConnection = await userHasConnectedGitHubForChannel(deps.pool, user.id, body.channelId);
-      if (!hasGitHubConnection) {
-        return reply.code(409).send({
-          error: 'github_connection_required',
-          message: 'Connect GitHub before starting a session with private repositories.',
-        });
-      }
+    const githubIdentityMode = normalizeGitHubIdentityMode(body.githubIdentityMode);
+    if (!githubIdentityMode) {
+      return reply.code(400).send({
+        error: 'bad_request',
+        message: 'githubIdentityMode must be automatic, app_installation, app_user, or pat',
+      });
+    }
+    const privateRepoRequested = requestHasPrivateRepos(body);
+    const githubConnection =
+      privateRepoRequested || githubIdentityMode !== 'automatic'
+        ? await connectedGitHubForChannel(deps.pool, user.id, body.channelId)
+        : null;
+    if (privateRepoRequested && !githubConnection) {
+      return reply.code(409).send({
+        error: 'github_connection_required',
+        message: 'Connect GitHub before starting a session with private repositories.',
+      });
+    }
+    if (
+      githubIdentityMode !== 'automatic' &&
+      (!githubConnection || githubConnection.token_kind !== githubIdentityMode)
+    ) {
+      return reply.code(409).send({
+        error: 'github_identity_unavailable',
+        message: `Connect GitHub with ${githubIdentityMode} credentials before using that identity mode.`,
+      });
     }
     const clientSpawnId =
       typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
@@ -104,6 +125,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         repo,
         branch,
         repos: Array.isArray(body.repos) ? body.repos : undefined,
+        githubIdentityMode,
         agentProfileId,
         agentProfileVersionId,
         clientSpawnId,
@@ -117,6 +139,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           repo,
           branch,
           repos: Array.isArray(body.repos) ? body.repos : undefined,
+          githubIdentityMode,
           agentProfileId,
           agentProfileVersionId,
           clientSpawnId,
@@ -262,9 +285,13 @@ function requestHasPrivateRepos(body: {
   return Array.isArray(body.repos) && body.repos.some((repo) => repo?.private === true);
 }
 
-async function userHasConnectedGitHubForChannel(pool: Db, userId: string, channelId: string): Promise<boolean> {
-  const res = await pool.query(
-    `SELECT 1
+async function connectedGitHubForChannel(
+  pool: Db,
+  userId: string,
+  channelId: string,
+): Promise<{ token_kind: string | null } | null> {
+  const res = await pool.query<{ token_kind: string | null }>(
+    `SELECT uc.token_kind
        FROM channels c
        JOIN user_connections uc
          ON uc.workspace_id = c.workspace_id
@@ -275,5 +302,13 @@ async function userHasConnectedGitHubForChannel(pool: Db, userId: string, channe
       LIMIT 1`,
     [channelId, userId],
   );
-  return (res.rowCount ?? 0) > 0;
+  return res.rows[0] ?? null;
+}
+
+function normalizeGitHubIdentityMode(value: unknown): GitHubIdentityMode | null {
+  if (value == null || value === '') return 'automatic';
+  if (value === 'automatic' || value === 'app_installation' || value === 'app_user' || value === 'pat') {
+    return value;
+  }
+  return null;
 }
