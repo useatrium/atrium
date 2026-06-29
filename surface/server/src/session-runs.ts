@@ -49,6 +49,7 @@ import {
   type ProviderCredentialProvider,
   type ProviderAuthRequiredJson,
 } from './provider-credentials.js';
+import { Connections } from './connections.js';
 import { AgentProfiles } from './agent-profiles.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -352,6 +353,7 @@ export class SessionRuns {
   private readonly questionRenotifyMinutes: number;
   private readonly questionPushFetchImpl?: typeof fetch;
   private readonly providerCredentials: ProviderCredentials;
+  private readonly connections: Connections;
   private readonly agentProfiles: AgentProfiles;
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -377,6 +379,7 @@ export class SessionRuns {
     this.questionPushFetchImpl = options.questionPushFetchImpl;
     this.providerCredentials =
       options.providerCredentials ?? new ProviderCredentials(this.pool, config.providerCredentialSecret);
+    this.connections = new Connections(this.pool);
     this.agentProfiles = options.agentProfiles ?? new AgentProfiles(this.pool);
   }
 
@@ -1578,6 +1581,7 @@ export class SessionRuns {
     let lastFlushAt = Date.now();
     let lastProjectAt = 0;
     let providerAuthFailureEventId: number | null = null;
+    let githubAuthFailureEventId: number | null = null;
     // Frame-gap observability (addressable-entries H1): track the next id we expect
     // and record any gap/late frame. OBSERVABILITY ONLY — no behavior change.
     let expectedEventId: number | null = row.last_event_id > 0 ? row.last_event_id + 1 : null;
@@ -1597,7 +1601,10 @@ export class SessionRuns {
         if (providerAuthFailureTextForFrame(frame)) {
           providerAuthFailureEventId = frame.event_id;
         }
-        await this.foldFrame(id, frame, providerAuthFailureEventId);
+        if (githubAuthFailureTextForFrame(frame)) {
+          githubAuthFailureEventId = frame.event_id;
+        }
+        await this.foldFrame(id, frame, providerAuthFailureEventId, githubAuthFailureEventId);
         if (isCompletedItemFrame(frame) && Date.now() - lastProjectAt >= 4000) {
           lastProjectAt = Date.now();
           await projectIncrementalAndEmit(this.pool, id).catch(() => {});
@@ -1627,6 +1634,9 @@ export class SessionRuns {
             providerAuthFailureEventId,
           );
           if (marked) return;
+        }
+        if (githubAuthFailureEventId != null) {
+          await this.markGitHubNeedsAuth(id, undefined, githubAuthFailureEventId);
         }
         await this.updateStatus(id, 'failed').catch(() => {});
       }
@@ -1667,6 +1677,7 @@ export class SessionRuns {
     id: string,
     frame: CentaurEventFrame,
     providerAuthFailureEventId: number | null = null,
+    githubAuthFailureEventId: number | null = null,
   ): Promise<void> {
     if (frame.event === 'usage_observed') {
       const cost = typeof frame.data.cost_usd === 'number' ? frame.data.cost_usd : 0;
@@ -1698,6 +1709,12 @@ export class SessionRuns {
           frame.event_id,
         );
         if (marked) return;
+      }
+      const terminalGitHubAuthFailureEventId = githubAuthFailureTextForFrame(frame)
+        ? frame.event_id
+        : githubAuthFailureEventId;
+      if (status === 'failed' && terminalGitHubAuthFailureEventId != null) {
+        await this.markGitHubNeedsAuth(id, undefined, frame.event_id);
       }
       await this.completeSession(id, status, resultText, frame.event_id);
     } else {
@@ -1901,6 +1918,40 @@ export class SessionRuns {
         });
     }
     return events.length > 0;
+  }
+
+  private async markGitHubNeedsAuth(id: string, message: string | undefined, lastEventId = 0): Promise<boolean> {
+    const authMessage =
+      message ?? 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.';
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      if (!row) return null;
+      const ownerId = row.provider_credential_user_id ?? row.spawned_by;
+      await this.connections.markGitHubNeedsAuth(row.workspace_id, ownerId, authMessage, client);
+      await client.query('UPDATE sessions SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
+        lastEventId,
+        id,
+      ]);
+      return appendEvent(client, {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: row.thread_root_event_id,
+        type: 'session.github_auth_required',
+        actorId: ownerId,
+        payload: {
+          sessionId: id,
+          provider: 'github',
+          userId: ownerId,
+          reason: 'invalid_token',
+          message: authMessage,
+          at: new Date().toISOString(),
+        },
+      });
+    });
+    if (!event) return false;
+    this.hub.publishEvent(event);
+    return true;
   }
 
   private async updateStatus(id: string, status: SessionStatus): Promise<void> {
@@ -2471,6 +2522,40 @@ function providerAuthFailureTextForFrame(frame: CentaurEventFrame): string | nul
   if (!isRawHarnessErrorFrame(raw)) return null;
   const text = frameAuthText(raw);
   return isProviderAuthFailureText(text) ? text : null;
+}
+
+function githubAuthFailureTextForFrame(frame: CentaurEventFrame): string | null {
+  if (frame.event === 'execution_state') {
+    const text = frameAuthText(frame.data);
+    return isGitHubAuthFailureText(text) ? text : null;
+  }
+  if (frame.event !== 'amp_raw_event') return null;
+  const raw = objectRecord(frame.data);
+  if (!isRawHarnessErrorFrame(raw)) return null;
+  const text = frameAuthText(raw);
+  return isGitHubAuthFailureText(text) ? text : null;
+}
+
+function isGitHubAuthFailureText(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const text = value.toLowerCase();
+  const hasGitHubContext =
+    text.includes('github.com') ||
+    text.includes('api.github.com') ||
+    text.includes('github_token') ||
+    text.includes('resource not accessible by integration');
+  if (!hasGitHubContext) return false;
+  return (
+    text.includes('authentication failed') ||
+    text.includes('bad credentials') ||
+    text.includes('could not read username') ||
+    text.includes('repository not found') ||
+    text.includes('resource not accessible by integration') ||
+    text.includes('401') ||
+    text.includes('403') ||
+    text.includes('unauthorized') ||
+    text.includes('forbidden')
+  );
 }
 
 function isRawHarnessErrorFrame(raw: Record<string, unknown>): boolean {

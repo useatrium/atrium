@@ -1008,6 +1008,77 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('marks the GitHub connection needs_auth when private repo checkout authentication fails', async () => {
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 9,
+        data: {
+          type: 'execution.state',
+          status: 'failed',
+          result_text:
+            "fatal: Authentication failed for 'https://github.com/acme/private.git' while using GITHUB_TOKEN",
+        },
+      },
+    ]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'checkout private repo',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().session.id;
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        `SELECT status, provider_auth_required
+         FROM sessions
+         WHERE id = $1`,
+        [id],
+      );
+      expect(row.rows[0]).toMatchObject({
+        status: 'failed',
+        provider_auth_required: null,
+      });
+      const connection = await pool.query(
+        `SELECT status, token_kind, last_error
+         FROM user_connections
+         WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+        [fx.workspaceId, fx.userId],
+      );
+      expect(connection.rows[0]).toMatchObject({
+        status: 'needs_auth',
+        token_kind: 'app_installation',
+        last_error: 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.',
+      });
+      const authEvent = await pool.query(
+        `SELECT payload FROM events WHERE type = 'session.github_auth_required'`,
+      );
+      expect(authEvent.rows[0].payload).toMatchObject({
+        sessionId: id,
+        provider: 'github',
+        userId: fx.userId,
+        reason: 'invalid_token',
+      });
+    });
+    await app.close();
+  });
+
   it('does not attach an execution when cancel wins the async session-start race', async () => {
     fake.pauseNextExecute();
     const app = await buildApp({
