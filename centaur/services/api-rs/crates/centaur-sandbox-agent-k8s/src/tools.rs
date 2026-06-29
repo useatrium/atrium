@@ -31,6 +31,7 @@ pub(crate) const BASE_TOOL_DIR: &str = "/app/tools";
 /// Base Centaur tools baked into the sandbox image. Restricted sandboxes use
 /// this path so they keep first-party tool shims without mounting repo-cache or
 /// publishing overlay sources.
+#[allow(dead_code)]
 pub(crate) const BAKED_BASE_TOOL_DIR: &str = "/opt/centaur/tools";
 /// emptyDir the `tools-bootstrap` init container publishes the tools tree into.
 const TOOLS_VOLUME: &str = "tools-root";
@@ -142,6 +143,7 @@ pub(crate) fn agent_tool_dirs() -> String {
 
 /// `TOOL_DIRS` for restricted sandboxes that should not receive repo-cache or
 /// overlay-derived tool sources.
+#[allow(dead_code)]
 pub(crate) fn baked_base_tool_dirs() -> String {
     BAKED_BASE_TOOL_DIR.to_owned()
 }
@@ -163,6 +165,7 @@ pub(crate) fn agent_env(tools: Option<&ToolsConfig>) -> Vec<(String, String)> {
 
 /// Agent env for baked base tools only. No GitHub token is exposed because
 /// restricted sandboxes do not refresh from git or repo-cache.
+#[allow(dead_code)]
 pub(crate) fn baked_base_agent_env() -> Vec<(String, String)> {
     vec![("TOOL_DIRS".to_owned(), baked_base_tool_dirs())]
 }
