@@ -55,7 +55,7 @@ Prereqs: Node 24+, pnpm 10+, Docker.
 ```bash
 cd surface
 
-# 1. start Postgres (leave it running)
+# 1. start local services: Postgres, MinIO, and LiveKit (leave them running)
 docker compose up -d --wait
 
 # 2. install deps

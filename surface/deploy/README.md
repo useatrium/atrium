@@ -116,7 +116,10 @@ Per-user GitHub connections require Centaur console / iron-control. Configure
 Surface with `IRON_CONTROL_BASE_URL`, `IRON_CONTROL_API_KEY`, and
 `IRON_CONTROL_NAMESPACE`. To enable the primary GitHub App user-OAuth button,
 also set `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, and
-`GITHUB_APP_REDIRECT_URL`. Then follow the cutover and rollback runbook in
+`GITHUB_APP_REDIRECT_URL`. To support GitHub App installation-token
+connections, also set `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`; optionally
+set `GITHUB_APP_PRIVATE_KEY_ID` and `GITHUB_PUBLIC_READ_TOKEN`. Then follow the
+cutover and rollback runbook in
 [`docs/github-connections-ops.md`](../../docs/github-connections-ops.md).
 
 ## Operations

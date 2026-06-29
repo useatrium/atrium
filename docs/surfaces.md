@@ -56,7 +56,9 @@ work surface), `/search` (session search).
 ## Agent sessions
 
 - **Spawn dialog** (`sessions/SpawnDialog.tsx`) — task, harness (Codex / Claude
-  Code), optional repo + branch; warns if no subscription credential is connected.
+  Code), optional repo + branch, and advanced GitHub identity selection; warns if
+  a private repo needs a GitHub connection or if no subscription credential is
+  connected.
 - **Session pane** (`sessions/SessionPane.tsx`) — live transcript of a session
   (messages, tool calls, reasoning, suggestions, artifacts) with status, cost,
   elapsed time, a steer composer, answer-question prompts, and cancel.
@@ -99,9 +101,10 @@ context, not write targets.
 - **Settings** (settings popover in `components/Sidebar.tsx`, `theme.tsx`) —
   theme (system/light/dark), accent, text size, high-contrast, motion,
   notifications. Synced to the server across devices.
-- **Provider connectors** (`components/ClaudeConnectDialog.tsx`,
-  `components/CodexConnectDialog.tsx`) — connect a personal Claude Code or Codex
-  subscription so sessions bill to it instead of the workspace default.
+- **Connectors** (`components/GitHubConnectionDialog.tsx`,
+  `components/ClaudeConnectDialog.tsx`, `components/CodexConnectDialog.tsx`) —
+  connect GitHub identities for repository access and personal Claude Code or
+  Codex subscriptions so sessions bill to them instead of the workspace default.
 
 ## Platform coverage
 

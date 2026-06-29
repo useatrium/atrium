@@ -53,7 +53,7 @@ Prereqs: Node 24+, pnpm 10+, Docker.
 
 ```bash
 cd surface
-docker compose up -d --wait   # Postgres + file storage
+docker compose up -d --wait   # Postgres + MinIO + local LiveKit
 pnpm install
 pnpm migrate                  # also runs automatically on boot
 pnpm dev                      # server on :3001, web on :5173
@@ -177,8 +177,9 @@ machine (the **node daemon**) does the copying in both directions:
        │   Centaur sandbox   (nothing can connect in)    │
        │   ┌─────────────────────────────────────────┐  │
        │   │ harness  (Claude Code · Codex · amp · …) │  │
-       │   │ HOME/work = session-visible files         │  │
-       │   │ /atrium    = read-only team context       │  │
+       │   │ ~        = captured workspace             │  │
+       │   │ ~/repos  = Git-managed working repos      │  │
+       │   │ /atrium  = read-only team context         │  │
        │   └───────────────────┬─────────────────────┘  │
        └───────────────────────┼────────────────────────┘
                                │ proxy adds the credentials
@@ -210,8 +211,10 @@ Atrium stores each kind of thing the way that suits it:
 
 ### The agent's workspace
 
-Inside the sandbox the agent works in ordinary directories under its home folder.
-Durable work products are backed by Atrium's artifact ledger and scoped by path:
+Inside the sandbox the agent's home directory is the captured workspace. Git
+repositories are mounted under `~/repos/<owner>/<repo>` and are handled by Git,
+while non-repo deliverables created in the home directory are captured into
+Atrium's artifact ledger and scoped by path:
 
 - `scratch/<session-id>/...` is private durable scratch for that session.
 - `shared/global/...` is workspace-wide shared work.

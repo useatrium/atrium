@@ -68,32 +68,35 @@ A cold session start decomposes into ~five serial costs. What pre-pays each, and
 | Build / compile | sccache compiler cache (`RUSTC_WRAPPER`) | **Atrium** |
 | Cache growth (both tiers) | TTL + per-workspace size-cap (Atrium GC) · node depcache LRU | **Atrium** |
 
-**The warm pool and the warm-cache are orthogonal and compose cleanly.** The pool only
-serves *generic* sessions (repo-less, default-persona, no custom env, no resume) — see the
-`session_repos_json.is_none()` claim filter in `centaur-session-runtime`. Repo-bearing
-sessions *always cold-spawn* a fresh pod whose spec carries `AGENT_REPOS_JSON`, which is
-exactly what gates the `warmcache-hydrate` init container. So the two never collide, and the
-warm-cache never perturbs the upstream pool (it never touches the warm spec, never forces a
-cold start on a claim). Reflink (FICLONE) makes node-local hydration near-free; a cache-cold
-node pulls the store from Atrium CAS over the network (bounded, amortized per node).
+**The warm pool and the warm-cache compose in two paths.** The warm pool starts
+generic pods keyed by harness/persona. Repo-less sessions can claim them directly.
+Repo-bearing sessions can also claim a generic warm pod when flat-home
+post-claim overlay preparation is supported, the repos are not private, and the
+session has default capabilities, no custom env, no persona override, and no
+resume thread. After the claim, Centaur rewrites the claimed home for the
+session and binds the requested `AGENT_REPOS_JSON` layout. If post-claim prep
+fails, the claimed pod is retired and the runtime cold-creates a replacement.
 
-**Why dependency/build caching isn't upstream:** the warm pool *can't* bake repo/deps in —
-that's combinatorial idle cost (one pool per repo×branch×harness×persona) — and upstream
-Centaur's original workload (Slack tool-calling bots) rarely runs `pnpm install`/`cargo
-build`, so the cost never bit. It bites for Atrium's repo software-engineering sessions, so
-this fork adds dep/build caching as a *separate*, content-addressed, post-claim-hydratable
-layer rather than baking it into the pool.
+Sessions that need private repo hydration, custom env, non-default capabilities,
+persona-specific warm state, resume-thread restore, or a backend without
+claimed-home support cold-create a fresh pod. That cold path carries the composed
+repo spec and runs the `warmcache-hydrate` init container when the cache inputs
+are present. Reflink (FICLONE) makes node-local hydration near-free; a cache-cold
+node pulls the store from Atrium CAS over the network.
 
-**Future (not built; tracked in gbasin/atrium#141):**
-- **Warm pool for repo-bearing sessions** — let a repo session claim a generic warm pod and
-  bind its repo + cache *post-claim* via the overlay daemon, so it gets warm pod-boot too
-  (the build-plan §5 path). Spike: `docs/archive/notes/warm-pool-repo-spike.md`.
-- **Per-repo prebuilt pool** (build-plan §7 "Full") — pools keyed by repo+branch with
-  deps+build pre-done; combinatorial idle cost, hot repos only.
-- **Eager cross-node cache replication** — at large multi-node scale, proactively replicate
-  the hot dep-store set to every node (bounded by disk + LRU) so every node is always warm:
-  the container-image-p2p pattern (Dragonfly/Kraken). Content-addressed blobs let this drop
-  in without touching cache logic.
+**Why dependency/build caching isn't upstream:** the warm pool still does not
+bake repo dependencies into the generic pod. That would require one pool per
+repo×branch×harness×persona. Upstream Centaur's original workload (Slack
+tool-calling bots) rarely runs `pnpm install` or `cargo build`, so the cost did
+not dominate. Atrium adds dep/build caching as a separate content-addressed layer
+for repo software-engineering sessions.
+
+**Future / optional scale work:**
+- **Per-repo prebuilt pool** (build-plan §7 "Full") — pools keyed by repo+branch
+  with deps+build pre-done; useful only for hot repos because idle cost grows
+  quickly.
+- **Eager cross-node cache replication** — proactively replicate the hot dep-store
+  set to every node, bounded by disk and LRU, so every node is cache-warm.
 
 ## Migrations
 Use the **`1000+`** range (e.g. `1000_artifact_blobs.sql`). Upstream numbers migrations
