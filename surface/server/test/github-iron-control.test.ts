@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  convergeGitHubBrokerGrant,
   convergeExistingGitHubDirectGrant,
+  convergeGitHubPatGrant,
   convergeGitHubPublicReadFallback,
   convergeGitHubPublicReadRole,
 } from '../src/github-iron-control.js';
@@ -45,6 +47,71 @@ describe('GitHub iron-control convergence', () => {
     ]);
   });
 
+  it('converges a PAT direct grant before removing fallback inheritance and verifying', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = fakeIronControl(calls, { principalGrants: [] });
+
+    await convergeGitHubPatGrant(client, { workspaceId: 'ws1', userId: 'user1', token: 'ghp_secret' });
+
+    expect(callMethodsAndPaths(calls)).toEqual([
+      ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/principals/prn_atrium/grants'],
+      ['POST', '/api/v1/grants'],
+      ['PUT', '/api/v1/roles/github-default'],
+      ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
+      ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
+    ]);
+    expect(JSON.parse(String(calls[1]!.init.body))).toMatchObject({
+      data: {
+        foreign_id: 'github-token-atrium-workspace-ws1-user-user1',
+        source: { source_type: 'control_plane', secret: 'ghp_secret' },
+        labels: { source: 'atrium', provider: 'github', atrium_workspace_id: 'ws1', atrium_user_id: 'user1' },
+      },
+    });
+    expect(JSON.parse(String(calls[3]!.init.body))).toEqual({
+      data: { principal_id: 'prn_atrium', static_secret_id: 'ssr_github_user' },
+    });
+  });
+
+  it('does not duplicate an existing direct grant while converging an App-backed identity', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = fakeIronControl(calls, {
+      principalGrants: [{ id: 'grant_user', principal_id: 'prn_atrium', static_secret_id: 'ssr_github_user' }],
+    });
+
+    await convergeGitHubBrokerGrant(client, {
+      workspaceId: 'ws1',
+      userId: 'user1',
+      tokenKind: 'app_user',
+      brokerCredentialId: 'bcr_user',
+    });
+
+    expect(callMethodsAndPaths(calls)).toEqual([
+      ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
+      ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1'],
+      ['GET', '/api/v1/principals/prn_atrium/grants'],
+      ['PUT', '/api/v1/roles/github-default'],
+      ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
+      ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
+    ]);
+    expect(JSON.parse(String(calls[1]!.init.body))).toMatchObject({
+      data: {
+        source: {
+          source_type: 'token_broker',
+          config: { credential_id: 'bcr_user' },
+        },
+        labels: {
+          source: 'atrium',
+          provider: 'github',
+          token_kind: 'app_user',
+          atrium_workspace_id: 'ws1',
+          atrium_user_id: 'user1',
+        },
+      },
+    });
+  });
+
   it('repairs an existing connected PAT principal by removing fallback role inheritance before verifying', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = fakeIronControl(calls);
@@ -77,7 +144,10 @@ describe('GitHub iron-control convergence', () => {
 
 function fakeIronControl(
   calls: Array<{ url: string; init: RequestInit }>,
-  options: { roleGrants?: Array<{ id: string; role_id: string; static_secret_id: string }> } = {},
+  options: {
+    principalGrants?: Array<{ id: string; principal_id: string; static_secret_id: string }>;
+    roleGrants?: Array<{ id: string; role_id: string; static_secret_id: string }>;
+  } = {},
 ): IronControlAdminClient {
   return new IronControlAdminClient({
     baseUrl: 'http://iron.test',
@@ -98,8 +168,20 @@ function fakeIronControl(
       if (path.endsWith('/roles/role_github_default/grants')) {
         return json({ data: options.roleGrants ?? [] });
       }
+      if (path.endsWith('/principals/prn_atrium/grants')) {
+        return json({ data: options.principalGrants ?? [] });
+      }
       if (path.includes('/static_secrets/github-public-read-token')) {
         return json({ data: { id: 'ssr_public_read', namespace: 'default', foreign_id: 'github-public-read-token' } });
+      }
+      if (path.includes('/static_secrets/github-token-atrium-workspace-ws1-user-user1')) {
+        return json({
+          data: {
+            id: 'ssr_github_user',
+            namespace: 'default',
+            foreign_id: 'github-token-atrium-workspace-ws1-user-user1',
+          },
+        });
       }
       if (path.includes('/roles/')) {
         return json({ data: { id: 'role_github_default', namespace: 'default', foreign_id: 'github-default' } });
@@ -108,9 +190,8 @@ function fakeIronControl(
         return json({ data: { id: 'prn_atrium', namespace: 'default', foreign_id: 'atrium-principal' } });
       }
       if (path.endsWith('/grants') && init?.method === 'POST') {
-        return json({
-          data: { id: 'grant_github', role_id: 'role_github_default', static_secret_id: 'ssr_public_read' },
-        });
+        const body = JSON.parse(String(init.body)) as { data?: Record<string, unknown> };
+        return json({ data: { id: 'grant_github', ...(body.data ?? {}) } });
       }
       return json({ data: { ok: true } });
     }) as unknown as typeof fetch,
