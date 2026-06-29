@@ -177,6 +177,24 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(onConnectGitHub).toHaveBeenCalled();
   });
 
+  it('renders the GitHub identity mode used by the session', () => {
+    render(
+      <SessionPane
+        session={bSession({
+          repo: 'acme/private',
+          githubIdentityMode: 'app_installation',
+          providerConnectionId: 'github',
+        })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    expect(screen.getByText('GitHub: App installation')).toBeTruthy();
+  });
+
   it('renders one Bash tool card with the roundtrip result, completed status', async () => {
     await renderPaneWithB();
 

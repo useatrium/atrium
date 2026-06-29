@@ -213,6 +213,8 @@ export interface Session {
   answerProposals: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
   providerAuthRequired?: SessionProviderAuthRequired | null;
+  githubIdentityMode?: string | null;
+  providerConnectionId?: string | null;
   agentProfileVersionId?: string | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
@@ -325,6 +327,8 @@ export function sessionFromWire(w: SessionWire): Session {
     answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
     providerAuthRequired: parseProviderAuthRequired(w.providerAuthRequired),
+    githubIdentityMode: w.githubIdentityMode ?? null,
+    providerConnectionId: w.providerConnectionId ?? null,
     agentProfileVersionId: w.agentProfileVersionId ?? null,
     questionEvents: [],
     seatEvents: [],
@@ -351,6 +355,8 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     repo: resp.repo ?? live.repo ?? null,
     branch: resp.branch ?? live.branch ?? null,
     repos: resp.repos ?? live.repos ?? null,
+    githubIdentityMode: resp.githubIdentityMode ?? live.githubIdentityMode ?? null,
+    providerConnectionId: resp.providerConnectionId ?? live.providerConnectionId ?? null,
     status: maxSessionStatus(live.status, resp.status),
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
@@ -406,6 +412,10 @@ export function applySessionEvent(
       answerProposals: [],
       pendingQuestion: null,
       providerAuthRequired: null,
+      githubIdentityMode:
+        typeof p.githubIdentityMode === 'string' ? p.githubIdentityMode : null,
+      providerConnectionId:
+        typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null,
       questionEvents: [],
       seatEvents: [],
       costUsd: 0,
@@ -421,7 +431,14 @@ export function applySessionEvent(
     const repo = base.repo ?? (typeof p.repo === 'string' ? p.repo : null);
     const branch = base.branch ?? (typeof p.branch === 'string' ? p.branch : null);
     const repos = base.repos ?? (Array.isArray(p.repos) ? (p.repos as SessionRepoSpec[]) : null);
-    return { ...sessions, [sessionId]: { ...base, spawnerName, repo, branch, repos } };
+    const githubIdentityMode =
+      base.githubIdentityMode ?? (typeof p.githubIdentityMode === 'string' ? p.githubIdentityMode : null);
+    const providerConnectionId =
+      base.providerConnectionId ?? (typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null);
+    return {
+      ...sessions,
+      [sessionId]: { ...base, spawnerName, repo, branch, repos, githubIdentityMode, providerConnectionId },
+    };
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore

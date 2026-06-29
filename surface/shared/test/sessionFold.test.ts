@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySessionEvent } from '../src/sessions';
+import { applySessionEvent, sessionFromWire } from '../src/sessions';
 import type { Session } from '../src/sessions';
 import type { WireEvent } from '../src/timeline';
 
@@ -65,5 +65,42 @@ describe('applySessionEvent repo/branch fold', () => {
   it('keeps the optimistic repo/branch when the event omits them', () => {
     const s = applySessionEvent(optimistic({ repo: 'acme/app', branch: 'dev' }), spawned({}));
     expect(s['sess-1']).toMatchObject({ repo: 'acme/app', branch: 'dev' });
+  });
+
+  it('preserves GitHub identity metadata from session.spawned events', () => {
+    const s = applySessionEvent(
+      {},
+      spawned({ githubIdentityMode: 'app_installation', providerConnectionId: 'github' }),
+    );
+    expect(s['sess-1']).toMatchObject({
+      githubIdentityMode: 'app_installation',
+      providerConnectionId: 'github',
+    });
+  });
+
+  it('preserves GitHub identity metadata from session snapshots', () => {
+    const s = sessionFromWire({
+      id: 'sess-1',
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      title: 'task',
+      status: 'running',
+      harness: 'claude-code',
+      spawnedBy: alice.id,
+      driverId: null,
+      githubIdentityMode: 'app_user',
+      providerConnectionId: 'github',
+      costUsd: 0,
+      resultText: null,
+      createdAt: new Date(1000).toISOString(),
+      completedAt: null,
+      lastEventId: 0,
+      permalink: '/s/sess-1',
+    });
+    expect(s).toMatchObject({
+      githubIdentityMode: 'app_user',
+      providerConnectionId: 'github',
+    });
   });
 });

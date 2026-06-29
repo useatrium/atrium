@@ -464,6 +464,9 @@ export function SessionPane({
 
   const focused = layout === 'focus';
   const canDetach = !isPendingSessionId(session.id);
+  const githubIdentityLabel = session.githubIdentityMode
+    ? githubIdentityModeLabel(session.githubIdentityMode)
+    : null;
 
   return (
     <aside
@@ -506,6 +509,14 @@ export function SessionPane({
                 <span className="text-fg-faint">·</span>
                 <span className="truncate" title={repoBranchTitle(session.repo, session.branch)}>
                   {repoBranchLabel(session.repo, session.branch)}
+                </span>
+              </>
+            )}
+            {githubIdentityLabel && (
+              <>
+                <span className="text-fg-faint">·</span>
+                <span className="shrink-0 truncate" title={`GitHub identity: ${githubIdentityLabel}`}>
+                  GitHub: {githubIdentityLabel}
                 </span>
               </>
             )}
@@ -978,6 +989,21 @@ export function SessionPane({
       )}
     </aside>
   );
+}
+
+function githubIdentityModeLabel(mode: string): string {
+  switch (mode) {
+    case 'automatic':
+      return 'Automatic';
+    case 'app_installation':
+      return 'App installation';
+    case 'app_user':
+      return 'GitHub user';
+    case 'pat':
+      return 'PAT';
+    default:
+      return mode;
+  }
 }
 
 function AnnotatedTranscriptRow({
