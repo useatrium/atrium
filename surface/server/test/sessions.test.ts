@@ -1745,7 +1745,7 @@ describe('Phase 2 sessions', () => {
     await app.ready();
     const cookie = await loginCookie(app);
     await connectClaude(app, cookie, 'oauth-from-test');
-    await connectGitHubMetadata(fx.workspaceId, fx.userId);
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat', { staticSecretId: 'ssr_active_pat' });
 
     const res = await app.inject({
       method: 'POST',
@@ -1763,6 +1763,7 @@ describe('Phase 2 sessions', () => {
     });
     expect(res.statusCode).toBe(201);
     const validationCall = ironCalls.find((call) => call.url.includes('/validate_github_repos'));
+    expect(validationCall?.url).toBe('http://iron.test/api/v1/static_secrets/ssr_active_pat/validate_github_repos');
     expect(JSON.parse(String(validationCall?.init.body))).toMatchObject({
       data: { repos: ['acme/app'] },
     });

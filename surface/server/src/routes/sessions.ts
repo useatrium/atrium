@@ -193,11 +193,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         }
       }
       if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
+        const staticSecretId =
+          metadataString(githubConnection.metadata, 'staticSecretId') ??
+          metadataString(githubConnection.metadata, 'staticSecretForeignId') ??
+          githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id);
         try {
-          const validation = await ironControl.validateGitHubStaticSecretRepos(
-            githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id),
-            privateRepos,
-          );
+          const validation = await ironControl.validateGitHubStaticSecretRepos(staticSecretId, privateRepos);
           if (validation.inaccessible.length > 0) {
             return reply.code(409).send({
               error: 'github_repo_inaccessible',
