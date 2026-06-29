@@ -12,8 +12,9 @@ one PR/CI run instead of two coordinated PRs across two repos.
 
 ## How sync works (important)
 - **Direction:** only inbound (upstream → `centaur/`). We never push upstream.
-- **Pull upstream:** `scripts/centaur-sync.sh` (wraps `git subtree pull` with the right
-  flags/guards). Details + conflict guidance in [`centaur/ATRIUM_FORK.md`](../centaur/ATRIUM_FORK.md).
+- **Pull upstream:** `scripts/centaur-sync.sh` (creates a sibling integration worktree,
+  then wraps `git subtree pull` with the right flags/guards). Details + conflict guidance
+  in [`centaur/ATRIUM_FORK.md`](../centaur/ATRIUM_FORK.md).
 - **Merge method — load-bearing:** the nest and every upstream-pull PR **must land as a
   MERGE COMMIT, never squash.** Squashing flattens the centaur ancestry → the next
   `subtree pull` fails with "refusing to merge unrelated histories." This is why
