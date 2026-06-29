@@ -972,6 +972,75 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('does not forward GitHub PAT material to Centaur spawn, execution, or session events', async () => {
+    const token = 'ghp_absence_test_secret_1234';
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ login: 'octo-user' }), {
+          status: 200,
+          headers: { 'x-oauth-scopes': 'repo, read:user' },
+        }),
+      ),
+    );
+
+    const connect = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'pat',
+        token,
+      },
+    });
+    expect(connect.statusCode).toBe(200);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'checkout private repo',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+      expect(fake.requests.some((r) => r.path === '/agent/execute')).toBe(true);
+    });
+    expect(JSON.stringify(fake.requests)).not.toContain(token);
+    expect(JSON.stringify(fake.requests)).toContain('github_identity_mode');
+    expect(JSON.stringify(ironCalls)).toContain(token);
+
+    const persisted = await pool.query(
+      `SELECT row_to_json(s.*)::text AS payload
+       FROM sessions s
+        WHERE s.id = $1::uuid
+       UNION ALL
+       SELECT payload::text
+         FROM events
+        WHERE payload->>'sessionId' = $2`,
+      [res.json().session.id, res.json().session.id],
+    );
+    expect(JSON.stringify(persisted.rows)).not.toContain(token);
+    expect(JSON.stringify(persisted.rows)).not.toContain('ghp_absence_test_secret');
+    await app.close();
+  });
+
   it('rejects private repo spawn when GitHub PAT credentials cannot access the repo', async () => {
     const ironCalls: Array<{ url: string; init: RequestInit }> = [];
     const app = await buildApp({
