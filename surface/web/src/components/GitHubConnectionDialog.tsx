@@ -87,7 +87,7 @@ export function GitHubConnectionDialog({
             </div>
           ) : (
             <p className="text-xs leading-relaxed text-fg-muted">
-              Connect GitHub to make repository access use your workspace or account credentials.
+              Connect a GitHub user, app installation, or PAT for repository access.
             </p>
           )}
 
@@ -102,6 +102,9 @@ export function GitHubConnectionDialog({
               <details className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
                 <summary className="cursor-pointer font-medium text-fg-secondary">App installation</summary>
                 <div className="mt-3 space-y-2">
+                  <p className="text-fg-muted">
+                    Uses a GitHub App installation token for selected organization repositories.
+                  </p>
                   <input
                     value={installationId}
                     onChange={(e) => setInstallationId(e.target.value)}
@@ -124,8 +127,11 @@ export function GitHubConnectionDialog({
                 </div>
               </details>
               <details className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
-                <summary className="cursor-pointer font-medium text-fg-secondary">Paste token</summary>
+                <summary className="cursor-pointer font-medium text-fg-secondary">Personal access token</summary>
                 <div className="mt-3 space-y-2">
+                  <p className="text-fg-muted">
+                    Uses your pasted PAT. Private repo access is reported during checkout.
+                  </p>
                   <input
                     value={token}
                     onChange={(e) => setToken(e.target.value)}
@@ -139,7 +145,7 @@ export function GitHubConnectionDialog({
                     onClick={() => void run(() => onConnect({ tokenKind: 'pat', token: token.trim() }))}
                     className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Connect token
+                    Connect PAT
                   </button>
                 </div>
               </details>
@@ -171,7 +177,7 @@ export function GitHubConnectionDialog({
             onClick={() => void run(() => onConnect({ tokenKind: 'app_user' }))}
             className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {connected || needsAuth ? 'Reconnect GitHub' : 'Connect GitHub'}
+            {connected || needsAuth ? 'Reconnect GitHub user' : 'Connect GitHub user'}
           </button>
         </footer>
       </div>

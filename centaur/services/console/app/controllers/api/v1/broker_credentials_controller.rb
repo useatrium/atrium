@@ -45,7 +45,30 @@ module Api
         render status: :conflict, json: { error: { message: ref.errors.full_messages.to_sentence } }
       end
 
+      def validate_github_repos
+        ref = resolve_broker_credential_ref!
+        repos = Array(data_params[:repos]).filter_map { |repo| repo.to_s.presence }
+        result = GithubRepoAccessValidation.call(access_token: ref.access_token, repos: repos)
+        render json: { data: result }
+      rescue GithubRepoAccessValidation::CredentialUnavailable => e
+        render status: :conflict, json: { error: { code: "credential_unavailable", message: e.message } }
+      rescue GithubRepoAccessValidation::RetryableFailure => e
+        render status: :bad_gateway, json: { error: { code: "github_validation_failed", message: e.message } }
+      end
+
       private
+
+      def resolve_broker_credential_ref!
+        identifier = params[:id].to_s
+        if BrokerCredential.decode_oid(identifier)
+          BrokerCredential.find_by_oid!(identifier)
+        else
+          BrokerCredential.find_by!(
+            namespace: data_params[:namespace].presence || "default",
+            foreign_id: identifier,
+          )
+        end
+      end
 
       def assign_and_save!(ref, attrs)
         base = attrs.permit(:namespace, :foreign_id, :name, :description, :token_endpoint,

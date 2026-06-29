@@ -834,6 +834,105 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('validates private repo access for GitHub App user credentials before spawning', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_user', { brokerCredentialId: 'bcr_user_github' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const validationCall = ironCalls.find((call) =>
+      call.url.endsWith('/api/v1/broker_credentials/bcr_user_github/validate_github_repos'),
+    );
+    expect(validationCall).toBeDefined();
+    expect(JSON.parse(String(validationCall?.init.body))).toEqual({
+      data: { namespace: 'default', repos: ['acme/private'] },
+    });
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    await app.close();
+  });
+
+  it('rejects private repo spawn when GitHub App user credentials cannot access the repo', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls, { inaccessibleGitHubRepos: ['acme/private'] }),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_user', { brokerCredentialId: 'bcr_user_github' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'github_repo_inaccessible', repos: ['acme/private'] });
+    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    await app.close();
+  });
+
+  it('rejects private repo spawn when GitHub App user credentials lack a broker credential id', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_user');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'github_repo_access_unverified' });
+    expect(ironCalls).toHaveLength(0);
+    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    await app.close();
+  });
+
   it('POST /api/sessions allows Claude Code without a subscription token', async () => {
     const app = await buildApp({
       pool,
@@ -4123,7 +4222,10 @@ describe('session list access control', () => {
   });
 });
 
-function fakeIronControl(calls: Array<{ url: string; init: RequestInit }>): IronControlAdminClient {
+function fakeIronControl(
+  calls: Array<{ url: string; init: RequestInit }>,
+  options: { inaccessibleGitHubRepos?: string[] } = {},
+): IronControlAdminClient {
   return new IronControlAdminClient({
     baseUrl: 'http://iron.test',
     apiKey: 'iak_test',
@@ -4139,6 +4241,9 @@ function fakeIronControl(calls: Array<{ url: string; init: RequestInit }>): Iron
             secrets: [{ replace: { proxy_value: 'GITHUB_TOKEN' }, rules: [{ host: 'api.github.com' }] }],
           },
         });
+      }
+      if (path.endsWith('/validate_github_repos')) {
+        return json({ data: { inaccessible: options.inaccessibleGitHubRepos ?? [] } });
       }
       if (path.includes('/roles/')) {
         return json({ data: { id: 'role_github_default', namespace: 'default', foreign_id: 'github-default' } });

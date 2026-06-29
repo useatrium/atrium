@@ -7,12 +7,14 @@ import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
+import { IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 
 export interface SessionRouteDeps {
   pool: Db;
   sessionRuns: SessionRuns;
+  ironControl: IronControlAdminClient;
   agentProfiles: AgentProfiles;
   appRegistry: AppRegistry;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
@@ -29,7 +31,7 @@ export interface SessionRouteDeps {
 }
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
-  const { sessionRuns, agentProfiles, appRegistry, requireUser, requireSessionAccess, optionalOpId, runMutation } =
+  const { sessionRuns, ironControl, agentProfiles, appRegistry, requireUser, requireSessionAccess, optionalOpId, runMutation } =
     deps;
 
   async function sessionAppContext(sessionId: string): Promise<{ workspaceId: string; channelId: string } | null> {
@@ -139,6 +141,37 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           });
         }
         req.log.warn({ err }, 'github repo access validation failed');
+        return reply.code(502).send({
+          error: 'github_repo_validation_failed',
+          message: 'Could not validate GitHub repository access.',
+        });
+      }
+    }
+    if (privateRepoRequested && githubConnection?.token_kind === 'app_user') {
+      const brokerCredentialId = metadataString(githubConnection.metadata, 'brokerCredentialId');
+      if (!brokerCredentialId) {
+        return reply.code(409).send({
+          error: 'github_repo_access_unverified',
+          message: 'Reconnect GitHub before starting a session with private repositories.',
+        });
+      }
+      try {
+        const validation = await ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos);
+        if (validation.inaccessible.length > 0) {
+          return reply.code(409).send({
+            error: 'github_repo_inaccessible',
+            message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
+            repos: validation.inaccessible,
+          });
+        }
+      } catch (err) {
+        if (err instanceof IronControlRequestError && err.status === 409) {
+          return reply.code(409).send({
+            error: 'github_repo_access_unverified',
+            message: 'Reconnect GitHub before starting a session with private repositories.',
+          });
+        }
+        req.log.warn({ err }, 'github broker repo access validation failed');
         return reply.code(502).send({
           error: 'github_repo_validation_failed',
           message: 'Could not validate GitHub repository access.',

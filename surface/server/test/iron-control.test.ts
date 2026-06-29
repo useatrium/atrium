@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   IronControlAdminClient,
+  type IronControlRequestError,
   atriumPrincipalForeignId,
   countGitHubTokenTransforms,
   githubAppInstallationBrokerCredentialForeignId,
@@ -223,6 +224,42 @@ describe('IronControlAdminClient', () => {
         github_private_key_id: 'key-1',
       },
     });
+  });
+
+  it('validates GitHub repo access through a broker credential without returning token material', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test/',
+      apiKey: 'iak_test',
+      fetchImpl: vi.fn(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        calls.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({ data: { inaccessible: ['acme/missing'] } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    await expect(client.validateGitHubBrokerRepos('bcr_user', ['acme/private', 'acme/missing'])).resolves.toEqual({
+      inaccessible: ['acme/missing'],
+    });
+    expect(calls[0]!.url).toBe('http://iron.test/api/v1/broker_credentials/bcr_user/validate_github_repos');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      data: { namespace: 'default', repos: ['acme/private', 'acme/missing'] },
+    });
+  });
+
+  it('exposes iron-control response status and body on request failures', async () => {
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test/',
+      apiKey: 'iak_test',
+      fetchImpl: vi.fn(async () => new Response('credential unavailable', { status: 409 })) as unknown as typeof fetch,
+    });
+
+    await expect(client.validateGitHubBrokerRepos('bcr_user', ['acme/private'])).rejects.toMatchObject({
+      status: 409,
+      bodyText: 'credential unavailable',
+    } satisfies Partial<IronControlRequestError>);
   });
 
   it('creates and revokes grants by iron-control object id', async () => {

@@ -153,6 +153,7 @@ Rails.application.routes.draw do
       # rotating token blob is never serialized back.
       resources :broker_credentials, only: %i[index show create update destroy] do
         collection { get "lookup/:namespace/:foreign_id", action: :lookup, as: :lookup }
+        member { post "validate_github_repos" }
       end
 
       # Operator-managed OAuth apps (ApiKey auth). Addressed by oid or slug; CRUD

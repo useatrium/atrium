@@ -15,6 +15,14 @@ module Api
         @github_private_key ||= OpenSSL::PKey::RSA.generate(2048).to_pem
       end
 
+      setup do
+        GithubRepoAccessValidation.github_api_http = nil
+      end
+
+      teardown do
+        GithubRepoAccessValidation.github_api_http = nil
+      end
+
       test "rejects requests without an API key" do
         get api_v1_broker_credentials_url(namespace: "acme")
         assert_response :unauthorized
@@ -330,6 +338,59 @@ module Api
         assert_nil bc.dead_reason
         assert_equal 0, bc.failure_count
         assert bc.next_attempt_at.present?
+      end
+
+      test "validate_github_repos checks access using the broker access token without returning it" do
+        bc = broker_credentials(:acme_managed_gmail)
+        bc.update!(access_token: "gho-live-token", last_refresh: Time.current, expires_at: 10.minutes.from_now)
+        seen = []
+        GithubRepoAccessValidation.github_api_http = ->(url:, access_token:) {
+          seen << [ url, access_token ]
+          url.ends_with?("/repos/acme/private") ? 200 : 404
+        }
+
+        post validate_github_repos_api_v1_broker_credential_url(id: bc.oid),
+             params: { data: { repos: [ "acme/private", "acme/missing" ] } }.to_json,
+             headers: auth_headers
+
+        assert_response :ok
+        assert_equal [ "acme/missing" ], json_body.dig("data", "inaccessible")
+        assert_equal [ "gho-live-token", "gho-live-token" ], seen.map(&:second)
+        refute_includes response.body, "gho-live-token"
+      end
+
+      test "validate_github_repos resolves namespaced broker credential foreign ids" do
+        bc = broker_credentials(:acme_managed_gmail)
+        bc.update!(
+          namespace: "atrium",
+          foreign_id: "github-app-user-workspace-user",
+          access_token: "gho-live-token",
+          last_refresh: Time.current,
+          expires_at: 10.minutes.from_now,
+        )
+        GithubRepoAccessValidation.github_api_http = ->(url:, access_token:) {
+          assert_equal "gho-live-token", access_token
+          url.ends_with?("/repos/acme/private") ? 200 : 404
+        }
+
+        post validate_github_repos_api_v1_broker_credential_url(id: "github-app-user-workspace-user"),
+             params: { data: { namespace: "atrium", repos: [ "acme/private", "acme/missing" ] } }.to_json,
+             headers: auth_headers
+
+        assert_response :ok
+        assert_equal [ "acme/missing" ], json_body.dig("data", "inaccessible")
+      end
+
+      test "validate_github_repos reports unavailable broker credentials without token material" do
+        bc = broker_credentials(:acme_managed_gmail)
+
+        post validate_github_repos_api_v1_broker_credential_url(id: bc.oid),
+             params: { data: { repos: [ "acme/private" ] } }.to_json,
+             headers: auth_headers
+
+        assert_response :conflict
+        assert_equal "credential_unavailable", json_body.dig("error", "code")
+        refute_includes response.body, "access_token"
       end
 
       test "destroy removes the credential" do

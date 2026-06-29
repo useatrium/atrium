@@ -38,6 +38,16 @@ export interface GitHubTransformVerification {
   ok: boolean;
 }
 
+export class IronControlRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly bodyText: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export class IronControlAdminClient {
   readonly namespace: string;
   private readonly baseUrl: string;
@@ -175,6 +185,17 @@ export class IronControlAdminClient {
     });
   }
 
+  async validateGitHubBrokerRepos(
+    brokerCredentialId: string,
+    repos: readonly string[],
+  ): Promise<{ inaccessible: string[] }> {
+    return this.write<{ inaccessible: string[] }>(
+      'POST',
+      `/api/v1/broker_credentials/${encodeURIComponent(brokerCredentialId)}/validate_github_repos`,
+      { namespace: this.namespace, repos },
+    );
+  }
+
   async createPrincipalStaticGrant(principalId: string, staticSecretId: string): Promise<IronControlGrant> {
     return this.write<IronControlGrant>('POST', '/api/v1/grants', {
       principal_id: principalId,
@@ -252,7 +273,12 @@ export class IronControlAdminClient {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     if (!res.ok) {
-      throw new Error(`iron-control ${method} ${path} failed: ${res.status} ${await res.text()}`);
+      const bodyText = await res.text();
+      throw new IronControlRequestError(
+        res.status,
+        bodyText,
+        `iron-control ${method} ${path} failed: ${res.status} ${bodyText}`,
+      );
     }
     if (res.status === 204) return null;
     return res.json();

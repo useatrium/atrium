@@ -130,6 +130,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
   registerSessionRoutes(app, {
     pool,
     sessionRuns,
+    ironControl,
     agentProfiles,
     appRegistry,
     requireUser,

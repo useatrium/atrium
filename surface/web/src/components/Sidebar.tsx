@@ -881,9 +881,9 @@ function SessionBrowserModal({
 function githubConnectionLabel(tokenKind: ConnectionStatus['tokenKind']): string {
   switch (tokenKind) {
     case 'app_installation':
-      return 'App';
+      return 'App installation';
     case 'app_user':
-      return 'User';
+      return 'GitHub user';
     case 'pat':
       return 'PAT';
     case 'public_read':

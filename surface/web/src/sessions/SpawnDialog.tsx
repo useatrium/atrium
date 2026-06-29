@@ -87,7 +87,7 @@ export function SpawnDialog({
     ? githubIdentityModeForTokenKind(githubConnection.tokenKind)
     : null;
   const githubIdentityOptions = [
-    { value: 'automatic' as const, label: 'Automatic' },
+    { value: 'automatic' as const, label: githubAutomaticLabel(availableGitHubIdentity) },
     ...(availableGitHubIdentity
       ? [{ value: availableGitHubIdentity, label: githubIdentityModeLabel(availableGitHubIdentity) }]
       : []),
@@ -373,7 +373,12 @@ export function SpawnDialog({
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-edge bg-surface px-3 py-2 text-2xs">
             <span className="font-medium text-fg-secondary">{repoMode}</span>
             <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
-            <span className="shrink-0 text-fg-muted">GitHub: {githubIdentityModeLabel(githubIdentityMode)}</span>
+            <span className="shrink-0 text-fg-muted">
+              GitHub:{' '}
+              {githubIdentityMode === 'automatic'
+                ? githubAutomaticLabel(availableGitHubIdentity)
+                : githubIdentityModeLabel(githubIdentityMode)}
+            </span>
           </div>
 
           {(repoScoped || githubConnection?.connected) && (
@@ -474,4 +479,8 @@ function githubIdentityModeLabel(mode: GitHubIdentityMode): string {
     default:
       return 'Automatic';
   }
+}
+
+function githubAutomaticLabel(connectedMode: GitHubIdentityMode | null): string {
+  return connectedMode ? `Automatic (${githubIdentityModeLabel(connectedMode)})` : 'Automatic (public unless private)';
 }
