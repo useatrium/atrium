@@ -78,10 +78,10 @@ describe('GitHubConnectionDialog', () => {
 
     expect(screen.getByText('Reconnect required')).toBeTruthy();
     expect(screen.getByText('token expired')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Reconnect GitHub' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reconnect GitHub user' })).toBeTruthy();
   });
 
-  it('connects a GitHub App installation from the advanced installation id control', async () => {
+  it('connects a GitHub App installation from the primary installation id control', async () => {
     const onConnect = vi.fn(async () => {});
     render(
       <GitHubConnectionDialog
@@ -93,10 +93,30 @@ describe('GitHubConnectionDialog', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('App installation'));
     fireEvent.change(screen.getByPlaceholderText('Installation id'), { target: { value: '12345' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Connect installation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub App' }));
 
     expect(onConnect).toHaveBeenCalledWith({ tokenKind: 'app_installation', installationId: '12345' });
+  });
+
+  it('shows workspace, validation, and repo access metadata for connected accounts', () => {
+    renderDialog(
+      status({
+        tokenKind: 'app_installation',
+        workspaceId: 'workspace-1',
+        capabilities: { repoAccessSummary: '12 selected repositories' },
+        lastValidatedAt: '2026-06-29T12:00:00.000Z',
+        metadata: {
+          installationAccountType: 'Organization',
+          installationTargetType: 'Organization',
+        },
+      }),
+    );
+
+    expect(screen.getByText('Workspace')).toBeTruthy();
+    expect(screen.getByText('workspace-1')).toBeTruthy();
+    expect(screen.getByText('Last checked')).toBeTruthy();
+    expect(screen.getByText('Repo access')).toBeTruthy();
+    expect(screen.getByText('12 selected repositories')).toBeTruthy();
   });
 });
