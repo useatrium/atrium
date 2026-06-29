@@ -1107,6 +1107,7 @@ export function Chat({
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
           providerCredentials={providerCredentials}
           onConnectProvider={setProviderDialog}
+          onConnectGitHub={() => setConnectionDialog('github')}
         />
       ) : state.openSessionId ? (
         <aside

@@ -56,7 +56,7 @@ export interface SessionPendingQuestion {
 }
 
 export interface SessionProviderAuthRequired {
-  provider: 'claude-code' | 'codex';
+  provider: 'claude-code' | 'codex' | 'github';
   userId: string;
   reason: 'missing_token' | 'invalid_token' | 'auth_error';
   message: string;
@@ -448,7 +448,7 @@ export function applySessionEvent(
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,
         pendingQuestion: null,
-        providerAuthRequired: null,
+        providerAuthRequired: prev.providerAuthRequired?.provider === 'github' ? prev.providerAuthRequired : null,
       },
     };
   }
@@ -467,8 +467,21 @@ export function applySessionEvent(
     };
   }
 
+  if (ev.type === 'session.github_auth_required') {
+    const required = parseProviderAuthRequired({ ...p, provider: 'github' });
+    if (!required) return sessions;
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        providerAuthRequired: required,
+        pendingQuestion: null,
+      },
+    };
+  }
+
   if (ev.type === 'session.provider_auth_resolved') {
-    if (p.provider !== 'claude-code' && p.provider !== 'codex') return sessions;
+    if (p.provider !== 'claude-code' && p.provider !== 'codex' && p.provider !== 'github') return sessions;
     return { ...sessions, [sessionId]: { ...prev, providerAuthRequired: null } };
   }
 
@@ -745,7 +758,7 @@ function parseQuestionPrompts(value: unknown): QuestionPrompt[] {
 function parseProviderAuthRequired(value: unknown): SessionProviderAuthRequired | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
-  if (raw.provider !== 'claude-code' && raw.provider !== 'codex') return null;
+  if (raw.provider !== 'claude-code' && raw.provider !== 'codex' && raw.provider !== 'github') return null;
   if (typeof raw.userId !== 'string') return null;
   if (
     raw.reason !== 'missing_token' &&
@@ -763,6 +776,8 @@ function parseProviderAuthRequired(value: unknown): SessionProviderAuthRequired 
         ? raw.message
         : raw.provider === 'codex'
           ? 'Reconnect Codex to continue this session.'
+          : raw.provider === 'github'
+            ? 'Reconnect GitHub before retrying private repository access.'
           : 'Reconnect Claude Code to continue this session.',
     at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
   };

@@ -142,6 +142,36 @@ describe('session card transitions across session.* events', () => {
     });
   });
 
+  it('preserves GitHub auth-required state across terminal checkout failure', () => {
+    let s = spawned(loadedState());
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(102, 'session.github_auth_required', {
+        sessionId: 'sess-1',
+        provider: 'github',
+        userId: spawner.id,
+        reason: 'invalid_token',
+        message: 'GitHub authentication failed.',
+        at: new Date().toISOString(),
+      }),
+    });
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(103, 'session.completed', {
+        sessionId: 'sess-1',
+        status: 'failed',
+        resultExcerpt: 'private repo checkout failed',
+        permalink: '/s/sess-1',
+      }),
+    });
+
+    expect(s.sessions['sess-1']!.providerAuthRequired).toMatchObject({
+      provider: 'github',
+      reason: 'invalid_token',
+      message: 'GitHub authentication failed.',
+    });
+  });
+
   it('shows the current driver in the subtitle when it differs from the spawner', () => {
     const bob = { id: 'u-bob', handle: 'bob', displayName: 'Bob' };
     let s = spawned(loadedState());

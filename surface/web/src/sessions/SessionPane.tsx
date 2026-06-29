@@ -96,6 +96,7 @@ export function SessionPane({
   onClearFailedCancel = () => {},
   providerCredentials,
   onConnectProvider,
+  onConnectGitHub,
   layout = 'split',
   onToggleFocus,
 }: {
@@ -121,6 +122,7 @@ export function SessionPane({
   onClearFailedCancel?: () => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
+  onConnectGitHub?: () => void;
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
@@ -595,13 +597,21 @@ export function SessionPane({
         </div>
       )}
 
-      {session.providerAuthRequired && !displayTerminal && (
+      {session.providerAuthRequired &&
+        (!displayTerminal || session.providerAuthRequired.provider === 'github') && (
         <ProviderAuthBanner
           required={session.providerAuthRequired}
           isOwner={session.providerAuthRequired.userId === me.id}
           ownerName={providerAuthOwnerName}
-          connected={providerCredentials?.[session.providerAuthRequired.provider]?.connected === true}
-          onConnect={() => onConnectProvider?.(session.providerAuthRequired!.provider)}
+          connected={
+            session.providerAuthRequired.provider !== 'github' &&
+            providerCredentials?.[session.providerAuthRequired.provider]?.connected === true
+          }
+          onConnect={() => {
+            const provider = session.providerAuthRequired!.provider;
+            if (provider === 'github') onConnectGitHub?.();
+            else onConnectProvider?.(provider);
+          }}
         />
       )}
 

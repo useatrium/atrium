@@ -161,11 +161,15 @@ export function ProviderAuthBanner({
 }
 
 function providerLabel(provider: SessionProviderAuthRequired['provider']): string {
-  return provider === 'codex' ? 'Codex' : 'Claude Code';
+  if (provider === 'codex') return 'Codex';
+  if (provider === 'github') return 'GitHub';
+  return 'Claude Code';
 }
 
 function providerActionLabel(provider: SessionProviderAuthRequired['provider']): string {
-  return provider === 'codex' ? 'Codex' : 'Claude';
+  if (provider === 'codex') return 'Codex';
+  if (provider === 'github') return 'GitHub';
+  return 'Claude';
 }
 
 export function QuestionBanner({

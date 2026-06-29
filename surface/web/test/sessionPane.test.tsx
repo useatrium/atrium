@@ -148,6 +148,35 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(onConnect).toHaveBeenCalledWith('claude-code');
   });
 
+  it('renders a GitHub auth-required banner on failed private repo checkout', () => {
+    const onConnectGitHub = vi.fn();
+    render(
+      <SessionPane
+        session={bSession({
+          status: 'failed',
+          completedAt: new Date().toISOString(),
+          providerAuthRequired: {
+            provider: 'github',
+            userId: me.id,
+            reason: 'invalid_token',
+            message: 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.',
+            at: new Date().toISOString(),
+          },
+        })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onConnectGitHub={onConnectGitHub}
+      />,
+    );
+
+    expect(screen.getByTestId('provider-auth-banner')).toBeTruthy();
+    expect(screen.getByText(/Reconnect GitHub before retrying private repository access/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+    expect(onConnectGitHub).toHaveBeenCalled();
+  });
+
   it('renders one Bash tool card with the roundtrip result, completed status', async () => {
     await renderPaneWithB();
 
