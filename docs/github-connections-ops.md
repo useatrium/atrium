@@ -62,6 +62,24 @@ The GitHub infra transform must be removed from
 `centaur/services/api-rs/crates/centaur-iron-proxy/src/infra.yaml` before the
 cutover. If `GITHUB_TOKEN` remains in infra config, it shadows principal grants.
 
+## Connector Scope
+
+This runbook is GitHub-specific because GitHub is both a sandbox tool credential
+(`gh`, `git`, private checkout) and an Atrium user-facing connection. Do not
+blindly apply the same cutover to every credential-shaped setting in Centaur:
+
+| Credential family | Current treatment | Same Atrium Connections treatment? |
+| --- | --- | --- |
+| GitHub `GITHUB_TOKEN` | Workspace/user principal grant owned by Surface; no shared infra fallback except public-read role | Yes, this runbook |
+| Claude/Codex subscription auth | Atrium `user_provider_credentials`; injected by Surface at execute time | Later, when legacy provider credential APIs are adapted into unified Connections |
+| Google/Slack OAuth broker credentials in Centaur console | Brokered OAuth credentials for console jobs/imports/sync paths | Only when Atrium exposes those as user-scoped product connections; keep broker lifecycle in iron-control |
+| Slack bot/app tokens, model API keys, storage/service credentials | Infra/operator secrets | No; these are service credentials, not user-selected sandbox identities |
+
+Rule of thumb: use the unified `user_connections` model when a workspace user is
+choosing the identity an Atrium session or connector should act as. Keep
+operator-owned service credentials in infra or console-managed roles, and keep
+token material out of Atrium either way.
+
 ## Big Cutover
 
 1. Deploy Centaur with console enabled and the GitHub infra transform removed.
