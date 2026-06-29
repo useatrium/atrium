@@ -257,6 +257,55 @@ pub(crate) struct WarmcacheHydrateInitContainer<'a> {
     pub(crate) atrium_key: Option<&'a str>,
 }
 
+pub(crate) struct PrivateRepoHydrateInitContainer<'a> {
+    pub(crate) repos_json: &'a str,
+    pub(crate) repo_cache_root: &'a str,
+    pub(crate) repo_cache_volume: &'a str,
+    pub(crate) https_proxy: &'a str,
+    pub(crate) git_ca_info: &'a str,
+    pub(crate) ca_volume_mount: Value,
+}
+
+pub(crate) fn private_repo_hydrate_init_container_json(
+    overlay: &OverlayConfig,
+    init: PrivateRepoHydrateInitContainer<'_>,
+) -> Value {
+    json!({
+        "name": "private-repo-cache-hydrate",
+        "image": overlay.image,
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["/usr/local/bin/provision-overlay"],
+        "args": [
+            "--hydrate-private-repos",
+            "--repos-json",
+            init.repos_json,
+            "--repo-cache-root",
+            init.repo_cache_root,
+            "--https-proxy",
+            init.https_proxy,
+            "--git-ca-info",
+            init.git_ca_info,
+        ],
+        "securityContext": {
+            "privileged": false,
+            "allowPrivilegeEscalation": false,
+            "capabilities": {
+                "drop": ["ALL"],
+            },
+            "seccompProfile": {
+                "type": "RuntimeDefault",
+            },
+        },
+        "volumeMounts": [
+            {
+                "name": init.repo_cache_volume,
+                "mountPath": init.repo_cache_root,
+            },
+            init.ca_volume_mount,
+        ],
+    })
+}
+
 pub(crate) fn warmcache_hydrate_init_container_json(
     overlay: &OverlayConfig,
     init: WarmcacheHydrateInitContainer<'_>,

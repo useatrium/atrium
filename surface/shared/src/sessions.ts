@@ -228,6 +228,7 @@ export interface SessionRepoSpec {
   repo: string;
   ref?: string;
   subdir?: string;
+  private?: boolean;
 }
 
 /**

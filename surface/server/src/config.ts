@@ -43,6 +43,12 @@ export const config = {
   centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
   centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
   centaurHarness: process.env.CENTAUR_HARNESS ?? 'codex',
+  ironControlBaseUrl: process.env.IRON_CONTROL_BASE_URL ?? '',
+  ironControlApiKey: process.env.IRON_CONTROL_API_KEY ?? '',
+  ironControlNamespace: process.env.IRON_CONTROL_NAMESPACE ?? 'default',
+  githubAppClientId: process.env.GITHUB_APP_CLIENT_ID ?? '',
+  githubAppClientSecret: process.env.GITHUB_APP_CLIENT_SECRET ?? '',
+  githubAppRedirectUrl: process.env.GITHUB_APP_REDIRECT_URL ?? '',
   // The Centaur artifact-byte endpoint authenticates with its own
   // sandbox-token key, distinct from CENTAUR_API_KEY. Unset falls back to
   // centaurApiKey (works only if Centaur accepts the session key there).

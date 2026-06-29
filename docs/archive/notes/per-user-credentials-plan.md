@@ -1,6 +1,6 @@
 # Per-user credentials - plan (per-user GitHub via iron-control)
 
-**Status:** design, ready to build · **Date:** 2026-06-28 · **First consumer:** per-user GitHub (`gh` + `git` + private repo checkout)
+**Status:** implementation landed in `feat/per-user-credentials`; installation-token broker remains a follow-up · **Date:** 2026-06-28 · **First consumer:** per-user GitHub (`gh` + `git` + private repo checkout)
 
 ## Problem
 
@@ -35,6 +35,10 @@ general.
 - **No-connect fallback = public-read default.** Keep a minimal shared default
   that supports public GitHub reads, not the current full org token. Connecting
   GitHub upgrades the principal to user/app credentials.
+- **Unified Connections model.** GitHub and future connector state should live
+  in one workspace/user connection model, not in a GitHub-only table and not as
+  another Claude/Codex-shaped token row. Legacy provider credential APIs can
+  remain as adapters during the transition.
 - **GitHub App supports both identity modes.** Installation tokens are good for
   repo-scoped app automation; user access tokens are needed when the product
   promise is literally "act as me." Default selection is automatic by
@@ -192,10 +196,11 @@ Atrium:
    `atrium_user_id = provider_credential_user_id`, selected GitHub identity
    mode, and repo checkout policy in Centaur spawn metadata. This belongs in
    the server spawn flow because the server chooses the credential owner.
-2. Add a GitHub connection store. Current `user_provider_credentials` has
-   `token_ciphertext NOT NULL` and is Claude/Codex-shaped, so either migrate it
-   to support metadata-only providers or create a GitHub-specific connection
-   table keyed by `(workspace_id, user_id, provider)`.
+2. Add a unified connection store. Current `user_provider_credentials` has
+   `token_ciphertext NOT NULL` and is Claude/Codex-shaped, so introduce a
+   metadata-only `user_connections`/`workspace_user_connections` model keyed by
+   `(workspace_id, user_id, provider)` and keep the old Claude/Codex provider
+   credential APIs as compatibility adapters until those providers move over.
 3. Add an iron-control client in `surface/server` for principal, static secret,
    grant, role assignment, role unassignment, grant deletion, and effective
    config verification.
@@ -257,6 +262,14 @@ automatic by workspace/repo policy, with an advanced spawn override:
 2. A token-broker-backed static secret defines the GitHub replacement rules.
 3. The secret is granted directly to the workspace/user principal.
 4. `github-default` is removed.
+
+Implementation note: GitHub App user OAuth is supported by the current
+refresh-token broker when the GitHub App has expiring user tokens enabled.
+Installation-token mode needs a Centaur/iron-control broker extension because
+GitHub installation tokens are minted from a GitHub App JWT rather than by
+refreshing an OAuth refresh token. The grant model accepts an existing
+installation broker credential id, but the first-party install-token minting
+front door is not in this branch.
 
 PAT remains the permanent escape hatch for bootstrap, unsupported org policies,
 and cases where an App install is unavailable.

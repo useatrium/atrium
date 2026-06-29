@@ -2,9 +2,11 @@ import { CentaurClient } from '@atrium/centaur-client';
 import { AgentProfiles } from './agent-profiles.js';
 import { AppRegistry } from './app-registry.js';
 import { config } from './config.js';
+import { Connections } from './connections.js';
 import type { Db } from './db.js';
 import { DemoCentaurClient } from './demo-centaur.js';
 import { WsHub } from './hub.js';
+import { IronControlAdminClient } from './iron-control.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { ProviderCredentials } from './provider-credentials.js';
@@ -32,6 +34,7 @@ export interface AppServiceDeps {
   voip?: VoipPushSender;
   /** Injectable fetch for the email transport (tests mock Resend). */
   emailFetch?: typeof fetch;
+  ironControl?: IronControlAdminClient;
   /** Internal x-api-key override for tests; production reads config. */
   artifactCaptureApiKey?: string;
 }
@@ -44,6 +47,8 @@ export interface AppServices {
   emailFetch: typeof fetch | undefined;
   fileStorage: FileStorageDeps;
   hub: WsHub;
+  connections: Connections;
+  ironControl: IronControlAdminClient;
   providerCredentials: ProviderCredentials;
   secret: string;
   sessionRuns: SessionRuns;
@@ -55,6 +60,14 @@ export function createAppServices(deps: AppServiceDeps): AppServices {
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
   const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
+  const connections = new Connections(pool);
+  const ironControl =
+    deps.ironControl ??
+    new IronControlAdminClient({
+      baseUrl: config.ironControlBaseUrl,
+      apiKey: config.ironControlApiKey,
+      namespace: config.ironControlNamespace,
+    });
   const providerCredentials = new ProviderCredentials(pool, config.providerCredentialSecret);
   const agentProfiles = new AgentProfiles(pool);
   const sessionRunOptions = deps.sessionRuns ?? {};
@@ -86,6 +99,8 @@ export function createAppServices(deps: AppServiceDeps): AppServices {
     emailFetch: deps.emailFetch,
     fileStorage,
     hub,
+    connections,
+    ironControl,
     providerCredentials,
     secret,
     sessionRuns,

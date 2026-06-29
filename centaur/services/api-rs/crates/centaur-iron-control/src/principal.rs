@@ -15,7 +15,9 @@
 //! never collides onto one principal.
 //!
 //! [`derive_principal`] is pure so the mapping is unit-tested directly; callers
-//! upsert the returned [`PrincipalRef`] at session start.
+//! upsert the returned [`PrincipalRef`] at session start. Atrium sessions can
+//! override the chat-derived identity with an explicit workspace/user principal
+//! when both workspace and user metadata ids are present.
 
 use std::collections::BTreeMap;
 
@@ -189,6 +191,36 @@ pub fn derive_principal(
     }
 }
 
+/// Resolve an Atrium workspace/user principal when both ids are present,
+/// otherwise preserve the existing chat-derived principal behavior.
+pub fn derive_principal_for_atrium_workspace(
+    thread_key: &str,
+    actor_user_id: Option<&str>,
+    conversation_name: Option<&str>,
+    atrium_workspace_id: Option<&str>,
+    atrium_user_id: Option<&str>,
+) -> PrincipalRef {
+    let workspace = atrium_workspace_id
+        .map(str::trim)
+        .filter(|workspace| !workspace.is_empty());
+    let user = atrium_user_id
+        .map(str::trim)
+        .filter(|user| !user.is_empty());
+
+    if let (Some(workspace), Some(user)) = (workspace, user) {
+        let mut labels = BTreeMap::new();
+        labels.insert("atrium_workspace_id".to_owned(), workspace.to_owned());
+        labels.insert("atrium_user_id".to_owned(), user.to_owned());
+        return PrincipalRef {
+            foreign_id: format!("atrium-workspace-{workspace}-user-{user}"),
+            name: format!("Atrium Workspace {workspace} User {user}"),
+            labels,
+        };
+    }
+
+    derive_principal(thread_key, actor_user_id, conversation_name)
+}
+
 /// Identify the team and conversation segments by their Slack prefix, ignoring
 /// the leading source namespace and any numeric ``thread_ts``. Returns the
 /// first team (``T…``) and first conversation (``C``/``D``/``G``) found.
@@ -279,6 +311,42 @@ mod tests {
             principal.labels.get("slack_user_id").map(String::as_str),
             Some("U07ABC")
         );
+    }
+
+    #[test]
+    fn atrium_workspace_and_user_metadata_key_on_workspace_user() {
+        let principal = derive_principal_for_atrium_workspace(
+            "slack:T123:C456:ts",
+            Some("U1"),
+            Some("eng-oncall"),
+            Some("ws_123"),
+            Some("usr_456"),
+        );
+        assert_eq!(principal.foreign_id, "atrium-workspace-ws_123-user-usr_456");
+        assert_eq!(
+            principal
+                .labels
+                .get("atrium_workspace_id")
+                .map(String::as_str),
+            Some("ws_123")
+        );
+        assert_eq!(
+            principal.labels.get("atrium_user_id").map(String::as_str),
+            Some("usr_456")
+        );
+    }
+
+    #[test]
+    fn atrium_workspace_principal_requires_both_ids() {
+        let principal = derive_principal_for_atrium_workspace(
+            "slack:T123:C456:ts",
+            Some("U1"),
+            Some("eng-oncall"),
+            Some("ws_123"),
+            None,
+        );
+        assert_eq!(principal.foreign_id, "slack-channel-t123-c456");
+        assert_eq!(principal.name, "Slack Channel #eng-oncall");
     }
 
     #[test]

@@ -36,6 +36,18 @@ pub struct RepoMount {
     pub r#ref: Option<String>,
     #[serde(default)]
     pub subdir: Option<String>,
+    /// Private target repos are never read from the shared node-global cache.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub private: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<RepoCacheScope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RepoCacheScope {
+    Shared,
+    Principal { principal_id: String },
 }
 
 fn default_agent_uid() -> u32 {
@@ -187,6 +199,19 @@ pub fn validate_repo_mount(repo: &RepoMount) -> Result<(), String> {
     if let Some(subdir) = &repo.subdir {
         validate_repo_subdir_syntax(subdir)?;
     }
+    if repo.private {
+        match repo.cache_scope.as_ref() {
+            Some(RepoCacheScope::Principal { principal_id }) => {
+                validate_principal_cache_scope(principal_id)?;
+            }
+            Some(RepoCacheScope::Shared) => {
+                return Err("private repo must not use the shared repo cache".to_string());
+            }
+            None => {
+                return Err("private repo requires a principal cache scope".to_string());
+            }
+        }
+    }
     if let Some(git_ref) = &repo.r#ref {
         if git_ref.contains('\0') {
             return Err("repo ref must not contain NUL bytes".to_string());
@@ -194,6 +219,21 @@ pub fn validate_repo_mount(repo: &RepoMount) -> Result<(), String> {
         if git_ref.trim().is_empty() {
             return Err("repo ref must not be empty".to_string());
         }
+    }
+    Ok(())
+}
+
+pub fn validate_principal_cache_scope(principal_id: &str) -> Result<(), String> {
+    if principal_id.contains('\0') {
+        return Err("principal cache scope must not contain NUL bytes".to_string());
+    }
+    if principal_id.trim().is_empty() {
+        return Err("principal cache scope must not be empty".to_string());
+    }
+    if principal_id.trim() != principal_id {
+        return Err(
+            "principal cache scope must not contain leading or trailing whitespace".to_string(),
+        );
     }
     Ok(())
 }
@@ -264,6 +304,8 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: Some("foo".to_string()),
+                private: false,
+                cache_scope: None,
             }],
             agent_uid: 1001,
         };
@@ -408,6 +450,8 @@ mod tests {
             repo: "../secret".to_string(),
             r#ref: None,
             subdir: Some("ok".to_string()),
+            private: false,
+            cache_scope: None,
         })
         .unwrap_err();
         assert!(err.contains("relative path"));
@@ -416,8 +460,33 @@ mod tests {
             repo: "acme/foo".to_string(),
             r#ref: None,
             subdir: Some("../secret".to_string()),
+            private: false,
+            cache_scope: None,
         })
         .unwrap_err();
         assert!(err.contains("single path segment"));
+    }
+
+    #[test]
+    fn private_repo_mount_requires_principal_scope() {
+        let err = validate_repo_mount(&RepoMount {
+            repo: "acme/private".to_string(),
+            r#ref: None,
+            subdir: None,
+            private: true,
+            cache_scope: None,
+        })
+        .unwrap_err();
+        assert!(err.contains("principal cache scope"));
+
+        let err = validate_repo_mount(&RepoMount {
+            repo: "acme/private".to_string(),
+            r#ref: None,
+            subdir: None,
+            private: true,
+            cache_scope: Some(RepoCacheScope::Shared),
+        })
+        .unwrap_err();
+        assert!(err.contains("shared repo cache"));
     }
 }

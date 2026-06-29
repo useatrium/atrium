@@ -2033,8 +2033,12 @@ impl SessionRuntime {
                 harness_type,
                 persona_context.as_ref(),
             );
-            let composed_repos_json = compose_spec_repos_json(&mut spec, session_repos_json);
+            let composed_repos_json =
+                compose_spec_repos_json(&mut spec, session_repos_json, iron_control_principal)?;
             let needs_claimed_overlay_home = composed_repos_json.is_some();
+            let has_private_repos = composed_repos_json
+                .as_deref()
+                .is_some_and(repos_json_contains_private_repo);
             let claimed_overlay_supported = !needs_claimed_overlay_home
                 || self
                     .sandbox_runtime
@@ -2050,6 +2054,7 @@ impl SessionRuntime {
                         && resume_thread_id.is_none()
                         && desired_capabilities.is_default_enabled()
                         && claimed_overlay_supported
+                        && !has_private_repos
                 })
             {
                 match warm_pool
@@ -5583,9 +5588,16 @@ fn session_repos_json(metadata: &Value) -> Option<String> {
 fn compose_spec_repos_json(
     spec: &mut SandboxSpec,
     session_repos_json: Option<&str>,
-) -> Option<String> {
+    iron_control_principal: Option<&str>,
+) -> Result<Option<String>, SessionRuntimeError> {
     let workload_repos_json = take_spec_env(spec, AGENT_REPOS_JSON_ENV);
-    merge_repos_json(workload_repos_json.as_deref(), session_repos_json)
+    let Some(repos_json) = merge_repos_json(workload_repos_json.as_deref(), session_repos_json)
+    else {
+        return Ok(None);
+    };
+    scope_private_repo_entries(&repos_json, iron_control_principal)
+        .map(Some)
+        .map_err(SessionRuntimeError::BadRequest)
 }
 
 fn take_spec_env(spec: &mut SandboxSpec, name: &str) -> Option<String> {
@@ -5625,6 +5637,50 @@ fn parse_repo_array(repos_json: Option<&str>) -> Vec<Value> {
         Ok(Value::Array(entries)) => entries,
         Ok(_) | Err(_) => Vec::new(),
     }
+}
+
+fn scope_private_repo_entries(
+    repos_json: &str,
+    iron_control_principal: Option<&str>,
+) -> Result<String, String> {
+    let mut repos = parse_repo_array(Some(repos_json));
+    for repo in &mut repos {
+        if !repo_is_private(repo) {
+            continue;
+        }
+        let principal = iron_control_principal.ok_or_else(|| {
+            format!(
+                "private repo {:?} requires a session iron-control principal",
+                repo.get("repo")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unknown>")
+            )
+        })?;
+        let object = repo
+            .as_object_mut()
+            .ok_or_else(|| "repo entry must be a JSON object".to_string())?;
+        object.insert(
+            "cache_scope".to_owned(),
+            json!({"kind": "principal", "principal_id": principal}),
+        );
+    }
+    Ok(Value::Array(repos).to_string())
+}
+
+fn repo_is_private(repo: &Value) -> bool {
+    repo.get("private")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || repo
+            .get("visibility")
+            .and_then(Value::as_str)
+            .is_some_and(|visibility| visibility.eq_ignore_ascii_case("private"))
+}
+
+fn repos_json_contains_private_repo(repos_json: &str) -> bool {
+    parse_repo_array(Some(repos_json))
+        .iter()
+        .any(repo_is_private)
 }
 
 fn idle_timeout_from_execution(execution: &SessionExecution) -> Option<Duration> {
@@ -6017,7 +6073,9 @@ mod tests {
             r#"[{"repo":"acme/default","ref":"main"}]"#,
         );
 
-        let repos_json = compose_spec_repos_json(&mut spec, None).unwrap();
+        let repos_json = compose_spec_repos_json(&mut spec, None, None)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             serde_json::from_str::<Value>(&repos_json).unwrap(),
@@ -6034,9 +6092,13 @@ mod tests {
     fn compose_spec_repos_json_preserves_session_only_repos() {
         let mut spec = SandboxSpec::new("centaur-agent:latest");
 
-        let repos_json =
-            compose_spec_repos_json(&mut spec, Some(r#"[{"repo":"acme/work","ref":"feature"}]"#))
-                .unwrap();
+        let repos_json = compose_spec_repos_json(
+            &mut spec,
+            Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
+            None,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(
             serde_json::from_str::<Value>(&repos_json).unwrap(),
@@ -6054,9 +6116,13 @@ mod tests {
             ]"#,
         );
 
-        let repos_json =
-            compose_spec_repos_json(&mut spec, Some(r#"[{"repo":"acme/work","ref":"feature"}]"#))
-                .unwrap();
+        let repos_json = compose_spec_repos_json(
+            &mut spec,
+            Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
+            None,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(
             serde_json::from_str::<Value>(&repos_json).unwrap(),
@@ -6064,6 +6130,53 @@ mod tests {
                 {"repo":"acme/work","ref":"feature"},
                 {"repo":"acme/default","ref":"main"}
             ])
+        );
+    }
+
+    #[test]
+    fn compose_spec_repos_json_scopes_private_repos_to_session_principal() {
+        let mut spec = SandboxSpec::new("centaur-agent:latest").env(
+            AGENT_REPOS_JSON_ENV,
+            r#"[{"repo":"acme/public","ref":"main"}]"#,
+        );
+
+        let repos_json = compose_spec_repos_json(
+            &mut spec,
+            Some(r#"[{"repo":"acme/private","ref":"feature","private":true}]"#),
+            Some("prn_user_one"),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&repos_json).unwrap(),
+            json!([
+                {"repo":"acme/public","ref":"main"},
+                {
+                    "repo":"acme/private",
+                    "ref":"feature",
+                    "private":true,
+                    "cache_scope":{"kind":"principal","principal_id":"prn_user_one"}
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn compose_spec_repos_json_rejects_private_repos_without_principal() {
+        let mut spec = SandboxSpec::new("centaur-agent:latest");
+
+        let err = compose_spec_repos_json(
+            &mut spec,
+            Some(r#"[{"repo":"acme/private","private":true}]"#),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, SessionRuntimeError::BadRequest(_)));
+        assert!(
+            err.to_string()
+                .contains("requires a session iron-control principal")
         );
     }
 
@@ -7491,6 +7604,55 @@ mod adoption_tests {
             event.event_type == "session.warm_sandbox_claimed"
                 && event.payload["post_claim_overlay_home"] == json!(true)
         }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn private_repo_session_skips_warm_claim_for_cache_hydration() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:warm-private-repo-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend.support_prepare_home();
+        let runtime = runtime_with_warm_pool(
+            &store,
+            backend.clone(),
+            SandboxSpec::new("mock").env(
+                AGENT_REPOS_JSON_ENV,
+                r#"[{"repo":"acme/default","ref":"main"}]"#,
+            ),
+        );
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-private-repo").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                existing_sandbox_capabilities: None,
+                desired_capabilities: &SessionSandboxCapabilities::default_enabled(),
+                iron_control_principal: Some("prn_user"),
+                resume_thread_id: None,
+                session_repos_json: Some(r#"[{"repo":"acme/private","private":true}]"#),
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_ne!(sandbox_id, "warm-private-repo");
+        assert!(backend.prepared_homes().is_empty());
+        assert_eq!(backend.created_specs().len(), 1);
+        let all = events(&store, &thread_key).await;
+        assert!(
+            !all.iter()
+                .any(|event| event.event_type == "session.warm_sandbox_claimed")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

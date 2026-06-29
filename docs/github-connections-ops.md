@@ -1,0 +1,139 @@
+# GitHub Connections Operations
+
+This runbook covers the per-user GitHub connection cutover for Atrium sessions
+that route `gh`, `git`, and GitHub API traffic through Centaur's iron-proxy.
+The goal is one effective `GITHUB_TOKEN` replacement per
+`workspace_id`/credential-owner `user_id` principal, with no real GitHub token in
+sandbox env, logs, artifacts, or Atrium's database.
+
+## Required Config
+
+Surface needs iron-control admin access:
+
+```sh
+IRON_CONTROL_BASE_URL=https://<console-host>
+IRON_CONTROL_API_KEY=iak_...
+IRON_CONTROL_NAMESPACE=default
+```
+
+The primary GitHub UI uses GitHub App user OAuth and requires expiring user
+tokens on the GitHub App:
+
+```sh
+GITHUB_APP_CLIENT_ID=...
+GITHUB_APP_CLIENT_SECRET=...
+GITHUB_APP_REDIRECT_URL=https://<surface-host>/api/me/connections/github/callback
+```
+
+GitHub App installation-token mode is supported by the grant model when an
+operator supplies an existing token-broker credential id. A first-party
+installation-token broker is still a separate Centaur/iron-control extension
+because installation tokens are minted from a GitHub App JWT, not by refreshing
+an OAuth refresh token.
+
+Centaur must run with console / iron-control enabled:
+
+```yaml
+console:
+  enabled: true
+worker:
+  enabled: true
+```
+
+Provision the `github-default` role in the same namespace as Surface. It should
+grant only the minimal public-read GitHub fallback secret that replaces the
+placeholder `GITHUB_TOKEN` for `github.com` and `api.github.com`. Do not include
+`github-default` in Centaur's normal startup `assign_role_ids`; Atrium owns
+assignment and removal for workspace/user principals.
+
+The GitHub infra transform must be removed from
+`centaur/services/api-rs/crates/centaur-iron-proxy/src/infra.yaml` before the
+cutover. If `GITHUB_TOKEN` remains in infra config, it shadows principal grants.
+
+## Big Cutover
+
+1. Deploy Centaur with console enabled and the GitHub infra transform removed.
+2. Deploy Surface with `IRON_CONTROL_BASE_URL`, `IRON_CONTROL_API_KEY`, and
+   `IRON_CONTROL_NAMESPACE` set.
+3. Seed or verify `github-default` and its public-read static secret.
+4. Run reconciliation for every existing Atrium workspace/user credential
+   principal:
+   - connected GitHub users: direct GitHub grant exists, `github-default` absent
+   - disconnected or `needs_auth` users: no direct GitHub grant,
+     `github-default` present
+5. Spawn validation sessions for connected and disconnected users.
+6. Confirm proxy effective config has exactly one GitHub transform for each
+   sampled principal.
+
+## Reconciliation
+
+Reconciliation is idempotent and should converge from desired state instead of
+assuming the previous handler completed. For each
+`atrium-workspace-<workspace_id>-user-<user_id>` principal:
+
+- `connected`: upsert the principal, upsert/reuse the user/app GitHub secret,
+  ensure the direct grant exists, and unassign `github-default`.
+- `public_read` / absent row: upsert the principal, delete or revoke direct
+  GitHub grants owned by Atrium for that principal, and assign `github-default`.
+- `needs_auth`: revoke the direct GitHub grant, assign `github-default`, and
+  keep the metadata row with the auth error.
+
+After each batch, sample `effective_config` from iron-control and count
+transforms that replace `GITHUB_TOKEN` for GitHub hosts. The expected count is
+exactly one.
+
+## Rollback
+
+Fast rollback restores the old shared-token behavior:
+
+1. Disable GitHub connection writes in Surface by unsetting
+   `IRON_CONTROL_BASE_URL` or `IRON_CONTROL_API_KEY` and redeploying Surface.
+   Existing metadata remains but no new PAT convergence can run.
+2. Re-add the `GITHUB_TOKEN` infra transform in Centaur's iron-proxy
+   `infra.yaml`.
+3. Restore the shared Kubernetes/runtime `GITHUB_TOKEN` secret with the intended
+   reduced scope.
+4. Redeploy Centaur iron-proxy/api pods.
+5. Verify a disconnected test session can perform the expected public GitHub
+   read and that private/write operations match the restored shared token's
+   scope.
+
+Data rollback is not required for the fast path because Atrium stores only
+connection metadata. If the feature is fully backed out, leave
+`user_connections` rows in place or delete only `provider = 'github'` rows after
+confirming no older binary expects them.
+
+## Audit Expectations
+
+Surface logs structured `github_connection_audit` events for connection
+convergence. Required fields:
+
+- `action`: `connect`, `disconnect`, or `needs_auth`
+- `result`: `success` or `failure`
+- `workspace_id`
+- `actor_user_id`
+- `credential_owner_user_id`
+- `principal_foreign_id`
+- `token_kind`: `pat`, `app_installation`, `app_user`, or `public_read`
+- `status`, `connected`, `account_login`, `scopes` when known
+
+Token material must never appear. Metadata and capabilities may be included only
+after redaction; secret-shaped keys such as `token`, `secret`, `credential`,
+`authorization`, `password`, `private_key`, and `refresh_token` must be logged as
+`[redacted]`. The allowed PAT-derived value is `last4`.
+
+Centaur / iron-proxy logs remain the request-level audit trail. Use them to
+verify outbound GitHub host, principal, session/proxy identifiers, status, and
+timing. They must not include `Authorization` values or substituted token bytes.
+
+## Validation Checklist
+
+- Connected PAT user: `gh api user` returns the connected account.
+- Disconnected user: public reads work; private reads and writes fail.
+- Two workspace/user principals resolve to different GitHub identities.
+- Connect/disconnect during spawn never yields two GitHub transforms in
+  `effective_config`.
+- Private repo checkout uses the same workspace/user principal as in-sandbox
+  `gh`/`git`.
+- Sandbox env, `.git-credentials`, shell history, logs, session records, and
+  artifacts contain only `GITHUB_TOKEN` placeholders or redacted values.

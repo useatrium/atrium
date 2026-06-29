@@ -110,6 +110,15 @@ For file uploads on a VPS, expose MinIO through a separate TLS name such as `min
 
 Centaur is optional at boot. Leave `CENTAUR_API_KEY` empty and keep `CENTAUR_BASE_URL` at its default if you only need chat. Agent session spawning will be unavailable until Centaur is reachable and configured.
 
+## GitHub Connections
+
+Per-user GitHub connections require Centaur console / iron-control. Configure
+Surface with `IRON_CONTROL_BASE_URL`, `IRON_CONTROL_API_KEY`, and
+`IRON_CONTROL_NAMESPACE`. To enable the primary GitHub App user-OAuth button,
+also set `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, and
+`GITHUB_APP_REDIRECT_URL`. Then follow the cutover and rollback runbook in
+[`docs/github-connections-ops.md`](../../docs/github-connections-ops.md).
+
 ## Operations
 
 Check health:

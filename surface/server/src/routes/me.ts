@@ -1,9 +1,19 @@
 import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { githubConnectionAuditMetadata } from '../connection-audit.js';
+import { config } from '../config.js';
+import type { Connections, ConnectionStatusJson } from '../connections.js';
 import type { DbClient } from '../db.js';
 import type { UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
-import { AgentProfiles, providerFromProfileValue } from '../agent-profiles.js';
+import {
+  type IronControlAdminClient,
+  atriumPrincipalForeignId,
+  githubAppUserBrokerCredentialForeignId,
+  githubPatSecretForeignId,
+} from '../iron-control.js';
+import { type AgentProfiles, providerFromProfileValue } from '../agent-profiles.js';
 import { CODEX_PROVIDER, type ProviderCredentials } from '../provider-credentials.js';
 import type { SessionRuns } from '../session-runs.js';
 
@@ -11,6 +21,8 @@ export interface MeRouteDeps {
   hub: WsHub;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   optionalOpId(body: unknown): string | undefined;
+  connections: Connections;
+  ironControl: IronControlAdminClient;
   providerCredentials: ProviderCredentials;
   agentProfiles: AgentProfiles;
   sessionRuns: Pick<SessionRuns, 'clearClaudeAuthRequired' | 'clearProviderAuthRequired'>;
@@ -48,13 +60,277 @@ function prefsPatch(input: Record<string, unknown>): Partial<UserPrefs> {
 }
 
 export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void {
-  const { hub, requireUser, optionalOpId, providerCredentials, agentProfiles, sessionRuns, runMutation } =
+  const { hub, requireUser, optionalOpId, connections, ironControl, providerCredentials, agentProfiles, sessionRuns, runMutation } =
     deps;
 
   app.get('/api/me/provider-credentials', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
     return { providers: await providerCredentials.list(user.id) };
+  });
+
+  app.get('/api/me/connections', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, workspaceId);
+    if (!resolvedWorkspaceId) {
+      const error = workspaceId ? 'workspace_not_found' : 'no_workspace';
+      return reply.code(workspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+    }
+    return { connections: await connections.list(user.id, resolvedWorkspaceId) };
+  });
+
+  app.post('/api/me/connections/github', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as {
+      workspaceId?: unknown;
+      tokenKind?: unknown;
+      accountLogin?: unknown;
+      accountLabel?: unknown;
+      scopes?: unknown;
+      metadata?: unknown;
+      capabilities?: unknown;
+      token?: unknown;
+      brokerCredentialId?: unknown;
+    };
+    const requestedWorkspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
+    const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
+    if (!resolvedWorkspaceId) {
+      const error = requestedWorkspaceId ? 'workspace_not_found' : 'no_workspace';
+      return reply.code(requestedWorkspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+    }
+    const tokenKind = normalizeGitHubTokenKind(body.tokenKind);
+    if (!tokenKind) {
+      if (!('tokenKind' in body)) {
+        const [connection] = await connections.list(user.id, resolvedWorkspaceId);
+        return { connection };
+      }
+      return reply
+        .code(400)
+        .send({ error: 'bad_request', message: 'tokenKind must be pat, app_installation, or app_user' });
+    }
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    const brokerCredentialId =
+      typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
+    if (tokenKind === 'app_user' && !brokerCredentialId && githubAppOAuthEnabled()) {
+      const [connection] = await connections.list(user.id, resolvedWorkspaceId);
+      return {
+        connection,
+        authorizeUrl: githubAppAuthorizeUrl({
+          workspaceId: resolvedWorkspaceId,
+          userId: user.id,
+        }),
+      };
+    }
+    let connection: ConnectionStatusJson;
+    try {
+      connection = await connections.withConnectionLock(resolvedWorkspaceId, user.id, 'github', async () => {
+        if (!ironControl.configured) {
+          throw new RouteResponse(503, 'iron_control_unconfigured', 'iron-control is not configured');
+        }
+        if (tokenKind === 'pat') {
+          if (!token) {
+            throw new RouteResponse(400, 'bad_request', 'GitHub token required');
+          }
+          await convergeGitHubPatGrant(ironControl, {
+            workspaceId: resolvedWorkspaceId,
+            userId: user.id,
+            token,
+          });
+        } else {
+          if (!brokerCredentialId) {
+            throw new RouteResponse(400, 'bad_request', 'GitHub broker credential required');
+          }
+          await convergeGitHubBrokerGrant(ironControl, {
+            workspaceId: resolvedWorkspaceId,
+            userId: user.id,
+            tokenKind,
+            brokerCredentialId,
+          });
+        }
+        return connections.upsertGitHubMetadata({
+          workspaceId: resolvedWorkspaceId,
+          userId: user.id,
+          status: 'connected',
+          tokenKind,
+          accountLogin: stringOrNull(body.accountLogin),
+          accountLabel: stringOrNull(body.accountLabel),
+          scopes: stringArray(body.scopes),
+          capabilities: plainObject(body.capabilities),
+          metadata: {
+            ...plainObject(body.metadata),
+            ...(token ? { last4: token.slice(-4) } : {}),
+            ...(brokerCredentialId ? { brokerCredentialId } : {}),
+          },
+        });
+      });
+    } catch (err) {
+      req.log.warn(
+        githubConnectionAuditMetadata({
+          action: 'connect',
+          result: 'failure',
+          workspaceId: resolvedWorkspaceId,
+          actorUserId: user.id,
+          credentialOwnerUserId: user.id,
+          requestedTokenKind: body.tokenKind,
+          error: err,
+        }),
+        'github connection convergence failed',
+      );
+      if (err instanceof RouteResponse) {
+        return reply.code(err.statusCode).send({ error: err.error, message: err.message });
+      }
+      throw err;
+    }
+    req.log.info(
+      githubConnectionAuditMetadata({
+        action: 'connect',
+        result: 'success',
+        workspaceId: resolvedWorkspaceId,
+        actorUserId: user.id,
+        credentialOwnerUserId: user.id,
+        requestedTokenKind: body.tokenKind,
+        connection,
+      }),
+      'github connection converged',
+    );
+    return { connection };
+  });
+
+  app.get('/api/me/connections/github/callback', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    if (!githubAppOAuthEnabled()) return reply.code(404).send({ error: 'not_found' });
+    const query = req.query as { code?: string; state?: string; error?: string; error_description?: string };
+    if (query.error) {
+      return reply.code(400).send({ error: 'github_oauth_failed', message: query.error_description ?? query.error });
+    }
+    const state = verifyGitHubConnectionState(query.state);
+    if (!query.code || !state || state.userId !== user.id) {
+      return reply.code(400).send({ error: 'invalid_oauth_state' });
+    }
+    const workspaceId = await connections.resolveWorkspaceId(user.id, state.workspaceId);
+    if (!workspaceId || workspaceId !== state.workspaceId) {
+      return reply.code(404).send({ error: 'workspace_not_found', message: 'workspace not found' });
+    }
+    if (!ironControl.configured) {
+      return reply.code(503).send({ error: 'iron_control_unconfigured', message: 'iron-control is not configured' });
+    }
+
+    let connection: ConnectionStatusJson;
+    try {
+      const token = await exchangeGitHubAppUserCode(query.code);
+      if (!token.refreshToken) {
+        return reply.code(400).send({
+          error: 'github_refresh_token_missing',
+          message: 'GitHub App user tokens must have expiring user tokens enabled',
+        });
+      }
+      const brokerCredentialId = githubAppUserBrokerCredentialForeignId(workspaceId, user.id);
+      await ironControl.upsertBrokerCredential({
+        foreignId: brokerCredentialId,
+        name: `GitHub App user token for ${atriumPrincipalForeignId(workspaceId, user.id)}`,
+        tokenEndpoint: 'https://github.com/login/oauth/access_token',
+        clientId: config.githubAppClientId,
+        clientSecret: config.githubAppClientSecret,
+        refreshToken: token.refreshToken,
+        scopes: token.scopes,
+        labels: {
+          source: 'atrium',
+          provider: 'github',
+          token_kind: 'app_user',
+          atrium_workspace_id: workspaceId,
+          atrium_user_id: user.id,
+        },
+      });
+      connection = await connections.withConnectionLock(workspaceId, user.id, 'github', async () => {
+        await convergeGitHubBrokerGrant(ironControl, {
+          workspaceId,
+          userId: user.id,
+          tokenKind: 'app_user',
+          brokerCredentialId,
+        });
+        return connections.upsertGitHubMetadata({
+          workspaceId,
+          userId: user.id,
+          status: 'connected',
+          tokenKind: 'app_user',
+          accountLogin: null,
+          accountLabel: 'GitHub user',
+          scopes: token.scopes,
+          capabilities: {},
+          metadata: { brokerCredentialId },
+        });
+      });
+    } catch (err) {
+      if (err instanceof RouteResponse) {
+        return reply.code(err.statusCode).send({ error: err.error, message: err.message });
+      }
+      throw err;
+    }
+    req.log.info(
+      githubConnectionAuditMetadata({
+        action: 'connect',
+        result: 'success',
+        workspaceId,
+        actorUserId: user.id,
+        credentialOwnerUserId: user.id,
+        requestedTokenKind: 'app_user',
+        connection,
+      }),
+      'github app user connection converged',
+    );
+    return reply.redirect('/?githubConnection=connected', 302);
+  });
+
+  app.delete('/api/me/connections/github', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, workspaceId);
+    if (!resolvedWorkspaceId) {
+      const error = workspaceId ? 'workspace_not_found' : 'no_workspace';
+      return reply.code(workspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+    }
+    let connection: ConnectionStatusJson;
+    try {
+      connection = await connections.withConnectionLock(resolvedWorkspaceId, user.id, 'github', async () => {
+        if (ironControl.configured) {
+          await convergeGitHubPublicReadFallback(ironControl, {
+            workspaceId: resolvedWorkspaceId,
+            userId: user.id,
+          });
+        }
+        return connections.disconnectGitHub(resolvedWorkspaceId, user.id);
+      });
+    } catch (err) {
+      req.log.warn(
+        githubConnectionAuditMetadata({
+          action: 'disconnect',
+          result: 'failure',
+          workspaceId: resolvedWorkspaceId,
+          actorUserId: user.id,
+          credentialOwnerUserId: user.id,
+          error: err,
+        }),
+        'github connection disconnect failed',
+      );
+      throw err;
+    }
+    req.log.info(
+      githubConnectionAuditMetadata({
+        action: 'disconnect',
+        result: 'success',
+        workspaceId: resolvedWorkspaceId,
+        actorUserId: user.id,
+        credentialOwnerUserId: user.id,
+        connection,
+      }),
+      'github connection disconnected',
+    );
+    return { connection };
   });
 
   app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
@@ -216,4 +492,223 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
       },
     });
   });
+}
+
+function normalizeGitHubTokenKind(value: unknown): 'pat' | 'app_installation' | 'app_user' | null {
+  if (value === 'pat' || value === 'app_installation' || value === 'app_user') return value;
+  return null;
+}
+
+type GitHubConnectionState = {
+  workspaceId: string;
+  userId: string;
+  exp: number;
+};
+
+type GitHubAppUserToken = {
+  refreshToken: string | null;
+  scopes: string[];
+};
+
+function githubAppOAuthEnabled(): boolean {
+  return Boolean(config.githubAppClientId && config.githubAppClientSecret && config.githubAppRedirectUrl);
+}
+
+function githubAppAuthorizeUrl(args: { workspaceId: string; userId: string }): string {
+  const url = new URL('https://github.com/login/oauth/authorize');
+  url.searchParams.set('client_id', config.githubAppClientId);
+  url.searchParams.set('redirect_uri', config.githubAppRedirectUrl);
+  url.searchParams.set('scope', 'repo read:user');
+  url.searchParams.set(
+    'state',
+    signGitHubConnectionState({
+      workspaceId: args.workspaceId,
+      userId: args.userId,
+      exp: Math.floor(Date.now() / 1000) + 600,
+    }),
+  );
+  return url.toString();
+}
+
+function signGitHubConnectionState(state: GitHubConnectionState): string {
+  const payload = Buffer.from(JSON.stringify(state)).toString('base64url');
+  const signature = createHmac('sha256', config.appSigningSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function verifyGitHubConnectionState(value: unknown): GitHubConnectionState | null {
+  if (typeof value !== 'string') return null;
+  const [payload, signature] = value.split('.');
+  if (!payload || !signature) return null;
+  const expected = createHmac('sha256', config.appSigningSecret).update(payload).digest('base64url');
+  const signatureBytes = Buffer.from(signature);
+  const expectedBytes = Buffer.from(expected);
+  if (signatureBytes.length !== expectedBytes.length || !timingSafeEqual(signatureBytes, expectedBytes)) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Partial<GitHubConnectionState>;
+    if (
+      typeof decoded.workspaceId !== 'string' ||
+      typeof decoded.userId !== 'string' ||
+      typeof decoded.exp !== 'number' ||
+      decoded.exp * 1000 <= Date.now()
+    ) {
+      return null;
+    }
+    return { workspaceId: decoded.workspaceId, userId: decoded.userId, exp: decoded.exp };
+  } catch {
+    return null;
+  }
+}
+
+async function exchangeGitHubAppUserCode(code: string): Promise<GitHubAppUserToken> {
+  const res = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.githubAppClientId,
+      client_secret: config.githubAppClientSecret,
+      code,
+      redirect_uri: config.githubAppRedirectUrl,
+    }),
+  });
+  if (!res.ok) {
+    throw new RouteResponse(400, 'github_oauth_exchange_failed', 'GitHub OAuth exchange failed');
+  }
+  const body = (await res.json()) as Record<string, unknown>;
+  if (typeof body.error === 'string') {
+    throw new RouteResponse(400, 'github_oauth_exchange_failed', stringOrNull(body.error_description) ?? body.error);
+  }
+  return {
+    refreshToken: stringOrNull(body.refresh_token),
+    scopes: typeof body.scope === 'string' ? stringArray(body.scope.split(',')) : [],
+  };
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function plainObject(value: unknown): Record<string, unknown> {
+  return isPlainObject(value) ? value : {};
+}
+
+class RouteResponse extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly error: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function convergeGitHubPatGrant(
+  ironControl: IronControlAdminClient,
+  args: { workspaceId: string; userId: string; token: string },
+): Promise<void> {
+  const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
+  const principal = await ironControl.upsertPrincipal({
+    foreignId,
+    name: `Atrium Workspace ${args.workspaceId} User ${args.userId}`,
+    labels: {
+      source: 'atrium',
+      atrium_workspace_id: args.workspaceId,
+      atrium_user_id: args.userId,
+    },
+  });
+  const secret = await ironControl.upsertGitHubPatSecret({
+    foreignId: githubPatSecretForeignId(args.workspaceId, args.userId),
+    name: `GitHub token for ${foreignId}`,
+    token: args.token,
+    labels: {
+      source: 'atrium',
+      provider: 'github',
+      atrium_workspace_id: args.workspaceId,
+      atrium_user_id: args.userId,
+    },
+  });
+  const grants = await ironControl.listPrincipalGrants(principal.id);
+  if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
+    await ironControl.createPrincipalStaticGrant(principal.id, secret.id);
+  }
+  const defaultRole = await ironControl.upsertRole({
+    foreignId: 'github-default',
+    name: 'GitHub public-read fallback',
+    labels: { source: 'atrium', provider: 'github', kind: 'fallback' },
+  });
+  await ironControl.unassignRole(principal.id, defaultRole.id).catch(() => {});
+  await ironControl.verifySingleGitHubTokenTransform(foreignId);
+}
+
+async function convergeGitHubBrokerGrant(
+  ironControl: IronControlAdminClient,
+  args: {
+    workspaceId: string;
+    userId: string;
+    tokenKind: 'app_installation' | 'app_user';
+    brokerCredentialId: string;
+  },
+): Promise<void> {
+  const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
+  const principal = await ironControl.upsertPrincipal({
+    foreignId,
+    name: `Atrium Workspace ${args.workspaceId} User ${args.userId}`,
+    labels: {
+      source: 'atrium',
+      atrium_workspace_id: args.workspaceId,
+      atrium_user_id: args.userId,
+    },
+  });
+  const secret = await ironControl.upsertGitHubBrokerSecret({
+    foreignId: githubPatSecretForeignId(args.workspaceId, args.userId),
+    name: `GitHub ${args.tokenKind} token for ${foreignId}`,
+    brokerCredentialId: args.brokerCredentialId,
+    labels: {
+      source: 'atrium',
+      provider: 'github',
+      token_kind: args.tokenKind,
+      atrium_workspace_id: args.workspaceId,
+      atrium_user_id: args.userId,
+    },
+  });
+  const grants = await ironControl.listPrincipalGrants(principal.id);
+  if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
+    await ironControl.createPrincipalStaticGrant(principal.id, secret.id);
+  }
+  const defaultRole = await ironControl.upsertRole({
+    foreignId: 'github-default',
+    name: 'GitHub public-read fallback',
+    labels: { source: 'atrium', provider: 'github', kind: 'fallback' },
+  });
+  await ironControl.unassignRole(principal.id, defaultRole.id).catch(() => {});
+  await ironControl.verifySingleGitHubTokenTransform(foreignId);
+}
+
+async function convergeGitHubPublicReadFallback(
+  ironControl: IronControlAdminClient,
+  args: { workspaceId: string; userId: string },
+): Promise<void> {
+  const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
+  const principal = await ironControl.upsertPrincipal({
+    foreignId,
+    name: `Atrium Workspace ${args.workspaceId} User ${args.userId}`,
+    labels: {
+      source: 'atrium',
+      atrium_workspace_id: args.workspaceId,
+      atrium_user_id: args.userId,
+    },
+  });
+  await ironControl.deleteStaticSecret(githubPatSecretForeignId(args.workspaceId, args.userId)).catch(() => {});
+  const defaultRole = await ironControl.upsertRole({
+    foreignId: 'github-default',
+    name: 'GitHub public-read fallback',
+    labels: { source: 'atrium', provider: 'github', kind: 'fallback' },
+  });
+  await ironControl.assignRole(principal.id, defaultRole.id);
+  await ironControl.verifySingleGitHubTokenTransform(foreignId);
 }

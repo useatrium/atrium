@@ -48,11 +48,13 @@ export interface RepoSpec {
   repo: string;
   ref?: string;
   subdir?: string;
+  private?: boolean;
 }
 
 export interface SpawnOptions {
   spawnId?: string;
   repos?: RepoSpec[];
+  metadata?: JsonObject;
 }
 
 export interface PostMessageOptions {
@@ -126,6 +128,7 @@ export class CentaurClient {
       metadata: {
         source: "atrium",
         harness,
+        ...(opts.metadata ?? {}),
         ...(opts.spawnId ? { spawn_id: opts.spawnId } : {}),
       },
       ...(opts.repos && opts.repos.length

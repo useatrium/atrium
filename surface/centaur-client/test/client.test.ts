@@ -96,12 +96,12 @@ describe("CentaurClient endpoint paths", () => {
     });
     await clientA.spawn("thread:1", "codex", {
       spawnId: "spawn-1",
-      repos: [{ repo: "owner/name", ref: "main" }],
+      repos: [{ repo: "owner/name", ref: "main", private: true }],
     });
     expect(withRepos.body).toEqual({
       harness_type: "codex",
       metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
-      repos: [{ repo: "owner/name", ref: "main" }],
+      repos: [{ repo: "owner/name", ref: "main", private: true }],
     });
 
     const noRepos: { url?: string; body?: unknown } = {};
@@ -114,6 +114,36 @@ describe("CentaurClient endpoint paths", () => {
     expect(noRepos.body).toEqual({
       harness_type: "codex",
       metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
+    });
+  });
+
+  it("merges caller-provided metadata into the spawn body", async () => {
+    const captured: { url?: string; body?: unknown } = {};
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: captureFetch(captured),
+    });
+
+    await client.spawn("thread:1", "codex", {
+      spawnId: "spawn-1",
+      metadata: {
+        atrium_workspace_id: "workspace-1",
+        atrium_user_id: "user-1",
+        github_identity_mode: "automatic",
+      },
+    });
+
+    expect(captured.body).toEqual({
+      harness_type: "codex",
+      metadata: {
+        source: "atrium",
+        harness: "codex",
+        atrium_workspace_id: "workspace-1",
+        atrium_user_id: "user-1",
+        github_identity_mode: "automatic",
+        spawn_id: "spawn-1",
+      },
     });
   });
 

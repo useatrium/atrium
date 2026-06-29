@@ -1411,11 +1411,15 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: None,
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
             RepoMount {
                 repo: "acme/bar".to_string(),
                 r#ref: None,
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
         ];
         let mounted = plan_overlay_mount(

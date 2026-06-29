@@ -8,6 +8,9 @@
 //!   [--harness-home <path>] [--flat-home] [--repo <path>] [--repos-json <json>] [--agent-uid <uid>]
 //!   [--hydrate-artifacts] [--atrium-url <url>] [--atrium-key <key>] [--cas-dir <dir>]`
 //!
+//! `provision-overlay --hydrate-private-repos --repos-json <json>
+//!   [--repo-cache-root /cache] [--https-proxy <url>] [--git-ca-info <path>]`
+//!
 //! Default mode preserves the legacy privileged provisioner path: prepare the
 //! host-backed upper, create the fixture lower when no repo is provided, mount
 //! the merged workspace, and write the node-sync sidecar manifest.
@@ -24,8 +27,8 @@
 use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
 use centaur_node_sync::http_client::HttpAtriumClient;
 use centaur_node_sync::overlay_mount::{
-    DEFAULT_AGENT_UID, LowerKind, OverlayMountPlan, mount_overlay, plan_overlay_mount,
-    unmount_overlay,
+    DEFAULT_AGENT_UID, LowerKind, OverlayMountPlan, hydrate_private_repo_caches, mount_overlay,
+    plan_overlay_mount, unmount_overlay,
 };
 use centaur_node_sync::session_manifest::{
     RepoMount, SessionManifest, normalize_harness, write_manifest,
@@ -51,6 +54,10 @@ struct Config {
     repos: Vec<RepoMount>,
     agent_uid: Option<u32>,
     hydrate_artifacts: bool,
+    hydrate_private_repos: bool,
+    repo_cache_root: PathBuf,
+    https_proxy: Option<String>,
+    git_ca_info: Option<String>,
     atrium_url: Option<String>,
     atrium_key: Option<String>,
     cas_dir: PathBuf,
@@ -65,6 +72,9 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let cfg = parse_args(std::env::args_os().skip(1))?;
+    if cfg.hydrate_private_repos {
+        return hydrate_private_repos(&cfg);
+    }
     validate_session(&cfg.session)?;
 
     let merged = cfg
@@ -195,6 +205,23 @@ fn hydrate_artifacts_if_enabled(cfg: &Config, plan: &mut OverlayMountPlan) -> Re
     Ok(())
 }
 
+fn hydrate_private_repos(cfg: &Config) -> Result<(), String> {
+    let Some(https_proxy) = cfg.https_proxy.as_deref() else {
+        return Err("--https-proxy is required with --hydrate-private-repos".to_string());
+    };
+    let git_ca_info = cfg
+        .git_ca_info
+        .as_deref()
+        .ok_or_else(|| "--git-ca-info is required with --hydrate-private-repos".to_string())?;
+    let hydrated =
+        hydrate_private_repo_caches(&cfg.repos, &cfg.repo_cache_root, https_proxy, git_ca_info)?;
+    println!(
+        "provision-overlay: hydrated {} private repo cache entries",
+        hydrated
+    );
+    Ok(())
+}
+
 fn parse_args<I>(args: I) -> Result<Config, String>
 where
     I: IntoIterator<Item = OsString>,
@@ -214,6 +241,10 @@ where
     let mut repo = String::new();
     let mut repos = Vec::new();
     let mut agent_uid = None;
+    let mut hydrate_private_repos = false;
+    let mut repo_cache_root = PathBuf::from("/cache");
+    let mut https_proxy = None;
+    let mut git_ca_info = None;
     let mut hydrate_artifacts =
         env_bool_any(&["PROVISION_OVERLAY_HYDRATE_ARTIFACTS", "HYDRATE_ARTIFACTS"])?
             .unwrap_or(false);
@@ -289,6 +320,18 @@ where
             "--hydrate-artifacts" => {
                 hydrate_artifacts = true;
             }
+            "--hydrate-private-repos" => {
+                hydrate_private_repos = true;
+            }
+            "--repo-cache-root" => {
+                repo_cache_root = PathBuf::from(next_value(&mut iter, "--repo-cache-root")?);
+            }
+            "--https-proxy" => {
+                https_proxy = non_empty_value(next_value(&mut iter, "--https-proxy")?);
+            }
+            "--git-ca-info" => {
+                git_ca_info = non_empty_value(next_value(&mut iter, "--git-ca-info")?);
+            }
             "--atrium-url" => {
                 atrium_url = non_empty_value(next_value(&mut iter, "--atrium-url")?);
             }
@@ -307,7 +350,11 @@ where
     }
 
     let cas_dir = cas_dir.unwrap_or_else(|| overlays_root.join("cas"));
-    let session = session.ok_or_else(|| "--session <ID> is required".to_string())?;
+    let session = if hydrate_private_repos {
+        session.unwrap_or_else(|| "private-repo-hydrate".to_string())
+    } else {
+        session.ok_or_else(|| "--session <ID> is required".to_string())?
+    };
     if atrium_session.trim().is_empty() {
         atrium_session = session.clone();
     }
@@ -332,6 +379,10 @@ where
         repos,
         agent_uid,
         hydrate_artifacts,
+        hydrate_private_repos,
+        repo_cache_root,
+        https_proxy,
+        git_ca_info,
         atrium_url,
         atrium_key,
         cas_dir,
@@ -550,6 +601,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_private_repo_hydration_flags() {
+        let cfg = parse_args([
+            OsString::from("--hydrate-private-repos"),
+            OsString::from("--repos-json"),
+            OsString::from(r#"[{"repo":"acme/private","private":true}]"#),
+            OsString::from("--repo-cache-root"),
+            OsString::from("/cache"),
+            OsString::from("--https-proxy"),
+            OsString::from("http://proxy:8080"),
+            OsString::from("--git-ca-info"),
+            OsString::from("/firewall-certs/ca-cert.pem"),
+        ])
+        .unwrap();
+
+        assert!(cfg.hydrate_private_repos);
+        assert_eq!(cfg.repo_cache_root, PathBuf::from("/cache"));
+        assert_eq!(cfg.https_proxy.as_deref(), Some("http://proxy:8080"));
+        assert_eq!(
+            cfg.git_ca_info.as_deref(),
+            Some("/firewall-certs/ca-cert.pem")
+        );
+        assert_eq!(cfg.repos.len(), 1);
+    }
+
+    #[test]
     fn parse_repos_json() {
         let cfg = parse_args([
             OsString::from("--manifest-only"),
@@ -569,11 +645,15 @@ mod tests {
                     repo: "acme/foo".to_string(),
                     r#ref: Some("main".to_string()),
                     subdir: None,
+                    private: false,
+                    cache_scope: None,
                 },
                 RepoMount {
                     repo: "acme/bar".to_string(),
                     r#ref: None,
                     subdir: Some("bar".to_string()),
+                    private: false,
+                    cache_scope: None,
                 },
             ]
         );

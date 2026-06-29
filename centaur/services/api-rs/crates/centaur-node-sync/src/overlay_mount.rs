@@ -5,7 +5,8 @@
 //! the privileged node-sync daemon.
 
 use crate::session_manifest::{
-    RepoMount, validate_repo_cache_path_syntax, validate_repo_mounts, validate_repo_subdir_syntax,
+    RepoCacheScope, RepoMount, validate_principal_cache_scope, validate_repo_cache_path_syntax,
+    validate_repo_mounts, validate_repo_subdir_syntax,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -198,7 +199,7 @@ pub fn plan_repo_composition(
 
         entries.push(RepoComposeEntry {
             mount: mount.clone(),
-            cache_path: repo_cache_root.join(&mount.repo),
+            cache_path: repo_cache_path(repo_cache_root, mount)?,
             target_path: lower.join(&target_subdir),
             target_subdir,
         });
@@ -208,6 +209,41 @@ pub fn plan_repo_composition(
         lower: lower.to_path_buf(),
         entries,
     })
+}
+
+pub fn repo_cache_path(repo_cache_root: &Path, mount: &RepoMount) -> Result<PathBuf, String> {
+    if !mount.private {
+        return Ok(repo_cache_root.join(&mount.repo));
+    }
+
+    match mount.cache_scope.as_ref() {
+        Some(RepoCacheScope::Principal { principal_id }) => Ok(repo_cache_root
+            .join("principals")
+            .join(principal_cache_component(principal_id)?)
+            .join(&mount.repo)),
+        Some(RepoCacheScope::Shared) => Err(format!(
+            "private repo {:?} must not use shared repo cache",
+            mount.repo
+        )),
+        None => Err(format!(
+            "private repo {:?} requires a principal cache scope",
+            mount.repo
+        )),
+    }
+}
+
+pub fn principal_cache_component(principal_id: &str) -> Result<String, String> {
+    validate_principal_cache_scope(principal_id)?;
+    let mut encoded = String::from("principal-");
+    for byte in principal_id.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    Ok(encoded)
 }
 
 pub fn repo_target_subdir(mount: &RepoMount) -> Result<String, String> {
@@ -464,6 +500,12 @@ fn materialize_repo_entry(entry: &RepoComposeEntry) -> Result<(), String> {
 
     if entry.cache_path.join(".git").is_dir() {
         copy_repo_from_cache(&entry.cache_path, &entry.target_path)?;
+    } else if entry.mount.private {
+        return Err(format!(
+            "private repo {:?} is not present in its principal-scoped cache {}; direct clone is disabled",
+            entry.mount.repo,
+            entry.cache_path.display()
+        ));
     } else {
         clone_repo(&entry.mount.repo, &entry.target_path)?;
     }
@@ -471,6 +513,136 @@ fn materialize_repo_entry(entry: &RepoComposeEntry) -> Result<(), String> {
     if let Some(git_ref) = entry.mount.r#ref.as_deref() {
         checkout_repo_ref(&entry.target_path, git_ref)?;
     }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn hydrate_private_repo_caches(
+    repos: &[RepoMount],
+    repo_cache_root: &Path,
+    https_proxy: &str,
+    git_ca_info: &str,
+) -> Result<usize, String> {
+    validate_repo_mounts(repos)?;
+    let mut hydrated = 0usize;
+    for repo in repos.iter().filter(|repo| repo.private) {
+        let cache_path = repo_cache_path(repo_cache_root, repo)?;
+        if cache_path.join(".git").is_dir() {
+            continue;
+        }
+        clone_private_repo_to_cache(repo, &cache_path, https_proxy, git_ca_info)?;
+        hydrated += 1;
+    }
+    Ok(hydrated)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn hydrate_private_repo_caches(
+    _repos: &[RepoMount],
+    _repo_cache_root: &Path,
+    _https_proxy: &str,
+    _git_ca_info: &str,
+) -> Result<usize, String> {
+    Err("private repo cache hydration is linux-only".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn clone_private_repo_to_cache(
+    repo: &RepoMount,
+    cache_path: &Path,
+    https_proxy: &str,
+    git_ca_info: &str,
+) -> Result<(), String> {
+    use std::time::Duration;
+
+    let parent = cache_path
+        .parent()
+        .ok_or_else(|| format!("cache path {} has no parent", cache_path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("create private repo cache parent {}: {e}", parent.display()))?;
+
+    let lock_path = cache_path.with_extension("clone.lock");
+    for attempt in 0..120 {
+        match std::fs::create_dir(&lock_path) {
+            Ok(()) => {
+                let result =
+                    clone_private_repo_to_cache_locked(repo, cache_path, https_proxy, git_ca_info);
+                let _ = std::fs::remove_dir(&lock_path);
+                return result;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if cache_path.join(".git").is_dir() {
+                    return Ok(());
+                }
+                if attempt == 119 {
+                    return Err(format!(
+                        "timed out waiting for private repo cache lock {}",
+                        lock_path.display()
+                    ));
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            Err(err) => {
+                return Err(format!(
+                    "create private repo cache lock {}: {err}",
+                    lock_path.display()
+                ));
+            }
+        }
+    }
+    Err("unreachable private repo cache lock loop".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn clone_private_repo_to_cache_locked(
+    repo: &RepoMount,
+    cache_path: &Path,
+    https_proxy: &str,
+    git_ca_info: &str,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    if cache_path.join(".git").is_dir() {
+        return Ok(());
+    }
+    if cache_path.exists() {
+        std::fs::remove_dir_all(cache_path)
+            .map_err(|e| format!("reset private repo cache {}: {e}", cache_path.display()))?;
+    }
+    let tmp = cache_path.with_extension(format!("clone.tmp.{}", std::process::id()));
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)
+            .map_err(|e| format!("reset private repo cache temp {}: {e}", tmp.display()))?;
+    }
+
+    let repo_url = format!("https://github.com/{}.git", repo.repo);
+    let output = Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("HTTPS_PROXY", https_proxy)
+        .env("HTTP_PROXY", https_proxy)
+        .env("GIT_SSL_CAINFO", git_ca_info)
+        .args([
+            "-c",
+            "http.https://github.com/.extraheader=Authorization: Bearer GITHUB_TOKEN",
+            "clone",
+            "--filter=blob:none",
+            "--quiet",
+        ])
+        .arg(&repo_url)
+        .arg(&tmp)
+        .output()
+        .map_err(|e| format!("spawn private git clone {repo_url}: {e}"))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(format!(
+            "private git clone {repo_url} -> {} failed (status {}): {}",
+            cache_path.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    std::fs::rename(&tmp, cache_path)
+        .map_err(|e| format!("publish private repo cache {}: {e}", cache_path.display()))?;
     Ok(())
 }
 
@@ -839,16 +1011,22 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
             RepoMount {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
             RepoMount {
                 repo: "acme/bar".to_string(),
                 r#ref: None,
                 subdir: Some("libbar".to_string()),
+                private: false,
+                cache_scope: None,
             },
         ];
         let plan = plan_overlay_mount(
@@ -879,11 +1057,15 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: None,
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
             RepoMount {
                 repo: "acme/bar".to_string(),
                 r#ref: Some("release/v1".to_string()),
                 subdir: Some("vendor-bar".to_string()),
+                private: false,
+                cache_scope: None,
             },
         ];
         let plan = plan_repo_composition(Path::new("/lower"), Path::new("/cache"), &repos).unwrap();
@@ -904,6 +1086,27 @@ mod tests {
     }
 
     #[test]
+    fn compose_plan_uses_principal_scoped_cache_for_private_repos() {
+        let repos = vec![RepoMount {
+            repo: "acme/private".to_string(),
+            r#ref: Some("main".to_string()),
+            subdir: None,
+            private: true,
+            cache_scope: Some(RepoCacheScope::Principal {
+                principal_id: "prn_user:one".to_string(),
+            }),
+        }];
+
+        let plan = plan_repo_composition(Path::new("/lower"), Path::new("/cache"), &repos).unwrap();
+
+        assert_eq!(plan.entries[0].target_subdir, "repos/acme/private");
+        assert_eq!(
+            plan.entries[0].cache_path,
+            PathBuf::from("/cache/principals/principal-prn_user%3Aone/acme/private")
+        );
+    }
+
+    #[test]
     fn compose_plan_same_basename_different_owners_no_collision() {
         // Used to collide on the shared basename "app"; owner-scoping under repos/ fixes it.
         let repos = vec![
@@ -911,11 +1114,15 @@ mod tests {
                 repo: "acme/app".to_string(),
                 r#ref: None,
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
             RepoMount {
                 repo: "globex/app".to_string(),
                 r#ref: None,
                 subdir: None,
+                private: false,
+                cache_scope: None,
             },
         ];
         let plan = plan_repo_composition(Path::new("/lower"), Path::new("/cache"), &repos).unwrap();
@@ -936,11 +1143,15 @@ mod tests {
                     repo: "acme/bar".to_string(),
                     r#ref: None,
                     subdir: Some("shared".to_string()),
+                    private: false,
+                    cache_scope: None,
                 },
                 RepoMount {
                     repo: "globex/baz".to_string(),
                     r#ref: None,
                     subdir: Some("shared".to_string()),
+                    private: false,
+                    cache_scope: None,
                 },
             ],
         )
@@ -954,6 +1165,8 @@ mod tests {
                 repo: "/absolute/repo".to_string(),
                 r#ref: None,
                 subdir: Some("repo".to_string()),
+                private: false,
+                cache_scope: None,
             }],
         )
         .unwrap_err();

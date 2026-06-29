@@ -34,6 +34,8 @@ export interface AppDeps {
   voip?: AppServiceDeps['voip'];
   /** Injectable fetch for the email transport (tests mock Resend). */
   emailFetch?: AppServiceDeps['emailFetch'];
+  /** Injectable iron-control client for connection convergence tests. */
+  ironControl?: AppServiceDeps['ironControl'];
   /** Internal x-api-key override for tests; production reads config. */
   artifactCaptureApiKey?: AppServiceDeps['artifactCaptureApiKey'];
 }

@@ -75,6 +75,13 @@ fn run() -> Result<(), String> {
     let mut client = HttpAtriumClient::new(url, key, session.clone());
     let mut receipt_entries = Vec::new();
     for repo in &repos {
+        if repo.private {
+            eprintln!(
+                "event=warmcache_hydrate_skip session={} repo={} reason=private_repo",
+                session, repo.repo
+            );
+            continue;
+        }
         let git_ref = repo.r#ref.as_deref().unwrap_or("HEAD");
         let stats = hydrate_depcache(
             &mut client,

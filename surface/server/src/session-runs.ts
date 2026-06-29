@@ -263,6 +263,8 @@ interface SessionRow {
   pending_question: unknown | null;
   provider_credential_user_id: string | null;
   provider_auth_required: unknown | null;
+  provider_connection_id: string | null;
+  github_identity_mode: string | null;
   agent_profile_version_id: string | null;
   last_event_id: number;
   result_text: string | null;
@@ -275,6 +277,7 @@ interface SessionRepoSpec {
   repo: string;
   ref?: string;
   subdir?: string;
+  private?: boolean;
 }
 
 interface ChannelRow {
@@ -944,15 +947,7 @@ export class SessionRuns {
   ): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
-      const spawned = await this.spawnAssignment(
-        row.id,
-        row.centaur_thread_key,
-        row.harness,
-        row.repo,
-        row.branch,
-        parseSessionRepos(row.session_repos),
-        client,
-      );
+      const spawned = await this.spawnAssignment(row, client);
       generation = spawned.assignment_generation;
       row = spawned.row;
     }
@@ -1495,14 +1490,7 @@ export class SessionRuns {
       if (!row) return;
       let generation = row.assignment_generation;
       if (generation == null) {
-        const spawned = await this.spawnAssignment(
-          row.id,
-          row.centaur_thread_key,
-          row.harness,
-          row.repo,
-          row.branch,
-          parseSessionRepos(row.session_repos),
-        );
+        const spawned = await this.spawnAssignment(row);
         generation = spawned.assignment_generation;
         row = spawned.row;
         if (TERMINAL_STATUSES.has(row.status)) return;
@@ -2133,24 +2121,28 @@ export class SessionRuns {
   }
 
   private async spawnAssignment(
-    id: string,
-    threadKey: string,
-    harness: string,
-    repo: string | null,
-    branch: string | null,
-    sessionRepos: SessionRepoSpec[] | null,
+    session: SessionRow,
     client: Db | DbClient = this.pool,
   ): Promise<{ row: SessionRow; assignment_generation: number }> {
-    const spawnId = await this.reserveSpawnId(id, client);
+    const spawnId = await this.reserveSpawnId(session.id, client);
     // Forward the session's checkout target so Centaur hydrates it from the node
     // repo-cache (centaur_session_repos → AGENT_REPOS_JSON → entrypoint clone).
-    const repos = sessionRepos ?? (repo ? [{ repo, ...(branch ? { ref: branch } : {}) }] : []);
-    const spawned = await this.centaur.spawn(threadKey, harness, {
+    const sessionRepos = parseSessionRepos(session.session_repos);
+    const repos = sessionRepos ?? (session.repo ? [{ repo: session.repo, ...(session.branch ? { ref: session.branch } : {}) }] : []);
+    const credentialOwnerUserId = session.provider_credential_user_id ?? session.spawned_by;
+    const spawned = await this.centaur.spawn(session.centaur_thread_key, session.harness, {
       spawnId,
+      metadata: {
+        atrium_workspace_id: session.workspace_id,
+        atrium_user_id: credentialOwnerUserId,
+        github_identity_mode: session.github_identity_mode ?? 'automatic',
+        credential_owner_user_id: credentialOwnerUserId,
+        ...(session.provider_connection_id ? { provider_connection_id: session.provider_connection_id } : {}),
+      },
       ...(repos.length ? { repos } : {}),
     });
     const generation = spawned.assignment_generation ?? 1;
-    const row = await this.persistSpawnedAssignment(id, generation, client);
+    const row = await this.persistSpawnedAssignment(session.id, generation, client);
     return { row, assignment_generation: generation };
   }
 
@@ -2554,6 +2546,7 @@ function normalizeSessionRepos(
       repo,
       ...(ref ? { ref } : {}),
       ...(subdir ? { subdir } : {}),
+      ...(record.private === true ? { private: true } : {}),
     });
     if (repos.length >= 8) break;
   }

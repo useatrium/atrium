@@ -923,6 +923,19 @@ fn build_agent_sandbox(
                 &metadata,
             ));
         } else {
+            if let Some(private_repo_hydrate) = private_repo_hydrate_wiring(spec)? {
+                init_containers.push(overlay::private_repo_hydrate_init_container_json(
+                    overlay,
+                    overlay::PrivateRepoHydrateInitContainer {
+                        repos_json: &private_repo_hydrate.repos_json,
+                        repo_cache_root: &private_repo_hydrate.repo_cache_mount_path,
+                        repo_cache_volume: &private_repo_hydrate.repo_cache_volume,
+                        https_proxy: &private_repo_hydrate.https_proxy,
+                        git_ca_info: iron_proxy::FIREWALL_CA_CERT_PATH,
+                        ca_volume_mount: iron_proxy::sandbox_ca_volume_mount_json(),
+                    },
+                ));
+            }
             init_containers.push(overlay::overlay_manifest_init_container_json(
                 overlay,
                 id.as_str(),
@@ -1326,6 +1339,63 @@ struct WarmcacheHydrateWiring {
     depcache_volume: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PrivateRepoHydrateWiring {
+    repos_json: String,
+    repo_cache_mount_path: String,
+    repo_cache_volume: String,
+    https_proxy: String,
+}
+
+fn private_repo_hydrate_wiring(
+    spec: &SandboxSpec,
+) -> SandboxResult<Option<PrivateRepoHydrateWiring>> {
+    let Some(repos_json) = spec_env_value(spec, "AGENT_REPOS_JSON") else {
+        return Ok(None);
+    };
+    if !repos_json_has_private_repo(repos_json)? {
+        return Ok(None);
+    }
+    let repo_cache_volume = mount_volume_name_for_target(spec, "/cache").ok_or_else(|| {
+        SandboxError::InvalidSpec(
+            "private repo checkout requires the repo cache mounted at /cache".to_owned(),
+        )
+    })?;
+    let https_proxy = spec_env_value(spec, "HTTPS_PROXY")
+        .or_else(|| spec_env_value(spec, "https_proxy"))
+        .ok_or_else(|| {
+            SandboxError::InvalidSpec(
+                "private repo checkout requires iron-proxy HTTPS_PROXY env".to_owned(),
+            )
+        })?
+        .to_owned();
+    Ok(Some(PrivateRepoHydrateWiring {
+        repos_json: repos_json.to_owned(),
+        repo_cache_mount_path: "/cache".to_owned(),
+        repo_cache_volume,
+        https_proxy,
+    }))
+}
+
+fn repos_json_has_private_repo(repos_json: &str) -> SandboxResult<bool> {
+    let value = serde_json::from_str::<Value>(repos_json)
+        .map_err(|err| SandboxError::InvalidSpec(format!("invalid AGENT_REPOS_JSON: {err}")))?;
+    let Some(repos) = value.as_array() else {
+        return Err(SandboxError::InvalidSpec(
+            "AGENT_REPOS_JSON must be an array".to_owned(),
+        ));
+    };
+    Ok(repos.iter().any(|repo| {
+        repo.get("private")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || repo
+                .get("visibility")
+                .and_then(Value::as_str)
+                .is_some_and(|visibility| visibility.eq_ignore_ascii_case("private"))
+    }))
+}
+
 fn warmcache_hydrate_wiring(
     id: &SandboxId,
     spec: &SandboxSpec,
@@ -1469,7 +1539,7 @@ fn map_kube_error(operation: &str, err: Error) -> SandboxError {
 
 #[cfg(test)]
 mod tests {
-    use centaur_sandbox_core::{Mount, ResourceLimits, SandboxSpec};
+    use centaur_sandbox_core::{Mount, MountKind, ResourceLimits, SandboxSpec};
     use k8s_openapi::api::core::v1::{PodCondition, PodStatus};
 
     use super::*;
@@ -2063,6 +2133,76 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair[0] == "--repos-json" && pair[1] == repos_json)
         );
+    }
+
+    #[test]
+    fn private_repo_hydrate_runs_before_overlay_manifest_writer() {
+        let repos_json = r#"[{"repo":"acme/private","private":true,"cache_scope":{"kind":"principal","principal_id":"prn_user"}}]"#;
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .env("AGENT_REPOS_JSON", repos_json)
+            .env("HTTPS_PROXY", "http://asbx-test-iron-proxy:8080")
+            .mount(
+                Mount::new(
+                    MountKind::Bind {
+                        source_path: "/var/lib/centaur/repos".to_owned(),
+                    },
+                    "/cache",
+                )
+                .read_only(),
+            );
+        let config = AgentSandboxConfig::new("centaur")
+            .overlay(OverlayConfig::new("centaur-node-sync:test"))
+            .iron_proxy(IronProxyConfig::new("proxy:test", "ca-cert", "ca-key"));
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let init_containers = sandbox
+            .spec
+            .pod_template
+            .spec
+            .init_containers
+            .as_ref()
+            .unwrap();
+        let private_hydrate = init_containers
+            .iter()
+            .position(|container| container.name == "private-repo-cache-hydrate")
+            .expect("private hydrate init container");
+        let manifest_writer = init_containers
+            .iter()
+            .position(|container| container.name == "overlay-manifest-writer")
+            .expect("manifest writer init container");
+        assert!(private_hydrate < manifest_writer);
+
+        let hydrate = &init_containers[private_hydrate];
+        let args = hydrate.args.as_ref().unwrap();
+        assert!(args.iter().any(|arg| arg == "--hydrate-private-repos"));
+        assert!(args.windows(2).any(
+            |pair| pair[0] == "--https-proxy" && pair[1] == "http://asbx-test-iron-proxy:8080"
+        ));
+        assert!(hydrate.volume_mounts.as_ref().unwrap().iter().any(|mount| {
+            mount.name == "mount-0" && mount.mount_path == "/cache" && mount.read_only != Some(true)
+        }));
+        assert!(
+            hydrate
+                .volume_mounts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|mount| mount.name == "firewall-ca")
+        );
+    }
+
+    #[test]
+    fn private_repo_hydrate_requires_repo_cache_mount() {
+        let repos_json = r#"[{"repo":"acme/private","private":true,"cache_scope":{"kind":"principal","principal_id":"prn_user"}}]"#;
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .env("AGENT_REPOS_JSON", repos_json)
+            .env("HTTPS_PROXY", "http://asbx-test-iron-proxy:8080");
+        let config = AgentSandboxConfig::new("centaur")
+            .overlay(OverlayConfig::new("centaur-node-sync:test"))
+            .iron_proxy(IronProxyConfig::new("proxy:test", "ca-cert", "ca-key"));
+
+        let err = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap_err();
+        assert!(err.to_string().contains("repo cache mounted at /cache"));
     }
 
     #[test]

@@ -48,7 +48,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       harness?: string;
       repo?: string;
       branch?: string;
-      repos?: { repo?: unknown; ref?: unknown; subdir?: unknown }[];
+      repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
       agentProfileId?: string;
       agentProfileVersionId?: string;
       clientSpawnId?: unknown;
@@ -73,6 +73,15 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     }
     if (!(await canAccessChannel(deps.pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    if (requestHasPrivateRepos(body)) {
+      const hasGitHubConnection = await userHasConnectedGitHubForChannel(deps.pool, user.id, body.channelId);
+      if (!hasGitHubConnection) {
+        return reply.code(409).send({
+          error: 'github_connection_required',
+          message: 'Connect GitHub before starting a session with private repositories.',
+        });
+      }
     }
     const clientSpawnId =
       typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
@@ -244,4 +253,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     }
     return reply.send(await appRegistry.launch(appId, user.id, version));
   });
+}
+
+function requestHasPrivateRepos(body: {
+  repo?: string;
+  repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
+}): boolean {
+  return Array.isArray(body.repos) && body.repos.some((repo) => repo?.private === true);
+}
+
+async function userHasConnectedGitHubForChannel(pool: Db, userId: string, channelId: string): Promise<boolean> {
+  const res = await pool.query(
+    `SELECT 1
+       FROM channels c
+       JOIN user_connections uc
+         ON uc.workspace_id = c.workspace_id
+        AND uc.user_id = $2
+        AND uc.provider = 'github'
+        AND uc.status = 'connected'
+      WHERE c.id = $1
+      LIMIT 1`,
+    [channelId, userId],
+  );
+  return (res.rowCount ?? 0) > 0;
 }

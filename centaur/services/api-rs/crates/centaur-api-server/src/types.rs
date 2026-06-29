@@ -30,6 +30,10 @@ pub struct RepoSpec {
     pub r#ref: Option<String>,
     #[serde(default)]
     pub subdir: Option<String>,
+    /// Private target repos must be resolved with the session's user principal
+    /// and must not use the node-global shared repo cache.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub private: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -301,6 +305,10 @@ fn validate_single_segment(label: &str, value: &str) -> Result<(), String> {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Error)]
 pub enum SessionEventConversionError {
     #[error("session.output.line event {event_id} payload must be a string")]
@@ -343,6 +351,7 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: Some("foo".to_string()),
+                private: false,
             }],
             on_harness_conflict: None,
         };
@@ -364,6 +373,7 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: None,
                 subdir: Some("foo".to_string()),
+                private: true,
             }],
         )
         .unwrap()
@@ -372,5 +382,6 @@ mod tests {
         assert_eq!(metadata["source"], "test");
         assert_eq!(metadata[SESSION_REPOS_METADATA_KEY][0]["repo"], "acme/foo");
         assert_eq!(metadata[SESSION_REPOS_METADATA_KEY][0]["subdir"], "foo");
+        assert_eq!(metadata[SESSION_REPOS_METADATA_KEY][0]["private"], true);
     }
 }

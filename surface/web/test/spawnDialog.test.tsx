@@ -227,4 +227,64 @@ describe('SpawnDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect Codex' }));
     expect(onConnect).toHaveBeenCalledWith('codex');
   });
+
+  it('offers a compact GitHub connection affordance near repo input', () => {
+    const onConnectGitHub = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{ codex: connectedCodex }}
+        githubConnection={{
+          provider: 'github',
+          workspaceId: 'workspace-1',
+          connected: false,
+          status: 'public_read',
+          tokenKind: 'public_read',
+          accountLogin: null,
+          accountLabel: null,
+          scopes: [],
+          capabilities: {},
+          metadata: {},
+          lastValidatedAt: null,
+          lastError: null,
+          updatedAt: null,
+        }}
+        onConnectGitHub={onConnectGitHub}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'GitHub' }));
+
+    expect(onConnectGitHub).toHaveBeenCalled();
+  });
+
+  it('includes private repo intent in spawn config', () => {
+    const onSpawn = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'work privately' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('owner/name'), {
+      target: { value: 'acme/private' },
+    });
+    fireEvent.click(screen.getByLabelText('Private repo'));
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repo: 'acme/private',
+        repos: [{ repo: 'acme/private', private: true }],
+      }),
+    );
+  });
 });

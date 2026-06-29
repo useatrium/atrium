@@ -32,6 +32,7 @@ import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI
 import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
 import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
+import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
@@ -69,6 +70,7 @@ import {
 import { useChannelActions } from './useChannelActions';
 import { useChatMessageActions } from './useChatMessageActions';
 import { useDraftState } from './useDraftState';
+import { useConnections } from './useConnections';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
 import { useSessionActions } from './useSessionActions';
@@ -322,6 +324,14 @@ export function Chat({
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [demoStarting, setDemoStarting] = useState(false);
   const agentProfiles = useAgentProfiles();
+  const {
+    available: connectionsAvailable,
+    connectGitHub,
+    connectionDialog,
+    disconnectGitHub,
+    githubConnection,
+    setConnectionDialog,
+  } = useConnections();
   const {
     disconnectClaude,
     disconnectCodex,
@@ -861,7 +871,10 @@ export function Chat({
           setIsSidebarOpen(false);
         }}
         sessionEventSeq={sessionEventSeq}
+        githubConnection={githubConnection}
+        connectionsAvailable={connectionsAvailable}
         providerCredentials={providerCredentials}
+        onConnectGitHub={() => setConnectionDialog('github')}
         onConnectProvider={setProviderDialog}
         onLogout={onLogout}
         isOpen={isSidebarOpen}
@@ -1202,8 +1215,21 @@ export function Chat({
           onCancel={() => setSpawnOpen(false)}
           onSpawn={startConfiguredSession}
           providerStatuses={providerCredentials}
+          githubConnection={githubConnection}
+          connectionsAvailable={connectionsAvailable}
           profiles={agentProfiles}
+          onConnectGitHub={() => setConnectionDialog('github')}
           onConnectProvider={setProviderDialog}
+        />
+      )}
+
+      {connectionDialog === 'github' && (
+        <GitHubConnectionDialog
+          available={connectionsAvailable}
+          status={githubConnection}
+          onCancel={() => setConnectionDialog(null)}
+          onConnect={connectGitHub}
+          onDisconnect={disconnectGitHub}
         />
       )}
 

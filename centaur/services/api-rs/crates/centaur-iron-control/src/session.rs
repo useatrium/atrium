@@ -12,12 +12,14 @@ use serde_json::Value;
 use crate::IronControlClient;
 use crate::error::{IronControlError, Result};
 use crate::models::Principal;
-use crate::principal::derive_principal;
+use crate::principal::derive_principal_for_atrium_workspace;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct SessionPrincipalMetadata<'a> {
     actor_user_id: Option<&'a str>,
     conversation_name: Option<&'a str>,
+    atrium_workspace_id: Option<&'a str>,
+    atrium_user_id: Option<&'a str>,
 }
 
 impl<'a> SessionPrincipalMetadata<'a> {
@@ -37,6 +39,8 @@ impl<'a> SessionPrincipalMetadata<'a> {
                 .or_else(|| metadata.get("linear_conversation_name"))
                 .or_else(|| metadata.get("teams_conversation_name"))
                 .and_then(Value::as_str),
+            atrium_workspace_id: metadata.get("atrium_workspace_id").and_then(Value::as_str),
+            atrium_user_id: metadata.get("atrium_user_id").and_then(Value::as_str),
         }
     }
 }
@@ -82,10 +86,12 @@ impl SessionRegistrar {
         metadata: Option<&Value>,
     ) -> Result<Principal> {
         let metadata = SessionPrincipalMetadata::from_session_metadata(metadata);
-        let principal = derive_principal(
+        let principal = derive_principal_for_atrium_workspace(
             thread_key,
             metadata.actor_user_id,
             metadata.conversation_name,
+            metadata.atrium_workspace_id,
+            metadata.atrium_user_id,
         );
         let input = principal.to_identity_input(&self.namespace);
         let exists = match self
@@ -167,9 +173,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn session_principal_metadata_accepts_atrium_workspace_user_ids() {
+        let value = json!({
+            "atrium_workspace_id": "ws_123",
+            "atrium_user_id": "usr_456"
+        });
+        let metadata = SessionPrincipalMetadata::from_session_metadata(Some(&value));
+        assert_eq!(metadata.atrium_workspace_id, Some("ws_123"));
+        assert_eq!(metadata.atrium_user_id, Some("usr_456"));
+    }
+
     #[tokio::test]
     async fn register_session_seeds_roles_for_new_principal() {
-        let (base_url, requests, server) = spawn_iron_control_stub(false).await;
+        let (base_url, requests, server) =
+            spawn_iron_control_stub(false, "slack-channel-t123-c123", principal_body).await;
         let registrar = SessionRegistrar::new(
             IronControlClient::new(base_url, "test-key"),
             "default",
@@ -198,7 +216,8 @@ mod tests {
 
     #[tokio::test]
     async fn register_session_does_not_restore_roles_for_existing_principal() {
-        let (base_url, requests, server) = spawn_iron_control_stub(true).await;
+        let (base_url, requests, server) =
+            spawn_iron_control_stub(true, "slack-channel-t123-c123", principal_body).await;
         let registrar = SessionRegistrar::new(
             IronControlClient::new(base_url, "test-key"),
             "default",
@@ -230,8 +249,51 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn register_session_uses_atrium_workspace_user_principal_when_present() {
+        let (base_url, requests, server) = spawn_iron_control_stub(
+            false,
+            "atrium-workspace-ws_123-user-usr_456",
+            atrium_principal_body,
+        )
+        .await;
+        let registrar = SessionRegistrar::new(
+            IronControlClient::new(base_url, "test-key"),
+            "default",
+            vec!["role_infra".to_owned()],
+        );
+        let metadata = json!({
+            "slack_user_id": "U123",
+            "slack_conversation_name": "general",
+            "atrium_workspace_id": "ws_123",
+            "atrium_user_id": "usr_456"
+        });
+
+        registrar
+            .register_session("slack:T123:C123:1773364194.179929", Some(&metadata))
+            .await
+            .unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert!(
+            requests.contains(
+                &"GET /api/v1/principals/lookup/default/atrium-workspace-ws_123-user-usr_456"
+                    .to_owned()
+            )
+        );
+        assert!(
+            requests.contains(
+                &"PUT /api/v1/principals/atrium-workspace-ws_123-user-usr_456".to_owned()
+            )
+        );
+        assert!(requests.contains(&"POST /api/v1/principals/prn_channel/roles".to_owned()));
+        server.abort();
+    }
+
     async fn spawn_iron_control_stub(
         principal_exists: bool,
+        principal_foreign_id: &'static str,
+        principal_body: fn() -> String,
     ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -257,18 +319,18 @@ mod tests {
                 let path = parts.next().unwrap_or_default();
                 seen.lock().unwrap().push(format!("{method} {path}"));
 
+                let lookup_path =
+                    format!("/api/v1/principals/lookup/default/{principal_foreign_id}");
+                let upsert_path = format!("/api/v1/principals/{principal_foreign_id}");
+
                 let (status_line, body) = match (method, path) {
-                    ("GET", "/api/v1/principals/lookup/default/slack-channel-t123-c123")
-                        if principal_exists =>
-                    {
+                    ("GET", path) if path == lookup_path && principal_exists => {
                         ("200 OK", principal_body())
                     }
-                    ("GET", "/api/v1/principals/lookup/default/slack-channel-t123-c123") => {
+                    ("GET", path) if path == lookup_path => {
                         ("404 Not Found", r#"{"error":"not found"}"#.to_owned())
                     }
-                    ("PUT", "/api/v1/principals/slack-channel-t123-c123") => {
-                        ("200 OK", principal_body())
-                    }
+                    ("PUT", path) if path == upsert_path => ("200 OK", principal_body()),
                     ("POST", "/api/v1/principals/prn_channel/roles") => {
                         ("200 OK", r#"{"data":{"ok":true}}"#.to_owned())
                     }
@@ -290,5 +352,9 @@ mod tests {
 
     fn principal_body() -> String {
         r#"{"data":{"id":"prn_channel","namespace":"default","foreign_id":"slack-channel-t123-c123","name":"Slack Channel #general","labels":{}}}"#.to_owned()
+    }
+
+    fn atrium_principal_body() -> String {
+        r#"{"data":{"id":"prn_channel","namespace":"default","foreign_id":"atrium-workspace-ws_123-user-usr_456","name":"Atrium Workspace ws_123 User usr_456","labels":{}}}"#.to_owned()
     }
 }

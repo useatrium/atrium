@@ -107,6 +107,7 @@ class FakeCentaur {
           thread_key: threadKey,
           harness: body.harness_type,
           spawn_id: spawnId,
+          metadata,
           ...(Array.isArray(body.repos) ? { repos: body.repos } : {}),
         };
         this.recordLegacy('POST', '/agent/spawn', legacyBody, url.searchParams);
@@ -427,6 +428,20 @@ async function connectCodex(
   expect(res.statusCode).toBe(200);
 }
 
+async function connectGitHubMetadata(workspaceId: string, userId: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO user_connections
+       (workspace_id, user_id, provider, status, token_kind, account_login)
+     VALUES ($1, $2, 'github', 'connected', 'pat', 'octo-user')
+     ON CONFLICT (workspace_id, user_id, provider) DO UPDATE
+     SET status = EXCLUDED.status,
+         token_kind = EXCLUDED.token_kind,
+         account_login = EXCLUDED.account_login,
+         updated_at = now()`,
+    [workspaceId, userId],
+  );
+}
+
 async function insertRunningSession(driverId = fx.userId): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `INSERT INTO sessions (
@@ -683,6 +698,33 @@ describe('Phase 2 sessions', () => {
     });
     const execute = fake.requests.find((r) => r.path === '/agent/execute');
     expect(execute?.body.environment).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-from-test' });
+    await app.close();
+  });
+
+  it('rejects private repo spawn without a connected GitHub connection', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'github_connection_required' });
+    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
     await app.close();
   });
 
@@ -1078,6 +1120,14 @@ describe('Phase 2 sessions', () => {
     const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
     // Trimmed repo/branch become the RepoSpec Centaur folds into AGENT_REPOS_JSON.
     expect(spawn?.body).toMatchObject({ repos: [{ repo: 'acme/app', ref: 'dev' }] });
+    expect(spawn?.body.metadata).toMatchObject({
+      source: 'atrium',
+      harness: 'claude-code',
+      atrium_workspace_id: fx.workspaceId,
+      atrium_user_id: fx.userId,
+      credential_owner_user_id: fx.userId,
+      github_identity_mode: 'automatic',
+    });
     await app.close();
   });
 
@@ -1089,6 +1139,7 @@ describe('Phase 2 sessions', () => {
     await app.ready();
     const cookie = await loginCookie(app);
     await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId);
 
     const res = await app.inject({
       method: 'POST',
@@ -1099,7 +1150,7 @@ describe('Phase 2 sessions', () => {
         task: 'say PONG',
         harness: 'claude-code',
         repos: [
-          { repo: ' acme/app ', ref: ' main ' },
+          { repo: ' acme/app ', ref: ' main ', private: true },
           { repo: 'acme/docs', subdir: 'docs' },
         ],
       },
@@ -1109,7 +1160,7 @@ describe('Phase 2 sessions', () => {
       repo: 'acme/app',
       branch: 'main',
       repos: [
-        { repo: 'acme/app', ref: 'main' },
+        { repo: 'acme/app', ref: 'main', private: true },
         { repo: 'acme/docs', subdir: 'docs' },
       ],
     });
@@ -1120,7 +1171,7 @@ describe('Phase 2 sessions', () => {
     const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
     expect(spawn?.body).toMatchObject({
       repos: [
-        { repo: 'acme/app', ref: 'main' },
+        { repo: 'acme/app', ref: 'main', private: true },
         { repo: 'acme/docs', subdir: 'docs' },
       ],
     });

@@ -72,6 +72,25 @@ export interface ProviderCredentialStatus {
   updatedAt: string | null;
 }
 
+export type ConnectionProvider = 'github' | (string & {});
+export type ConnectionTokenKind = 'pat' | 'app_installation' | 'app_user' | 'public_read' | (string & {});
+
+export interface ConnectionStatus {
+  provider: ConnectionProvider;
+  workspaceId: string;
+  connected: boolean;
+  status: 'connected' | 'needs_auth' | 'public_read' | 'unavailable';
+  tokenKind: ConnectionTokenKind | null;
+  accountLogin: string | null;
+  accountLabel: string | null;
+  scopes: string[];
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
 export type Api = ReturnType<typeof createApi>;
 
 export interface ListSessionsOptions {
@@ -146,6 +165,33 @@ export function createApi(opts: ApiOptions = {}) {
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
     providerCredentials: () =>
       req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
+    connections: () =>
+      req<{ connections: ConnectionStatus[] }>('/api/me/connections'),
+    connectConnection: (provider: ConnectionProvider, body: Record<string, unknown> = {}) =>
+      req<{ connection: ConnectionStatus; authorizeUrl?: string }>(
+        `/api/me/connections/${encodeURIComponent(provider)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      ),
+    disconnectConnection: (provider: ConnectionProvider, workspaceId?: string) => {
+      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+      return req<{ connection: ConnectionStatus }>(`/api/me/connections/${encodeURIComponent(provider)}${query}`, {
+        method: 'DELETE',
+      });
+    },
+    connectGitHub: (body: Record<string, unknown> = {}) =>
+      req<{ connection: ConnectionStatus; authorizeUrl?: string }>('/api/me/connections/github', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    disconnectGitHub: (workspaceId?: string) => {
+      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+      return req<{ connection: ConnectionStatus }>(`/api/me/connections/github${query}`, {
+        method: 'DELETE',
+      });
+    },
     agentProfiles: () =>
       req<{ profiles: AgentProfile[] }>('/api/me/agent-profiles'),
     createAgentProfile: (body: { provider: AgentProfileProvider; name: string }) =>

@@ -14,6 +14,8 @@ export type {
   AgentProfileProposal,
   AgentProfileProvider,
   AgentProfileVersion,
+  ConnectionProvider,
+  ConnectionStatus,
   ProviderCredentialProvider,
   ProviderCredentialStatus,
 } from '@atrium/surface-client';

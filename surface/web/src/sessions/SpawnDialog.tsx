@@ -3,7 +3,12 @@
 // sandbox for the run.
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { AgentProfile, ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
+import type {
+  AgentProfile,
+  ConnectionStatus,
+  ProviderCredentialProvider,
+  ProviderCredentialStatus,
+} from '../api';
 import { PlusIcon, XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
@@ -16,7 +21,7 @@ export interface SpawnConfig {
   harness: string;
   repo?: string;
   branch?: string;
-  repos?: { repo: string; ref?: string; subdir?: string }[];
+  repos?: { repo: string; ref?: string; subdir?: string; private?: boolean }[];
   agentProfileId?: string;
   agentProfileVersionId?: string;
 }
@@ -26,6 +31,7 @@ type ReferenceRepoInput = {
   repo: string;
   ref: string;
   subdir: string;
+  private: boolean;
 };
 
 export function SpawnDialog({
@@ -33,20 +39,27 @@ export function SpawnDialog({
   onCancel,
   onSpawn,
   providerStatuses,
+  githubConnection,
+  connectionsAvailable = true,
   profiles = [],
+  onConnectGitHub,
   onConnectProvider,
 }: {
   channelName: string;
   onCancel: () => void;
   onSpawn: (config: SpawnConfig) => void;
   providerStatuses?: Record<string, ProviderCredentialStatus | undefined>;
+  githubConnection?: ConnectionStatus;
+  connectionsAvailable?: boolean;
   profiles?: AgentProfile[];
+  onConnectGitHub?: () => void;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
 }) {
   const [task, setTask] = useState('');
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');
+  const [repoPrivate, setRepoPrivate] = useState(false);
   const [referenceRepos, setReferenceRepos] = useState<ReferenceRepoInput[]>([]);
   const [agentProfileId, setAgentProfileId] = useState('');
 
@@ -74,7 +87,7 @@ export function SpawnDialog({
     const trimmedRepo = repo.trim();
     const trimmedBranch = branch.trim();
     const repos = [
-      ...(trimmedRepo ? [{ repo: trimmedRepo, ...(trimmedBranch ? { ref: trimmedBranch } : {}) }] : []),
+      ...(trimmedRepo ? [{ repo: trimmedRepo, ...(trimmedBranch ? { ref: trimmedBranch } : {}), ...(repoPrivate ? { private: true } : {}) }] : []),
       ...referenceRepos.flatMap((item) => {
         const itemRepo = item.repo.trim();
         if (!itemRepo) return [];
@@ -85,6 +98,7 @@ export function SpawnDialog({
             repo: itemRepo,
             ...(itemRef ? { ref: itemRef } : {}),
             ...(itemSubdir ? { subdir: itemSubdir } : {}),
+            ...(item.private ? { private: true } : {}),
           },
         ];
       }),
@@ -106,7 +120,7 @@ export function SpawnDialog({
   }
 
   function addReferenceRepo() {
-    setReferenceRepos((items) => [...items, { id: crypto.randomUUID(), repo: '', ref: '', subdir: '' }]);
+    setReferenceRepos((items) => [...items, { id: crypto.randomUUID(), repo: '', ref: '', subdir: '', private: false }]);
   }
 
   function updateReferenceRepo(id: string, patch: Partial<Omit<ReferenceRepoInput, 'id'>>) {
@@ -214,7 +228,26 @@ export function SpawnDialog({
               <span className="block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
                 Working repo <span className="font-normal normal-case text-fg-muted">· optional</span>
               </span>
-              <span className="text-2xs text-fg-muted">~/repos/&lt;owner&gt;/&lt;repo&gt;</span>
+              <span className="flex items-center gap-2 text-2xs text-fg-muted">
+                <span>~/repos/&lt;owner&gt;/&lt;repo&gt;</span>
+                <button
+                  type="button"
+                  onClick={onConnectGitHub}
+                  title={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
+                  className="inline-flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-3xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      githubConnection?.connected
+                        ? 'bg-success'
+                        : connectionsAvailable
+                          ? 'bg-warning'
+                          : 'bg-fg-muted/60'
+                    }`}
+                  />
+                  GitHub
+                </button>
+              </span>
             </div>
             <div className="flex gap-3">
               <label className="block flex-1">
@@ -236,6 +269,15 @@ export function SpawnDialog({
                 />
               </label>
             </div>
+            <label className="mt-2 inline-flex items-center gap-2 text-2xs text-fg-muted">
+              <input
+                type="checkbox"
+                checked={repoPrivate}
+                onChange={(e) => setRepoPrivate(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-edge bg-surface"
+              />
+              Private repo
+            </label>
           </div>
 
           <div>
@@ -256,7 +298,7 @@ export function SpawnDialog({
             {referenceRepos.length > 0 && (
               <div className="space-y-2">
                 {referenceRepos.map((item) => (
-                  <div key={item.id} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_2rem] gap-2">
+                  <div key={item.id} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto_2rem] gap-2">
                     <label>
                       <span className="sr-only">Reference repo</span>
                       <input
@@ -283,6 +325,15 @@ export function SpawnDialog({
                         placeholder="subdir"
                         className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
                       />
+                    </label>
+                    <label className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-edge px-2 text-2xs text-fg-muted">
+                      <input
+                        type="checkbox"
+                        checked={item.private}
+                        onChange={(e) => updateReferenceRepo(item.id, { private: e.target.checked })}
+                        className="h-3.5 w-3.5 rounded border-edge bg-surface"
+                      />
+                      Private
                     </label>
                     <button
                       type="button"

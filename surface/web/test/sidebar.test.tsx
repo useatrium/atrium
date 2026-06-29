@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Channel, ProviderCredentialStatus } from '../src/api';
 import { Sidebar } from '../src/components/Sidebar';
@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 const me = { id: 'u-allan', handle: 'allann', displayName: 'Allan Niemerg' };
 
-function renderSidebar(channels: Channel[]) {
+function renderSidebar(channels: Channel[], props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   return render(
     <ThemeProvider>
       <Sidebar
@@ -28,6 +28,7 @@ function renderSidebar(channels: Channel[]) {
         sessionEventSeq={0}
         providerCredentials={{} as Record<string, ProviderCredentialStatus | undefined>}
         onLogout={vi.fn()}
+        {...props}
       />
     </ThemeProvider>,
   );
@@ -58,5 +59,27 @@ describe('Sidebar', () => {
     expect(screen.getByText('Allan Niemerg (you)')).toBeTruthy();
     expect(screen.getByTitle('Allan Niemerg').textContent).toBe('AN');
     expect(screen.queryByText('AY')).toBeNull();
+  });
+
+  it('shows unavailable GitHub connection state without breaking provider settings', () => {
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      { connectionsAvailable: false },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(screen.getByRole('button', { name: /Unavailable/ })).toBeTruthy();
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
   });
 });

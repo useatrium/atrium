@@ -8,7 +8,13 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { api, type Channel, type ProviderCredentialProvider, type ProviderCredentialStatus } from '../api';
+import {
+  api,
+  type Channel,
+  type ConnectionStatus,
+  type ProviderCredentialProvider,
+  type ProviderCredentialStatus,
+} from '../api';
 import {
   ACCENTS,
   FONT_SCALES,
@@ -54,7 +60,10 @@ export function Sidebar({
   onStartDm,
   onOpenSession,
   sessionEventSeq,
+  githubConnection,
+  connectionsAvailable = true,
   providerCredentials,
+  onConnectGitHub,
   onConnectProvider,
   onLogout,
   isOpen = false,
@@ -72,7 +81,10 @@ export function Sidebar({
   onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
   sessionEventSeq: number;
+  githubConnection?: ConnectionStatus;
+  connectionsAvailable?: boolean;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
+  onConnectGitHub?: () => void;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onLogout: () => void;
   isOpen?: boolean;
@@ -423,8 +435,11 @@ export function Sidebar({
             firstControlRef={firstSettingsControlRef}
             notify={notify}
             setNotify={setNotify}
+            githubConnection={githubConnection}
+            connectionsAvailable={connectionsAvailable}
             claudeStatus={providerCredentials?.['claude-code']}
             codexStatus={providerCredentials?.codex}
+            onConnectGitHub={onConnectGitHub}
             onConnectClaude={() => onConnectProvider?.('claude-code')}
             onConnectCodex={() => onConnectProvider?.('codex')}
           />
@@ -479,8 +494,11 @@ function SettingsPopover({
   firstControlRef,
   notify,
   setNotify,
+  githubConnection,
+  connectionsAvailable,
   claudeStatus,
   codexStatus,
+  onConnectGitHub,
   onConnectClaude,
   onConnectCodex,
 }: {
@@ -488,8 +506,11 @@ function SettingsPopover({
   firstControlRef: RefObject<HTMLButtonElement | null>;
   notify: NotifyState;
   setNotify: (state: NotifyState) => void;
+  githubConnection?: ConnectionStatus;
+  connectionsAvailable: boolean;
   claudeStatus?: ProviderCredentialStatus;
   codexStatus?: ProviderCredentialStatus;
+  onConnectGitHub?: () => void;
   onConnectClaude?: () => void;
   onConnectCodex?: () => void;
 }) {
@@ -609,6 +630,28 @@ function SettingsPopover({
           >
             {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
             <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
+          </button>
+        </SettingRow>
+
+        <SettingRow label="GitHub">
+          <button
+            type="button"
+            onClick={onConnectGitHub}
+            title={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
+            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+          >
+            <span
+              className={`size-2 rounded-full ${
+                githubConnection?.connected ? 'bg-success' : connectionsAvailable ? 'bg-warning' : 'bg-fg-muted/60'
+              }`}
+            />
+            <span>
+              {githubConnection?.connected
+                ? githubConnection.accountLabel ?? 'Connected'
+                : connectionsAvailable
+                  ? 'Connect'
+                  : 'Unavailable'}
+            </span>
           </button>
         </SettingRow>
 
