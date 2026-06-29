@@ -274,6 +274,7 @@ COPY --link --chmod=755 services/sandbox/entrypoint.sh /entrypoint.sh
 USER agent
 WORKDIR /home/agent
 
+ARG RUST_BUILD_PROFILE=release
 # Build from a bind mount instead of COPY: COPY --link into /tmp rebuilds the
 # parent directory chain in its own layer, clobbering /tmp's root:root 1777
 # sticky metadata with agent:agent 0755, which broke /tmp writes for any
@@ -284,7 +285,11 @@ RUN --mount=type=bind,source=crates/harness-server,target=/harness-server-src \
     --mount=type=cache,target=/opt/centaur/cargo/git,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/home/agent/.cache/harness-server-target,uid=1001,gid=1001,sharing=locked \
     CARGO_TARGET_DIR=/home/agent/.cache/harness-server-target \
-    cargo install --locked --path /harness-server-src --root /opt/centaur/local
+    case "$RUST_BUILD_PROFILE" in \
+      release) cargo install --locked --path /harness-server-src --root /opt/centaur/local ;; \
+      debug|dev) cargo install --debug --locked --path /harness-server-src --root /opt/centaur/local ;; \
+      *) echo "unsupported RUST_BUILD_PROFILE=$RUST_BUILD_PROFILE" >&2; exit 2 ;; \
+    esac
 
 # No RUN instructions after these — all repo-local content at the very end.
 COPY --link --chown=1001:1001 .agents/skills/ /opt/centaur/agents/skills/

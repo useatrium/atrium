@@ -1,0 +1,71 @@
+# Version control
+.git/
+.git/**
+**/.git/
+**/.git/**
+
+# Node
+node_modules/
+node_modules/**
+**/node_modules/
+**/node_modules/**
+
+# Build outputs
+target/
+target/**
+**/target/
+**/target/**
+dist/
+dist/**
+**/dist/
+**/dist/**
+build/
+build/**
+**/build/
+**/build/**
+coverage/
+coverage/**
+**/coverage/
+**/coverage/**
+
+# Caches
+.ruff_cache/
+.ruff_cache/**
+**/.ruff_cache/
+**/.ruff_cache/**
+.pytest_cache/
+.pytest_cache/**
+**/.pytest_cache/
+**/.pytest_cache/**
+.mypy_cache/
+.mypy_cache/**
+**/.mypy_cache/
+**/.mypy_cache/**
+__pycache__/
+__pycache__/**
+**/__pycache__/
+**/__pycache__/**
+
+# Logs
+logs/
+logs/**
+*.log
+
+# IDE / editor
+.claude
+.cursor
+.vscode
+.idea
+.amp
+.windsurf
+.DS_Store
+
+# Docker
+.dockerignore
+
+# Docs / non-runtime
+*.md
+
+# Environment (secrets)
+.env
+.env.*
