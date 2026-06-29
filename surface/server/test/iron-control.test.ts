@@ -3,6 +3,7 @@ import {
   IronControlAdminClient,
   atriumPrincipalForeignId,
   countGitHubTokenTransforms,
+  githubAppInstallationBrokerCredentialForeignId,
   githubPatSecretForeignId,
 } from '../src/iron-control.js';
 
@@ -21,6 +22,9 @@ describe('IronControlAdminClient', () => {
     expect(atriumPrincipalForeignId('workspace-1', 'user-1')).toBe('atrium-workspace-workspace-1-user-user-1');
     expect(githubPatSecretForeignId('workspace-1', 'user-1')).toBe(
       'github-token-atrium-workspace-workspace-1-user-user-1',
+    );
+    expect(githubAppInstallationBrokerCredentialForeignId('workspace-1', '12345')).toBe(
+      'github-app-installation-workspace-1-installation-12345',
     );
   });
 
@@ -183,6 +187,40 @@ describe('IronControlAdminClient', () => {
         client_id: 'client-id',
         client_secret: 'client-secret',
         refresh_token: 'refresh-secret',
+      },
+    });
+  });
+
+  it('upserts GitHub App installation broker credentials with write-only private keys', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test/',
+      apiKey: 'iak_test',
+      fetchImpl: okFetch(calls),
+    });
+
+    await client.upsertGitHubAppInstallationBrokerCredential({
+      foreignId: 'github-app-installation-ws-installation-12345',
+      name: 'GitHub App installation 12345',
+      githubAppId: '98765',
+      githubInstallationId: '12345',
+      githubPrivateKey: 'private-key',
+      githubPrivateKeyId: 'key-1',
+      labels: { provider: 'github', token_kind: 'app_installation' },
+    });
+
+    expect(calls[0]!.url).toBe('http://iron.test/api/v1/broker_credentials/github-app-installation-ws-installation-12345');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      data: {
+        namespace: 'default',
+        foreign_id: 'github-app-installation-ws-installation-12345',
+        name: 'GitHub App installation 12345',
+        labels: { provider: 'github', token_kind: 'app_installation' },
+        grant: 'github_app_installation',
+        github_app_id: '98765',
+        github_installation_id: '12345',
+        github_private_key: 'private-key',
+        github_private_key_id: 'key-1',
       },
     });
   });

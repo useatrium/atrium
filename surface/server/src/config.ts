@@ -49,6 +49,9 @@ export const config = {
   githubAppClientId: process.env.GITHUB_APP_CLIENT_ID ?? '',
   githubAppClientSecret: process.env.GITHUB_APP_CLIENT_SECRET ?? '',
   githubAppRedirectUrl: process.env.GITHUB_APP_REDIRECT_URL ?? '',
+  githubAppId: process.env.GITHUB_APP_ID ?? '',
+  githubAppPrivateKey: (process.env.GITHUB_APP_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+  githubAppPrivateKeyId: process.env.GITHUB_APP_PRIVATE_KEY_ID ?? '',
   // The Centaur artifact-byte endpoint authenticates with its own
   // sandbox-token key, distinct from CENTAUR_API_KEY. Unset falls back to
   // centaurApiKey (works only if Centaur accepts the session key there).

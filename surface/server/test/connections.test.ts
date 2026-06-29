@@ -13,6 +13,9 @@ const originalGithubAppConfig = {
   clientId: config.githubAppClientId,
   clientSecret: config.githubAppClientSecret,
   redirectUrl: config.githubAppRedirectUrl,
+  appId: config.githubAppId,
+  privateKey: config.githubAppPrivateKey,
+  privateKeyId: config.githubAppPrivateKeyId,
 };
 
 beforeAll(async () => {
@@ -39,6 +42,9 @@ afterEach(async () => {
   config.githubAppClientId = originalGithubAppConfig.clientId;
   config.githubAppClientSecret = originalGithubAppConfig.clientSecret;
   config.githubAppRedirectUrl = originalGithubAppConfig.redirectUrl;
+  config.githubAppId = originalGithubAppConfig.appId;
+  config.githubAppPrivateKey = originalGithubAppConfig.privateKey;
+  config.githubAppPrivateKeyId = originalGithubAppConfig.privateKeyId;
   vi.restoreAllMocks();
   await app.close();
 });
@@ -146,6 +152,78 @@ describe('connections routes', () => {
       status: 'public_read',
       tokenKind: 'public_read',
     });
+  });
+
+  it('creates a GitHub App installation broker credential from an installation id', async () => {
+    config.githubAppId = '98765';
+    config.githubAppPrivateKey = 'private-key-secret';
+    config.githubAppPrivateKeyId = 'key-1';
+    const cookie = await loginCookie();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'app_installation',
+        installationId: 12345,
+        accountLogin: 'acme',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().connection).toMatchObject({
+      provider: 'github',
+      workspaceId: fx.workspaceId,
+      connected: true,
+      status: 'connected',
+      tokenKind: 'app_installation',
+      accountLogin: 'acme',
+      metadata: {
+        brokerCredentialId: `github-app-installation-${fx.workspaceId}-installation-12345`,
+        installationId: '12345',
+      },
+    });
+    const brokerCall = ironCalls.find((call) => call.url.includes('/broker_credentials/github-app-installation-'));
+    expect(brokerCall).toBeTruthy();
+    expect(JSON.parse(String(brokerCall!.init.body))).toMatchObject({
+      data: {
+        grant: 'github_app_installation',
+        github_app_id: '98765',
+        github_installation_id: '12345',
+        github_private_key: 'private-key-secret',
+        github_private_key_id: 'key-1',
+      },
+    });
+
+    const stored = await pool.query<{ metadata: unknown }>(
+      `SELECT metadata
+         FROM user_connections
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+      [fx.workspaceId, fx.userId],
+    );
+    expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain('private-key-secret');
+  });
+
+  it('requires configured GitHub App material before creating an installation broker credential', async () => {
+    config.githubAppId = '';
+    config.githubAppPrivateKey = '';
+    const cookie = await loginCookie();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'app_installation',
+        installationId: '12345',
+      },
+    });
+
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: 'github_app_installation_unconfigured' });
   });
 
   it('starts and completes GitHub App user OAuth through a broker credential', async () => {

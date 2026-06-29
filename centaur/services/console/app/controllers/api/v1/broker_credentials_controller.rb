@@ -50,6 +50,7 @@ module Api
       def assign_and_save!(ref, attrs)
         base = attrs.permit(:namespace, :foreign_id, :name, :description, :token_endpoint,
                             :grant, :client_id,
+                            :github_app_id, :github_installation_id, :github_private_key_id,
                             :early_refresh_slack_seconds, :early_refresh_fraction,
                             :max_refresh_interval_seconds, :refresh_timeout_seconds,
                             labels: {}, scopes: [])
@@ -89,7 +90,7 @@ module Api
       # and rotation state untouched.
       def apply_initial_values(ref, attrs)
         changed = false
-        %i[refresh_token username password api_key].each do |field|
+        %i[refresh_token username password api_key github_private_key].each do |field|
           value = attrs[field]
           next if value.blank?
 
@@ -120,6 +121,9 @@ module Api
           token_endpoint: ref.token_endpoint,
           scopes: ref.scopes,
           client_id: ref.client_id,
+          github_app_id: ref.github_app_id,
+          github_installation_id: ref.github_installation_id,
+          github_private_key_id: ref.github_private_key_id,
           token_endpoint_header_names: (ref.token_endpoint_headers || {}).keys,
           early_refresh_slack_seconds: ref.early_refresh_slack_seconds,
           early_refresh_fraction: ref.early_refresh_fraction,

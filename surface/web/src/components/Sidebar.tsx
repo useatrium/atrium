@@ -647,9 +647,11 @@ function SettingsPopover({
             />
             <span>
               {githubConnection?.connected
-                ? githubConnection.accountLabel ?? 'Connected'
+                ? `${githubConnection.accountLabel ?? 'Connected'} · ${githubConnectionLabel(githubConnection.tokenKind)}`
                 : connectionsAvailable
-                  ? 'Connect'
+                  ? githubConnection?.status === 'needs_auth'
+                    ? 'Reconnect'
+                    : 'Connect'
                   : 'Unavailable'}
             </span>
           </button>
@@ -874,4 +876,19 @@ function SessionBrowserModal({
       </div>
     </div>
   );
+}
+
+function githubConnectionLabel(tokenKind: ConnectionStatus['tokenKind']): string {
+  switch (tokenKind) {
+    case 'app_installation':
+      return 'App';
+    case 'app_user':
+      return 'User';
+    case 'pat':
+      return 'PAT';
+    case 'public_read':
+      return 'Public';
+    default:
+      return 'GitHub';
+  }
 }

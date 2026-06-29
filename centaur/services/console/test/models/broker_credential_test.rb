@@ -5,6 +5,7 @@ class BrokerCredentialTest < ActiveSupport::TestCase
   class StubClient
     def initialize(&block) = (@block = block)
     def refresh(**kw) = @block.call(**kw)
+    def github_app_installation_token(**kw) = @block.call(**kw)
   end
 
   def result(access_token: "AT", refresh_token: "RT", expires_in: 3600)
@@ -31,6 +32,10 @@ class BrokerCredentialTest < ActiveSupport::TestCase
     bc = build_credential(**kw)
     bc.save!
     bc
+  end
+
+  def github_private_key
+    @github_private_key ||= OpenSSL::PKey::RSA.generate(2048).to_pem
   end
 
   # --- validations ----------------------------------------------------------
@@ -77,6 +82,23 @@ class BrokerCredentialTest < ActiveSupport::TestCase
                           api_key: nil, refresh_token: nil)
     refute bc.valid?
     assert bc.errors[:api_key].any? { |m| m.include?("Preqin broker grant") }
+  end
+
+  test "GitHub App installation grant is valid with app installation and private key" do
+    bc = build_credential(grant: "github_app_installation", token_endpoint: nil, client_id: nil,
+                          refresh_token: nil, github_app_id: "12345",
+                          github_installation_id: "67890", github_private_key: github_private_key)
+    assert bc.valid?, bc.errors.full_messages.to_sentence
+    assert_equal "https://api.github.com/app/installations/67890/access_tokens", bc.token_endpoint
+  end
+
+  test "GitHub App installation grant requires app material" do
+    bc = build_credential(grant: "github_app_installation", token_endpoint: nil, client_id: nil,
+                          refresh_token: nil, github_app_id: "12345",
+                          github_installation_id: nil, github_private_key: nil)
+    refute bc.valid?
+    assert bc.errors[:github_installation_id].any? { |m| m.include?("GitHub App installation grant") }
+    assert bc.errors[:github_private_key].any? { |m| m.include?("GitHub App installation grant") }
   end
 
   # --- oauth_app provenance (flow-minted credentials) -----------------------
@@ -387,6 +409,25 @@ class BrokerCredentialTest < ActiveSupport::TestCase
     refute bc.dead?
   end
 
+  test "GitHub App installation grant mints an installation token" do
+    captured = {}
+    bc = create_credential(grant: "github_app_installation", token_endpoint: nil, client_id: nil,
+                           refresh_token: nil, github_app_id: "12345",
+                           github_installation_id: "67890", github_private_key: github_private_key,
+                           github_private_key_id: "key-1")
+    bc.refresh_client = StubClient.new do |**kw|
+      captured = kw
+      result(access_token: "ghs_installation", refresh_token: nil, expires_in: 3600)
+    end
+    bc.refresh!
+    bc.reload
+    assert_equal "https://api.github.com/app/installations/67890/access_tokens", captured[:url]
+    refute_empty captured[:jwt]
+    assert_equal "ghs_installation", bc.access_token
+    assert_nil bc.refresh_token
+    refute bc.dead?
+  end
+
   test "refresh with no seed marks dead as missing a seed" do
     bc = create_credential(refresh_token: "seed")
     bc.update_columns(refresh_token: nil)
@@ -418,6 +459,18 @@ class BrokerCredentialTest < ActiveSupport::TestCase
     assert_equal "preqin_missing_initial_values", bc.dead_reason
   end
 
+  test "GitHub App installation grant with missing initial values marks dead" do
+    bc = create_credential(grant: "github_app_installation", token_endpoint: nil, client_id: nil,
+                           refresh_token: nil, github_app_id: "12345",
+                           github_installation_id: "67890", github_private_key: github_private_key)
+    bc.update_columns(github_private_key: nil)
+    bc.reload
+    bc.refresh!
+    bc.reload
+    assert bc.dead?
+    assert_equal "github_app_installation_missing_initial_values", bc.dead_reason
+  end
+
   # --- scope ----------------------------------------------------------------
 
   test "refreshable includes never-attempted and due, excludes dead and future" do
@@ -446,6 +499,15 @@ class BrokerCredentialTest < ActiveSupport::TestCase
   test "refreshable includes preqin credentials without a refresh_token" do
     bc = create_credential(grant: "preqin", client_id: nil, username: "user",
                            api_key: "api-key", refresh_token: nil)
+    bc.update_columns(last_refresh: 1.hour.ago, next_attempt_at: 1.minute.ago)
+
+    assert_includes BrokerCredential.refreshable.pluck(:id), bc.id
+  end
+
+  test "refreshable includes GitHub App installation credentials without a refresh_token" do
+    bc = create_credential(grant: "github_app_installation", token_endpoint: nil, client_id: nil,
+                           refresh_token: nil, github_app_id: "12345",
+                           github_installation_id: "67890", github_private_key: github_private_key)
     bc.update_columns(last_refresh: 1.hour.ago, next_attempt_at: 1.minute.ago)
 
     assert_includes BrokerCredential.refreshable.pluck(:id), bc.id

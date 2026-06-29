@@ -18,7 +18,10 @@ export function GitHubConnectionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState('');
+  const [installationId, setInstallationId] = useState('');
   const connected = status?.connected === true;
+  const needsAuth = status?.status === 'needs_auth';
+  const identityLabel = githubIdentityLabel(status);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -50,7 +53,7 @@ export function GitHubConnectionDialog({
           <div>
             <h2 className="text-sm font-semibold text-fg">GitHub connection</h2>
             <p className="text-2xs text-fg-muted">
-              {connected ? status?.accountLabel ?? 'Connected' : 'Use your GitHub account for repository access.'}
+              {connected || needsAuth ? `${status?.accountLabel ?? 'GitHub'} · ${identityLabel}` : 'Use your GitHub account for repository access.'}
             </p>
           </div>
           <button
@@ -69,12 +72,18 @@ export function GitHubConnectionDialog({
               GitHub connections are not available on this server yet. You can still start sessions
               and enter repository names manually.
             </p>
-          ) : connected ? (
+          ) : connected || needsAuth ? (
             <div className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
-              <div className="font-medium text-fg">Connected</div>
+              <div className="font-medium text-fg">{needsAuth ? 'Reconnect required' : 'Connected'}</div>
               <div className="mt-1 text-fg-muted">
-                {status?.accountLabel ?? 'GitHub'}{status?.scopes?.length ? ` · ${status.scopes.join(', ')}` : ''}
+                {status?.accountLabel ?? 'GitHub'} · {identityLabel}
+                {status?.scopes?.length ? ` · ${status.scopes.join(', ')}` : ''}
               </div>
+              {needsAuth && status?.lastError && (
+                <div className="mt-2 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-danger">
+                  {status.lastError}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-xs leading-relaxed text-fg-muted">
@@ -89,31 +98,57 @@ export function GitHubConnectionDialog({
           )}
 
           {available && (
-            <details className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
-              <summary className="cursor-pointer font-medium text-fg-secondary">Paste token</summary>
-              <div className="mt-3 space-y-2">
-                <input
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  type="password"
-                  placeholder="github_pat_..."
-                  className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
-                />
-                <button
-                  type="button"
-                  disabled={busy || token.trim().length === 0}
-                  onClick={() => void run(() => onConnect({ tokenKind: 'pat', token: token.trim() }))}
-                  className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Connect token
-                </button>
-              </div>
-            </details>
+            <div className="space-y-2">
+              <details className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
+                <summary className="cursor-pointer font-medium text-fg-secondary">App installation</summary>
+                <div className="mt-3 space-y-2">
+                  <input
+                    value={installationId}
+                    onChange={(e) => setInstallationId(e.target.value)}
+                    inputMode="numeric"
+                    placeholder="Installation id"
+                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || installationId.trim().length === 0}
+                    onClick={() =>
+                      void run(() =>
+                        onConnect({ tokenKind: 'app_installation', installationId: installationId.trim() }),
+                      )
+                    }
+                    className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Connect installation
+                  </button>
+                </div>
+              </details>
+              <details className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
+                <summary className="cursor-pointer font-medium text-fg-secondary">Paste token</summary>
+                <div className="mt-3 space-y-2">
+                  <input
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    type="password"
+                    placeholder="github_pat_..."
+                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || token.trim().length === 0}
+                    onClick={() => void run(() => onConnect({ tokenKind: 'pat', token: token.trim() }))}
+                    className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Connect token
+                  </button>
+                </div>
+              </details>
+            </div>
           )}
         </div>
 
         <footer className="flex items-center justify-end gap-2 border-t border-edge px-4 py-3">
-          {connected && (
+          {(connected || needsAuth) && (
             <button
               type="button"
               disabled={busy}
@@ -136,10 +171,25 @@ export function GitHubConnectionDialog({
             onClick={() => void run(() => onConnect({ tokenKind: 'app_user' }))}
             className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {connected ? 'Reconnect GitHub' : 'Connect GitHub'}
+            {connected || needsAuth ? 'Reconnect GitHub' : 'Connect GitHub'}
           </button>
         </footer>
       </div>
     </div>
   );
+}
+
+function githubIdentityLabel(status?: ConnectionStatus): string {
+  switch (status?.tokenKind) {
+    case 'app_installation':
+      return 'App installation';
+    case 'app_user':
+      return 'GitHub user';
+    case 'pat':
+      return 'Personal token';
+    case 'public_read':
+      return 'Public read';
+    default:
+      return 'GitHub';
+  }
 }

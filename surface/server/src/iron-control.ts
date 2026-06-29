@@ -153,6 +153,28 @@ export class IronControlAdminClient {
     });
   }
 
+  async upsertGitHubAppInstallationBrokerCredential(args: {
+    foreignId: string;
+    name: string;
+    githubAppId: string;
+    githubInstallationId: string;
+    githubPrivateKey: string;
+    githubPrivateKeyId?: string;
+    labels?: Record<string, unknown>;
+  }): Promise<IronControlBrokerCredential> {
+    return this.write<IronControlBrokerCredential>('PUT', `/api/v1/broker_credentials/${encodeURIComponent(args.foreignId)}`, {
+      namespace: this.namespace,
+      foreign_id: args.foreignId,
+      name: args.name,
+      labels: args.labels ?? {},
+      grant: 'github_app_installation',
+      github_app_id: args.githubAppId,
+      github_installation_id: args.githubInstallationId,
+      github_private_key: args.githubPrivateKey,
+      ...(args.githubPrivateKeyId ? { github_private_key_id: args.githubPrivateKeyId } : {}),
+    });
+  }
+
   async createPrincipalStaticGrant(principalId: string, staticSecretId: string): Promise<IronControlGrant> {
     return this.write<IronControlGrant>('POST', '/api/v1/grants', {
       principal_id: principalId,
@@ -247,6 +269,10 @@ export function githubPatSecretForeignId(workspaceId: string, userId: string): s
 
 export function githubAppUserBrokerCredentialForeignId(workspaceId: string, userId: string): string {
   return `github-app-user-${atriumPrincipalForeignId(workspaceId, userId)}`;
+}
+
+export function githubAppInstallationBrokerCredentialForeignId(workspaceId: string, installationId: string): string {
+  return `github-app-installation-${workspaceId}-installation-${installationId}`;
 }
 
 function unwrapData<T>(body: unknown): T {

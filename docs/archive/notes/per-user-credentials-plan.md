@@ -1,6 +1,6 @@
 # Per-user credentials - plan (per-user GitHub via iron-control)
 
-**Status:** implementation landed in `feat/per-user-credentials`; installation-token broker remains a follow-up · **Date:** 2026-06-28 · **First consumer:** per-user GitHub (`gh` + `git` + private repo checkout)
+**Status:** implementation landed in `feat/per-user-credentials`; GitHub App installation broker follow-up in `feat/github-installation-credentials` · **Date:** 2026-06-28 · **First consumer:** per-user GitHub (`gh` + `git` + private repo checkout)
 
 ## Problem
 
@@ -263,13 +263,13 @@ automatic by workspace/repo policy, with an advanced spawn override:
 3. The secret is granted directly to the workspace/user principal.
 4. `github-default` is removed.
 
-Implementation note: GitHub App user OAuth is supported by the current
-refresh-token broker when the GitHub App has expiring user tokens enabled.
-Installation-token mode needs a Centaur/iron-control broker extension because
-GitHub installation tokens are minted from a GitHub App JWT rather than by
-refreshing an OAuth refresh token. The grant model accepts an existing
-installation broker credential id, but the first-party install-token minting
-front door is not in this branch.
+Implementation note: GitHub App user OAuth uses the refresh-token broker when
+the GitHub App has expiring user tokens enabled. Installation-token mode uses
+the Centaur console `github_app_installation` broker grant, which signs a
+GitHub App JWT with the encrypted app private key and exchanges it for a
+short-lived installation token. Surface creates that broker credential from the
+installation id and wraps it in the same token-broker-backed `GITHUB_TOKEN`
+static secret used by private repo checkout.
 
 PAT remains the permanent escape hatch for bootstrap, unsupported org policies,
 and cases where an App install is unavailable.

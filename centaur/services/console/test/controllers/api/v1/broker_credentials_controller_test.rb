@@ -11,6 +11,10 @@ module Api
 
       def json_body = JSON.parse(response.body)
 
+      def github_private_key
+        @github_private_key ||= OpenSSL::PKey::RSA.generate(2048).to_pem
+      end
+
       test "rejects requests without an API key" do
         get api_v1_broker_credentials_url(namespace: "acme")
         assert_response :unauthorized
@@ -146,6 +150,35 @@ module Api
         assert created.next_attempt_at.present?
       end
 
+      test "create GitHub App installation grant stores app material and redacts private key" do
+        body = {
+          data: {
+            namespace: "acme", foreign_id: "github-installation",
+            grant: "github_app_installation",
+            github_app_id: "12345",
+            github_installation_id: "67890",
+            github_private_key: github_private_key,
+            github_private_key_id: "key-1"
+          }
+        }
+
+        assert_difference -> { BrokerCredential.count } => 1 do
+          post api_v1_broker_credentials_url, params: body.to_json, headers: auth_headers
+        end
+        assert_response :created
+        data = json_body.fetch("data")
+        assert_equal "github_app_installation", data["grant"]
+        assert_equal "12345", data["github_app_id"]
+        assert_equal "67890", data["github_installation_id"]
+        assert_equal "key-1", data["github_private_key_id"]
+        refute data.key?("github_private_key")
+        assert_equal "https://api.github.com/app/installations/67890/access_tokens", data["token_endpoint"]
+
+        created = BrokerCredential.find_by_oid(data["id"])
+        assert_equal github_private_key, created.github_private_key
+        assert created.next_attempt_at.present?
+      end
+
       test "create rejects a missing client_id" do
         body = {
           data: {
@@ -190,6 +223,22 @@ module Api
         end
         assert_response :unprocessable_entity
         assert json_body.dig("error", "details", "api_key").present?
+      end
+
+      test "create GitHub App installation grant rejects missing private key" do
+        body = {
+          data: {
+            namespace: "acme", foreign_id: "github-installation-incomplete",
+            grant: "github_app_installation",
+            github_app_id: "12345",
+            github_installation_id: "67890"
+          }
+        }
+        assert_no_difference -> { BrokerCredential.count } do
+          post api_v1_broker_credentials_url, params: body.to_json, headers: auth_headers
+        end
+        assert_response :unprocessable_entity
+        assert json_body.dig("error", "details", "github_private_key").present?
       end
 
       test "re-auth via PUT clears dead state and reschedules" do
@@ -255,6 +304,28 @@ module Api
 
         bc.reload
         assert_equal "new-key", bc.api_key
+        refute bc.dead?
+        assert_nil bc.dead_reason
+        assert_equal 0, bc.failure_count
+        assert bc.next_attempt_at.present?
+      end
+
+      test "GitHub App private key update clears dead state and reschedules" do
+        bc = BrokerCredential.create!(namespace: "acme", foreign_id: "github-installation-dead",
+                                      grant: "github_app_installation",
+                                      github_app_id: "12345",
+                                      github_installation_id: "67890",
+                                      github_private_key: github_private_key,
+                                      dead: true, dead_reason: "http_401", failure_count: 3,
+                                      created_by: users(:acme_admin))
+
+        fresh_key = OpenSSL::PKey::RSA.generate(2048).to_pem
+        body = { data: { github_private_key: fresh_key } }
+        patch api_v1_broker_credential_url(id: bc.oid), params: body.to_json, headers: auth_headers
+        assert_response :ok
+
+        bc.reload
+        assert_equal fresh_key, bc.github_private_key
         refute bc.dead?
         assert_nil bc.dead_reason
         assert_equal 0, bc.failure_count

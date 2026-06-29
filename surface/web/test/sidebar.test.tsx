@@ -82,4 +82,41 @@ describe('Sidebar', () => {
     expect(screen.getByText('Claude Code')).toBeTruthy();
     expect(screen.getByText('Codex')).toBeTruthy();
   });
+
+  it('shows GitHub identity kind in connected settings state', () => {
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      {
+        connectionsAvailable: true,
+        githubConnection: {
+          provider: 'github',
+          workspaceId: 'ws-1',
+          connected: true,
+          status: 'connected',
+          tokenKind: 'app_installation',
+          accountLogin: 'acme',
+          accountLabel: 'acme',
+          scopes: [],
+          capabilities: {},
+          metadata: {},
+          lastValidatedAt: null,
+          lastError: null,
+          updatedAt: null,
+        },
+      },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(screen.getByRole('button', { name: /acme · App/ })).toBeTruthy();
+  });
 });

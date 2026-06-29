@@ -25,11 +25,20 @@ GITHUB_APP_CLIENT_SECRET=...
 GITHUB_APP_REDIRECT_URL=https://<surface-host>/api/me/connections/github/callback
 ```
 
-GitHub App installation-token mode is supported by the grant model when an
-operator supplies an existing token-broker credential id. A first-party
-installation-token broker is still a separate Centaur/iron-control extension
-because installation tokens are minted from a GitHub App JWT, not by refreshing
-an OAuth refresh token.
+GitHub App installation-token mode uses iron-control's
+`github_app_installation` broker grant. Surface creates the broker credential
+from the installation id and these app credentials:
+
+```sh
+GITHUB_APP_ID=...
+GITHUB_APP_PRIVATE_KEY='-----BEGIN RSA PRIVATE KEY-----...'
+GITHUB_APP_PRIVATE_KEY_ID=... # optional
+```
+
+The private key is sent only to iron-control, stored encrypted there, and is not
+stored in Atrium. The broker mints short-lived installation tokens from GitHub's
+`/app/installations/:installation_id/access_tokens` endpoint and delivers the
+current token through the existing `token_broker` `GITHUB_TOKEN` replacement.
 
 Centaur must run with console / iron-control enabled:
 

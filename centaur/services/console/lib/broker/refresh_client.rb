@@ -1,5 +1,6 @@
 require "net/http"
 require "json"
+require "time"
 require "uri"
 
 module Broker
@@ -53,6 +54,27 @@ module Broker
       parse_success(response)
     end
 
+    def github_app_installation_token(url:, jwt:, timeout: DEFAULT_TIMEOUT)
+      raise ArgumentError, "url is required" if url.blank?
+      raise ArgumentError, "jwt is required" if jwt.blank?
+
+      response = perform_json_post(
+        url,
+        {},
+        {
+          "Authorization" => "Bearer #{jwt}",
+          "Accept" => "application/vnd.github+json",
+          "X-GitHub-Api-Version" => "2022-11-28"
+        },
+        timeout
+      )
+      if response.status / 100 != 2
+        return classify_error(response.status, response.body, strict_4xx: true)
+      end
+
+      parse_github_installation_success(response)
+    end
+
     private
 
     def perform(url, form, headers, timeout, form_encoding:)
@@ -86,6 +108,30 @@ module Broker
                              stage: "network", retryable: true)
     end
 
+    def perform_json_post(url, body, headers, timeout)
+      if @http
+        return @http.call(url: url, json: body, headers: headers, timeout: timeout,
+                          form_encoding: :json)
+      end
+
+      uri = URI.parse(url)
+      req = Net::HTTP::Post.new(uri)
+      req["Content-Type"] = "application/json"
+      req.body = JSON.generate(body)
+      headers.each { |name, value| req[name] = value }
+
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = uri.scheme == "https"
+      http.open_timeout = timeout
+      http.read_timeout = timeout
+
+      res = http.request(req)
+      Response.new(status: res.code.to_i, body: res.body.to_s.byteslice(0, MAX_BODY_BYTES))
+    rescue StandardError => e
+      raise RefreshError.new("token endpoint request failed: #{e.class}",
+                             stage: "network", retryable: true)
+    end
+
     def parse_success(response)
       parsed = JSON.parse(response.body)
       if parsed["ok"] == false && parsed["error"].present?
@@ -110,6 +156,21 @@ module Broker
       # invalid. Treat as transient; the dead-after-backoff escalation still
       # catches a persistently broken IdP.
       raise RefreshError.new("parsing token response failed",
+                             stage: "parse", status: response.status, retryable: true)
+    end
+
+    def parse_github_installation_success(response)
+      parsed = JSON.parse(response.body)
+      token = parsed["token"]
+      if token.blank?
+        raise RefreshError.new("GitHub installation endpoint returned an empty token",
+                               stage: "parse", status: response.status, retryable: true)
+      end
+      expires_at = parsed["expires_at"]
+      expires_in = expires_at.present? ? [ Time.iso8601(expires_at) - Time.current, 1 ].max.to_i : nil
+      Result.new(access_token: token, refresh_token: nil, expires_in: expires_in)
+    rescue JSON::ParserError, ArgumentError, TypeError
+      raise RefreshError.new("parsing GitHub installation token response failed",
                              stage: "parse", status: response.status, retryable: true)
     end
 

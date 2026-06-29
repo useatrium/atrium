@@ -55,6 +55,7 @@ class BrokerCredential < ApplicationRecord
   before_destroy :ensure_not_referenced
   after_commit :auto_grant_matching_principals, on: %i[create update], if: :oauth_app_id?
   before_validation :default_preqin_token_endpoint
+  before_validation :default_github_app_installation_token_endpoint
   before_commit :bump_referencing_principal_sync_config_versions, if: :sync_config_relevant_change?
 
   serialize :token_endpoint_headers, coder: JSON
@@ -64,6 +65,7 @@ class BrokerCredential < ApplicationRecord
   encrypts :username
   encrypts :password
   encrypts :api_key
+  encrypts :github_private_key
   encrypts :token_endpoint_headers
 
   scope :refreshable, -> {
@@ -265,5 +267,12 @@ class BrokerCredential < ApplicationRecord
     return unless grant == "preqin"
 
     self.token_endpoint = Broker::CredentialGrants.default_token_endpoint(grant)
+  end
+
+  def default_github_app_installation_token_endpoint
+    return unless grant == "github_app_installation"
+    return if github_installation_id.blank?
+
+    self.token_endpoint = Broker::CredentialGrants.github_installation_token_endpoint(github_installation_id)
   end
 end

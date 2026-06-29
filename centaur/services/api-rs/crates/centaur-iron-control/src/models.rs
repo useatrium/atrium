@@ -411,14 +411,26 @@ pub struct BrokerCredentialInput {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub labels: BTreeMap<String, String>,
-    pub token_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
-    pub client_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_installation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_private_key_id: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub token_endpoint_headers: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]

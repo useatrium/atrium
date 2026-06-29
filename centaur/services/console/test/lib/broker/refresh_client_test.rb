@@ -12,8 +12,8 @@ module Broker
         @body = body
       end
 
-      def call(url:, form:, headers:, timeout:, form_encoding:)
-        @captured = { url: url, form: form, headers: headers, timeout: timeout, form_encoding: form_encoding }
+      def call(url:, headers:, timeout:, form_encoding:, form: nil, json: nil)
+        @captured = { url: url, form: form, json: json, headers: headers, timeout: timeout, form_encoding: form_encoding }
         Broker::RefreshClient::Response.new(status: @status, body: @body)
       end
     end
@@ -130,6 +130,36 @@ module Broker
       assert_raises(ArgumentError) { client.refresh(**base_request(url: "")) }
       assert_raises(ArgumentError) { client.refresh(**base_request(form: nil)) }
       assert_raises(ArgumentError) { client.refresh(**base_request(form_encoding: :xml)) }
+    end
+
+    test "GitHub App installation exchange posts a JWT bearer request" do
+      client, http = client_with(
+        status: 201,
+        body: { token: "ghs_installation", expires_at: 1.hour.from_now.iso8601 }.to_json
+      )
+      result = client.github_app_installation_token(
+        url: "https://api.github.com/app/installations/123/access_tokens",
+        jwt: "signed.jwt"
+      )
+      assert_equal "ghs_installation", result.access_token
+      assert_nil result.refresh_token
+      assert_in_delta 3600, result.expires_in, 5
+      assert_equal :json, http.captured[:form_encoding]
+      assert_equal({}, http.captured[:json])
+      assert_equal "Bearer signed.jwt", http.captured[:headers]["Authorization"]
+      assert_equal "application/vnd.github+json", http.captured[:headers]["Accept"]
+    end
+
+    test "GitHub App installation exchange treats empty token as retryable parse failure" do
+      client, _ = client_with(status: 201, body: { token: "" }.to_json)
+      err = assert_raises(Broker::RefreshError) do
+        client.github_app_installation_token(
+          url: "https://api.github.com/app/installations/123/access_tokens",
+          jwt: "signed.jwt"
+        )
+      end
+      assert err.retryable?
+      assert_equal "parse", err.stage
     end
   end
 end

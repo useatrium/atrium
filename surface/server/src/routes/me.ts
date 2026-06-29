@@ -10,6 +10,7 @@ import type { WsHub } from '../hub.js';
 import {
   type IronControlAdminClient,
   atriumPrincipalForeignId,
+  githubAppInstallationBrokerCredentialForeignId,
   githubAppUserBrokerCredentialForeignId,
   githubPatSecretForeignId,
 } from '../iron-control.js';
@@ -94,6 +95,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
       capabilities?: unknown;
       token?: unknown;
       brokerCredentialId?: unknown;
+      installationId?: unknown;
     };
     const requestedWorkspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
     const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
@@ -112,8 +114,14 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         .send({ error: 'bad_request', message: 'tokenKind must be pat, app_installation, or app_user' });
     }
     const token = typeof body.token === 'string' ? body.token.trim() : '';
-    const brokerCredentialId =
+    let brokerCredentialId =
       typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
+    const installationId =
+      typeof body.installationId === 'string'
+        ? body.installationId.trim()
+        : typeof body.installationId === 'number' && Number.isSafeInteger(body.installationId)
+          ? String(body.installationId)
+          : '';
     if (tokenKind === 'app_user' && !brokerCredentialId && githubAppOAuthEnabled()) {
       const [connection] = await connections.list(user.id, resolvedWorkspaceId);
       return {
@@ -140,8 +148,20 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
             token,
           });
         } else {
+          if (tokenKind === 'app_installation' && !brokerCredentialId && installationId) {
+            brokerCredentialId = await upsertGitHubInstallationBrokerCredential(ironControl, {
+              workspaceId: resolvedWorkspaceId,
+              installationId,
+            });
+          }
           if (!brokerCredentialId) {
-            throw new RouteResponse(400, 'bad_request', 'GitHub broker credential required');
+            throw new RouteResponse(
+              400,
+              tokenKind === 'app_installation' ? 'github_installation_required' : 'bad_request',
+              tokenKind === 'app_installation'
+                ? 'GitHub installation id or broker credential required'
+                : 'GitHub broker credential required',
+            );
           }
           await convergeGitHubBrokerGrant(ironControl, {
             workspaceId: resolvedWorkspaceId,
@@ -163,6 +183,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
             ...plainObject(body.metadata),
             ...(token ? { last4: token.slice(-4) } : {}),
             ...(brokerCredentialId ? { brokerCredentialId } : {}),
+            ...(installationId ? { installationId } : {}),
           },
         });
       });
@@ -514,6 +535,10 @@ function githubAppOAuthEnabled(): boolean {
   return Boolean(config.githubAppClientId && config.githubAppClientSecret && config.githubAppRedirectUrl);
 }
 
+function githubAppInstallationEnabled(): boolean {
+  return Boolean(config.githubAppId && config.githubAppPrivateKey);
+}
+
 function githubAppAuthorizeUrl(args: { workspaceId: string; userId: string }): string {
   const url = new URL('https://github.com/login/oauth/authorize');
   url.searchParams.set('client_id', config.githubAppClientId);
@@ -687,6 +712,35 @@ async function convergeGitHubBrokerGrant(
   });
   await ironControl.unassignRole(principal.id, defaultRole.id).catch(() => {});
   await ironControl.verifySingleGitHubTokenTransform(foreignId);
+}
+
+async function upsertGitHubInstallationBrokerCredential(
+  ironControl: IronControlAdminClient,
+  args: {
+    workspaceId: string;
+    installationId: string;
+  },
+): Promise<string> {
+  if (!githubAppInstallationEnabled()) {
+    throw new RouteResponse(503, 'github_app_installation_unconfigured', 'GitHub App installation credentials are not configured');
+  }
+  const foreignId = githubAppInstallationBrokerCredentialForeignId(args.workspaceId, args.installationId);
+  await ironControl.upsertGitHubAppInstallationBrokerCredential({
+    foreignId,
+    name: `GitHub App installation ${args.installationId} for workspace ${args.workspaceId}`,
+    githubAppId: config.githubAppId,
+    githubInstallationId: args.installationId,
+    githubPrivateKey: config.githubAppPrivateKey,
+    githubPrivateKeyId: config.githubAppPrivateKeyId || undefined,
+    labels: {
+      source: 'atrium',
+      provider: 'github',
+      token_kind: 'app_installation',
+      atrium_workspace_id: args.workspaceId,
+      github_installation_id: args.installationId,
+    },
+  });
+  return foreignId;
 }
 
 async function convergeGitHubPublicReadFallback(

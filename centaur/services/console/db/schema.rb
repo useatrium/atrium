@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_25_030000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_28_090000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -58,6 +58,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_25_030000) do
     t.string "external_user_key"
     t.integer "failure_count", default: 0, null: false
     t.string "foreign_id"
+    t.string "github_app_id"
+    t.string "github_installation_id"
+    t.text "github_private_key"
+    t.string "github_private_key_id"
     t.string "grant", default: "refresh_token", null: false
     t.jsonb "labels", default: {}, null: false
     t.datetime "last_refresh"

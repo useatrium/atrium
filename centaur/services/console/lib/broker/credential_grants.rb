@@ -1,3 +1,7 @@
+require "base64"
+require "json"
+require "openssl"
+
 module Broker
   # Registry for broker credential token-exchange strategies. BrokerCredential
   # owns persistence and scheduling; these strategies own provider-specific
@@ -5,9 +9,10 @@ module Broker
   module CredentialGrants
     PREQIN_TOKEN_ENDPOINT = "https://api.preqin.com/connect/token".freeze
     PREQIN_REFRESH_TOKEN_ENDPOINT = "https://api.preqin.com/connect/refresh_token".freeze
+    GITHUB_API_BASE = "https://api.github.com".freeze
 
-    GRANTS = %w[refresh_token password preqin].freeze
-    REFRESHABLE_WITHOUT_TOKEN_GRANTS = %w[password preqin].freeze
+    GRANTS = %w[refresh_token password preqin github_app_installation].freeze
+    REFRESHABLE_WITHOUT_TOKEN_GRANTS = %w[password preqin github_app_installation].freeze
 
     Outcome = Data.define(:result, :clear_refresh_token, :dead_reason)
 
@@ -17,7 +22,7 @@ module Broker
       end
 
       def client_id_required?(credential)
-        credential.grant != "preqin" && !credential.oauth_app_id?
+        !%w[preqin github_app_installation].include?(credential.grant) && !credential.oauth_app_id?
       end
 
       def validate(credential)
@@ -26,6 +31,8 @@ module Broker
           validate_password(credential)
         when "preqin"
           validate_preqin(credential)
+        when "github_app_installation"
+          validate_github_app_installation(credential)
         end
       end
 
@@ -35,6 +42,8 @@ module Broker
           refresh_password(credential)
         when "preqin"
           refresh_preqin(credential)
+        when "github_app_installation"
+          refresh_github_app_installation(credential)
         else
           refresh_token(credential)
         end
@@ -114,6 +123,17 @@ module Broker
           strict_4xx: true
         )
         success(result, clear_refresh_token: clear_stale_refresh_token && result.refresh_token.blank?)
+      end
+
+      def refresh_github_app_installation(credential)
+        return dead("github_app_installation_missing_initial_values") unless github_app_installation_values_present?(credential)
+
+        result = credential.refresh_client.github_app_installation_token(
+          url: credential.token_endpoint,
+          jwt: github_app_jwt(credential),
+          timeout: credential.refresh_timeout_seconds
+        )
+        success(result)
       end
 
       def oauth_refresh_token(credential)
@@ -199,12 +219,53 @@ module Broker
         credential.errors.add(:api_key, "can't be blank for the Preqin broker grant") if credential.api_key.blank?
       end
 
+      def validate_github_app_installation(credential)
+        if credential.github_app_id.blank?
+          credential.errors.add(:github_app_id, "can't be blank for the GitHub App installation grant")
+        end
+        if credential.github_installation_id.blank?
+          credential.errors.add(:github_installation_id, "can't be blank for the GitHub App installation grant")
+        end
+        if credential.github_private_key.blank?
+          credential.errors.add(:github_private_key, "can't be blank for the GitHub App installation grant")
+        end
+      end
+
       def password_values_present?(credential)
         credential.username.present? && credential.password.present?
       end
 
       def preqin_values_present?(credential)
         credential.username.present? && credential.api_key.present?
+      end
+
+      def github_app_installation_values_present?(credential)
+        credential.github_app_id.present? &&
+          credential.github_installation_id.present? &&
+          credential.github_private_key.present?
+      end
+
+      def github_installation_token_endpoint(installation_id)
+        "#{GITHUB_API_BASE}/app/installations/#{installation_id}/access_tokens"
+      end
+      public :github_installation_token_endpoint
+
+      def github_app_jwt(credential, now: Time.current)
+        private_key = OpenSSL::PKey::RSA.new(credential.github_private_key)
+        header = { alg: "RS256", typ: "JWT" }
+        header[:kid] = credential.github_private_key_id if credential.github_private_key_id.present?
+        payload = {
+          iat: now.to_i - 60,
+          exp: now.to_i + 9.minutes.to_i,
+          iss: credential.github_app_id
+        }
+        signing_input = [ header, payload ].map { |part| base64url(JSON.generate(part)) }.join(".")
+        signature = private_key.sign(OpenSSL::Digest::SHA256.new, signing_input)
+        "#{signing_input}.#{base64url(signature)}"
+      end
+
+      def base64url(value)
+        Base64.urlsafe_encode64(value).delete("=")
       end
     end
   end
