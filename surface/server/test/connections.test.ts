@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
@@ -200,8 +201,17 @@ describe('connections routes', () => {
 
   it('creates a GitHub App installation broker credential from an installation id', async () => {
     config.githubAppId = '98765';
-    config.githubAppPrivateKey = 'private-key-secret';
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    config.githubAppPrivateKey = privateKeyPem;
     config.githubAppPrivateKeyId = 'key-1';
+    const githubFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json({
+        id: 12345,
+        account: { login: 'verified-acme', type: 'Organization' },
+        target_type: 'Organization',
+      }),
+    );
     const cookie = await loginCookie();
 
     const res = await app.inject({
@@ -212,7 +222,7 @@ describe('connections routes', () => {
         workspaceId: fx.workspaceId,
         tokenKind: 'app_installation',
         installationId: 12345,
-        accountLogin: 'acme',
+        accountLogin: 'forged-acme',
       },
     });
 
@@ -223,12 +233,18 @@ describe('connections routes', () => {
       connected: true,
       status: 'connected',
       tokenKind: 'app_installation',
-      accountLogin: 'acme',
+      accountLogin: 'verified-acme',
       metadata: {
         brokerCredentialId: `github-app-installation-${fx.workspaceId}-installation-12345`,
         installationId: '12345',
+        installationAccountType: 'Organization',
+        installationTargetType: 'Organization',
       },
     });
+    expect(githubFetch).toHaveBeenCalledWith(
+      'https://api.github.com/app/installations/12345',
+      expect.objectContaining({ method: 'GET' }),
+    );
     const brokerCall = ironCalls.find((call) => call.url.includes('/broker_credentials/github-app-installation-'));
     expect(brokerCall).toBeTruthy();
     expect(JSON.parse(String(brokerCall!.init.body))).toMatchObject({
@@ -236,7 +252,7 @@ describe('connections routes', () => {
         grant: 'github_app_installation',
         github_app_id: '98765',
         github_installation_id: '12345',
-        github_private_key: 'private-key-secret',
+        github_private_key: privateKeyPem,
         github_private_key_id: 'key-1',
       },
     });
@@ -247,7 +263,7 @@ describe('connections routes', () => {
         WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
       [fx.workspaceId, fx.userId],
     );
-    expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain('private-key-secret');
+    expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain(privateKeyPem);
   });
 
   it('requires configured GitHub App material before creating an installation broker credential', async () => {
@@ -268,6 +284,36 @@ describe('connections routes', () => {
 
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ error: 'github_app_installation_unconfigured' });
+  });
+
+  it('rejects unverified GitHub App installation ids before storing or granting them', async () => {
+    config.githubAppId = '98765';
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    config.githubAppPrivateKey = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not found', { status: 404 }));
+    const cookie = await loginCookie();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'app_installation',
+        installationId: '12345',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'github_installation_unverified' });
+    expect(ironCalls.some((call) => call.url.includes('/broker_credentials/github-app-installation-'))).toBe(false);
+    const stored = await pool.query(
+      `SELECT 1
+         FROM user_connections
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+      [fx.workspaceId, fx.userId],
+    );
+    expect(stored.rowCount).toBe(0);
   });
 
   it('starts and completes GitHub App user OAuth through a broker credential', async () => {

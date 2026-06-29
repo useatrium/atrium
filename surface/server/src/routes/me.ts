@@ -6,6 +6,11 @@ import { config } from '../config.js';
 import type { Connections, ConnectionStatusJson } from '../connections.js';
 import type { DbClient } from '../db.js';
 import type { UserRef } from '../events.js';
+import {
+  GitHubRepoValidationError,
+  verifyGitHubAppInstallation,
+  type GitHubAppInstallationInfo,
+} from '../github-repo-validation.js';
 import type { WsHub } from '../hub.js';
 import {
   type IronControlAdminClient,
@@ -121,6 +126,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     let brokerCredentialId =
       typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
     let verifiedPatIdentity: { accountLogin: string; scopes: string[] } | null = null;
+    let verifiedInstallation: GitHubAppInstallationInfo | null = null;
     const installationId =
       typeof body.installationId === 'string'
         ? body.installationId.trim()
@@ -155,6 +161,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           });
         } else {
           if (tokenKind === 'app_installation' && !brokerCredentialId && installationId) {
+            verifiedInstallation = await verifyGitHubInstallationForConnect(installationId);
             brokerCredentialId = await upsertGitHubInstallationBrokerCredential(ironControl, {
               workspaceId: resolvedWorkspaceId,
               installationId,
@@ -181,8 +188,14 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           userId: user.id,
           status: 'connected',
           tokenKind,
-          accountLogin: verifiedPatIdentity?.accountLogin ?? stringOrNull(body.accountLogin),
-          accountLabel: verifiedPatIdentity?.accountLogin ?? stringOrNull(body.accountLabel),
+          accountLogin:
+            verifiedPatIdentity?.accountLogin ??
+            verifiedInstallation?.accountLogin ??
+            stringOrNull(body.accountLogin),
+          accountLabel:
+            verifiedPatIdentity?.accountLogin ??
+            verifiedInstallation?.accountLogin ??
+            stringOrNull(body.accountLabel),
           scopes: verifiedPatIdentity?.scopes ?? stringArray(body.scopes),
           capabilities: plainObject(body.capabilities),
           metadata: {
@@ -190,6 +203,8 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
             ...(token ? { last4: token.slice(-4) } : {}),
             ...(brokerCredentialId ? { brokerCredentialId } : {}),
             ...(installationId ? { installationId } : {}),
+            ...(verifiedInstallation?.accountType ? { installationAccountType: verifiedInstallation.accountType } : {}),
+            ...(verifiedInstallation?.targetType ? { installationTargetType: verifiedInstallation.targetType } : {}),
           },
         });
       });
@@ -725,4 +740,24 @@ async function upsertGitHubInstallationBrokerCredential(
     },
   });
   return foreignId;
+}
+
+async function verifyGitHubInstallationForConnect(installationId: string): Promise<GitHubAppInstallationInfo> {
+  try {
+    return await verifyGitHubAppInstallation({
+      appId: config.githubAppId,
+      privateKey: config.githubAppPrivateKey,
+      privateKeyId: config.githubAppPrivateKeyId || undefined,
+      installationId,
+    });
+  } catch (err) {
+    if (err instanceof GitHubRepoValidationError && err.code === 'unconfigured') {
+      throw new RouteResponse(
+        503,
+        'github_app_installation_unconfigured',
+        'GitHub App installation credentials are not configured',
+      );
+    }
+    throw new RouteResponse(400, 'github_installation_unverified', 'Could not verify GitHub installation id');
+  }
 }

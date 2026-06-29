@@ -13,6 +13,13 @@ export interface GitHubRepoValidationResult {
   inaccessible: string[];
 }
 
+export interface GitHubAppInstallationInfo {
+  installationId: string;
+  accountLogin: string | null;
+  accountType: string | null;
+  targetType: string | null;
+}
+
 export class GitHubRepoValidationError extends Error {
   constructor(
     readonly code: 'unconfigured' | 'token_exchange_failed' | 'repo_check_failed',
@@ -72,6 +79,42 @@ export async function validateGitHubAppInstallationRepos(
     throw new GitHubRepoValidationError('repo_check_failed', `GitHub repo access check failed: ${res.status}`);
   }
   return { inaccessible };
+}
+
+export async function verifyGitHubAppInstallation(
+  config: GitHubRepoValidationConfig,
+): Promise<GitHubAppInstallationInfo> {
+  if (!config.appId || !config.privateKey || !config.installationId) {
+    throw new GitHubRepoValidationError('unconfigured', 'GitHub App installation validation is not configured');
+  }
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const jwt = githubAppJwt(config);
+  const res = await fetchImpl(
+    `https://api.github.com/app/installations/${encodeURIComponent(config.installationId)}`,
+    {
+      method: 'GET',
+      headers: githubHeaders({ authorization: `Bearer ${jwt}` }),
+    },
+  );
+  if (!res.ok) {
+    throw new GitHubRepoValidationError(
+      'token_exchange_failed',
+      `GitHub installation lookup failed: ${res.status}`,
+    );
+  }
+  const body = await res.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new GitHubRepoValidationError('token_exchange_failed', 'GitHub installation lookup returned no body');
+  }
+  const installation = body as Record<string, unknown>;
+  const account = installation.account;
+  const accountRecord = account && typeof account === 'object' && !Array.isArray(account) ? account as Record<string, unknown> : null;
+  return {
+    installationId: config.installationId,
+    accountLogin: typeof accountRecord?.login === 'string' ? accountRecord.login : null,
+    accountType: typeof accountRecord?.type === 'string' ? accountRecord.type : null,
+    targetType: typeof installation.target_type === 'string' ? installation.target_type : null,
+  };
 }
 
 function githubHeaders(args: { authorization: string }): Record<string, string> {
