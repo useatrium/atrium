@@ -203,7 +203,7 @@ export function Chat({
           }
           rememberRejectedSessionOp(op);
           if (!(err instanceof ApiError && err.status === 401)) {
-            showErrorToast(queuedFailureMessage(op.opType));
+            showErrorToast(queuedFailureMessage(op.opType, err));
           }
         },
       }),

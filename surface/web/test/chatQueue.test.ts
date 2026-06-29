@@ -6,6 +6,7 @@ import type {
   QueuedOp,
   UploadPayload,
 } from '@atrium/surface-client';
+import { ApiError } from '@atrium/surface-client';
 import { createChatOpRegistry, queuedFailureMessage } from '../src/chatQueue';
 
 describe('chatQueue', () => {
@@ -25,6 +26,33 @@ describe('chatQueue', () => {
     expect(queuedFailureMessage('draft.set')).toBe("Couldn't sync the draft.");
     expect(queuedFailureMessage('channel.join')).toBe("Couldn't add the person.");
     expect(queuedFailureMessage('channel.leave')).toBe("Couldn't leave the channel.");
+  });
+
+  it('surfaces actionable GitHub repo validation failures for queued spawns', () => {
+    expect(
+      queuedFailureMessage(
+        'session.spawn',
+        new ApiError(409, 'github_connection_required', 'server message'),
+      ),
+    ).toBe('Connect GitHub before starting a session with private repositories.');
+    expect(
+      queuedFailureMessage(
+        'session.spawn',
+        new ApiError(409, 'github_repo_access_unverified', 'server message'),
+      ),
+    ).toBe('Reconnect GitHub before starting a session with private repositories.');
+    expect(
+      queuedFailureMessage(
+        'session.spawn',
+        new ApiError(409, 'github_repo_inaccessible', 'Connected GitHub credentials cannot access: acme/private'),
+      ),
+    ).toBe('Connected GitHub credentials cannot access: acme/private');
+    expect(
+      queuedFailureMessage(
+        'session.spawn',
+        new ApiError(502, 'github_repo_validation_failed', 'server message'),
+      ),
+    ).toBe('Could not validate GitHub repository access. Try again or reconnect GitHub.');
   });
 
   it('resolves upload refs and voice metadata before posting a queued message', async () => {

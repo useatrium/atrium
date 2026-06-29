@@ -1,4 +1,5 @@
 import {
+  ApiError,
   createDefaultOpRegistry,
   type MsgSendPayload,
   type OpQueueLockProvider,
@@ -37,7 +38,11 @@ export function broadcastQueueNudge(): void {
   }
 }
 
-export function queuedFailureMessage(opType: OpType): string {
+export function queuedFailureMessage(opType: OpType, err?: unknown): string {
+  if (opType === 'session.spawn') {
+    const githubMessage = githubSpawnFailureMessage(err);
+    if (githubMessage) return githubMessage;
+  }
   switch (opType) {
     case 'msg.send':
       return "Couldn't send the message.";
@@ -69,6 +74,26 @@ export function queuedFailureMessage(opType: OpType): string {
       return "Couldn't add the person.";
     case 'channel.leave':
       return "Couldn't leave the channel.";
+  }
+}
+
+function githubSpawnFailureMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  switch (err.code) {
+    case 'github_connection_required':
+      return 'Connect GitHub before starting a session with private repositories.';
+    case 'github_repo_access_unverified':
+      return 'Reconnect GitHub before starting a session with private repositories.';
+    case 'github_repo_inaccessible':
+      return err.message || 'Connected GitHub credentials cannot access one or more private repositories.';
+    case 'github_repo_validation_unconfigured':
+      return 'GitHub App repository validation is not configured.';
+    case 'github_repo_validation_failed':
+      return 'Could not validate GitHub repository access. Try again or reconnect GitHub.';
+    case 'github_identity_unavailable':
+      return err.message || 'Connect GitHub with the selected identity before starting this session.';
+    default:
+      return null;
   }
 }
 
