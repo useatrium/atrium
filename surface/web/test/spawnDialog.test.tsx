@@ -16,6 +16,22 @@ const connectedCodex = {
   updatedAt: new Date().toISOString(),
 };
 
+const connectedGitHub = {
+  provider: 'github' as const,
+  workspaceId: 'workspace-1',
+  connected: true,
+  status: 'connected' as const,
+  tokenKind: 'app_user' as const,
+  accountLogin: 'octo',
+  accountLabel: 'octo',
+  scopes: [],
+  capabilities: {},
+  metadata: {},
+  lastValidatedAt: null,
+  lastError: null,
+  updatedAt: null,
+};
+
 const codexProfile = {
   id: 'profile-1',
   provider: 'codex' as const,
@@ -52,6 +68,7 @@ describe('SpawnDialog', () => {
         onCancel={() => {}}
         onSpawn={onSpawn}
         providerStatuses={{ codex: connectedCodex }}
+        githubConnection={connectedGitHub}
       />,
     );
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
@@ -80,6 +97,7 @@ describe('SpawnDialog', () => {
         onCancel={() => {}}
         onSpawn={onSpawn}
         providerStatuses={{ codex: connectedCodex }}
+        githubConnection={connectedGitHub}
       />,
     );
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
@@ -268,6 +286,7 @@ describe('SpawnDialog', () => {
         onCancel={() => {}}
         onSpawn={onSpawn}
         providerStatuses={{ codex: connectedCodex }}
+        githubConnection={connectedGitHub}
       />,
     );
 
@@ -286,5 +305,72 @@ describe('SpawnDialog', () => {
         repos: [{ repo: 'acme/private', private: true }],
       }),
     );
+  });
+
+  it('blocks private working repo spawn until GitHub is connected', () => {
+    const onSpawn = vi.fn();
+    const onConnectGitHub = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={{ codex: connectedCodex }}
+        githubConnection={{
+          ...connectedGitHub,
+          connected: false,
+          status: 'public_read',
+          tokenKind: 'public_read',
+          accountLogin: null,
+          accountLabel: null,
+        }}
+        onConnectGitHub={onConnectGitHub}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'work privately' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('owner/name'), {
+      target: { value: 'acme/private' },
+    });
+    fireEvent.click(screen.getByLabelText('Private repo'));
+
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Connect GitHub before starting a session with private repositories.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+    expect(onConnectGitHub).toHaveBeenCalled();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it('blocks private reference repo spawn until GitHub is connected', () => {
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{ codex: connectedCodex }}
+        githubConnection={{
+          ...connectedGitHub,
+          connected: false,
+          status: 'public_read',
+          tokenKind: 'public_read',
+          accountLogin: null,
+          accountLabel: null,
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'inspect private dependency' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add reference repo' }));
+    fireEvent.change(screen.getByLabelText('Reference repo'), {
+      target: { value: 'acme/reference-private' },
+    });
+    fireEvent.click(screen.getByLabelText('Private'));
+
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Connect GitHub before starting a session with private repositories.')).toBeTruthy();
   });
 });

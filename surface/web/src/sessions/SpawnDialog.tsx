@@ -67,7 +67,12 @@ export function SpawnDialog({
   const codexStatus = providerStatuses?.codex;
   const claudeUsesDefaultAuth = harness === 'claude-code' && claudeStatus?.connected !== true;
   const codexUsesDefaultAuth = harness === 'codex' && codexStatus?.connected !== true;
-  const canSpawn = task.trim().length > 0;
+  const privateRepoRequested =
+    (repo.trim().length > 0 && repoPrivate) ||
+    referenceRepos.some((item) => item.repo.trim().length > 0 && item.private);
+  const githubReadyForPrivateRepos = githubConnection?.connected === true;
+  const privateRepoBlocked = privateRepoRequested && !githubReadyForPrivateRepos;
+  const canSpawn = task.trim().length > 0 && !privateRepoBlocked;
   const providerProfiles = profiles.filter(
     (profile) => profile.provider === harness && profile.currentVersionId,
   );
@@ -354,6 +359,19 @@ export function SpawnDialog({
             <span className="font-medium text-fg-secondary">{repoMode}</span>
             <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
           </div>
+
+          {privateRepoBlocked && (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-2xs text-fg-secondary">
+              <span>Connect GitHub before starting a session with private repositories.</span>
+              <button
+                type="button"
+                onClick={onConnectGitHub}
+                className="shrink-0 rounded border border-edge bg-surface px-2 py-1 font-medium text-accent-text hover:bg-surface-overlay"
+              >
+                {githubConnection?.status === 'needs_auth' ? 'Reconnect GitHub' : 'Connect GitHub'}
+              </button>
+            </div>
+          )}
 
           {providerProfiles.length > 0 && (
             <label className="block">
