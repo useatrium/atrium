@@ -1548,6 +1548,11 @@ export class SessionRuns {
         ).catch(() => {});
         return;
       }
+      if (githubAuthFailureTextForError(err)) {
+        await this.markGitHubNeedsAuth(id, undefined).catch(() => {});
+        await this.updateStatus(id, 'failed').catch(() => {});
+        return;
+      }
       console.error('session start failed', { id, err });
       await this.updateStatus(id, 'failed').catch(() => {});
     }
@@ -2628,6 +2633,18 @@ function isDemoHarness(harness: string): boolean {
 
 function isCentaurCode(err: unknown, code: string): boolean {
   return err instanceof CentaurApiError && err.code === code;
+}
+
+function githubAuthFailureTextForError(err: unknown): string | null {
+  if (!(err instanceof CentaurApiError)) return null;
+  if (isGitHubAuthFailureText(err.message)) return err.message;
+  if (typeof err.code === 'string' && isGitHubAuthFailureText(err.code)) return err.code;
+  try {
+    const body = JSON.stringify(err.body);
+    return isGitHubAuthFailureText(body) ? body : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Trim + cap optional git metadata; empty becomes null. */

@@ -38,6 +38,7 @@ class FakeCentaur {
   streamResetBeyondHistory = false;
   streamWriteCommentBeforeSecondFrame = false;
   streamClosedCount = 0;
+  spawnFailure: { status: number; body: object } | null = null;
   private answerNotPendingCount = 0;
   url = '';
 
@@ -115,6 +116,11 @@ class FakeCentaur {
         this.recordLegacy('POST', '/agent/spawn', legacyBody, url.searchParams);
         const replay = this.replayIdempotent(res, 'spawn', threadKey, spawnId, legacyBody);
         if (replay) return;
+        if (this.spawnFailure) {
+          const failure = this.spawnFailure;
+          this.spawnFailure = null;
+          return sendJson(res, failure.body, failure.status);
+        }
         const generation = (this.threadGenerations.get(threadKey) ?? 0) + 1;
         this.threadGenerations.set(threadKey, generation);
         const response = { thread_key: threadKey, assignment_generation: generation };
@@ -192,6 +198,11 @@ class FakeCentaur {
     if (req.method === 'POST' && url.pathname === '/agent/spawn') {
       const replay = this.replayIdempotent(res, 'spawn', body.thread_key, body.spawn_id, body);
       if (replay) return;
+      if (this.spawnFailure) {
+        const failure = this.spawnFailure;
+        this.spawnFailure = null;
+        return sendJson(res, failure.body, failure.status);
+      }
       const generation = (this.threadGenerations.get(body.thread_key) ?? 0) + 1;
       this.threadGenerations.set(body.thread_key, generation);
       const response = { thread_key: body.thread_key, assignment_generation: generation };
@@ -1444,6 +1455,103 @@ describe('Phase 2 sessions', () => {
         expect.stringMatching(/^PUT \/api\/v1\/roles\/github-default$/),
         expect.stringMatching(/^POST \/api\/v1\/principals\/prn_atrium\/roles$/),
         expect.stringMatching(/\/effective_config$/),
+      ]),
+    );
+    await app.close();
+  });
+
+  it('marks GitHub needs_auth when private repo checkout fails during spawn', async () => {
+    fake.spawnFailure = {
+      status: 502,
+      body: {
+        error: 'repo_checkout_failed',
+        message: "fatal: Authentication failed for 'https://github.com/acme/private.git'",
+      },
+    };
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation', { installationId: '12345' });
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    config.githubAppId = '98765';
+    config.githubAppPrivateKey = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request) => {
+        const href = String(url);
+        if (href.endsWith('/app/installations/12345/access_tokens')) {
+          return new Response(JSON.stringify({ token: 'installation-token' }), { status: 201 });
+        }
+        if (href.endsWith('/repos/acme/private')) {
+          return new Response(JSON.stringify({ full_name: 'acme/private' }), { status: 200 });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'checkout private repo',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().session.id;
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        `SELECT status, assignment_generation
+         FROM sessions
+         WHERE id = $1`,
+        [id],
+      );
+      expect(row.rows[0]).toMatchObject({
+        status: 'failed',
+        assignment_generation: null,
+      });
+      const connection = await pool.query(
+        `SELECT status, token_kind, last_error
+         FROM user_connections
+         WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+        [fx.workspaceId, fx.userId],
+      );
+      expect(connection.rows[0]).toMatchObject({
+        status: 'needs_auth',
+        token_kind: 'app_installation',
+        last_error: 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.',
+      });
+      const authEvent = await pool.query(
+        `SELECT payload FROM events WHERE type = 'session.github_auth_required'`,
+      );
+      expect(authEvent.rows[0].payload).toMatchObject({
+        sessionId: id,
+        provider: 'github',
+        userId: fx.userId,
+        reason: 'invalid_token',
+      });
+      const statusEvent = await pool.query(
+        `SELECT payload FROM events WHERE type = 'session.status_changed' AND payload->>'sessionId' = $1`,
+        [id],
+      );
+      expect(statusEvent.rows.some((event) => event.payload.status === 'failed')).toBe(true);
+    });
+    expect(ironCalls.map((call) => `${call.init.method ?? 'GET'} ${new URL(call.url).pathname}`)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^PUT \/api\/v1\/principals\//),
+        expect.stringMatching(/^DELETE \/api\/v1\/static_secrets\//),
+        expect.stringMatching(/^PUT \/api\/v1\/roles\/github-default$/),
+        expect.stringMatching(/^POST \/api\/v1\/principals\/prn_atrium\/roles$/),
       ]),
     );
     await app.close();
