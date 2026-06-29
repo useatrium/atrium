@@ -3,12 +3,7 @@
 // sandbox for the run.
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
-import type {
-  AgentProfile,
-  ConnectionStatus,
-  ProviderCredentialProvider,
-  ProviderCredentialStatus,
-} from '../api';
+import type { AgentProfile, ConnectionStatus, ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
 import { PlusIcon, XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
@@ -77,9 +72,7 @@ export function SpawnDialog({
   const githubReadyForPrivateRepos = githubConnection?.connected === true;
   const privateRepoBlocked = privateRepoRequested && !githubReadyForPrivateRepos;
   const canSpawn = task.trim().length > 0 && !privateRepoBlocked;
-  const providerProfiles = profiles.filter(
-    (profile) => profile.provider === harness && profile.currentVersionId,
-  );
+  const providerProfiles = profiles.filter((profile) => profile.provider === harness && profile.currentVersionId);
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
   const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
@@ -106,7 +99,15 @@ export function SpawnDialog({
     const trimmedRepo = repo.trim();
     const trimmedBranch = branch.trim();
     const repos = [
-      ...(trimmedRepo ? [{ repo: trimmedRepo, ...(trimmedBranch ? { ref: trimmedBranch } : {}), ...(repoPrivate ? { private: true } : {}) }] : []),
+      ...(trimmedRepo
+        ? [
+            {
+              repo: trimmedRepo,
+              ...(trimmedBranch ? { ref: trimmedBranch } : {}),
+              ...(repoPrivate ? { private: true } : {}),
+            },
+          ]
+        : []),
       ...referenceRepos.flatMap((item) => {
         const itemRepo = item.repo.trim();
         if (!itemRepo) return [];
@@ -140,7 +141,10 @@ export function SpawnDialog({
   }
 
   function addReferenceRepo() {
-    setReferenceRepos((items) => [...items, { id: crypto.randomUUID(), repo: '', ref: '', subdir: '', private: false }]);
+    setReferenceRepos((items) => [
+      ...items,
+      { id: crypto.randomUUID(), repo: '', ref: '', subdir: '', private: false },
+    ]);
   }
 
   function updateReferenceRepo(id: string, patch: Partial<Omit<ReferenceRepoInput, 'id'>>) {
@@ -182,9 +186,7 @@ export function SpawnDialog({
 
         <div className="space-y-3 px-4 py-3">
           <label className="block">
-            <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-              Task
-            </span>
+            <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">Task</span>
             <textarea
               autoFocus
               value={task}
@@ -197,9 +199,7 @@ export function SpawnDialog({
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-              Harness
-            </span>
+            <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">Harness</span>
             <select
               value={harness}
               onChange={(e) => setHarness(e.target.value)}
@@ -318,7 +318,10 @@ export function SpawnDialog({
             {referenceRepos.length > 0 && (
               <div className="space-y-2">
                 {referenceRepos.map((item) => (
-                  <div key={item.id} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto_2rem] gap-2">
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto_2rem] gap-2"
+                  >
                     <label>
                       <span className="sr-only">Reference repo</span>
                       <input
@@ -373,15 +376,17 @@ export function SpawnDialog({
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-edge bg-surface px-3 py-2 text-2xs">
             <span className="font-medium text-fg-secondary">{repoMode}</span>
             <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
-            <span className="shrink-0 text-fg-muted">
-              GitHub:{' '}
-              {githubIdentityMode === 'automatic'
-                ? githubAutomaticLabel(availableGitHubIdentity)
-                : githubIdentityModeLabel(githubIdentityMode)}
-            </span>
+            {repoScoped && (
+              <span className="shrink-0 text-fg-muted">
+                GitHub:{' '}
+                {githubIdentityMode === 'automatic'
+                  ? githubAutomaticLabel(availableGitHubIdentity)
+                  : githubIdentityModeLabel(githubIdentityMode)}
+              </span>
+            )}
           </div>
 
-          {(repoScoped || githubConnection?.connected) && (
+          {repoScoped && (
             <label className="block">
               <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
                 GitHub identity <span className="font-normal normal-case text-fg-muted">· advanced</span>

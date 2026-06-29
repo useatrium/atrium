@@ -107,6 +107,28 @@ describe('SpawnDialog', () => {
     expect(onSpawn).toHaveBeenCalledWith({ task: 'do a thing', harness: 'codex' });
   });
 
+  it('hides GitHub identity controls until a repo is selected', () => {
+    render(
+      <SpawnDialog
+        channelName="#general"
+        onCancel={() => {}}
+        onSpawn={() => {}}
+        providerStatuses={{ codex: connectedCodex }}
+        githubConnection={connectedGitHub}
+      />,
+    );
+
+    expect(screen.queryByLabelText(/GitHub identity/)).toBeNull();
+    expect(screen.queryByText(/^GitHub:/)).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText('owner/name'), {
+      target: { value: 'acme/app' },
+    });
+
+    expect(screen.getByLabelText(/GitHub identity/)).toBeTruthy();
+    expect(screen.getByText('GitHub: Automatic (GitHub user)')).toBeTruthy();
+  });
+
   it('emits working and reference repo specs', () => {
     const onSpawn = vi.fn();
     render(
