@@ -8,6 +8,11 @@
 # ubuntu runner or a real Linux host. See docs/archive/notes/sync-hardening-plan.md.
 set -euo pipefail
 
+# The node-sync Dockerfile uses a `# syntax=` directive and BuildKit cache mounts,
+# so the build requires BuildKit. GHA's Docker defaults to it, but make it explicit
+# so this build site never regresses to the legacy builder.
+export DOCKER_BUILDKIT=1
+
 IMAGE="${IMAGE:-centaur-node-sync:e2e}"
 KIND_CLUSTER="${KIND_CLUSTER:-centaur}"
 # Dockerfile builds from the api-rs workspace root (it needs the whole workspace).

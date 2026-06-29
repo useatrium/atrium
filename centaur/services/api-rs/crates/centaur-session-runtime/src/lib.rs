@@ -2575,6 +2575,7 @@ impl SessionRuntime {
                 execution_id,
                 "",
                 "orphaned before input was sent",
+                None,
             )
             .await;
             return Ok(());
@@ -2586,14 +2587,15 @@ impl SessionRuntime {
                 execution_id,
                 "",
                 "orphaned with no sandbox assigned",
+                None,
             )
             .await;
             return Ok(());
         };
         let id = SandboxId::new(sandbox_id);
-        let status = match self.sandbox_runtime.manager.status(&id).await {
-            Ok(status) => status,
-            Err(SandboxError::NotFound(_)) => SandboxStatus::Gone,
+        let (status, sandbox_reason) = match self.sandbox_runtime.manager.observe(&id).await {
+            Ok(observed) => (observed.status, observed.reason),
+            Err(SandboxError::NotFound(_)) => (SandboxStatus::Gone, None),
             // Transient status failures must not fail a possibly live
             // execution; surface the error and retry on the next startup.
             Err(error) => return Err(SessionRuntimeError::Sandbox(error)),
@@ -2604,6 +2606,7 @@ impl SessionRuntime {
                 execution_id,
                 sandbox_id,
                 &format!("sandbox no longer accepts io (status {status:?})"),
+                sandbox_reason.as_deref(),
             )
             .await;
             return Ok(());
@@ -2707,8 +2710,17 @@ impl SessionRuntime {
         execution_id: &str,
         sandbox_id: &str,
         detail: &str,
+        sandbox_reason: Option<&str>,
     ) {
-        let error = format!("execution orphaned by control plane restart; {detail}");
+        let error = match sandbox_reason {
+            Some(reason) if !reason.trim().is_empty() => {
+                format!(
+                    "execution orphaned by control plane restart; {detail}; sandbox: {}",
+                    reason.trim()
+                )
+            }
+            _ => format!("execution orphaned by control plane restart; {detail}"),
+        };
         if let Err(record_error) = record_terminal_output(
             &self.context(),
             thread_key,
@@ -7127,6 +7139,7 @@ mod adoption_tests {
         stop_error: std::sync::Mutex<Option<String>>,
         create_gate: std::sync::Mutex<Option<Arc<CreateGate>>>,
         status: std::sync::Mutex<SandboxStatus>,
+        reason: std::sync::Mutex<Option<String>>,
         create_id: String,
         resume_fails: AtomicBool,
         stopped: std::sync::Mutex<Vec<String>>,
@@ -7169,6 +7182,7 @@ mod adoption_tests {
                 stop_error: std::sync::Mutex::new(None),
                 create_gate: std::sync::Mutex::new(None),
                 status: std::sync::Mutex::new(status),
+                reason: std::sync::Mutex::new(None),
                 create_id: "mock-sbx".to_owned(),
                 resume_fails: AtomicBool::new(false),
                 stopped: std::sync::Mutex::new(Vec::new()),
@@ -7220,6 +7234,10 @@ mod adoption_tests {
 
         fn set_status(&self, status: SandboxStatus) {
             *self.status.lock().unwrap() = status;
+        }
+
+        fn set_reason(&self, reason: impl Into<String>) {
+            *self.reason.lock().unwrap() = Some(reason.into());
         }
 
         fn fail_resume(&self) {
@@ -7280,7 +7298,8 @@ mod adoption_tests {
 
         async fn observe(&self, id: &SandboxId) -> SandboxResult<ObservedSandbox> {
             let status = self.status(id).await?;
-            Ok(ObservedSandbox::new(id.clone(), "mock", status))
+            Ok(ObservedSandbox::new(id.clone(), "mock", status)
+                .with_reason(self.reason.lock().unwrap().clone()))
         }
 
         async fn list_observed(&self) -> SandboxResult<Vec<ObservedSandbox>> {
@@ -8309,6 +8328,7 @@ mod adoption_tests {
         orphaned_execution(&store, &thread_key, Some("sbx-mock"), true).await;
 
         let backend = Arc::new(MockBackend::new(SandboxStatus::Gone, Vec::new()));
+        backend.set_reason("agent terminated: Error (exit 1): missing credentials");
         let runtime = runtime_with(&store, backend.clone());
         runtime.adopt_orphaned_executions().await;
 
@@ -8326,6 +8346,10 @@ mod adoption_tests {
         assert!(
             error.contains("sandbox no longer accepts io"),
             "expected status detail: {error}"
+        );
+        assert!(
+            error.contains("sandbox: agent terminated: Error (exit 1): missing credentials"),
+            "expected sandbox reason: {error}"
         );
         assert_eq!(backend.opens(), 0);
     }

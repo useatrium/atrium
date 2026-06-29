@@ -128,6 +128,11 @@ impl ObservedSandbox {
         self
     }
 
+    pub fn with_reason(mut self, reason: Option<String>) -> Self {
+        self.reason = reason;
+        self
+    }
+
     pub fn with_suspended_since(mut self, suspended_since: Option<SystemTime>) -> Self {
         self.suspended_since = suspended_since;
         self

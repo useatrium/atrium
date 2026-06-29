@@ -1,0 +1,92 @@
+REGISTRY = os.getenv("CENTAUR_LOCAL_REGISTRY", "localhost:5000")
+RELEASE = os.getenv("CENTAUR_RELEASE", "centaur")
+NAMESPACE = os.getenv("CENTAUR_NAMESPACE", "centaur")
+RUST_BUILD_PROFILE = os.getenv("RUST_BUILD_PROFILE", "debug")
+AGENT_DOCKERFILE = os.getenv("CENTAUR_AGENT_DOCKERFILE", "services/sandbox/Dockerfile")
+AGENT_BUILD_TARGET = os.getenv("CENTAUR_AGENT_BUILD_TARGET", "sandbox")
+
+def local_image(name):
+    return REGISTRY + "/library/" + name
+
+docker_build(
+    local_image("centaur-api-rs"),
+    ".",
+    dockerfile = "services/api-rs/Dockerfile",
+    build_args = {"RUST_BUILD_PROFILE": RUST_BUILD_PROFILE},
+)
+
+docker_build(
+    local_image("centaur-iron-proxy"),
+    ".",
+    dockerfile = "services/iron-proxy/Dockerfile",
+)
+
+docker_build(
+    local_image("centaur-slackbotv2"),
+    ".",
+    dockerfile = "services/slackbotv2/Dockerfile",
+)
+
+docker_build(
+    local_image("centaur-discordbot"),
+    ".",
+    dockerfile = "services/discordbot/Dockerfile",
+)
+
+docker_build(
+    local_image("centaur-teamsbot"),
+    ".",
+    dockerfile = "services/teamsbot/Dockerfile",
+)
+
+docker_build(
+    local_image("centaur-agent"),
+    ".",
+    dockerfile = AGENT_DOCKERFILE,
+    target = AGENT_BUILD_TARGET,
+    build_args = {"RUST_BUILD_PROFILE": RUST_BUILD_PROFILE},
+)
+
+docker_build(
+    local_image("centaur-node-sync"),
+    "services/api-rs",
+    dockerfile = "crates/centaur-node-sync/Dockerfile",
+    build_args = {"RUST_BUILD_PROFILE": RUST_BUILD_PROFILE},
+)
+
+docker_build(
+    local_image("centaur-console"),
+    "services/console",
+    dockerfile = "services/console/Dockerfile",
+)
+
+rendered = helm(
+    "contrib/chart",
+    name = RELEASE,
+    namespace = NAMESPACE,
+    values = [
+        "contrib/chart/values.dev.yaml",
+        "contrib/chart/values.local-e2e.yaml",
+    ],
+    set = [
+        "apiRs.image.repository=" + local_image("centaur-api-rs"),
+        "ironProxy.image.repository=" + local_image("centaur-iron-proxy"),
+        "slackbotv2.image.repository=" + local_image("centaur-slackbotv2"),
+        "discordbot.image.repository=" + local_image("centaur-discordbot"),
+        "teamsbot.image.repository=" + local_image("centaur-teamsbot"),
+        "sandbox.image.repository=" + local_image("centaur-agent"),
+        "nodeSync.image.repository=" + local_image("centaur-node-sync"),
+        "console.image.repository=" + local_image("centaur-console"),
+    ],
+)
+
+k8s_yaml(rendered)
+
+prefix = RELEASE + "-centaur-"
+k8s_resource(prefix + "postgres")
+k8s_resource(prefix + "repo-cache")
+k8s_resource(prefix + "api-rs", resource_deps = [prefix + "postgres"], port_forwards = ["8080:8080"])
+k8s_resource(prefix + "slackbotv2", resource_deps = [prefix + "api-rs"])
+k8s_resource(prefix + "node-sync", resource_deps = [prefix + "api-rs"])
+k8s_resource(prefix + "console", resource_deps = [prefix + "api-rs"], port_forwards = ["3000:3000"])
+k8s_resource(prefix + "console-worker", resource_deps = [prefix + "console"])

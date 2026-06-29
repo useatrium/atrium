@@ -16,9 +16,14 @@ k3s_ctr := env_var_or_default("CENTAUR_K3S_CTR", "sudo k3s ctr")
 #       docker.io:
 #         endpoint: ["http://localhost:5000"]
 registry := env_var_or_default("CENTAUR_LOCAL_REGISTRY", "localhost:5000")
+kind_cluster := env_var_or_default("CENTAUR_KIND_CLUSTER", "centaur")
 agent_dockerfile := env_var_or_default("CENTAUR_AGENT_DOCKERFILE", "services/sandbox/Dockerfile")
 agent_build_target := env_var_or_default("CENTAUR_AGENT_BUILD_TARGET", "sandbox")
 agent_image := env_var_or_default("CENTAUR_AGENT_IMAGE", "centaur-agent:latest")
+rust_build_profile := env_var_or_default("RUST_BUILD_PROFILE", "debug")
+git_sha := `git rev-parse HEAD`
+dirty_suffix := `if test -n "$(git status --porcelain)"; then printf %s -dirty; fi`
+image_revision := git_sha + dirty_suffix
 
 default:
     just --list
@@ -30,8 +35,8 @@ build:
       just _build-all-sequential
     else
       pids=()
-      for recipe in _build-api-rs _build-iron-proxy _build-slackbotv2 _build-discordbot _build-teamsbot _build-agent _build-console; do
-        just "$recipe" &
+      for recipe in _build-api-rs _build-iron-proxy _build-slackbotv2 _build-discordbot _build-teamsbot _build-agent _build-node-sync _build-console; do
+        just image_revision="{{image_revision}}" "$recipe" &
         pids+=("$!")
       done
       status=0
@@ -42,13 +47,14 @@ build:
     fi
 
 _build-all-sequential:
-    just _build-api-rs
-    just _build-iron-proxy
-    just _build-slackbotv2
-    just _build-discordbot
-    just _build-teamsbot
-    just _build-agent
-    just _build-console
+    just image_revision="{{image_revision}}" _build-api-rs
+    just image_revision="{{image_revision}}" _build-iron-proxy
+    just image_revision="{{image_revision}}" _build-slackbotv2
+    just image_revision="{{image_revision}}" _build-discordbot
+    just image_revision="{{image_revision}}" _build-teamsbot
+    just image_revision="{{image_revision}}" _build-agent
+    just image_revision="{{image_revision}}" _build-node-sync
+    just image_revision="{{image_revision}}" _build-console
 
 build-one service:
     #!/usr/bin/env bash
@@ -60,32 +66,70 @@ build-one service:
       discordbot) just _build-discordbot ;;
       teamsbot) just _build-teamsbot ;;
       agent|sandbox) just _build-agent ;;
+      node-sync) just _build-node-sync ;;
       console) just _build-console ;;
       *) echo "unknown service: {{service}}" >&2; exit 2 ;;
     esac
 
 _build-api-rs:
-    docker build -t centaur-api-rs:latest -f services/api-rs/Dockerfile .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" --build-arg "RUST_BUILD_PROFILE={{rust_build_profile}}" -t centaur-api-rs:latest -f services/api-rs/Dockerfile .
 
 _build-iron-proxy:
-    docker build -t centaur-iron-proxy:latest -f services/iron-proxy/Dockerfile .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" -t centaur-iron-proxy:latest -f services/iron-proxy/Dockerfile .
 
 _build-slackbotv2:
-    docker build -t centaur-slackbotv2:latest -f services/slackbotv2/Dockerfile .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" -t centaur-slackbotv2:latest -f services/slackbotv2/Dockerfile .
 
 _build-discordbot:
-    docker build -t centaur-discordbot:latest -f services/discordbot/Dockerfile .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" -t centaur-discordbot:latest -f services/discordbot/Dockerfile .
 
 _build-teamsbot:
-    docker build -t centaur-teamsbot:latest -f services/teamsbot/Dockerfile .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" -t centaur-teamsbot:latest -f services/teamsbot/Dockerfile .
 
 _build-agent:
-    docker build --target "{{agent_build_target}}" -t "{{agent_image}}" -f "{{agent_dockerfile}}" .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" --build-arg "RUST_BUILD_PROFILE={{rust_build_profile}}" --target "{{agent_build_target}}" -t "{{agent_image}}" -f "{{agent_dockerfile}}" .
+
+# The node-sync image builds from services/api-rs as its context (not the repo
+# root), so services/api-rs/.dockerignore controls the transferred files.
+_build-node-sync:
+    cd services/api-rs && docker build --label "org.opencontainers.image.revision={{image_revision}}" --build-arg "RUST_BUILD_PROFILE={{rust_build_profile}}" -f crates/centaur-node-sync/Dockerfile -t centaur-node-sync:latest .
 
 # The console builds from its own subdirectory context (services/console), unlike
 # the other services which build from the repo root.
 _build-console:
-    docker build -t centaur-console:latest -f services/console/Dockerfile services/console
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" -t centaur-console:latest -f services/console/Dockerfile services/console
+
+build-changed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    head_sha="{{git_sha}}"
+    dirty_suffix="{{dirty_suffix}}"
+    entries=(
+      "api-rs|centaur-api-rs|_build-api-rs"
+      "iron-proxy|centaur-iron-proxy|_build-iron-proxy"
+      "slackbotv2|centaur-slackbotv2|_build-slackbotv2"
+      "discordbot|centaur-discordbot|_build-discordbot"
+      "teamsbot|centaur-teamsbot|_build-teamsbot"
+      "agent|centaur-agent|_build-agent"
+      "node-sync|centaur-node-sync|_build-node-sync"
+      "console|centaur-console|_build-console"
+    )
+    for entry in "${entries[@]}"; do
+      IFS='|' read -r service image recipe <<<"$entry"
+      label="$(docker image inspect "${image}:latest" --format '{{ "{{" }}index .Config.Labels "org.opencontainers.image.revision"{{ "}}" }}' 2>/dev/null || true)"
+      if [[ -z "$dirty_suffix" && "$label" == "$head_sha" ]]; then
+        echo "skip ${service}: ${image}:latest already built from ${head_sha}"
+        continue
+      fi
+      if [[ -n "$dirty_suffix" ]]; then
+        echo "build ${service}: working tree is dirty; stamping ${head_sha}${dirty_suffix}"
+      elif [[ -z "$label" ]]; then
+        echo "build ${service}: ${image}:latest missing revision label"
+      else
+        echo "build ${service}: image revision ${label} != ${head_sha}"
+      fi
+      just image_revision="${head_sha}${dirty_suffix}" "$recipe"
+    done
 
 # Push locally-built images to the local registry under library/ so k3s pulls
 # them via its docker.io mirror. Used by `just up k3s`. Only changed layers are
@@ -93,12 +137,27 @@ _build-console:
 _push-registry:
     #!/usr/bin/env bash
     set -euo pipefail
-    for img in centaur-api-rs centaur-iron-proxy centaur-slackbotv2 centaur-discordbot centaur-teamsbot centaur-agent centaur-console; do
+    for img in centaur-api-rs centaur-iron-proxy centaur-slackbotv2 centaur-discordbot centaur-teamsbot centaur-agent centaur-node-sync centaur-console; do
       target="{{registry}}/library/${img}:latest"
       echo "pushing ${img}:latest -> ${target}..."
       docker tag "${img}:latest" "${target}"
       docker push "${target}"
     done
+
+_ensure-registry:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name=kind-registry
+    if ! docker container inspect "$name" >/dev/null 2>&1; then
+      docker run -d --restart=always -p "127.0.0.1:5000:5000" --name "$name" registry:2 >/dev/null
+    elif [[ -z "$(docker ps --filter "name=^/${name}$" --filter status=running -q)" ]]; then
+      docker start "$name" >/dev/null
+    fi
+    if docker network inspect kind >/dev/null 2>&1; then
+      docker network connect kind "$name" 2>/dev/null || true
+    else
+      echo "kind docker network not found; create/recreate the kind cluster with infra/kind-cluster.yaml before deploying via registry" >&2
+    fi
 
 # Legacy: import locally-built images straight into k3s's containerd (no registry
 # needed). Slower than `_push-registry`; kept as a fallback. Run manually with
@@ -106,9 +165,17 @@ _push-registry:
 _import-k3s:
     #!/usr/bin/env bash
     set -euo pipefail
-    for img in centaur-api-rs centaur-iron-proxy centaur-slackbotv2 centaur-discordbot centaur-teamsbot centaur-agent centaur-console; do
+    for img in centaur-api-rs centaur-iron-proxy centaur-slackbotv2 centaur-discordbot centaur-teamsbot centaur-agent centaur-node-sync centaur-console; do
       echo "importing ${img}:latest into k3s containerd..."
       docker save "${img}:latest" | {{k3s_ctr}} images import -
+    done
+
+_import-kind:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for img in centaur-api-rs centaur-iron-proxy centaur-slackbotv2 centaur-discordbot centaur-teamsbot centaur-agent centaur-node-sync centaur-console; do
+      echo "importing ${img}:latest into kind cluster {{kind_cluster}}..."
+      kind load docker-image --name "{{kind_cluster}}" "${img}:latest"
     done
 
 bootstrap-secrets *args:
@@ -121,6 +188,18 @@ deploy:
     extra_args=()
     case "{{source}}" in
       local) ;;
+      kind)
+        extra_args+=(
+          --set apiRs.image.repository={{registry}}/library/centaur-api-rs
+          --set ironProxy.image.repository={{registry}}/library/centaur-iron-proxy
+          --set slackbotv2.image.repository={{registry}}/library/centaur-slackbotv2
+          --set discordbot.image.repository={{registry}}/library/centaur-discordbot
+          --set teamsbot.image.repository={{registry}}/library/centaur-teamsbot
+          --set sandbox.image.repository={{registry}}/library/centaur-agent
+          --set nodeSync.image.repository={{registry}}/library/centaur-node-sync
+          --set console.image.repository={{registry}}/library/centaur-console
+        )
+        ;;
       ghcr)
         extra_args+=(
           --set apiRs.image.repository=ghcr.io/paradigmxyz/centaur/centaur-api-rs
@@ -129,10 +208,11 @@ deploy:
           --set discordbot.image.repository=ghcr.io/paradigmxyz/centaur/centaur-discordbot
           --set teamsbot.image.repository=ghcr.io/paradigmxyz/centaur/centaur-teamsbot
           --set sandbox.image.repository=ghcr.io/paradigmxyz/centaur/centaur-agent
+          --set nodeSync.image.repository=ghcr.io/paradigmxyz/centaur/centaur-node-sync
           --set console.image.repository=ghcr.io/paradigmxyz/centaur/centaur-console
         )
         ;;
-      *) echo "unknown source: {{source}} (expected local or ghcr)" >&2; exit 2 ;;
+      *) echo "unknown source: {{source}} (expected local, kind, or ghcr)" >&2; exit 2 ;;
     esac
     if [[ -n "${OP_CONNECT_CREDENTIALS_FILE:-}" ]]; then
       extra_args+=(
@@ -159,13 +239,13 @@ deploy:
     fi
     helm upgrade --install {{release}} {{chart}} -n {{namespace}} --create-namespace -f {{dev_values}} ${extra_args[@]+"${extra_args[@]}"}
 
-# Bring up the dev stack; pass `k3s` (just up k3s) to push local images to the
-# local registry (CENTAUR_LOCAL_REGISTRY, default localhost:5000) for k3s to pull.
+# Bring up the dev stack; pass `k3s` or `kind` to push local images to the local
+# registry (CENTAUR_LOCAL_REGISTRY, default localhost:5000) before deploying.
 up import="":
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -n "{{import}}" && "{{import}}" != "k3s" ]]; then
-      echo "unknown argument: {{import}} (expected nothing or 'k3s')" >&2; exit 2
+    if [[ -n "{{import}}" && "{{import}}" != "k3s" && "{{import}}" != "kind" ]]; then
+      echo "unknown argument: {{import}} (expected nothing, 'k3s', or 'kind')" >&2; exit 2
     fi
     just bootstrap-secrets
     case "{{source}}" in
@@ -173,12 +253,57 @@ up import="":
         just build
         if [[ "{{import}}" == "k3s" ]]; then
           just _push-registry
+        elif [[ "{{import}}" == "kind" ]]; then
+          just _ensure-registry
+          just _push-registry
         fi
         ;;
       ghcr) ;;
       *) echo "unknown source: {{source}} (expected local or ghcr)" >&2; exit 2 ;;
     esac
-    just source={{source}} deploy
+    deploy_source="{{source}}"
+    if [[ "{{import}}" == "kind" ]]; then
+      deploy_source=kind
+    fi
+    just source="${deploy_source}" deploy
+
+debug-sandbox:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ns="{{namespace}}"
+    out_dir="${CENTAUR_DEBUG_SANDBOX_DIR:-/tmp}"
+    echo "watching for asbx-* pods in namespace ${ns}; writing describe/logs to ${out_dir}"
+    while true; do
+      pod="$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '$1 ~ /^asbx-/ && $1 !~ /-proxy-/ {print $1; exit}')"
+      if [[ -n "${pod:-}" ]]; then
+        stamp="$(date +%Y%m%dT%H%M%S)"
+        prefix="${out_dir}/${pod}-${stamp}"
+        proxy_pod=""
+        for _ in {1..50}; do
+          proxy_pod="$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk -v p="${pod}-proxy-" 'index($1, p) == 1 {print $1; exit}')"
+          [[ -n "$proxy_pod" ]] && break
+          sleep 0.1
+        done
+        echo "capturing ${pod} -> ${prefix}.{describe,agent.log,iron-proxy.log}"
+        kubectl describe pod -n "$ns" "$pod" > "${prefix}.describe" 2>&1 || true
+        if [[ -n "$proxy_pod" ]]; then
+          kubectl describe pod -n "$ns" "$proxy_pod" > "${prefix}.iron-proxy.describe" 2>&1 || true
+        fi
+        pids=()
+        kubectl logs -n "$ns" "$pod" -c agent --timestamps -f > "${prefix}.agent.log" 2>&1 &
+        pids+=("$!")
+        if [[ -n "$proxy_pod" ]]; then
+          kubectl logs -n "$ns" "$proxy_pod" -c iron-proxy --timestamps -f > "${prefix}.iron-proxy.log" 2>&1 &
+          pids+=("$!")
+        else
+          echo "matching iron-proxy pod was not found for ${pod}" > "${prefix}.iron-proxy.log"
+        fi
+        trap 'kill "${pids[@]}" 2>/dev/null || true' INT TERM EXIT
+        wait "${pids[@]}" || true
+        exit 0
+      fi
+      sleep 0.2
+    done
 
 down:
     kubectl delete namespace {{namespace}} --ignore-not-found --wait

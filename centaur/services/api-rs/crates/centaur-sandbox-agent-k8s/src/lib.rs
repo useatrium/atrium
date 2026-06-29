@@ -15,7 +15,7 @@ use centaur_sandbox_core::{
     MountKind, ObservedSandbox, PrepareClaimedOverlayHome, SandboxBackend, SandboxError,
     SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
 };
-use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};
+use k8s_openapi::api::core::v1::{ContainerStatus, PersistentVolumeClaim, Pod};
 use kube::api::{
     AttachParams, DeleteParams, ListParams, LogParams, Patch, PatchParams, PostParams,
 };
@@ -405,7 +405,9 @@ impl AgentSandboxBackend {
         let replicas = sandbox.spec.replicas.unwrap_or(1);
         let pod = self.get_pod(id).await?;
         let status = sandbox_status_from_pod(replicas, pod.as_ref());
+        let reason = sandbox_reason_from_pod(&status, pod.as_ref());
         Ok(ObservedSandbox::new(id.clone(), BACKEND_NAME, status)
+            .with_reason(reason)
             .with_created_at(sandbox_creation_time(sandbox))
             .with_suspended_since(sandbox_paused_at(sandbox)))
     }
@@ -776,6 +778,107 @@ fn sandbox_status_from_pod(replicas: i32, pod: Option<&Pod>) -> SandboxStatus {
         "unknown" => SandboxStatus::Unknown("unknown".to_owned()),
         other => SandboxStatus::Unknown(other.to_owned()),
     }
+}
+
+fn sandbox_reason_from_pod(status: &SandboxStatus, pod: Option<&Pod>) -> Option<String> {
+    if status.can_open_io() || matches!(status, SandboxStatus::Suspended) {
+        return None;
+    }
+    let pod_status = pod?.status.as_ref()?;
+    let mut parts = Vec::new();
+
+    // The agent pod holds only the `agent` container; iron-proxy runs in a
+    // separate `<id>-proxy-*` pod with its own lifecycle (capture its logs via
+    // `just debug-sandbox`), so the only main-container state available here is
+    // the agent's. Init-container failures (overlay/hydrate/tools setup) are in
+    // this pod and are a common reason a sandbox dies before the agent runs.
+    if let Some(reason) = pod_status
+        .container_statuses
+        .as_deref()
+        .and_then(|statuses| {
+            container_reason(statuses, DEFAULT_CONTAINER_NAME, DEFAULT_CONTAINER_NAME)
+        })
+    {
+        parts.push(reason);
+    }
+
+    if let Some(init_statuses) = pod_status.init_container_statuses.as_deref() {
+        for container in init_statuses {
+            let display_name = format!("init {}", container.name);
+            if let Some(reason) = container_reason(
+                std::slice::from_ref(container),
+                &container.name,
+                &display_name,
+            ) {
+                parts.push(reason);
+            }
+        }
+    }
+
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+fn container_reason(
+    statuses: &[ContainerStatus],
+    container_name: &str,
+    display_name: &str,
+) -> Option<String> {
+    let state = statuses
+        .iter()
+        .find(|status| status.name == container_name)?
+        .state
+        .as_ref()?;
+    if let Some(terminated) = state.terminated.as_ref() {
+        let reason = terminated
+            .reason
+            .as_deref()
+            .map(clean_status_text)
+            .filter(|reason| !reason.is_empty());
+        let message = terminated
+            .message
+            .as_deref()
+            .map(clean_status_text)
+            .filter(|message| !message.is_empty());
+        let mut detail = reason.unwrap_or_else(|| format!("exit {}", terminated.exit_code));
+        if !detail.contains("exit ") {
+            detail = format!("{detail} (exit {})", terminated.exit_code);
+        }
+        if let Some(message) = message {
+            detail = format!("{detail}: {message}");
+        }
+        return Some(format!("{display_name} terminated: {detail}"));
+    }
+    if let Some(waiting) = state.waiting.as_ref() {
+        let reason = waiting
+            .reason
+            .as_deref()
+            .map(clean_status_text)
+            .filter(|reason| !reason.is_empty());
+        let message = waiting
+            .message
+            .as_deref()
+            .map(clean_status_text)
+            .filter(|message| !message.is_empty());
+        return match (reason, message) {
+            (Some(reason), Some(message)) => {
+                Some(format!("{display_name} waiting: {reason}: {message}"))
+            }
+            (Some(reason), None) => Some(format!("{display_name} waiting: {reason}")),
+            (None, Some(message)) => Some(format!("{display_name} waiting: {message}")),
+            (None, None) => None,
+        };
+    }
+    None
+}
+
+fn clean_status_text(value: &str) -> String {
+    const MAX_LEN: usize = 300;
+    let mut text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() > MAX_LEN {
+        text = text.chars().take(MAX_LEN).collect();
+        text.push_str("...");
+    }
+    text
 }
 
 fn pod_ready(pod: &Pod) -> bool {
@@ -1540,7 +1643,9 @@ fn map_kube_error(operation: &str, err: Error) -> SandboxError {
 #[cfg(test)]
 mod tests {
     use centaur_sandbox_core::{Mount, MountKind, ResourceLimits, SandboxSpec};
-    use k8s_openapi::api::core::v1::{PodCondition, PodStatus};
+    use k8s_openapi::api::core::v1::{
+        ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
+    };
 
     use super::*;
 
@@ -2512,6 +2617,45 @@ mod tests {
         assert_eq!(
             sandbox_status_from_pod(1, Some(&failed_pod)),
             SandboxStatus::Stopped
+        );
+    }
+
+    #[test]
+    fn extracts_pod_container_state_reason() {
+        let mut pod = pod_with_phase_and_ready("Failed", false);
+        let status = sandbox_status_from_pod(1, Some(&pod));
+        pod.status.as_mut().unwrap().container_statuses = Some(vec![ContainerStatus {
+            name: DEFAULT_CONTAINER_NAME.to_owned(),
+            state: Some(ContainerState {
+                terminated: Some(ContainerStateTerminated {
+                    exit_code: 1,
+                    reason: Some("Error".to_owned()),
+                    message: Some("missing credentials".to_owned()),
+                    ..ContainerStateTerminated::default()
+                }),
+                ..ContainerState::default()
+            }),
+            ..ContainerStatus::default()
+        }]);
+        // An init-container failure lives in the same (agent) pod and should also
+        // surface — this is a common "died before the agent ran" cause.
+        pod.status.as_mut().unwrap().init_container_statuses = Some(vec![ContainerStatus {
+            name: "overlay-claim-home".to_owned(),
+            state: Some(ContainerState {
+                waiting: Some(ContainerStateWaiting {
+                    reason: Some("CrashLoopBackOff".to_owned()),
+                    message: Some("back-off restarting failed container".to_owned()),
+                }),
+                ..ContainerState::default()
+            }),
+            ..ContainerStatus::default()
+        }]);
+
+        assert_eq!(
+            sandbox_reason_from_pod(&status, Some(&pod)).as_deref(),
+            Some(
+                "agent terminated: Error (exit 1): missing credentials; init overlay-claim-home waiting: CrashLoopBackOff: back-off restarting failed container"
+            )
         );
     }
 
