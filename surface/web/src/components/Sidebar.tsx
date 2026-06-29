@@ -650,8 +650,8 @@ function SettingsPopover({
                 ? `${githubConnection.accountLabel ?? 'Connected'} · ${githubConnectionLabel(githubConnection.tokenKind)}`
                 : connectionsAvailable
                   ? githubConnection?.status === 'needs_auth'
-                    ? 'Reconnect'
-                    : 'Connect'
+                    ? 'Needs auth'
+                    : 'Public read'
                   : 'Unavailable'}
             </span>
           </button>
