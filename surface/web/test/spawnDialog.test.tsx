@@ -341,7 +341,29 @@ describe('SpawnDialog', () => {
         onCancel={() => {}}
         onSpawn={onSpawn}
         providerStatuses={{ codex: connectedCodex }}
-        githubConnection={{ ...connectedGitHub, tokenKind: 'app_installation' }}
+        githubConnection={{
+          ...connectedGitHub,
+          tokenKind: 'app_installation',
+          identities: [
+            {
+              id: 'github:app_installation:12345',
+              provider: 'github',
+              workspaceId: 'workspace-1',
+              active: true,
+              connected: true,
+              status: 'connected',
+              tokenKind: 'app_installation',
+              accountLogin: 'acme',
+              accountLabel: 'acme',
+              scopes: [],
+              capabilities: {},
+              metadata: { installationId: '12345' },
+              lastValidatedAt: null,
+              lastError: null,
+              updatedAt: null,
+            },
+          ],
+        }}
       />,
     );
 
@@ -352,14 +374,15 @@ describe('SpawnDialog', () => {
       target: { value: 'acme/private' },
     });
     fireEvent.change(screen.getByLabelText(/GitHub identity/), {
-      target: { value: 'app_installation' },
+      target: { value: 'github:app_installation:12345' },
     });
-    expect(screen.getByText('GitHub: app install for octo')).toBeTruthy();
+    expect(screen.getByText('GitHub: app install for acme')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
 
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
         githubIdentityMode: 'app_installation',
+        githubIdentityId: 'github:app_installation:12345',
       }),
     );
   });

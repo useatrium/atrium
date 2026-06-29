@@ -9,6 +9,7 @@ import { githubConnectionId, type Connections } from '../connections.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
+import { convergeGitHubExistingIdentityGrant } from '../github-iron-control.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 
@@ -66,6 +67,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       branch?: string;
       repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
       githubIdentityMode?: unknown;
+      githubIdentityId?: unknown;
       agentProfileId?: string;
       agentProfileVersionId?: string;
       clientSpawnId?: unknown;
@@ -99,13 +101,29 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         message: 'githubIdentityMode must be automatic, app_installation, app_user, or pat',
       });
     }
+    const githubIdentityId =
+      typeof body.githubIdentityId === 'string' && body.githubIdentityId.trim() ? body.githubIdentityId.trim() : null;
     const privateRepos = privateGitHubRepos(body);
     const privateRepoRequested = privateRepos.length > 0;
     const spawnWithGitHubState = async () => {
-      const githubConnection =
-        privateRepoRequested || githubIdentityMode !== 'automatic'
+      let githubConnection =
+        privateRepoRequested || githubIdentityMode !== 'automatic' || githubIdentityId
           ? await connectedGitHubForChannel(deps.pool, user.id, channelId)
           : null;
+      if (githubIdentityId) {
+        const selected = await selectGitHubIdentityForSpawn({
+          connections,
+          ironControl,
+          pool: deps.pool,
+          userId: user.id,
+          channelId,
+          identityId: githubIdentityId,
+        });
+        if (!selected.ok) {
+          return reply.code(selected.status).send({ error: selected.error, message: selected.message });
+        }
+        githubConnection = selected.connection;
+      }
       const credentialOwnerUserId = githubConnection?.user_id ?? null;
       if (privateRepoRequested && !githubConnection) {
         return reply.code(409).send({
@@ -248,6 +266,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           branch,
           repos: Array.isArray(body.repos) ? body.repos : undefined,
           githubIdentityMode: resolvedGitHubIdentityMode,
+          githubIdentityId: githubConnection?.connection_id ?? null,
           providerConnectionId,
           providerCredentialUserId: credentialOwnerUserId,
           agentProfileId,
@@ -279,7 +298,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       });
       return reply.code(result.created ? 201 : 200).send({ session: result.session });
     };
-    if (privateRepoRequested || githubIdentityMode !== 'automatic') {
+    if (privateRepoRequested || githubIdentityMode !== 'automatic' || githubIdentityId) {
       const workspaceId = await workspaceIdForChannel(deps.pool, channelId);
       if (!workspaceId) return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
       return connections.withConnectionLock(workspaceId, user.id, 'github', spawnWithGitHubState);
@@ -456,7 +475,73 @@ async function connectedGitHubForChannel(
     [channelId, userId],
   );
   const row = res.rows[0];
-  return row ? { ...row, connection_id: githubConnectionId({ tokenKind: row.token_kind, metadata: row.metadata }) } : null;
+  return row
+    ? { ...row, connection_id: githubConnectionId({ tokenKind: row.token_kind, metadata: row.metadata }) }
+    : null;
+}
+
+async function selectGitHubIdentityForSpawn(args: {
+  connections: Connections;
+  ironControl: IronControlAdminClient;
+  pool: Db;
+  userId: string;
+  channelId: string;
+  identityId: string;
+}): Promise<
+  | {
+      ok: true;
+      connection: {
+        connection_id: string;
+        workspace_id: string;
+        user_id: string;
+        token_kind: string | null;
+        metadata: unknown;
+      };
+    }
+  | { ok: false; status: number; error: string; message: string }
+> {
+  const workspaceId = await workspaceIdForChannel(args.pool, args.channelId);
+  if (!workspaceId) {
+    return { ok: false, status: 404, error: 'channel_not_found', message: 'channel not found' };
+  }
+  const [current] = await args.connections.list(args.userId, workspaceId);
+  const identity = current?.identities.find((item) => item.id === args.identityId);
+  if (!identity) {
+    return { ok: false, status: 404, error: 'github_identity_not_found', message: 'GitHub identity not found' };
+  }
+  const staticSecretId = metadataString(identity.metadata, 'staticSecretId');
+  if (!staticSecretId) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'github_identity_reconnect_required',
+      message: 'Reconnect this GitHub identity before using it for a session.',
+    };
+  }
+  await convergeGitHubExistingIdentityGrant(args.ironControl, {
+    workspaceId,
+    userId: args.userId,
+    staticSecretId,
+    staleStaticSecretIds: await args.connections.gitHubIdentityStaticSecretIds(
+      workspaceId,
+      args.userId,
+      args.identityId,
+    ),
+  });
+  const activated = await args.connections.activateGitHubIdentity(workspaceId, args.userId, args.identityId);
+  if (!activated) {
+    return { ok: false, status: 404, error: 'github_identity_not_found', message: 'GitHub identity not found' };
+  }
+  return {
+    ok: true,
+    connection: {
+      connection_id: activated.id,
+      workspace_id: activated.workspaceId,
+      user_id: args.userId,
+      token_kind: activated.tokenKind,
+      metadata: activated.metadata,
+    },
+  };
 }
 
 function metadataString(metadata: unknown, key: string): string | null {

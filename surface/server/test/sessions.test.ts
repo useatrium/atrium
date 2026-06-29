@@ -456,6 +456,14 @@ async function connectGitHubMetadata(
   tokenKind = 'pat',
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
+  const identityId =
+    tokenKind === 'app_installation' && typeof metadata.installationId === 'string'
+      ? `github:app_installation:${metadata.installationId}`
+      : tokenKind === 'app_installation'
+        ? 'github:app_installation'
+        : tokenKind === 'app_user'
+          ? 'github:app_user'
+          : 'github:pat';
   await pool.query(
     `INSERT INTO user_connections
        (workspace_id, user_id, provider, status, token_kind, account_login, metadata)
@@ -467,6 +475,18 @@ async function connectGitHubMetadata(
          account_login = EXCLUDED.account_login,
          updated_at = now()`,
     [workspaceId, userId, tokenKind, JSON.stringify(metadata)],
+  );
+  await pool.query(
+    `INSERT INTO user_connection_identities
+       (workspace_id, user_id, provider, identity_id, status, token_kind, account_login, metadata, active)
+     VALUES ($1, $2, 'github', $3, 'connected', $4, 'octo-user', $5::jsonb, true)
+     ON CONFLICT (workspace_id, user_id, provider, identity_id) DO UPDATE
+     SET status = EXCLUDED.status,
+         token_kind = EXCLUDED.token_kind,
+         metadata = EXCLUDED.metadata,
+         active = EXCLUDED.active,
+         updated_at = now()`,
+    [workspaceId, userId, identityId, tokenKind, JSON.stringify(metadata)],
   );
 }
 
@@ -1842,6 +1862,72 @@ describe('Phase 2 sessions', () => {
     expect(spawn?.body.metadata).toMatchObject({
       github_identity_mode: 'app_installation',
       provider_connection_id: 'github:app_installation',
+      credential_owner_user_id: fx.userId,
+    });
+    await app.close();
+  });
+
+  it('activates and forwards a selected saved GitHub identity id at spawn', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat', { staticSecretId: 'ssr_active_pat' });
+    await pool.query(
+      `UPDATE user_connection_identities
+          SET active = false
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+      [fx.workspaceId, fx.userId],
+    );
+    await pool.query(
+      `INSERT INTO user_connection_identities
+         (workspace_id, user_id, provider, identity_id, status, token_kind, account_login, metadata, active)
+       VALUES ($1, $2, 'github', 'github:app_installation:12345', 'connected', 'app_installation', 'acme',
+               '{"installationId":"12345","staticSecretId":"ssr_app_install"}'::jsonb, false)`,
+      [fx.workspaceId, fx.userId],
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repo: 'acme/app',
+        githubIdentityMode: 'app_installation',
+        githubIdentityId: 'github:app_installation:12345',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const session = res.json().session;
+    expect(session).toMatchObject({
+      githubIdentityMode: 'app_installation',
+      providerConnectionId: 'github:app_installation:12345',
+    });
+    expect(ironCalls.some((call) => String(call.init.body).includes('ssr_app_install'))).toBe(true);
+    const active = await pool.query<{ identity_id: string }>(
+      `SELECT identity_id
+         FROM user_connection_identities
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github' AND active`,
+      [fx.workspaceId, fx.userId],
+    );
+    expect(active.rows).toEqual([{ identity_id: 'github:app_installation:12345' }]);
+
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
+    expect(spawn?.body.metadata).toMatchObject({
+      github_identity_mode: 'app_installation',
+      provider_connection_id: 'github:app_installation:12345',
       credential_owner_user_id: fx.userId,
     });
     await app.close();

@@ -3,7 +3,13 @@
 // sandbox for the run.
 
 import { useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { AgentProfile, ConnectionStatus, ProviderCredentialProvider, ProviderCredentialStatus } from '../api';
+import type {
+  AgentProfile,
+  ConnectionIdentity,
+  ConnectionStatus,
+  ProviderCredentialProvider,
+  ProviderCredentialStatus,
+} from '../api';
 import { PlusIcon, XIcon } from '../components/icons';
 
 const HARNESSES: { value: string; label: string }[] = [
@@ -20,6 +26,7 @@ export interface SpawnConfig {
   branch?: string;
   repos?: { repo: string; ref?: string; subdir?: string; private?: boolean }[];
   githubIdentityMode?: GitHubIdentityMode;
+  githubIdentityId?: string;
   agentProfileId?: string;
   agentProfileVersionId?: string;
 }
@@ -59,7 +66,7 @@ export function SpawnDialog({
   const [branch, setBranch] = useState('');
   const [repoPrivate, setRepoPrivate] = useState(false);
   const [referenceRepos, setReferenceRepos] = useState<ReferenceRepoInput[]>([]);
-  const [githubIdentityMode, setGitHubIdentityMode] = useState<GitHubIdentityMode>('automatic');
+  const [githubIdentitySelection, setGitHubIdentitySelection] = useState('automatic');
   const [agentProfileId, setAgentProfileId] = useState('');
 
   const claudeStatus = providerStatuses?.['claude-code'];
@@ -76,14 +83,20 @@ export function SpawnDialog({
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
   const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
-  const availableGitHubIdentity = githubConnection?.connected
+  const activeGitHubIdentityMode = githubConnection?.connected
     ? githubIdentityModeForTokenKind(githubConnection.tokenKind)
     : null;
+  const savedGitHubIdentities = githubConnection?.identities ?? [];
+  const selectedGitHubIdentity = savedGitHubIdentities.find((identity) => identity.id === githubIdentitySelection);
+  const selectedGitHubIdentityMode = selectedGitHubIdentity
+    ? githubIdentityModeForTokenKind(selectedGitHubIdentity.tokenKind)
+    : null;
   const githubIdentityOptions = [
-    { value: 'automatic' as const, label: githubAutomaticLabel(availableGitHubIdentity) },
-    ...(availableGitHubIdentity
-      ? [{ value: availableGitHubIdentity, label: githubIdentityModeLabel(availableGitHubIdentity) }]
-      : []),
+    { value: 'automatic', label: githubAutomaticLabel(activeGitHubIdentityMode) },
+    ...savedGitHubIdentities.map((identity) => ({
+      value: identity.id,
+      label: githubSavedIdentityLabel(identity),
+    })),
   ];
   const repoMode = repo.trim()
     ? activeReferenceCount > 0
@@ -129,7 +142,8 @@ export function SpawnDialog({
       ...(trimmedRepo ? { repo: trimmedRepo } : {}),
       ...(trimmedBranch ? { branch: trimmedBranch } : {}),
       ...(repos.length ? { repos } : {}),
-      ...(githubIdentityMode !== 'automatic' ? { githubIdentityMode } : {}),
+      ...(selectedGitHubIdentityMode ? { githubIdentityMode: selectedGitHubIdentityMode } : {}),
+      ...(selectedGitHubIdentity ? { githubIdentityId: selectedGitHubIdentity.id } : {}),
       ...(selectedProfile ? { agentProfileId: selectedProfile.id } : {}),
       ...(selectedProfile?.currentVersionId ? { agentProfileVersionId: selectedProfile.currentVersionId } : {}),
     });
@@ -378,7 +392,7 @@ export function SpawnDialog({
             <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
             {repoScoped && (
               <span className="shrink-0 text-fg-muted">
-                GitHub: {githubIdentitySummary(githubConnection, githubIdentityMode, availableGitHubIdentity)}
+                GitHub: {githubIdentitySummary(githubConnection, selectedGitHubIdentity, activeGitHubIdentityMode)}
               </span>
             )}
           </div>
@@ -389,8 +403,8 @@ export function SpawnDialog({
                 GitHub identity <span className="font-normal normal-case text-fg-muted">· advanced</span>
               </span>
               <select
-                value={githubIdentityMode}
-                onChange={(e) => setGitHubIdentityMode(e.target.value as GitHubIdentityMode)}
+                value={githubIdentitySelection}
+                onChange={(e) => setGitHubIdentitySelection(e.target.value)}
                 className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg outline-none focus:border-edge-strong"
               >
                 {githubIdentityOptions.map((option) => (
@@ -489,11 +503,16 @@ function githubAutomaticLabel(connectedMode: GitHubIdentityMode | null): string 
 
 function githubIdentitySummary(
   connection: ConnectionStatus | undefined,
-  selectedMode: GitHubIdentityMode,
+  selectedIdentity: ConnectionIdentity | undefined,
   automaticMode: GitHubIdentityMode | null,
 ): string {
-  const mode = selectedMode === 'automatic' ? automaticMode : selectedMode;
-  const account = connection?.accountLabel ?? connection?.accountLogin ?? null;
+  const mode = selectedIdentity ? githubIdentityModeForTokenKind(selectedIdentity.tokenKind) : automaticMode;
+  const account =
+    selectedIdentity?.accountLabel ??
+    selectedIdentity?.accountLogin ??
+    connection?.accountLabel ??
+    connection?.accountLogin ??
+    null;
   switch (mode) {
     case 'app_installation':
       return account ? `app install for ${account}` : 'app installation';
@@ -503,5 +522,21 @@ function githubIdentitySummary(
       return account ? `PAT for @${account}` : 'PAT';
     default:
       return 'public read';
+  }
+}
+
+function githubSavedIdentityLabel(identity: ConnectionIdentity): string {
+  const mode = githubIdentityModeForTokenKind(identity.tokenKind);
+  const account = identity.accountLabel ?? identity.accountLogin ?? null;
+  const suffix = identity.active ? ' (active)' : '';
+  switch (mode) {
+    case 'app_installation':
+      return `${account ? `App installation for ${account}` : 'App installation'}${suffix}`;
+    case 'app_user':
+      return `${account ? `GitHub user @${account}` : 'GitHub user'}${suffix}`;
+    case 'pat':
+      return `${account ? `PAT for @${account}` : 'PAT'}${suffix}`;
+    default:
+      return `GitHub${suffix}`;
   }
 }

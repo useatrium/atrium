@@ -381,6 +381,7 @@ export function createApi(opts: ApiOptions = {}) {
       branch?: string;
       repos?: SessionRepoSpec[];
       githubIdentityMode?: 'automatic' | 'app_installation' | 'app_user' | 'pat';
+      githubIdentityId?: string;
       agentProfileId?: string;
       agentProfileVersionId?: string;
       threadRootEventId?: number;
