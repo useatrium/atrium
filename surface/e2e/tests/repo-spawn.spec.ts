@@ -173,3 +173,27 @@ test('configured spawn posts private repo flags and GitHub identity override', a
     ],
   });
 });
+
+test('configured spawn blocks private repos until GitHub is connected', async ({ page }) => {
+  await page.route('**/api/me/connections', async (route) => {
+    const req = route.request();
+    if (req.method() !== 'GET') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ connections: [] }),
+    });
+  });
+  await login(page, unique('repoer-blocked'), 'Repo Blocked Tester');
+
+  await page.getByRole('button', { name: 'New agent' }).click();
+  await page.getByPlaceholder('What should the agent do?').fill('inspect private repo');
+  await page.getByPlaceholder('owner/name').fill(' acme/private ');
+  await page.getByRole('checkbox', { name: 'Private repo' }).check();
+
+  await expect(page.getByText('Connect GitHub before starting a session with private repositories.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start session' })).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Connect GitHub' }).click();
+  await expect(page.getByRole('dialog', { name: 'GitHub connection' })).toBeVisible();
+});
