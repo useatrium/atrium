@@ -50,6 +50,8 @@ import {
   type ProviderAuthRequiredJson,
 } from './provider-credentials.js';
 import { Connections } from './connections.js';
+import { convergeGitHubPublicReadFallback } from './github-iron-control.js';
+import type { IronControlAdminClient } from './iron-control.js';
 import { AgentProfiles } from './agent-profiles.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -231,6 +233,7 @@ export interface SessionRunsOptions {
   questionPushFetchImpl?: typeof fetch;
   providerCredentials?: ProviderCredentials;
   agentProfiles?: AgentProfiles;
+  ironControl?: IronControlAdminClient;
 }
 
 export interface SessionCreateResult {
@@ -354,6 +357,7 @@ export class SessionRuns {
   private readonly questionPushFetchImpl?: typeof fetch;
   private readonly providerCredentials: ProviderCredentials;
   private readonly connections: Connections;
+  private readonly ironControl?: IronControlAdminClient;
   private readonly agentProfiles: AgentProfiles;
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -380,6 +384,7 @@ export class SessionRuns {
     this.providerCredentials =
       options.providerCredentials ?? new ProviderCredentials(this.pool, config.providerCredentialSecret);
     this.connections = new Connections(this.pool);
+    this.ironControl = options.ironControl;
     this.agentProfiles = options.agentProfiles ?? new AgentProfiles(this.pool);
   }
 
@@ -1923,6 +1928,21 @@ export class SessionRuns {
   private async markGitHubNeedsAuth(id: string, message: string | undefined, lastEventId = 0): Promise<boolean> {
     const authMessage =
       message ?? 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.';
+    const before = await this.pool.query<Pick<SessionRow, 'workspace_id' | 'spawned_by' | 'provider_credential_user_id'>>(
+      'SELECT workspace_id, spawned_by, provider_credential_user_id FROM sessions WHERE id = $1',
+      [id],
+    );
+    const owner = before.rows[0]
+      ? {
+          workspaceId: before.rows[0].workspace_id,
+          userId: before.rows[0].provider_credential_user_id ?? before.rows[0].spawned_by,
+        }
+      : null;
+    if (owner && this.ironControl?.configured) {
+      await convergeGitHubPublicReadFallback(this.ironControl, owner).catch((err) => {
+        console.warn('GitHub fallback convergence after auth failure failed', { id, err });
+      });
+    }
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];

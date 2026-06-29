@@ -10,6 +10,7 @@ import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { addWorkspaceMember } from '../src/membership.js';
+import { IronControlAdminClient } from '../src/iron-control.js';
 import { SeededPrng } from './chaosHarness.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -1021,8 +1022,10 @@ describe('Phase 2 sessions', () => {
         },
       },
     ]);
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
     const app = await buildApp({
       pool,
+      ironControl: fakeIronControl(ironCalls),
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
     });
     await app.ready();
@@ -1076,6 +1079,15 @@ describe('Phase 2 sessions', () => {
         reason: 'invalid_token',
       });
     });
+    expect(ironCalls.map((call) => `${call.init.method ?? 'GET'} ${new URL(call.url).pathname}`)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^PUT \/api\/v1\/principals\//),
+        expect.stringMatching(/^DELETE \/api\/v1\/static_secrets\//),
+        expect.stringMatching(/^PUT \/api\/v1\/roles\/github-default$/),
+        expect.stringMatching(/^POST \/api\/v1\/principals\/prn_atrium\/roles$/),
+        expect.stringMatching(/\/effective_config$/),
+      ]),
+    );
     await app.close();
   });
 
@@ -3989,3 +4001,38 @@ describe('session list access control', () => {
     await app.close();
   });
 });
+
+function fakeIronControl(calls: Array<{ url: string; init: RequestInit }>): IronControlAdminClient {
+  return new IronControlAdminClient({
+    baseUrl: 'http://iron.test',
+    apiKey: 'iak_test',
+    fetchImpl: (async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      const path = new URL(String(url)).pathname;
+      if (init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      if (path.endsWith('/effective_config')) {
+        return json({
+          data: {
+            secrets: [{ replace: { proxy_value: 'GITHUB_TOKEN' }, rules: [{ host: 'api.github.com' }] }],
+          },
+        });
+      }
+      if (path.includes('/roles/')) {
+        return json({ data: { id: 'role_github_default', namespace: 'default', foreign_id: 'github-default' } });
+      }
+      if (path.includes('/principals/')) {
+        return json({ data: { id: 'prn_atrium', namespace: 'default', foreign_id: 'atrium-principal' } });
+      }
+      return json({ data: { ok: true } });
+    }) as typeof fetch,
+  });
+}
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}

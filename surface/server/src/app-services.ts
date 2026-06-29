@@ -83,6 +83,7 @@ export function createAppServices(deps: AppServiceDeps): AppServices {
     centaur: new DemoCentaurClient(centaur),
     providerCredentials,
     agentProfiles,
+    ironControl,
   });
   const appRegistry = new AppRegistry(pool, {
     appsOrigin: config.appsOrigin,
