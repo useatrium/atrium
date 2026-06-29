@@ -173,7 +173,7 @@ describe('session pane folds the B_tooltest stream', () => {
 
     expect(screen.getByTestId('provider-auth-banner')).toBeTruthy();
     expect(screen.getByText(/Reconnect GitHub before retrying private repository access/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect GitHub' }));
     expect(onConnectGitHub).toHaveBeenCalled();
   });
 

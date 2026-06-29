@@ -152,7 +152,7 @@ export function ProviderAuthBanner({
             onClick={onConnect}
             className="rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
           >
-            {connected ? 'Reconnect' : `Connect ${providerActionLabel(required.provider)}`}
+            {connected ? 'Reconnect' : providerAuthActionLabel(required.provider)}
           </button>
         )}
       </div>
@@ -170,6 +170,11 @@ function providerActionLabel(provider: SessionProviderAuthRequired['provider']):
   if (provider === 'codex') return 'Codex';
   if (provider === 'github') return 'GitHub';
   return 'Claude';
+}
+
+function providerAuthActionLabel(provider: SessionProviderAuthRequired['provider']): string {
+  if (provider === 'github') return 'Reconnect GitHub';
+  return `Connect ${providerActionLabel(provider)}`;
 }
 
 export function QuestionBanner({
