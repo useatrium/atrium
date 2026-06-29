@@ -378,10 +378,7 @@ export function SpawnDialog({
             <span className="shrink-0 text-fg-muted">mounts under ~/repos</span>
             {repoScoped && (
               <span className="shrink-0 text-fg-muted">
-                GitHub:{' '}
-                {githubIdentityMode === 'automatic'
-                  ? githubAutomaticLabel(availableGitHubIdentity)
-                  : githubIdentityModeLabel(githubIdentityMode)}
+                GitHub: {githubIdentitySummary(githubConnection, githubIdentityMode, availableGitHubIdentity)}
               </span>
             )}
           </div>
@@ -488,4 +485,23 @@ function githubIdentityModeLabel(mode: GitHubIdentityMode): string {
 
 function githubAutomaticLabel(connectedMode: GitHubIdentityMode | null): string {
   return connectedMode ? `Automatic (${githubIdentityModeLabel(connectedMode)})` : 'Automatic (public unless private)';
+}
+
+function githubIdentitySummary(
+  connection: ConnectionStatus | undefined,
+  selectedMode: GitHubIdentityMode,
+  automaticMode: GitHubIdentityMode | null,
+): string {
+  const mode = selectedMode === 'automatic' ? automaticMode : selectedMode;
+  const account = connection?.accountLabel ?? connection?.accountLogin ?? null;
+  switch (mode) {
+    case 'app_installation':
+      return account ? `app install for ${account}` : 'app installation';
+    case 'app_user':
+      return account ? `@${account} as user` : 'GitHub user';
+    case 'pat':
+      return account ? `PAT for @${account}` : 'PAT';
+    default:
+      return 'public read';
+  }
 }

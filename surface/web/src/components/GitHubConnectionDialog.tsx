@@ -21,7 +21,7 @@ export function GitHubConnectionDialog({
   const [installationId, setInstallationId] = useState('');
   const connected = status?.connected === true;
   const needsAuth = status?.status === 'needs_auth';
-  const identityLabel = githubIdentityLabel(status);
+  const activeSummary = githubActiveSummary(status);
   const connectionDetails = githubConnectionDetails(status);
 
   async function run(action: () => Promise<void>) {
@@ -54,7 +54,7 @@ export function GitHubConnectionDialog({
           <div>
             <h2 className="text-sm font-semibold text-fg">GitHub connection</h2>
             <p className="text-2xs text-fg-muted">
-              {connected || needsAuth ? `${status?.accountLabel ?? 'GitHub'} · ${identityLabel}` : 'Use your GitHub account for repository access.'}
+              {connected || needsAuth ? activeSummary : 'Use your GitHub account for repository access.'}
             </p>
           </div>
           <button
@@ -70,14 +70,16 @@ export function GitHubConnectionDialog({
         <div className="space-y-3 px-4 py-3 text-sm text-fg-secondary">
           {!available ? (
             <p className="text-xs leading-relaxed text-fg-muted">
-              GitHub connections are not available on this server yet. You can still start sessions
-              and enter repository names manually.
+              GitHub connections are not available on this server yet. You can still start sessions and enter repository
+              names manually.
             </p>
           ) : connected || needsAuth ? (
             <div className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
-              <div className="font-medium text-fg">{needsAuth ? 'Reconnect required' : 'Connected'}</div>
+              <div className="font-medium text-fg">
+                {needsAuth ? 'Reconnect required' : 'Active for this workspace'}
+              </div>
               <div className="mt-1 text-fg-muted">
-                {status?.accountLabel ?? 'GitHub'} · {identityLabel}
+                {activeSummary}
                 {status?.scopes?.length ? ` · ${status.scopes.join(', ')}` : ''}
               </div>
               {connectionDetails.length > 0 && (
@@ -110,19 +112,27 @@ export function GitHubConnectionDialog({
 
           {available && (
             <div className="space-y-2">
+              {(connected || needsAuth) && (
+                <p className="text-xs leading-relaxed text-fg-muted">
+                  Connecting another GitHub identity replaces the active identity for future sessions in this workspace.
+                </p>
+              )}
               <div className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
-                <div className="font-medium text-fg-secondary">App installation</div>
+                <div className="font-medium text-fg-secondary">Connect an installed Atrium GitHub App</div>
                 <div className="mt-3 space-y-2">
                   <p className="text-fg-muted">
-                    Uses a GitHub App installation token for selected organization repositories.
+                    Use the installation owned by the org or user that should grant repository access.
                   </p>
-                  <input
-                    value={installationId}
-                    onChange={(e) => setInstallationId(e.target.value)}
-                    inputMode="numeric"
-                    placeholder="Installation id"
-                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
-                  />
+                  <label className="block">
+                    <span className="mb-1 block text-2xs font-medium text-fg-muted">Installation ID</span>
+                    <input
+                      value={installationId}
+                      onChange={(e) => setInstallationId(e.target.value)}
+                      inputMode="numeric"
+                      placeholder="12345"
+                      className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                    />
+                  </label>
                   <button
                     type="button"
                     disabled={busy || installationId.trim().length === 0}
@@ -239,14 +249,15 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function githubIdentityLabel(status?: ConnectionStatus): string {
+function githubActiveSummary(status?: ConnectionStatus): string {
+  const account = status?.accountLabel ?? status?.accountLogin ?? null;
   switch (status?.tokenKind) {
     case 'app_installation':
-      return 'App installation';
+      return account ? `App installation for ${account}` : 'App installation';
     case 'app_user':
-      return 'GitHub user';
+      return account ? `@${account} as GitHub user` : 'GitHub user';
     case 'pat':
-      return 'Personal token';
+      return account ? `PAT for @${account}` : 'Personal access token';
     case 'public_read':
       return 'Public read';
     default:

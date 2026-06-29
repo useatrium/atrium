@@ -127,7 +127,7 @@ describe('SpawnDialog', () => {
     });
 
     expect(screen.getByLabelText(/GitHub identity/)).toBeTruthy();
-    expect(screen.getByText('GitHub: Automatic (GitHub user)')).toBeTruthy();
+    expect(screen.getByText('GitHub: @octo as user')).toBeTruthy();
   });
 
   it('emits working and reference repo specs', () => {
@@ -352,7 +352,7 @@ describe('SpawnDialog', () => {
     fireEvent.change(screen.getByLabelText(/GitHub identity/), {
       target: { value: 'app_installation' },
     });
-    expect(screen.getByText('GitHub: App installation')).toBeTruthy();
+    expect(screen.getByText('GitHub: app install for octo')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
 
     expect(onSpawn).toHaveBeenCalledWith(

@@ -64,7 +64,7 @@ describe('GitHubConnectionDialog', () => {
         onDisconnect={async () => {}}
       />,
     );
-    expect(screen.getAllByText(/Personal token/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/PAT for @octo/).length).toBeGreaterThan(0);
   });
 
   it('surfaces reconnect state and the last GitHub auth error', () => {
@@ -78,6 +78,7 @@ describe('GitHubConnectionDialog', () => {
     );
 
     expect(screen.getByText('Reconnect required')).toBeTruthy();
+    expect(screen.getAllByText('@octo as GitHub user').length).toBeGreaterThan(0);
     expect(screen.getByText('token expired')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reconnect GitHub user' })).toBeTruthy();
   });
@@ -94,10 +95,26 @@ describe('GitHubConnectionDialog', () => {
       />,
     );
 
-    fireEvent.change(screen.getByPlaceholderText('Installation id'), { target: { value: '12345' } });
+    fireEvent.change(screen.getByLabelText('Installation ID'), { target: { value: '12345' } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub App' }));
 
     expect(onConnect).toHaveBeenCalledWith({ tokenKind: 'app_installation', installationId: '12345' });
+  });
+
+  it('makes active replacement semantics and App ownership explicit', () => {
+    renderDialog(status({ tokenKind: 'app_installation', accountLabel: 'acme' }));
+
+    expect(screen.getByText('Active for this workspace')).toBeTruthy();
+    expect(screen.getAllByText('App installation for acme').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        'Connecting another GitHub identity replaces the active identity for future sessions in this workspace.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('Connect an installed Atrium GitHub App')).toBeTruthy();
+    expect(
+      screen.getByText('Use the installation owned by the org or user that should grant repository access.'),
+    ).toBeTruthy();
   });
 
   it('shows workspace, validation, and repo access metadata for connected accounts', () => {
