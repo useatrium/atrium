@@ -6,6 +6,7 @@ import {
   countGitHubTokenTransforms,
   githubAppInstallationBrokerCredentialForeignId,
   githubPatSecretForeignId,
+  githubPublicReadSecretForeignId,
 } from '../src/iron-control.js';
 
 function okFetch(calls: Array<{ url: string; init: RequestInit }>) {
@@ -24,6 +25,7 @@ describe('IronControlAdminClient', () => {
     expect(githubPatSecretForeignId('workspace-1', 'user-1')).toBe(
       'github-token-atrium-workspace-workspace-1-user-user-1',
     );
+    expect(githubPublicReadSecretForeignId()).toBe('github-public-read-token');
     expect(githubAppInstallationBrokerCredentialForeignId('workspace-1', '12345')).toBe(
       'github-app-installation-workspace-1-installation-12345',
     );
@@ -88,6 +90,41 @@ describe('IronControlAdminClient', () => {
         source: {
           source_type: 'control_plane',
           secret: 'ghp_secret',
+          config: {},
+        },
+        rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
+      },
+    });
+  });
+
+  it('upserts the GitHub public-read fallback secret as a write-only control-plane source', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test/',
+      apiKey: 'iak_test',
+      fetchImpl: okFetch(calls),
+    });
+
+    await client.upsertGitHubPublicReadSecret({
+      token: 'github-public-token',
+      labels: { provider: 'github', token_kind: 'public_read' },
+    });
+
+    expect(calls[0]!.url).toBe('http://iron.test/api/v1/static_secrets/github-public-read-token');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      data: {
+        namespace: 'default',
+        foreign_id: 'github-public-read-token',
+        name: 'GitHub public-read fallback token',
+        labels: { provider: 'github', token_kind: 'public_read' },
+        replace_config: {
+          proxy_value: 'GITHUB_TOKEN',
+          match_headers: ['Authorization'],
+          require: true,
+        },
+        source: {
+          source_type: 'control_plane',
+          secret: 'github-public-token',
           config: {},
         },
         rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
@@ -302,6 +339,26 @@ describe('IronControlAdminClient', () => {
     ]);
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       data: { principal_id: 'prn_1', static_secret_id: 'ssr_1' },
+    });
+  });
+
+  it('lists role grants and creates role static-secret grants', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test',
+      apiKey: 'iak_test',
+      fetchImpl: okFetch(calls),
+    });
+
+    await client.listRoleGrants('role_1');
+    await client.createRoleStaticGrant('role_1', 'ssr_1');
+
+    expect(calls.map((call) => [call.init.method, call.url])).toEqual([
+      ['GET', 'http://iron.test/api/v1/roles/role_1/grants'],
+      ['POST', 'http://iron.test/api/v1/grants'],
+    ]);
+    expect(JSON.parse(String(calls[1]!.init.body))).toEqual({
+      data: { role_id: 'role_1', static_secret_id: 'ssr_1' },
     });
   });
 

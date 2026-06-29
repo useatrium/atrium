@@ -3,6 +3,7 @@ import {
   atriumPrincipalForeignId,
   githubPatSecretForeignId,
 } from './iron-control.js';
+import { config } from './config.js';
 
 export async function convergeGitHubPatGrant(
   ironControl: IronControlAdminClient,
@@ -89,10 +90,21 @@ async function upsertAtriumGitHubPrincipal(
   });
 }
 
-function upsertGitHubDefaultRole(ironControl: IronControlAdminClient) {
-  return ironControl.upsertRole({
+async function upsertGitHubDefaultRole(ironControl: IronControlAdminClient) {
+  const role = await ironControl.upsertRole({
     foreignId: 'github-default',
     name: 'GitHub public-read fallback',
     labels: { source: 'atrium', provider: 'github', kind: 'fallback' },
   });
+  if (!config.githubPublicReadToken) return role;
+
+  const secret = await ironControl.upsertGitHubPublicReadSecret({
+    token: config.githubPublicReadToken,
+    labels: { source: 'atrium', provider: 'github', token_kind: 'public_read' },
+  });
+  const grants = await ironControl.listRoleGrants(role.id);
+  if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
+    await ironControl.createRoleStaticGrant(role.id, secret.id);
+  }
+  return role;
 }

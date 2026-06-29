@@ -33,6 +33,7 @@ from the installation id and these app credentials:
 GITHUB_APP_ID=...
 GITHUB_APP_PRIVATE_KEY='-----BEGIN RSA PRIVATE KEY-----...'
 GITHUB_APP_PRIVATE_KEY_ID=... # optional
+GITHUB_PUBLIC_READ_TOKEN=... # optional, seeds github-default fallback
 ```
 
 The private key is sent only to iron-control, stored encrypted there, and is not
@@ -49,11 +50,13 @@ worker:
   enabled: true
 ```
 
-Provision the `github-default` role in the same namespace as Surface. It should
-grant only the minimal public-read GitHub fallback secret that replaces the
-placeholder `GITHUB_TOKEN` for `github.com` and `api.github.com`. Do not include
-`github-default` in Centaur's normal startup `assign_role_ids`; Atrium owns
-assignment and removal for workspace/user principals.
+Provision the `github-default` role in the same namespace as Surface. If
+`GITHUB_PUBLIC_READ_TOKEN` is set, Surface seeds the role's minimal public-read
+GitHub fallback secret and role grant idempotently. Otherwise, pre-provision
+that static secret and grant in iron-control. The fallback secret must replace
+the placeholder `GITHUB_TOKEN` for `github.com` and `api.github.com`. Do not
+include `github-default` in Centaur's normal startup `assign_role_ids`; Atrium
+owns assignment and removal for workspace/user principals.
 
 The GitHub infra transform must be removed from
 `centaur/services/api-rs/crates/centaur-iron-proxy/src/infra.yaml` before the

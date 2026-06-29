@@ -116,6 +116,29 @@ export class IronControlAdminClient {
     });
   }
 
+  async upsertGitHubPublicReadSecret(args: {
+    token: string;
+    labels?: Record<string, unknown>;
+  }): Promise<IronControlSecret> {
+    return this.write<IronControlSecret>('PUT', `/api/v1/static_secrets/${githubPublicReadSecretForeignId()}`, {
+      namespace: this.namespace,
+      foreign_id: githubPublicReadSecretForeignId(),
+      name: 'GitHub public-read fallback token',
+      labels: args.labels ?? {},
+      replace_config: {
+        proxy_value: 'GITHUB_TOKEN',
+        match_headers: ['Authorization'],
+        require: true,
+      },
+      source: {
+        source_type: 'control_plane',
+        secret: args.token,
+        config: {},
+      },
+      rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
+    });
+  }
+
   async upsertGitHubBrokerSecret(args: {
     foreignId: string;
     name: string;
@@ -222,6 +245,17 @@ export class IronControlAdminClient {
     return this.getList<IronControlGrant>(`/api/v1/principals/${encodeURIComponent(principalId)}/grants`);
   }
 
+  async listRoleGrants(roleId: string): Promise<IronControlGrant[]> {
+    return this.getList<IronControlGrant>(`/api/v1/roles/${encodeURIComponent(roleId)}/grants`);
+  }
+
+  async createRoleStaticGrant(roleId: string, staticSecretId: string): Promise<IronControlGrant> {
+    return this.write<IronControlGrant>('POST', '/api/v1/grants', {
+      role_id: roleId,
+      static_secret_id: staticSecretId,
+    });
+  }
+
   async deleteGrant(grantId: string): Promise<void> {
     await this.request('DELETE', `/api/v1/grants/${encodeURIComponent(grantId)}`);
   }
@@ -302,6 +336,10 @@ export function atriumPrincipalForeignId(workspaceId: string, userId: string): s
 
 export function githubPatSecretForeignId(workspaceId: string, userId: string): string {
   return `github-token-${atriumPrincipalForeignId(workspaceId, userId)}`;
+}
+
+export function githubPublicReadSecretForeignId(): string {
+  return 'github-public-read-token';
 }
 
 export function githubAppUserBrokerCredentialForeignId(workspaceId: string, userId: string): string {

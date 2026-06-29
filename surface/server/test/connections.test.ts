@@ -16,6 +16,7 @@ const originalGithubAppConfig = {
   appId: config.githubAppId,
   privateKey: config.githubAppPrivateKey,
   privateKeyId: config.githubAppPrivateKeyId,
+  publicReadToken: config.githubPublicReadToken,
 };
 
 beforeAll(async () => {
@@ -45,6 +46,7 @@ afterEach(async () => {
   config.githubAppId = originalGithubAppConfig.appId;
   config.githubAppPrivateKey = originalGithubAppConfig.privateKey;
   config.githubAppPrivateKeyId = originalGithubAppConfig.privateKeyId;
+  config.githubPublicReadToken = originalGithubAppConfig.publicReadToken;
   vi.restoreAllMocks();
   await app.close();
 });
@@ -125,6 +127,7 @@ describe('connections routes', () => {
   });
 
   it('disconnects GitHub back to public-read fallback', async () => {
+    config.githubPublicReadToken = 'github-public-token';
     const cookie = await loginCookie();
     await app.inject({
       method: 'POST',
@@ -152,6 +155,13 @@ describe('connections routes', () => {
       status: 'public_read',
       tokenKind: 'public_read',
     });
+    expect(ironCalls.map((call) => [call.init.method, call.url])).toEqual(
+      expect.arrayContaining([
+        ['PUT', 'http://iron.test/api/v1/static_secrets/github-public-read-token'],
+        ['GET', 'http://iron.test/api/v1/roles/role_github_default/grants'],
+        ['POST', 'http://iron.test/api/v1/grants'],
+      ]),
+    );
   });
 
   it('creates a GitHub App installation broker credential from an installation id', async () => {
