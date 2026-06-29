@@ -46,8 +46,8 @@ Centaur must run with console / iron-control enabled:
 ```yaml
 console:
   enabled: true
-worker:
-  enabled: true
+  worker:
+    enabled: true
 ```
 
 Provision the `github-default` role in the same namespace as Surface. If
