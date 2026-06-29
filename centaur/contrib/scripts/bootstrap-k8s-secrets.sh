@@ -23,11 +23,9 @@ Optional local-dev admin key:
                                (envFrom centaur-infra-env). Re-run with --force
                                or kubectl patch to rotate.
 
-Optional repo-cache GitHub token:
-  GITHUB_TOKEN                 added to centaur-infra-env when present; the
-                               repo-cache DaemonSet reads it (repoCache.githubToken
-                               -> existingSecretName) to clone tool/overlay repos.
-                               Updated on every run when set, so it rotates.
+GitHub tokens are intentionally not seeded into centaur-infra-env. User/session
+GitHub access is owned by iron-control grants; tool/repo-cache credentials must
+use a dedicated Secret referenced by the Helm values when still needed.
 
 Optional Linear bot bootstrap (consumed when linearbot.enabled=true):
   LINEAR_ACCESS_TOKEN          actor=app OAuth token from the Linear agent
@@ -185,10 +183,10 @@ if secret_exists centaur-infra-env; then
   if [[ -n "${LOCAL_DEV_API_KEY:-}" ]]; then
     patch_data+=("\"LOCAL_DEV_API_KEY\":\"$(printf '%s' "$LOCAL_DEV_API_KEY" | base64 | tr -d '\n')\"")
   fi
-  # GITHUB_TOKEN for the repo-cache DaemonSet. Set whenever present so it can be
-  # rotated; harmless when repoCache is disabled.
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    patch_data+=("\"GITHUB_TOKEN\":\"$(printf '%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')\"")
+  if secret_key_present GITHUB_TOKEN; then
+    kubectl -n "$NAMESPACE" patch secret centaur-infra-env --type json \
+      -p '[{"op":"remove","path":"/data/GITHUB_TOKEN"}]' >/dev/null
+    echo "Removed legacy GITHUB_TOKEN from Secret centaur-infra-env in namespace $NAMESPACE"
   fi
   # Discord ingress (discordbot) keys: added when DISCORD_BOT_TOKEN is in the env. DISCORD_* are
   # overwritten on each run (so rotation works); DISCORDBOT_API_KEY is generated once if absent.
@@ -317,9 +315,6 @@ else
   fi
   if [[ -n "${LOCAL_DEV_API_KEY:-}" ]]; then
     secret_args+=(--from-literal=LOCAL_DEV_API_KEY="$LOCAL_DEV_API_KEY")
-  fi
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    secret_args+=(--from-literal=GITHUB_TOKEN="$GITHUB_TOKEN")
   fi
   if [[ -n "${LINEAR_ACCESS_TOKEN:-}" ]]; then
     secret_args+=(--from-literal=LINEAR_ACCESS_TOKEN="$LINEAR_ACCESS_TOKEN")
