@@ -1,8 +1,4 @@
-import {
-  type IronControlAdminClient,
-  atriumPrincipalForeignId,
-  githubPatSecretForeignId,
-} from './iron-control.js';
+import { type IronControlAdminClient, atriumPrincipalForeignId, githubPatSecretForeignId } from './iron-control.js';
 import { config } from './config.js';
 
 export async function convergeGitHubPatGrant(
@@ -22,13 +18,7 @@ export async function convergeGitHubPatGrant(
       atrium_user_id: args.userId,
     },
   });
-  const grants = await ironControl.listPrincipalGrants(principal.id);
-  if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
-    await ironControl.createPrincipalStaticGrant(principal.id, secret.id);
-  }
-  const defaultRole = await upsertGitHubDefaultRole(ironControl);
-  await ironControl.unassignRole(principal.id, defaultRole.id).catch(() => {});
-  await ironControl.verifySingleGitHubTokenTransform(foreignId);
+  await convergeGitHubDirectGrant(ironControl, { principalId: principal.id, staticSecretId: secret.id, foreignId });
 }
 
 export async function convergeGitHubBrokerGrant(
@@ -54,13 +44,31 @@ export async function convergeGitHubBrokerGrant(
       atrium_user_id: args.userId,
     },
   });
-  const grants = await ironControl.listPrincipalGrants(principal.id);
-  if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
-    await ironControl.createPrincipalStaticGrant(principal.id, secret.id);
-  }
-  const defaultRole = await upsertGitHubDefaultRole(ironControl);
+  await convergeGitHubDirectGrant(ironControl, { principalId: principal.id, staticSecretId: secret.id, foreignId });
+}
+
+export async function convergeExistingGitHubDirectGrant(
+  ironControl: IronControlAdminClient,
+  args: { workspaceId: string; userId: string },
+): Promise<void> {
+  const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
+  const principal = await upsertAtriumGitHubPrincipal(ironControl, args);
+  const defaultRole = await convergeGitHubPublicReadRole(ironControl);
   await ironControl.unassignRole(principal.id, defaultRole.id).catch(() => {});
   await ironControl.verifySingleGitHubTokenTransform(foreignId);
+}
+
+async function convergeGitHubDirectGrant(
+  ironControl: IronControlAdminClient,
+  args: { principalId: string; staticSecretId: string; foreignId: string },
+): Promise<void> {
+  const grants = await ironControl.listPrincipalGrants(args.principalId);
+  if (!grants.some((grant) => grant.static_secret_id === args.staticSecretId)) {
+    await ironControl.createPrincipalStaticGrant(args.principalId, args.staticSecretId);
+  }
+  const defaultRole = await convergeGitHubPublicReadRole(ironControl);
+  await ironControl.unassignRole(args.principalId, defaultRole.id).catch(() => {});
+  await ironControl.verifySingleGitHubTokenTransform(args.foreignId);
 }
 
 export async function convergeGitHubPublicReadFallback(
@@ -70,7 +78,7 @@ export async function convergeGitHubPublicReadFallback(
   const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
   const principal = await upsertAtriumGitHubPrincipal(ironControl, args);
   await ironControl.deleteStaticSecret(githubPatSecretForeignId(args.workspaceId, args.userId)).catch(() => {});
-  const defaultRole = await upsertGitHubDefaultRole(ironControl);
+  const defaultRole = await convergeGitHubPublicReadRole(ironControl);
   await ironControl.assignRole(principal.id, defaultRole.id);
   await ironControl.verifySingleGitHubTokenTransform(foreignId);
 }
@@ -90,16 +98,19 @@ async function upsertAtriumGitHubPrincipal(
   });
 }
 
-async function upsertGitHubDefaultRole(ironControl: IronControlAdminClient) {
+export async function convergeGitHubPublicReadRole(
+  ironControl: IronControlAdminClient,
+  publicReadToken = config.githubPublicReadToken,
+) {
   const role = await ironControl.upsertRole({
     foreignId: 'github-default',
     name: 'GitHub public-read fallback',
     labels: { source: 'atrium', provider: 'github', kind: 'fallback' },
   });
-  if (!config.githubPublicReadToken) return role;
+  if (!publicReadToken) return role;
 
   const secret = await ironControl.upsertGitHubPublicReadSecret({
-    token: config.githubPublicReadToken,
+    token: publicReadToken,
     labels: { source: 'atrium', provider: 'github', token_kind: 'public_read' },
   });
   const grants = await ironControl.listRoleGrants(role.id);
