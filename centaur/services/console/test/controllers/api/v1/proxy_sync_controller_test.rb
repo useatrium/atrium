@@ -11,6 +11,11 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     JSON.parse(response.body)
   end
 
+  def secret_transform_secrets(body = json_body)
+    transform = body.fetch("transforms").find { |t| t["name"] == "secrets" }
+    transform ? transform.dig("config", "secrets") : []
+  end
+
   setup do
     @proxy = proxies(:acme_proxy)
 
@@ -25,6 +30,8 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
 
     RequestRule.create!(host: "api.example.com", http_methods: [ "POST" ], paths: [ "/v1/*" ],
                         position: 0, static_secret: @inject)
+    RequestRule.create!(host: "github.com", http_methods: [], paths: [],
+                        position: 0, static_secret: @replace)
   end
 
   test "rejects requests without an Authorization header" do
@@ -37,14 +44,14 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     assert_response :unauthorized
   end
 
-  test "returns config_hash and secrets when no hash is supplied" do
+  test "returns config_hash and ordered secrets transform when no hash is supplied" do
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
 
     body = json_body
     assert_match(/\Asha256:[0-9a-f]{64}\z/, body.fetch("config_hash"))
-    secrets = body.fetch("secrets")
-    assert_equal 2, secrets.length
+    assert_empty body.fetch("secrets")
+    assert_equal 2, secret_transform_secrets(body).length
 
     # Omitted top-level fields stay absent so the proxy no-ops on them.
     refute body.key?("rules")
@@ -59,7 +66,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     assert_response :ok
 
     snapshot = PrincipalSyncConfigSnapshot.find_by!(principal: @proxy.principal)
-    assert_equal @proxy.principal.sync_config_cache_version, snapshot.principal_cache_version
+    assert_equal PrincipalSyncConfigSnapshot.cache_key_version(@proxy.principal), snapshot.principal_cache_version
     assert_equal "s3cr3t-db-pass", snapshot.payload.dig("secrets", 1, "source", "value")
 
     raw = PrincipalSyncConfigSnapshot.connection.select_value(
@@ -81,7 +88,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     end
     assert_response :ok
 
-    entry = json_body.fetch("secrets").find { |s| s.dig("source", "type") == "control_plane" }
+    entry = secret_transform_secrets.find { |s| s.dig("source", "type") == "control_plane" }
     assert_equal "rotated-db-pass", entry.dig("source", "value")
   end
 
@@ -89,7 +96,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
 
-    entry = json_body.fetch("secrets").find { |s| s.dig("source", "type") == "env" }
+    entry = secret_transform_secrets.find { |s| s.dig("source", "type") == "env" }
     refute_nil entry
     assert_equal "GITHUB_TOKEN", entry.dig("source", "var")
     assert_equal({ "header" => "Authorization", "formatter" => "Bearer {{ .Value }}" }, entry["inject"])
@@ -102,15 +109,17 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     refute rule.key?("http_methods")
   end
 
-  test "control_plane source delivers the decrypted value inline" do
+  test "control_plane source delivers the decrypted value inline like a control_plane value" do
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
 
-    entry = json_body.fetch("secrets").find { |s| s.dig("source", "type") == "control_plane" }
+    entry = secret_transform_secrets.find { |s| s.dig("source", "type") == "control_plane" }
     refute_nil entry
     assert_equal "s3cr3t-db-pass", entry.dig("source", "value")
     assert_equal "__DB_PASSWORD__", entry.dig("replace", "proxy_value")
     assert_nil entry["inject"]
+    assert_equal RequestRule::PROXY_DEFAULT_METHODS, entry.fetch("rules").first.fetch("methods")
+    refute_includes entry.fetch("rules").first.fetch("methods"), "CONNECT"
   end
 
   test "matching config_hash returns only the hash, no secrets" do
@@ -127,7 +136,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
   test "stale config_hash returns the full payload" do
     post api_v1_proxy_sync_url, params: { config_hash: "sha256:#{'0' * 64}" }.to_json, headers: auth_headers
     assert_response :ok
-    assert_equal 2, json_body.fetch("secrets").length
+    assert_equal 2, secret_transform_secrets.length
   end
 
   test "secrets without a source are skipped" do
@@ -141,7 +150,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
     # Still only the two sourced secrets.
-    assert_equal 2, json_body.fetch("secrets").length
+    assert_equal 2, secret_transform_secrets.length
   end
 
   test "config_hash is stable across identical requests" do
@@ -226,10 +235,29 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ { "host" => "hooks.example.com", "methods" => [ "POST" ] } ], hmac.dig("config", "rules")
   end
 
-  test "transforms is an empty array when no transform grants exist" do
+  test "transforms includes dynamic allowlist when credential rules exist" do
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
-    assert_equal [], json_body.fetch("transforms")
+    transforms = json_body.fetch("transforms")
+    assert_equal "allowlist", transforms.first.fetch("name")
+    assert_equal [ "api.example.com", "github.com" ], transforms.first.dig("config", "domains")
+  end
+
+  test "proxy baseline transforms are delivered with dynamic allowlist" do
+    ProxyBaseline.create!(
+      namespace: "acme", foreign_id: "infra", name: "Infra",
+      transforms: [ { "name" => "header_allowlist", "config" => { "headers" => [ "authorization" ] } } ],
+      created_by: users(:acme_admin)
+    )
+
+    post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
+    assert_response :ok
+
+    transforms = json_body.fetch("transforms")
+    assert_equal "allowlist", transforms.first.fetch("name")
+    assert_equal [ "api.example.com", "github.com" ], transforms.first.dig("config", "domains")
+    assert_equal "header_allowlist", transforms.second.fetch("name")
+    assert_equal "secrets", transforms.third.fetch("name")
   end
 
   test "postgres carries a DSN entry per granted PgDsnSecret with foreign_id" do
@@ -289,7 +317,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
 
-    ids = json_body.fetch("secrets").map { |s| s.dig("source", "var") || s.dig("source", "type") }
+    ids = secret_transform_secrets.map { |s| s.dig("source", "var") || s.dig("source", "type") }
     role_index = ids.index("PROD_API_KEY")
     refute_nil role_index
     [ "GITHUB_TOKEN", "control_plane" ].each do |direct|
@@ -300,7 +328,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     grants(:acme_infra_prod_api_key).update!(priority: 500)
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
-    bumped = json_body.fetch("secrets").map { |s| s.dig("source", "var") || s.dig("source", "type") }
+    bumped = secret_transform_secrets.map { |s| s.dig("source", "var") || s.dig("source", "type") }
     assert_equal "PROD_API_KEY", bumped.last
   end
 
@@ -351,7 +379,7 @@ class ProxySyncControllerTest < ActionDispatch::IntegrationTest
     post api_v1_proxy_sync_url, params: {}.to_json, headers: auth_headers
     assert_response :ok
 
-    entry = json_body.fetch("secrets").find { |s| s.dig("source", "value") == "token-2" }
+    entry = secret_transform_secrets.find { |s| s.dig("source", "value") == "token-2" }
     refute_nil entry
   end
 end

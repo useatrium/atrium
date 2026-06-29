@@ -537,7 +537,7 @@ module Api
         }
 
         post validate_github_repos_api_v1_static_secret_url(id: ref.oid),
-             params: { data: { repos: [ "acme/private", "acme/missing" ] } }.to_json,
+             params: { data: { repos: [ "https://github.com/acme/private.git", "acme/missing" ] } }.to_json,
              headers: auth_headers
 
         assert_response :ok

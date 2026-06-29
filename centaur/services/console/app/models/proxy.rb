@@ -42,11 +42,19 @@ class Proxy < ApplicationRecord
   # proxy carries no authority and resolves to the empty config. Live secret
   # values are kept inline here because the proxy needs them to resolve.
   def sync_config
-    principal&.effective_config(redact_secrets: false) || Principal::EMPTY_CONFIG
+    config = principal&.effective_config(redact_secrets: false)
+    return Principal::EMPTY_CONFIG unless config
+
+    self.class.merge_proxy_policy(config, namespace: principal.namespace)
   end
 
   def sync_config_snapshot
-    config = principal ? PrincipalSyncConfigSnapshot.fetch_for(principal).payload : Principal::EMPTY_CONFIG
+    config = if principal
+      self.class.merge_proxy_policy(PrincipalSyncConfigSnapshot.fetch_for(principal).payload,
+                                    namespace: principal.namespace)
+    else
+      Principal::EMPTY_CONFIG
+    end
     { config_hash: config_hash_for(config), config: config }
   end
 
@@ -80,6 +88,83 @@ class Proxy < ApplicationRecord
       value.sort_by { |k, _| k.to_s }.to_h.transform_values { |v| canonicalize(v) }
     when Array
       value.map { |v| canonicalize(v) }
+    else
+      value
+    end
+  end
+
+  def self.merge_proxy_policy(config, namespace:)
+    baseline = ProxyBaseline.effective_for(namespace)
+    static_secrets = Array(config["secrets"])
+    credential_transforms = Array(config["transforms"])
+    baseline_transforms = Array(baseline["transforms"])
+
+    allowlist_domains, other_baseline_transforms = split_allowlist_transforms(baseline_transforms)
+    allowlist_domains += domains_from_rules(config)
+    allowlist = allowlist_domains.uniq.sort
+
+    transforms = []
+    transforms << { "name" => "allowlist", "config" => { "domains" => allowlist } } if allowlist.any?
+    transforms += other_baseline_transforms
+    transforms << { "name" => "secrets", "config" => { "secrets" => static_secrets } } if static_secrets.any?
+    transforms += credential_transforms
+
+    {
+      # Keep the proxy sync `secrets` field empty so static secrets are applied
+      # in the explicit transform order above. iron-proxy evaluates the legacy
+      # top-level `secrets` field before `transforms`, which rejects CONNECT
+      # tunnels before the synthesized allowlist can authorize them.
+      "secrets" => [],
+      "transforms" => transforms,
+      "postgres" => Array(config["postgres"])
+    }
+  end
+
+  def self.split_allowlist_transforms(transforms)
+    domains = []
+    others = []
+    transforms.each do |transform|
+      transform = normalize_json_hash(transform)
+      if transform["name"] == "allowlist"
+        domains += Array(transform.dig("config", "domains")).map(&:to_s).reject(&:blank?)
+      else
+        others << transform
+      end
+    end
+    [ domains, others ]
+  end
+
+  def self.domains_from_rules(value)
+    hosts_from_rule_arrays(normalize_json_hash(value)).uniq
+  end
+
+  def self.hosts_from_rule_arrays(value)
+    case value
+    when Hash
+      hosts = []
+      rules = value["rules"]
+      if rules.is_a?(Array)
+        hosts += rules.filter_map do |rule|
+          rule = normalize_json_hash(rule)
+          rule["host"].to_s if rule["host"].present?
+        end
+      end
+      hosts + value.values.flat_map { |v| hosts_from_rule_arrays(v) }
+    when Array
+      value.flat_map { |v| hosts_from_rule_arrays(v) }
+    else
+      []
+    end
+  end
+
+  def self.normalize_json_hash(value)
+    case value
+    when ActionController::Parameters
+      normalize_json_hash(value.to_unsafe_h)
+    when Hash
+      value.transform_keys(&:to_s).transform_values { |v| normalize_json_hash(v) }
+    when Array
+      value.map { |v| normalize_json_hash(v) }
     else
       value
     end

@@ -16,7 +16,7 @@ use crate::models::{
     AwsAuthSecretInput, BrokerCredentialInput, BrokerCredentialRecord, DataEnvelope,
     EffectiveConfig, GcpAuthSecretInput, GcpIdTokenSecretInput, Grant, GrantSecret, Grantee,
     HmacSecretInput, IdentityInput, OAuthTokenSecretInput, PgDsnSecretInput, Principal, Proxy,
-    ProxyInput, Role, SecretRecord, StaticSecretInput,
+    ProxyBaseline, ProxyBaselineInput, ProxyInput, Role, SecretRecord, StaticSecretInput,
 };
 
 const API_PREFIX: &str = "/api/v1";
@@ -451,6 +451,18 @@ impl IronControlClient {
         let path = format!("{API_PREFIX}/proxies/{}", urlencoding::encode(id));
         let resp = self.send(Method::DELETE, &path, None::<&Value>).await?;
         expect_success(resp, Method::DELETE, &path).await
+    }
+
+    // ----- proxy baselines -------------------------------------------------
+
+    /// Upsert a proxy baseline policy by ``foreign_id``.
+    pub async fn upsert_proxy_baseline(&self, input: &ProxyBaselineInput) -> Result<ProxyBaseline> {
+        self.write(
+            Method::PUT,
+            &upsert_path("proxy_baselines", &input.foreign_id),
+            input,
+        )
+        .await
     }
 
     // ----- transport -------------------------------------------------------

@@ -4,6 +4,20 @@ use super::*;
 fn harness_auth_fragments_are_baked_in() {
     let codex = harness_auth_fragment("codex", "api_key").unwrap().unwrap();
     assert!(placeholder_env(&[codex]).is_empty());
+    let codex = harness_auth_fragment("codex", "api_key").unwrap().unwrap();
+    assert!(codex.transforms.iter().any(|transform| {
+        transform.name == "allowlist"
+            && transform
+                .config
+                .extra
+                .get("domains")
+                .and_then(|value| value.as_sequence())
+                .is_some_and(|domains| {
+                    domains
+                        .iter()
+                        .any(|domain| domain.as_str() == Some("chatgpt.com"))
+                })
+    }));
 
     // access_token carries the token-broker credential, not a replace
     // placeholder, so it contributes no sandbox placeholder env.

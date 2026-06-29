@@ -1776,7 +1776,7 @@ describe('Phase 2 sessions', () => {
         task: 'say PONG',
         harness: 'claude-code',
         repos: [
-          { repo: ' acme/app ', ref: ' main ', private: true },
+          { repo: ' https://github.com/acme/app.git ', ref: ' main ', private: true },
           { repo: 'acme/docs', subdir: 'docs' },
         ],
       },
@@ -4647,6 +4647,9 @@ function fakeIronControl(
       }
       if (path.endsWith('/validate_github_repos')) {
         return json({ data: { inaccessible: options.inaccessibleGitHubRepos ?? [] } });
+      }
+      if (path.endsWith('/roles/lookup/default/infra')) {
+        return json({ data: { id: 'role_infra', namespace: 'default', foreign_id: 'infra' } });
       }
       if (path.includes('/roles/')) {
         return json({ data: { id: 'role_github_default', namespace: 'default', foreign_id: 'github-default' } });

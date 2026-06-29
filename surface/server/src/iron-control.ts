@@ -91,6 +91,12 @@ export class IronControlAdminClient {
     });
   }
 
+  async lookupRole(foreignId: string): Promise<IronControlIdentity> {
+    return this.get<IronControlIdentity>(
+      `/api/v1/roles/lookup/${encodeURIComponent(this.namespace)}/${encodeURIComponent(foreignId)}`,
+    );
+  }
+
   async upsertGitHubPatSecret(args: {
     foreignId: string;
     name: string;
@@ -110,7 +116,7 @@ export class IronControlAdminClient {
       source: {
         source_type: 'control_plane',
         secret: args.token,
-        config: {},
+        config: { authorization_format: 'github_basic' },
       },
       rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
     });
@@ -133,7 +139,7 @@ export class IronControlAdminClient {
       source: {
         source_type: 'control_plane',
         secret: args.token,
-        config: {},
+        config: { authorization_format: 'github_basic' },
       },
       rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
     });
@@ -157,7 +163,7 @@ export class IronControlAdminClient {
       },
       source: {
         source_type: 'token_broker',
-        config: tokenBrokerSourceConfig(args.brokerCredentialId, this.namespace),
+        config: { ...tokenBrokerSourceConfig(args.brokerCredentialId, this.namespace), authorization_format: 'github_basic' },
       },
       rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
     });

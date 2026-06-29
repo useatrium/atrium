@@ -1,4 +1,5 @@
 import {
+  IronControlRequestError,
   type IronControlAdminClient,
   atriumPrincipalForeignId,
   githubConnectionSecretForeignId,
@@ -145,7 +146,7 @@ async function upsertAtriumGitHubPrincipal(
   ironControl: IronControlAdminClient,
   args: { workspaceId: string; userId: string },
 ) {
-  return ironControl.upsertPrincipal({
+  const principal = await ironControl.upsertPrincipal({
     foreignId: atriumPrincipalForeignId(args.workspaceId, args.userId),
     name: `Atrium Workspace ${args.workspaceId} User ${args.userId}`,
     labels: {
@@ -153,6 +154,16 @@ async function upsertAtriumGitHubPrincipal(
       atrium_workspace_id: args.workspaceId,
       atrium_user_id: args.userId,
     },
+  });
+  await assignInfraRole(ironControl, principal.id);
+  return principal;
+}
+
+async function assignInfraRole(ironControl: IronControlAdminClient, principalId: string): Promise<void> {
+  const role = await ironControl.lookupRole('infra');
+  await ironControl.assignRole(principalId, role.id).catch((err: unknown) => {
+    if (err instanceof IronControlRequestError && (err.status === 409 || err.status === 422)) return;
+    throw err;
   });
 }
 
