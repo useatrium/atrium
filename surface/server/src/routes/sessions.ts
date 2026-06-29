@@ -5,7 +5,7 @@ import { canAccessChannel, type UserRef } from '../events.js';
 import type { AgentProfiles } from '../agent-profiles.js';
 import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
-import type { Connections } from '../connections.js';
+import { githubConnectionId, type Connections } from '../connections.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
@@ -223,6 +223,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         githubIdentityMode === 'automatic' && githubConnection?.token_kind
           ? githubConnection.token_kind
           : githubIdentityMode;
+      const providerConnectionId =
+        resolvedGitHubIdentityMode !== 'automatic' && githubConnection ? githubConnection.connection_id : null;
       const clientSpawnId =
         typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
       const agentProfileId =
@@ -245,6 +247,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           branch,
           repos: Array.isArray(body.repos) ? body.repos : undefined,
           githubIdentityMode: resolvedGitHubIdentityMode,
+          providerConnectionId,
           providerCredentialUserId: credentialOwnerUserId,
           agentProfileId,
           agentProfileVersionId,
@@ -260,6 +263,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
             branch,
             repos: Array.isArray(body.repos) ? body.repos : undefined,
             githubIdentityMode: resolvedGitHubIdentityMode,
+            providerConnectionId,
             providerCredentialUserId: credentialOwnerUserId,
             agentProfileId,
             agentProfileVersionId,
@@ -431,7 +435,13 @@ async function connectedGitHubForChannel(
   pool: Db,
   userId: string,
   channelId: string,
-): Promise<{ workspace_id: string; user_id: string; token_kind: string | null; metadata: unknown } | null> {
+): Promise<{
+  connection_id: string;
+  workspace_id: string;
+  user_id: string;
+  token_kind: string | null;
+  metadata: unknown;
+} | null> {
   const res = await pool.query<{ workspace_id: string; user_id: string; token_kind: string | null; metadata: unknown }>(
     `SELECT uc.workspace_id, uc.user_id, uc.token_kind, uc.metadata
        FROM channels c
@@ -444,7 +454,8 @@ async function connectedGitHubForChannel(
       LIMIT 1`,
     [channelId, userId],
   );
-  return res.rows[0] ?? null;
+  const row = res.rows[0];
+  return row ? { ...row, connection_id: githubConnectionId({ tokenKind: row.token_kind, metadata: row.metadata }) } : null;
 }
 
 function metadataString(metadata: unknown, key: string): string | null {

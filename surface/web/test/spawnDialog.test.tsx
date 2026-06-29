@@ -17,6 +17,7 @@ const connectedCodex = {
 };
 
 const connectedGitHub = {
+  id: 'github:app_user',
   provider: 'github' as const,
   workspaceId: 'workspace-1',
   connected: true,
@@ -277,6 +278,7 @@ describe('SpawnDialog', () => {
         onSpawn={() => {}}
         providerStatuses={{ codex: connectedCodex }}
         githubConnection={{
+          id: 'github:public_read',
           provider: 'github',
           workspaceId: 'workspace-1',
           connected: false,
@@ -371,6 +373,7 @@ describe('SpawnDialog', () => {
         providerStatuses={{ codex: connectedCodex }}
         githubConnection={{
           ...connectedGitHub,
+          id: 'github:public_read',
           connected: false,
           status: 'public_read',
           tokenKind: 'public_read',
@@ -405,6 +408,7 @@ describe('SpawnDialog', () => {
         providerStatuses={{ codex: connectedCodex }}
         githubConnection={{
           ...connectedGitHub,
+          id: 'github:public_read',
           connected: false,
           status: 'public_read',
           tokenKind: 'public_read',

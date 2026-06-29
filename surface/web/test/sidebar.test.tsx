@@ -117,6 +117,7 @@ describe('Sidebar', () => {
       {
         connectionsAvailable: true,
         githubConnection: {
+          id: 'github:app_installation',
           provider: 'github',
           workspaceId: 'ws-1',
           connected: false,
@@ -154,6 +155,7 @@ describe('Sidebar', () => {
       {
         connectionsAvailable: true,
         githubConnection: {
+          id: 'github:app_installation',
           provider: 'github',
           workspaceId: 'ws-1',
           connected: true,

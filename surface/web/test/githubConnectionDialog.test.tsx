@@ -9,6 +9,7 @@ afterEach(cleanup);
 
 function status(overrides: Partial<ConnectionStatus>): ConnectionStatus {
   return {
+    id: 'github:app_user',
     provider: 'github',
     workspaceId: 'workspace-1',
     connected: true,

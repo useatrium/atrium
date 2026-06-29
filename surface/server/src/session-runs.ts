@@ -397,6 +397,7 @@ export class SessionRuns {
     branch?: string | null;
     repos?: unknown;
     githubIdentityMode?: string | null;
+    providerConnectionId?: string | null;
     providerCredentialUserId?: string | null;
     agentProfileId?: string | null;
     agentProfileVersionId?: string | null;
@@ -421,6 +422,7 @@ export class SessionRuns {
       branch?: string | null;
       repos?: unknown;
       githubIdentityMode?: string | null;
+      providerConnectionId?: string | null;
       providerCredentialUserId?: string | null;
       agentProfileId?: string | null;
       agentProfileVersionId?: string | null;
@@ -480,7 +482,8 @@ export class SessionRuns {
         args.user.id,
         args.clientSpawnId ?? null,
         providerCredentialUserId,
-        args.githubIdentityMode && args.githubIdentityMode !== 'automatic' ? 'github' : null,
+        args.providerConnectionId ??
+          (args.githubIdentityMode && args.githubIdentityMode !== 'automatic' ? 'github' : null),
         args.githubIdentityMode ?? 'automatic',
         selectedProfileVersion?.id ?? null,
       ],

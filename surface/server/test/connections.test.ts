@@ -77,6 +77,7 @@ describe('connections routes', () => {
     expect(res.json().connections).toEqual([
       expect.objectContaining({
         provider: 'github',
+        id: 'github:public_read',
         workspaceId: fx.workspaceId,
         connected: false,
         status: 'public_read',
@@ -112,6 +113,7 @@ describe('connections routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().connection).toMatchObject({
       provider: 'github',
+      id: 'github:pat',
       workspaceId: fx.workspaceId,
       connected: true,
       status: 'connected',
@@ -185,6 +187,7 @@ describe('connections routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().connection).toMatchObject({
       provider: 'github',
+      id: 'github:public_read',
       workspaceId: fx.workspaceId,
       connected: false,
       status: 'public_read',
@@ -229,6 +232,7 @@ describe('connections routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().connection).toMatchObject({
       provider: 'github',
+      id: 'github:app_installation:12345',
       workspaceId: fx.workspaceId,
       connected: true,
       status: 'connected',

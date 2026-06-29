@@ -10,6 +10,7 @@ describe('githubConnectionAuditMetadata', () => {
       actorUserId: 'user-1',
       credentialOwnerUserId: 'user-1',
       connection: {
+        id: 'github:pat',
         provider: 'github',
         workspaceId: 'workspace-1',
         connected: true,

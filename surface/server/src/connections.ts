@@ -8,6 +8,7 @@ export type ConnectionStatusValue = 'connected' | 'needs_auth' | 'public_read' |
 export type ConnectionTokenKind = 'pat' | 'app_installation' | 'app_user' | 'public_read' | (string & {});
 
 export interface ConnectionStatusJson {
+  id: string;
   provider: ConnectionProvider;
   workspaceId: string;
   connected: boolean;
@@ -172,6 +173,7 @@ export function connectionStatusFromRow(
 ): ConnectionStatusJson {
   if (!row) {
     return {
+      id: githubConnectionId({ tokenKind: 'public_read' }),
       provider,
       workspaceId,
       connected: false,
@@ -188,6 +190,7 @@ export function connectionStatusFromRow(
     };
   }
   return {
+    id: githubConnectionId({ tokenKind: row.token_kind, metadata: row.metadata }),
     provider: row.provider,
     workspaceId: row.workspace_id,
     connected: row.status === 'connected',
@@ -204,10 +207,31 @@ export function connectionStatusFromRow(
   };
 }
 
+export function githubConnectionId(args: { tokenKind?: string | null; metadata?: unknown }): string {
+  switch (args.tokenKind) {
+    case 'app_installation': {
+      const installationId = metadataString(args.metadata, 'installationId');
+      return installationId ? `github:app_installation:${installationId}` : 'github:app_installation';
+    }
+    case 'app_user':
+      return 'github:app_user';
+    case 'pat':
+      return 'github:pat';
+    default:
+      return 'github:public_read';
+  }
+}
+
 function normalizeScopes(scopes: readonly string[]): string[] {
   return [...new Set(scopes.map((scope) => scope.trim()).filter(Boolean))].sort();
 }
 
 function plainRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function metadataString(metadata: unknown, key: string): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }

@@ -1770,7 +1770,7 @@ describe('Phase 2 sessions', () => {
       repo: 'acme/app',
       branch: 'main',
       githubIdentityMode: 'pat',
-      providerConnectionId: 'github',
+      providerConnectionId: 'github:pat',
       repos: [
         { repo: 'acme/app', ref: 'main', private: true },
         { repo: 'acme/docs', subdir: 'docs' },
@@ -1789,7 +1789,7 @@ describe('Phase 2 sessions', () => {
     });
     expect(spawn?.body.metadata).toMatchObject({
       github_identity_mode: 'pat',
-      provider_connection_id: 'github',
+      provider_connection_id: 'github:pat',
       credential_owner_user_id: fx.userId,
     });
     await app.close();
@@ -1821,7 +1821,7 @@ describe('Phase 2 sessions', () => {
     const session = res.json().session;
     expect(session).toMatchObject({
       githubIdentityMode: 'app_installation',
-      providerConnectionId: 'github',
+      providerConnectionId: 'github:app_installation',
     });
 
     const row = await pool.query(
@@ -1829,7 +1829,7 @@ describe('Phase 2 sessions', () => {
       [session.id],
     );
     expect(row.rows[0]).toEqual({
-      provider_connection_id: 'github',
+      provider_connection_id: 'github:app_installation',
       provider_credential_user_id: fx.userId,
       github_identity_mode: 'app_installation',
     });
@@ -1840,7 +1840,7 @@ describe('Phase 2 sessions', () => {
     const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
     expect(spawn?.body.metadata).toMatchObject({
       github_identity_mode: 'app_installation',
-      provider_connection_id: 'github',
+      provider_connection_id: 'github:app_installation',
       credential_owner_user_id: fx.userId,
     });
     await app.close();

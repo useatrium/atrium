@@ -76,6 +76,7 @@ export type ConnectionProvider = 'github' | (string & {});
 export type ConnectionTokenKind = 'pat' | 'app_installation' | 'app_user' | 'public_read' | (string & {});
 
 export interface ConnectionStatus {
+  id: string;
   provider: ConnectionProvider;
   workspaceId: string;
   connected: boolean;
