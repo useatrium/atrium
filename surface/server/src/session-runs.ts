@@ -1945,35 +1945,38 @@ export class SessionRuns {
           userId: before.rows[0].provider_credential_user_id ?? before.rows[0].spawned_by,
         }
       : null;
-    if (owner && this.ironControl?.configured) {
-      await convergeGitHubPublicReadFallback(this.ironControl, owner).catch((err) => {
-        console.warn('GitHub fallback convergence after auth failure failed', { id, err });
-      });
-    }
-    const event = await withTx(this.pool, async (client) => {
-      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
-      const row = before.rows[0];
-      if (!row) return null;
-      const ownerId = row.provider_credential_user_id ?? row.spawned_by;
-      await this.connections.markGitHubNeedsAuth(row.workspace_id, ownerId, authMessage, client);
-      await client.query('UPDATE sessions SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
-        lastEventId,
-        id,
-      ]);
-      return appendEvent(client, {
-        workspaceId: row.workspace_id,
-        channelId: row.channel_id,
-        threadRootEventId: row.thread_root_event_id,
-        type: 'session.github_auth_required',
-        actorId: ownerId,
-        payload: {
-          sessionId: id,
-          provider: 'github',
-          userId: ownerId,
-          reason: 'invalid_token',
-          message: authMessage,
-          at: new Date().toISOString(),
-        },
+    if (!owner) return false;
+    const event = await this.connections.withConnectionLock(owner.workspaceId, owner.userId, 'github', async () => {
+      if (this.ironControl?.configured) {
+        await convergeGitHubPublicReadFallback(this.ironControl, owner).catch((err) => {
+          console.warn('GitHub fallback convergence after auth failure failed', { id, err });
+        });
+      }
+      return withTx(this.pool, async (client) => {
+        const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+        const row = before.rows[0];
+        if (!row) return null;
+        const ownerId = row.provider_credential_user_id ?? row.spawned_by;
+        await this.connections.markGitHubNeedsAuth(row.workspace_id, ownerId, authMessage, client);
+        await client.query('UPDATE sessions SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
+          lastEventId,
+          id,
+        ]);
+        return appendEvent(client, {
+          workspaceId: row.workspace_id,
+          channelId: row.channel_id,
+          threadRootEventId: row.thread_root_event_id,
+          type: 'session.github_auth_required',
+          actorId: ownerId,
+          payload: {
+            sessionId: id,
+            provider: 'github',
+            userId: ownerId,
+            reason: 'invalid_token',
+            message: authMessage,
+            at: new Date().toISOString(),
+          },
+        });
       });
     });
     if (!event) return false;

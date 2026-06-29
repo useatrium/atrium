@@ -5,6 +5,7 @@ import { canAccessChannel, type UserRef } from '../events.js';
 import type { AgentProfiles } from '../agent-profiles.js';
 import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
+import type { Connections } from '../connections.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
@@ -14,6 +15,7 @@ type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 export interface SessionRouteDeps {
   pool: Db;
   sessionRuns: SessionRuns;
+  connections: Connections;
   ironControl: IronControlAdminClient;
   agentProfiles: AgentProfiles;
   appRegistry: AppRegistry;
@@ -31,8 +33,17 @@ export interface SessionRouteDeps {
 }
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
-  const { sessionRuns, ironControl, agentProfiles, appRegistry, requireUser, requireSessionAccess, optionalOpId, runMutation } =
-    deps;
+  const {
+    sessionRuns,
+    connections,
+    ironControl,
+    agentProfiles,
+    appRegistry,
+    requireUser,
+    requireSessionAccess,
+    optionalOpId,
+    runMutation,
+  } = deps;
 
   async function sessionAppContext(sessionId: string): Promise<{ workspaceId: string; channelId: string } | null> {
     const res = await deps.pool.query<{ workspace_id: string; channel_id: string }>(
@@ -67,6 +78,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
     }
+    const channelId = body.channelId;
     if (task.trim().length === 0) {
       return reply.code(400).send({ error: 'empty_task', message: 'task is empty' });
     }
@@ -77,7 +89,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
-    if (!(await canAccessChannel(deps.pool, user.id, body.channelId))) {
+    if (!(await canAccessChannel(deps.pool, user.id, channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
     const githubIdentityMode = normalizeGitHubIdentityMode(body.githubIdentityMode);
@@ -89,153 +101,139 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     }
     const privateRepos = privateGitHubRepos(body);
     const privateRepoRequested = privateRepos.length > 0;
-    const githubConnection =
-      privateRepoRequested || githubIdentityMode !== 'automatic'
-        ? await connectedGitHubForChannel(deps.pool, user.id, body.channelId)
-        : null;
-    const credentialOwnerUserId = githubConnection?.user_id ?? null;
-    if (privateRepoRequested && !githubConnection) {
-      return reply.code(409).send({
-        error: 'github_connection_required',
-        message: 'Connect GitHub before starting a session with private repositories.',
-      });
-    }
-    if (
-      githubIdentityMode !== 'automatic' &&
-      (!githubConnection || githubConnection.token_kind !== githubIdentityMode)
-    ) {
-      return reply.code(409).send({
-        error: 'github_identity_unavailable',
-        message: `Connect GitHub with ${githubIdentityMode} credentials before using that identity mode.`,
-      });
-    }
-    if (privateRepoRequested && githubConnection?.token_kind === 'app_installation') {
-      const installationId = metadataString(githubConnection.metadata, 'installationId');
-      if (!installationId) {
+    const spawnWithGitHubState = async () => {
+      const githubConnection =
+        privateRepoRequested || githubIdentityMode !== 'automatic'
+          ? await connectedGitHubForChannel(deps.pool, user.id, channelId)
+          : null;
+      const credentialOwnerUserId = githubConnection?.user_id ?? null;
+      if (privateRepoRequested && !githubConnection) {
         return reply.code(409).send({
-          error: 'github_repo_access_unverified',
-          message: 'Reconnect the GitHub App installation before starting a session with private repositories.',
+          error: 'github_connection_required',
+          message: 'Connect GitHub before starting a session with private repositories.',
         });
       }
-      try {
-        const validation = await validateGitHubAppInstallationRepos(
-          {
-            appId: config.githubAppId,
-            privateKey: config.githubAppPrivateKey,
-            privateKeyId: config.githubAppPrivateKeyId || undefined,
-            installationId,
-          },
-          privateRepos,
-        );
-        if (validation.inaccessible.length > 0) {
-          return reply.code(409).send({
-            error: 'github_repo_inaccessible',
-            message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-            repos: validation.inaccessible,
-          });
-        }
-      } catch (err) {
-        if (err instanceof GitHubRepoValidationError && err.code === 'unconfigured') {
-          return reply.code(503).send({
-            error: 'github_repo_validation_unconfigured',
-            message: 'GitHub App repository validation is not configured.',
-          });
-        }
-        req.log.warn({ err }, 'github repo access validation failed');
-        return reply.code(502).send({
-          error: 'github_repo_validation_failed',
-          message: 'Could not validate GitHub repository access.',
-        });
-      }
-    }
-    if (privateRepoRequested && githubConnection?.token_kind === 'app_user') {
-      const brokerCredentialId = metadataString(githubConnection.metadata, 'brokerCredentialId');
-      if (!brokerCredentialId) {
+      if (
+        githubIdentityMode !== 'automatic' &&
+        (!githubConnection || githubConnection.token_kind !== githubIdentityMode)
+      ) {
         return reply.code(409).send({
-          error: 'github_repo_access_unverified',
-          message: 'Reconnect GitHub before starting a session with private repositories.',
+          error: 'github_identity_unavailable',
+          message: `Connect GitHub with ${githubIdentityMode} credentials before using that identity mode.`,
         });
       }
-      try {
-        const validation = await ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos);
-        if (validation.inaccessible.length > 0) {
+      if (privateRepoRequested && githubConnection?.token_kind === 'app_installation') {
+        const installationId = metadataString(githubConnection.metadata, 'installationId');
+        if (!installationId) {
           return reply.code(409).send({
-            error: 'github_repo_inaccessible',
-            message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-            repos: validation.inaccessible,
+            error: 'github_repo_access_unverified',
+            message: 'Reconnect the GitHub App installation before starting a session with private repositories.',
           });
         }
-      } catch (err) {
-        if (err instanceof IronControlRequestError && err.status === 409) {
+        try {
+          const validation = await validateGitHubAppInstallationRepos(
+            {
+              appId: config.githubAppId,
+              privateKey: config.githubAppPrivateKey,
+              privateKeyId: config.githubAppPrivateKeyId || undefined,
+              installationId,
+            },
+            privateRepos,
+          );
+          if (validation.inaccessible.length > 0) {
+            return reply.code(409).send({
+              error: 'github_repo_inaccessible',
+              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
+              repos: validation.inaccessible,
+            });
+          }
+        } catch (err) {
+          if (err instanceof GitHubRepoValidationError && err.code === 'unconfigured') {
+            return reply.code(503).send({
+              error: 'github_repo_validation_unconfigured',
+              message: 'GitHub App repository validation is not configured.',
+            });
+          }
+          req.log.warn({ err }, 'github repo access validation failed');
+          return reply.code(502).send({
+            error: 'github_repo_validation_failed',
+            message: 'Could not validate GitHub repository access.',
+          });
+        }
+      }
+      if (privateRepoRequested && githubConnection?.token_kind === 'app_user') {
+        const brokerCredentialId = metadataString(githubConnection.metadata, 'brokerCredentialId');
+        if (!brokerCredentialId) {
           return reply.code(409).send({
             error: 'github_repo_access_unverified',
             message: 'Reconnect GitHub before starting a session with private repositories.',
           });
         }
-        req.log.warn({ err }, 'github broker repo access validation failed');
-        return reply.code(502).send({
-          error: 'github_repo_validation_failed',
-          message: 'Could not validate GitHub repository access.',
-        });
-      }
-    }
-    if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
-      try {
-        const validation = await ironControl.validateGitHubStaticSecretRepos(
-          githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id),
-          privateRepos,
-        );
-        if (validation.inaccessible.length > 0) {
-          return reply.code(409).send({
-            error: 'github_repo_inaccessible',
-            message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-            repos: validation.inaccessible,
+        try {
+          const validation = await ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos);
+          if (validation.inaccessible.length > 0) {
+            return reply.code(409).send({
+              error: 'github_repo_inaccessible',
+              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
+              repos: validation.inaccessible,
+            });
+          }
+        } catch (err) {
+          if (err instanceof IronControlRequestError && err.status === 409) {
+            return reply.code(409).send({
+              error: 'github_repo_access_unverified',
+              message: 'Reconnect GitHub before starting a session with private repositories.',
+            });
+          }
+          req.log.warn({ err }, 'github broker repo access validation failed');
+          return reply.code(502).send({
+            error: 'github_repo_validation_failed',
+            message: 'Could not validate GitHub repository access.',
           });
         }
-      } catch (err) {
-        if (err instanceof IronControlRequestError && err.status === 409) {
-          return reply.code(409).send({
-            error: 'github_repo_access_unverified',
-            message: 'Reconnect GitHub before starting a session with private repositories.',
+      }
+      if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
+        try {
+          const validation = await ironControl.validateGitHubStaticSecretRepos(
+            githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id),
+            privateRepos,
+          );
+          if (validation.inaccessible.length > 0) {
+            return reply.code(409).send({
+              error: 'github_repo_inaccessible',
+              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
+              repos: validation.inaccessible,
+            });
+          }
+        } catch (err) {
+          if (err instanceof IronControlRequestError && err.status === 409) {
+            return reply.code(409).send({
+              error: 'github_repo_access_unverified',
+              message: 'Reconnect GitHub before starting a session with private repositories.',
+            });
+          }
+          req.log.warn({ err }, 'github PAT repo access validation failed');
+          return reply.code(502).send({
+            error: 'github_repo_validation_failed',
+            message: 'Could not validate GitHub repository access.',
           });
         }
-        req.log.warn({ err }, 'github PAT repo access validation failed');
-        return reply.code(502).send({
-          error: 'github_repo_validation_failed',
-          message: 'Could not validate GitHub repository access.',
-        });
       }
-    }
-    const clientSpawnId =
-      typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
-    const agentProfileId =
-      typeof body.agentProfileId === 'string' && body.agentProfileId.trim() ? body.agentProfileId.trim() : undefined;
-    const agentProfileVersionId =
-      typeof body.agentProfileVersionId === 'string' && body.agentProfileVersionId.trim()
-        ? body.agentProfileVersionId.trim()
-        : undefined;
-    let createdSession: Awaited<ReturnType<SessionRuns['createSessionInTx']>> | null = null;
-    const result = await runMutation({
-      userId: user.id,
-      opId,
-      opType: 'session.spawn',
-      body: {
-        channelId: body.channelId,
-        threadRootEventId,
-        task,
-        harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
-        repo,
-        branch,
-        repos: Array.isArray(body.repos) ? body.repos : undefined,
-        githubIdentityMode,
-        providerCredentialUserId: credentialOwnerUserId,
-        agentProfileId,
-        agentProfileVersionId,
-        clientSpawnId,
-      },
-      fn: async (client) => {
-        createdSession = await sessionRuns.createSessionInTx(client, {
-          channelId: body.channelId as string,
+      const clientSpawnId =
+        typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
+      const agentProfileId =
+        typeof body.agentProfileId === 'string' && body.agentProfileId.trim() ? body.agentProfileId.trim() : undefined;
+      const agentProfileVersionId =
+        typeof body.agentProfileVersionId === 'string' && body.agentProfileVersionId.trim()
+          ? body.agentProfileVersionId.trim()
+          : undefined;
+      let createdSession: Awaited<ReturnType<SessionRuns['createSessionInTx']>> | null = null;
+      const result = await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.spawn',
+        body: {
+          channelId,
           threadRootEventId,
           task,
           harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
@@ -247,15 +245,37 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           agentProfileId,
           agentProfileVersionId,
           clientSpawnId,
-          user,
-        });
-        return { session: createdSession.session, created: createdSession.created };
-      },
-      onApplied: () => {
-        if (createdSession) sessionRuns.afterCreateSession(createdSession, task);
-      },
-    });
-    return reply.code(result.created ? 201 : 200).send({ session: result.session });
+        },
+        fn: async (client) => {
+          createdSession = await sessionRuns.createSessionInTx(client, {
+            channelId,
+            threadRootEventId,
+            task,
+            harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
+            repo,
+            branch,
+            repos: Array.isArray(body.repos) ? body.repos : undefined,
+            githubIdentityMode,
+            providerCredentialUserId: credentialOwnerUserId,
+            agentProfileId,
+            agentProfileVersionId,
+            clientSpawnId,
+            user,
+          });
+          return { session: createdSession.session, created: createdSession.created };
+        },
+        onApplied: () => {
+          if (createdSession) sessionRuns.afterCreateSession(createdSession, task);
+        },
+      });
+      return reply.code(result.created ? 201 : 200).send({ session: result.session });
+    };
+    if (privateRepoRequested || githubIdentityMode !== 'automatic') {
+      const workspaceId = await workspaceIdForChannel(deps.pool, channelId);
+      if (!workspaceId) return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+      return connections.withConnectionLock(workspaceId, user.id, 'github', spawnWithGitHubState);
+    }
+    return spawnWithGitHubState();
   });
 
   app.get('/api/sessions', async (req, reply) => {
@@ -394,6 +414,13 @@ function privateGitHubRepos(body: {
     if (normalized) repos.add(normalized);
   }
   return [...repos];
+}
+
+async function workspaceIdForChannel(pool: Db, channelId: string): Promise<string | null> {
+  const res = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+    channelId,
+  ]);
+  return res.rows[0]?.workspace_id ?? null;
 }
 
 async function connectedGitHubForChannel(

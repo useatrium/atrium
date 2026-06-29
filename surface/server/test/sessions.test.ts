@@ -561,18 +561,15 @@ function questionResolvedFrame(reason: 'answered' | 'cancelled' | 'empty', event
 }
 
 async function setPendingQuestion(id: string): Promise<void> {
-  await pool.query(
-    `UPDATE sessions SET pending_question = $1 WHERE id = $2`,
-    [
-      JSON.stringify({
-        questionId: 'q-main',
-        turnId: 'turn-1',
-        eventId: 1,
-        questions: questionRequestedFrame().data.questions,
-      }),
-      id,
-    ],
-  );
+  await pool.query(`UPDATE sessions SET pending_question = $1 WHERE id = $2`, [
+    JSON.stringify({
+      questionId: 'q-main',
+      turnId: 'turn-1',
+      eventId: 1,
+      questions: questionRequestedFrame().data.questions,
+    }),
+    id,
+  ]);
 }
 
 async function mirrorArtifactFrame(
@@ -659,10 +656,7 @@ function fakeArtifactStorage() {
 }
 
 async function registerToken(userId: string, token: string): Promise<void> {
-  await pool.query(
-    `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`,
-    [token, userId],
-  );
+  await pool.query(`INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`, [token, userId]);
 }
 
 function okPushFetch() {
@@ -753,6 +747,61 @@ describe('Phase 2 sessions', () => {
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'github_connection_required' });
     expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    await app.close();
+  });
+
+  it('serializes private repo spawn with GitHub connection convergence', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat');
+
+    const lockClient = await pool.connect();
+    await lockClient.query('SELECT pg_advisory_lock(hashtext($1))', [
+      `connection:${fx.workspaceId}:${fx.userId}:github`,
+    ]);
+    let completed = false;
+    const spawn = app
+      .inject({
+        method: 'POST',
+        url: '/api/sessions',
+        headers: { cookie },
+        payload: {
+          channelId: fx.channelId,
+          task: 'say PONG',
+          harness: 'claude-code',
+          repos: [{ repo: 'acme/private', private: true }],
+        },
+      })
+      .then((res) => {
+        completed = true;
+        return res;
+      });
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(completed).toBe(false);
+      expect(ironCalls).toHaveLength(0);
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    } finally {
+      await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [
+        `connection:${fx.workspaceId}:${fx.userId}:github`,
+      ]);
+      lockClient.release();
+    }
+
+    const res = await spawn;
+    expect(res.statusCode).toBe(201);
+    expect(ironCalls.some((call) => call.url.endsWith('/validate_github_repos'))).toBe(true);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
     await app.close();
   });
 
@@ -996,11 +1045,12 @@ describe('Phase 2 sessions', () => {
     await connectClaude(app, cookie, 'oauth-from-test');
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ login: 'octo-user' }), {
-          status: 200,
-          headers: { 'x-oauth-scopes': 'repo, read:user' },
-        }),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ login: 'octo-user' }), {
+            status: 200,
+            headers: { 'x-oauth-scopes': 'repo, read:user' },
+          }),
       ),
     );
 
@@ -1276,9 +1326,7 @@ describe('Phase 2 sessions', () => {
       });
       const completed = await pool.query(`SELECT 1 FROM events WHERE type = 'session.completed'`);
       expect(completed.rowCount).toBe(0);
-      const authEvent = await pool.query(
-        `SELECT payload FROM events WHERE type = 'session.provider_auth_required'`,
-      );
+      const authEvent = await pool.query(`SELECT payload FROM events WHERE type = 'session.provider_auth_required'`);
       expect(authEvent.rows[0].payload).toMatchObject({ sessionId: id, provider: 'claude-code' });
     });
     expect(fake.requests.some((r) => r.path.endsWith('/cancel'))).toBe(true);
@@ -1353,9 +1401,7 @@ describe('Phase 2 sessions', () => {
       });
       const completed = await pool.query(`SELECT 1 FROM events WHERE type = 'session.completed'`);
       expect(completed.rowCount).toBe(0);
-      const authEvent = await pool.query(
-        `SELECT payload FROM events WHERE type = 'session.provider_auth_required'`,
-      );
+      const authEvent = await pool.query(`SELECT payload FROM events WHERE type = 'session.provider_auth_required'`);
       expect(authEvent.rows[0].payload).toMatchObject({ sessionId: id, provider: 'codex' });
     });
     expect(fake.requests.some((r) => r.path.endsWith('/cancel'))).toBe(true);
@@ -1438,9 +1484,7 @@ describe('Phase 2 sessions', () => {
         token_kind: 'app_installation',
         last_error: 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.',
       });
-      const authEvent = await pool.query(
-        `SELECT payload FROM events WHERE type = 'session.github_auth_required'`,
-      );
+      const authEvent = await pool.query(`SELECT payload FROM events WHERE type = 'session.github_auth_required'`);
       expect(authEvent.rows[0].payload).toMatchObject({
         sessionId: id,
         provider: 'github',
@@ -1531,9 +1575,7 @@ describe('Phase 2 sessions', () => {
         token_kind: 'app_installation',
         last_error: 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.',
       });
-      const authEvent = await pool.query(
-        `SELECT payload FROM events WHERE type = 'session.github_auth_required'`,
-      );
+      const authEvent = await pool.query(`SELECT payload FROM events WHERE type = 'session.github_auth_required'`);
       expect(authEvent.rows[0].payload).toMatchObject({
         sessionId: id,
         provider: 'github',
@@ -1588,10 +1630,7 @@ describe('Phase 2 sessions', () => {
     fake.releasePausedExecute();
 
     await waitFor(async () => {
-      const row = await pool.query(
-        'SELECT status, current_execution_id FROM sessions WHERE id = $1',
-        [sessionId],
-      );
+      const row = await pool.query('SELECT status, current_execution_id FROM sessions WHERE id = $1', [sessionId]);
       expect(row.rows[0]).toMatchObject({
         status: 'cancelled',
         current_execution_id: null,
@@ -1629,9 +1668,7 @@ describe('Phase 2 sessions', () => {
       session_repos: [{ repo: 'acme/app', ref: 'dev' }],
     });
 
-    const events = await pool.query('SELECT payload FROM events WHERE type = $1', [
-      'session.spawned',
-    ]);
+    const events = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.spawned']);
     expect(events.rows[0].payload).toMatchObject({
       repo: 'acme/app',
       branch: 'dev',
@@ -1886,9 +1923,7 @@ describe('Phase 2 sessions', () => {
     expect(first.statusCode).toBe(201);
     expect(second.statusCode).toBe(200);
     expect(second.json().session.id).toBe(first.json().session.id);
-    const rows = await pool.query('SELECT id FROM sessions WHERE client_spawn_id = $1', [
-      payload.clientSpawnId,
-    ]);
+    const rows = await pool.query('SELECT id FROM sessions WHERE client_spawn_id = $1', [payload.clientSpawnId]);
     expect(rows.rowCount).toBe(1);
     const events = await pool.query(
       `SELECT id, payload FROM events
@@ -2009,9 +2044,7 @@ describe('Phase 2 sessions', () => {
       expect(mirrored.rows.map((row) => row.frame)).toEqual([frames[0], frames[1], frames[3]]);
       expect(mirrored.rows.every((row) => row.session_id === id && row.created_at instanceof Date)).toBe(true);
 
-      const completed = await pool.query('SELECT payload FROM events WHERE type = $1', [
-        'session.completed',
-      ]);
+      const completed = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.completed']);
       expect(completed.rowCount).toBe(1);
       expect(completed.rows[0].payload).toMatchObject({
         sessionId: id,
@@ -2080,7 +2113,11 @@ describe('Phase 2 sessions', () => {
   });
 
   it('GET /api/sessions/:id/stream closes after replay for a terminal session instead of tailing forever', async () => {
-    const id = await insertSessionRow({ title: 'terminal replay', status: 'completed', currentExecutionId: 'exe_done' });
+    const id = await insertSessionRow({
+      title: 'terminal replay',
+      status: 'completed',
+      currentExecutionId: 'exe_done',
+    });
     await pool.query(
       `INSERT INTO session_events (session_id, centaur_event_id, event_kind, frame)
        VALUES ($1, 10, 'amp_raw_event', $2), ($1, 20, 'execution_state', $3)`,
@@ -2145,9 +2182,7 @@ describe('Phase 2 sessions', () => {
     await app.ready();
 
     await waitFor(async () => {
-      const row = await pool.query('SELECT status, result_text FROM sessions WHERE id = $1', [
-        inserted.rows[0]!.id,
-      ]);
+      const row = await pool.query('SELECT status, result_text FROM sessions WHERE id = $1', [inserted.rows[0]!.id]);
       expect(row.rows[0].status).toBe('completed');
       expect(row.rows[0].result_text).toContain('PONG');
     });
@@ -2221,9 +2256,7 @@ describe('Phase 2 sessions', () => {
       url: `/api/channels/${fx.channelId}/messages`,
       headers: { cookie },
     });
-    const rootRow = (channel.json().events as { id: number; replyCount?: number }[]).find(
-      (e) => e.id === rootId,
-    );
+    const rootRow = (channel.json().events as { id: number; replyCount?: number }[]).find((e) => e.id === rootId);
     expect(rootRow?.replyCount).toBe(1);
     await app.close();
   });
@@ -2303,18 +2336,15 @@ describe('Phase 2 sessions', () => {
     await app.ready();
     await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
 
-    await pool.query(
-      `UPDATE sessions SET pending_question = $1 WHERE id = $2`,
-      [
-        JSON.stringify({
-          questionId: 'q-other',
-          turnId: 'turn-2',
-          eventId: 2,
-          questions: questionRequestedFrame(2).data.questions,
-        }),
-        id,
-      ],
-    );
+    await pool.query(`UPDATE sessions SET pending_question = $1 WHERE id = $2`, [
+      JSON.stringify({
+        questionId: 'q-other',
+        turnId: 'turn-2',
+        eventId: 2,
+        questions: questionRequestedFrame(2).data.questions,
+      }),
+      id,
+    ]);
 
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -2326,12 +2356,7 @@ describe('Phase 2 sessions', () => {
     const root = await pool.query<{ id: number }>(
       `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
        VALUES ($1, $2, 'session.spawned', $3, $4) RETURNING id`,
-      [
-        fx.workspaceId,
-        fx.channelId,
-        fx.userId,
-        JSON.stringify({ sessionId: id, title: 'needs input' }),
-      ],
+      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ sessionId: id, title: 'needs input' })],
     );
     const rootId = root.rows[0]!.id;
     await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, id]);
@@ -2478,9 +2503,7 @@ describe('Phase 2 sessions', () => {
     });
     expect(second.statusCode).toBe(409);
     expect(fake.answers).toHaveLength(1);
-    const answeredEvents = await pool.query('SELECT id FROM events WHERE type = $1', [
-      'session.question_answered',
-    ]);
+    const answeredEvents = await pool.query('SELECT id FROM events WHERE type = $1', ['session.question_answered']);
     expect(answeredEvents.rowCount).toBe(1);
     await app.close();
   });
@@ -2505,10 +2528,7 @@ describe('Phase 2 sessions', () => {
       spawnedBy: alice.userId,
     });
     await setPendingQuestion(id);
-    await pool.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [
-      channel.id,
-      alice.userId,
-    ]);
+    await pool.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [channel.id, alice.userId]);
 
     const res = await app.inject({
       method: 'POST',
@@ -2544,18 +2564,14 @@ describe('Phase 2 sessions', () => {
     expect(res.json().error).toBe('question_not_pending');
     const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].pending_question).toBeNull();
-    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
-      'session.question_resolved',
-    ]);
+    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.question_resolved']);
     expect(resolved.rowCount).toBe(1);
     expect(resolved.rows[0].payload).toMatchObject({
       sessionId: id,
       questionId: 'q-main',
       reason: 'empty',
     });
-    const answered = await pool.query('SELECT id FROM events WHERE type = $1', [
-      'session.question_answered',
-    ]);
+    const answered = await pool.query('SELECT id FROM events WHERE type = $1', ['session.question_answered']);
     expect(answered.rowCount).toBe(0);
     await app.close();
   });
@@ -2586,18 +2602,14 @@ describe('Phase 2 sessions', () => {
     expect(res.json().error).toBe('question_not_pending');
     const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].pending_question).toBeNull();
-    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
-      'session.question_resolved',
-    ]);
+    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.question_resolved']);
     expect(resolved.rowCount).toBe(1);
     expect(resolved.rows[0].payload).toMatchObject({
       sessionId: id,
       questionId: 'q-main',
       reason: 'empty',
     });
-    const answered = await pool.query('SELECT id FROM events WHERE type = $1', [
-      'session.question_answered',
-    ]);
+    const answered = await pool.query('SELECT id FROM events WHERE type = $1', ['session.question_answered']);
     expect(answered.rowCount).toBe(0);
     await app.close();
   });
@@ -2614,9 +2626,7 @@ describe('Phase 2 sessions', () => {
     await waitFor(async () => {
       const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
       expect(row.rows[0].pending_question).toBeNull();
-      const event = await pool.query('SELECT payload FROM events WHERE type = $1', [
-        'session.question_resolved',
-      ]);
+      const event = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.question_resolved']);
       expect(event.rowCount).toBe(1);
       expect(event.rows[0].payload).toMatchObject({
         sessionId: id,
@@ -2763,10 +2773,7 @@ describe('Phase 2 sessions', () => {
     await app.ready();
 
     await waitFor(async () => {
-      const row = await pool.query(
-        'SELECT current_execution_id, centaur_execute_id FROM sessions WHERE id = $1',
-        [id],
-      );
+      const row = await pool.query('SELECT current_execution_id, centaur_execute_id FROM sessions WHERE id = $1', [id]);
       expect(row.rows[0].current_execution_id).toBe('exe_crashed');
       expect(row.rows[0].centaur_execute_id).toBeNull();
     });
@@ -2936,9 +2943,7 @@ describe('Phase 2 sessions', () => {
     const message = fake.requests.find((r) => r.path === '/agent/message');
     expect(message?.body.message_id).toBe(messageId);
     expect(fake.acceptedMessages).toEqual([messageId]);
-    const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [
-      id,
-    ]);
+    const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].centaur_message_id).toBeNull();
     expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
     await app.close();
@@ -2978,10 +2983,9 @@ describe('Phase 2 sessions', () => {
     expect(messages[1]!.body.assignment_generation).toBe(2);
     const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
     expect(spawn?.body.spawn_id).toBe(`spawn-${id}-a1`);
-    const row = await pool.query(
-      'SELECT assignment_generation, current_execution_id FROM sessions WHERE id = $1',
-      [id],
-    );
+    const row = await pool.query('SELECT assignment_generation, current_execution_id FROM sessions WHERE id = $1', [
+      id,
+    ]);
     expect(row.rows[0].assignment_generation).toBe(1);
     expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
     await app.close();
@@ -3299,9 +3303,7 @@ describe('Phase 2 sessions', () => {
     const row = await pool.query('SELECT status, pending_question FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].status).toBe('cancelled');
     expect(row.rows[0].pending_question).toBeNull();
-    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
-      'session.question_resolved',
-    ]);
+    const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.question_resolved']);
     expect(resolved.rowCount).toBe(1);
     expect(resolved.rows[0].payload).toMatchObject({
       sessionId: id,
@@ -3440,9 +3442,7 @@ describe('Phase 2 sessions', () => {
     });
     expect(create.statusCode).toBe(202);
 
-    const added = await pool.query(
-      "SELECT actor_id, payload FROM events WHERE type = 'session.suggestion_added'",
-    );
+    const added = await pool.query("SELECT actor_id, payload FROM events WHERE type = 'session.suggestion_added'");
     expect(added.rows).toHaveLength(1);
     expect(added.rows[0].actor_id).toBe(bob.userId);
     const suggestionId = added.rows[0].payload.suggestionId as string;
@@ -3486,10 +3486,9 @@ describe('Phase 2 sessions', () => {
     });
     expect(send.statusCode).toBe(202);
 
-    const row = await pool.query(
-      'SELECT status, resolved_by, sent_text FROM session_suggestions WHERE id = $1',
-      [suggestionId],
-    );
+    const row = await pool.query('SELECT status, resolved_by, sent_text FROM session_suggestions WHERE id = $1', [
+      suggestionId,
+    ]);
     expect(row.rows[0]).toMatchObject({
       status: 'sent',
       resolved_by: alice.userId,
@@ -3535,9 +3534,7 @@ describe('Phase 2 sessions', () => {
       headers: { cookie: bob.cookie },
       payload: { text: 'maybe try X' },
     });
-    const added = await pool.query(
-      "SELECT payload FROM events WHERE type = 'session.suggestion_added'",
-    );
+    const added = await pool.query("SELECT payload FROM events WHERE type = 'session.suggestion_added'");
     const suggestionId = added.rows[0].payload.suggestionId as string;
 
     const dismiss = await app.inject({
@@ -3549,10 +3546,9 @@ describe('Phase 2 sessions', () => {
     expect(dismiss.statusCode).toBe(202);
 
     // Dismissed rows persist (retro value), with the reason recorded.
-    const row = await pool.query(
-      'SELECT status, resolved_by, note FROM session_suggestions WHERE id = $1',
-      [suggestionId],
-    );
+    const row = await pool.query('SELECT status, resolved_by, note FROM session_suggestions WHERE id = $1', [
+      suggestionId,
+    ]);
     expect(row.rows[0]).toMatchObject({
       status: 'dismissed',
       resolved_by: alice.userId,
@@ -3608,9 +3604,7 @@ describe('Phase 2 sessions', () => {
     expect((await post()).statusCode).toBe(202);
     const rows = await pool.query('SELECT id FROM session_suggestions WHERE session_id = $1', [id]);
     expect(rows.rows).toHaveLength(1);
-    const events = await pool.query(
-      "SELECT id FROM events WHERE type = 'session.suggestion_added'",
-    );
+    const events = await pool.query("SELECT id FROM events WHERE type = 'session.suggestion_added'");
     expect(events.rows).toHaveLength(1);
     await app.close();
   });
@@ -3671,9 +3665,7 @@ describe('Phase 2 sessions', () => {
     });
     expect(propose.statusCode).toBe(202);
 
-    const proposed = await pool.query(
-      "SELECT actor_id, payload FROM events WHERE type = 'session.answer_proposed'",
-    );
+    const proposed = await pool.query("SELECT actor_id, payload FROM events WHERE type = 'session.answer_proposed'");
     expect(proposed.rows).toHaveLength(1);
     expect(proposed.rows[0].actor_id).toBe(bob.userId);
     const proposalId = proposed.rows[0].payload.proposalId as string;
@@ -3725,19 +3717,14 @@ describe('Phase 2 sessions', () => {
     });
     const sessRow = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
     expect(sessRow.rows[0].pending_question).toBeNull();
-    const propRow = await pool.query(
-      'SELECT status, resolved_by FROM session_answer_proposals WHERE id = $1',
-      [proposalId],
-    );
+    const propRow = await pool.query('SELECT status, resolved_by FROM session_answer_proposals WHERE id = $1', [
+      proposalId,
+    ]);
     expect(propRow.rows[0]).toMatchObject({ status: 'submitted', resolved_by: fx.userId });
-    const answered = await pool.query(
-      "SELECT actor_id FROM events WHERE type = 'session.question_answered'",
-    );
+    const answered = await pool.query("SELECT actor_id FROM events WHERE type = 'session.question_answered'");
     expect(answered.rows).toHaveLength(1);
     expect(answered.rows[0].actor_id).toBe(fx.userId);
-    const resolved = await pool.query(
-      "SELECT payload FROM events WHERE type = 'session.answer_proposal_resolved'",
-    );
+    const resolved = await pool.query("SELECT payload FROM events WHERE type = 'session.answer_proposal_resolved'");
     expect(resolved.rows).toHaveLength(1);
     expect(resolved.rows[0].payload).toMatchObject({ proposalId, status: 'submitted' });
 
@@ -3769,9 +3756,7 @@ describe('Phase 2 sessions', () => {
       payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
     });
     expect(propose.statusCode).toBe(202);
-    const proposed = await pool.query(
-      "SELECT payload FROM events WHERE type = 'session.answer_proposed'",
-    );
+    const proposed = await pool.query("SELECT payload FROM events WHERE type = 'session.answer_proposed'");
     const proposalId = proposed.rows[0].payload.proposalId as string;
     fake.rejectNextAnswerQuestionNotPending();
 
@@ -3786,13 +3771,9 @@ describe('Phase 2 sessions', () => {
     expect(submit.json().error).toBe('question_not_pending');
     const sessRow = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
     expect(sessRow.rows[0].pending_question).toBeNull();
-    const propRow = await pool.query('SELECT status FROM session_answer_proposals WHERE id = $1', [
-      proposalId,
-    ]);
+    const propRow = await pool.query('SELECT status FROM session_answer_proposals WHERE id = $1', [proposalId]);
     expect(propRow.rows[0].status).toBe('pending');
-    const questionResolved = await pool.query(
-      "SELECT payload FROM events WHERE type = 'session.question_resolved'",
-    );
+    const questionResolved = await pool.query("SELECT payload FROM events WHERE type = 'session.question_resolved'");
     expect(questionResolved.rows).toHaveLength(1);
     expect(questionResolved.rows[0].payload).toMatchObject({
       sessionId: id,
@@ -3842,9 +3823,7 @@ describe('Phase 2 sessions', () => {
       headers: { cookie: bob.cookie },
       payload: { questionId: 'q-main', answers: { choice: { answers: ['Fast'] } } },
     });
-    const proposed = await pool.query(
-      "SELECT payload FROM events WHERE type = 'session.answer_proposed'",
-    );
+    const proposed = await pool.query("SELECT payload FROM events WHERE type = 'session.answer_proposed'");
     const proposalId = proposed.rows[0].payload.proposalId as string;
 
     const dismiss = await app.inject({
@@ -3854,10 +3833,9 @@ describe('Phase 2 sessions', () => {
       payload: { action: 'dismiss', note: 'wrong option' },
     });
     expect(dismiss.statusCode).toBe(202);
-    const row = await pool.query(
-      'SELECT status, resolved_by, note FROM session_answer_proposals WHERE id = $1',
-      [proposalId],
-    );
+    const row = await pool.query('SELECT status, resolved_by, note FROM session_answer_proposals WHERE id = $1', [
+      proposalId,
+    ]);
     expect(row.rows[0]).toMatchObject({ status: 'dismissed', resolved_by: fx.userId, note: 'wrong option' });
     // Dismiss doesn't answer the question — it stays pending and Centaur is untouched.
     const sess = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
@@ -4030,18 +4008,27 @@ describe('Phase 2 sessions', () => {
     expect(JSON.stringify(record.transcript)).toContain('do the thing');
 
     // Work products: the file edit is derived into record.changes.
-    expect(record.changes).toEqual([
-      expect.objectContaining({ path: 'src/app.ts', kind: 'update', toolName: 'Edit' }),
-    ]);
+    expect(record.changes).toEqual([expect.objectContaining({ path: 'src/app.ts', kind: 'update', toolName: 'Edit' })]);
 
     // Work products: the shell op is classified into record.sideEffects.
     expect(record.sideEffects).toEqual([
-      expect.objectContaining({ command: 'npm install lodash', category: 'package', risk: 'caution', toolName: 'Bash' }),
+      expect.objectContaining({
+        command: 'npm install lodash',
+        category: 'package',
+        risk: 'caution',
+        toolName: 'Bash',
+      }),
     ]);
 
     // Work products: the captured file is surfaced in record.artifacts (path stripped).
     expect(record.artifacts).toEqual([
-      expect.objectContaining({ id: 'art-1', path: 'out/chart.png', kind: 'created', mime: 'image/png', ref: 'blob-art-1' }),
+      expect.objectContaining({
+        id: 'art-1',
+        path: 'out/chart.png',
+        kind: 'created',
+        mime: 'image/png',
+        ref: 'blob-art-1',
+      }),
     ]);
 
     // Overlay: the dismissed suggestion (all statuses) with its rationale.
@@ -4055,9 +4042,7 @@ describe('Phase 2 sessions', () => {
     ]);
 
     // Seat + question history.
-    expect(record.seatHistory).toEqual([
-      expect.objectContaining({ to: bob.userId, reason: 'granted' }),
-    ]);
+    expect(record.seatHistory).toEqual([expect.objectContaining({ to: bob.userId, reason: 'granted' })]);
     expect(record.questionHistory.some((e: { kind: string }) => e.kind === 'answered')).toBe(true);
 
     // Participants resolve every referenced id to a display name.
@@ -4095,12 +4080,8 @@ describe('Phase 2 sessions', () => {
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe(
-      `https://storage.local/get/${encodeURIComponent(s3Key)}?inline=1`,
-    );
-    expect(s3.presignCalls).toEqual([
-      { key: s3Key, filename: 'chart.png', inline: true },
-    ]);
+    expect(res.headers.location).toBe(`https://storage.local/get/${encodeURIComponent(s3Key)}?inline=1`);
+    expect(s3.presignCalls).toEqual([{ key: s3Key, filename: 'chart.png', inline: true }]);
     expect(fake.requests.some((r) => r.path.includes('/artifacts/'))).toBe(false);
     await app.close();
   });
@@ -4202,7 +4183,7 @@ describe('Phase 2 sessions', () => {
     }
   });
 
-  it("allows cancel by driver who is not spawner and rejects a random third user", async () => {
+  it('allows cancel by driver who is not spawner and rejects a random third user', async () => {
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
@@ -4296,9 +4277,7 @@ describe('session access control', () => {
     });
     expect(asBob.statusCode).toBe(200);
     expect(asCara.statusCode).toBe(200);
-    expect(asBob.json().sessions.map((s: { id: string }) => s.id)).toEqual(
-      expect.arrayContaining([publicId, dmId]),
-    );
+    expect(asBob.json().sessions.map((s: { id: string }) => s.id)).toEqual(expect.arrayContaining([publicId, dmId]));
     expect(asCara.json().sessions.map((s: { id: string }) => s.id)).toContain(publicId);
     expect(asCara.json().sessions.map((s: { id: string }) => s.id)).not.toContain(dmId);
     await app.close();
@@ -4384,10 +4363,7 @@ describe('session access control', () => {
       url: '/api/sessions?status=running',
       headers: { cookie: alice.cookie },
     });
-    expect(running.json().sessions.map((s: { id: string }) => s.id)).toEqual([
-      queuedNewer,
-      runningOlder,
-    ]);
+    expect(running.json().sessions.map((s: { id: string }) => s.id)).toEqual([queuedNewer, runningOlder]);
 
     const recent = await app.inject({
       method: 'GET',
