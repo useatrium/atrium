@@ -5,6 +5,7 @@ import {
   atriumPrincipalForeignId,
   countGitHubTokenTransforms,
   githubAppInstallationBrokerCredentialForeignId,
+  githubConnectionSecretForeignId,
   githubPatSecretForeignId,
   githubPublicReadSecretForeignId,
 } from '../src/iron-control.js';
@@ -24,6 +25,9 @@ describe('IronControlAdminClient', () => {
     expect(atriumPrincipalForeignId('workspace-1', 'user-1')).toBe('atrium-workspace-workspace-1-user-user-1');
     expect(githubPatSecretForeignId('workspace-1', 'user-1')).toBe(
       'github-token-atrium-workspace-workspace-1-user-user-1',
+    );
+    expect(githubConnectionSecretForeignId('workspace-1', 'user-1', 'github:app_installation:12345')).toBe(
+      'github-token-atrium-workspace-workspace-1-user-user-1-github-app_installation-12345',
     );
     expect(githubPublicReadSecretForeignId()).toBe('github-public-read-token');
     expect(githubAppInstallationBrokerCredentialForeignId('workspace-1', '12345')).toBe(
@@ -73,9 +77,7 @@ describe('IronControlAdminClient', () => {
       labels: { provider: 'github' },
     });
 
-    expect(calls[0]!.url).toBe(
-      'http://iron.test/api/v1/static_secrets/github-token-atrium-workspace-ws-user-user',
-    );
+    expect(calls[0]!.url).toBe('http://iron.test/api/v1/static_secrets/github-token-atrium-workspace-ws-user-user');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       data: {
         namespace: 'default',
@@ -247,7 +249,9 @@ describe('IronControlAdminClient', () => {
       labels: { provider: 'github', token_kind: 'app_installation' },
     });
 
-    expect(calls[0]!.url).toBe('http://iron.test/api/v1/broker_credentials/github-app-installation-ws-installation-12345');
+    expect(calls[0]!.url).toBe(
+      'http://iron.test/api/v1/broker_credentials/github-app-installation-ws-installation-12345',
+    );
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       data: {
         namespace: 'default',
@@ -300,7 +304,9 @@ describe('IronControlAdminClient', () => {
       }) as unknown as typeof fetch,
     });
 
-    await expect(client.validateGitHubStaticSecretRepos('github-token-user', ['acme/private', 'acme/missing'])).resolves.toEqual({
+    await expect(
+      client.validateGitHubStaticSecretRepos('github-token-user', ['acme/private', 'acme/missing']),
+    ).resolves.toEqual({
       inaccessible: ['acme/missing'],
     });
     expect(calls[0]!.url).toBe('http://iron.test/api/v1/static_secrets/github-token-user/validate_github_repos');

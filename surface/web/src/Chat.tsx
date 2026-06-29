@@ -327,6 +327,7 @@ export function Chat({
   const {
     available: connectionsAvailable,
     connectGitHub,
+    activateGitHubIdentity,
     connectionDialog,
     disconnectGitHub,
     githubConnection,
@@ -1231,6 +1232,7 @@ export function Chat({
           status={githubConnection}
           onCancel={() => setConnectionDialog(null)}
           onConnect={connectGitHub}
+          onActivate={activateGitHubIdentity}
           onDisconnect={disconnectGitHub}
         />
       )}

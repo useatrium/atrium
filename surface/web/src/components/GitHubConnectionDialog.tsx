@@ -7,12 +7,14 @@ export function GitHubConnectionDialog({
   status,
   onCancel,
   onConnect,
+  onActivate,
   onDisconnect,
 }: {
   available: boolean;
   status?: ConnectionStatus;
   onCancel: () => void;
   onConnect: (body?: Record<string, unknown>) => Promise<void>;
+  onActivate: (identityId: string) => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -105,15 +107,20 @@ export function GitHubConnectionDialog({
                     {identities.map((identity) => (
                       <li key={identity.id} className="flex items-center justify-between gap-2">
                         <span className="min-w-0 truncate text-fg-secondary">{githubIdentitySummary(identity)}</span>
-                        <span
-                          className={
-                            identity.active
-                              ? 'shrink-0 rounded border border-success/40 px-1.5 py-0.5 text-2xs font-medium text-success'
-                              : 'shrink-0 rounded border border-edge px-1.5 py-0.5 text-2xs font-medium text-fg-muted'
-                          }
-                        >
-                          {identity.active ? 'Active' : 'Inactive'}
-                        </span>
+                        {identity.active ? (
+                          <span className="shrink-0 rounded border border-success/40 px-1.5 py-0.5 text-2xs font-medium text-success">
+                            Active
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void run(() => onActivate(identity.id))}
+                            className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-2xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-50"
+                          >
+                            Make active
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>

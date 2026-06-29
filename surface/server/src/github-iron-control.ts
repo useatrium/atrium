@@ -1,14 +1,25 @@
-import { type IronControlAdminClient, atriumPrincipalForeignId, githubPatSecretForeignId } from './iron-control.js';
+import {
+  type IronControlAdminClient,
+  atriumPrincipalForeignId,
+  githubConnectionSecretForeignId,
+  githubPatSecretForeignId,
+} from './iron-control.js';
 import { config } from './config.js';
+import { githubConnectionId } from './connections.js';
 
 export async function convergeGitHubPatGrant(
   ironControl: IronControlAdminClient,
-  args: { workspaceId: string; userId: string; token: string },
-): Promise<void> {
+  args: { workspaceId: string; userId: string; token: string; staleStaticSecretIds?: readonly string[] },
+): Promise<{ staticSecretId: string; staticSecretForeignId: string }> {
   const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
   const principal = await upsertAtriumGitHubPrincipal(ironControl, args);
+  const staticSecretForeignId = githubConnectionSecretForeignId(
+    args.workspaceId,
+    args.userId,
+    githubConnectionId({ tokenKind: 'pat' }),
+  );
   const secret = await ironControl.upsertGitHubPatSecret({
-    foreignId: githubPatSecretForeignId(args.workspaceId, args.userId),
+    foreignId: staticSecretForeignId,
     name: `GitHub token for ${foreignId}`,
     token: args.token,
     labels: {
@@ -18,7 +29,13 @@ export async function convergeGitHubPatGrant(
       atrium_user_id: args.userId,
     },
   });
-  await convergeGitHubDirectGrant(ironControl, { principalId: principal.id, staticSecretId: secret.id, foreignId });
+  await convergeGitHubDirectGrant(ironControl, {
+    principalId: principal.id,
+    staticSecretId: secret.id,
+    foreignId,
+    staleStaticSecretIds: args.staleStaticSecretIds,
+  });
+  return { staticSecretId: secret.id, staticSecretForeignId };
 }
 
 export async function convergeGitHubBrokerGrant(
@@ -28,12 +45,22 @@ export async function convergeGitHubBrokerGrant(
     userId: string;
     tokenKind: 'app_installation' | 'app_user';
     brokerCredentialId: string;
+    installationId?: string;
+    staleStaticSecretIds?: readonly string[];
   },
-): Promise<void> {
+): Promise<{ staticSecretId: string; staticSecretForeignId: string }> {
   const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
   const principal = await upsertAtriumGitHubPrincipal(ironControl, args);
+  const staticSecretForeignId = githubConnectionSecretForeignId(
+    args.workspaceId,
+    args.userId,
+    githubConnectionId({
+      tokenKind: args.tokenKind,
+      metadata: args.installationId ? { installationId: args.installationId } : {},
+    }),
+  );
   const secret = await ironControl.upsertGitHubBrokerSecret({
-    foreignId: githubPatSecretForeignId(args.workspaceId, args.userId),
+    foreignId: staticSecretForeignId,
     name: `GitHub ${args.tokenKind} token for ${foreignId}`,
     brokerCredentialId: args.brokerCredentialId,
     labels: {
@@ -44,7 +71,27 @@ export async function convergeGitHubBrokerGrant(
       atrium_user_id: args.userId,
     },
   });
-  await convergeGitHubDirectGrant(ironControl, { principalId: principal.id, staticSecretId: secret.id, foreignId });
+  await convergeGitHubDirectGrant(ironControl, {
+    principalId: principal.id,
+    staticSecretId: secret.id,
+    foreignId,
+    staleStaticSecretIds: args.staleStaticSecretIds,
+  });
+  return { staticSecretId: secret.id, staticSecretForeignId };
+}
+
+export async function convergeGitHubExistingIdentityGrant(
+  ironControl: IronControlAdminClient,
+  args: { workspaceId: string; userId: string; staticSecretId: string; staleStaticSecretIds?: readonly string[] },
+): Promise<void> {
+  const foreignId = atriumPrincipalForeignId(args.workspaceId, args.userId);
+  const principal = await upsertAtriumGitHubPrincipal(ironControl, args);
+  await convergeGitHubDirectGrant(ironControl, {
+    principalId: principal.id,
+    staticSecretId: args.staticSecretId,
+    foreignId,
+    staleStaticSecretIds: args.staleStaticSecretIds,
+  });
 }
 
 export async function convergeExistingGitHubDirectGrant(
@@ -60,9 +107,20 @@ export async function convergeExistingGitHubDirectGrant(
 
 async function convergeGitHubDirectGrant(
   ironControl: IronControlAdminClient,
-  args: { principalId: string; staticSecretId: string; foreignId: string },
+  args: {
+    principalId: string;
+    staticSecretId: string;
+    foreignId: string;
+    staleStaticSecretIds?: readonly string[];
+  },
 ): Promise<void> {
   const grants = await ironControl.listPrincipalGrants(args.principalId);
+  const stale = new Set((args.staleStaticSecretIds ?? []).filter((id) => id && id !== args.staticSecretId));
+  for (const grant of grants) {
+    if (grant.id && grant.static_secret_id && stale.has(grant.static_secret_id)) {
+      await ironControl.deleteGrant(grant.id);
+    }
+  }
   if (!grants.some((grant) => grant.static_secret_id === args.staticSecretId)) {
     await ironControl.createPrincipalStaticGrant(args.principalId, args.staticSecretId);
   }

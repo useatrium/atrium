@@ -73,8 +73,27 @@ export function useConnections() {
     }
   }, []);
 
+  const activateGitHubIdentity = useCallback(async (identityId: string) => {
+    try {
+      const workspaceId = connections.github?.workspaceId;
+      const { connection } = await api.activateGitHubIdentity({
+        identityId,
+        ...(workspaceId ? { workspaceId } : {}),
+      });
+      setConnections((prev) => ({ ...prev, github: connection }));
+    } catch (err) {
+      if (isMissingConnectionsEndpoint(err)) {
+        setAvailable(false);
+        setConnections({});
+        return;
+      }
+      throw err;
+    }
+  }, [connections.github?.workspaceId]);
+
   return useMemo(
     () => ({
+      activateGitHubIdentity,
       available,
       connectGitHub,
       connectionDialog,
@@ -85,6 +104,7 @@ export function useConnections() {
       setConnectionDialog,
     }),
     [
+      activateGitHubIdentity,
       available,
       connectGitHub,
       connectionDialog,

@@ -28,13 +28,14 @@ function status(overrides: Partial<ConnectionStatus>): ConnectionStatus {
   };
 }
 
-function renderDialog(connection: ConnectionStatus) {
+function renderDialog(connection: ConnectionStatus, onActivate = vi.fn(async () => {})) {
   return render(
     <GitHubConnectionDialog
       available={true}
       status={connection}
       onCancel={vi.fn()}
       onConnect={async () => {}}
+      onActivate={onActivate}
       onDisconnect={async () => {}}
     />,
   );
@@ -51,6 +52,7 @@ describe('GitHubConnectionDialog', () => {
         status={status({ tokenKind: 'app_installation', accountLabel: 'acme' })}
         onCancel={vi.fn()}
         onConnect={async () => {}}
+        onActivate={async () => {}}
         onDisconnect={async () => {}}
       />,
     );
@@ -62,6 +64,7 @@ describe('GitHubConnectionDialog', () => {
         status={status({ tokenKind: 'pat' })}
         onCancel={vi.fn()}
         onConnect={async () => {}}
+        onActivate={async () => {}}
         onDisconnect={async () => {}}
       />,
     );
@@ -92,6 +95,7 @@ describe('GitHubConnectionDialog', () => {
         status={status({ connected: false, status: 'public_read', tokenKind: 'public_read' })}
         onCancel={vi.fn()}
         onConnect={onConnect}
+        onActivate={async () => {}}
         onDisconnect={async () => {}}
       />,
     );
@@ -118,7 +122,8 @@ describe('GitHubConnectionDialog', () => {
     ).toBeTruthy();
   });
 
-  it('shows saved GitHub identities with active state', () => {
+  it('shows saved GitHub identities and activates inactive identities', () => {
+    const onActivate = vi.fn(async () => {});
     renderDialog(
       status({
         tokenKind: 'app_installation',
@@ -160,13 +165,15 @@ describe('GitHubConnectionDialog', () => {
           },
         ],
       }),
+      onActivate,
     );
 
     expect(screen.getByText('Saved identities')).toBeTruthy();
     expect(screen.getAllByText('App installation for acme').length).toBeGreaterThan(0);
     expect(screen.getByText('PAT for @octo')).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
-    expect(screen.getByText('Inactive')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Make active' }));
+    expect(onActivate).toHaveBeenCalledWith('github:pat');
   });
 
   it('shows workspace, validation, and repo access metadata for connected accounts', () => {

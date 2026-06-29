@@ -173,17 +173,21 @@ export class IronControlAdminClient {
     scopes?: string[];
     labels?: Record<string, unknown>;
   }): Promise<IronControlBrokerCredential> {
-    return this.write<IronControlBrokerCredential>('PUT', `/api/v1/broker_credentials/${encodeURIComponent(args.foreignId)}`, {
-      namespace: this.namespace,
-      foreign_id: args.foreignId,
-      name: args.name,
-      labels: args.labels ?? {},
-      token_endpoint: args.tokenEndpoint,
-      scopes: args.scopes ?? [],
-      client_id: args.clientId,
-      ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
-      refresh_token: args.refreshToken,
-    });
+    return this.write<IronControlBrokerCredential>(
+      'PUT',
+      `/api/v1/broker_credentials/${encodeURIComponent(args.foreignId)}`,
+      {
+        namespace: this.namespace,
+        foreign_id: args.foreignId,
+        name: args.name,
+        labels: args.labels ?? {},
+        token_endpoint: args.tokenEndpoint,
+        scopes: args.scopes ?? [],
+        client_id: args.clientId,
+        ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
+        refresh_token: args.refreshToken,
+      },
+    );
   }
 
   async upsertGitHubAppInstallationBrokerCredential(args: {
@@ -195,17 +199,21 @@ export class IronControlAdminClient {
     githubPrivateKeyId?: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlBrokerCredential> {
-    return this.write<IronControlBrokerCredential>('PUT', `/api/v1/broker_credentials/${encodeURIComponent(args.foreignId)}`, {
-      namespace: this.namespace,
-      foreign_id: args.foreignId,
-      name: args.name,
-      labels: args.labels ?? {},
-      grant: 'github_app_installation',
-      github_app_id: args.githubAppId,
-      github_installation_id: args.githubInstallationId,
-      github_private_key: args.githubPrivateKey,
-      ...(args.githubPrivateKeyId ? { github_private_key_id: args.githubPrivateKeyId } : {}),
-    });
+    return this.write<IronControlBrokerCredential>(
+      'PUT',
+      `/api/v1/broker_credentials/${encodeURIComponent(args.foreignId)}`,
+      {
+        namespace: this.namespace,
+        foreign_id: args.foreignId,
+        name: args.name,
+        labels: args.labels ?? {},
+        grant: 'github_app_installation',
+        github_app_id: args.githubAppId,
+        github_installation_id: args.githubInstallationId,
+        github_private_key: args.githubPrivateKey,
+        ...(args.githubPrivateKeyId ? { github_private_key_id: args.githubPrivateKeyId } : {}),
+      },
+    );
   }
 
   async validateGitHubBrokerRepos(
@@ -297,7 +305,7 @@ export class IronControlAdminClient {
 
   private async getList<T>(path: string): Promise<T[]> {
     const body = await this.request('GET', path);
-    return Array.isArray((body as { data?: unknown }).data) ? ((body as { data: T[] }).data) : [];
+    return Array.isArray((body as { data?: unknown }).data) ? (body as { data: T[] }).data : [];
   }
 
   private async write<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, data: unknown): Promise<T> {
@@ -338,6 +346,10 @@ export function githubPatSecretForeignId(workspaceId: string, userId: string): s
   return `github-token-${atriumPrincipalForeignId(workspaceId, userId)}`;
 }
 
+export function githubConnectionSecretForeignId(workspaceId: string, userId: string, connectionId: string): string {
+  return `${githubPatSecretForeignId(workspaceId, userId)}-${slugForeignIdPart(connectionId)}`;
+}
+
 export function githubPublicReadSecretForeignId(): string {
   return 'github-public-read-token';
 }
@@ -360,6 +372,14 @@ function unwrapData<T>(body: unknown): T {
 function tokenBrokerSourceConfig(credentialId: string, namespace: string): Record<string, string> {
   if (credentialId.startsWith('bcr_')) return { credential_id: credentialId };
   return { credential_id: credentialId, credential_namespace: namespace };
+}
+
+function slugForeignIdPart(value: string): string {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9._~-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
 }
 
 export function countGitHubTokenTransforms(config: unknown): number {

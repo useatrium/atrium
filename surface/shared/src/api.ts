@@ -206,6 +206,11 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    activateGitHubIdentity: (body: { workspaceId?: string; identityId: string }) =>
+      req<{ connection: ConnectionStatus }>('/api/me/connections/github/active', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     disconnectGitHub: (workspaceId?: string) => {
       const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
       return req<{ connection: ConnectionStatus }>(`/api/me/connections/github${query}`, {

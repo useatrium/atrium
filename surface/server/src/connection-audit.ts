@@ -1,7 +1,7 @@
 import type { ConnectionStatusJson } from './connections.js';
 import { atriumPrincipalForeignId } from './iron-control.js';
 
-export type GitHubConnectionAuditAction = 'connect' | 'disconnect' | 'needs_auth';
+export type GitHubConnectionAuditAction = 'connect' | 'disconnect' | 'activate' | 'needs_auth';
 export type GitHubConnectionAuditResult = 'success' | 'failure';
 
 export interface GitHubConnectionAuditInput {

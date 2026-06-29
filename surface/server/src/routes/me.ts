@@ -19,6 +19,7 @@ import {
   githubAppUserBrokerCredentialForeignId,
 } from '../iron-control.js';
 import {
+  convergeGitHubExistingIdentityGrant,
   convergeGitHubBrokerGrant,
   convergeGitHubPatGrant,
   convergeGitHubPublicReadFallback,
@@ -62,16 +63,24 @@ function prefsPatch(input: Record<string, unknown>): Partial<UserPrefs> {
     if (!(key in DEFAULT_PREFS)) continue;
     const prefKey = key as keyof UserPrefs;
     if (Object.is(normalizePrefs({ [key]: value })[prefKey], value)) {
-      (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[prefKey] =
-        value as UserPrefs[keyof UserPrefs];
+      (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[prefKey] = value as UserPrefs[keyof UserPrefs];
     }
   }
   return patch;
 }
 
 export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void {
-  const { hub, requireUser, optionalOpId, connections, ironControl, providerCredentials, agentProfiles, sessionRuns, runMutation } =
-    deps;
+  const {
+    hub,
+    requireUser,
+    optionalOpId,
+    connections,
+    ironControl,
+    providerCredentials,
+    agentProfiles,
+    sessionRuns,
+    runMutation,
+  } = deps;
 
   app.get('/api/me/provider-credentials', async (req, reply) => {
     const user = requireUser(req, reply);
@@ -123,8 +132,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         .send({ error: 'bad_request', message: 'tokenKind must be pat, app_installation, or app_user' });
     }
     const token = typeof body.token === 'string' ? body.token.trim() : '';
-    let brokerCredentialId =
-      typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
+    let brokerCredentialId = typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
     let verifiedPatIdentity: { accountLogin: string; scopes: string[] } | null = null;
     let verifiedInstallation: GitHubAppInstallationInfo | null = null;
     const installationId =
@@ -149,15 +157,17 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         if (!ironControl.configured) {
           throw new RouteResponse(503, 'iron_control_unconfigured', 'iron-control is not configured');
         }
+        let staticSecret: { staticSecretId: string; staticSecretForeignId: string } | null = null;
         if (tokenKind === 'pat') {
           if (!token) {
             throw new RouteResponse(400, 'bad_request', 'GitHub token required');
           }
           verifiedPatIdentity = await validateGitHubPatToken(token);
-          await convergeGitHubPatGrant(ironControl, {
+          staticSecret = await convergeGitHubPatGrant(ironControl, {
             workspaceId: resolvedWorkspaceId,
             userId: user.id,
             token,
+            staleStaticSecretIds: await connections.gitHubIdentityStaticSecretIds(resolvedWorkspaceId, user.id),
           });
         } else {
           if (tokenKind === 'app_installation' && !brokerCredentialId && installationId) {
@@ -176,11 +186,13 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
                 : 'GitHub broker credential required',
             );
           }
-          await convergeGitHubBrokerGrant(ironControl, {
+          staticSecret = await convergeGitHubBrokerGrant(ironControl, {
             workspaceId: resolvedWorkspaceId,
             userId: user.id,
             tokenKind,
             brokerCredentialId,
+            ...(installationId ? { installationId } : {}),
+            staleStaticSecretIds: await connections.gitHubIdentityStaticSecretIds(resolvedWorkspaceId, user.id),
           });
         }
         return connections.upsertGitHubMetadata({
@@ -189,13 +201,9 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           status: 'connected',
           tokenKind,
           accountLogin:
-            verifiedPatIdentity?.accountLogin ??
-            verifiedInstallation?.accountLogin ??
-            stringOrNull(body.accountLogin),
+            verifiedPatIdentity?.accountLogin ?? verifiedInstallation?.accountLogin ?? stringOrNull(body.accountLogin),
           accountLabel:
-            verifiedPatIdentity?.accountLogin ??
-            verifiedInstallation?.accountLogin ??
-            stringOrNull(body.accountLabel),
+            verifiedPatIdentity?.accountLogin ?? verifiedInstallation?.accountLogin ?? stringOrNull(body.accountLabel),
           scopes: verifiedPatIdentity?.scopes ?? stringArray(body.scopes),
           capabilities: plainObject(body.capabilities),
           metadata: {
@@ -203,6 +211,8 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
             ...(token ? { last4: token.slice(-4) } : {}),
             ...(brokerCredentialId ? { brokerCredentialId } : {}),
             ...(installationId ? { installationId } : {}),
+            ...(staticSecret ? { staticSecretId: staticSecret.staticSecretId } : {}),
+            ...(staticSecret ? { staticSecretForeignId: staticSecret.staticSecretForeignId } : {}),
             ...(verifiedInstallation?.accountType ? { installationAccountType: verifiedInstallation.accountType } : {}),
             ...(verifiedInstallation?.targetType ? { installationTargetType: verifiedInstallation.targetType } : {}),
           },
@@ -237,6 +247,78 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         connection,
       }),
       'github connection converged',
+    );
+    return { connection };
+  });
+
+  app.post('/api/me/connections/github/active', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { workspaceId?: unknown; identityId?: unknown };
+    const requestedWorkspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
+    const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
+    if (!resolvedWorkspaceId) {
+      const error = requestedWorkspaceId ? 'workspace_not_found' : 'no_workspace';
+      return reply.code(requestedWorkspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+    }
+    const identityId = typeof body.identityId === 'string' ? body.identityId.trim() : '';
+    if (!identityId) {
+      return reply.code(400).send({ error: 'bad_request', message: 'identityId required' });
+    }
+    let connection: ConnectionStatusJson | null = null;
+    try {
+      connection = await connections.withConnectionLock(resolvedWorkspaceId, user.id, 'github', async () => {
+        if (!ironControl.configured) {
+          throw new RouteResponse(503, 'iron_control_unconfigured', 'iron-control is not configured');
+        }
+        const [current] = await connections.list(user.id, resolvedWorkspaceId);
+        if (!current) {
+          throw new RouteResponse(404, 'github_identity_not_found', 'GitHub identity not found');
+        }
+        const identity = current.identities.find((item) => item.id === identityId);
+        if (!identity) {
+          throw new RouteResponse(404, 'github_identity_not_found', 'GitHub identity not found');
+        }
+        const staticSecretId = metadataString(identity.metadata, 'staticSecretId');
+        if (!staticSecretId) {
+          throw new RouteResponse(
+            409,
+            'github_identity_reconnect_required',
+            'This GitHub identity was saved before switchable identity secrets were tracked. Reconnect it before activating.',
+          );
+        }
+        await convergeGitHubExistingIdentityGrant(ironControl, {
+          workspaceId: resolvedWorkspaceId,
+          userId: user.id,
+          staticSecretId,
+          staleStaticSecretIds: await connections.gitHubIdentityStaticSecretIds(
+            resolvedWorkspaceId,
+            user.id,
+            identityId,
+          ),
+        });
+        return connections.activateGitHubIdentity(resolvedWorkspaceId, user.id, identityId);
+      });
+    } catch (err) {
+      if (err instanceof RouteResponse) {
+        return reply.code(err.statusCode).send({ error: err.error, message: err.message });
+      }
+      throw err;
+    }
+    if (!connection) {
+      return reply.code(404).send({ error: 'github_identity_not_found', message: 'GitHub identity not found' });
+    }
+    req.log.info(
+      githubConnectionAuditMetadata({
+        action: 'activate',
+        result: 'success',
+        workspaceId: resolvedWorkspaceId,
+        actorUserId: user.id,
+        credentialOwnerUserId: user.id,
+        requestedTokenKind: connection.tokenKind,
+        connection,
+      }),
+      'github connection identity activated',
     );
     return { connection };
   });
@@ -295,11 +377,12 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         },
       });
       connection = await connections.withConnectionLock(workspaceId, user.id, 'github', async () => {
-        await convergeGitHubBrokerGrant(ironControl, {
+        const staticSecret = await convergeGitHubBrokerGrant(ironControl, {
           workspaceId,
           userId: user.id,
           tokenKind: 'app_user',
           brokerCredentialId,
+          staleStaticSecretIds: await connections.gitHubIdentityStaticSecretIds(workspaceId, user.id),
         });
         return connections.upsertGitHubMetadata({
           workspaceId,
@@ -310,7 +393,11 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           accountLabel: accountLogin,
           scopes: token.scopes,
           capabilities: {},
-          metadata: { brokerCredentialId },
+          metadata: {
+            brokerCredentialId,
+            staticSecretId: staticSecret.staticSecretId,
+            staticSecretForeignId: staticSecret.staticSecretForeignId,
+          },
         });
       });
     } catch (err) {
@@ -484,17 +571,12 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
       opType: 'prefs.patch',
       body: withoutOpId(prefsBody),
       fn: async (client) => {
-        const current = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [
-          user.id,
-        ]);
+        const current = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [user.id]);
         const merged = normalizePrefs({
           ...normalizePrefs(current.rows[0]?.prefs),
           ...prefsPatch(prefsBody),
         });
-        await client.query('UPDATE users SET prefs = $1 WHERE id = $2', [
-          JSON.stringify(merged),
-          user.id,
-        ]);
+        await client.query('UPDATE users SET prefs = $1 WHERE id = $2', [JSON.stringify(merged), user.id]);
         return { prefs: merged };
       },
       onApplied: (response) => {
@@ -696,11 +778,23 @@ function stringArray(value: unknown): string[] {
 
 function scopesHeaderArray(value: string | null): string[] {
   if (!value) return [];
-  return [...new Set(value.split(',').map((scope) => scope.trim()).filter(Boolean))].sort();
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+    ),
+  ].sort();
 }
 
 function plainObject(value: unknown): Record<string, unknown> {
   return isPlainObject(value) ? value : {};
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 class RouteResponse extends Error {
@@ -721,7 +815,11 @@ async function upsertGitHubInstallationBrokerCredential(
   },
 ): Promise<string> {
   if (!githubAppInstallationEnabled()) {
-    throw new RouteResponse(503, 'github_app_installation_unconfigured', 'GitHub App installation credentials are not configured');
+    throw new RouteResponse(
+      503,
+      'github_app_installation_unconfigured',
+      'GitHub App installation credentials are not configured',
+    );
   }
   const foreignId = githubAppInstallationBrokerCredentialForeignId(args.workspaceId, args.installationId);
   await ironControl.upsertGitHubAppInstallationBrokerCredential({

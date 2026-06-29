@@ -239,6 +239,94 @@ export class Connections {
     return connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, args.workspaceId, res.rows[0] ?? null, identities);
   }
 
+  async gitHubIdentityStaticSecretIds(
+    workspaceId: string,
+    userId: string,
+    exceptIdentityId?: string | null,
+    client: Queryable = this.pool,
+  ): Promise<string[]> {
+    const res = await client.query<{ metadata: unknown }>(
+      `SELECT metadata
+         FROM user_connection_identities
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3
+          AND ($4::text IS NULL OR identity_id <> $4)`,
+      [workspaceId, userId, GITHUB_CONNECTION_PROVIDER, exceptIdentityId ?? null],
+    );
+    const ids = res.rows
+      .map((row) => metadataString(row.metadata, 'staticSecretId'))
+      .filter((id): id is string => Boolean(id));
+    return [...new Set(ids)];
+  }
+
+  async activateGitHubIdentity(
+    workspaceId: string,
+    userId: string,
+    identityId: string,
+    client: Queryable = this.pool,
+  ): Promise<ConnectionStatusJson | null> {
+    const selected = await client.query<ConnectionIdentityRow>(
+      `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+              scopes, capabilities, metadata, active, last_validated_at, last_error, updated_at
+         FROM user_connection_identities
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND identity_id = $4
+        LIMIT 1`,
+      [workspaceId, userId, GITHUB_CONNECTION_PROVIDER, identityId],
+    );
+    const identity = selected.rows[0];
+    if (!identity) return null;
+    await client.query(
+      `UPDATE user_connection_identities
+          SET active = false,
+              updated_at = now()
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND active`,
+      [workspaceId, userId, GITHUB_CONNECTION_PROVIDER],
+    );
+    await client.query(
+      `UPDATE user_connection_identities
+          SET active = true,
+              status = 'connected',
+              last_error = NULL,
+              last_validated_at = COALESCE(last_validated_at, now()),
+              updated_at = now()
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND identity_id = $4`,
+      [workspaceId, userId, GITHUB_CONNECTION_PROVIDER, identityId],
+    );
+    const active = await client.query<ConnectionRow>(
+      `INSERT INTO user_connections
+         (workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+          scopes, capabilities, metadata, last_validated_at, last_error)
+       VALUES ($1, $2, $3, 'connected', $4, $5, $6, $7::text[], $8::jsonb, $9::jsonb,
+               COALESCE($10::timestamptz, now()), NULL)
+       ON CONFLICT (workspace_id, user_id, provider) DO UPDATE
+       SET status = 'connected',
+           token_kind = EXCLUDED.token_kind,
+           account_login = EXCLUDED.account_login,
+           account_label = EXCLUDED.account_label,
+           scopes = EXCLUDED.scopes,
+           capabilities = EXCLUDED.capabilities,
+           metadata = EXCLUDED.metadata,
+           last_validated_at = EXCLUDED.last_validated_at,
+           last_error = NULL,
+           updated_at = now()
+       RETURNING workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+                 scopes, capabilities, metadata, last_validated_at, last_error, updated_at`,
+      [
+        workspaceId,
+        userId,
+        GITHUB_CONNECTION_PROVIDER,
+        identity.token_kind,
+        identity.account_login,
+        identity.account_label,
+        normalizeScopes(identity.scopes ?? []),
+        JSON.stringify(plainRecord(identity.capabilities)),
+        JSON.stringify(plainRecord(identity.metadata)),
+        identity.last_validated_at,
+      ],
+    );
+    const identities = await listConnectionIdentities(client, workspaceId, userId, GITHUB_CONNECTION_PROVIDER);
+    return connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, workspaceId, active.rows[0] ?? null, identities);
+  }
+
   async disconnectGitHub(
     workspaceId: string,
     userId: string,

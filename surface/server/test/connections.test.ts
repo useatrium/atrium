@@ -155,13 +155,13 @@ describe('connections routes', () => {
       },
     });
     expect(pat.statusCode).toBe(200);
-    expect(pat.json().connection.identities).toEqual([
+    expect(pat.json().connection.identities).toMatchObject([
       expect.objectContaining({
         id: 'github:pat',
         active: true,
         tokenKind: 'pat',
         accountLogin: 'octo-user',
-        metadata: { last4: '5678' },
+        metadata: expect.objectContaining({ last4: '5678' }),
       }),
     ]);
 
@@ -194,7 +194,7 @@ describe('connections routes', () => {
           active: false,
           tokenKind: 'pat',
           accountLogin: 'octo-user',
-          metadata: { last4: '5678' },
+          metadata: expect.objectContaining({ last4: '5678' }),
         }),
       ],
     });
@@ -226,6 +226,31 @@ describe('connections routes', () => {
       ['github:pat', false],
     ]);
     expect(JSON.stringify(stored.rows)).not.toContain('ghp_secret_5678');
+
+    const activated = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github/active',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        identityId: 'github:pat',
+      },
+    });
+    expect(activated.statusCode).toBe(200);
+    expect(activated.json().connection).toMatchObject({
+      id: 'github:pat',
+      tokenKind: 'pat',
+      accountLogin: 'octo-user',
+      identities: [
+        expect.objectContaining({ id: 'github:pat', active: true }),
+        expect.objectContaining({ id: 'github:app_installation:12345', active: false }),
+      ],
+    });
+    const activationGrant = ironCalls.find((call) => {
+      if (new URL(call.url).pathname !== '/api/v1/grants' || call.init.method !== 'POST') return false;
+      return String(call.init.body).includes('ssr_github_pat');
+    });
+    expect(activationGrant).toBeTruthy();
   });
 
   it('rejects invalid GitHub PATs before storing or granting them', async () => {
@@ -519,7 +544,13 @@ function fakeIronControl(calls: Array<{ url: string; init: RequestInit }>): Iron
         return json({ data: [] });
       }
       if (path.includes('/static_secrets/')) {
-        return json({ data: { id: 'ssr_github', namespace: 'default', foreign_id: 'github-token' } });
+        const foreignId = decodeURIComponent(path.split('/').at(-1) ?? 'github-token');
+        const id = foreignId.endsWith('github-pat')
+          ? 'ssr_github_pat'
+          : foreignId.endsWith('github-app_installation-12345')
+            ? 'ssr_github_app_installation'
+            : 'ssr_github';
+        return json({ data: { id, namespace: 'default', foreign_id: foreignId } });
       }
       if (path.includes('/roles/')) {
         return json({ data: { id: 'role_github_default', namespace: 'default', foreign_id: 'github-default' } });
@@ -528,7 +559,8 @@ function fakeIronControl(calls: Array<{ url: string; init: RequestInit }>): Iron
         return json({ data: { id: 'prn_atrium', namespace: 'default', foreign_id: 'atrium-principal' } });
       }
       if (path.endsWith('/grants') && init?.method === 'POST') {
-        return json({ data: { id: 'grant_github', principal_id: 'prn_atrium', static_secret_id: 'ssr_github' } });
+        const body = JSON.parse(String(init.body)) as { data?: Record<string, unknown> };
+        return json({ data: { id: 'grant_github', ...(body.data ?? {}) } });
       }
       return json({ data: { ok: true } });
     }) as typeof fetch,
