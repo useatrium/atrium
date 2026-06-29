@@ -2189,6 +2189,10 @@ mod tests {
                 .iter()
                 .any(|mount| mount.name == "firewall-ca")
         );
+        let hydrate_json = serde_json::to_string(hydrate).unwrap();
+        assert!(!hydrate_json.contains("tools-github-token"));
+        assert!(!hydrate_json.contains("/tools-github-token"));
+        assert!(!hydrate_json.contains("CENTAUR_TOOLS_GITHUB_TOKEN_FILE"));
     }
 
     #[test]

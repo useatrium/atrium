@@ -600,6 +600,23 @@ fn clone_private_repo_to_cache_locked(
     https_proxy: &str,
     git_ca_info: &str,
 ) -> Result<(), String> {
+    clone_private_repo_to_cache_locked_with_git(
+        repo,
+        cache_path,
+        https_proxy,
+        git_ca_info,
+        Path::new("git"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn clone_private_repo_to_cache_locked_with_git(
+    repo: &RepoMount,
+    cache_path: &Path,
+    https_proxy: &str,
+    git_ca_info: &str,
+    git_binary: &Path,
+) -> Result<(), String> {
     use std::process::Command;
 
     if cache_path.join(".git").is_dir() {
@@ -615,21 +632,12 @@ fn clone_private_repo_to_cache_locked(
             .map_err(|e| format!("reset private repo cache temp {}: {e}", tmp.display()))?;
     }
 
-    let repo_url = format!("https://github.com/{}.git", repo.repo);
-    let output = Command::new("git")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("HTTPS_PROXY", https_proxy)
-        .env("HTTP_PROXY", https_proxy)
-        .env("GIT_SSL_CAINFO", git_ca_info)
-        .args([
-            "-c",
-            "http.https://github.com/.extraheader=Authorization: Bearer GITHUB_TOKEN",
-            "clone",
-            "--filter=blob:none",
-            "--quiet",
-        ])
-        .arg(&repo_url)
-        .arg(&tmp)
+    let repo_url = private_repo_clone_url(repo);
+    let (envs, args) =
+        private_repo_clone_command_env_and_args(repo, &tmp, https_proxy, git_ca_info);
+    let output = Command::new(git_binary)
+        .envs(envs)
+        .args(args)
         .output()
         .map_err(|e| format!("spawn private git clone {repo_url}: {e}"))?;
     if !output.status.success() {
@@ -644,6 +652,37 @@ fn clone_private_repo_to_cache_locked(
     std::fs::rename(&tmp, cache_path)
         .map_err(|e| format!("publish private repo cache {}: {e}", cache_path.display()))?;
     Ok(())
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn private_repo_clone_url(repo: &RepoMount) -> String {
+    format!("https://github.com/{}.git", repo.repo)
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn private_repo_clone_command_env_and_args(
+    repo: &RepoMount,
+    target: &Path,
+    https_proxy: &str,
+    git_ca_info: &str,
+) -> (Vec<(&'static str, String)>, Vec<String>) {
+    (
+        vec![
+            ("GIT_TERMINAL_PROMPT", "0".to_string()),
+            ("HTTPS_PROXY", https_proxy.to_string()),
+            ("HTTP_PROXY", https_proxy.to_string()),
+            ("GIT_SSL_CAINFO", git_ca_info.to_string()),
+        ],
+        vec![
+            "-c".to_string(),
+            "http.https://github.com/.extraheader=Authorization: Bearer GITHUB_TOKEN".to_string(),
+            "clone".to_string(),
+            "--filter=blob:none".to_string(),
+            "--quiet".to_string(),
+            private_repo_clone_url(repo),
+            target.display().to_string(),
+        ],
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -1104,6 +1143,113 @@ mod tests {
             plan.entries[0].cache_path,
             PathBuf::from("/cache/principals/principal-prn_user%3Aone/acme/private")
         );
+    }
+
+    #[test]
+    fn private_repo_clone_command_uses_proxy_placeholder_not_raw_token() {
+        let repo = RepoMount {
+            repo: "acme/private".to_string(),
+            r#ref: None,
+            subdir: None,
+            private: true,
+            cache_scope: Some(RepoCacheScope::Principal {
+                principal_id: "prn_user:one".to_string(),
+            }),
+        };
+
+        let (envs, args) = private_repo_clone_command_env_and_args(
+            &repo,
+            Path::new("/cache/principals/principal-prn_user%3Aone/acme/private"),
+            "http://session-proxy:8080",
+            "/proxy/ca.crt",
+        );
+        let serialized = format!("{envs:?} {args:?}");
+
+        assert!(envs.contains(&("GIT_TERMINAL_PROMPT", "0".to_string())));
+        assert!(envs.contains(&("HTTPS_PROXY", "http://session-proxy:8080".to_string())));
+        assert!(envs.contains(&("HTTP_PROXY", "http://session-proxy:8080".to_string())));
+        assert!(envs.contains(&("GIT_SSL_CAINFO", "/proxy/ca.crt".to_string())));
+        assert!(args.contains(
+            &"http.https://github.com/.extraheader=Authorization: Bearer GITHUB_TOKEN".to_string()
+        ));
+        assert!(args.contains(&"https://github.com/acme/private.git".to_string()));
+        assert!(
+            args.contains(&"/cache/principals/principal-prn_user%3Aone/acme/private".to_string())
+        );
+        assert!(!serialized.contains("ghp_"));
+        assert!(!serialized.contains("github_pat_"));
+        assert!(!serialized.contains("/tools-github-token"));
+        assert!(!serialized.contains("CENTAUR_TOOLS_GITHUB_TOKEN_FILE"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn private_repo_cache_hydration_uses_proxy_placeholder_not_raw_token() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let fake_git = tmp.path().join("git");
+        let log_path = tmp.path().join("git-call.log");
+        std::fs::write(
+            &fake_git,
+            format!(
+                r#"#!/bin/sh
+set -eu
+log="{}"
+printf 'GIT_TERMINAL_PROMPT=%s\n' "${{GIT_TERMINAL_PROMPT-}}" > "$log"
+printf 'HTTPS_PROXY=%s\n' "${{HTTPS_PROXY-}}" >> "$log"
+printf 'HTTP_PROXY=%s\n' "${{HTTP_PROXY-}}" >> "$log"
+printf 'GIT_SSL_CAINFO=%s\n' "${{GIT_SSL_CAINFO-}}" >> "$log"
+printf 'ARGS=%s\n' "$*" >> "$log"
+last=""
+for arg in "$@"; do last="$arg"; done
+mkdir -p "$last/.git"
+"#,
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&fake_git).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, perms).unwrap();
+
+        let repo = RepoMount {
+            repo: "acme/private".to_string(),
+            r#ref: None,
+            subdir: None,
+            private: true,
+            cache_scope: Some(RepoCacheScope::Principal {
+                principal_id: "prn_user:one".to_string(),
+            }),
+        };
+        let cache_path = repo_cache_path(tmp.path().join("cache").as_path(), &repo).unwrap();
+
+        clone_private_repo_to_cache_locked_with_git(
+            &repo,
+            &cache_path,
+            "http://session-proxy:8080",
+            "/proxy/ca.crt",
+            &fake_git,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cache_path,
+            tmp.path()
+                .join("cache/principals/principal-prn_user%3Aone/acme/private")
+        );
+        assert!(cache_path.join(".git").is_dir());
+        let log = std::fs::read_to_string(log_path).unwrap();
+        assert!(log.contains("GIT_TERMINAL_PROMPT=0"));
+        assert!(log.contains("HTTPS_PROXY=http://session-proxy:8080"));
+        assert!(log.contains("HTTP_PROXY=http://session-proxy:8080"));
+        assert!(log.contains("GIT_SSL_CAINFO=/proxy/ca.crt"));
+        assert!(log.contains("Authorization: Bearer GITHUB_TOKEN"));
+        assert!(log.contains("https://github.com/acme/private.git"));
+        assert!(!log.contains("ghp_"));
+        assert!(!log.contains("github_pat_"));
+        assert!(!log.contains("/tools-github-token"));
+        assert!(!log.contains("CENTAUR_TOOLS_GITHUB_TOKEN_FILE"));
     }
 
     #[test]
