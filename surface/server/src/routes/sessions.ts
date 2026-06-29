@@ -93,6 +93,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       privateRepoRequested || githubIdentityMode !== 'automatic'
         ? await connectedGitHubForChannel(deps.pool, user.id, body.channelId)
         : null;
+    const credentialOwnerUserId = githubConnection?.user_id ?? null;
     if (privateRepoRequested && !githubConnection) {
       return reply.code(409).send({
         error: 'github_connection_required',
@@ -181,7 +182,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
       try {
         const validation = await ironControl.validateGitHubStaticSecretRepos(
-          githubPatSecretForeignId(githubConnection.workspace_id, user.id),
+          githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id),
           privateRepos,
         );
         if (validation.inaccessible.length > 0) {
@@ -227,6 +228,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         branch,
         repos: Array.isArray(body.repos) ? body.repos : undefined,
         githubIdentityMode,
+        providerCredentialUserId: credentialOwnerUserId,
         agentProfileId,
         agentProfileVersionId,
         clientSpawnId,
@@ -241,6 +243,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           branch,
           repos: Array.isArray(body.repos) ? body.repos : undefined,
           githubIdentityMode,
+          providerCredentialUserId: credentialOwnerUserId,
           agentProfileId,
           agentProfileVersionId,
           clientSpawnId,
@@ -397,9 +400,9 @@ async function connectedGitHubForChannel(
   pool: Db,
   userId: string,
   channelId: string,
-): Promise<{ workspace_id: string; token_kind: string | null; metadata: unknown } | null> {
-  const res = await pool.query<{ workspace_id: string; token_kind: string | null; metadata: unknown }>(
-    `SELECT uc.workspace_id, uc.token_kind, uc.metadata
+): Promise<{ workspace_id: string; user_id: string; token_kind: string | null; metadata: unknown } | null> {
+  const res = await pool.query<{ workspace_id: string; user_id: string; token_kind: string | null; metadata: unknown }>(
+    `SELECT uc.workspace_id, uc.user_id, uc.token_kind, uc.metadata
        FROM channels c
        JOIN user_connections uc
          ON uc.workspace_id = c.workspace_id

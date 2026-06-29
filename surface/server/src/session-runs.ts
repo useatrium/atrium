@@ -397,6 +397,7 @@ export class SessionRuns {
     branch?: string | null;
     repos?: unknown;
     githubIdentityMode?: string | null;
+    providerCredentialUserId?: string | null;
     agentProfileId?: string | null;
     agentProfileVersionId?: string | null;
     /** Client's optimistic id, echoed on session.spawned so a spawn whose
@@ -420,6 +421,7 @@ export class SessionRuns {
       branch?: string | null;
       repos?: unknown;
       githubIdentityMode?: string | null;
+      providerCredentialUserId?: string | null;
       agentProfileId?: string | null;
       agentProfileVersionId?: string | null;
       clientSpawnId?: string;
@@ -444,7 +446,7 @@ export class SessionRuns {
       profileId: args.agentProfileId,
       profileVersionId: args.agentProfileVersionId,
     });
-    const providerCredentialUserId = provider ? args.user.id : null;
+    const providerCredentialUserId = args.providerCredentialUserId ?? (provider ? args.user.id : null);
     const channel = await getChannel(client, args.channelId);
     if (!channel) {
       throw new DomainError(404, 'channel_not_found', 'channel not found');

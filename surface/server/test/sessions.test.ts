@@ -1763,11 +1763,12 @@ describe('Phase 2 sessions', () => {
     });
 
     const row = await pool.query(
-      'SELECT provider_connection_id, github_identity_mode FROM sessions WHERE id = $1',
+      'SELECT provider_connection_id, provider_credential_user_id, github_identity_mode FROM sessions WHERE id = $1',
       [session.id],
     );
     expect(row.rows[0]).toEqual({
       provider_connection_id: 'github',
+      provider_credential_user_id: fx.userId,
       github_identity_mode: 'app_installation',
     });
 
@@ -1778,6 +1779,7 @@ describe('Phase 2 sessions', () => {
     expect(spawn?.body.metadata).toMatchObject({
       github_identity_mode: 'app_installation',
       provider_connection_id: 'github',
+      credential_owner_user_id: fx.userId,
     });
     await app.close();
   });
