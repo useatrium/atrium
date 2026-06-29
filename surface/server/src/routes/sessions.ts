@@ -6,6 +6,7 @@ import type { AgentProfiles } from '../agent-profiles.js';
 import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
 import type { SessionRuns } from '../session-runs.js';
+import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 
@@ -84,7 +85,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         message: 'githubIdentityMode must be automatic, app_installation, app_user, or pat',
       });
     }
-    const privateRepoRequested = requestHasPrivateRepos(body);
+    const privateRepos = privateGitHubRepos(body);
+    const privateRepoRequested = privateRepos.length > 0;
     const githubConnection =
       privateRepoRequested || githubIdentityMode !== 'automatic'
         ? await connectedGitHubForChannel(deps.pool, user.id, body.channelId)
@@ -103,6 +105,45 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         error: 'github_identity_unavailable',
         message: `Connect GitHub with ${githubIdentityMode} credentials before using that identity mode.`,
       });
+    }
+    if (privateRepoRequested && githubConnection?.token_kind === 'app_installation') {
+      const installationId = metadataString(githubConnection.metadata, 'installationId');
+      if (!installationId) {
+        return reply.code(409).send({
+          error: 'github_repo_access_unverified',
+          message: 'Reconnect the GitHub App installation before starting a session with private repositories.',
+        });
+      }
+      try {
+        const validation = await validateGitHubAppInstallationRepos(
+          {
+            appId: config.githubAppId,
+            privateKey: config.githubAppPrivateKey,
+            privateKeyId: config.githubAppPrivateKeyId || undefined,
+            installationId,
+          },
+          privateRepos,
+        );
+        if (validation.inaccessible.length > 0) {
+          return reply.code(409).send({
+            error: 'github_repo_inaccessible',
+            message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
+            repos: validation.inaccessible,
+          });
+        }
+      } catch (err) {
+        if (err instanceof GitHubRepoValidationError && err.code === 'unconfigured') {
+          return reply.code(503).send({
+            error: 'github_repo_validation_unconfigured',
+            message: 'GitHub App repository validation is not configured.',
+          });
+        }
+        req.log.warn({ err }, 'github repo access validation failed');
+        return reply.code(502).send({
+          error: 'github_repo_validation_failed',
+          message: 'Could not validate GitHub repository access.',
+        });
+      }
     }
     const clientSpawnId =
       typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
@@ -278,20 +319,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   });
 }
 
-function requestHasPrivateRepos(body: {
+function privateGitHubRepos(body: {
   repo?: string;
   repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
-}): boolean {
-  return Array.isArray(body.repos) && body.repos.some((repo) => repo?.private === true);
+}): string[] {
+  if (!Array.isArray(body.repos)) return [];
+  const repos = new Set<string>();
+  for (const repo of body.repos) {
+    if (repo?.private !== true || typeof repo.repo !== 'string') continue;
+    const normalized = repo.repo.trim();
+    if (normalized) repos.add(normalized);
+  }
+  return [...repos];
 }
 
 async function connectedGitHubForChannel(
   pool: Db,
   userId: string,
   channelId: string,
-): Promise<{ token_kind: string | null } | null> {
-  const res = await pool.query<{ token_kind: string | null }>(
-    `SELECT uc.token_kind
+): Promise<{ token_kind: string | null; metadata: unknown } | null> {
+  const res = await pool.query<{ token_kind: string | null; metadata: unknown }>(
+    `SELECT uc.token_kind, uc.metadata
        FROM channels c
        JOIN user_connections uc
          ON uc.workspace_id = c.workspace_id
@@ -303,6 +351,12 @@ async function connectedGitHubForChannel(
     [channelId, userId],
   );
   return res.rows[0] ?? null;
+}
+
+function metadataString(metadata: unknown, key: string): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function normalizeGitHubIdentityMode(value: unknown): GitHubIdentityMode | null {

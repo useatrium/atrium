@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
+import { config } from '../src/config.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { addWorkspaceMember } from '../src/membership.js';
@@ -344,6 +345,11 @@ function isRecord(value: unknown): value is Record<string, any> {
 let pool: pg.Pool;
 let fx: Fixture;
 let fake: FakeCentaur;
+const originalGitHubAppConfig = {
+  appId: config.githubAppId,
+  privateKey: config.githubAppPrivateKey,
+  privateKeyId: config.githubAppPrivateKeyId,
+};
 
 beforeAll(async () => {
   pool = await createTestPool();
@@ -362,6 +368,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake?.stop();
+  vi.unstubAllGlobals();
+  config.githubAppId = originalGitHubAppConfig.appId;
+  config.githubAppPrivateKey = originalGitHubAppConfig.privateKey;
+  config.githubAppPrivateKeyId = originalGitHubAppConfig.privateKeyId;
 });
 
 function fakeSocket(): HubSocket {
@@ -429,17 +439,23 @@ async function connectCodex(
   expect(res.statusCode).toBe(200);
 }
 
-async function connectGitHubMetadata(workspaceId: string, userId: string, tokenKind = 'pat'): Promise<void> {
+async function connectGitHubMetadata(
+  workspaceId: string,
+  userId: string,
+  tokenKind = 'pat',
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
   await pool.query(
     `INSERT INTO user_connections
-       (workspace_id, user_id, provider, status, token_kind, account_login)
-     VALUES ($1, $2, 'github', 'connected', $3, 'octo-user')
+       (workspace_id, user_id, provider, status, token_kind, account_login, metadata)
+     VALUES ($1, $2, 'github', 'connected', $3, 'octo-user', $4::jsonb)
      ON CONFLICT (workspace_id, user_id, provider) DO UPDATE
      SET status = EXCLUDED.status,
          token_kind = EXCLUDED.token_kind,
+         metadata = EXCLUDED.metadata,
          account_login = EXCLUDED.account_login,
          updated_at = now()`,
-    [workspaceId, userId, tokenKind],
+    [workspaceId, userId, tokenKind, JSON.stringify(metadata)],
   );
 }
 
@@ -725,6 +741,95 @@ describe('Phase 2 sessions', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'github_connection_required' });
+    expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
+    await app.close();
+  });
+
+  it('validates private repo access for a GitHub App installation before spawning', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation', { installationId: '12345' });
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    config.githubAppId = '98765';
+    config.githubAppPrivateKey = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    config.githubAppPrivateKeyId = 'key-1';
+    const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
+      const href = String(url);
+      if (href.endsWith('/app/installations/12345/access_tokens')) {
+        return new Response(JSON.stringify({ token: 'installation-token' }), { status: 201 });
+      }
+      if (href.endsWith('/repos/acme/private')) {
+        return new Response(JSON.stringify({ full_name: 'acme/private' }), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const repoCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/repos/acme/private'));
+    expect(repoCall?.[1]?.headers).toMatchObject({ authorization: 'Bearer installation-token' });
+    await app.close();
+  });
+
+  it('rejects private repo spawn when the GitHub App installation cannot access the repo', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation', { installationId: '12345' });
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    config.githubAppId = '98765';
+    config.githubAppPrivateKey = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
+      const href = String(url);
+      if (href.endsWith('/app/installations/12345/access_tokens')) {
+        return new Response(JSON.stringify({ token: 'installation-token' }), { status: 201 });
+      }
+      if (href.endsWith('/repos/acme/private')) {
+        return new Response('not found', { status: 404 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        task: 'say PONG',
+        harness: 'claude-code',
+        repos: [{ repo: 'acme/private', private: true }],
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'github_repo_inaccessible', repos: ['acme/private'] });
     expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(false);
     await app.close();
   });
@@ -1031,7 +1136,23 @@ describe('Phase 2 sessions', () => {
     await app.ready();
     const cookie = await loginCookie(app);
     await connectClaude(app, cookie, 'oauth-from-test');
-    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'app_installation', { installationId: '12345' });
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    config.githubAppId = '98765';
+    config.githubAppPrivateKey = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request) => {
+        const href = String(url);
+        if (href.endsWith('/app/installations/12345/access_tokens')) {
+          return new Response(JSON.stringify({ token: 'installation-token' }), { status: 201 });
+        }
+        if (href.endsWith('/repos/acme/private')) {
+          return new Response(JSON.stringify({ full_name: 'acme/private' }), { status: 200 });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
