@@ -1769,6 +1769,8 @@ describe('Phase 2 sessions', () => {
     expect(res.json().session).toMatchObject({
       repo: 'acme/app',
       branch: 'main',
+      githubIdentityMode: 'pat',
+      providerConnectionId: 'github',
       repos: [
         { repo: 'acme/app', ref: 'main', private: true },
         { repo: 'acme/docs', subdir: 'docs' },
@@ -1784,6 +1786,11 @@ describe('Phase 2 sessions', () => {
         { repo: 'acme/app', ref: 'main', private: true },
         { repo: 'acme/docs', subdir: 'docs' },
       ],
+    });
+    expect(spawn?.body.metadata).toMatchObject({
+      github_identity_mode: 'pat',
+      provider_connection_id: 'github',
+      credential_owner_user_id: fx.userId,
     });
     await app.close();
   });

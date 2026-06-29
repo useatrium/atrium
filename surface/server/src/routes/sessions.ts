@@ -219,6 +219,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           });
         }
       }
+      const resolvedGitHubIdentityMode =
+        githubIdentityMode === 'automatic' && githubConnection?.token_kind
+          ? githubConnection.token_kind
+          : githubIdentityMode;
       const clientSpawnId =
         typeof body.clientSpawnId === 'string' && body.clientSpawnId.length <= 80 ? body.clientSpawnId : undefined;
       const agentProfileId =
@@ -240,7 +244,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           repo,
           branch,
           repos: Array.isArray(body.repos) ? body.repos : undefined,
-          githubIdentityMode,
+          githubIdentityMode: resolvedGitHubIdentityMode,
           providerCredentialUserId: credentialOwnerUserId,
           agentProfileId,
           agentProfileVersionId,
@@ -255,7 +259,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
             repo,
             branch,
             repos: Array.isArray(body.repos) ? body.repos : undefined,
-            githubIdentityMode,
+            githubIdentityMode: resolvedGitHubIdentityMode,
             providerCredentialUserId: credentialOwnerUserId,
             agentProfileId,
             agentProfileVersionId,
