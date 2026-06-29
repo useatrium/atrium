@@ -3,8 +3,8 @@
 This runbook covers the per-user GitHub connection cutover for Atrium sessions
 that route `gh`, `git`, and GitHub API traffic through Centaur's iron-proxy.
 The goal is one effective `GITHUB_TOKEN` replacement per
-`workspace_id`/credential-owner `user_id` principal, with no real GitHub token in
-sandbox env, logs, artifacts, or Atrium's database.
+`workspace_id`/credential-owner `user_id` principal at run time, with no real
+GitHub token in sandbox env, logs, artifacts, or Atrium's database.
 
 ## Required Config
 
@@ -80,6 +80,30 @@ choosing the identity an Atrium session or connector should act as. Keep
 operator-owned service credentials in infra or console-managed roles, and keep
 token material out of Atrium either way.
 
+## Runtime Model
+
+Atrium stores GitHub connection metadata in two layers:
+
+- `user_connections`: the current effective GitHub identity for a
+  workspace/user/provider.
+- `user_connection_identities`: saved GitHub identities for the same
+  workspace/user/provider. Each identity has an `identity_id` such as
+  `github:pat`, `github:app_user`, or
+  `github:app_installation:<installation_id>`.
+
+New GitHub identities get per-identity iron-control static secrets. The current
+principal grant is switched by activating the selected identity, revoking stale
+direct GitHub grants for the same principal, and verifying the principal still
+has exactly one GitHub `GITHUB_TOKEN` transform. Older identities that predate
+per-identity static secret metadata may appear in the UI but require reconnect
+before they can be activated for a session.
+
+Spawn-time identity override accepts a saved identity id. If the identity is not
+already active, Surface activates it under the workspace/user GitHub connection
+lock before repository validation and Centaur spawn. This means the advanced
+spawn selector changes the workspace/user principal's current GitHub grant, not
+only that single session's metadata.
+
 ## Big Cutover
 
 1. Deploy Centaur with console enabled and the GitHub infra transform removed.
@@ -91,6 +115,8 @@ token material out of Atrium either way.
    - connected GitHub users: direct GitHub grant exists, `github-default` absent
    - disconnected or `needs_auth` users: no direct GitHub grant,
      `github-default` present
+   - saved identities: identities without `staticSecretId` metadata are usable
+     as display/history only until the user reconnects them
 5. Spawn validation sessions for connected and disconnected users.
 6. Confirm proxy effective config has exactly one GitHub transform for each
    sampled principal.
@@ -101,12 +127,17 @@ Reconciliation is idempotent and should converge from desired state instead of
 assuming the previous handler completed. For each
 `atrium-workspace-<workspace_id>-user-<user_id>` principal:
 
-- `connected`: upsert the principal, upsert/reuse the user/app GitHub secret,
-  ensure the direct grant exists, and unassign `github-default`.
+- `connected`: upsert the principal, upsert/reuse the active user/app GitHub
+  secret, ensure the direct grant exists, revoke stale direct GitHub grants
+  known from inactive saved identities, and unassign `github-default`.
 - `public_read` / absent row: upsert the principal, delete or revoke direct
   GitHub grants owned by Atrium for that principal, and assign `github-default`.
 - `needs_auth`: revoke the direct GitHub grant, assign `github-default`, and
   keep the metadata row with the auth error.
+- saved identity activation: require the identity's `metadata.staticSecretId`,
+  grant that static secret directly to the principal, revoke stale direct grants
+  for other saved identities, unassign `github-default`, mark that identity
+  active, and update `user_connections` to match.
 
 After each batch, sample `effective_config` from iron-control and count
 transforms that replace `GITHUB_TOKEN` for GitHub hosts. The expected count is
@@ -130,15 +161,22 @@ Fast rollback restores the old shared-token behavior:
 
 Data rollback is not required for the fast path because Atrium stores only
 connection metadata. If the feature is fully backed out, leave
-`user_connections` rows in place or delete only `provider = 'github'` rows after
-confirming no older binary expects them.
+`user_connections` and `user_connection_identities` rows in place or delete only
+`provider = 'github'` rows after confirming no older binary expects them.
+
+If only saved-identity activation needs to be rolled back, disable the
+`/api/me/connections/github/active` and spawn `githubIdentityId` paths in
+Surface while leaving connect/disconnect convergence enabled. Existing active
+connections continue to work through `user_connections`; inactive saved
+identities remain metadata until activation is re-enabled or the user reconnects
+them.
 
 ## Audit Expectations
 
 Surface logs structured `github_connection_audit` events for connection
 convergence. Required fields:
 
-- `action`: `connect`, `disconnect`, or `needs_auth`
+- `action`: `connect`, `disconnect`, `activate`, or `needs_auth`
 - `result`: `success` or `failure`
 - `workspace_id`
 - `actor_user_id`
@@ -159,8 +197,15 @@ timing. They must not include `Authorization` values or substituted token bytes.
 ## Validation Checklist
 
 - Connected PAT user: `gh api user` returns the connected account.
+- Connected app-installation user: private repo access follows installation
+  repository scope and UI copy says App installation, not human user.
+- Connected app-user user: `gh api user` returns the connected user.
 - Disconnected user: public reads work; private reads and writes fail.
 - Two workspace/user principals resolve to different GitHub identities.
+- Saved identity override: spawning with an inactive saved identity id activates
+  that identity, records `provider_connection_id = <identity_id>`, and validates
+  private repo access through that identity's static secret or broker
+  credential.
 - Connect/disconnect during spawn never yields two GitHub transforms in
   `effective_config`.
 - Private repo checkout uses the same workspace/user principal as in-sandbox
