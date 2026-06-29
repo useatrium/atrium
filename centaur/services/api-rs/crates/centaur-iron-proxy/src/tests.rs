@@ -12,7 +12,11 @@ fn harness_auth_fragments_are_baked_in() {
                 .extra
                 .get("domains")
                 .and_then(|value| value.as_sequence())
-                .is_some_and(|domains| domains.iter().any(|domain| domain.as_str() == Some("chatgpt.com")))
+                .is_some_and(|domains| {
+                    domains
+                        .iter()
+                        .any(|domain| domain.as_str() == Some("chatgpt.com"))
+                })
     }));
 
     // access_token carries the token-broker credential, not a replace
