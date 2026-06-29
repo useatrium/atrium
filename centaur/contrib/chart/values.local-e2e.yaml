@@ -1,8 +1,38 @@
+# Local kind e2e overrides.
+#
+# imagePullPolicy: IfNotPresent for every locally-built centaur-* image.
+# The local loop is `just build-one <svc>` -> `kind load docker-image ...` ->
+# rollout, which overwrites the image in the node's containerd under the
+# `:latest` tag before the rollout runs. The chart default is `Always` because
+# *production* publishes a mutable `:latest` to a registry and relies on the
+# pull to pick up new digests (see values.yaml console.image comment) — but in
+# kind there is no authoritative registry, so `Always` just forces a wasteful
+# (and in a registry-less kind, fragile) pull on every restart. `IfNotPresent`
+# uses the freshly-loaded image directly. Trade-off: a forgotten `kind load`
+# runs the previously-loaded image instead of erroring — fine for this loop,
+# where the load is always chained before the rollout. Never set this in the
+# chart default; it would silently ship stale code in prod.
 apiRs:
   ironProxy:
     mode: enabled
+  image:
+    pullPolicy: IfNotPresent
 
 console:
   enabled: true
   worker:
     enabled: true
+  image:
+    # Covers console-worker too — its template reuses $console.image.pullPolicy.
+    pullPolicy: IfNotPresent
+
+# Agent sandbox image (centaur-agent); repo-cache inherits this when its own
+# pullPolicy is unset.
+sandbox:
+  image:
+    pullPolicy: IfNotPresent
+
+# Per-sandbox credential-injection proxy (centaur-iron-proxy).
+ironProxy:
+  image:
+    pullPolicy: IfNotPresent
