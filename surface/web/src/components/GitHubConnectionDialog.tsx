@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import type { ConnectionStatus } from '../api';
 import { XIcon } from './icons';
 
@@ -22,6 +22,7 @@ export function GitHubConnectionDialog({
   const connected = status?.connected === true;
   const needsAuth = status?.status === 'needs_auth';
   const identityLabel = githubIdentityLabel(status);
+  const metadataDetails = githubConnectionMetadataDetails(status);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -79,6 +80,16 @@ export function GitHubConnectionDialog({
                 {status?.accountLabel ?? 'GitHub'} · {identityLabel}
                 {status?.scopes?.length ? ` · ${status.scopes.join(', ')}` : ''}
               </div>
+              {metadataDetails.length > 0 && (
+                <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-fg-muted">
+                  {metadataDetails.map(([label, value]) => (
+                    <Fragment key={label}>
+                      <dt>{label}</dt>
+                      <dd className="truncate text-fg-secondary">{value}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
+              )}
               {needsAuth && status?.lastError && (
                 <div className="mt-2 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-danger">
                   {status.lastError}
@@ -183,6 +194,27 @@ export function GitHubConnectionDialog({
       </div>
     </div>
   );
+}
+
+function githubConnectionMetadataDetails(status?: ConnectionStatus): Array<[string, string]> {
+  if (!status?.metadata) return [];
+  const details: Array<[string, string]> = [];
+  const installationAccountType = metadataString(status.metadata, 'installationAccountType');
+  const installationTargetType = metadataString(status.metadata, 'installationTargetType');
+  const last4 = metadataString(status.metadata, 'last4');
+  if (status.tokenKind === 'app_installation') {
+    if (installationAccountType) details.push(['Account', installationAccountType]);
+    if (installationTargetType && installationTargetType !== installationAccountType) {
+      details.push(['Target', installationTargetType]);
+    }
+  }
+  if (status.tokenKind === 'pat' && last4) details.push(['Token', `...${last4}`]);
+  return details;
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function githubIdentityLabel(status?: ConnectionStatus): string {
