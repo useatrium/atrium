@@ -84,6 +84,7 @@ test('configured spawn posts private repo flags and GitHub identity override', a
         connections: [
           {
             provider: 'github',
+            id: 'github:app_installation:12345',
             workspaceId: 'workspace-e2e',
             connected: true,
             status: 'connected',
@@ -93,6 +94,25 @@ test('configured spawn posts private repo flags and GitHub identity override', a
             scopes: [],
             capabilities: {},
             metadata: {},
+            identities: [
+              {
+                id: 'github:app_installation:12345',
+                provider: 'github',
+                workspaceId: 'workspace-e2e',
+                active: true,
+                connected: true,
+                status: 'connected',
+                tokenKind: 'app_installation',
+                accountLogin: 'acme',
+                accountLabel: 'acme',
+                scopes: [],
+                capabilities: {},
+                metadata: { installationId: '12345' },
+                lastValidatedAt: null,
+                lastError: null,
+                updatedAt: new Date().toISOString(),
+              },
+            ],
             lastValidatedAt: new Date().toISOString(),
             lastError: null,
             updatedAt: new Date().toISOString(),
@@ -117,6 +137,7 @@ test('configured spawn posts private repo flags and GitHub identity override', a
       branch?: string;
       repos?: Array<{ repo: string; ref?: string; subdir?: string; private?: boolean }>;
       githubIdentityMode?: string;
+      githubIdentityId?: string;
     };
     await route.fulfill({
       status: 201,
@@ -134,7 +155,7 @@ test('configured spawn posts private repo flags and GitHub identity override', a
           branch: body.branch ?? null,
           repos: body.repos ?? null,
           githubIdentityMode: body.githubIdentityMode ?? 'automatic',
-          providerConnectionId: body.githubIdentityMode ? 'github' : null,
+          providerConnectionId: body.githubIdentityId ?? null,
           spawnedBy: 'repoer-private-e2e',
           driverId: null,
           costUsd: null,
@@ -155,9 +176,9 @@ test('configured spawn posts private repo flags and GitHub identity override', a
   await page.getByRole('button', { name: 'Add reference repo' }).click();
   await page.getByPlaceholder('owner/name').nth(1).fill(' acme/private-docs ');
   await page.getByRole('checkbox', { name: 'Private', exact: true }).check();
-  await page.getByLabel(/GitHub identity/).selectOption('app_installation');
+  await page.getByLabel(/GitHub identity/).selectOption('github:app_installation:12345');
 
-  await expect(page.getByText('GitHub: App installation')).toBeVisible();
+  await expect(page.getByText('GitHub: app install for acme')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start session' })).toBeEnabled();
   await page.getByRole('button', { name: 'Start session' }).click();
 
@@ -167,6 +188,7 @@ test('configured spawn posts private repo flags and GitHub identity override', a
     harness: 'codex',
     repo: 'acme/private',
     githubIdentityMode: 'app_installation',
+    githubIdentityId: 'github:app_installation:12345',
     repos: [
       { repo: 'acme/private', private: true },
       { repo: 'acme/private-docs', private: true },

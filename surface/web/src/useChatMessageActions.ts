@@ -80,6 +80,7 @@ export function useChatMessageActions({
         branch?: string;
         repos?: { repo: string; ref?: string; subdir?: string }[];
         githubIdentityMode?: 'automatic' | 'app_installation' | 'app_user' | 'pat';
+        githubIdentityId?: string;
         agentProfileId?: string;
         agentProfileVersionId?: string;
       },
@@ -104,6 +105,7 @@ export function useChatMessageActions({
         ...(branch ? { branch } : {}),
         ...(repos.length ? { repos } : {}),
         ...(opts?.githubIdentityMode ? { githubIdentityMode: opts.githubIdentityMode } : {}),
+        ...(opts?.githubIdentityId ? { githubIdentityId: opts.githubIdentityId } : {}),
         ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
         ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
         createdAt: new Date().toISOString(),
@@ -144,6 +146,7 @@ export function useChatMessageActions({
         ...(config.branch ? { branch: config.branch } : {}),
         ...(config.repos?.length ? { repos: config.repos } : {}),
         ...(config.githubIdentityMode ? { githubIdentityMode: config.githubIdentityMode } : {}),
+        ...(config.githubIdentityId ? { githubIdentityId: config.githubIdentityId } : {}),
         ...(config.agentProfileId ? { agentProfileId: config.agentProfileId } : {}),
         ...(config.agentProfileVersionId ? { agentProfileVersionId: config.agentProfileVersionId } : {}),
       });
