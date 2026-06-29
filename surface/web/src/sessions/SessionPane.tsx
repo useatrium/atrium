@@ -29,6 +29,7 @@ import {
   ApiError,
   api,
   type AgentProfileProposal,
+  type ConnectionStatus,
   type ProviderCredentialProvider,
   type ProviderCredentialStatus,
 } from '../api';
@@ -95,6 +96,7 @@ export function SessionPane({
   failedCancel = false,
   onClearFailedCancel = () => {},
   providerCredentials,
+  githubConnection,
   onConnectProvider,
   onConnectGitHub,
   layout = 'split',
@@ -121,6 +123,7 @@ export function SessionPane({
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
+  githubConnection?: ConnectionStatus;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onConnectGitHub?: () => void;
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
@@ -615,8 +618,9 @@ export function SessionPane({
           isOwner={session.providerAuthRequired.userId === me.id}
           ownerName={providerAuthOwnerName}
           connected={
-            session.providerAuthRequired.provider !== 'github' &&
-            providerCredentials?.[session.providerAuthRequired.provider]?.connected === true
+            session.providerAuthRequired.provider === 'github'
+              ? githubConnection?.connected === true
+              : providerCredentials?.[session.providerAuthRequired.provider]?.connected === true
           }
           onConnect={() => {
             const provider = session.providerAuthRequired!.provider;
