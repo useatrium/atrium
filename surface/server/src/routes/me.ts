@@ -255,6 +255,13 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           message: 'GitHub App user tokens must have expiring user tokens enabled',
         });
       }
+      if (!token.accessToken) {
+        return reply.code(400).send({
+          error: 'github_oauth_exchange_failed',
+          message: 'GitHub OAuth exchange returned no access token',
+        });
+      }
+      const accountLogin = await fetchGitHubTokenLogin(token.accessToken);
       const brokerCredentialId = githubAppUserBrokerCredentialForeignId(workspaceId, user.id);
       await ironControl.upsertBrokerCredential({
         foreignId: brokerCredentialId,
@@ -284,8 +291,8 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           userId: user.id,
           status: 'connected',
           tokenKind: 'app_user',
-          accountLogin: null,
-          accountLabel: 'GitHub user',
+          accountLogin,
+          accountLabel: accountLogin,
           scopes: token.scopes,
           capabilities: {},
           metadata: { brokerCredentialId },
@@ -533,6 +540,7 @@ type GitHubConnectionState = {
 };
 
 type GitHubAppUserToken = {
+  accessToken: string | null;
   refreshToken: string | null;
   scopes: string[];
 };
@@ -610,9 +618,30 @@ async function exchangeGitHubAppUserCode(code: string): Promise<GitHubAppUserTok
     throw new RouteResponse(400, 'github_oauth_exchange_failed', stringOrNull(body.error_description) ?? body.error);
   }
   return {
+    accessToken: stringOrNull(body.access_token),
     refreshToken: stringOrNull(body.refresh_token),
     scopes: typeof body.scope === 'string' ? stringArray(body.scope.split(',')) : [],
   };
+}
+
+async function fetchGitHubTokenLogin(token: string): Promise<string> {
+  const res = await fetch('https://api.github.com/user', {
+    method: 'GET',
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${token}`,
+      'x-github-api-version': '2022-11-28',
+    },
+  });
+  if (!res.ok) {
+    throw new RouteResponse(502, 'github_user_lookup_failed', 'Could not fetch GitHub user identity');
+  }
+  const body = (await res.json().catch(() => null)) as { login?: unknown } | null;
+  const login = stringOrNull(body?.login);
+  if (!login) {
+    throw new RouteResponse(502, 'github_user_lookup_failed', 'GitHub user lookup returned no login');
+  }
+  return login;
 }
 
 async function validateGitHubPatToken(token: string): Promise<{ accountLogin: string; scopes: string[] }> {

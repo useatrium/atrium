@@ -274,13 +274,15 @@ describe('connections routes', () => {
     config.githubAppClientId = 'github-client-id';
     config.githubAppClientSecret = 'github-client-secret';
     config.githubAppRedirectUrl = 'http://server.test/api/me/connections/github/callback';
-    const githubFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json({
-        access_token: 'access-token-not-stored',
-        refresh_token: 'refresh-token-secret',
-        scope: 'repo,read:user',
-      }),
-    );
+    const githubFetch = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        json({
+          access_token: 'access-token-not-stored',
+          refresh_token: 'refresh-token-secret',
+          scope: 'repo,read:user',
+        }),
+      )
+      .mockResolvedValueOnce(json({ login: 'octo-user' }));
     const cookie = await loginCookie();
 
     const start = await app.inject({
@@ -309,17 +311,27 @@ describe('connections routes', () => {
         method: 'POST',
       }),
     );
+    expect(githubFetch).toHaveBeenCalledWith(
+      'https://api.github.com/user',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ authorization: 'Bearer access-token-not-stored' }),
+      }),
+    );
     expect(ironCalls.some((call) => call.url.includes('/broker_credentials/'))).toBe(true);
     expect(ironCalls.some((call) => String(call.init.body).includes('refresh-token-secret'))).toBe(true);
 
-    const stored = await pool.query<{ token_kind: string; metadata: unknown }>(
-      `SELECT token_kind, metadata
+    const stored = await pool.query<{ token_kind: string; account_login: string | null; account_label: string | null; metadata: unknown }>(
+      `SELECT token_kind, account_login, account_label, metadata
          FROM user_connections
         WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
       [fx.workspaceId, fx.userId],
     );
     expect(stored.rows[0]!.token_kind).toBe('app_user');
+    expect(stored.rows[0]!.account_login).toBe('octo-user');
+    expect(stored.rows[0]!.account_label).toBe('octo-user');
     expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain('refresh-token-secret');
+    expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain('access-token-not-stored');
   });
 
   it('rejects explicit workspaces outside membership', async () => {
