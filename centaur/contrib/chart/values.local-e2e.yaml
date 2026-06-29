@@ -1,0 +1,8 @@
+apiRs:
+  ironProxy:
+    mode: enabled
+
+console:
+  enabled: true
+  worker:
+    enabled: true

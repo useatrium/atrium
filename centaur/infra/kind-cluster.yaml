@@ -1,0 +1,8 @@
+# Existing kind clusters must be recreated once with this config before they can
+# pull images from localhost:5000 through the kind-registry container.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5000"]
+      endpoint = ["http://kind-registry:5000"]
