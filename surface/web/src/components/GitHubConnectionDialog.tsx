@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import type { ConnectionStatus } from '../api';
+import type { ConnectionIdentity, ConnectionStatus } from '../api';
 import { XIcon } from './icons';
 
 export function GitHubConnectionDialog({
@@ -23,6 +23,7 @@ export function GitHubConnectionDialog({
   const needsAuth = status?.status === 'needs_auth';
   const activeSummary = githubActiveSummary(status);
   const connectionDetails = githubConnectionDetails(status);
+  const identities = status?.identities ?? [];
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -95,6 +96,27 @@ export function GitHubConnectionDialog({
               {needsAuth && status?.lastError && (
                 <div className="mt-2 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-danger">
                   {status.lastError}
+                </div>
+              )}
+              {identities.length > 0 && (
+                <div className="mt-3 border-t border-edge pt-2">
+                  <div className="text-2xs font-medium uppercase text-fg-muted">Saved identities</div>
+                  <ul className="mt-2 space-y-1">
+                    {identities.map((identity) => (
+                      <li key={identity.id} className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-fg-secondary">{githubIdentitySummary(identity)}</span>
+                        <span
+                          className={
+                            identity.active
+                              ? 'shrink-0 rounded border border-success/40 px-1.5 py-0.5 text-2xs font-medium text-success'
+                              : 'shrink-0 rounded border border-edge px-1.5 py-0.5 text-2xs font-medium text-fg-muted'
+                          }
+                        >
+                          {identity.active ? 'Active' : 'Inactive'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
@@ -260,6 +282,20 @@ function githubActiveSummary(status?: ConnectionStatus): string {
       return account ? `PAT for @${account}` : 'Personal access token';
     case 'public_read':
       return 'Public read';
+    default:
+      return 'GitHub';
+  }
+}
+
+function githubIdentitySummary(identity: ConnectionIdentity): string {
+  const account = identity.accountLabel ?? identity.accountLogin ?? null;
+  switch (identity.tokenKind) {
+    case 'app_installation':
+      return account ? `App installation for ${account}` : 'App installation';
+    case 'app_user':
+      return account ? `@${account} as GitHub user` : 'GitHub user';
+    case 'pat':
+      return account ? `PAT for @${account}` : 'Personal access token';
     default:
       return 'GitHub';
   }

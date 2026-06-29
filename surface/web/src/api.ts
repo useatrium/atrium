@@ -14,6 +14,7 @@ export type {
   AgentProfileProposal,
   AgentProfileProvider,
   AgentProfileVersion,
+  ConnectionIdentity,
   ConnectionProvider,
   ConnectionStatus,
   ProviderCredentialProvider,

@@ -118,6 +118,57 @@ describe('GitHubConnectionDialog', () => {
     ).toBeTruthy();
   });
 
+  it('shows saved GitHub identities with active state', () => {
+    renderDialog(
+      status({
+        tokenKind: 'app_installation',
+        accountLabel: 'acme',
+        identities: [
+          {
+            id: 'github:app_installation:12345',
+            provider: 'github',
+            workspaceId: 'workspace-1',
+            active: true,
+            connected: true,
+            status: 'connected',
+            tokenKind: 'app_installation',
+            accountLogin: 'acme',
+            accountLabel: 'acme',
+            scopes: [],
+            capabilities: {},
+            metadata: { installationId: '12345' },
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+          {
+            id: 'github:pat',
+            provider: 'github',
+            workspaceId: 'workspace-1',
+            active: false,
+            connected: true,
+            status: 'connected',
+            tokenKind: 'pat',
+            accountLogin: 'octo',
+            accountLabel: 'octo',
+            scopes: [],
+            capabilities: {},
+            metadata: { last4: '1234' },
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByText('Saved identities')).toBeTruthy();
+    expect(screen.getAllByText('App installation for acme').length).toBeGreaterThan(0);
+    expect(screen.getByText('PAT for @octo')).toBeTruthy();
+    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.getByText('Inactive')).toBeTruthy();
+  });
+
   it('shows workspace, validation, and repo access metadata for connected accounts', () => {
     renderDialog(
       status({
