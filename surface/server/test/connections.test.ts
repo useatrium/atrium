@@ -87,6 +87,12 @@ describe('connections routes', () => {
   });
 
   it('stores GitHub connection metadata without storing token material', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ login: 'octo-user' }), {
+        status: 200,
+        headers: { 'x-oauth-scopes': 'repo, read:user, repo' },
+      }),
+    );
     const cookie = await loginCookie();
 
     const res = await app.inject({
@@ -97,8 +103,8 @@ describe('connections routes', () => {
         workspaceId: fx.workspaceId,
         tokenKind: 'pat',
         token: 'ghp_secret_1234',
-        accountLogin: 'octo-user',
-        scopes: ['repo', 'read:user', 'repo'],
+        accountLogin: 'spoofed-user',
+        scopes: ['admin:org'],
       },
     });
 
@@ -124,6 +130,34 @@ describe('connections routes', () => {
     );
     expect(stored.rows).toHaveLength(1);
     expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain('ghp_secret_1234');
+  });
+
+  it('rejects invalid GitHub PATs before storing or granting them', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('bad credentials', { status: 401 }));
+    const cookie = await loginCookie();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'pat',
+        token: 'ghp_bad_token',
+      },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: 'github_token_invalid' });
+    expect(ironCalls.some((call) => String(call.init.body).includes('ghp_bad_token'))).toBe(false);
+
+    const stored = await pool.query(
+      `SELECT 1
+         FROM user_connections
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+      [fx.workspaceId, fx.userId],
+    );
+    expect(stored.rowCount).toBe(0);
   });
 
   it('disconnects GitHub back to public-read fallback', async () => {

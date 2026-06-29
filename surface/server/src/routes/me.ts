@@ -120,6 +120,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     const token = typeof body.token === 'string' ? body.token.trim() : '';
     let brokerCredentialId =
       typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
+    let verifiedPatIdentity: { accountLogin: string; scopes: string[] } | null = null;
     const installationId =
       typeof body.installationId === 'string'
         ? body.installationId.trim()
@@ -146,6 +147,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           if (!token) {
             throw new RouteResponse(400, 'bad_request', 'GitHub token required');
           }
+          verifiedPatIdentity = await validateGitHubPatToken(token);
           await convergeGitHubPatGrant(ironControl, {
             workspaceId: resolvedWorkspaceId,
             userId: user.id,
@@ -179,9 +181,9 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           userId: user.id,
           status: 'connected',
           tokenKind,
-          accountLogin: stringOrNull(body.accountLogin),
-          accountLabel: stringOrNull(body.accountLabel),
-          scopes: stringArray(body.scopes),
+          accountLogin: verifiedPatIdentity?.accountLogin ?? stringOrNull(body.accountLogin),
+          accountLabel: verifiedPatIdentity?.accountLogin ?? stringOrNull(body.accountLabel),
+          scopes: verifiedPatIdentity?.scopes ?? stringArray(body.scopes),
           capabilities: plainObject(body.capabilities),
           metadata: {
             ...plainObject(body.metadata),
@@ -613,6 +615,32 @@ async function exchangeGitHubAppUserCode(code: string): Promise<GitHubAppUserTok
   };
 }
 
+async function validateGitHubPatToken(token: string): Promise<{ accountLogin: string; scopes: string[] }> {
+  const res = await fetch('https://api.github.com/user', {
+    method: 'GET',
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${token}`,
+      'x-github-api-version': '2022-11-28',
+    },
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new RouteResponse(401, 'github_token_invalid', 'GitHub token is invalid or unauthorized');
+  }
+  if (!res.ok) {
+    throw new RouteResponse(502, 'github_token_validation_failed', 'Could not validate GitHub token');
+  }
+  const body = (await res.json().catch(() => null)) as { login?: unknown } | null;
+  const accountLogin = stringOrNull(body?.login);
+  if (!accountLogin) {
+    throw new RouteResponse(502, 'github_token_validation_failed', 'GitHub token validation returned no login');
+  }
+  return {
+    accountLogin,
+    scopes: scopesHeaderArray(res.headers.get('x-oauth-scopes')),
+  };
+}
+
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -620,6 +648,11 @@ function stringOrNull(value: unknown): string | null {
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function scopesHeaderArray(value: string | null): string[] {
+  if (!value) return [];
+  return [...new Set(value.split(',').map((scope) => scope.trim()).filter(Boolean))].sort();
 }
 
 function plainObject(value: unknown): Record<string, unknown> {
