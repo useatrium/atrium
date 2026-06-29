@@ -113,6 +113,7 @@ export interface SessionSpawnPayload {
   repo?: string;
   branch?: string;
   repos?: SessionRepoSpec[];
+  githubIdentityMode?: 'automatic' | 'app_installation' | 'app_user' | 'pat';
   agentProfileId?: string;
   agentProfileVersionId?: string;
   createdAt?: string;
@@ -853,6 +854,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           repo: payload.repo,
           branch: payload.branch,
           repos: payload.repos,
+          githubIdentityMode: payload.githubIdentityMode,
           agentProfileId: payload.agentProfileId,
           agentProfileVersionId: payload.agentProfileVersionId,
           clientSpawnId: payload.clientSpawnId,

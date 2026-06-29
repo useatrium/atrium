@@ -79,6 +79,7 @@ export function useChatMessageActions({
         repo?: string;
         branch?: string;
         repos?: { repo: string; ref?: string; subdir?: string }[];
+        githubIdentityMode?: 'automatic' | 'app_installation' | 'app_user' | 'pat';
         agentProfileId?: string;
         agentProfileVersionId?: string;
       },
@@ -102,6 +103,7 @@ export function useChatMessageActions({
         ...(repo ? { repo } : {}),
         ...(branch ? { branch } : {}),
         ...(repos.length ? { repos } : {}),
+        ...(opts?.githubIdentityMode ? { githubIdentityMode: opts.githubIdentityMode } : {}),
         ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
         ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
         createdAt: new Date().toISOString(),
