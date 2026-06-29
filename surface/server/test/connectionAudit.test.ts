@@ -25,6 +25,7 @@ describe('githubConnectionAuditMetadata', () => {
           authorization: 'Bearer ghp_secret_secret_secret',
           nested: { refreshToken: 'github_pat_secret_secret_secret' },
         },
+        identities: [],
         lastValidatedAt: '2026-06-28T00:00:00.000Z',
         lastError: null,
         updatedAt: '2026-06-28T00:00:00.000Z',

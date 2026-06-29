@@ -19,6 +19,25 @@ export interface ConnectionStatusJson {
   scopes: string[];
   capabilities: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  identities: ConnectionIdentityJson[];
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
+export interface ConnectionIdentityJson {
+  id: string;
+  provider: ConnectionProvider;
+  workspaceId: string;
+  active: boolean;
+  connected: boolean;
+  status: Exclude<ConnectionStatusValue, 'public_read' | 'unavailable'>;
+  tokenKind: Exclude<ConnectionTokenKind, 'public_read'>;
+  accountLogin: string | null;
+  accountLabel: string | null;
+  scopes: string[];
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
   lastValidatedAt: string | null;
   lastError: string | null;
   updatedAt: string | null;
@@ -35,6 +54,24 @@ interface ConnectionRow {
   scopes: string[] | null;
   capabilities: unknown;
   metadata: unknown;
+  last_validated_at: Date | null;
+  last_error: string | null;
+  updated_at: Date;
+}
+
+interface ConnectionIdentityRow {
+  workspace_id: string;
+  user_id: string;
+  provider: string;
+  identity_id: string;
+  status: Exclude<ConnectionStatusValue, 'public_read' | 'unavailable'>;
+  token_kind: Exclude<ConnectionTokenKind, 'public_read'>;
+  account_login: string | null;
+  account_label: string | null;
+  scopes: string[] | null;
+  capabilities: unknown;
+  metadata: unknown;
+  active: boolean;
   last_validated_at: Date | null;
   last_error: string | null;
   updated_at: Date;
@@ -71,15 +108,37 @@ export class Connections {
   }
 
   async list(userId: string, workspaceId: string, client: Queryable = this.pool): Promise<ConnectionStatusJson[]> {
-    const res = await client.query<ConnectionRow>(
+    const connectionsRes = await client.query<ConnectionRow>(
       `SELECT workspace_id, user_id, provider, status, token_kind, account_login, account_label,
               scopes, capabilities, metadata, last_validated_at, last_error, updated_at
          FROM user_connections
         WHERE workspace_id = $1 AND user_id = $2`,
       [workspaceId, userId],
     );
-    const byProvider = new Map(res.rows.map((row) => [row.provider, row]));
-    return [connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, workspaceId, byProvider.get(GITHUB_CONNECTION_PROVIDER) ?? null)];
+    const identitiesRes = await client.query<ConnectionIdentityRow>(
+      `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+              scopes, capabilities, metadata, active, last_validated_at, last_error, updated_at
+         FROM user_connection_identities
+        WHERE workspace_id = $1 AND user_id = $2
+        ORDER BY active DESC, updated_at DESC, identity_id ASC`,
+      [workspaceId, userId],
+    );
+    const byProvider = new Map(connectionsRes.rows.map((row) => [row.provider, row]));
+    const identitiesByProvider = new Map<string, ConnectionIdentityJson[]>();
+    for (const row of identitiesRes.rows) {
+      const identity = connectionIdentityFromRow(row);
+      const bucket = identitiesByProvider.get(row.provider) ?? [];
+      bucket.push(identity);
+      identitiesByProvider.set(row.provider, bucket);
+    }
+    return [
+      connectionStatusFromRow(
+        GITHUB_CONNECTION_PROVIDER,
+        workspaceId,
+        byProvider.get(GITHUB_CONNECTION_PROVIDER) ?? null,
+        identitiesByProvider.get(GITHUB_CONNECTION_PROVIDER) ?? [],
+      ),
+    ];
   }
 
   async upsertGitHubMetadata(
@@ -97,6 +156,14 @@ export class Connections {
     },
     client: Queryable = this.pool,
   ): Promise<ConnectionStatusJson> {
+    const identityId = githubConnectionId({ tokenKind: args.tokenKind, metadata: args.metadata });
+    await client.query(
+      `UPDATE user_connection_identities
+          SET active = false,
+              updated_at = now()
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND identity_id <> $4 AND active`,
+      [args.workspaceId, args.userId, GITHUB_CONNECTION_PROVIDER, identityId],
+    );
     const res = await client.query<ConnectionRow>(
       `INSERT INTO user_connections
          (workspace_id, user_id, provider, status, token_kind, account_login, account_label,
@@ -130,7 +197,46 @@ export class Connections {
         args.lastError ?? null,
       ],
     );
-    return connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, args.workspaceId, res.rows[0] ?? null);
+    await client.query(
+      `INSERT INTO user_connection_identities
+         (workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+          scopes, capabilities, metadata, active, last_validated_at, last_error)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::jsonb, $11::jsonb, true,
+               CASE WHEN $5 = 'connected' THEN now() ELSE NULL END, $12)
+       ON CONFLICT (workspace_id, user_id, provider, identity_id) DO UPDATE
+       SET status = EXCLUDED.status,
+           token_kind = EXCLUDED.token_kind,
+           account_login = EXCLUDED.account_login,
+           account_label = EXCLUDED.account_label,
+           scopes = EXCLUDED.scopes,
+           capabilities = EXCLUDED.capabilities,
+           metadata = EXCLUDED.metadata,
+           active = true,
+           last_validated_at = CASE WHEN EXCLUDED.status = 'connected' THEN now() ELSE user_connection_identities.last_validated_at END,
+           last_error = EXCLUDED.last_error,
+           updated_at = now()`,
+      [
+        args.workspaceId,
+        args.userId,
+        GITHUB_CONNECTION_PROVIDER,
+        identityId,
+        args.status,
+        args.tokenKind,
+        args.accountLogin ?? null,
+        args.accountLabel ?? args.accountLogin ?? null,
+        normalizeScopes(args.scopes ?? []),
+        JSON.stringify(args.capabilities ?? {}),
+        JSON.stringify(args.metadata ?? {}),
+        args.lastError ?? null,
+      ],
+    );
+    const identities = await listConnectionIdentities(
+      client,
+      args.workspaceId,
+      args.userId,
+      GITHUB_CONNECTION_PROVIDER,
+    );
+    return connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, args.workspaceId, res.rows[0] ?? null, identities);
   }
 
   async disconnectGitHub(
@@ -143,7 +249,15 @@ export class Connections {
         WHERE workspace_id = $1 AND user_id = $2 AND provider = $3`,
       [workspaceId, userId, GITHUB_CONNECTION_PROVIDER],
     );
-    return connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, workspaceId, null);
+    await client.query(
+      `UPDATE user_connection_identities
+          SET active = false,
+              updated_at = now()
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND active`,
+      [workspaceId, userId, GITHUB_CONNECTION_PROVIDER],
+    );
+    const identities = await listConnectionIdentities(client, workspaceId, userId, GITHUB_CONNECTION_PROVIDER);
+    return connectionStatusFromRow(GITHUB_CONNECTION_PROVIDER, workspaceId, null, identities);
   }
 
   async markGitHubNeedsAuth(
@@ -163,6 +277,15 @@ export class Connections {
            updated_at = now()`,
       [workspaceId, userId, GITHUB_CONNECTION_PROVIDER, message],
     );
+    await client.query(
+      `UPDATE user_connection_identities
+          SET active = false,
+              status = 'needs_auth',
+              last_error = $4,
+              updated_at = now()
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND active`,
+      [workspaceId, userId, GITHUB_CONNECTION_PROVIDER, message],
+    );
   }
 }
 
@@ -170,6 +293,7 @@ export function connectionStatusFromRow(
   provider: ConnectionProvider,
   workspaceId: string,
   row: ConnectionRow | null,
+  identities: ConnectionIdentityJson[] = [],
 ): ConnectionStatusJson {
   if (!row) {
     return {
@@ -184,6 +308,7 @@ export function connectionStatusFromRow(
       scopes: [],
       capabilities: {},
       metadata: {},
+      identities,
       lastValidatedAt: null,
       lastError: null,
       updatedAt: null,
@@ -201,10 +326,48 @@ export function connectionStatusFromRow(
     scopes: normalizeScopes(row.scopes ?? []),
     capabilities: plainRecord(row.capabilities),
     metadata: plainRecord(row.metadata),
+    identities,
     lastValidatedAt: row.last_validated_at ? row.last_validated_at.toISOString() : null,
     lastError: row.last_error,
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+function connectionIdentityFromRow(row: ConnectionIdentityRow): ConnectionIdentityJson {
+  return {
+    id: row.identity_id,
+    provider: row.provider,
+    workspaceId: row.workspace_id,
+    active: row.active,
+    connected: row.status === 'connected',
+    status: row.status,
+    tokenKind: row.token_kind,
+    accountLogin: row.account_login,
+    accountLabel: row.account_label,
+    scopes: normalizeScopes(row.scopes ?? []),
+    capabilities: plainRecord(row.capabilities),
+    metadata: plainRecord(row.metadata),
+    lastValidatedAt: row.last_validated_at ? row.last_validated_at.toISOString() : null,
+    lastError: row.last_error,
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+async function listConnectionIdentities(
+  client: Queryable,
+  workspaceId: string,
+  userId: string,
+  provider: ConnectionProvider,
+): Promise<ConnectionIdentityJson[]> {
+  const res = await client.query<ConnectionIdentityRow>(
+    `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+            scopes, capabilities, metadata, active, last_validated_at, last_error, updated_at
+       FROM user_connection_identities
+      WHERE workspace_id = $1 AND user_id = $2 AND provider = $3
+      ORDER BY active DESC, updated_at DESC, identity_id ASC`,
+    [workspaceId, userId, provider],
+  );
+  return res.rows.map(connectionIdentityFromRow);
 }
 
 export function githubConnectionId(args: { tokenKind?: string | null; metadata?: unknown }): string {

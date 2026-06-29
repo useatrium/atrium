@@ -20,6 +20,7 @@ function status(overrides: Partial<ConnectionStatus>): ConnectionStatus {
     scopes: [],
     capabilities: {},
     metadata: {},
+    identities: [],
     lastValidatedAt: null,
     lastError: null,
     updatedAt: null,

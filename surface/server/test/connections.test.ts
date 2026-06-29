@@ -135,6 +135,99 @@ describe('connections routes', () => {
     expect(JSON.stringify(stored.rows[0]!.metadata)).not.toContain('ghp_secret_1234');
   });
 
+  it('keeps prior GitHub identities as inactive metadata when another identity becomes active', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ login: 'octo-user' }), {
+        status: 200,
+        headers: { 'x-oauth-scopes': 'repo, read:user' },
+      }),
+    );
+    const cookie = await loginCookie();
+
+    const pat = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'pat',
+        token: 'ghp_secret_5678',
+      },
+    });
+    expect(pat.statusCode).toBe(200);
+    expect(pat.json().connection.identities).toEqual([
+      expect.objectContaining({
+        id: 'github:pat',
+        active: true,
+        tokenKind: 'pat',
+        accountLogin: 'octo-user',
+        metadata: { last4: '5678' },
+      }),
+    ]);
+
+    const appInstall = await app.inject({
+      method: 'POST',
+      url: '/api/me/connections/github',
+      headers: { cookie },
+      payload: {
+        workspaceId: fx.workspaceId,
+        tokenKind: 'app_installation',
+        brokerCredentialId: 'bcr_installation',
+        installationId: '12345',
+        accountLogin: 'acme',
+      },
+    });
+    expect(appInstall.statusCode).toBe(200);
+    expect(appInstall.json().connection).toMatchObject({
+      id: 'github:app_installation:12345',
+      tokenKind: 'app_installation',
+      accountLogin: 'acme',
+      identities: [
+        expect.objectContaining({
+          id: 'github:app_installation:12345',
+          active: true,
+          tokenKind: 'app_installation',
+          accountLogin: 'acme',
+        }),
+        expect.objectContaining({
+          id: 'github:pat',
+          active: false,
+          tokenKind: 'pat',
+          accountLogin: 'octo-user',
+          metadata: { last4: '5678' },
+        }),
+      ],
+    });
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/api/me/connections?workspaceId=${fx.workspaceId}`,
+      headers: { cookie },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().connections[0]).toMatchObject({
+      id: 'github:app_installation:12345',
+      identities: [
+        expect.objectContaining({ id: 'github:app_installation:12345', active: true }),
+        expect.objectContaining({ id: 'github:pat', active: false }),
+      ],
+    });
+
+    const stored = await pool.query<{ identity_id: string; active: boolean; metadata: unknown }>(
+      `SELECT identity_id, active, metadata
+         FROM user_connection_identities
+        WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'
+        ORDER BY active DESC, identity_id ASC`,
+      [fx.workspaceId, fx.userId],
+    );
+    expect(stored.rows).toHaveLength(2);
+    expect(stored.rows.map((row) => [row.identity_id, row.active])).toEqual([
+      ['github:app_installation:12345', true],
+      ['github:pat', false],
+    ]);
+    expect(JSON.stringify(stored.rows)).not.toContain('ghp_secret_5678');
+  });
+
   it('rejects invalid GitHub PATs before storing or granting them', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('bad credentials', { status: 401 }));
     const cookie = await loginCookie();
@@ -324,7 +417,8 @@ describe('connections routes', () => {
     config.githubAppClientId = 'github-client-id';
     config.githubAppClientSecret = 'github-client-secret';
     config.githubAppRedirectUrl = 'http://server.test/api/me/connections/github/callback';
-    const githubFetch = vi.spyOn(globalThis, 'fetch')
+    const githubFetch = vi
+      .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
         json({
           access_token: 'access-token-not-stored',
@@ -371,7 +465,12 @@ describe('connections routes', () => {
     expect(ironCalls.some((call) => call.url.includes('/broker_credentials/'))).toBe(true);
     expect(ironCalls.some((call) => String(call.init.body).includes('refresh-token-secret'))).toBe(true);
 
-    const stored = await pool.query<{ token_kind: string; account_login: string | null; account_label: string | null; metadata: unknown }>(
+    const stored = await pool.query<{
+      token_kind: string;
+      account_login: string | null;
+      account_label: string | null;
+      metadata: unknown;
+    }>(
       `SELECT token_kind, account_login, account_label, metadata
          FROM user_connections
         WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
@@ -386,9 +485,7 @@ describe('connections routes', () => {
 
   it('rejects explicit workspaces outside membership', async () => {
     const cookie = await loginCookie();
-    const other = await pool.query<{ id: string }>(
-      `INSERT INTO workspaces (name) VALUES ('other') RETURNING id`,
-    );
+    const other = await pool.query<{ id: string }>(`INSERT INTO workspaces (name) VALUES ('other') RETURNING id`);
 
     const res = await app.inject({
       method: 'GET',

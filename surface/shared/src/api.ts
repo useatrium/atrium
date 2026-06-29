@@ -87,6 +87,25 @@ export interface ConnectionStatus {
   scopes: string[];
   capabilities: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  identities: ConnectionIdentity[];
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
+export interface ConnectionIdentity {
+  id: string;
+  provider: ConnectionProvider;
+  workspaceId: string;
+  active: boolean;
+  connected: boolean;
+  status: 'connected' | 'needs_auth';
+  tokenKind: Exclude<ConnectionTokenKind, 'public_read'>;
+  accountLogin: string | null;
+  accountLabel: string | null;
+  scopes: string[];
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
   lastValidatedAt: string | null;
   lastError: string | null;
   updatedAt: string | null;
