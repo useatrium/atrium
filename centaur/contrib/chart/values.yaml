@@ -205,6 +205,9 @@ sandbox:
   # TODO: namespace per tenant (or disable) before scheduling multi-tenant pods
   # on shared nodes; a poisoned sccache entry would be consumed by other sessions.
   depCachePath: /var/lib/centaur/depcache
+  # Optional deployment/toolchain discriminator for warmcache dep-store keys.
+  # Leave blank to preserve legacy `(lockfile_hash, kind)` cache keys.
+  warmcacheToolchainId: ""
   # How the in-sandbox harness authenticates upstream. Single source of truth:
   # the control plane reads it to register the matching iron-proxy credential
   # AND propagates it into the sandbox, so the agent's auth.json and the

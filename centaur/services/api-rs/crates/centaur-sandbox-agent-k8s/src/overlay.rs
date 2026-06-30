@@ -255,6 +255,7 @@ pub(crate) struct WarmcacheHydrateInitContainer<'a> {
     pub(crate) cas_volume: &'a str,
     pub(crate) atrium_url: Option<&'a str>,
     pub(crate) atrium_key: Option<&'a str>,
+    pub(crate) toolchain_id: Option<&'a str>,
 }
 
 pub(crate) struct PrivateRepoHydrateInitContainer<'a> {
@@ -317,6 +318,10 @@ pub(crate) fn warmcache_hydrate_init_container_json(
     if let Some(atrium_key) = init.atrium_key {
         env.push(json!({ "name": "ARTIFACT_CAPTURE_API_KEY", "value": atrium_key }));
     }
+    let toolchain_id = init
+        .toolchain_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     let mut container = json!({
         "name": "warmcache-hydrate",
@@ -363,6 +368,13 @@ pub(crate) fn warmcache_hydrate_init_container_json(
     });
     if !env.is_empty() {
         container["env"] = json!(env);
+    }
+    if let Some(toolchain_id) = toolchain_id {
+        let args = container["args"]
+            .as_array_mut()
+            .expect("warmcache hydrate args must be an array");
+        args.push(json!("--toolchain-id"));
+        args.push(json!(toolchain_id));
     }
     container
 }

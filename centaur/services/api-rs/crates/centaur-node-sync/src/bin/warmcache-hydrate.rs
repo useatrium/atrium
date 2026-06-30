@@ -15,8 +15,10 @@
 //! Contract:
 //! `warmcache-hydrate --session <id> --repos-json <json>
 //!   [--repo-cache-root /var/lib/centaur/repos] [--depcache-root /var/lib/centaur/depcache]
-//!   [--cas-dir /var/lib/centaur/cas] [--atrium-url <url>] [--atrium-key <key>]`
-//! (atrium-url / atrium-key fall back to ATRIUM_URL / ARTIFACT_CAPTURE_API_KEY.)
+//!   [--cas-dir /var/lib/centaur/cas] [--atrium-url <url>] [--atrium-key <key>]
+//!   [--toolchain-id <id>]`
+//! (atrium-url / atrium-key fall back to ATRIUM_URL / ARTIFACT_CAPTURE_API_KEY;
+//! toolchain-id falls back to WARMCACHE_TOOLCHAIN_ID.)
 
 use centaur_node_sync::http_client::HttpAtriumClient;
 use centaur_node_sync::session_manifest::RepoMount;
@@ -41,6 +43,7 @@ fn run() -> Result<(), String> {
     let mut cas_dir = PathBuf::from("/var/lib/centaur/cas");
     let mut atrium_url: Option<String> = None;
     let mut atrium_key: Option<String> = None;
+    let mut toolchain_id: Option<String> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -53,6 +56,7 @@ fn run() -> Result<(), String> {
             "--cas-dir" => cas_dir = PathBuf::from(take()?),
             "--atrium-url" => atrium_url = Some(take()?),
             "--atrium-key" => atrium_key = Some(take()?),
+            "--toolchain-id" => toolchain_id = Some(take()?),
             other => return Err(format!("unknown arg {other}")),
         }
     }
@@ -64,6 +68,10 @@ fn run() -> Result<(), String> {
     let key = atrium_key
         .or_else(|| std::env::var("ARTIFACT_CAPTURE_API_KEY").ok())
         .ok_or("--atrium-key / ARTIFACT_CAPTURE_API_KEY is required")?;
+    let toolchain_id = toolchain_id
+        .or_else(|| std::env::var("WARMCACHE_TOOLCHAIN_ID").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     let repos: Vec<RepoMount> = match repos_json {
         Some(j) if !j.trim().is_empty() => {
@@ -91,16 +99,22 @@ fn run() -> Result<(), String> {
             &depcache_root,
             &cas_dir,
             DEFAULT_KINDS,
+            toolchain_id.as_deref(),
         );
         for k in &stats.kinds {
             let hit = k.entries > 0;
+            let toolchain_log = toolchain_id
+                .as_deref()
+                .map(|id| format!(" toolchain_id={id}"))
+                .unwrap_or_default();
             eprintln!(
-                "event=warmcache_hydrate session={} repo={} kind={} hit={} lockfile_hash={} entries={} reflinked={} fetched={} errors={}{}",
+                "event=warmcache_hydrate session={} repo={} kind={} hit={} lockfile_hash={}{} entries={} reflinked={} fetched={} errors={}{}",
                 session,
                 repo.repo,
                 k.kind,
                 hit,
                 k.lockfile_hash,
+                toolchain_log,
                 k.entries,
                 k.reflinked,
                 k.fetched,

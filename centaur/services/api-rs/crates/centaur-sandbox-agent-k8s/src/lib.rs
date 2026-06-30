@@ -173,6 +173,7 @@ pub struct WarmcacheHydrateConfig {
     pub cas_mount_path: String,
     pub atrium_base_url: Option<String>,
     pub atrium_capture_api_key: Option<String>,
+    pub toolchain_id: Option<String>,
 }
 
 impl WarmcacheHydrateConfig {
@@ -189,6 +190,7 @@ impl WarmcacheHydrateConfig {
             cas_mount_path: cas_mount_path.into(),
             atrium_base_url: None,
             atrium_capture_api_key: None,
+            toolchain_id: None,
         }
     }
 }
@@ -1076,6 +1078,10 @@ fn build_agent_sandbox(
                         .warmcache_hydrate
                         .as_ref()
                         .and_then(|config| config.atrium_capture_api_key.as_deref()),
+                    toolchain_id: config
+                        .warmcache_hydrate
+                        .as_ref()
+                        .and_then(|config| config.toolchain_id.as_deref()),
                 },
             ));
         }
@@ -2481,6 +2487,60 @@ mod tests {
                 .unwrap()
                 .iter()
                 .all(|mount| mount.name != WARMCACHE_CAS_VOLUME)
+        );
+    }
+
+    #[test]
+    fn warmcache_hydrate_init_container_includes_toolchain_id_when_configured() {
+        let repos_json = r#"[{"repo":"acme/foo","ref":"main"}]"#;
+        let mut warmcache = WarmcacheHydrateConfig::new(
+            "/cache",
+            "/var/cache/centaur/depcache",
+            "/var/lib/centaur/cas",
+            "/var/lib/centaur/cas",
+        );
+        warmcache.toolchain_id = Some("node24-rust1.88".to_owned());
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .env("CENTAUR_THREAD_KEY", "surface:session-1")
+            .env("AGENT_REPOS_JSON", repos_json)
+            .mount(Mount::new(
+                MountKind::Bind {
+                    source_path: "/var/lib/centaur/repos".to_owned(),
+                },
+                "/cache",
+            ))
+            .mount(Mount::new(
+                MountKind::Bind {
+                    source_path: "/var/lib/centaur/depcache".to_owned(),
+                },
+                "/var/cache/centaur/depcache",
+            ));
+        let config = AgentSandboxConfig::new("centaur")
+            .overlay(OverlayConfig::new("centaur-node-sync:test"))
+            .warmcache_hydrate(warmcache);
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let warmcache = sandbox
+            .spec
+            .pod_template
+            .spec
+            .init_containers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|container| container.name == "warmcache-hydrate")
+            .expect("warmcache-hydrate");
+
+        let args = warmcache
+            .args
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--toolchain-id", "node24-rust1.88"])
         );
     }
 

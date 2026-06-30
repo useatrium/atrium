@@ -118,6 +118,24 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
+pub fn warmcache_effective_lockfile_hash(
+    lockfile_hash: &str,
+    toolchain_id: Option<&str>,
+) -> String {
+    let Some(toolchain_id) = toolchain_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return lockfile_hash.to_string();
+    };
+    let mut h = Sha256::new();
+    h.update(b"atrium-warmcache-v2\0");
+    h.update(lockfile_hash.as_bytes());
+    h.update(b"\0");
+    h.update(toolchain_id.as_bytes());
+    format!("v2.{}", hex::encode(h.finalize()))
+}
+
 /// Hydrate the node depcache for one repo's dependency sets from Atrium CAS. For
 /// each ecosystem whose lockfile is present at `git_ref`, hash the lockfile, fetch
 /// the warm-cache manifest, and reflink each store blob into `<depcache>/<dest>`.
@@ -130,6 +148,7 @@ pub fn hydrate_depcache(
     depcache_root: &Path,
     cas_dir: &Path,
     kinds: &[LockfileKind],
+    toolchain_id: Option<&str>,
 ) -> HydrateStats {
     let repo_dir = repo_cache_root.join(repo);
     let mut stats = HydrateStats::default();
@@ -137,7 +156,8 @@ pub fn hydrate_depcache(
         let Some(lockfile_bytes) = git_show(&repo_dir, git_ref, k.lockfile) else {
             continue;
         };
-        let lockfile_hash = sha256_hex(&lockfile_bytes);
+        let lockfile_hash =
+            warmcache_effective_lockfile_hash(&sha256_hex(&lockfile_bytes), toolchain_id);
         let manifest = match client.warmcache_manifest(&lockfile_hash, k.kind) {
             Ok(m) if !m.is_empty() => m,
             Ok(_) => {
@@ -278,10 +298,12 @@ pub struct CaptureStats {
 }
 
 /// Capture one dependency store from the node depcache back to Atrium CAS, keyed by
-/// `(lockfile_hash, kind)`. Walks `<depcache>/<dest_subdir>`, uploads each file's
-/// bytes (idempotent — the server dedups), and registers the manifest. Intended to
-/// run only on a cold miss / changed deps (the caller gates that), so a full upload
-/// here is the first population, not a per-session cost.
+/// `(lockfile_hash, kind)`. `lockfile_hash` may be the legacy raw lockfile digest
+/// or a v2 effective key that also encodes the sandbox toolchain identity. Walks
+/// `<depcache>/<dest_subdir>`, uploads each file's bytes (idempotent — the server
+/// dedups), and registers the manifest. Intended to run only on a cold miss /
+/// changed deps (the caller gates that), so a full upload here is the first
+/// population, not a per-session cost.
 pub fn capture_depcache(
     client: &mut dyn AtriumClient,
     depcache_root: &Path,
@@ -464,6 +486,34 @@ mod tests {
     }
 
     #[test]
+    fn effective_lockfile_hash_preserves_legacy_when_toolchain_unset() {
+        assert_eq!(warmcache_effective_lockfile_hash("abc123", None), "abc123");
+        assert_eq!(
+            warmcache_effective_lockfile_hash("abc123", Some("  ")),
+            "abc123"
+        );
+    }
+
+    #[test]
+    fn effective_lockfile_hash_uses_stable_v2_toolchain_key() {
+        let key = warmcache_effective_lockfile_hash("abc123", Some("node24-rust1.88"));
+        assert!(key.starts_with("v2."));
+        assert_eq!(key.len(), 67);
+        assert_eq!(
+            key,
+            warmcache_effective_lockfile_hash("abc123", Some("node24-rust1.88"))
+        );
+        assert_ne!(
+            key,
+            warmcache_effective_lockfile_hash("abc123", Some("node24-rust1.89"))
+        );
+        assert_ne!(
+            key,
+            warmcache_effective_lockfile_hash("def456", Some("node24-rust1.88"))
+        );
+    }
+
+    #[test]
     fn hydrates_present_ecosystem_skips_absent() {
         let tmp = tempfile::tempdir().unwrap();
         let repo_cache = tmp.path().join("repos");
@@ -503,6 +553,7 @@ mod tests {
             &depcache,
             &cas,
             DEFAULT_KINDS,
+            None,
         );
 
         let dest = depcache.join("pnpm-store/react/package.json");
@@ -554,6 +605,7 @@ mod tests {
             &depcache,
             &cas,
             DEFAULT_KINDS,
+            None,
         );
 
         assert!(
@@ -563,6 +615,53 @@ mod tests {
         let pnpm = stats.kinds.iter().find(|k| k.kind == "pnpm").unwrap();
         assert_eq!(pnpm.errors, 1);
         assert!(pnpm.error.as_deref().unwrap_or("").contains("integrity"));
+    }
+
+    #[test]
+    fn hydrate_uses_effective_toolchain_key_for_manifest_lookup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_cache = tmp.path().join("repos");
+        let repo_dir = repo_cache.join("acme/app");
+        fs::create_dir_all(&repo_dir).unwrap();
+        run_git(&repo_dir, &["init", "-q", "-b", "main"]);
+        run_git(&repo_dir, &["config", "user.email", "t@t"]);
+        run_git(&repo_dir, &["config", "user.name", "t"]);
+        let lock = b"lockfileVersion: 9\n";
+        fs::write(repo_dir.join("pnpm-lock.yaml"), lock).unwrap();
+        run_git(&repo_dir, &["add", "-A"]);
+        run_git(&repo_dir, &["commit", "-qm", "v1"]);
+
+        let raw_hash = sha256_hex(lock);
+        let effective_key = warmcache_effective_lockfile_hash(&raw_hash, Some("node24-rust1.88"));
+        let store_bytes = b"react package json bytes".to_vec();
+        let store_sha = sha256_hex(&store_bytes);
+        let mut manifests = HashMap::new();
+        manifests.insert(
+            (effective_key.clone(), "pnpm".to_string()),
+            vec![WarmcacheManifestEntry {
+                path: "react/package.json".to_string(),
+                sha256: store_sha.clone(),
+                size_bytes: store_bytes.len() as u64,
+            }],
+        );
+        let mut blobs = HashMap::new();
+        blobs.insert(store_sha, store_bytes);
+        let mut client = FakeWarmcacheClient { manifests, blobs };
+
+        let stats = hydrate_depcache(
+            &mut client,
+            &repo_cache,
+            "acme/app",
+            "main",
+            &tmp.path().join("depcache"),
+            &tmp.path().join("cas"),
+            DEFAULT_KINDS,
+            Some("node24-rust1.88"),
+        );
+
+        let pnpm = stats.kinds.iter().find(|k| k.kind == "pnpm").unwrap();
+        assert_eq!(pnpm.lockfile_hash, effective_key);
+        assert_eq!(pnpm.entries, 1);
     }
 
     #[test]

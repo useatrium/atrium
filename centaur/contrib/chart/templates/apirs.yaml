@@ -196,6 +196,10 @@ spec:
             - name: SESSION_SANDBOX_DEP_CACHE_PATH
               value: {{ .Values.sandbox.depCachePath | quote }}
 {{- end }}
+{{- if .Values.sandbox.warmcacheToolchainId }}
+            - name: SESSION_SANDBOX_WARMCACHE_TOOLCHAIN_ID
+              value: {{ .Values.sandbox.warmcacheToolchainId | quote }}
+{{- end }}
             - name: SESSION_SANDBOX_IDLE_STOP_TTL_SECS
               value: {{ .Values.apiRs.sandboxIdleStopTtlSecs | quote }}
             - name: SESSION_SANDBOX_MAX_LIFETIME_SECS

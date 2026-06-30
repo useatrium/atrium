@@ -632,6 +632,11 @@ struct SandboxArgs {
     )]
     dep_cache_path: Option<String>,
     #[arg(
+        long = "session-sandbox-warmcache-toolchain-id",
+        env = "SESSION_SANDBOX_WARMCACHE_TOOLCHAIN_ID"
+    )]
+    warmcache_toolchain_id: Option<String>,
+    #[arg(
         long = "session-sandbox-passthrough-env",
         env = "SESSION_SANDBOX_PASSTHROUGH_ENV",
         value_delimiter = ','
@@ -956,6 +961,7 @@ impl SandboxArgs {
             clean_optional_value(env::var("ATRIUM_BASE_URL").ok().as_deref());
         warmcache.atrium_capture_api_key =
             clean_optional_value(env::var("ATRIUM_CAPTURE_API_KEY").ok().as_deref());
+        warmcache.toolchain_id = clean_optional_value(self.warmcache_toolchain_id.as_deref());
         Some(warmcache)
     }
 
@@ -2294,6 +2300,30 @@ mod tests {
         assert_eq!(config.ready_timeout, Duration::from_secs(42));
         assert!(config.iron_proxy.is_none());
         assert!(config.overlay.is_none());
+    }
+
+    #[test]
+    fn warmcache_toolchain_id_flows_into_agent_k8s_config() {
+        let args = Args::try_parse_from([
+            "centaur-api-server",
+            "--database-url",
+            "postgres://postgres:postgres@localhost/centaur",
+            "--session-sandbox-backend",
+            "agent-k8s",
+            "--kubernetes-sandbox-iron-proxy-mode",
+            "disabled",
+            "--session-sandbox-dep-cache-path",
+            "/var/lib/centaur/depcache",
+            "--session-sandbox-warmcache-toolchain-id",
+            "node24-rust1.88",
+        ])
+        .unwrap();
+
+        let config = AgentSandboxConfig::try_from(&args.sandbox).unwrap();
+        let warmcache = config
+            .warmcache_hydrate
+            .expect("warmcache hydrate should be configured");
+        assert_eq!(warmcache.toolchain_id.as_deref(), Some("node24-rust1.88"));
     }
 
     #[test]
