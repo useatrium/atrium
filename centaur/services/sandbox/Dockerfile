@@ -284,7 +284,7 @@ RUN --mount=type=bind,source=crates/harness-server,target=/harness-server-src \
     --mount=type=cache,target=/opt/centaur/cargo/registry,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/opt/centaur/cargo/git,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/home/agent/.cache/harness-server-target,uid=1001,gid=1001,sharing=locked \
-    CARGO_TARGET_DIR=/home/agent/.cache/harness-server-target \
+    export CARGO_TARGET_DIR=/home/agent/.cache/harness-server-target; \
     case "$RUST_BUILD_PROFILE" in \
       release) cargo install --locked --path /harness-server-src --root /opt/centaur/local ;; \
       debug|dev) cargo install --debug --locked --path /harness-server-src --root /opt/centaur/local ;; \
