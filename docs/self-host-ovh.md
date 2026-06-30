@@ -263,6 +263,50 @@ $DC curl -s -X POST 'http://localhost:8080/api/session/cli%3Asmoke/execute' \
 kubectl get pods -n centaur | grep asbx   # asbx-* → 1/1 Running
 ```
 
+## Phase 6b — Artifact capture (optional)
+
+Capture ships agents' file changes to Atrium's CAS ledger via the privileged
+`node-sync` DaemonSet. It's off in the round-1 deploy above; enable it like this.
+
+```sh
+# build + import the node-sync image (skipped earlier)
+cd ~/atrium/centaur && DOCKER_BUILDKIT=1 just build-one node-sync
+docker save centaur-node-sync:latest | sudo k3s ctr images import -
+
+# the DaemonSet (k3s) must reach the surface server (Docker). Publish the surface
+# on the cni0 host IP (10.42.0.1) — k3s pods reach the host there and it's internal
+# (not public). Append to the compose tunnel override → server.ports, then recreate:
+#   services: { server: { ports: [ "10.42.0.1:3001:3001" ] } }
+cd ~/atrium/surface/deploy
+sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -d server
+
+# re-enable node-sync + overlay-provisioning, point atriumBaseUrl at cni0
+cd ~/atrium/centaur
+helm upgrade centaur contrib/chart -n centaur \
+  -f contrib/chart/values.dev.yaml -f ../infra/values.local.yaml \
+  --set repoCache.enabled=false --set networkPolicy.enabled=false \
+  --set nodeSync.enabled=true --set nodeSync.overlayProvisioning.enabled=true \
+  --set nodeSync.atriumBaseUrl=http://10.42.0.1:3001
+kubectl get pods -n centaur | grep node-sync   # 1/1 Running
+```
+
+> ⚠️ **Gotcha — the surface needs `ARTIFACT_CAPTURE_API_KEY`, matching Centaur's.**
+> The surface `.env` has **no such line by default**, so the server runs with an
+> *empty* key and node-sync gets **401**. Set the same value on both sides:
+> ```sh
+> KEY=$(kubectl -n centaur get secret centaur-infra-env -o jsonpath='{.data.ARTIFACT_CAPTURE_API_KEY}' | base64 -d)
+> cd ~/atrium/surface/deploy
+> grep -q '^ARTIFACT_CAPTURE_API_KEY=' .env || echo "ARTIFACT_CAPTURE_API_KEY=$KEY" >> .env
+> sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -d server
+> ```
+> Confirm in `kubectl logs -n centaur <node-sync-pod>`: requests should be 200 (a
+> `404` for a thread key you created directly in Centaur is fine — only real
+> Atrium-spawned sessions exist in the surface DB), **never 401**.
+
+> Note: `infra/values.local.yaml` hardcodes `nodeSync.atriumBaseUrl` to the old
+> **kind** IP `172.18.0.3` — the `--set` above overrides it for the k3s+compose
+> topology. NetworkPolicy stays off so node-sync can reach `10.42.0.1`.
+
 ## Phase 7 — Agents actually run (per-user BYO Codex)
 
 In the Atrium UI, each user **connects their Codex login** (`PUT
@@ -275,10 +319,9 @@ calls the LLM directly. Then spawn an agent and watch it respond.
 - **iron-proxy off** → token rides into the sandbox (env-injection). The
   "token-never-in-the-box" proxy path is the hardening fast-follow.
 - **NetworkPolicy off** → open sandbox egress (required while iron-proxy is off).
-- **Artifact capture (node-sync) off** → agents run, file changes aren't captured to
-  the ledger. Needs the `centaur-node-sync` image built + k3s-pod→Docker-surface
-  reachability (the hardcoded kind IP `172.18.0.3` in `infra/values.local.yaml` must be
-  fixed for this topology).
+- **Artifact capture (node-sync)** — disabled in the *base* deploy; **Phase 6b** shows
+  how to enable it (build the image, publish the surface on cni0, fix `atriumBaseUrl`).
+  Still rougher than the rest: it's a privileged DaemonSet on open egress.
 - **repo-cache off** → tools direct-cloned (open egress). Fix its gitconfig perms to
   re-enable the per-node cache.
 
