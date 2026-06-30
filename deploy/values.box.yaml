@@ -1,0 +1,37 @@
+# Atrium single-box (OVH) production overrides for Centaur, layered on top of
+# centaur/contrib/chart/values.dev.yaml + infra/values.local.yaml.
+#
+# Round-1 self-host config (see docs/self-host-ovh.md). Pins the choices we made
+# standing the box up so a redeploy is reproducible:
+#  - iron-proxy off (per-user creds via env-injection)
+#  - repo-cache off (tools direct-cloned)
+#  - sandbox NetworkPolicy off (direct egress to the LLM + GitHub)
+#  - node-sync artifact capture ON, reaching the surface on the cni0 host IP
+#
+# Image repositories point at the local registry so deploys push SHA-tagged
+# images and roll back by tag; the tag is passed per-deploy via --set (redeploy.sh).
+
+repoCache:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+apiRs:
+  image:
+    repository: localhost:5000/library/centaur-api-rs
+ironProxy:
+  image:
+    repository: localhost:5000/library/centaur-iron-proxy
+sandbox:
+  image:
+    repository: localhost:5000/library/centaur-agent
+
+nodeSync:
+  enabled: true
+  overlayProvisioning:
+    enabled: true
+    flatHome: true
+  atriumBaseUrl: "http://10.42.0.1:3001"
+  image:
+    repository: localhost:5000/library/centaur-node-sync

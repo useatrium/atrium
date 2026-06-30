@@ -1,0 +1,40 @@
+name: Deploy to box
+
+# Continuous deployment for the self-hosted OVH box (see docs/self-host-ovh.md).
+# Trigger model: master is the integration branch; you promote by merging
+# master -> `deploy`. A push to `deploy` (or a manual run) ships to the box via a
+# self-hosted runner that lives on the box. Path-filtered so doc-only promotions
+# are no-ops; redeploy.sh itself only rebuilds images whose source changed.
+on:
+  push:
+    branches: [deploy]
+    paths:
+      - 'surface/**'
+      - 'centaur/**'
+      - 'infra/**'
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch: {}
+
+# One deploy at a time; never cancel an in-flight deploy (rollback must finish).
+concurrency:
+  group: deploy-box
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, atrium-box]
+    timeout-minutes: 45
+    steps:
+      - name: Sync box source to the deploy branch
+        run: |
+          set -euo pipefail
+          cd "$HOME/atrium"
+          git -c http.extraheader="AUTHORIZATION: bearer ${{ github.token }}" fetch origin deploy
+          git reset --hard origin/deploy
+          echo "deploying:"; git log --oneline -1
+      - name: Redeploy (build-changed, health-gated, auto-rollback)
+        run: |
+          set -euo pipefail
+          chmod +x "$HOME/atrium/deploy/redeploy.sh"
+          "$HOME/atrium/deploy/redeploy.sh" all
