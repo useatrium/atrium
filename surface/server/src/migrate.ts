@@ -48,9 +48,17 @@ export async function runMigrations(
   return applied;
 }
 
-// CLI entry: `pnpm migrate`
+// CLI entry: `pnpm migrate`.
+// NOTE: in the production server this module is bundled into dist/index.js by
+// esbuild, so import.meta.url === pathToFileURL(argv[1]) would be true even when
+// started as the server — firing a SECOND runMigrations on its own pool that
+// races main()'s on `CREATE TABLE IF NOT EXISTS schema_migrations`
+// ("duplicate key ... pg_type_typname_nsp_index"). Require the entry file to
+// actually be this migrate module so the CLI path only runs under `pnpm migrate`.
 const invokedDirectly =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+  !!process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href &&
+  /(^|[\\/])migrate\.[cm]?[jt]s$/.test(process.argv[1]);
 if (invokedDirectly) {
   const pool = new pg.Pool({ connectionString: config.databaseUrl });
   runMigrations(pool)
