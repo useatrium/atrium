@@ -37,7 +37,7 @@ if [[ ! "$SLUG" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$ ]]; then
 fi
 
 SRC=""
-for candidate in "$HOME/repos/$REPO" "$HOME/github/$REPO"; do
+for candidate in "$HOME/repos/$REPO"; do
     if git -C "$candidate" rev-parse --git-dir >/dev/null 2>&1; then
         SRC="$candidate"
         break
@@ -45,7 +45,7 @@ for candidate in "$HOME/repos/$REPO" "$HOME/github/$REPO"; do
 done
 
 if [ -z "$SRC" ]; then
-    echo "Error: $REPO is not available as a git repository under ~/repos or ~/github" >&2
+    echo "Error: $REPO is not available as a git repository under ~/repos" >&2
     exit 1
 fi
 

@@ -6643,9 +6643,9 @@ mod tests {
         .mount(
             Mount::new(
                 MountKind::Bind {
-                    source_path: "/host/github".to_owned(),
+                    source_path: "/host/repos".to_owned(),
                 },
-                "/home/agent/github",
+                "/home/agent/repos",
             )
             .read_only(),
         );
@@ -6657,11 +6657,11 @@ mod tests {
             mount.target_path == SANDBOX_STATE_DIR && mount.kind == MountKind::EmptyDir
         }));
         assert!(spec.mounts.iter().any(|mount| {
-            mount.target_path == "/home/agent/github"
+            mount.target_path == "/home/agent/repos"
                 && mount.read_only
                 && mount.kind
                     == (MountKind::Bind {
-                        source_path: "/host/github".to_owned(),
+                        source_path: "/host/repos".to_owned(),
                     })
         }));
     }

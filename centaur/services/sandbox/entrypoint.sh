@@ -474,14 +474,14 @@ else
 fi
 if [ -n "${AGENT_REPO:-}" ]; then
     REPO_PATH=""
-    for candidate in "$HOME_DIR/repos/$AGENT_REPO" "$HOME_DIR/github/$AGENT_REPO"; do
+    for candidate in "$HOME_DIR/repos/$AGENT_REPO"; do
         if git -C "$candidate" rev-parse --git-dir >/dev/null 2>&1; then
             REPO_PATH="$candidate"
             break
         fi
     done
     if [ -z "$REPO_PATH" ]; then
-        echo "AGENT_REPO is not a valid git repository under ~/repos or ~/github: $AGENT_REPO" >&2
+        echo "AGENT_REPO is not a valid git repository under ~/repos: $AGENT_REPO" >&2
         exit 1
     fi
 

@@ -297,10 +297,10 @@ def _copy_skill_dir(skills_src: Path, workspace_skills: Path) -> int:
 
 
 def _first_base_centaur_skills(home_dir: Path) -> Path | None:
-    github_dir = home_dir / "github"
-    if not github_dir.is_dir():
+    repos_dir = home_dir / "repos"
+    if not repos_dir.is_dir():
         return None
-    for skills_dir in sorted(github_dir.glob("*/centaur/.agents/skills")):
+    for skills_dir in sorted(repos_dir.glob("*/centaur/.agents/skills")):
         if skills_dir.is_dir():
             return skills_dir
     return None

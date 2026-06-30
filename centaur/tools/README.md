@@ -78,12 +78,12 @@ is appended after it so overlay tools can replace base tools with the same name.
 
 For repo-cache overlays, set `REPOS_PATH` on the API process to the host path
 where the repo-cache syncs repositories. The sandbox mounts that path read-only
-at `/home/agent/github`, so overlay tools can come from the cached repo:
+at `/home/agent/repos`, so overlay tools can come from the cached repo:
 
 ```bash
 REPOS_PATH=/var/lib/centaur/repos
-TOOLS_PATH=/home/agent/github/paradigmxyz/centaur/tools
-TOOLS_OVERLAY_PATH=/home/agent/github/acme/centaur-overlay/tools
+TOOLS_PATH=/home/agent/repos/paradigmxyz/centaur/tools
+TOOLS_OVERLAY_PATH=/home/agent/repos/acme/centaur-overlay/tools
 SESSION_SANDBOX_PASSTHROUGH_ENV=TOOLS_PATH,TOOLS_OVERLAY_PATH
 ```
 

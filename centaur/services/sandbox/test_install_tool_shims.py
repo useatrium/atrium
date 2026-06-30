@@ -11,6 +11,14 @@ import install_tool_shims
 
 
 class CopyPublishedToolsTest(unittest.TestCase):
+    def test_first_base_centaur_skills_discovers_repos_mount(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            skills = home / "repos" / "paradigmxyz" / "centaur" / ".agents" / "skills"
+            skills.mkdir(parents=True)
+
+            self.assertEqual(install_tool_shims._first_base_centaur_skills(home), skills)
+
     def test_copies_tool_dirs_and_skips_duplicate_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
