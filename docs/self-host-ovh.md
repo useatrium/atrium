@@ -384,24 +384,56 @@ mounted) instead of the baked prod image.
 fastest first:
 - **Tilt (hot loop):** `cd ~/atrium/centaur && tilt up` — watches source, rebuilds only
   changed images, pushes to the local registry, redeploys. Needs the registry below.
-- **Local registry (recommended for the manual loop):** run `registry:2` on
-  `localhost:5000` + a k3s mirror so it resolves the chart's bare `:latest` tags:
-  ```sh
-  docker run -d --restart=always -p 127.0.0.1:5000:5000 --name registry registry:2
-  sudo tee /etc/rancher/k3s/registries.yaml <<'YAML'
-  mirrors:
-    docker.io:
-      endpoint: ["http://localhost:5000"]
-  YAML
-  sudo systemctl restart k3s
-  # then: only changed layers push
-  cd ~/atrium/centaur && just build-changed && just _push-registry \
-    && kubectl rollout restart deploy/centaur-centaur-api-rs -n centaur
-  ```
-- **Import (no registry — what this guide used):** `just build-one <svc>` →
-  `docker save centaur-<svc>:latest | sudo k3s ctr images import -` →
-  `kubectl rollout restart deploy/…`. Simplest, slowest (saves the whole image).
+- **Local registry (`deploy/setup-registry.sh`):** stands up `registry:2` on
+  `localhost:5000` + a k3s **HTTP mirror for `localhost:5000`** (docker.io untouched),
+  so Centaur runs SHA-tagged registry images. ⚠️ restarts k3s once (all pods bounce).
+- **`deploy/redeploy.sh [surface|centaur|all]`** is the committed one-command form of
+  this whole loop — content-aware (rebuilds only changed images), pushes to the
+  registry, rolls the pods, health-gated, with auto-rollback. It's also what CD runs
+  (below). See [`deploy/README.md`](../deploy/README.md).
 
 > An agent editing the platform's own source runs in an **isolated sandbox** — its
 > changes land in the CAS ledger, not `~/atrium`. To rebuild from agent edits, pull them
 > into the host source first (git/PR), then run a loop above.
+
+## Continuous deployment (promote → box)
+
+The committed [`deploy/`](../deploy/) tooling turns the loop above into a GitHub-driven
+pipeline. `master` is the integration branch; you **promote to ship**:
+
+```sh
+git push origin master:deploy        # or merge a PR into `deploy`
+```
+
+A push to `deploy` (path-filtered to `surface/`,`centaur/`,`infra/`,`deploy/`) runs
+[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) on a **self-hosted
+runner on the box**, which syncs `~/atrium` to `origin/deploy` and runs
+`deploy/redeploy.sh all` — content-aware rebuild → registry push → health-gated
+rollout → **auto-rollback** on failure. Deploys are serial and never cancel a running
+one; logs + status live in the repo's **Actions** tab. Manual trigger:
+`gh workflow run deploy.yml --ref deploy`.
+
+### One-time CD setup on the box
+```sh
+# 1) registry + k3s HTTP mirror (⚠️ restarts k3s once — all pods bounce; do it quietly)
+~/atrium/deploy/setup-registry.sh
+
+# 2) self-hosted runner. Registration token (run where gh is authed):
+#    gh api -X POST /repos/<owner>/<repo>/actions/runners/registration-token -q .token
+mkdir -p ~/actions-runner && cd ~/actions-runner
+VER=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r .tag_name | sed s/^v//)
+curl -fsSL -o r.tgz "https://github.com/actions/runner/releases/download/v${VER}/actions-runner-linux-x64-${VER}.tar.gz"
+tar xzf r.tgz && sudo ./bin/installdependencies.sh
+./config.sh --url https://github.com/<owner>/<repo> --token <TOKEN> --name atrium-box --labels atrium-box --unattended
+sudo ./svc.sh install ubuntu && sudo ./svc.sh start
+```
+The runner runs as `ubuntu` (docker + kubectl + passwordless sudo). The box's `~/atrium`
+must be a real clone (`git remote add origin https://github.com/<owner>/<repo>.git`); the
+workflow's first sync is conversion-safe if it started as a bare `git init`.
+
+### Cost & rollback
+First deploy ≈ 20 min (baselines every image at the new SHA); after that, deploys
+rebuild **only what changed** — a no-op deploy is ~15 s. State lives in
+`~/atrium-deploy/{last-deployed-sha,last-good-centaur-sha}`. On a failed health check
+`redeploy.sh` auto-rolls-back (surface: re-tag the previous image; Centaur: re-deploy
+the last-good SHA) — verified end-to-end with a deliberately crashing build.
