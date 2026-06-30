@@ -333,3 +333,54 @@ calls the LLM directly. Then spawn an agent and watch it respond.
 - **Rotate** any API token that ever touched a log.
 - **Health:** `curl localhost/healthz`, `kubectl get pods -n centaur`,
   `cd centaur && just debug-sandbox`.
+- **Restart resilience.** The compose stacks ship with **no restart policy**, so they
+  don't survive a reboot or `systemctl restart docker`. Pin them (do this *before* any
+  docker restart): `sudo docker update --restart=unless-stopped $(sudo docker ps -q)`.
+- **Cap the Docker build cache.** Ubuntu's `docker.io` has no GC ceiling, so the BuildKit
+  cache grows unbounded (ours hit 26 GB after the Centaur builds). Cap + reclaim:
+  ```sh
+  sudo tee /etc/docker/daemon.json <<'JSON'
+  { "builder": { "gc": { "enabled": true,
+    "policy": [ { "reservedSpace": "5GB", "maxUsedSpace": "20GB" } ] } } }
+  JSON
+  sudo docker builder prune -f && sudo systemctl restart docker   # bounces containers ~10s
+  ```
+
+## Dev loop — rebuild & reload
+
+**Surface (Docker)** — rebuild + recreate in one step (~30 s, esbuild bundle):
+```sh
+cd ~/atrium/surface/deploy
+sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -d --build server
+# web SPA: rebuild dist (Caddy serves it live, no restart needed)
+docker run --rm -v ~/atrium/surface:/app -w /app node:24-alpine \
+  sh -c 'corepack enable && pnpm --filter @atrium/web build'
+```
+For *true* hot reload, run the server in dev mode (`pnpm dev` / `tsx watch`, source
+mounted) instead of the baked prod image.
+
+**Centaur (k3s)** — the image has to reach containerd, then the pod reloads. Loops,
+fastest first:
+- **Tilt (hot loop):** `cd ~/atrium/centaur && tilt up` — watches source, rebuilds only
+  changed images, pushes to the local registry, redeploys. Needs the registry below.
+- **Local registry (recommended for the manual loop):** run `registry:2` on
+  `localhost:5000` + a k3s mirror so it resolves the chart's bare `:latest` tags:
+  ```sh
+  docker run -d --restart=always -p 127.0.0.1:5000:5000 --name registry registry:2
+  sudo tee /etc/rancher/k3s/registries.yaml <<'YAML'
+  mirrors:
+    docker.io:
+      endpoint: ["http://localhost:5000"]
+  YAML
+  sudo systemctl restart k3s
+  # then: only changed layers push
+  cd ~/atrium/centaur && just build-changed && just _push-registry \
+    && kubectl rollout restart deploy/centaur-centaur-api-rs -n centaur
+  ```
+- **Import (no registry — what this guide used):** `just build-one <svc>` →
+  `docker save centaur-<svc>:latest | sudo k3s ctr images import -` →
+  `kubectl rollout restart deploy/…`. Simplest, slowest (saves the whole image).
+
+> An agent editing the platform's own source runs in an **isolated sandbox** — its
+> changes land in the CAS ledger, not `~/atrium`. To rebuild from agent edits, pull them
+> into the host source first (git/PR), then run a loop above.
