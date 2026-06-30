@@ -4,6 +4,7 @@
 //! `just codegen-agent-sandbox-crd`.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1206,6 +1207,11 @@ fn build_claimed_overlay_home_helper_pod(
 ) -> SandboxResult<Pod> {
     let merged_slot = overlay.merged_root.join(id.as_str());
     let merged_home = merged_slot.join("agent");
+    let generic_home_lower = overlay
+        .overlays_root
+        .join(".warm-home-lower")
+        .join(id.as_str());
+    let context_source = overlay::atrium_context_host_path(id.as_str());
     let ready_marker = merged_home.join(".centaur-workspace-ready");
     let manifest_path = overlay
         .overlays_root
@@ -1226,6 +1232,10 @@ fn build_claimed_overlay_home_helper_pod(
         "--agent-uid".to_owned(),
         overlay.agent_uid.to_string(),
         "--flat-home".to_owned(),
+        "--generic-home-lower".to_owned(),
+        path_string(&generic_home_lower),
+        "--context-source".to_owned(),
+        context_source.clone(),
         "--repos-json".to_owned(),
         request.repos_json.to_owned(),
     ];
@@ -1238,7 +1248,8 @@ fn build_claimed_overlay_home_helper_pod(
     push_optional_arg(&mut provision_args, "--harness-home", request.harness_home);
 
     let script = format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
+        snapshot_generic_home_script(&merged_home, &generic_home_lower),
         shell_join_provision_overlay(&provision_args),
         readiness_wait_script(
             &path_string(&ready_marker),
@@ -1323,6 +1334,25 @@ fn build_claimed_overlay_home_helper_pod(
     .map_err(|err| {
         SandboxError::InvalidSpec(format!("invalid claimed overlay home helper pod: {err}"))
     })
+}
+
+fn snapshot_generic_home_script(source_home: &Path, generic_home_lower: &Path) -> String {
+    format!(
+        "src={src:?}\n\
+         dst={dst:?}\n\
+         rm -rf \"$dst\"\n\
+         mkdir -p \"$dst\"\n\
+         if [ -d \"$src\" ]; then\n\
+         \tfor entry in \"$src\"/.[!.]* \"$src\"/..?* \"$src\"/*; do\n\
+         \t\t[ -e \"$entry\" ] || continue\n\
+         \t\tname=${{entry##*/}}\n\
+         \t\tcase \"$name\" in context|.centaur-workspace-ready) continue ;; esac\n\
+         \t\tcp -a \"$entry\" \"$dst/\"\n\
+         \tdone\n\
+         fi",
+        src = path_string(source_home),
+        dst = path_string(generic_home_lower),
+    )
 }
 
 fn claimed_overlay_home_helper_name(id: &SandboxId) -> String {
@@ -2146,7 +2176,14 @@ mod tests {
         assert!(!script.contains("'--replace'"));
         assert!(script.contains("'--atrium-session' 'thread-1'"));
         assert!(script.contains("'--merged-path' '/run/centaur/merged/asbx-test/agent'"));
+        assert!(script.contains(
+            "'--generic-home-lower' '/var/lib/centaur/overlays/.warm-home-lower/asbx-test'"
+        ));
+        assert!(script.contains("'--context-source' '/var/lib/centaur/atrium/asbx-test'"));
         assert!(script.contains("'--repos-json' '[{\"repo\":\"acme/widget\",\"ref\":\"main\"}]'"));
+        assert!(script.contains("name=${entry##*/}"));
+        assert!(script.contains("case \"$name\" in context|.centaur-workspace-ready)"));
+        assert!(script.contains("rm -rf \"$dst\""));
         assert!(script.contains("/run/centaur/merged/asbx-test/agent/.centaur-workspace-ready"));
         assert!(script.contains("rm -f \"/var/lib/centaur/overlays/.sessions/asbx-test.json\""));
 

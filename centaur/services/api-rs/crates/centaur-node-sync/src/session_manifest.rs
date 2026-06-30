@@ -21,6 +21,10 @@ pub struct SessionManifest {
     pub harness_home: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub flat_home: bool,
+    #[serde(default, skip_serializing_if = "path_is_empty")]
+    pub generic_home_lower: PathBuf,
+    #[serde(default, skip_serializing_if = "path_is_empty")]
+    pub context_source: PathBuf,
     #[serde(default)]
     pub repo: String,
     #[serde(default)]
@@ -56,6 +60,10 @@ fn default_agent_uid() -> u32 {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn path_is_empty(path: &PathBuf) -> bool {
+    path.as_os_str().is_empty()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,8 +119,46 @@ pub fn read_manifest(overlays_root: &Path, session: &str) -> Result<SessionManif
     if let Some(harness) = &manifest.harness {
         normalize_harness(harness)?;
     }
+    validate_manifest_host_paths(overlays_root, session, &manifest)?;
     validate_repo_mounts(&manifest.repos)?;
     Ok(manifest)
+}
+
+fn validate_manifest_host_paths(
+    overlays_root: &Path,
+    session: &str,
+    manifest: &SessionManifest,
+) -> Result<(), String> {
+    if !manifest.generic_home_lower.as_os_str().is_empty() {
+        validate_absolute_clean_path("--generic-home-lower", &manifest.generic_home_lower)?;
+        let expected = overlays_root.join(".warm-home-lower").join(session);
+        if manifest.generic_home_lower != expected {
+            return Err(format!(
+                "--generic-home-lower {} must equal {}",
+                manifest.generic_home_lower.display(),
+                expected.display()
+            ));
+        }
+    }
+    if !manifest.context_source.as_os_str().is_empty() {
+        validate_absolute_clean_path("--context-source", &manifest.context_source)?;
+    }
+    Ok(())
+}
+
+fn validate_absolute_clean_path(name: &str, path: &Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err(format!("{name} must be absolute"));
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::CurDir | Component::ParentDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(format!("{name} must not contain relative path components"));
+    }
+    Ok(())
 }
 
 pub fn write_manifest(overlays_root: &Path, manifest: &SessionManifest) -> Result<(), String> {
@@ -299,6 +345,8 @@ mod tests {
             harness_thread_id: "thread-123".to_string(),
             harness_home: ".claude".to_string(),
             flat_home: true,
+            generic_home_lower: PathBuf::from("/var/lib/centaur/overlays/.warm-home-lower/sess-1"),
+            context_source: PathBuf::from("/var/lib/centaur/atrium/sess-1"),
             repo: "/workspace/repo".to_string(),
             repos: vec![RepoMount {
                 repo: "acme/foo".to_string(),
@@ -318,6 +366,11 @@ mod tests {
         assert_eq!(value["harness_thread_id"], "thread-123");
         assert_eq!(value["harness_home"], ".claude");
         assert_eq!(value["flat_home"], true);
+        assert_eq!(
+            value["generic_home_lower"],
+            "/var/lib/centaur/overlays/.warm-home-lower/sess-1"
+        );
+        assert_eq!(value["context_source"], "/var/lib/centaur/atrium/sess-1");
         assert_eq!(value["repo"], "/workspace/repo");
         assert_eq!(value["repos"][0]["repo"], "acme/foo");
         assert_eq!(value["repos"][0]["ref"], "main");
@@ -339,6 +392,8 @@ mod tests {
 
         assert!(manifest.repos.is_empty());
         assert!(manifest.atrium_session.is_empty());
+        assert!(manifest.generic_home_lower.as_os_str().is_empty());
+        assert!(manifest.context_source.as_os_str().is_empty());
         assert_eq!(manifest.repo, "/workspace/repo");
         assert_eq!(manifest.agent_uid, DEFAULT_AGENT_UID);
     }
@@ -356,6 +411,8 @@ mod tests {
         .unwrap();
 
         assert!(!manifest.flat_home);
+        assert!(manifest.generic_home_lower.as_os_str().is_empty());
+        assert!(manifest.context_source.as_os_str().is_empty());
     }
 
     #[test]
@@ -368,6 +425,8 @@ mod tests {
             harness_thread_id: String::new(),
             harness_home: String::new(),
             flat_home: false,
+            generic_home_lower: PathBuf::new(),
+            context_source: PathBuf::new(),
             repo: String::new(),
             repos: Vec::new(),
             agent_uid: 1001,
@@ -376,6 +435,8 @@ mod tests {
         let value = serde_json::to_value(&manifest).unwrap();
         assert!(value["harness"].is_null());
         assert!(value.get("flat_home").is_none());
+        assert!(value.get("generic_home_lower").is_none());
+        assert!(value.get("context_source").is_none());
     }
 
     #[test]
@@ -400,6 +461,8 @@ mod tests {
                 harness_thread_id: String::new(),
                 harness_home: String::new(),
                 flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
                 repo: String::new(),
                 repos: Vec::new(),
                 agent_uid: 1001,
@@ -442,6 +505,63 @@ mod tests {
                 .iter()
                 .all(|warning| !warning.contains("artifact-lower"))
         );
+    }
+
+    #[test]
+    fn read_manifest_rejects_generic_home_lower_outside_session_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".sessions")).unwrap();
+        write_manifest(
+            root,
+            &SessionManifest {
+                session: "sess-1".to_string(),
+                atrium_session: String::new(),
+                merged: PathBuf::from("/run/centaur/merged/sess-1"),
+                harness: None,
+                harness_thread_id: String::new(),
+                harness_home: String::new(),
+                flat_home: true,
+                generic_home_lower: root.join(".warm-home-lower/other"),
+                context_source: PathBuf::new(),
+                repo: String::new(),
+                repos: Vec::new(),
+                agent_uid: 1001,
+            },
+        )
+        .unwrap();
+
+        let err = read_manifest(root, "sess-1").unwrap_err();
+        assert!(err.contains("--generic-home-lower"));
+        assert!(err.contains(".warm-home-lower/sess-1"));
+    }
+
+    #[test]
+    fn read_manifest_rejects_relative_context_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".sessions")).unwrap();
+        write_manifest(
+            root,
+            &SessionManifest {
+                session: "sess-1".to_string(),
+                atrium_session: String::new(),
+                merged: PathBuf::from("/run/centaur/merged/sess-1"),
+                harness: None,
+                harness_thread_id: String::new(),
+                harness_home: String::new(),
+                flat_home: true,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::from("relative/context"),
+                repo: String::new(),
+                repos: Vec::new(),
+                agent_uid: 1001,
+            },
+        )
+        .unwrap();
+
+        let err = read_manifest(root, "sess-1").unwrap_err();
+        assert!(err.contains("--context-source must be absolute"));
     }
 
     #[test]

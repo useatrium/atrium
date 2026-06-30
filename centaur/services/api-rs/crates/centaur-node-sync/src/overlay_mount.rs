@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 pub const DEFAULT_AGENT_UID: u32 = 1001;
 pub const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
+#[cfg(target_os = "linux")]
+const OVERLAY_SIGNATURE_FILE: &str = ".centaur-overlay-signature";
 pub const DEFAULT_REPO_CACHE_ROOT: &str = "/cache";
 /// Single top-level workspace dir that holds every session repo, nested as
 /// `repos/<owner>/<repo>`. Reserving one prefix keeps the rest of `~` for
@@ -46,7 +48,8 @@ pub struct OverlayMountPlan {
     pub merged: PathBuf,
     pub work: PathBuf,
     pub lower: LowerSource,
-    pub extra_lower: Option<PathBuf>,
+    pub extra_lowers: Vec<PathBuf>,
+    pub context_source: Option<PathBuf>,
     pub repo_mounts: Vec<RepoMount>,
     pub repo_cache_root: PathBuf,
 }
@@ -58,7 +61,7 @@ impl OverlayMountPlan {
 
     pub fn overlay_options(&self) -> String {
         overlay_options_with_extra_lower(
-            self.extra_lower.as_deref(),
+            &self.extra_lowers,
             &self.lower.path,
             &self.upper,
             &self.work,
@@ -93,7 +96,8 @@ pub fn plan_overlay_mount(
         merged: merged.to_path_buf(),
         work: host_root.join("overlay-work").join(session),
         lower,
-        extra_lower: None,
+        extra_lowers: Vec::new(),
+        context_source: None,
         repo_mounts,
         repo_cache_root: PathBuf::from(DEFAULT_REPO_CACHE_ROOT),
     })
@@ -266,19 +270,21 @@ pub fn repo_target_subdir(mount: &RepoMount) -> Result<String, String> {
 }
 
 pub fn overlay_options(lower: &Path, upper: &Path, work: &Path) -> String {
-    overlay_options_with_extra_lower(None, lower, upper, work)
+    overlay_options_with_extra_lower(&[], lower, upper, work)
 }
 
 pub fn overlay_options_with_extra_lower(
-    extra_lower: Option<&Path>,
+    extra_lowers: &[PathBuf],
     lower: &Path,
     upper: &Path,
     work: &Path,
 ) -> String {
-    let lowerdir = match extra_lower {
-        Some(extra_lower) => format!("{}:{}", extra_lower.display(), lower.display()),
-        None => lower.display().to_string(),
-    };
+    let lowerdir = extra_lowers
+        .iter()
+        .map(|path| path.display().to_string())
+        .chain(std::iter::once(lower.display().to_string()))
+        .collect::<Vec<_>>()
+        .join(":");
     format!(
         "lowerdir={lowerdir},upperdir={},workdir={},metacopy=off",
         upper.display(),
@@ -342,17 +348,22 @@ pub fn mount_overlay(
     use std::process::Command;
 
     prepare_upper_and_merged(&plan, agent_uid)?;
+    let plan = resolve_lower_source(plan)?;
     if is_overlay_mount(&plan.merged)? {
-        write_ready_marker(&plan.merged)?;
-        println!(
-            "overlay mount: session {} already mounted at {}",
-            plan.session,
-            plan.merged.display()
-        );
-        return Ok(plan);
+        if overlay_signature_matches(&plan)? {
+            mount_context_if_requested(&plan)?;
+            write_overlay_signature(&plan)?;
+            write_ready_marker(&plan.merged)?;
+            println!(
+                "overlay mount: session {} already mounted at {}",
+                plan.session,
+                plan.merged.display()
+            );
+            return Ok(plan);
+        }
+        unmount_overlay(&plan)?;
     }
 
-    let plan = resolve_lower_source(plan)?;
     prepare_lower_source(&plan)?;
     reset_workdir(&plan.work)?;
     let opts = plan.overlay_options();
@@ -370,6 +381,8 @@ pub fn mount_overlay(
         ));
     }
 
+    mount_context_if_requested(&plan)?;
+    write_overlay_signature(&plan)?;
     write_ready_marker(&plan.merged)?;
     println!(
         "overlay mount: mounted session {} upper={} lower={} work={} merged={}",
@@ -395,6 +408,12 @@ pub fn unmount_overlay(plan: &OverlayMountPlan) -> Result<(), String> {
     use std::process::Command;
 
     let _ = remove_ready_marker(plan);
+    if let Err(e) = unmount_context_if_mounted(plan) {
+        eprintln!(
+            "overlay mount: session {} context unmount: {e}",
+            plan.session
+        );
+    }
     if !is_overlay_mount(&plan.merged)? {
         let _ = remove_ready_marker(plan);
         return Ok(());
@@ -422,6 +441,120 @@ pub fn unmount_overlay(plan: &OverlayMountPlan) -> Result<(), String> {
 #[cfg(not(target_os = "linux"))]
 pub fn unmount_overlay(_plan: &OverlayMountPlan) -> Result<(), String> {
     Err("overlay unmounts are linux-only".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn mount_context_if_requested(plan: &OverlayMountPlan) -> Result<(), String> {
+    use std::process::Command;
+
+    let Some(source) = plan.context_source.as_ref() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(source)
+        .map_err(|e| format!("create context source {}: {e}", source.display()))?;
+    let target = plan.merged.join("context");
+    std::fs::create_dir_all(&target)
+        .map_err(|e| format!("create context mount target {}: {e}", target.display()))?;
+    if is_mount_at(&target)? {
+        if same_file_identity(source, &target)? {
+            return Ok(());
+        }
+        unmount_context_if_mounted(plan)?;
+    }
+
+    let output = Command::new("mount")
+        .args(["--bind"])
+        .arg(source)
+        .arg(&target)
+        .output()
+        .map_err(|e| format!("spawn context bind mount: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "context bind mount failed (status {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let output = Command::new("mount")
+        .args(["-o", "remount,bind,ro"])
+        .arg(&target)
+        .output()
+        .map_err(|e| format!("spawn context read-only remount: {e}"))?;
+    if !output.status.success() {
+        let _ = Command::new("umount").arg(&target).status();
+        return Err(format!(
+            "context read-only remount failed (status {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn same_file_identity(left: &Path, right: &Path) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let left = std::fs::metadata(left).map_err(|e| format!("stat {}: {e}", left.display()))?;
+    let right = std::fs::metadata(right).map_err(|e| format!("stat {}: {e}", right.display()))?;
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+}
+
+#[cfg(target_os = "linux")]
+fn overlay_signature_matches(plan: &OverlayMountPlan) -> Result<bool, String> {
+    let path = plan.merged.join(OVERLAY_SIGNATURE_FILE);
+    let actual = match std::fs::read_to_string(&path) {
+        Ok(actual) => actual,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("read overlay signature {}: {e}", path.display())),
+    };
+    Ok(actual == overlay_signature(plan))
+}
+
+#[cfg(target_os = "linux")]
+fn write_overlay_signature(plan: &OverlayMountPlan) -> Result<(), String> {
+    let path = plan.merged.join(OVERLAY_SIGNATURE_FILE);
+    std::fs::write(&path, overlay_signature(plan))
+        .map_err(|e| format!("write overlay signature {}: {e}", path.display()))
+}
+
+#[cfg(target_os = "linux")]
+fn overlay_signature(plan: &OverlayMountPlan) -> String {
+    let mut signature = format!("lower={}\n", plan.lower.path.display());
+    for lower in &plan.extra_lowers {
+        signature.push_str("extra=");
+        signature.push_str(&lower.display().to_string());
+        signature.push('\n');
+    }
+    if let Some(context_source) = &plan.context_source {
+        signature.push_str("context=");
+        signature.push_str(&context_source.display().to_string());
+        signature.push('\n');
+    }
+    signature
+}
+
+#[cfg(target_os = "linux")]
+fn unmount_context_if_mounted(plan: &OverlayMountPlan) -> Result<(), String> {
+    use std::process::Command;
+
+    let target = plan.merged.join("context");
+    if !is_mount_at(&target)? {
+        return Ok(());
+    }
+    let output = Command::new("umount")
+        .arg(&target)
+        .output()
+        .map_err(|e| format!("spawn context umount: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "context umount failed (status {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -462,6 +595,16 @@ fn prepare_upper_and_merged(plan: &OverlayMountPlan, agent_uid: Option<u32>) -> 
 
 #[cfg(target_os = "linux")]
 fn prepare_lower_source(plan: &OverlayMountPlan) -> Result<(), String> {
+    for lower in &plan.extra_lowers {
+        let metadata = std::fs::metadata(lower)
+            .map_err(|e| format!("extra lower {}: {e}", lower.display()))?;
+        if !metadata.is_dir() {
+            return Err(format!(
+                "extra lower must be an existing directory, got {}",
+                lower.display()
+            ));
+        }
+    }
     if plan.lower.uses_fixture_seed() {
         std::fs::create_dir_all(&plan.lower.path)
             .map_err(|e| format!("create lower {}: {e}", plan.lower.path.display()))?;
@@ -888,9 +1031,19 @@ fn reset_workdir(work: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn is_overlay_mount(merged: &Path) -> Result<bool, String> {
-    let target = merged
+    is_mount_with_fs_type(merged, Some("overlay"))
+}
+
+#[cfg(target_os = "linux")]
+fn is_mount_at(path: &Path) -> Result<bool, String> {
+    is_mount_with_fs_type(path, None)
+}
+
+#[cfg(target_os = "linux")]
+fn is_mount_with_fs_type(path: &Path, fs_type_filter: Option<&str>) -> Result<bool, String> {
+    let target = path
         .canonicalize()
-        .unwrap_or_else(|_| merged.to_path_buf())
+        .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .into_owned();
     let mountinfo = match std::fs::read_to_string("/proc/self/mountinfo") {
@@ -911,7 +1064,7 @@ fn is_overlay_mount(merged: &Path) -> Result<bool, String> {
         let Some(fs_type) = fields.get(sep + 1) else {
             continue;
         };
-        if mount_point == target && *fs_type == "overlay" {
+        if mount_point == target && fs_type_filter.is_none_or(|wanted| *fs_type == wanted) {
             return Ok(true);
         }
     }
@@ -1011,13 +1164,15 @@ mod tests {
             None,
         )
         .unwrap();
-        plan.extra_lower = Some(PathBuf::from(
+        plan.extra_lowers
+            .push(PathBuf::from("/var/lib/centaur/overlays/home-lower/sess-1"));
+        plan.extra_lowers.push(PathBuf::from(
             "/var/lib/centaur/overlays/artifact-lower/sess-1",
         ));
 
         assert_eq!(
             plan.overlay_options(),
-            "lowerdir=/var/lib/centaur/overlays/artifact-lower/sess-1:/repo/lower,upperdir=/var/lib/centaur/overlays/sess-1,workdir=/var/lib/centaur/overlay-work/sess-1,metacopy=off"
+            "lowerdir=/var/lib/centaur/overlays/home-lower/sess-1:/var/lib/centaur/overlays/artifact-lower/sess-1:/repo/lower,upperdir=/var/lib/centaur/overlays/sess-1,workdir=/var/lib/centaur/overlay-work/sess-1,metacopy=off"
         );
     }
 

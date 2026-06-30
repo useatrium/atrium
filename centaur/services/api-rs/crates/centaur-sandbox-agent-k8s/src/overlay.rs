@@ -437,6 +437,10 @@ pub(crate) fn atrium_volume_json(session: &str) -> Value {
     })
 }
 
+pub(crate) fn atrium_context_host_path(session: &str) -> String {
+    atrium_session_path(session)
+}
+
 fn readiness_wait_script(ready_path: &str) -> String {
     let marker = Path::new(ready_path).join(READY_MARKER_FILE);
     format!(

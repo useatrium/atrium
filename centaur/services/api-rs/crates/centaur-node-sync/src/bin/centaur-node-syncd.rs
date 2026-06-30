@@ -586,6 +586,18 @@ mod linux_daemon {
                                 continue;
                             }
                         };
+                        if !discovered
+                            .manifest
+                            .generic_home_lower
+                            .as_os_str()
+                            .is_empty()
+                        {
+                            plan.extra_lowers
+                                .push(discovered.manifest.generic_home_lower.clone());
+                        }
+                        if !discovered.manifest.context_source.as_os_str().is_empty() {
+                            plan.context_source = Some(discovered.manifest.context_source.clone());
+                        }
                         // Hydrate the artifact lower only on FIRST mount. Re-hydrating
                         // every scan would `remove_dir_all` the artifact-lower out from
                         // under the live overlay (it is an active lowerdir), emptying the
@@ -1453,6 +1465,8 @@ mod tests {
                 harness_thread_id: "thread-123".to_string(),
                 harness_home: ".codex".to_string(),
                 flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
                 repo: String::new(),
                 repos,
                 agent_uid: 1001,
@@ -1532,6 +1546,8 @@ mod tests {
                 harness_thread_id: String::new(),
                 harness_home: ".codex".to_string(),
                 flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
                 repo: "/var/lib/centaur/repos/sess-single".to_string(),
                 repos: vec![],
                 agent_uid: 1001,

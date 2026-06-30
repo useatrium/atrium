@@ -200,7 +200,7 @@ pub fn hydrate_artifact_lower_into_plan(
         .map_err(|e| format!("create artifact lower {}: {e}", artifact_lower.display()))?;
 
     let outcome = hydrate_artifact_lower(client, cas_dir, &artifact_lower)?;
-    plan.extra_lower = Some(artifact_lower);
+    plan.extra_lowers.push(artifact_lower);
     Ok(outcome)
 }
 
@@ -384,7 +384,8 @@ mod tests {
                 path: root.join("lower/sess-1"),
                 kind: LowerKind::Fixture,
             },
-            extra_lower: None,
+            extra_lowers: Vec::new(),
+            context_source: None,
             repo_mounts: Vec::new(),
             repo_cache_root: PathBuf::from("/cache"),
         };
@@ -400,11 +401,48 @@ mod tests {
 
         let artifact_lower = overlays_root.join("artifact-lower/sess-1");
         assert_eq!(out.fetched, 1);
-        assert_eq!(plan.extra_lower, Some(artifact_lower.clone()));
+        assert_eq!(plan.extra_lowers, vec![artifact_lower.clone()]);
         assert!(!artifact_lower.join("stale.txt").exists());
         assert_eq!(
             fs::read(artifact_lower.join("shared/hydrated.md")).unwrap(),
             b"fresh"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hydrate_artifact_lower_preserves_existing_extra_lower_precedence() {
+        let root = tmp("plan-order");
+        let overlays_root = root.join("overlays");
+        let cas = overlays_root.join("cas");
+        let home_lower = overlays_root.join(".warm-home-lower/sess-1");
+        fs::create_dir_all(&home_lower).unwrap();
+
+        let mut client = FakeAtriumClient {
+            entries: Vec::new(),
+            bytes: HashMap::new(),
+        };
+        let mut plan = OverlayMountPlan {
+            session: "sess-1".to_string(),
+            upper: overlays_root.join("sess-1"),
+            merged: root.join("merged/sess-1"),
+            work: root.join("work/sess-1"),
+            lower: LowerSource {
+                path: root.join("lower/sess-1"),
+                kind: LowerKind::Fixture,
+            },
+            extra_lowers: vec![home_lower.clone()],
+            context_source: None,
+            repo_mounts: Vec::new(),
+            repo_cache_root: PathBuf::from("/cache"),
+        };
+
+        hydrate_artifact_lower_into_plan(&mut client, &cas, &overlays_root, "sess-1", &mut plan)
+            .unwrap();
+
+        assert_eq!(
+            plan.extra_lowers,
+            vec![home_lower, overlays_root.join("artifact-lower/sess-1")]
         );
         let _ = fs::remove_dir_all(&root);
     }

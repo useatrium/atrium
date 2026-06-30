@@ -50,6 +50,8 @@ struct Config {
     harness_thread_id: String,
     harness_home: String,
     flat_home: bool,
+    generic_home_lower: PathBuf,
+    context_source: PathBuf,
     repo: String,
     repos: Vec<RepoMount>,
     agent_uid: Option<u32>,
@@ -128,6 +130,8 @@ fn run() -> Result<(), String> {
             harness_thread_id: cfg.harness_thread_id.clone(),
             harness_home: cfg.harness_home.clone(),
             flat_home: cfg.flat_home,
+            generic_home_lower: cfg.generic_home_lower.clone(),
+            context_source: cfg.context_source.clone(),
             repo: manifest_repo,
             repos: cfg.repos.clone(),
             agent_uid: cfg.agent_uid.unwrap_or(DEFAULT_AGENT_UID),
@@ -160,6 +164,8 @@ fn run() -> Result<(), String> {
                 harness_thread_id: cfg.harness_thread_id.clone(),
                 harness_home: cfg.harness_home.clone(),
                 flat_home: cfg.flat_home,
+                generic_home_lower: cfg.generic_home_lower.clone(),
+                context_source: cfg.context_source.clone(),
                 repo: mounted.lower.path.to_string_lossy().into_owned(),
                 repos: cfg.repos.clone(),
                 agent_uid: cfg.agent_uid.unwrap_or(DEFAULT_AGENT_UID),
@@ -238,6 +244,8 @@ where
     let mut harness_thread_id = String::new();
     let mut harness_home = String::new();
     let mut flat_home = false;
+    let mut generic_home_lower = PathBuf::new();
+    let mut context_source = PathBuf::new();
     let mut repo = String::new();
     let mut repos = Vec::new();
     let mut agent_uid = None;
@@ -303,6 +311,12 @@ where
             "--flat-home" => {
                 flat_home = true;
             }
+            "--generic-home-lower" | "--home-lower" => {
+                generic_home_lower = PathBuf::from(next_value(&mut iter, "--generic-home-lower")?);
+            }
+            "--context-source" => {
+                context_source = PathBuf::from(next_value(&mut iter, "--context-source")?);
+            }
             "--repo" => {
                 repo = next_value(&mut iter, "--repo")?;
             }
@@ -361,6 +375,12 @@ where
     if let Some(path) = merged_path.as_deref() {
         validate_merged_path(path, &merged_root)?;
     }
+    if !generic_home_lower.as_os_str().is_empty() {
+        validate_absolute_path("--generic-home-lower", &generic_home_lower)?;
+    }
+    if !context_source.as_os_str().is_empty() {
+        validate_absolute_path("--context-source", &context_source)?;
+    }
 
     Ok(Config {
         session,
@@ -375,6 +395,8 @@ where
         harness_thread_id,
         harness_home,
         flat_home,
+        generic_home_lower,
+        context_source,
         repo,
         repos,
         agent_uid,
@@ -451,7 +473,7 @@ fn parse_bool(name: &str, value: &str) -> Result<bool, String> {
 
 fn print_help() {
     println!(
-        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--replace] [--overlays-root PATH] [--merged-root PATH] [--merged-path PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
+        "usage: provision-overlay --session <ID> [--atrium-session ID] [--manifest-only] [--replace] [--overlays-root PATH] [--merged-root PATH] [--merged-path PATH] [--lower PATH] [--harness claude|codex|null] [--harness-thread-id ID] [--harness-home PATH] [--flat-home] [--generic-home-lower PATH] [--context-source PATH] [--repo PATH] [--repos-json JSON] [--agent-uid UID] [--hydrate-artifacts] [--atrium-url URL] [--atrium-key KEY] [--cas-dir PATH]"
     );
 }
 
@@ -475,8 +497,21 @@ fn validate_session(session: &str) -> Result<(), String> {
 }
 
 fn validate_merged_path(path: &Path, merged_root: &Path) -> Result<(), String> {
+    validate_absolute_path("--merged-path", path)?;
+    validate_absolute_path("--merged-root", merged_root)?;
+    if !path.starts_with(merged_root) {
+        return Err(format!(
+            "--merged-path {} must be under --merged-root {}",
+            path.display(),
+            merged_root.display()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_absolute_path(name: &str, path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
-        return Err("--merged-path must be absolute".to_string());
+        return Err(format!("{name} must be absolute"));
     }
     if path.components().any(|component| {
         matches!(
@@ -484,14 +519,7 @@ fn validate_merged_path(path: &Path, merged_root: &Path) -> Result<(), String> {
             Component::CurDir | Component::ParentDir | Component::Prefix(_)
         )
     }) {
-        return Err("--merged-path must not contain relative path components".to_string());
-    }
-    if !path.starts_with(merged_root) {
-        return Err(format!(
-            "--merged-path {} must be under --merged-root {}",
-            path.display(),
-            merged_root.display()
-        ));
+        return Err(format!("{name} must not contain relative path components"));
     }
     Ok(())
 }
@@ -560,6 +588,29 @@ mod tests {
         assert_eq!(
             cfg.merged_path,
             Some(PathBuf::from("/run/centaur/merged/sess-1/agent"))
+        );
+    }
+
+    #[test]
+    fn parse_home_lower_and_context_source_flags() {
+        let cfg = parse_args([
+            OsString::from("--manifest-only"),
+            OsString::from("--session"),
+            OsString::from("sess-1"),
+            OsString::from("--generic-home-lower"),
+            OsString::from("/var/lib/centaur/overlays/.warm-home-lower/sess-1"),
+            OsString::from("--context-source"),
+            OsString::from("/var/lib/centaur/atrium/sess-1"),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cfg.generic_home_lower,
+            PathBuf::from("/var/lib/centaur/overlays/.warm-home-lower/sess-1")
+        );
+        assert_eq!(
+            cfg.context_source,
+            PathBuf::from("/var/lib/centaur/atrium/sess-1")
         );
     }
 
