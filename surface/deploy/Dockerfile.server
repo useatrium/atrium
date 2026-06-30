@@ -22,6 +22,10 @@ COPY surface/centaur-client ./surface/centaur-client
 # but node in the runtime image cannot type-strip inside node_modules — so
 # the prod artifact must be self-contained. Real deps stay external and come
 # from the pnpm deploy below. Types are CI's job (tsc --noEmit there).
+# --banner injects a real `require`/`__filename`/`__dirname` into the ESM
+# output. Some bundled deps (e.g. @opentelemetry/core) do CommonJS
+# `require("util")` of Node builtins; without this shim esbuild's ESM bundle
+# throws "Dynamic require of \"util\" is not supported" at startup.
 RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --bundle \
   --platform=node \
@@ -29,6 +33,7 @@ RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --target=node24 \
   --sourcemap \
   --outfile=dist/index.js \
+  --banner:js='import { createRequire as __createRequire } from "module"; import { fileURLToPath as __fileURLToPath } from "url"; import { dirname as __pathDirname } from "path"; const require = __createRequire(import.meta.url); const __filename = __fileURLToPath(import.meta.url); const __dirname = __pathDirname(__filename);' \
   --external:fastify \
   --external:@fastify/* \
   --external:pg \
