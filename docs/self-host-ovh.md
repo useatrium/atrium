@@ -191,10 +191,31 @@ sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -
 
 ## Phase 6 — Centaur agent runtime (k3s)
 
+> **⚠️ Gotcha — disable k3s Traefik + ServiceLB, or it steals Caddy's port 80.**
+> Caddy (Docker) is the ingress on host `:80`/`:443`, and api-rs is reached over a
+> NodePort — so k3s's bundled Traefik/ServiceLB are unused. Left enabled, the
+> `svclb-traefik` pod binds host `:80`/`:443` via a hostPort, and its CNI DNAT rule
+> **shadows Caddy's** `127.0.0.1:80 → caddy` rule. Then `cloudflared → localhost:80`
+> lands on Traefik (a blank `404 page not found`) instead of Caddy — the whole site
+> 404s. It can stay dormant for a while and surface only after a `docker`/`k3s`
+> restart reshuffles iptables ordering. The `config.yaml` below disables both. (To
+> fix a live cluster without reinstalling: `kubectl -n kube-system patch svc traefik
+> -p '{"spec":{"type":"ClusterIP"}}'` frees the ports immediately, but is **not**
+> durable — set the `disable:` list and `systemctl restart k3s` for a permanent fix.)
+
 ```sh
 # cluster + tooling
+# Pre-seed k3s config BEFORE install so first boot already excludes Traefik/ServiceLB.
+# write-kubeconfig-mode keeps k3s.yaml readable across restarts — a bare `chmod 644`
+# gets reset to 0600 every time k3s restarts.
+sudo mkdir -p /etc/rancher/k3s
+sudo tee /etc/rancher/k3s/config.yaml >/dev/null <<'YAML'
+disable:
+  - traefik
+  - servicelb
+write-kubeconfig-mode: "0644"
+YAML
 curl -sfL https://get.k3s.io | sh -
-sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 mkdir -p ~/.kube && sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config && sudo chown ubuntu:ubuntu ~/.kube/config
 sudo ln -sf /usr/local/bin/k3s /usr/local/bin/kubectl
 export KUBECONFIG=$HOME/.kube/config
