@@ -1,6 +1,6 @@
 # Warm-lease unified plan — warm pods + harden Medium
 
-> **Status: PLAN, stress-tested and code-reconciled (2026-06-30).** An earlier draft of this doc sequenced toward
+> **Status: BUILT ON BRANCH `feat/warm-home-cache-all` (2026-06-30).** An earlier draft of this doc sequenced toward
 > a **working-set snapshot → Full per-repo pool**. That thesis was **disproven by POCs** (see
 > §4) — the snapshot loses to the already-shipped Medium tier for both pnpm and cargo. This
 > revision keeps only what survived: **finish the warm-pod work (#141) and harden the Medium
@@ -15,18 +15,19 @@
 ## 0. Where we are (shipped on `master`)
 
 - **Medium content-keyed dep/build cache** — node depcache (pnpm store / cargo registry / uv)
-  + sccache + a cross-node Atrium-CAS tier keyed by lockfile hash. Hydrate via
-  `warmcache-hydrate` init container, capture via the node-sync daemon, bounded by
-  TTL/size-cap + node LRU. (`warmcache.rs`, `cas.rs`, mig `051_warmcache_blobs.sql`.)
+  + node-local sccache, with a cross-node Atrium-CAS tier for dependency-store warmcache blobs.
+  Hydrate via `warmcache-hydrate` init container, capture via the node-sync daemon, bounded by
+  TTL/size-cap + node LRU. (`warmcache.rs`, `cas.rs`, mig `051_warmcache_blobs.sql`.) Shared
+  cross-node sccache remains future Phase C work.
 - **Warm pool of generic pods** keyed by a single `workload_key` (harness/persona),
   repo-agnostic (`centaur-sandbox-manager/src/warm_pool.rs`).
 - **#141 v1 — repo-bearing warm sessions** (`052b7503`): org-default repos compose under
   `~/repos/<owner>/<repo>`; multi-repo `session_repos` spec (mig `056`); the **post-claim bind
   primitive is already built**. `prepare_claimed_overlay_home`, the helper pod, readiness wait,
   `session_repos` claim-filter relaxation, and retire-then-cold-spawn fallback are present and
-  covered by targeted Rust tests. **Open:** the post-claim HOME that gets bound is incomplete:
-  it does not yet compose the warm pod's generic harness HOME as a lower, and the `/home/agent/context`
-  child mount is hidden by the HOME submount.
+  covered by targeted Rust tests. Branch `feat/warm-home-cache-all` finishes the missing HOME
+  composition: it snapshots the warm pod generic HOME, excludes `context` and the ready marker,
+  mounts it as the top extra lower, and rebinds `/home/agent/context` after the HOME submount.
 
 ## 1. The cold-start ladder, and what's left
 
@@ -39,7 +40,7 @@ POCs, here is the honest accounting of what each costs and what closes it:
 | Image pull | fat pre-baked image | — |
 | Repo clone | node repo-cache mirror + `git clone --shared` | — |
 | Dependency install | warm pnpm store → `pnpm install --offline` ≈ **4.6s** (measured) | already near-optimal — see §4 |
-| Build / compile | node-local sccache + cargo registry | **Phase B** — toolchain-aware cache keys now; shared sccache later for multi-node |
+| Build / compile | node-local sccache + cargo registry | **Phase B shipped** — optional toolchain-aware dep-store warmcache keys; shared sccache later for multi-node |
 
 **The key realization from the stress-test:** the dependency-install and build-compile rungs
 are *already* largely paid down by Medium (warm store + sccache). The one rung Medium cannot
@@ -48,7 +49,7 @@ hardening, not a new lane.
 
 ## 2. Plan
 
-### Phase A — finish #141 post-claim HOME composition  *(the real remaining win)*
+### Phase A — finish #141 post-claim HOME composition  *(implemented)*
 Let an explicit working/session repo claim a **generic** warm pod and receive a complete
 flat-home overlay after claim. The bind primitive is shipped; the remaining work is what gets
 mounted at `/home/agent`.
@@ -64,22 +65,22 @@ mounted at `/home/agent`.
   compose failure **retire the pod and cold-spawn** (never serve a half-bound pod).
 
 **A1 — generic HOME lower**
-- Capture or stage the generic warm HOME as a read-only lower before the post-claim HOME overlay
-  is mounted. It must include the harness config and prompt written by the warm pod entrypoint:
-  `~/.codex`, `~/.claude`, `~/.config/amp`, `~/AGENTS.md`, and equivalent harness files.
-- Compose that lower above the repo lower:
-  `lowerdir=<generic-home>:<repo-or-composed-repos>`. The generic HOME snapshot carries the
-  harness config/prompt; the repo lower carries `repos/<owner>/<repo>` plus repo files.
-- Preserve today's flat-home prompt precedence: Centaur's top-level `~/AGENTS.md` wins over a
-  repo top-level prompt, while nested repo prompts still live under `~/repos/...`.
-- Use the existing node-sync `extra_lower`/multi-lower mount path where possible instead of
-  inventing a new mount planner.
+- Implemented with a helper-side snapshot from `/run/centaur/merged/<sandbox>/agent` into
+  `<overlays-root>/.warm-home-lower/<sandbox>`, excluding `context` and
+  `.centaur-workspace-ready`.
+- The daemon reads `generic_home_lower` from the session manifest and mounts it as the top extra
+  lower, before repo or artifact lowers:
+  `lowerdir=<generic-home>:<artifact-lower-if-any>:<repo-or-composed-repos>`.
+- This preserves flat-home prompt precedence: Centaur's top-level `~/AGENTS.md` wins over a repo
+  top-level prompt, while nested repo prompts still live under `~/repos/...`.
+- The daemon validates the generic HOME lower path on manifest read and uses a mount signature so
+  changed lower/context inputs force a remount instead of a false-ready existing mount.
 
 **A2 — context under the HOME submount**
-- Preserve `/home/agent/context` after the HOME submount. A kind POC confirmed that the
-  existing context child mount is hidden when the post-claim overlay is mounted at `/home/agent`.
-  The implementation needs an explicit context rebind/remount strategy or a deliberate path change;
-  do not ship warm-claimed repo sessions without resolving this.
+- Implemented by writing `context_source` to the manifest and having node-sync bind-mount it at
+  `<merged-home>/context` after the HOME overlay mount and before readiness. The bind is remounted
+  read-only. Existing context mounts are accepted only when their file identity matches the
+  manifest source; stale mounts are unmounted and rebound.
 
 **A3 — tests and smoke**
 - Unit-test the generic-HOME lower planning, lowerdir order, helper manifest arguments, and
@@ -94,19 +95,21 @@ mounted at `/home/agent`.
 repo files, Centaur prompt precedence, writable upper, and readable `/home/agent/context`.
 Real-pod kind e2e green, followed by a watched real-model smoke.
 
-### Phase B — harden Medium cache keying  *(near-term cache work)*
-Do this after or alongside Phase A if the code is naturally nearby. This is small hygiene; it is
-not a new cache lane.
-- **Add toolchain identity to the warmcache key** — today the key is
-  `(workspace_id, lockfile_hash, kind)` with no toolchain component; a node image/toolchain bump can
-  reuse a store hashed under the old toolchain (`warmcache.rs:35,140`).
-- Include the dimensions that can change store compatibility: pnpm major/store layout
-  (`STORE_VERSION` when available), Node major, rustc version for cargo-related stores,
-  OS/libc/arch, and preferably the sandbox image/toolchain digest if available.
-- **Pin and document toolchain assumptions** across the warm pool. The key protects correctness;
-  pinning protects hit rate.
-- **Exit:** no silent cache poisoning on toolchain drift; cache misses are explainable when the
-  image/toolchain changes.
+### Phase B — harden Medium cache keying  *(implemented)*
+This is small hygiene, not a new cache lane.
+- Added an optional deployment-level `SESSION_SANDBOX_WARMCACHE_TOOLCHAIN_ID` /
+  `sandbox.warmcacheToolchainId`.
+- When unset or blank, warmcache keeps the legacy `(lockfile_hash, kind)` server key unchanged.
+- When set, node-sync derives an effective key:
+  `v2.<sha256("atrium-warmcache-v2\\0" + raw_lockfile_hash + "\\0" + toolchain_id)>`.
+  The receipt carries that effective key through capture, so hydrate and capture stay aligned
+  without a server schema or route change.
+- The toolchain id is deliberately operator-supplied. It should encode the dimensions that matter
+  for the deployed sandbox image and dependency-store compatibility (for example image digest,
+  Node/pnpm store layout, OS/libc/arch). Do not imply cross-node `sccache` keying here; shared
+  sccache is Phase C.
+- **Exit:** unset keeps legacy rows reusable; configured deployments avoid silent dep-store reuse
+  across declared toolchain/image changes.
 
 ### Phase C — multi-node cache work  *(future, not current OVH blocker)*
 - **Shared sccache backend on Atrium CAS or object storage** + `CARGO_INCREMENTAL=0`. This is the
@@ -117,10 +120,9 @@ not a new cache lane.
   node-local cache misses show up in metrics.
 - **Exit:** cross-node cargo reuse without raw `target/` snapshots.
 
-### Phase D — optional product polish / adjacent cleanup
-- Remove leftover `~/github` assumptions in sandbox scripts/images if they still exist
-  (`git-branch.sh`, `entrypoint.sh`, Dockerfile/tool-shim residue). This is mechanical and should
-  stay separate if it starts touching behavior.
+### Phase D — optional product polish / adjacent cleanup  *(mechanical cleanup implemented)*
+- Removed leftover `~/github` assumptions in sandbox scripts/images/tool shims and updated the
+  affected runtime fixture/docs to `/home/agent/repos`.
 - Surface/UI work for org-default available repos and warm-pool status is useful product polish,
   but it is not required for the Phase A correctness path.
 
