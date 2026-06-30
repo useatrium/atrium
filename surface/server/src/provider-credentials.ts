@@ -70,11 +70,7 @@ export class ProviderCredentials {
   }
 
   async upsertClaudeToken(userId: string, token: string): Promise<ProviderCredentialStatusJson> {
-    const normalized = token.trim();
-    if (!normalized) {
-      throw new Error('Claude token is required');
-    }
-    return this.upsertProviderSecret(userId, CLAUDE_CODE_PROVIDER, normalized);
+    return this.upsertProviderSecret(userId, CLAUDE_CODE_PROVIDER, normalizeClaudeToken(token));
   }
 
   async upsertCodexAuthJson(userId: string, authJson: string): Promise<ProviderCredentialStatusJson> {
@@ -296,7 +292,22 @@ function statusFromRow(
   };
 }
 
-function normalizeCodexAuthJson(value: string): string {
+export function normalizeClaudeToken(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Claude token is required');
+  }
+  // `claude setup-token` mints an OAuth token (sk-ant-oat…) tied to the user's
+  // Pro/Max subscription. A plain API key (sk-ant-api…) bills the org account
+  // instead of the subscription, so reject it with a pointer to the right
+  // command — mirrors the Codex "must use ChatGPT login" guard.
+  if (/^sk-ant-api/i.test(trimmed)) {
+    throw new Error('Use a subscription token from `claude setup-token`, not an API key');
+  }
+  return trimmed;
+}
+
+export function normalizeCodexAuthJson(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
     throw new Error('Codex auth.json is required');
