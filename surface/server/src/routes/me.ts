@@ -477,9 +477,14 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     if (!token) {
       return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
     }
-    const provider = await providerCredentials.upsertClaudeToken(user.id, token);
-    await sessionRuns.clearClaudeAuthRequired(user.id);
-    return { provider };
+    try {
+      const provider = await providerCredentials.upsertClaudeToken(user.id, token);
+      await sessionRuns.clearClaudeAuthRequired(user.id);
+      return { provider };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid Claude token';
+      return reply.code(400).send({ error: 'bad_request', message });
+    }
   });
 
   app.put('/api/me/provider-credentials/codex', async (req, reply) => {
