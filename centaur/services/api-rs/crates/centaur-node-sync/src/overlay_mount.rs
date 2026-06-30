@@ -296,10 +296,10 @@ pub fn ready_marker_path(merged: &Path) -> PathBuf {
     merged.join(READY_MARKER_FILE)
 }
 
-pub fn seed_fixture_lower(lower: &Path) -> Result<(), String> {
+pub fn seed_fixture_lower(lower: &Path, agent_uid: Option<u32>) -> Result<(), String> {
     write_if_missing(&lower.join("seed.txt"), b"base seed\n")?;
     write_if_missing(&lower.join("delete-me.txt"), b"delete me\n")?;
-    set_fixture_permissions(lower)
+    set_fixture_permissions(lower, agent_uid)
 }
 
 fn write_if_missing(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -314,11 +314,16 @@ fn write_if_missing(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-fn set_fixture_permissions(lower: &Path) -> Result<(), String> {
+fn set_fixture_permissions(lower: &Path, agent_uid: Option<u32>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::chown;
 
     std::fs::set_permissions(lower, std::fs::Permissions::from_mode(0o777))
         .map_err(|e| format!("chmod lower {}: {e}", lower.display()))?;
+    if let Some(uid) = agent_uid {
+        chown(lower, Some(uid), Some(uid))
+            .map_err(|e| format!("chown lower {} to {uid}: {e}", lower.display()))?;
+    }
     for entry in
         std::fs::read_dir(lower).map_err(|e| format!("read lower {}: {e}", lower.display()))?
     {
@@ -331,12 +336,16 @@ fn set_fixture_permissions(lower: &Path) -> Result<(), String> {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))
                 .map_err(|e| format!("chmod lower file {}: {e}", path.display()))?;
         }
+        if let Some(uid) = agent_uid {
+            chown(&path, Some(uid), Some(uid))
+                .map_err(|e| format!("chown lower entry {} to {uid}: {e}", path.display()))?;
+        }
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn set_fixture_permissions(_lower: &Path) -> Result<(), String> {
+fn set_fixture_permissions(_lower: &Path, _agent_uid: Option<u32>) -> Result<(), String> {
     Ok(())
 }
 
@@ -364,7 +373,7 @@ pub fn mount_overlay(
         unmount_overlay(&plan)?;
     }
 
-    prepare_lower_source(&plan)?;
+    prepare_lower_source(&plan, agent_uid)?;
     reset_workdir(&plan.work)?;
     let opts = plan.overlay_options();
     let output = Command::new("mount")
@@ -594,7 +603,7 @@ fn prepare_upper_and_merged(plan: &OverlayMountPlan, agent_uid: Option<u32>) -> 
 }
 
 #[cfg(target_os = "linux")]
-fn prepare_lower_source(plan: &OverlayMountPlan) -> Result<(), String> {
+fn prepare_lower_source(plan: &OverlayMountPlan, agent_uid: Option<u32>) -> Result<(), String> {
     for lower in &plan.extra_lowers {
         let metadata = std::fs::metadata(lower)
             .map_err(|e| format!("extra lower {}: {e}", lower.display()))?;
@@ -608,7 +617,7 @@ fn prepare_lower_source(plan: &OverlayMountPlan) -> Result<(), String> {
     if plan.lower.uses_fixture_seed() {
         std::fs::create_dir_all(&plan.lower.path)
             .map_err(|e| format!("create lower {}: {e}", plan.lower.path.display()))?;
-        seed_fixture_lower(&plan.lower.path)?;
+        seed_fixture_lower(&plan.lower.path, agent_uid)?;
     }
     if plan.lower.kind == LowerKind::ComposedRepos {
         materialize_composed_lower(plan)?;

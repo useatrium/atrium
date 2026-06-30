@@ -348,8 +348,8 @@ POD="$(node_sync_pod)"
 echo "    node-sync pod: ${POD}"
 
 echo "==> [5/9] assert fixture-lower capture round-trip (agent edit -> capture sink) via pod logs"
-wait_for_log "capture: [1-9][0-9]* upserts" "capture upsert"
-wait_for_log "capture: .* [1-9][0-9]* deletes" "capture delete"
+wait_for_log "session ${SESSION}: capture: [1-9][0-9]* upserts" "capture upsert"
+wait_for_log "session ${SESSION}: capture: .* [1-9][0-9]* deletes" "capture delete"
 
 echo "==> [6/9] provision a repo-lower session and assert only new files hit upper/capture"
 kubectl -n "${NS}" delete pod "${REPO_AGENT_POD}" --ignore-not-found --wait=true
