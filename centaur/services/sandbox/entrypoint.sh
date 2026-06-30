@@ -394,14 +394,28 @@ fi
 #     OAuth-shaped requests, unset the API-key stub so it does not fall back
 #     to X-Api-Key, and let iron-token-broker mint a real Bearer at request
 #     time via the anthropic-claude brokered_token secret.
+# CLAUDE_CODE_OAUTH_TOKEN can provide a complete per-user subscription OAuth
+# token (from `claude setup-token`) for per-session subscription auth — the
+# Claude analogue of CODEX_AUTH_JSON. Claude Code reads it straight from the
+# env, so when present it wins over CLAUDE_CODE_AUTH_MODE: force access_token
+# mode, drop the API-key stub, and skip the dummy broker credentials (the env
+# token is the real one; a credentials file would shadow it).
 CLAUDE_CODE_AUTH_MODE="${CLAUDE_CODE_AUTH_MODE:-api_key}"
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    CLAUDE_CODE_AUTH_MODE="access_token"
+    export CLAUDE_CODE_AUTH_MODE
+fi
 case "$CLAUDE_CODE_AUTH_MODE" in
     api_key)
         :
         ;;
     access_token)
-        unset ANTHROPIC_API_KEY
-        if [ -f /etc/centaur/claude-credentials.default.json ]; then
+        unset ANTHROPIC_API_KEY CLAUDE_CODE_API_KEY
+        if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            # Real per-user subscription token in the env; the CLI reads it
+            # directly. Remove any credentials file so it cannot shadow the token.
+            rm -f "$HOME_DIR/.claude/.credentials.json"
+        elif [ -f /etc/centaur/claude-credentials.default.json ]; then
             cp /etc/centaur/claude-credentials.default.json "$HOME_DIR/.claude/.credentials.json"
             chmod 600 "$HOME_DIR/.claude/.credentials.json"
         fi
