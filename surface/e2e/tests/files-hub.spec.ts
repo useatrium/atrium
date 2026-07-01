@@ -269,4 +269,115 @@ test.describe('Files Hub', () => {
       await ctx.dispose();
     }
   });
+
+  test('text edit: clean save advances head; a conflicting edit round-trips through /conflict + /resolve', async () => {
+    const ctx = await apiAs(unique('editor'), 'Editor');
+    try {
+      const name = uniqueChannel('edit');
+      await createChannel(ctx, name);
+      const chanId = await channelId(ctx, name);
+      const original = Buffer.from('line one\nline two\nline three\n');
+      const fileId = await uploadViaApi(ctx, 'note.txt', 'text/plain', original);
+      await postWithAttachment(ctx, chanId, 'a note', fileId);
+      const artifactId = (await channelFiles(ctx, chanId)).find((f) => f.name === 'note.txt')?.artifactId;
+      expect(artifactId).toBeTruthy();
+
+      const baseSeq = async (): Promise<number> => {
+        const res = await ctx.get(`/api/files/${artifactId}/versions`);
+        expect(res.ok(), `versions (${res.status()})`).toBeTruthy();
+        const { versions } = (await res.json()) as { versions: Array<{ seq: number; isLatest: boolean }> };
+        const latest = versions.find((v) => v.isLatest) ?? versions[0];
+        expect(latest, 'a latest version').toBeTruthy();
+        return latest!.seq;
+      };
+      const readLatest = async (): Promise<string> => {
+        const res = await ctx.get(`/api/files/artifact/${artifactId}/content`);
+        expect(res.status(), `content (${res.status()})`).toBe(200);
+        return (await res.body()).toString('utf8');
+      };
+      const putContent = (seq: number, text: string) =>
+        ctx.put(`/api/files/${artifactId}/content`, {
+          headers: { 'x-artifact-base-seq': String(seq), 'content-type': 'text/plain' },
+          data: Buffer.from(text),
+        });
+
+      // 1) Clean save advances the head and rewrites the bytes.
+      const base0 = await baseSeq();
+      const clean = await putContent(base0, 'line one\nline two EDITED\nline three\n');
+      expect(clean.status(), `clean save (${clean.status()})`).toBe(200);
+      expect(((await clean.json()) as { status: string }).status).toBe('normal');
+      expect(await readLatest()).toContain('line two EDITED');
+
+      // 2) Two edits from the SAME base touching the SAME line → conflict.
+      const conflictBase = await baseSeq();
+      const a = await putContent(conflictBase, 'line one\nline two FROM A\nline three\n');
+      expect(a.status()).toBe(200);
+      expect(((await a.json()) as { status: string }).status).toBe('normal');
+
+      const b = await putContent(conflictBase, 'line one\nline two FROM B\nline three\n');
+      expect(b.status(), `stale edit (${b.status()})`).toBe(200);
+      const bBody = (await b.json()) as { status: string; seq: number };
+      expect(bBody.status, 'same-line stale edit is a conflict').toBe('conflict');
+
+      // 3) Conflict detail is fetchable with both sides + markers.
+      const detailRes = await ctx.get(`/api/files/${artifactId}/conflict`);
+      expect(detailRes.status(), `conflict detail (${detailRes.status()})`).toBe(200);
+      const detail = (await detailRes.json()) as {
+        conflictSeq: number;
+        left: { text: string };
+        right: { text: string };
+        markers: string;
+      };
+      expect(detail.conflictSeq).toBe(bBody.seq);
+      expect(detail.left.text).toContain('FROM A');
+      expect(detail.right.text).toContain('FROM B');
+      expect(detail.markers, 'diff3 markers present').toContain('line two');
+
+      // 4) Resolve by choosing a clean merged text (base = the conflict seq).
+      const resolved = 'line one\nline two RESOLVED\nline three\n';
+      const resolve = await ctx.post(`/api/files/${artifactId}/resolve`, {
+        headers: { 'x-artifact-base-seq': String(detail.conflictSeq), 'content-type': 'text/plain' },
+        data: Buffer.from(resolved),
+      });
+      expect(resolve.status(), `resolve (${resolve.status()})`).toBe(200);
+      expect(((await resolve.json()) as { status: string }).status).toBe('normal');
+      expect(await readLatest()).toBe(resolved);
+
+      // 5) Binary artifacts are not text-editable.
+      const pngId = await uploadViaApi(ctx, 'pic.png', 'image/png', PNG_1x1);
+      await postWithAttachment(ctx, chanId, 'a pic', pngId);
+      const pngArtifactId = (await channelFiles(ctx, chanId)).find((f) => f.name === 'pic.png')?.artifactId;
+      const binaryEdit = await ctx.put(`/api/files/${pngArtifactId}/content`, {
+        headers: { 'x-artifact-base-seq': '1', 'content-type': 'text/plain' },
+        data: Buffer.from('not allowed'),
+      });
+      expect(binaryEdit.status(), 'binary edit rejected').toBe(415);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  test('text edit ACL: a non-member cannot edit another user\'s private-channel file', async () => {
+    const alice = await apiAs(unique('aeditor'), 'AEditor');
+    const bob = await apiAs(unique('beditor'), 'BEditor');
+    try {
+      const priv = uniqueChannel('editsecret');
+      const create = await alice.post('/api/channels', { data: { name: priv, private: true } });
+      expect(create.ok(), `create private channel (${create.status()})`).toBeTruthy();
+      const privId = ((await create.json()) as { channel: { id: string } }).channel.id;
+      const fileId = await uploadViaApi(alice, 'private.txt', 'text/plain', Buffer.from('secret\n'));
+      await postWithAttachment(alice, privId, 'secret note', fileId);
+      const artifactId = (await channelFiles(alice, privId)).find((f) => f.name === 'private.txt')?.artifactId;
+      expect(artifactId).toBeTruthy();
+
+      const bobEdit = await bob.put(`/api/files/${artifactId}/content`, {
+        headers: { 'x-artifact-base-seq': '1', 'content-type': 'text/plain' },
+        data: Buffer.from('tampered\n'),
+      });
+      expect([403, 404]).toContain(bobEdit.status());
+    } finally {
+      await alice.dispose();
+      await bob.dispose();
+    }
+  });
 });

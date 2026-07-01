@@ -1,4 +1,5 @@
 import type { HubFileVersion } from '@atrium/surface-client';
+import type { ArtifactConflict, ResolveChoice } from '../../sessions/ConflictSurface';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'code' | 'text' | 'data' | 'opaque';
 
@@ -34,6 +35,16 @@ export interface LightboxCallbacks {
   onRevertVersion?: (f: PreviewFile, seq: number) => Promise<void> | void;
   /** Files Hub version history: un-delete a tombstoned file. */
   onRestoreFile?: (f: PreviewFile) => Promise<void> | void;
+  // slice3: Files Hub text editing.
+  onSaveText?: (f: PreviewFile, text: string, baseSeq: number) => Promise<{ seq: number; status: 'normal' | 'conflict' }>;
+  // slice3: Files Hub text conflict detail.
+  onLoadConflict?: (f: PreviewFile) => Promise<ArtifactConflict>;
+  // slice3: Files Hub text conflict resolution.
+  onResolveConflict?: (
+    f: PreviewFile,
+    conflict: ArtifactConflict,
+    choice: ResolveChoice,
+  ) => Promise<{ seq: number; status: string }>;
 }
 
 export type MediaPreviewVariant = 'tile' | 'full';

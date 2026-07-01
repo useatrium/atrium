@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import { MediaPreview } from './MediaPreview';
 import {
   ChevronLeftIcon,
@@ -12,9 +12,11 @@ import {
   RotateIcon,
   TrashIcon,
 } from './Icon';
+import { TextEditorPane } from './TextEditorPane';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import type { LightboxCallbacks, PreviewFile } from './types';
 import { effectiveMediaKind, formatBytes, formatDateTime, kindLabel } from './utils';
+import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from '../../sessions/ConflictSurface';
 
 interface LightboxProps extends LightboxCallbacks {
   files: PreviewFile[];
@@ -25,6 +27,12 @@ interface LightboxProps extends LightboxCallbacks {
 
 const iconButtonClass =
   'grid size-8 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
+
+function cacheBustedFile(file: PreviewFile, reloadKey: number): PreviewFile {
+  if (reloadKey === 0) return file;
+  const separator = file.contentUrl.includes('?') ? '&' : '?';
+  return { ...file, contentUrl: `${file.contentUrl}${separator}lbv=${reloadKey}` };
+}
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -52,20 +60,46 @@ export function Lightbox({
   onFetchVersionContent,
   onRevertVersion,
   onRestoreFile,
+  onSaveText,
+  onLoadConflict,
+  onResolveConflict,
 }: LightboxProps) {
   const file = files[index];
   const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>('info');
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(file?.name ?? '');
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editBaseSeq, setEditBaseSeq] = useState<number | null>(null);
+  const [editText, setEditText] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<ArtifactConflict | null>(null);
+  const [previewReloadKey, setPreviewReloadKey] = useState(0);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const touchStartRef = useRef<number | null>(null);
   const canPrev = index > 0;
   const canNext = index < files.length - 1;
   const manageable = file ? canManage?.(file) === true : false;
+  const mediaKind = file ? effectiveMediaKind(file) : 'opaque';
+  const editAvailable =
+    file != null &&
+    !file.tombstoned &&
+    manageable &&
+    (mediaKind === 'text' || mediaKind === 'code') &&
+    Boolean(onListVersions && onFetchVersionContent && onSaveText && onLoadConflict && onResolveConflict);
 
   useEffect(() => {
     setDraftName(file?.name ?? '');
     setRenaming(false);
+    setEditing(false);
+    setEditLoading(false);
+    setEditSaving(false);
+    setEditBaseSeq(null);
+    setEditText(null);
+    setEditError(null);
+    setConflict(null);
   }, [file]);
 
   useEffect(() => {
@@ -78,13 +112,65 @@ export function Lightbox({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const targetAcceptsText =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable === true;
       if (event.key === 'Escape') onClose();
+      if (targetAcceptsText) return;
       if (event.key === 'ArrowLeft' && canPrev) onIndexChange(index - 1);
       if (event.key === 'ArrowRight' && canNext) onIndexChange(index + 1);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canNext, canPrev, index, onClose, onIndexChange]);
+
+  const refreshAfterWrite = useCallback(async () => {
+    setPreviewReloadKey((value) => value + 1);
+    setHistoryRefreshKey((value) => value + 1);
+    if (file && onListVersions) {
+      try {
+        await onListVersions(file);
+      } catch {
+        // The callback owns user-facing error reporting. Keep the saved preview path moving.
+      }
+    }
+  }, [file, onListVersions]);
+
+  const loadEditSource = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!file || !editAvailable || !onListVersions || !onFetchVersionContent) return;
+      setEditLoading(true);
+      setEditError(null);
+      setConflict(null);
+      try {
+        const [versions, blob] = await Promise.all([
+          onListVersions(file, signal),
+          onFetchVersionContent(file, undefined, signal),
+        ]);
+        const latest = versions[0];
+        if (!latest) throw new Error('Could not find the latest file version');
+        const text = await blob.text();
+        if (signal?.aborted) return;
+        setEditBaseSeq(latest.seq);
+        setEditText(text);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setEditBaseSeq(null);
+        setEditText(null);
+        setEditError(err instanceof Error ? err.message : 'Could not load file content');
+      } finally {
+        if (!signal?.aborted) setEditLoading(false);
+      }
+    },
+    [editAvailable, file, onFetchVersionContent, onListVersions],
+  );
+
+  useEffect(() => {
+    if (!editing || !editAvailable) return;
+    const controller = new AbortController();
+    void loadEditSource(controller.signal);
+    return () => controller.abort();
+  }, [editAvailable, editing, loadEditSource]);
 
   const details = useMemo(() => {
     if (!file) return [];
@@ -102,6 +188,7 @@ export function Lightbox({
   }, [file]);
 
   if (!file) return null;
+  const displayFile = cacheBustedFile(file, previewReloadKey);
 
   const submitRename = async () => {
     const nextName = draftName.trim();
@@ -130,11 +217,59 @@ export function Lightbox({
     }
   };
 
+  const saveEdit = async (text: string) => {
+    if (!onSaveText || !onLoadConflict || editBaseSeq == null) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const result = await onSaveText(file, text, editBaseSeq);
+      if (result.status === 'conflict') {
+        const nextConflict = await onLoadConflict(file);
+        setConflict(nextConflict);
+        setEditText(null);
+        setEditBaseSeq(null);
+        setHistoryRefreshKey((value) => value + 1);
+        return;
+      }
+      setEditing(false);
+      setConflict(null);
+      setEditText(null);
+      setEditBaseSeq(null);
+      await refreshAfterWrite();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not save file');
+      void loadEditSource();
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const resolveConflict = async (choice: ResolveChoice) => {
+    if (!onResolveConflict || !conflict) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await onResolveConflict(file, conflict, choice);
+      setConflict(null);
+      setEditing(false);
+      setEditText(null);
+      setEditBaseSeq(null);
+      await refreshAfterWrite();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not resolve conflict');
+      throw err;
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const onTouchStart = (event: TouchEvent<HTMLElement>) => {
+    if (editing) return;
     touchStartRef.current = event.touches[0]?.clientX ?? null;
   };
 
   const onTouchEnd = (event: TouchEvent<HTMLElement>) => {
+    if (editing) return;
     const start = touchStartRef.current;
     const end = event.changedTouches[0]?.clientX;
     touchStartRef.current = null;
@@ -221,6 +356,21 @@ export function Lightbox({
             <RotateIcon size={16} />
           </button>
         )}
+        {editAvailable && (
+          <button
+            type="button"
+            className={`${iconButtonClass} ${editing ? 'border-accent-border text-accent-text-strong' : ''}`}
+            onClick={() => {
+              setEditing((value) => !value);
+              setEditError(null);
+              setConflict(null);
+            }}
+            aria-label="Edit file"
+            title="Edit"
+          >
+            <EditIcon size={16} />
+          </button>
+        )}
         <button
           type="button"
           className={`${iconButtonClass} ${openPanel === 'info' ? 'border-accent-border text-accent-text-strong' : ''}`}
@@ -234,26 +384,78 @@ export function Lightbox({
 
       <main className="min-h-0 flex-1" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_auto]">
-          <section className="relative min-h-0 bg-surface">
-            <MediaPreview file={file} variant="full" />
-            <button
-              type="button"
-              className="absolute left-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-edge-strong bg-surface-overlay/95 text-fg-secondary shadow-lg hover:bg-edge-strong hover:text-fg disabled:opacity-30"
-              onClick={() => onIndexChange(index - 1)}
-              disabled={!canPrev}
-              aria-label="Previous file"
-            >
-              <ChevronLeftIcon size={20} />
-            </button>
-            <button
-              type="button"
-              className="absolute right-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-edge-strong bg-surface-overlay/95 text-fg-secondary shadow-lg hover:bg-edge-strong hover:text-fg disabled:opacity-30"
-              onClick={() => onIndexChange(index + 1)}
-              disabled={!canNext}
-              aria-label="Next file"
-            >
-              <ChevronRightIcon size={20} />
-            </button>
+          <section className="relative flex min-h-0 bg-surface">
+            {editing && conflict ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                {editError && (
+                  <div role="alert" className="border-b border-danger-border bg-danger-tint px-3 py-2 text-2xs text-danger-text">
+                    {editError}
+                  </div>
+                )}
+                <ConflictSurface
+                  conflict={conflict}
+                  onResolve={resolveConflict}
+                  onClose={() => {
+                    setConflict(null);
+                    setEditing(false);
+                  }}
+                  embedded
+                />
+              </div>
+            ) : editing ? (
+              editLoading ? (
+                <div className="flex flex-1 items-center justify-center text-2xs text-fg-muted">Loading editable content...</div>
+              ) : editBaseSeq != null && editText != null ? (
+                <TextEditorPane
+                  file={file}
+                  baseSeq={editBaseSeq}
+                  initialText={editText}
+                  onSave={saveEdit}
+                  onCancel={() => {
+                    setEditing(false);
+                    setEditError(null);
+                    setConflict(null);
+                  }}
+                  saving={editSaving}
+                  error={editError}
+                />
+              ) : (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+                  <div role="alert" className="text-2xs text-danger-text">
+                    {editError ?? 'Could not load editable content'}
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+                    onClick={() => void loadEditSource()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )
+            ) : (
+              <>
+                <MediaPreview file={displayFile} variant="full" />
+                <button
+                  type="button"
+                  className="absolute left-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-edge-strong bg-surface-overlay/95 text-fg-secondary shadow-lg hover:bg-edge-strong hover:text-fg disabled:opacity-30"
+                  onClick={() => onIndexChange(index - 1)}
+                  disabled={!canPrev}
+                  aria-label="Previous file"
+                >
+                  <ChevronLeftIcon size={20} />
+                </button>
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-edge-strong bg-surface-overlay/95 text-fg-secondary shadow-lg hover:bg-edge-strong hover:text-fg disabled:opacity-30"
+                  onClick={() => onIndexChange(index + 1)}
+                  disabled={!canNext}
+                  aria-label="Next file"
+                >
+                  <ChevronRightIcon size={20} />
+                </button>
+              </>
+            )}
           </section>
 
           {openPanel === 'info' && (
@@ -309,6 +511,7 @@ export function Lightbox({
 
           {openPanel === 'history' && (
             <VersionHistoryPanel
+              key={`${file.id}:${historyRefreshKey}`}
               file={file}
               canManage={manageable}
               onListVersions={onListVersions}

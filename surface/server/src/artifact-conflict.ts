@@ -54,6 +54,48 @@ export async function loadConflictDetail(
   const ledger = new ArtifactLedger(pool);
   const conflict = await ledger.getConflict(sessionId, path, options);
   if (!conflict) return null;
+  return hydrateConflictDetail({
+    ledger,
+    storage,
+    conflict,
+    path,
+    resolveBaseSha: async (baseSeq) => {
+      const baseVer = await ledger.resolveVersion(sessionId, path, { seq: baseSeq }, options);
+      return baseVer?.blobSha ?? null;
+    },
+  });
+}
+
+export async function loadConflictDetailById(
+  pool: Db,
+  storage: ConflictStorage,
+  artifactId: string,
+): Promise<ArtifactConflictOut | null> {
+  const ledger = new ArtifactLedger(pool);
+  const conflict = await ledger.getConflictById(artifactId);
+  if (!conflict) return null;
+  const artifact = await ledger.artifactById(artifactId);
+  if (!artifact) return null;
+  return hydrateConflictDetail({
+    ledger,
+    storage,
+    conflict,
+    path: artifact.path,
+    resolveBaseSha: async (baseSeq) => {
+      const baseVer = await ledger.resolveVersionByArtifactId(artifactId, { seq: baseSeq });
+      return baseVer?.blobSha ?? null;
+    },
+  });
+}
+
+async function hydrateConflictDetail(args: {
+  ledger: ArtifactLedger;
+  storage: ConflictStorage;
+  conflict: { artifactId: string; conflictSeq: number; conflict: unknown; markerSha: string | null };
+  path: string;
+  resolveBaseSha(baseSeq: number): Promise<string | null>;
+}): Promise<ArtifactConflictOut> {
+  const { ledger, storage, conflict, path } = args;
   const payload = (conflict.conflict ?? {}) as ConflictPayload;
 
   const blobText = async (sha: string | null | undefined): Promise<string> => {
@@ -69,8 +111,7 @@ export async function loadConflictDetail(
   const baseSeq = payload.base_seq ?? null;
   let baseSha: string | null = null;
   if (baseSeq != null) {
-    const baseVer = await ledger.resolveVersion(sessionId, path, { seq: baseSeq }, options);
-    baseSha = baseVer?.blobSha ?? null;
+    baseSha = await args.resolveBaseSha(baseSeq);
   }
   const markers = await blobText(conflict.markerSha);
 
