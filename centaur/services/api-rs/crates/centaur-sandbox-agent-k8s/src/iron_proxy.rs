@@ -452,6 +452,7 @@ impl AgentSandboxBackend {
         id: &SandboxId,
         principal_id: &str,
     ) -> SandboxResult<()> {
+        let overall_started = Instant::now();
         let iron_control = self
             .config
             .iron_control
@@ -460,17 +461,31 @@ impl AgentSandboxBackend {
                 backend: crate::BACKEND_NAME,
                 operation: "assign_iron_control_proxy_principal",
             })?;
+        let lookup_started = Instant::now();
         let mut proxy_id = self.proxy_id_for_sandbox(id).await?;
-        if proxy_id.is_none() || !self.has_usable_iron_proxy_resources(id).await? {
+        let proxy_lookup_duration = lookup_started.elapsed();
+        let mut resources_check_duration = Duration::ZERO;
+        let resources_usable = if proxy_id.is_some() {
+            let resources_check_started = Instant::now();
+            let usable = self.has_usable_iron_proxy_resources(id).await?;
+            resources_check_duration = resources_check_started.elapsed();
+            usable
+        } else {
+            false
+        };
+        let mut repair_duration = Duration::ZERO;
+        if proxy_id.is_none() || !resources_usable {
             tracing::warn!(
                 sandbox_id = id.as_str(),
                 principal_id,
                 "iron-proxy resources are missing or not running; recreating before assignment"
             );
+            let repair_started = Instant::now();
             proxy_id = Some(
                 self.recreate_iron_proxy_resources_for_principal(id, principal_id)
                     .await?,
             );
+            repair_duration = repair_started.elapsed();
         }
         let proxy_id = proxy_id.ok_or_else(|| {
             SandboxError::backend(format!(
@@ -478,19 +493,37 @@ impl AgentSandboxBackend {
                 id.as_str()
             ))
         })?;
+        let iron_control_assign_started = Instant::now();
         let proxy = iron_control
             .client
             .assign_proxy_principal(&proxy_id, principal_id)
             .await
             .map_err(|err| SandboxError::backend_source("iron-control assign proxy", err))?;
+        let iron_control_assign_duration = iron_control_assign_started.elapsed();
         self.proxy_ids
             .lock()
             .await
             .insert(id.as_str().to_owned(), proxy.id);
+        let annotation_started = Instant::now();
         self.patch_iron_control_principal_annotation(id, principal_id)
             .await?;
+        let annotation_duration = annotation_started.elapsed();
+        let barrier_started = Instant::now();
         self.wait_for_proxy_principal_applied(id, principal_id)
             .await;
+        let barrier_duration = barrier_started.elapsed();
+        tracing::info!(
+            sandbox_id = id.as_str(),
+            principal_id,
+            proxy_lookup_duration_ms = proxy_lookup_duration.as_millis() as u64,
+            proxy_resources_check_duration_ms = resources_check_duration.as_millis() as u64,
+            proxy_repair_duration_ms = repair_duration.as_millis() as u64,
+            iron_control_assign_duration_ms = iron_control_assign_duration.as_millis() as u64,
+            proxy_annotation_patch_duration_ms = annotation_duration.as_millis() as u64,
+            proxy_claim_barrier_duration_ms = barrier_duration.as_millis() as u64,
+            proxy_assign_total_duration_ms = overall_started.elapsed().as_millis() as u64,
+            "assigned iron-proxy principal"
+        );
         Ok(())
     }
 
@@ -599,29 +632,44 @@ impl AgentSandboxBackend {
             .proxy_principal_ack(id, principal_id, "claim barrier")
             .await
         {
-            Ok(ProxyAck::Applied) => {
+            Ok(report) if report.outcome == ProxyAck::Applied => {
                 tracing::info!(
                     sandbox_id = id.as_str(),
                     principal_id,
                     barrier = "claim barrier",
                     elapsed_ms = started.elapsed().as_millis() as u64,
+                    ack_elapsed_ms = report.elapsed.as_millis() as u64,
+                    sync_attempts = report.sync_attempts,
+                    sync_successes = report.sync_successes,
+                    status_attempts = report.status_attempts,
+                    management_confirmed = report.management_confirmed,
                     "iron-proxy acknowledged the claimed principal's config"
                 );
             }
-            Ok(ProxyAck::ManagementUnavailable) => {
+            Ok(report) if report.outcome == ProxyAck::ManagementUnavailable => {
                 tracing::info!(
                     sandbox_id = id.as_str(),
+                    ack_elapsed_ms = report.elapsed.as_millis() as u64,
+                    sync_attempts = report.sync_attempts,
+                    sync_successes = report.sync_successes,
+                    status_attempts = report.status_attempts,
+                    management_confirmed = report.management_confirmed,
                     "iron-proxy management API is unavailable (image without \
                      managed status support?); using the fixed reassign delay"
                 );
                 sleep(proxy_fallback_delay_remaining(started.elapsed())).await;
             }
-            Ok(ProxyAck::TimedOut) => {
+            Ok(report) => {
                 // The ack timeout already waited longer than the fixed
                 // fallback delay, so do not add another sleep here.
                 tracing::warn!(
                     sandbox_id = id.as_str(),
                     principal_id,
+                    ack_elapsed_ms = report.elapsed.as_millis() as u64,
+                    sync_attempts = report.sync_attempts,
+                    sync_successes = report.sync_successes,
+                    status_attempts = report.status_attempts,
+                    management_confirmed = report.management_confirmed,
                     "iron-proxy did not acknowledge the claimed principal's \
                      config before the deadline; proceeding (managed proxies \
                      fail closed until synced)"
@@ -650,29 +698,44 @@ impl AgentSandboxBackend {
             .proxy_principal_ack(id, principal_id, "cold create barrier")
             .await
         {
-            Ok(ProxyAck::Applied) => {
+            Ok(report) if report.outcome == ProxyAck::Applied => {
                 tracing::info!(
                     sandbox_id = id.as_str(),
                     principal_id,
                     barrier = "cold create barrier",
                     elapsed_ms = started.elapsed().as_millis() as u64,
+                    ack_elapsed_ms = report.elapsed.as_millis() as u64,
+                    sync_attempts = report.sync_attempts,
+                    sync_successes = report.sync_successes,
+                    status_attempts = report.status_attempts,
+                    management_confirmed = report.management_confirmed,
                     "iron-proxy acknowledged the claimed principal's config"
                 );
             }
-            Ok(ProxyAck::ManagementUnavailable) => {
+            Ok(report) if report.outcome == ProxyAck::ManagementUnavailable => {
                 tracing::info!(
                     sandbox_id = id.as_str(),
+                    ack_elapsed_ms = report.elapsed.as_millis() as u64,
+                    sync_attempts = report.sync_attempts,
+                    sync_successes = report.sync_successes,
+                    status_attempts = report.status_attempts,
+                    management_confirmed = report.management_confirmed,
                     "iron-proxy management API is unavailable (image without \
                      managed status support?); using the fixed cold-create delay"
                 );
                 sleep(proxy_fallback_delay_remaining(started.elapsed())).await;
             }
-            Ok(ProxyAck::TimedOut) => {
+            Ok(report) => {
                 // The ack timeout already waited longer than the fixed
                 // fallback delay, so do not add another sleep here.
                 tracing::warn!(
                     sandbox_id = id.as_str(),
                     principal_id,
+                    ack_elapsed_ms = report.elapsed.as_millis() as u64,
+                    sync_attempts = report.sync_attempts,
+                    sync_successes = report.sync_successes,
+                    status_attempts = report.status_attempts,
+                    management_confirmed = report.management_confirmed,
                     "iron-proxy did not acknowledge the cold-created principal's \
                      config before the deadline; proceeding (managed proxies \
                      fail closed until synced)"
@@ -695,7 +758,7 @@ impl AgentSandboxBackend {
         id: &SandboxId,
         principal_id: &str,
         barrier: &'static str,
-    ) -> SandboxResult<ProxyAck> {
+    ) -> SandboxResult<ProxyAckReport> {
         let endpoint = match self.proxy_management_endpoint(id).await {
             Ok(Some(endpoint)) => endpoint,
             Ok(None) => {
@@ -909,6 +972,35 @@ enum ProxyAck {
     TimedOut,
 }
 
+struct ProxyAckReport {
+    outcome: ProxyAck,
+    elapsed: Duration,
+    sync_attempts: u32,
+    sync_successes: u32,
+    status_attempts: u32,
+    management_confirmed: bool,
+}
+
+impl ProxyAckReport {
+    fn new(
+        outcome: ProxyAck,
+        elapsed: Duration,
+        sync_attempts: u32,
+        sync_successes: u32,
+        status_attempts: u32,
+        management_confirmed: bool,
+    ) -> Self {
+        Self {
+            outcome,
+            elapsed,
+            sync_attempts,
+            sync_successes,
+            status_attempts,
+            management_confirmed,
+        }
+    }
+}
+
 fn proxy_fallback_delay_remaining(elapsed: Duration) -> Duration {
     PROXY_REASSIGN_FALLBACK_DELAY.saturating_sub(elapsed)
 }
@@ -925,16 +1017,20 @@ async fn wait_for_proxy_ack(
     ack_timeout: Duration,
     probe_window: Duration,
     poll_interval: Duration,
-) -> ProxyAck {
+) -> ProxyAckReport {
     let started = Instant::now();
     let mut poked = false;
     let mut management_confirmed = false;
+    let mut sync_attempts = 0_u32;
+    let mut sync_successes = 0_u32;
+    let mut status_attempts = 0_u32;
     loop {
         // Poke an immediate out-of-band sync so the barrier does not ride the
         // proxy's 5s poll cadence; retried until it lands (the status poll
         // below still converges without it, just slower).
         if !poked {
-            poked = matches!(
+            sync_attempts = sync_attempts.saturating_add(1);
+            let sync_ok = matches!(
                 client
                     .post(format!("{}/v1/sync", endpoint.base_url))
                     .bearer_auth(&endpoint.api_key)
@@ -942,7 +1038,12 @@ async fn wait_for_proxy_ack(
                     .await,
                 Ok(response) if response.status().is_success()
             );
+            if sync_ok {
+                sync_successes = sync_successes.saturating_add(1);
+                poked = true;
+            }
         }
+        status_attempts = status_attempts.saturating_add(1);
         let status = client
             .get(format!("{}/v1/status", endpoint.base_url))
             .bearer_auth(&endpoint.api_key)
@@ -956,15 +1057,36 @@ async fn wait_for_proxy_ack(
                 && status.synced_once
                 && status.principal_id == principal_id
             {
-                return ProxyAck::Applied;
+                return ProxyAckReport::new(
+                    ProxyAck::Applied,
+                    started.elapsed(),
+                    sync_attempts,
+                    sync_successes,
+                    status_attempts,
+                    management_confirmed,
+                );
             }
         }
         let elapsed = started.elapsed();
         if !management_confirmed && elapsed >= probe_window {
-            return ProxyAck::ManagementUnavailable;
+            return ProxyAckReport::new(
+                ProxyAck::ManagementUnavailable,
+                elapsed,
+                sync_attempts,
+                sync_successes,
+                status_attempts,
+                management_confirmed,
+            );
         }
         if elapsed >= ack_timeout {
-            return ProxyAck::TimedOut;
+            return ProxyAckReport::new(
+                ProxyAck::TimedOut,
+                elapsed,
+                sync_attempts,
+                sync_successes,
+                status_attempts,
+                management_confirmed,
+            );
         }
         sleep(poll_interval).await;
     }
@@ -2069,7 +2191,9 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ack, ProxyAck::Applied);
+        assert_eq!(ack.outcome, ProxyAck::Applied);
+        assert_eq!(ack.sync_attempts, 1);
+        assert!(ack.status_attempts >= 3);
         assert!(
             sync_calls.load(std::sync::atomic::Ordering::SeqCst) >= 1,
             "the barrier should poke an immediate out-of-band sync"
@@ -2095,7 +2219,9 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ack, ProxyAck::TimedOut);
+        assert_eq!(ack.outcome, ProxyAck::TimedOut);
+        assert!(ack.management_confirmed);
+        assert!(ack.status_attempts > 1);
         server.abort();
     }
 
@@ -2121,7 +2247,8 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ack, ProxyAck::ManagementUnavailable);
+        assert_eq!(ack.outcome, ProxyAck::ManagementUnavailable);
+        assert!(!ack.management_confirmed);
     }
 
     #[test]

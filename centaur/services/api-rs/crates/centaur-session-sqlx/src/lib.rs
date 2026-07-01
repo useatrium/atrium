@@ -904,6 +904,46 @@ impl PgSessionStore {
         Ok(sandbox_id)
     }
 
+    pub async fn drain_stale_ready_warm_sandboxes(
+        &self,
+        active_workload_keys: &[String],
+        limit: i64,
+        reason: &str,
+    ) -> Result<Vec<String>, SessionStoreError> {
+        let sandbox_ids = sqlx::query_scalar::<_, String>(
+            r#"
+            with candidate as (
+                select warm.sandbox_id
+                from session_warm_sandboxes warm
+                where warm.status = 'ready'
+                  and not (warm.workload_key = any($1))
+                  and not exists (
+                      select 1
+                      from sessions s
+                      where s.sandbox_id = warm.sandbox_id
+                  )
+                order by warm.created_at, warm.sandbox_id
+                for update skip locked
+                limit $2
+            )
+            update session_warm_sandboxes warm
+            set
+                status = 'drained',
+                last_error = $3,
+                updated_at = now()
+            from candidate
+            where warm.sandbox_id = candidate.sandbox_id
+            returning warm.sandbox_id
+            "#,
+        )
+        .bind(active_workload_keys)
+        .bind(limit.max(0))
+        .bind(reason)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(sandbox_ids)
+    }
+
     pub async fn mark_warm_sandbox_failed(
         &self,
         sandbox_id: &str,

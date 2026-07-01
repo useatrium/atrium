@@ -4,11 +4,12 @@ use centaur_sandbox_core::{SandboxError, SandboxId, SandboxSpec, SandboxStatus};
 use centaur_session_sqlx::{PgSessionStore, SessionStoreError};
 use thiserror::Error;
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::SandboxManager;
 
 pub type WarmSandboxSpecFactory = Arc<dyn Fn() -> SandboxSpec + Send + Sync>;
+const STALE_WARM_DRAIN_LIMIT: i64 = 16;
 
 pub struct WarmPoolConfig {
     pub target_size: usize,
@@ -59,11 +60,7 @@ impl WarmPoolManager {
         });
     }
 
-    pub async fn claim(
-        &self,
-        thread_key: &str,
-        iron_control_principal: Option<&str>,
-    ) -> Result<Option<String>, WarmPoolError> {
+    pub async fn claim(&self, thread_key: &str) -> Result<Option<String>, WarmPoolError> {
         loop {
             let Some(sandbox_id) = self
                 .store
@@ -79,22 +76,7 @@ impl WarmPoolManager {
                 // runtime regressed after the replenisher saw it running
                 // (backends wait for readiness before returning from create),
                 // so claiming it would fail at I/O attach.
-                Ok(SandboxStatus::Running) => {
-                    if let Some(principal_id) = iron_control_principal
-                        && let Err(error) = self
-                            .manager
-                            .assign_iron_control_proxy_principal(&id, principal_id)
-                            .await
-                    {
-                        let error_message = error.to_string();
-                        let _ = self
-                            .store
-                            .mark_warm_sandbox_failed(&sandbox_id, &error_message)
-                            .await;
-                        return Err(WarmPoolError::Sandbox(error));
-                    }
-                    return Ok(Some(sandbox_id));
-                }
+                Ok(SandboxStatus::Running) => return Ok(Some(sandbox_id)),
                 Ok(status) => format!("claimed warm sandbox was not running: {status:?}"),
                 Err(SandboxError::NotFound(_)) => "claimed warm sandbox was not found".to_owned(),
                 Err(error) => {
@@ -115,6 +97,8 @@ impl WarmPoolManager {
     }
 
     async fn replenish_once(&self) -> Result<(), WarmPoolError> {
+        self.drain_stale_ready_warm_sandboxes().await?;
+
         let needed = self.config.target_size.saturating_sub(
             self.store
                 .count_ready_warm_sandboxes(self.workload_key.as_str())
@@ -138,6 +122,43 @@ impl WarmPoolManager {
             }
         }
 
+        Ok(())
+    }
+
+    async fn drain_stale_ready_warm_sandboxes(&self) -> Result<(), WarmPoolError> {
+        let active_workload_keys = vec![self.workload_key.clone()];
+        let reason = format!(
+            "drained stale warm workload; active workload key is {}",
+            self.workload_key
+        );
+        let sandbox_ids = self
+            .store
+            .drain_stale_ready_warm_sandboxes(
+                &active_workload_keys,
+                STALE_WARM_DRAIN_LIMIT,
+                &reason,
+            )
+            .await?;
+        for sandbox_id in sandbox_ids {
+            let id = SandboxId::new(sandbox_id.as_str());
+            match self.manager.stop(&id).await {
+                Ok(()) | Err(SandboxError::NotFound(_)) => {
+                    info!(
+                        sandbox_id,
+                        workload_key = self.workload_key,
+                        "drained stale warm sandbox"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        sandbox_id,
+                        workload_key = self.workload_key,
+                        %error,
+                        "failed to stop drained stale warm sandbox"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -2074,33 +2074,72 @@ impl SessionRuntime {
                         && !warm_default_repos_mismatch
                 })
             {
-                match warm_pool
-                    .claim(thread_key.as_str(), iron_control_principal)
-                    .await
-                {
+                match warm_pool.claim(thread_key.as_str()).await {
                     Ok(Some(sandbox_id)) => {
+                        let id = SandboxId::new(sandbox_id.as_str());
                         if let Some(repos_json) = composed_repos_json.as_deref()
                             && needs_claimed_overlay_prepare
                         {
-                            let id = SandboxId::new(sandbox_id.as_str());
                             let post_claim_started = Instant::now();
-                            if let Err(error) = self
-                                .sandbox_runtime
-                                .manager
-                                .prepare_claimed_overlay_home(
-                                    &id,
-                                    PrepareClaimedOverlayHome {
-                                        thread_key: thread_key.as_str(),
+                            let proxy_future = self.assign_claimed_warm_proxy(
+                                &id,
+                                thread_key,
+                                execution_id,
+                                iron_control_principal,
+                            );
+                            let prepare_future = async {
+                                let prepare_started = Instant::now();
+                                let result = self
+                                    .sandbox_runtime
+                                    .manager
+                                    .prepare_claimed_overlay_home(
+                                        &id,
+                                        PrepareClaimedOverlayHome {
+                                            thread_key: thread_key.as_str(),
+                                            execution_id,
+                                            repos_json,
+                                            precomposed: warm_default_repos_match,
+                                            harness: Some(harness_server_subcommand(harness_type)),
+                                            harness_thread_id: resume_thread_id,
+                                            harness_home: harness_home_for_spec(harness_type),
+                                        },
+                                    )
+                                    .await;
+                                (result, prepare_started.elapsed())
+                            };
+                            let (proxy_result, (prepare_result, prepare_duration)) =
+                                tokio::join!(proxy_future, prepare_future);
+                            let proxy_assign_duration = match proxy_result {
+                                Ok(duration) => duration,
+                                Err(error) => {
+                                    let error_text = error.to_string();
+                                    record_sandbox_warm_pool_claim("proxy_assign_error");
+                                    self.retire_claimed_warm_sandbox(
+                                        thread_key,
                                         execution_id,
-                                        repos_json,
-                                        precomposed: warm_default_repos_match,
-                                        harness: Some(harness_server_subcommand(harness_type)),
-                                        harness_thread_id: resume_thread_id,
-                                        harness_home: harness_home_for_spec(harness_type),
-                                    },
-                                )
-                                .await
-                            {
+                                        &sandbox_id,
+                                        &id,
+                                        &error_text,
+                                        "proxy assignment failed",
+                                    )
+                                    .await;
+                                    self.store
+                                        .append_event(
+                                            thread_key,
+                                            Some(execution_id),
+                                            "session.warm_sandbox_proxy_assign_failed",
+                                            json!({
+                                                "execution_id": execution_id,
+                                                "thread_key": thread_key.as_str(),
+                                                "sandbox_id": sandbox_id.as_str(),
+                                                "error": error_text,
+                                            }),
+                                        )
+                                        .await?;
+                                    return Err(SessionRuntimeError::Sandbox(error));
+                                }
+                            };
+                            if let Err(error) = prepare_result {
                                 let post_claim_duration = post_claim_started.elapsed();
                                 record_sandbox_warm_pool_claim("post_claim_bind_error");
                                 let error_text = error.to_string();
@@ -2110,39 +2149,23 @@ impl SessionRuntime {
                                     thread_key = %thread_key,
                                     execution_id,
                                     sandbox_id = %sandbox_id,
-                                    post_claim_overlay_prepare_duration_ms = post_claim_duration.as_millis() as u64,
+                                    post_claim_overlay_prepare_duration_ms = duration_millis_u64(prepare_duration),
+                                    post_claim_total_duration_ms = duration_millis_u64(post_claim_duration),
+                                    proxy_assign_performed = proxy_assign_duration.is_some(),
+                                    proxy_assign_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
                                     precomposed_overlay_home = warm_default_repos_match,
                                     error = %error_text,
                                     "retiring claimed warm sandbox after post-claim overlay preparation failed"
                                 );
-                                if let Err(mark_error) = self
-                                    .store
-                                    .mark_warm_sandbox_failed(&sandbox_id, &error_text)
-                                    .await
-                                {
-                                    warn!(
-                                        component = COMPONENT_SESSION_RUNTIME,
-                                        event = "sandbox_ensure_warm_mark_failed_error",
-                                        thread_key = %thread_key,
-                                        execution_id,
-                                        sandbox_id = %sandbox_id,
-                                        error = %mark_error,
-                                        "failed to mark claimed warm sandbox failed"
-                                    );
-                                }
-                                if let Err(stop_error) =
-                                    self.sandbox_runtime.manager.stop(&id).await
-                                {
-                                    warn!(
-                                        component = COMPONENT_SESSION_RUNTIME,
-                                        event = "sandbox_ensure_warm_retire_stop_failed",
-                                        thread_key = %thread_key,
-                                        execution_id,
-                                        sandbox_id = %sandbox_id,
-                                        error = %stop_error,
-                                        "failed to stop claimed warm sandbox after post-claim overlay preparation failed"
-                                    );
-                                }
+                                self.retire_claimed_warm_sandbox(
+                                    thread_key,
+                                    execution_id,
+                                    &sandbox_id,
+                                    &id,
+                                    &error_text,
+                                    "post-claim overlay preparation failed",
+                                )
+                                .await;
                                 self.store
                                     .append_event(
                                         thread_key,
@@ -2167,7 +2190,10 @@ impl SessionRuntime {
                                     thread_key = %thread_key,
                                     execution_id,
                                     sandbox_id = %sandbox_id,
-                                    post_claim_overlay_prepare_duration_ms = post_claim_duration.as_millis() as u64,
+                                    post_claim_overlay_prepare_duration_ms = duration_millis_u64(prepare_duration),
+                                    post_claim_total_duration_ms = duration_millis_u64(post_claim_duration),
+                                    proxy_assign_performed = proxy_assign_duration.is_some(),
+                                    proxy_assign_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
                                     precomposed_overlay_home = warm_default_repos_match,
                                     "prepared claimed warm sandbox overlay home"
                                 );
@@ -2190,6 +2216,57 @@ impl SessionRuntime {
                                 return Ok(sandbox_id);
                             }
                         } else {
+                            let proxy_assign_duration = match self
+                                .assign_claimed_warm_proxy(
+                                    &id,
+                                    thread_key,
+                                    execution_id,
+                                    iron_control_principal,
+                                )
+                                .await
+                            {
+                                Ok(duration) => duration,
+                                Err(error) => {
+                                    let error_text = error.to_string();
+                                    record_sandbox_warm_pool_claim("proxy_assign_error");
+                                    self.retire_claimed_warm_sandbox(
+                                        thread_key,
+                                        execution_id,
+                                        &sandbox_id,
+                                        &id,
+                                        &error_text,
+                                        "proxy assignment failed",
+                                    )
+                                    .await;
+                                    self.store
+                                        .append_event(
+                                            thread_key,
+                                            Some(execution_id),
+                                            "session.warm_sandbox_proxy_assign_failed",
+                                            json!({
+                                                "execution_id": execution_id,
+                                                "thread_key": thread_key.as_str(),
+                                                "sandbox_id": sandbox_id.as_str(),
+                                                "error": error_text,
+                                            }),
+                                        )
+                                        .await?;
+                                    return Err(SessionRuntimeError::Sandbox(error));
+                                }
+                            };
+                            info!(
+                                component = COMPONENT_SESSION_RUNTIME,
+                                event = "sandbox_ensure_warm_post_claim_bind_completed",
+                                thread_key = %thread_key,
+                                execution_id,
+                                sandbox_id = %sandbox_id,
+                                post_claim_overlay_prepare_duration_ms = 0_u64,
+                                post_claim_total_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
+                                proxy_assign_performed = proxy_assign_duration.is_some(),
+                                proxy_assign_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
+                                precomposed_overlay_home = false,
+                                "prepared claimed warm sandbox without overlay home changes"
+                            );
                             record_sandbox_warm_pool_claim("hit");
                             span.record("centaur.sandbox_id", sandbox_id.as_str());
                             span.record("sandbox_id", sandbox_id.as_str());
@@ -2334,6 +2411,94 @@ impl SessionRuntime {
             "claimed warm session sandbox"
         );
         Ok(())
+    }
+
+    async fn assign_claimed_warm_proxy(
+        &self,
+        id: &SandboxId,
+        thread_key: &ThreadKey,
+        execution_id: &str,
+        iron_control_principal: Option<&str>,
+    ) -> Result<Option<Duration>, SandboxError> {
+        let Some(principal_id) = iron_control_principal else {
+            return Ok(None);
+        };
+        let started = Instant::now();
+        match self
+            .sandbox_runtime
+            .manager
+            .assign_iron_control_proxy_principal(id, principal_id)
+            .await
+        {
+            Ok(()) => {
+                let duration = started.elapsed();
+                info!(
+                    component = COMPONENT_SESSION_RUNTIME,
+                    event = "sandbox_ensure_warm_proxy_assign_completed",
+                    thread_key = %thread_key,
+                    execution_id,
+                    sandbox_id = %id.as_str(),
+                    principal_id,
+                    proxy_assign_duration_ms = duration_millis_u64(duration),
+                    "assigned claimed warm sandbox proxy principal"
+                );
+                Ok(Some(duration))
+            }
+            Err(error) => {
+                let duration = started.elapsed();
+                warn!(
+                    component = COMPONENT_SESSION_RUNTIME,
+                    event = "sandbox_ensure_warm_proxy_assign_failed",
+                    thread_key = %thread_key,
+                    execution_id,
+                    sandbox_id = %id.as_str(),
+                    principal_id,
+                    proxy_assign_duration_ms = duration_millis_u64(duration),
+                    %error,
+                    "failed to assign claimed warm sandbox proxy principal"
+                );
+                Err(error)
+            }
+        }
+    }
+
+    async fn retire_claimed_warm_sandbox(
+        &self,
+        thread_key: &ThreadKey,
+        execution_id: &str,
+        sandbox_id: &str,
+        id: &SandboxId,
+        error_text: &str,
+        reason: &'static str,
+    ) {
+        if let Err(mark_error) = self
+            .store
+            .mark_warm_sandbox_failed(sandbox_id, error_text)
+            .await
+        {
+            warn!(
+                component = COMPONENT_SESSION_RUNTIME,
+                event = "sandbox_ensure_warm_mark_failed_error",
+                thread_key = %thread_key,
+                execution_id,
+                sandbox_id,
+                reason,
+                error = %mark_error,
+                "failed to mark claimed warm sandbox failed"
+            );
+        }
+        if let Err(stop_error) = self.sandbox_runtime.manager.stop(id).await {
+            warn!(
+                component = COMPONENT_SESSION_RUNTIME,
+                event = "sandbox_ensure_warm_retire_stop_failed",
+                thread_key = %thread_key,
+                execution_id,
+                sandbox_id,
+                reason,
+                error = %stop_error,
+                "failed to stop claimed warm sandbox after claim failure"
+            );
+        }
     }
 
     async fn resolve_sandbox_capabilities(
@@ -7628,6 +7793,71 @@ mod adoption_tests {
             .insert_ready_warm_sandbox(sandbox_id, workload_key)
             .await
             .expect("insert warm sandbox");
+    }
+
+    async fn warm_status(store: &PgSessionStore, sandbox_id: &str) -> String {
+        sqlx::query_scalar::<_, String>(
+            "select status from session_warm_sandboxes where sandbox_id = $1",
+        )
+        .bind(sandbox_id)
+        .fetch_one(store.pool())
+        .await
+        .expect("warm status")
+    }
+
+    #[tokio::test]
+    async fn stale_ready_warm_drain_preserves_current_claimed_and_session_referenced() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        store
+            .insert_ready_warm_sandbox("old-claimed", "old-key")
+            .await
+            .expect("insert old claimed");
+        let claimed_thread =
+            ThreadKey::parse(format!("test:warm-claimed-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &claimed_thread, json!({})).await;
+        assert_eq!(
+            store
+                .claim_ready_warm_sandbox("old-key", claimed_thread.as_str())
+                .await
+                .expect("claim old warm")
+                .as_deref(),
+            Some("old-claimed")
+        );
+
+        store
+            .insert_ready_warm_sandbox("old-ready", "old-key")
+            .await
+            .expect("insert old ready");
+        store
+            .insert_ready_warm_sandbox("old-session-ref", "old-key")
+            .await
+            .expect("insert old session ref");
+        store
+            .insert_ready_warm_sandbox("current-ready", "current-key")
+            .await
+            .expect("insert current ready");
+
+        let session_ref_thread =
+            ThreadKey::parse(format!("test:warm-session-ref-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &session_ref_thread, json!({})).await;
+        store
+            .update_sandbox_id(&session_ref_thread, Some("old-session-ref"))
+            .await
+            .expect("set session sandbox");
+
+        let drained = store
+            .drain_stale_ready_warm_sandboxes(&["current-key".to_owned()], 10, "test drain")
+            .await
+            .expect("drain stale warm");
+
+        assert_eq!(drained, vec!["old-ready".to_owned()]);
+        assert_eq!(warm_status(&store, "old-ready").await, "drained");
+        assert_eq!(warm_status(&store, "old-claimed").await, "claimed");
+        assert_eq!(warm_status(&store, "old-session-ref").await, "ready");
+        assert_eq!(warm_status(&store, "current-ready").await, "ready");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
