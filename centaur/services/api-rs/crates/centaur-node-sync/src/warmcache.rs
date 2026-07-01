@@ -140,6 +140,7 @@ pub fn warmcache_effective_lockfile_hash(
 /// each ecosystem whose lockfile is present at `git_ref`, hash the lockfile, fetch
 /// the warm-cache manifest, and reflink each store blob into `<depcache>/<dest>`.
 /// A cold dependency set (no manifest) is skipped — the agent installs normally.
+#[allow(clippy::too_many_arguments)]
 pub fn hydrate_depcache(
     client: &mut dyn AtriumClient,
     repo_cache_root: &Path,
