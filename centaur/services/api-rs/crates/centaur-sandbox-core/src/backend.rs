@@ -4,10 +4,12 @@ use crate::{
     ObservedSandbox, SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
 };
 
+#[derive(Clone, Copy)]
 pub struct PrepareClaimedOverlayHome<'a> {
     pub thread_key: &'a str,
     pub execution_id: &'a str,
     pub repos_json: &'a str,
+    pub precomposed: bool,
     pub harness: Option<&'a str>,
     pub harness_thread_id: Option<&'a str>,
     pub harness_home: Option<&'a str>,

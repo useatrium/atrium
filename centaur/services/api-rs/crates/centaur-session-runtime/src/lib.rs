@@ -195,6 +195,7 @@ pub struct SandboxRuntime {
     spec_factory: SandboxSpecFactory,
     warm_spec_factory: Option<WarmSandboxSpecFactory>,
     workload_key: Option<String>,
+    warm_repos_json: Option<String>,
     /// The harness warm sandboxes boot with. A warm claim is only valid for a
     /// session on the same harness; other sessions get a cold sandbox.
     warm_harness: Option<HarnessType>,
@@ -2035,11 +2036,24 @@ impl SessionRuntime {
             );
             let composed_repos_json =
                 compose_spec_repos_json(&mut spec, session_repos_json, iron_control_principal)?;
-            let needs_claimed_overlay_home = composed_repos_json.is_some();
+            let composed_repos_key = composed_repos_json
+                .as_deref()
+                .and_then(canonical_repos_json);
+            let warm_default_repos_match = composed_repos_key.is_some()
+                && composed_repos_key == self.sandbox_runtime.warm_repos_json;
+            let warm_default_repos_mismatch = self.sandbox_runtime.warm_repos_json.is_some()
+                && composed_repos_key != self.sandbox_runtime.warm_repos_json;
+            if warm_default_repos_mismatch && self.warm_pool.is_some() {
+                record_sandbox_warm_pool_claim("default_repos_mismatch");
+            }
+            let needs_claimed_overlay_home =
+                composed_repos_json.is_some() && !warm_default_repos_match;
+            let needs_claimed_overlay_prepare =
+                needs_claimed_overlay_home || warm_default_repos_match;
             let has_private_repos = composed_repos_json
                 .as_deref()
                 .is_some_and(repos_json_contains_private_repo);
-            let claimed_overlay_supported = !needs_claimed_overlay_home
+            let claimed_overlay_supported = !needs_claimed_overlay_prepare
                 || self
                     .sandbox_runtime
                     .manager
@@ -2055,6 +2069,7 @@ impl SessionRuntime {
                         && desired_capabilities.is_default_enabled()
                         && claimed_overlay_supported
                         && !has_private_repos
+                        && !warm_default_repos_mismatch
                 })
             {
                 match warm_pool
@@ -2063,9 +2078,10 @@ impl SessionRuntime {
                 {
                     Ok(Some(sandbox_id)) => {
                         if let Some(repos_json) = composed_repos_json.as_deref()
-                            && needs_claimed_overlay_home
+                            && needs_claimed_overlay_prepare
                         {
                             let id = SandboxId::new(sandbox_id.as_str());
+                            let post_claim_started = Instant::now();
                             if let Err(error) = self
                                 .sandbox_runtime
                                 .manager
@@ -2075,6 +2091,7 @@ impl SessionRuntime {
                                         thread_key: thread_key.as_str(),
                                         execution_id,
                                         repos_json,
+                                        precomposed: warm_default_repos_match,
                                         harness: Some(harness_server_subcommand(harness_type)),
                                         harness_thread_id: resume_thread_id,
                                         harness_home: harness_home_for_spec(harness_type),
@@ -2082,6 +2099,7 @@ impl SessionRuntime {
                                 )
                                 .await
                             {
+                                let post_claim_duration = post_claim_started.elapsed();
                                 record_sandbox_warm_pool_claim("post_claim_bind_error");
                                 let error_text = error.to_string();
                                 warn!(
@@ -2090,6 +2108,8 @@ impl SessionRuntime {
                                     thread_key = %thread_key,
                                     execution_id,
                                     sandbox_id = %sandbox_id,
+                                    post_claim_overlay_prepare_duration_ms = post_claim_duration.as_millis() as u64,
+                                    precomposed_overlay_home = warm_default_repos_match,
                                     error = %error_text,
                                     "retiring claimed warm sandbox after post-claim overlay preparation failed"
                                 );
@@ -2138,6 +2158,17 @@ impl SessionRuntime {
                                 // Fall through to cold creation below. The cold
                                 // path uses the same composed repo JSON.
                             } else {
+                                let post_claim_duration = post_claim_started.elapsed();
+                                info!(
+                                    component = COMPONENT_SESSION_RUNTIME,
+                                    event = "sandbox_ensure_warm_post_claim_bind_completed",
+                                    thread_key = %thread_key,
+                                    execution_id,
+                                    sandbox_id = %sandbox_id,
+                                    post_claim_overlay_prepare_duration_ms = post_claim_duration.as_millis() as u64,
+                                    precomposed_overlay_home = warm_default_repos_match,
+                                    "prepared claimed warm sandbox overlay home"
+                                );
                                 record_sandbox_warm_pool_claim("hit");
                                 span.record("centaur.sandbox_id", sandbox_id.as_str());
                                 span.record("sandbox_id", sandbox_id.as_str());
@@ -2151,7 +2182,7 @@ impl SessionRuntime {
                                     iron_control_principal,
                                     desired_capabilities,
                                     ready_duration,
-                                    post_claim_overlay_home: true,
+                                    post_claim_overlay_home: needs_claimed_overlay_home,
                                 })
                                 .await?;
                                 return Ok(sandbox_id);
@@ -2799,6 +2830,7 @@ impl SandboxRuntime {
             spec_factory: Arc::new(spec_factory),
             warm_spec_factory: None,
             workload_key: None,
+            warm_repos_json: None,
             warm_harness: None,
         }
     }
@@ -2816,12 +2848,16 @@ impl SandboxRuntime {
         W: Fn() -> SandboxSpec + Send + Sync + 'static,
     {
         let warm_spec_factory: WarmSandboxSpecFactory = Arc::new(warm_spec_factory);
-        let workload_key = sandbox_spec_key(&warm_spec_factory());
+        let warm_spec = warm_spec_factory();
+        let workload_key = sandbox_spec_key(&warm_spec);
+        let warm_repos_json =
+            spec_env_value(&warm_spec, AGENT_REPOS_JSON_ENV).and_then(canonical_repos_json);
         Self {
             manager: Arc::new(SandboxManager::new(backend)),
             spec_factory: Arc::new(spec_factory),
             warm_spec_factory: Some(warm_spec_factory),
             workload_key: Some(workload_key),
+            warm_repos_json,
             warm_harness: None,
         }
     }
@@ -2999,6 +3035,20 @@ fn sandbox_spec_key(spec: &SandboxSpec) -> String {
     let encoded = serde_json::to_vec(spec).expect("sandbox specs should serialize");
     let digest = Sha256::digest(encoded);
     format!("sandbox-spec-sha256:{digest:x}")
+}
+
+fn spec_env_value<'a>(spec: &'a SandboxSpec, name: &str) -> Option<&'a str> {
+    spec.env
+        .iter()
+        .find(|env| env.name == name)
+        .map(|env| env.value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn canonical_repos_json(repos_json: &str) -> Option<String> {
+    let repos = parse_repo_array(Some(repos_json));
+    (!repos.is_empty()).then(|| Value::Array(repos).to_string())
 }
 
 fn mock_app_server_script() -> &'static str {
@@ -7152,6 +7202,7 @@ mod adoption_tests {
         thread_key: String,
         execution_id: String,
         repos_json: String,
+        precomposed: bool,
     }
 
     struct CreateGate {
@@ -7333,6 +7384,7 @@ mod adoption_tests {
                 thread_key: request.thread_key.to_owned(),
                 execution_id: request.execution_id.to_owned(),
                 repos_json: request.repos_json.to_owned(),
+                precomposed: request.precomposed,
             });
             if let Some(error) = self.prepare_home_error.lock().unwrap().clone() {
                 return Err(SandboxError::backend(error));
@@ -7561,7 +7613,7 @@ mod adoption_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn repo_session_claims_warm_when_post_claim_home_supported() {
+    async fn repo_session_claims_generic_warm_when_post_claim_home_supported() {
         let Some(store) = test_store().await else {
             return;
         };
@@ -7572,14 +7624,7 @@ mod adoption_tests {
         let execution_id = create_test_execution(&store, &thread_key).await;
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
         backend.support_prepare_home();
-        let runtime = runtime_with_warm_pool(
-            &store,
-            backend.clone(),
-            SandboxSpec::new("mock").env(
-                AGENT_REPOS_JSON_ENV,
-                r#"[{"repo":"acme/work","ref":"main"},{"repo":"acme/default","ref":"main"}]"#,
-            ),
-        );
+        let runtime = runtime_with_warm_pool(&store, backend.clone(), SandboxSpec::new("mock"));
         insert_ready_warm_for_runtime(&store, &runtime, "warm-repo-hit").await;
 
         let sandbox_id = runtime
@@ -7608,10 +7653,10 @@ mod adoption_tests {
                 thread_key: thread_key.as_str().to_owned(),
                 execution_id: execution_id.clone(),
                 repos_json: json!([
-                    {"repo":"acme/work","ref":"feature"},
-                    {"repo":"acme/default","ref":"main"}
+                    {"repo":"acme/work","ref":"feature"}
                 ])
                 .to_string(),
+                precomposed: false,
             }]
         );
         assert_eq!(
@@ -7675,7 +7720,7 @@ mod adoption_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn default_repo_session_claims_warm_after_post_claim_home_prepare() {
+    async fn default_repo_session_claims_precomposed_warm_with_manifest_finalize_only() {
         let Some(store) = test_store().await else {
             return;
         };
@@ -7722,13 +7767,68 @@ mod adoption_tests {
                 thread_key: thread_key.as_str().to_owned(),
                 execution_id: execution_id.clone(),
                 repos_json: json!([{"repo":"acme/default","ref":"main"}]).to_string(),
+                precomposed: true,
             }]
         );
         let all = events(&store, &thread_key).await;
         assert!(all.iter().any(|event| {
             event.event_type == "session.warm_sandbox_claimed"
-                && event.payload["post_claim_overlay_home"] == json!(true)
+                && event.payload["post_claim_overlay_home"] == json!(false)
         }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn custom_repo_session_skips_precomposed_default_warm_pool() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:warm-default-miss-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend.support_prepare_home();
+        let runtime = runtime_with_warm_pool(
+            &store,
+            backend.clone(),
+            SandboxSpec::new("mock").env(
+                AGENT_REPOS_JSON_ENV,
+                r#"[{"repo":"acme/default","ref":"main"}]"#,
+            ),
+        );
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-default-miss").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                existing_sandbox_capabilities: None,
+                desired_capabilities: &SessionSandboxCapabilities::default_enabled(),
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "mock-sbx");
+        assert!(backend.prepared_homes().is_empty());
+        let created_specs = backend.created_specs();
+        assert_eq!(created_specs.len(), 1);
+        assert_eq!(
+            spec_env_json(&created_specs[0], AGENT_REPOS_JSON_ENV),
+            json!([{"repo":"acme/work","ref":"feature"}])
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(
+            !all.iter()
+                .any(|event| event.event_type == "session.warm_sandbox_claimed")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7745,14 +7845,7 @@ mod adoption_tests {
         create_test_session(&store, &thread_key, json!({})).await;
         let execution_id = create_test_execution(&store, &thread_key).await;
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
-        let runtime = runtime_with_warm_pool(
-            &store,
-            backend.clone(),
-            SandboxSpec::new("mock").env(
-                AGENT_REPOS_JSON_ENV,
-                r#"[{"repo":"acme/default","ref":"main"}]"#,
-            ),
-        );
+        let runtime = runtime_with_warm_pool(&store, backend.clone(), SandboxSpec::new("mock"));
         insert_ready_warm_for_runtime(&store, &runtime, "warm-unsupported").await;
 
         let sandbox_id = runtime
@@ -7802,14 +7895,7 @@ mod adoption_tests {
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
         backend.support_prepare_home();
         backend.fail_prepare_home("bind failed");
-        let runtime = runtime_with_warm_pool(
-            &store,
-            backend.clone(),
-            SandboxSpec::new("mock").env(
-                AGENT_REPOS_JSON_ENV,
-                r#"[{"repo":"acme/default","ref":"main"}]"#,
-            ),
-        );
+        let runtime = runtime_with_warm_pool(&store, backend.clone(), SandboxSpec::new("mock"));
         insert_ready_warm_for_runtime(&store, &runtime, "warm-bind-fails").await;
 
         let sandbox_id = runtime
@@ -7836,10 +7922,7 @@ mod adoption_tests {
         assert_eq!(created_specs.len(), 1);
         assert_eq!(
             spec_env_json(&created_specs[0], AGENT_REPOS_JSON_ENV),
-            json!([
-                {"repo":"acme/default","ref":"main"},
-                {"repo":"acme/work","ref":"feature"}
-            ])
+            json!([{"repo":"acme/work","ref":"feature"}])
         );
         assert_eq!(
             store.get_session(&thread_key).await.unwrap().sandbox_id,

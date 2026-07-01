@@ -10,6 +10,8 @@ use crate::session_manifest::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 pub const DEFAULT_AGENT_UID: u32 = 1001;
 pub const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
@@ -627,8 +629,14 @@ fn prepare_lower_source(plan: &OverlayMountPlan, agent_uid: Option<u32>) -> Resu
 
 #[cfg(target_os = "linux")]
 fn materialize_composed_lower(plan: &OverlayMountPlan) -> Result<(), String> {
+    let started = Instant::now();
     let compose =
         plan_repo_composition(&plan.lower.path, &plan.repo_cache_root, &plan.repo_mounts)?;
+    eprintln!(
+        "event=overlay_compose_lower_started lower={} entries={}",
+        compose.lower.display(),
+        compose.entries.len()
+    );
     if compose.lower.exists() {
         std::fs::remove_dir_all(&compose.lower)
             .map_err(|e| format!("reset composed lower {}: {e}", compose.lower.display()))?;
@@ -640,11 +648,25 @@ fn materialize_composed_lower(plan: &OverlayMountPlan) -> Result<(), String> {
         materialize_repo_entry(entry)?;
     }
     remove_write_permissions(&compose.lower)?;
+    eprintln!(
+        "event=overlay_compose_lower_completed lower={} entries={} duration_ms={}",
+        compose.lower.display(),
+        compose.entries.len(),
+        started.elapsed().as_millis()
+    );
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 fn materialize_repo_entry(entry: &RepoComposeEntry) -> Result<(), String> {
+    let started = Instant::now();
+    let source = if entry.cache_path.join(".git").is_dir() {
+        "repo_cache"
+    } else if entry.mount.private {
+        "missing_private_cache"
+    } else {
+        "git_clone"
+    };
     if let Some(parent) = entry.target_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("create repo target parent {}: {e}", parent.display()))?;
@@ -665,6 +687,14 @@ fn materialize_repo_entry(entry: &RepoComposeEntry) -> Result<(), String> {
     if let Some(git_ref) = entry.mount.r#ref.as_deref() {
         checkout_repo_ref(&entry.target_path, git_ref)?;
     }
+    eprintln!(
+        "event=overlay_compose_repo_entry_completed repo={} ref={} source={} target={} duration_ms={}",
+        entry.mount.repo,
+        entry.mount.r#ref.as_deref().unwrap_or(""),
+        source,
+        entry.target_path.display(),
+        started.elapsed().as_millis()
+    );
     Ok(())
 }
 

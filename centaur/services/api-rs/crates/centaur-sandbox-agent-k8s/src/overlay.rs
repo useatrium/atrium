@@ -120,6 +120,8 @@ pub(crate) fn overlay_manifest_init_container_json(
     if warm_flat_home_claim_slot(overlay, metadata) {
         args.push("--merged-path".to_owned());
         args.push(warm_flat_home_path(overlay, session));
+        args.push("--context-source".to_owned());
+        args.push(atrium_context_host_path(session));
     }
     push_optional_arg(
         &mut args,

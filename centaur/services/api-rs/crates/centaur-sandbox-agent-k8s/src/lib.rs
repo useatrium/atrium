@@ -22,7 +22,7 @@ use kube::api::{
 };
 use kube::{Api, Client, Error};
 use serde_json::{Value, json};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 
@@ -41,6 +41,8 @@ const DEFAULT_CONTAINER_NAME: &str = "agent";
 const MANAGED_BY_LABEL: &str = "centaur.ai/managed-by";
 const SANDBOX_ID_LABEL: &str = "centaur.ai/sandbox-id";
 const MANAGED_BY_VALUE: &str = "api-rs";
+const NODE_SYNC_COMPONENT_LABEL: &str = "app.kubernetes.io/component";
+const NODE_SYNC_COMPONENT_VALUE: &str = "node-sync";
 // iron-control principal OID the sandbox's proxy binds to, stamped at create
 // so resume (which has only the sandbox id) can rebind without the spec or any
 // in-memory state. Survives pause and api-rs restarts.
@@ -275,6 +277,7 @@ impl AgentSandboxBackend {
         id: &SandboxId,
         request: PrepareClaimedOverlayHome<'_>,
     ) -> SandboxResult<()> {
+        let total_started = Instant::now();
         let overlay = self
             .config
             .overlay
@@ -310,7 +313,16 @@ impl AgentSandboxBackend {
             &self.config,
             request,
         )?;
+        match self
+            .run_claimed_overlay_home_in_node_sync(id, node_name, request, overlay)
+            .await
+        {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => return Err(error),
+        }
         let pods = self.pods();
+        let delete_started = Instant::now();
         match pods.delete(&helper_name, &DeleteParams::default()).await {
             Ok(_) => {}
             Err(err) if is_not_found(&err) => {}
@@ -322,11 +334,16 @@ impl AgentSandboxBackend {
             }
         }
         self.wait_for_helper_pod_absent(&helper_name).await?;
+        let stale_delete_duration = delete_started.elapsed();
+        let create_started = Instant::now();
         pods.create(&PostParams::default(), &helper)
             .await
             .map_err(|err| map_kube_error("create claimed overlay home helper pod", err))?;
+        let create_duration = create_started.elapsed();
 
+        let wait_started = Instant::now();
         let wait_result = self.wait_for_helper_pod(&helper_name).await;
+        let wait_duration = wait_started.elapsed();
         let delete_result = pods.delete(&helper_name, &DeleteParams::default()).await;
         if let Err(err) = delete_result
             && !is_not_found(&err)
@@ -337,7 +354,140 @@ impl AgentSandboxBackend {
                 "failed to delete claimed overlay home helper pod"
             );
         }
+        tracing::info!(
+            sandbox_id = id.as_str(),
+            helper_pod = %helper_name,
+            stale_delete_duration_ms = stale_delete_duration.as_millis() as u64,
+            create_duration_ms = create_duration.as_millis() as u64,
+            wait_duration_ms = wait_duration.as_millis() as u64,
+            total_duration_ms = total_started.elapsed().as_millis() as u64,
+            "claimed overlay home helper pod completed"
+        );
         wait_result
+    }
+
+    async fn run_claimed_overlay_home_in_node_sync(
+        &self,
+        id: &SandboxId,
+        node_name: &str,
+        request: PrepareClaimedOverlayHome<'_>,
+        overlay: &OverlayConfig,
+    ) -> SandboxResult<bool> {
+        let Some(pod_name) = self.node_sync_pod_on_node(node_name).await? else {
+            tracing::info!(
+                sandbox_id = id.as_str(),
+                node_name,
+                "node-sync pod not found on sandbox node; falling back to claimed overlay helper pod"
+            );
+            return Ok(false);
+        };
+        let script = claimed_overlay_home_script(id, overlay, &self.config, request);
+        let started = Instant::now();
+        let params = AttachParams::default()
+            .container("node-sync")
+            .stdin(false)
+            .stdout(true)
+            .stderr(true);
+        let mut attached = match self
+            .pods()
+            .exec(&pod_name, ["/bin/sh", "-ceu", script.as_str()], &params)
+            .await
+        {
+            Ok(attached) => attached,
+            Err(error) => {
+                tracing::warn!(
+                    sandbox_id = id.as_str(),
+                    node_name,
+                    node_sync_pod = %pod_name,
+                    error = %error,
+                    "failed to exec claimed overlay preparation in node-sync; falling back to helper pod"
+                );
+                return Ok(false);
+            }
+        };
+        let status = attached.take_status();
+        let mut stdout = attached.stdout();
+        let mut stderr = attached.stderr();
+        let stdout_task = async {
+            let mut buf = String::new();
+            if let Some(reader) = stdout.as_mut() {
+                reader.read_to_string(&mut buf).await.map_err(|err| {
+                    SandboxError::io(format!("read node-sync exec stdout: {err}"))
+                })?;
+            }
+            Ok::<_, SandboxError>(buf)
+        };
+        let stderr_task = async {
+            let mut buf = String::new();
+            if let Some(reader) = stderr.as_mut() {
+                reader.read_to_string(&mut buf).await.map_err(|err| {
+                    SandboxError::io(format!("read node-sync exec stderr: {err}"))
+                })?;
+            }
+            Ok::<_, SandboxError>(buf)
+        };
+        let status_task = async {
+            match status {
+                Some(status) => status.await,
+                None => None,
+            }
+        };
+        let (stdout, stderr, status, join_result) =
+            tokio::join!(stdout_task, stderr_task, status_task, attached.join());
+        join_result.map_err(|err| {
+            SandboxError::backend(format!("exec claimed overlay home in node-sync: {err}"))
+        })?;
+        let stdout = stdout?;
+        let stderr = stderr?;
+        let status_ok = status
+            .as_ref()
+            .and_then(|status| status.status.as_deref())
+            .is_none_or(|status| status.eq_ignore_ascii_case("success"));
+        if !status_ok {
+            return Err(SandboxError::backend(format!(
+                "claimed overlay preparation in node-sync pod {pod_name} failed: status={status:?} stdout={} stderr={}",
+                stdout.trim(),
+                stderr.trim()
+            )));
+        }
+        tracing::info!(
+            sandbox_id = id.as_str(),
+            node_name,
+            node_sync_pod = %pod_name,
+            duration_ms = started.elapsed().as_millis() as u64,
+            stdout = %stdout.trim(),
+            stderr = %stderr.trim(),
+            "claimed overlay home prepared via node-sync exec"
+        );
+        Ok(true)
+    }
+
+    async fn node_sync_pod_on_node(&self, node_name: &str) -> SandboxResult<Option<String>> {
+        let selector = format!("{NODE_SYNC_COMPONENT_LABEL}={NODE_SYNC_COMPONENT_VALUE}");
+        let field_selector = format!("spec.nodeName={node_name}");
+        let pods = self
+            .pods()
+            .list(
+                &ListParams::default()
+                    .labels(&selector)
+                    .fields(&field_selector),
+            )
+            .await
+            .map_err(|err| map_kube_error("list node-sync pods", err))?;
+        Ok(pods.items.into_iter().find_map(|pod| {
+            if pod.metadata.deletion_timestamp.is_some() {
+                return None;
+            }
+            let running = pod
+                .status
+                .as_ref()
+                .and_then(|status| status.phase.as_deref())
+                .is_some_and(|phase| phase.eq_ignore_ascii_case("running"));
+            if !running {
+                return None;
+            }
+            pod.metadata.name
+        }))
     }
 
     async fn wait_for_helper_pod_absent(&self, name: &str) -> SandboxResult<()> {
@@ -1009,6 +1159,7 @@ fn build_agent_sandbox(
         let agent_uid = agent_run_as_user(&container).unwrap_or(overlay.agent_uid);
         let metadata = overlay::OverlayMetadata::from_sandbox_spec(spec, agent_uid);
         let warm_flat_home = overlay.flat_home && metadata.warm_sandbox;
+        let warm_flat_home_precomposed = warm_flat_home && metadata.repos_json.is_some();
         container["workingDir"] = if overlay.flat_home {
             json!(overlay::DEFAULT_HOME_MOUNT_PATH)
         } else {
@@ -1022,13 +1173,19 @@ fn build_agent_sandbox(
         volume_mounts.push(overlay::atrium_agent_volume_mount_json(overlay));
         volumes.extend(overlay::overlay_volumes_json(overlay, id.as_str()));
         volumes.push(overlay::atrium_volume_json(id.as_str()));
-        if warm_flat_home {
+        if warm_flat_home && !warm_flat_home_precomposed {
             init_containers.push(overlay::warm_flat_home_init_container_json(
                 overlay,
                 id.as_str(),
                 &metadata,
             ));
         } else {
+            if warm_flat_home_precomposed {
+                tracing::info!(
+                    sandbox_id = id.as_str(),
+                    "pre-composing warm flat-home sandbox from default repo overlay"
+                );
+            }
             if let Some(private_repo_hydrate) = private_repo_hydrate_wiring(spec)? {
                 init_containers.push(overlay::private_repo_hydrate_init_container_json(
                     overlay,
@@ -1211,58 +1368,8 @@ fn build_claimed_overlay_home_helper_pod(
     config: &AgentSandboxConfig,
     request: PrepareClaimedOverlayHome<'_>,
 ) -> SandboxResult<Pod> {
+    let script = claimed_overlay_home_script(id, overlay, config, request);
     let merged_slot = overlay.merged_root.join(id.as_str());
-    let merged_home = merged_slot.join("agent");
-    let generic_home_lower = overlay
-        .overlays_root
-        .join(".warm-home-lower")
-        .join(id.as_str());
-    let context_source = overlay::atrium_context_host_path(id.as_str());
-    let ready_marker = merged_home.join(".centaur-workspace-ready");
-    let manifest_path = overlay
-        .overlays_root
-        .join(".sessions")
-        .join(format!("{}.json", id.as_str()));
-    let mut provision_args = vec![
-        "--manifest-only".to_owned(),
-        "--session".to_owned(),
-        id.as_str().to_owned(),
-        "--atrium-session".to_owned(),
-        request.thread_key.to_owned(),
-        "--overlays-root".to_owned(),
-        path_string(&overlay.overlays_root),
-        "--merged-root".to_owned(),
-        path_string(&overlay.merged_root),
-        "--merged-path".to_owned(),
-        path_string(&merged_home),
-        "--agent-uid".to_owned(),
-        overlay.agent_uid.to_string(),
-        "--flat-home".to_owned(),
-        "--generic-home-lower".to_owned(),
-        path_string(&generic_home_lower),
-        "--context-source".to_owned(),
-        context_source.clone(),
-        "--repos-json".to_owned(),
-        request.repos_json.to_owned(),
-    ];
-    push_optional_arg(&mut provision_args, "--harness", request.harness);
-    push_optional_arg(
-        &mut provision_args,
-        "--harness-thread-id",
-        request.harness_thread_id,
-    );
-    push_optional_arg(&mut provision_args, "--harness-home", request.harness_home);
-
-    let script = format!(
-        "{}\n{}\n{}",
-        snapshot_generic_home_script(&merged_home, &generic_home_lower),
-        shell_join_provision_overlay(&provision_args),
-        readiness_wait_script(
-            &path_string(&ready_marker),
-            config.ready_timeout,
-            Some(&path_string(&manifest_path)),
-        ),
-    );
 
     let mut pod_spec = json!({
         "restartPolicy": "Never",
@@ -1340,6 +1447,74 @@ fn build_claimed_overlay_home_helper_pod(
     .map_err(|err| {
         SandboxError::InvalidSpec(format!("invalid claimed overlay home helper pod: {err}"))
     })
+}
+
+fn claimed_overlay_home_script(
+    id: &SandboxId,
+    overlay: &OverlayConfig,
+    config: &AgentSandboxConfig,
+    request: PrepareClaimedOverlayHome<'_>,
+) -> String {
+    let merged_slot = overlay.merged_root.join(id.as_str());
+    let merged_home = merged_slot.join("agent");
+    let context_source = overlay::atrium_context_host_path(id.as_str());
+    let ready_marker = merged_home.join(".centaur-workspace-ready");
+    let manifest_path = overlay
+        .overlays_root
+        .join(".sessions")
+        .join(format!("{}.json", id.as_str()));
+    let mut provision_args = vec![
+        "--manifest-only".to_owned(),
+        "--session".to_owned(),
+        id.as_str().to_owned(),
+        "--atrium-session".to_owned(),
+        request.thread_key.to_owned(),
+        "--overlays-root".to_owned(),
+        path_string(&overlay.overlays_root),
+        "--merged-root".to_owned(),
+        path_string(&overlay.merged_root),
+        "--merged-path".to_owned(),
+        path_string(&merged_home),
+        "--agent-uid".to_owned(),
+        overlay.agent_uid.to_string(),
+        "--flat-home".to_owned(),
+        "--context-source".to_owned(),
+        context_source.clone(),
+        "--repos-json".to_owned(),
+        request.repos_json.to_owned(),
+    ];
+    let generic_home_lower = (!request.precomposed).then(|| {
+        overlay
+            .overlays_root
+            .join(".warm-home-lower")
+            .join(id.as_str())
+    });
+    if let Some(generic_home_lower) = &generic_home_lower {
+        provision_args.push("--generic-home-lower".to_owned());
+        provision_args.push(path_string(generic_home_lower));
+    }
+    push_optional_arg(&mut provision_args, "--harness", request.harness);
+    push_optional_arg(
+        &mut provision_args,
+        "--harness-thread-id",
+        request.harness_thread_id,
+    );
+    push_optional_arg(&mut provision_args, "--harness-home", request.harness_home);
+
+    let mut parts = Vec::new();
+    if let Some(generic_home_lower) = &generic_home_lower {
+        parts.push(snapshot_generic_home_script(
+            &merged_home,
+            generic_home_lower,
+        ));
+    }
+    parts.push(shell_join_provision_overlay(&provision_args));
+    parts.push(readiness_wait_script(
+        &path_string(&ready_marker),
+        config.ready_timeout,
+        Some(&path_string(&manifest_path)),
+    ));
+    parts.join("\n")
 }
 
 fn snapshot_generic_home_script(source_home: &Path, generic_home_lower: &Path) -> String {
@@ -2142,6 +2317,84 @@ mod tests {
     }
 
     #[test]
+    fn warm_flat_home_with_default_repos_precomposes_overlay_before_agent_start() {
+        let spec = SandboxSpec::new("centaur-agent:latest")
+            .env("CENTAUR_WARM_SANDBOX", "1")
+            .env(
+                "AGENT_REPOS_JSON",
+                r#"[{"repo":"acme/default","ref":"main"}]"#,
+            );
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay);
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-warm"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        let init_containers = pod_spec.init_containers.as_ref().unwrap();
+        assert!(
+            init_containers
+                .iter()
+                .all(|container| container.name != "warm-home-placeholder")
+        );
+        let manifest = init_containers
+            .iter()
+            .find(|container| container.name == "overlay-manifest-writer")
+            .expect("overlay manifest writer");
+        let args = manifest.args.as_ref().unwrap();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--merged-path", "/run/centaur/merged/asbx-warm/agent"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--repos-json", r#"[{"repo":"acme/default","ref":"main"}]"#])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--context-source", "/var/lib/centaur/atrium/asbx-warm"])
+        );
+
+        let readiness = init_containers
+            .iter()
+            .find(|container| container.name == "overlay-readiness-wait")
+            .expect("overlay readiness wait");
+        let readiness_command = readiness.command.as_ref().unwrap().join(" ");
+        assert!(
+            readiness_command
+                .contains("/run/centaur/merged/asbx-warm/agent/.centaur-workspace-ready")
+        );
+    }
+
+    #[test]
+    fn precomposed_claimed_overlay_script_finalizes_manifest_without_snapshotting_home() {
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay.clone());
+
+        let script = claimed_overlay_home_script(
+            &SandboxId::new("asbx-test"),
+            &overlay,
+            &config,
+            PrepareClaimedOverlayHome {
+                thread_key: "thread-1",
+                execution_id: "exec-1",
+                repos_json: r#"[{"repo":"acme/widget","ref":"main"}]"#,
+                precomposed: true,
+                harness: Some("codex"),
+                harness_thread_id: None,
+                harness_home: Some("/home/agent/.codex"),
+            },
+        );
+
+        assert!(script.contains("'--atrium-session' 'thread-1'"));
+        assert!(script.contains("'--context-source' '/var/lib/centaur/atrium/asbx-test'"));
+        assert!(script.contains("'--repos-json' '[{\"repo\":\"acme/widget\",\"ref\":\"main\"}]'"));
+        assert!(!script.contains("--generic-home-lower"));
+        assert!(!script.contains("rm -rf \"$dst\""));
+        assert!(script.contains("/run/centaur/merged/asbx-test/agent/.centaur-workspace-ready"));
+    }
+
+    #[test]
     fn claimed_overlay_home_helper_rewrites_manifest_and_waits_for_remount() {
         let mut overlay = OverlayConfig::new("centaur-node-sync:test");
         overlay.flat_home = true;
@@ -2160,6 +2413,7 @@ mod tests {
                 thread_key: "thread-1",
                 execution_id: "exec-1",
                 repos_json: r#"[{"repo":"acme/widget","ref":"main"}]"#,
+                precomposed: false,
                 harness: Some("codex"),
                 harness_thread_id: Some("codex-thread"),
                 harness_home: Some("/home/agent/.codex"),
