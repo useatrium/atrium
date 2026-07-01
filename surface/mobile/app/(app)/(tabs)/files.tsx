@@ -40,9 +40,72 @@ const MEDIA_KINDS = ['all', 'image', 'video', 'audio', 'document', 'code', 'text
 
 type MediaFilter = (typeof MEDIA_KINDS)[number];
 
+interface FolderEntry {
+  name: string;
+  path: string;
+  fileCount: number;
+}
+
+type FileListItem =
+  | { kind: 'folder'; folder: FolderEntry }
+  | { kind: 'file'; file: HubFile; fileIndex: number };
+
 function firstParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+function pathSegments(path: string): string[] {
+  return path.split('/').filter(Boolean);
+}
+
+function dirname(path: string): string {
+  const segments = pathSegments(path);
+  return segments.slice(0, -1).join('/');
+}
+
+function dirSegments(dir: string): string[] {
+  return dir ? dir.split('/').filter(Boolean) : [];
+}
+
+function joinDir(segments: string[]): string {
+  return segments.join('/');
+}
+
+function hasPrefix(segments: string[], prefix: string[]): boolean {
+  return prefix.every((segment, index) => segments[index] === segment);
+}
+
+function folderView(files: HubFile[], currentDir: string): { folders: FolderEntry[]; filesHere: HubFile[] } {
+  const currentSegments = dirSegments(currentDir);
+  const folderCounts = new Map<string, { path: string; fileCount: number }>();
+  const filesHere: HubFile[] = [];
+
+  for (const file of files) {
+    const fileDirSegments = dirSegments(dirname(file.path));
+    if (joinDir(fileDirSegments) === currentDir) {
+      filesHere.push(file);
+    }
+
+    if (fileDirSegments.length <= currentSegments.length || !hasPrefix(fileDirSegments, currentSegments)) {
+      continue;
+    }
+
+    const childName = fileDirSegments[currentSegments.length]!;
+    const childPath = joinDir([...currentSegments, childName]);
+    const current = folderCounts.get(childName);
+    if (current) {
+      current.fileCount += 1;
+    } else {
+      folderCounts.set(childName, { path: childPath, fileCount: 1 });
+    }
+  }
+
+  const folders = [...folderCounts.entries()]
+    .map(([name, value]) => ({ name, path: value.path, fileCount: value.fileCount }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return { folders, filesHere };
 }
 
 function useDebounced(value: string, delayMs: number): string {
@@ -141,6 +204,125 @@ function metaLine(file: HubFile): string {
   const parts = [file.origin, file.uploader?.name].filter(Boolean);
   if (file.sizeBytes != null) parts.push(formatBytes(file.sizeBytes));
   return parts.join(' · ');
+}
+
+function FolderTile({
+  folder,
+  width,
+  onPress,
+}: {
+  folder: FolderEntry;
+  width: number;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open folder ${folder.name}, ${folder.fileCount} ${folder.fileCount === 1 ? 'file' : 'files'}`}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        width,
+        minHeight: Math.round(width * 0.72) + 86,
+        borderRadius: radius.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+        overflow: 'hidden',
+        padding: space.sm,
+        justifyContent: 'space-between',
+      })}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}>
+        <View
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: radius.md,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.bg,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="folder-outline" size={23} color={colors.textMuted} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }} numberOfLines={2}>
+            {folder.name}
+          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 3 }} numberOfLines={1}>
+            {folder.fileCount} {folder.fileCount === 1 ? 'file' : 'files'}
+          </Text>
+        </View>
+      </View>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
+        {folder.path}
+      </Text>
+    </Pressable>
+  );
+}
+
+function FolderBreadcrumb({
+  currentDir,
+  onNavigate,
+}: {
+  currentDir: string;
+  onNavigate: (dir: string) => void;
+}) {
+  const { colors } = useTheme();
+  const segments = dirSegments(currentDir);
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      accessibilityLabel="Folder breadcrumb"
+      contentContainerStyle={{
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: space.lg,
+        paddingBottom: space.sm,
+      }}
+    >
+      <Pressable accessibilityRole="button" accessibilityLabel="Go to Files" onPress={() => onNavigate('')} hitSlop={6}>
+        <Text
+          style={{
+            color: currentDir ? colors.textMuted : colors.text,
+            fontSize: font.xs,
+            fontWeight: '800',
+            paddingVertical: 4,
+          }}
+        >
+          Files
+        </Text>
+      </Pressable>
+      {segments.map((segment, index) => {
+        const dir = joinDir(segments.slice(0, index + 1));
+        const isCurrent = dir === currentDir;
+        return (
+          <View key={dir} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ color: colors.textMuted, fontSize: font.xs }}>/</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Go to folder ${dir}`} onPress={() => onNavigate(dir)} hitSlop={6}>
+              <Text
+                style={{
+                  maxWidth: 140,
+                  color: isCurrent ? colors.text : colors.textMuted,
+                  fontSize: font.xs,
+                  fontWeight: isCurrent ? '800' : '700',
+                  paddingVertical: 4,
+                }}
+                numberOfLines={1}
+              >
+                {segment}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+    </ScrollView>
+  );
 }
 
 function FileTile({
@@ -254,6 +436,7 @@ export default function FilesTab() {
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounced(search, 250);
+  const [currentDir, setCurrentDir] = useState('');
   const [files, setFiles] = useState<HubFile[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -317,6 +500,35 @@ export default function FilesTab() {
     void loadFiles({ reset: true });
   }, [loadFiles]);
 
+  const searchActive = search.trim().length > 0;
+  const { folders, filesHere } = useMemo(() => folderView(files, currentDir), [currentDir, files]);
+  const visibleFiles = searchActive ? files : filesHere;
+  const visibleItemCount = searchActive ? visibleFiles.length : folders.length + visibleFiles.length;
+  const showBreadcrumb = !searchActive && (currentDir !== '' || folders.length > 0);
+  const listItems = useMemo<FileListItem[]>(
+    () =>
+      searchActive
+        ? visibleFiles.map((file, fileIndex) => ({ kind: 'file', file, fileIndex }))
+        : [
+            ...folders.map((folder) => ({ kind: 'folder' as const, folder })),
+            ...visibleFiles.map((file, fileIndex) => ({ kind: 'file' as const, file, fileIndex })),
+          ],
+    [folders, searchActive, visibleFiles],
+  );
+
+  const navigateToDir = useCallback((dir: string) => {
+    setCurrentDir(dir);
+    setLightboxIndex(null);
+  }, []);
+
+  const updateSearch = useCallback((value: string) => {
+    setSearch(value);
+    setLightboxIndex(null);
+    if (!value.trim()) {
+      setCurrentDir('');
+    }
+  }, []);
+
   const toggleStar = useCallback(
     async (file: HubFile) => {
       const previous = file.starred;
@@ -362,7 +574,14 @@ export default function FilesTab() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <MobileHeader title={title} />
+      <MobileHeader
+        title={title}
+        right={
+          <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '800' }}>
+            {visibleItemCount}
+          </Text>
+        }
+      />
       <ConnectionBanner status={chat.state.wsStatus} queuedChangesCount={chat.queuedChangesCount} />
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.md, gap: space.sm }}>
         <View
@@ -381,14 +600,14 @@ export default function FilesTab() {
           <Ionicons name="search" size={16} color={colors.textMuted} />
           <TextInput
             value={search}
-            onChangeText={setSearch}
+            onChangeText={updateSearch}
             placeholder="Search files"
             placeholderTextColor={colors.textMuted}
             returnKeyType="search"
             style={{ flex: 1, color: colors.text, fontSize: font.md, paddingVertical: 10 }}
           />
           {search ? (
-            <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setSearch('')} hitSlop={8}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => updateSearch('')} hitSlop={8}>
               <Ionicons name="close-circle" size={18} color={colors.textMuted} />
             </Pressable>
           ) : null}
@@ -429,31 +648,42 @@ export default function FilesTab() {
         </Pressable>
       ) : null}
       <FlatList
-        data={files}
-        keyExtractor={(item) => item.artifactId}
+        data={listItems}
+        keyExtractor={(item) => (item.kind === 'folder' ? `folder:${item.folder.path}` : `file:${item.file.artifactId}`)}
         numColumns={2}
         columnWrapperStyle={{ gap: tileGap, paddingHorizontal: space.lg }}
         contentContainerStyle={{ gap: tileGap, paddingTop: space.md }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => void loadFiles({ reset: true })} tintColor={colors.textMuted} />
         }
-        renderItem={({ item, index }) => (
-          <FileTile
-            file={item}
-            width={tileWidth}
-            fileContentUrl={chat.api.fileContentUrl}
-            fileHeaders={chat.fileHeaders}
-            onPress={() => setLightboxIndex(index)}
-            onToggleStar={() => void toggleStar(item)}
-          />
-        )}
+        renderItem={({ item }) =>
+          item.kind === 'folder' ? (
+            <FolderTile folder={item.folder} width={tileWidth} onPress={() => navigateToDir(item.folder.path)} />
+          ) : (
+            <FileTile
+              file={item.file}
+              width={tileWidth}
+              fileContentUrl={chat.api.fileContentUrl}
+              fileHeaders={chat.fileHeaders}
+              onPress={() => setLightboxIndex(item.fileIndex)}
+              onToggleStar={() => void toggleStar(item.file)}
+            />
+          )
+        }
+        ListHeaderComponent={showBreadcrumb ? <FolderBreadcrumb currentDir={currentDir} onNavigate={navigateToDir} /> : null}
         ListEmptyComponent={
           !refreshing && !loading ? (
             <View style={{ minHeight: 220, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}>
               <Ionicons name="folder-open-outline" size={38} color={colors.textMuted} />
-              <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}>No files</Text>
+              <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}>
+                {searchActive ? 'No matching files' : currentDir ? 'Empty folder' : 'No files'}
+              </Text>
               <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
-                Files from messages, agents, and workspace artifacts will appear here.
+                {searchActive
+                  ? 'Files matching the current search and filters will appear here.'
+                  : currentDir
+                    ? 'Files added to this folder will appear here.'
+                    : 'Files from messages, agents, and workspace artifacts will appear here.'}
               </Text>
             </View>
           ) : null
@@ -462,12 +692,15 @@ export default function FilesTab() {
       />
       <MediaLightbox
         visible={lightboxIndex != null}
-        files={files}
-        initialIndex={lightboxIndex ?? 0}
+        files={visibleFiles}
+        initialIndex={Math.min(lightboxIndex ?? 0, Math.max(visibleFiles.length - 1, 0))}
         fileContentUrl={chat.api.fileContentUrl}
         fileHeaders={chat.fileHeaders}
         onClose={() => setLightboxIndex(null)}
         onOpenExternal={openExternal}
+        api={chat.api}
+        me={chat.me}
+        onFileChanged={() => void loadFiles({ reset: true })}
       />
     </View>
   );

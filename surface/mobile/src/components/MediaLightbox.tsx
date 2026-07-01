@@ -22,10 +22,15 @@ import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import Pdf from 'react-native-pdf';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatBytes, type HubFile } from '@atrium/surface-client';
+import { formatBytes, type Api, type HubFile, type UserRef } from '@atrium/surface-client';
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
 import { SessionMarkdown } from './Markdown';
+import { EntryComments } from './EntryComments';
+import { TextEditorPane } from './TextEditorPane';
+import { VersionHistoryPanel } from './VersionHistoryPanel';
+import { AppPreviewPane } from './AppPreviewPane';
+import { PptxPane } from './PptxPane';
 import { font, space, useTheme, type Colors } from '../lib/theme';
 
 type HubFileWithThumbnail = HubFile & { thumbnailUrl?: string };
@@ -34,10 +39,37 @@ export interface MediaLightboxProps {
   visible: boolean;
   files: HubFile[];
   initialIndex: number;
-  fileContentUrl: (artifactId: string) => string;
+  fileContentUrl: (artifactId: string, atSeq?: number) => string;
   fileHeaders?: Record<string, string>;
   onClose: () => void;
   onOpenExternal: (file: HubFile) => Promise<void>;
+  /** When provided, unlocks the parity affordances: comments, version history,
+   * text editing, and HTML/app preview. Omit for a plain read-only viewer. */
+  api?: Api;
+  me?: UserRef;
+  /** Called after an edit / revert / restore lands, so the opener can refresh. */
+  onFileChanged?: () => void;
+}
+
+const APP_EXTENSIONS = new Set(['html', 'htm', 'jsx', 'tsx']);
+const PPTX_EXTENSIONS = new Set(['pptx', 'pptm', 'ppsx']);
+
+function isAppFile(file: HubFile): boolean {
+  const ext = extension(file);
+  const mime = (file.mime ?? '').toLowerCase();
+  return APP_EXTENSIONS.has(ext) || mime === 'text/html';
+}
+
+function isPptxFile(file: HubFile): boolean {
+  const ext = extension(file);
+  const mime = (file.mime ?? '').toLowerCase();
+  return PPTX_EXTENSIONS.has(ext) || mime.includes('presentationml');
+}
+
+function isEditableText(file: HubFile): boolean {
+  if (file.tombstoned) return false;
+  if (isAppFile(file) || isPptxFile(file)) return false;
+  return file.isText === true || TEXT_KINDS.has(normalizedKind(file));
 }
 
 const TEXT_KINDS = new Set(['code', 'text', 'data']);
@@ -545,13 +577,18 @@ function FilePane({
   fileHeaders,
   onClose,
   onOpenExternal,
+  api,
 }: {
   file: HubFile;
   fileContentUrl: (artifactId: string) => string;
   fileHeaders?: Record<string, string>;
   onClose: () => void;
   onOpenExternal: (file: HubFile) => Promise<void>;
+  api?: Api;
 }) {
+  // Rich previews (need the API client for the embed-only preview fetch).
+  if (api && isAppFile(file)) return <AppPreviewPane file={file} api={api} fileHeaders={fileHeaders} />;
+  if (isPptxFile(file)) return <PptxPane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} />;
   const kind = normalizedKind(file);
   if (kind === 'image') return <ImagePane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} onClose={onClose} />;
   if (kind === 'video') return <VideoPane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} />;
@@ -604,6 +641,9 @@ export function MediaLightbox({
   fileHeaders,
   onClose,
   onOpenExternal,
+  api,
+  me,
+  onFileChanged,
 }: MediaLightboxProps) {
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
@@ -611,16 +651,35 @@ export function MediaLightbox({
   const listRef = useRef<FlatList<HubFile>>(null);
   const [index, setIndex] = useState(initialIndex);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const current = files[index];
 
   useEffect(() => {
     if (!visible) return;
     setIndex(Math.max(0, Math.min(initialIndex, files.length - 1)));
     setInfoOpen(false);
+    setEditing(false);
+    setHistoryOpen(false);
+    setCommentsOpen(false);
     requestAnimationFrame(() => {
       listRef.current?.scrollToIndex({ index: Math.max(0, Math.min(initialIndex, files.length - 1)), animated: false });
     });
   }, [files.length, initialIndex, visible]);
+
+  // Swiping to another file closes any per-file surface (editor/history/comments).
+  useEffect(() => {
+    setEditing(false);
+    setHistoryOpen(false);
+    setCommentsOpen(false);
+  }, [index]);
+
+  const handleFileChanged = useCallback(() => {
+    setReloadKey((value) => value + 1);
+    onFileChanged?.();
+  }, [onFileChanged]);
 
   const jump = useCallback(
     (nextIndex: number) => {
@@ -672,6 +731,19 @@ export function MediaLightbox({
                 });
               }}
             />
+            {api && isEditableText(current) ? (
+              <ChromeButton
+                icon={editing ? 'create' : 'create-outline'}
+                label="Edit file"
+                onPress={() => setEditing(true)}
+              />
+            ) : null}
+            {api ? (
+              <ChromeButton icon="git-branch-outline" label="Version history" onPress={() => setHistoryOpen(true)} />
+            ) : null}
+            {api && me ? (
+              <ChromeButton icon="chatbubble-outline" label="Comments" onPress={() => setCommentsOpen(true)} />
+            ) : null}
             <ChromeButton
               icon={infoOpen ? 'information-circle' : 'information-circle-outline'}
               label={infoOpen ? 'Hide file info' : 'Show file info'}
@@ -679,32 +751,71 @@ export function MediaLightbox({
             />
           </View>
         </View>
-        <FlatList
-          ref={listRef}
-          data={files}
-          keyExtractor={(item) => item.artifactId}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          initialScrollIndex={Math.max(0, Math.min(initialIndex, files.length - 1))}
-          getItemLayout={(_, itemIndex) => ({ index: itemIndex, length: width, offset: width * itemIndex })}
-          onMomentumScrollEnd={handleMomentumEnd}
-          onScrollToIndexFailed={({ index: failedIndex }) => {
-            setTimeout(() => jump(failedIndex), 50);
-          }}
-          renderItem={({ item }) => (
-            <View style={{ width, flex: 1, backgroundColor: colors.bg }}>
-              <FilePane
-                file={item}
-                fileContentUrl={fileContentUrl}
-                fileHeaders={fileHeaders}
-                onClose={onClose}
-                onOpenExternal={onOpenExternal}
-              />
-            </View>
-          )}
-        />
+        {editing && current && api ? (
+          <View style={{ flex: 1, backgroundColor: colors.bg }}>
+            <TextEditorPane
+              file={current}
+              api={api}
+              fileContentUrl={fileContentUrl}
+              fileHeaders={fileHeaders}
+              onClose={() => setEditing(false)}
+              onSaved={() => {
+                setEditing(false);
+                handleFileChanged();
+              }}
+            />
+          </View>
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={files}
+            keyExtractor={(item) => item.artifactId}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            initialScrollIndex={Math.max(0, Math.min(initialIndex, files.length - 1))}
+            getItemLayout={(_, itemIndex) => ({ index: itemIndex, length: width, offset: width * itemIndex })}
+            onMomentumScrollEnd={handleMomentumEnd}
+            onScrollToIndexFailed={({ index: failedIndex }) => {
+              setTimeout(() => jump(failedIndex), 50);
+            }}
+            renderItem={({ item }) => (
+              <View style={{ width, flex: 1, backgroundColor: colors.bg }}>
+                <FilePane
+                  // Remount the current pane after an in-place edit so it refetches.
+                  key={item.artifactId === current?.artifactId ? `cur-${reloadKey}` : item.artifactId}
+                  file={item}
+                  fileContentUrl={fileContentUrl}
+                  fileHeaders={fileHeaders}
+                  onClose={onClose}
+                  onOpenExternal={onOpenExternal}
+                  api={api}
+                />
+              </View>
+            )}
+          />
+        )}
         {infoOpen ? <InfoPanel file={current} /> : null}
+        {historyOpen && current && api ? (
+          <VersionHistoryPanel
+            file={current}
+            api={api}
+            fileContentUrl={fileContentUrl}
+            fileHeaders={fileHeaders}
+            canManage
+            onClose={() => setHistoryOpen(false)}
+            onChanged={handleFileChanged}
+          />
+        ) : null}
+        {commentsOpen && current && api && me ? (
+          <EntryComments
+            api={api}
+            handle={`art_${current.artifactId}`}
+            visible
+            me={me}
+            onClose={() => setCommentsOpen(false)}
+          />
+        ) : null}
       </View>
     </Modal>
   );
