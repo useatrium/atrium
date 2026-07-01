@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import type { FileOrigin, HubFile, HubFileListResult } from '@atrium/surface-client';
+import { EntryComments } from '../components/EntryComments';
 import { showErrorToast } from '../components/Toasts';
 import { FileIcon, SearchIcon } from '../components/icons';
 import { Lightbox, MediaPreview } from '../components/media';
@@ -421,6 +422,7 @@ export function FilesHub({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [commentArtifactId, setCommentArtifactId] = useState<string | null>(null);
 
   const endpoint = channelId
     ? `/api/channels/${encodeURIComponent(channelId)}/files`
@@ -617,8 +619,8 @@ export function FilesHub({
           throw err;
         }
       },
-      onComment: () => {
-        showErrorToast('File comments are not wired yet.');
+      onComment: (file) => {
+        setCommentArtifactId(file.id);
       },
       canManage: () => true,
     }),
@@ -628,7 +630,7 @@ export function FilesHub({
   const empty = !loading && !error && files.length === 0;
 
   return (
-    <div data-testid="files-hub" className="flex min-h-0 flex-1 flex-col bg-surface">
+    <div data-testid="files-hub" className="relative flex min-h-0 flex-1 flex-col bg-surface">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-edge px-3">
         <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-fg">
           Files <span className="tabular-nums text-fg-muted">/ {files.length}</span>
@@ -684,8 +686,18 @@ export function FilesHub({
           files={previews}
           index={Math.min(lightboxIndex, previews.length - 1)}
           onIndexChange={setLightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          onClose={() => {
+            setLightboxIndex(null);
+            setCommentArtifactId(null);
+          }}
           {...callbacks}
+        />
+      )}
+      {commentArtifactId && (
+        <EntryComments
+          handle={`art_${commentArtifactId}`}
+          open
+          onClose={() => setCommentArtifactId(null)}
         />
       )}
     </div>
