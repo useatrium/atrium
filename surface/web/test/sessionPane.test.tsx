@@ -217,9 +217,10 @@ describe('session pane folds the B_tooltest stream', () => {
     // status chip reached completed (from the terminal execution_state)
     expect(screen.getByText('completed')).toBeTruthy();
 
-    // completed session: the turn card carries the terminal result_text
-    const summary = screen.getByTestId('turn-card');
-    expect(within(summary).getByText(/TOOLCHAIN_OK: atrium-roundtrip-ok/)).toBeTruthy();
+    // completed session: a subtle status line reports the turn (meta only). The
+    // roundtrip result itself lives in the tool card above — it is not re-carded.
+    expect(screen.getByTestId('turn-status').textContent).toContain('Turn complete');
+    expect(screen.queryByTestId('turn-card')).toBeNull();
   });
 
   it('reconnects from the last folded event id on stream error', async () => {

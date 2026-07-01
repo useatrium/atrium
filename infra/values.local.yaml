@@ -38,6 +38,10 @@ sandbox:
   extraEnv:
     DISABLE_TELEMETRY: "1"
     DISABLE_ERROR_REPORTING: "1"
+    # To surface Codex's live "thinking" in the transcript, set
+    # CODEX_MODEL_REASONING_SUMMARY: "auto" here (Codex >= 0.139 emits no summaries
+    # by default; consumed by services/sandbox/entrypoint.sh). Left off for now — the
+    # transcript shows a content-independent "Thinking…" activity indicator instead.
   resources:
     requests:
       cpu: 250m
