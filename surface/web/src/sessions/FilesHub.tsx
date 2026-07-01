@@ -6,6 +6,7 @@ import { showErrorToast } from '../components/Toasts';
 import { FileIcon, SearchIcon } from '../components/icons';
 import { Lightbox, MediaPreview } from '../components/media';
 import type { LightboxCallbacks, MediaKind, PreviewFile } from '../components/media';
+import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 
 type SortMode = 'recent' | 'name' | 'size';
@@ -78,6 +79,12 @@ function fileLocation(file: HubFile): string {
 function fileBadge(file: HubFile): string {
   const uploader = file.uploader?.name ?? file.uploader?.id;
   return uploader ? `${file.origin} / ${uploader}` : file.origin;
+}
+
+function resolvedTextForChoice(conflict: ArtifactConflict, choice: ResolveChoice): string {
+  if (choice.kind === 'left') return conflict.left.text;
+  if (choice.kind === 'right') return conflict.right.text;
+  return choice.text;
 }
 
 export function hubFileToPreview(f: HubFile): PreviewFile {
@@ -694,6 +701,88 @@ export function FilesHub({
           showErrorToast(err instanceof Error ? err.message : 'Could not restore file');
           throw err;
         }
+      },
+      onSaveText: async (file, text, baseSeq) => {
+        const response = await fetch(`/api/files/${file.id}/content`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: {
+            'X-Artifact-Base-Seq': String(baseSeq),
+            'Content-Type': file.mime || 'text/plain',
+          },
+          body: text,
+        });
+
+        if (response.status === 409) {
+          const message = 'File changed on the server — reload and retry';
+          showErrorToast(message);
+          await loadFiles();
+          throw new Error(message);
+        }
+        if (response.status === 415) {
+          const message = 'This file cannot be edited as text.';
+          showErrorToast(message);
+          throw new Error(message);
+        }
+        if (response.status === 403) {
+          const message = "You don't have permission to edit this file.";
+          showErrorToast(message);
+          throw new Error(message);
+        }
+        if (!response.ok) {
+          const message = await responseError(response, 'Could not save file');
+          showErrorToast(message);
+          throw new Error(message);
+        }
+
+        const body = (await response.json()) as { seq: number; status: 'normal' | 'conflict' };
+        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
+        await loadFiles();
+        return body;
+      },
+      onLoadConflict: async (file) => {
+        const response = await fetch(`/api/files/${file.id}/conflict`, {
+          credentials: 'same-origin',
+        });
+        if (!response.ok) {
+          const fallback = response.status === 404 ? 'No conflict found for this file' : 'Could not load file conflict';
+          const message = await responseError(response, fallback);
+          showErrorToast(message);
+          throw new Error(message);
+        }
+        return (await response.json()) as ArtifactConflict;
+      },
+      onResolveConflict: async (file, conflict, choice) => {
+        const headers: Record<string, string> = {
+          'X-Artifact-Base-Seq': String(conflict.conflictSeq),
+          'Content-Type': file.mime || 'text/plain',
+        };
+        if (
+          (choice.kind === 'left' && conflict.left.sha === null) ||
+          (choice.kind === 'right' && conflict.right.sha === null)
+        ) {
+          headers['X-Artifact-Delete'] = 'true';
+        }
+        const response = await fetch(`/api/files/${file.id}/resolve`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers,
+          body: resolvedTextForChoice(conflict, choice),
+        });
+        if (response.status === 403) {
+          const message = "You don't have permission to edit this file.";
+          showErrorToast(message);
+          throw new Error(message);
+        }
+        if (!response.ok) {
+          const message = await responseError(response, 'Could not resolve file conflict');
+          showErrorToast(message);
+          throw new Error(message);
+        }
+        const body = (await response.json()) as { seq: number; status: string };
+        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
+        await loadFiles();
+        return body;
       },
       canManage: () => true,
     }),

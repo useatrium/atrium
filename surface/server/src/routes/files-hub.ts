@@ -1,13 +1,18 @@
 import { basename } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactLedger, type VersionKind, type VersionRef, type VersionStatus } from '../artifact-ledger.js';
+import { loadConflictDetailById } from '../artifact-conflict.js';
+import { firstHeader, normalizeMime, parseBaseSeq } from '../artifact-route-utils.js';
 import { classifyScope } from '../artifact-scope.js';
 import { isTopLevelDocumentNavigation, sendArtifactPreview } from '../artifact-preview.js';
+import { config } from '../config.js';
 import type { Db } from '../db.js';
 import { canAccessChannel, type UserRef } from '../events.js';
+import { classifyMedia } from '../media-classifier.js';
 import { isWorkspaceMember } from '../membership.js';
-import { getObjectBytes, getObjectStream, presignGet } from '../s3.js';
+import { getObjectBytes, getObjectStream, headObject, presignGet, uploadObject } from '../s3.js';
 import { sanitizeFilename } from '../safe-filename.js';
+import { writeBackArtifactById, writeBackDeleteById } from '../artifact-writeback.js';
 
 type HubFileListQuery = {
   origin?: Array<'upload' | 'agent' | 'workspace'>;
@@ -369,6 +374,176 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
       return reply.code(409).send({ error: 'not_revertable', message: 'cannot revert to that version' });
     }
     return { artifactId, seq: result.newSeq, tombstoned: false };
+  });
+
+  app.register(async (editScope) => {
+    editScope.addContentTypeParser(
+      '*',
+      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
+      (_req, body, done) => done(null, body),
+    );
+
+    editScope.put('/api/files/:artifactId/content', async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const { artifactId: rawArtifactId } = req.params as { artifactId: string };
+      if (!isUuid(rawArtifactId)) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      const readable = await ledger.artifactReadableByUser(rawArtifactId, user.id);
+      if (!readable) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (!(await ledger.userCanManageArtifact(rawArtifactId, user.id))) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+      if (readable.tombstoned) {
+        return reply.code(410).send({ error: 'gone' });
+      }
+
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply
+          .code(400)
+          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+      if (baseSeq == null) {
+        return reply.code(409).send({ error: 'base_required' });
+      }
+
+      const current = await ledger.artifactContentById(rawArtifactId);
+      if (!current) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (current.tombstoned || current.kind === 'deleted') {
+        return reply.code(410).send({ error: 'gone' });
+      }
+      if (current.isText !== true) {
+        return reply
+          .code(415)
+          .send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
+      }
+
+      const body = Buffer.isBuffer(req.body)
+        ? req.body
+        : req.body instanceof Uint8Array
+          ? Buffer.from(req.body)
+          : typeof req.body === 'string'
+            ? Buffer.from(req.body, 'utf8')
+            : Buffer.alloc(0);
+      const mime = normalizeMime(firstHeader(req.headers['content-type']));
+      const incoming = classifyMedia(body, { declaredMime: mime, filename: current.path });
+      if (!incoming.isText) {
+        return reply.code(415).send({ error: 'binary_not_editable', mediaKind: incoming.mediaKind });
+      }
+
+      const result = await writeBackArtifactById({
+        pool,
+        storage: { uploadObject, getObjectBytes, headObject },
+        artifactId: rawArtifactId,
+        bytes: body,
+        mime,
+        author: `human:${user.id}`,
+        baseSeq,
+      });
+      if (!result.ok) {
+        if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
+        if (result.reason === 'binary_not_editable') {
+          return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
+        }
+        return reply.code(409).send({
+          error: result.reason,
+          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+        });
+      }
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+
+    editScope.post('/api/files/:artifactId/resolve', async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const { artifactId: rawArtifactId } = req.params as { artifactId: string };
+      if (!isUuid(rawArtifactId)) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      const readable = await ledger.artifactReadableByUser(rawArtifactId, user.id);
+      if (!readable) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (!(await ledger.userCanManageArtifact(rawArtifactId, user.id))) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+
+      const conflict = await ledger.getConflictById(rawArtifactId);
+      if (!conflict) {
+        return reply.code(409).send({ error: 'no_conflict' });
+      }
+      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+      if (baseSeq === false) {
+        return reply
+          .code(400)
+          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+      }
+      if (baseSeq == null) {
+        return reply.code(409).send({ error: 'base_required' });
+      }
+      if (baseSeq !== conflict.conflictSeq) {
+        return reply.code(409).send({
+          error: 'stale_base',
+          baseSeq,
+          latestSeq: conflict.conflictSeq,
+        });
+      }
+
+      const stayDeleted = firstHeader(req.headers['x-artifact-delete']) === 'true';
+      const result = stayDeleted
+        ? await writeBackDeleteById({
+            pool,
+            artifactId: rawArtifactId,
+            author: `human:${user.id}`,
+            baseSeq,
+          })
+        : await writeBackArtifactById({
+            pool,
+            storage: { uploadObject, getObjectBytes, headObject },
+            artifactId: rawArtifactId,
+            bytes: Buffer.isBuffer(req.body)
+              ? req.body
+              : req.body instanceof Uint8Array
+                ? Buffer.from(req.body)
+                : typeof req.body === 'string'
+                  ? Buffer.from(req.body, 'utf8')
+                  : Buffer.alloc(0),
+            mime: normalizeMime(firstHeader(req.headers['content-type'])),
+            author: `human:${user.id}`,
+            baseSeq,
+          });
+      if (!result.ok) {
+        if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
+        if (result.reason === 'binary_not_editable') {
+          return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
+        }
+        return reply.code(409).send({
+          error: result.reason,
+          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+        });
+      }
+      return reply.send({ seq: result.seq, status: result.status });
+    });
+  });
+
+  app.get('/api/files/:artifactId/conflict', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+    if (!artifactId) return;
+    const detail = await loadConflictDetailById(pool, { getObjectBytes }, artifactId);
+    if (!detail) {
+      return reply.code(404).send({ error: 'no_conflict' });
+    }
+    return reply.send(detail);
   });
 
   app.get('/api/files/artifact/:artifactId/content', async (req, reply) => {

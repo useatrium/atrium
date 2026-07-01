@@ -715,6 +715,33 @@ export class ArtifactLedger {
     };
   }
 
+  // === slice3 additions ===
+
+  async getConflictById(
+    artifactId: string,
+  ): Promise<{ artifactId: string; conflictSeq: number; conflict: unknown; markerSha: string | null } | null> {
+    const res = await this.pool.query<{
+      artifact_id: string;
+      seq: number;
+      conflict: unknown;
+      blob_sha: string | null;
+    }>(
+      `SELECT v.artifact_id, v.seq, v.conflict, v.blob_sha
+         FROM artifact_pointers p
+         JOIN artifact_versions v ON v.artifact_id = p.artifact_id AND v.seq = p.seq
+        WHERE p.artifact_id = $1 AND p.name = 'latest' AND v.status = 'conflict'`,
+      [artifactId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+      artifactId: row.artifact_id,
+      conflictSeq: row.seq,
+      conflict: row.conflict,
+      markerSha: row.blob_sha,
+    };
+  }
+
   /** The S3 key for a blob sha (or null if unknown/unstamped). */
   async blobS3Key(sha: string): Promise<string | null> {
     const res = await this.pool.query<{ s3_key: string | null }>(
