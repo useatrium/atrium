@@ -1,6 +1,8 @@
 require "test_helper"
 
 class BrokerCredentialTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+
   # A stub refresh client returning a fixed Result or raising a fixed error.
   class StubClient
     def initialize(&block) = (@block = block)
@@ -528,5 +530,48 @@ class BrokerCredentialTest < ActiveSupport::TestCase
     source = SecretSource.create!(source_type: "token_broker", config: { "credential_id" => cred.oid })
     source.destroy!
     assert cred.destroy
+  end
+
+  # --- eager bootstrap refresh ----------------------------------------------
+
+  test "creating a seeded credential enqueues an eager first refresh" do
+    bc = nil
+    assert_enqueued_jobs 1, only: Broker::RefreshCredentialJob do
+      bc = create_credential(refresh_token: "seed-rt")
+    end
+    job = enqueued_jobs.find { |j| j[:job] == Broker::RefreshCredentialJob }
+    assert_equal [ bc.id ], job[:args]
+  end
+
+  test "a successful refresh does not re-enqueue an eager refresh (no loop)" do
+    bc = create_credential(refresh_token: "seed-rt")
+    bc.refresh_client = StubClient.new { result(access_token: "AT", refresh_token: "RT-2") }
+    assert_no_enqueued_jobs only: Broker::RefreshCredentialJob do
+      bc.refresh!
+    end
+  end
+
+  test "a retryable failure does not enqueue an eager refresh" do
+    bc = create_credential(refresh_token: "seed-rt")
+    bc.refresh_client = StubClient.new { raise Broker::RefreshError.new("net", stage: "network", retryable: true) }
+    assert_no_enqueued_jobs only: Broker::RefreshCredentialJob do
+      bc.refresh!
+    end
+  end
+
+  test "re-supplying a refresh_token (re-auth) enqueues another eager refresh" do
+    bc = create_credential(refresh_token: "seed-rt")
+    # Simulate a prior mint without firing callbacks, then re-auth.
+    bc.update_columns(access_token: "AT", last_refresh: Time.current)
+    assert_enqueued_jobs 1, only: Broker::RefreshCredentialJob do
+      bc.update!(refresh_token: "new-seed-rt")
+    end
+  end
+
+  test "a dead credential does not enqueue an eager refresh" do
+    bc = create_credential(refresh_token: "seed-rt")
+    assert_no_enqueued_jobs only: Broker::RefreshCredentialJob do
+      bc.update!(dead: true, refresh_token: "another-seed")
+    end
   end
 end
