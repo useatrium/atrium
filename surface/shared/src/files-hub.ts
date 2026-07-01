@@ -50,6 +50,21 @@ export interface HubFileListResult {
   nextCursor?: string | null;
 }
 
+export interface HubFileVersion {
+  seq: number;
+  author: string;
+  kind: 'created' | 'modified' | 'deleted';
+  status: 'normal' | 'conflict';
+  createdAt: string;
+  sizeBytes: number | null;
+  mime: string | null;
+  isLatest: boolean;
+}
+
+export interface HubFileVersionsResponse {
+  versions: HubFileVersion[];
+}
+
 export interface HubFileLabelRequest {
   label: string;
 }

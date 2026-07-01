@@ -1,8 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { basename } from 'node:path';
 import { config } from '../config.js';
 import type { Db } from '../db.js';
-import { DomainError, type UserRef } from '../events.js';
+import type { UserRef } from '../events.js';
 import { ArtifactLedger, CHANGE_CURSOR_ZERO, type ChangeCursor } from '../artifact-ledger.js';
 import { loadConflictDetail } from '../artifact-conflict.js';
 import { artifactPathInRoots, classifyScope, type ArtifactScopeRoot } from '../artifact-scope.js';
@@ -11,8 +10,8 @@ import { canonicalizeRouteArtifactPath, firstHeader, normalizeMime } from '../ar
 import { writeBackArtifact, writeBackDelete } from '../artifact-writeback.js';
 import { normalizeAppRelPath } from '../app-registry.js';
 import { listLatestAppPresentations, refreshAppPresentations } from '../app-presentations.js';
-import type { ArtifactServePlan, SessionRuns } from '../session-runs.js';
-import { sanitizeFilename } from '../safe-filename.js';
+import { artifactPreviewBytes, isTopLevelDocumentNavigation, sendArtifactPreview } from '../artifact-preview.js';
+import type { SessionRuns } from '../session-runs.js';
 import { getObjectBytes, headObject, uploadObject } from '../s3.js';
 
 type SessionArtifactAccess = {
@@ -32,95 +31,6 @@ export interface ArtifactRouteDeps {
   serializeArtifactRoots(
     roots: readonly ArtifactScopeRoot[],
   ): Array<{ prefix: string; scope: string; writable: boolean }>;
-}
-
-async function previewBytes(plan: ArtifactServePlan): Promise<Buffer> {
-  if (plan.kind === 'redirect') {
-    if (plan.s3Key) {
-      return getObjectBytes(plan.s3Key);
-    }
-    const response = await fetch(plan.url);
-    if (!response.ok) {
-      throw new DomainError(502, 'artifact_preview_fetch_failed', 'failed to fetch artifact preview bytes');
-    }
-    return Buffer.from(await response.arrayBuffer());
-  }
-  throw new DomainError(500, 'artifact_preview_unsupported_plan', 'unsupported artifact preview serve plan');
-}
-
-function resolveArtifactPreviewRenderer(path: string, mime: string | null, hint?: string): 'html-app' | 'react-jsx' {
-  const normalizedHint = (hint ?? '').trim().toLowerCase();
-  if (normalizedHint === 'react-jsx') return 'react-jsx';
-  if (normalizedHint === 'html-app') return 'html-app';
-  if (/\.(jsx|tsx)$/i.test(path)) return 'react-jsx';
-  if ((mime ?? '').toLowerCase() === 'text/html' || /\.html?$/i.test(path)) return 'html-app';
-  return 'html-app';
-}
-
-function isTopLevelDocumentNavigation(req: FastifyRequest): boolean {
-  const dest = firstHeader(req.headers['sec-fetch-dest'])?.toLowerCase();
-  const mode = firstHeader(req.headers['sec-fetch-mode'])?.toLowerCase();
-  return dest === 'document' && mode === 'navigate';
-}
-
-function reactJsxPreviewDocument(source: string, filename: string): string {
-  const sourceJson = JSON.stringify(source);
-  const titleJson = JSON.stringify(filename);
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(filename)}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
-<body>
-  <div id="root"></div>
-  <pre id="artifact-error" style="display:none; white-space:pre-wrap; padding:16px; color:#991b1b;"></pre>
-  <script>
-    const source = ${sourceJson};
-    const title = ${titleJson};
-    function showError(error) {
-      const el = document.getElementById('artifact-error');
-      el.style.display = 'block';
-      el.textContent = String(error && error.stack ? error.stack : error);
-    }
-    function toRunnableJsx(input) {
-      return input
-        .replace(/^\\s*import\\s+.*?from\\s+['"].*?['"];?\\s*$/gm, '')
-        .replace(/^\\s*import\\s+['"].*?['"];?\\s*$/gm, '')
-        .replace(/export\\s+default\\s+function\\s+([A-Za-z0-9_$]+)/, 'function $1')
-        .replace(/export\\s+default\\s+/, 'const App = ');
-    }
-    try {
-      const cleaned = toRunnableJsx(source);
-      // Force the classic JSX runtime: @babel/standalone now defaults the react
-      // preset to the automatic runtime, which injects \`import { jsx } from
-      // "react/jsx-runtime"\` — an import statement that throws inside new Function.
-      // Classic emits React.createElement, which the scaffold supplies React for.
-      const transformed = Babel.transform(cleaned, { presets: [['react', { runtime: 'classic' }]] }).code;
-      const factory = new Function('React', transformed + '\\n; return typeof App !== "undefined" ? App : (typeof exports !== "undefined" && exports.default) || null;');
-      const App = factory(React);
-      if (!App) throw new Error('No default React component found in ' + title);
-      ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
-    } catch (error) {
-      showError(error);
-    }
-  </script>
-</body>
-</html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 function jsonNumberArray(value: unknown): number[] {
@@ -355,31 +265,18 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
     const version = await ledger.resolveVersion(id, path, ref, {
       readableChannelIds: access.readableChannelIds,
     });
-    const bytes = await previewBytes(plan);
-    const renderer = resolveArtifactPreviewRenderer(path, version?.mime ?? null, q.renderer);
-    const filename = basename(path) || 'artifact';
-    reply.header('X-Artifact-Scope', scope);
-    reply.header('X-Artifact-Canonical-Path', path);
-    reply.header('X-Artifact-Display-Path', displayPath);
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Content-Disposition', `inline; filename="${sanitizeFilename(filename)}"`);
-    reply.header(
-      'Content-Security-Policy',
-      [
-        "default-src 'none'",
-        "script-src 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://esm.sh https://cdn.tailwindcss.com",
-        "style-src 'unsafe-inline' https://cdn.tailwindcss.com",
-        'img-src data: blob: https:',
-        'font-src data: https:',
-        'connect-src https:',
-        "frame-ancestors 'self'",
-      ].join('; '),
-    );
-    reply.header('Content-Type', 'text/html; charset=utf-8');
-    if (renderer === 'react-jsx') {
-      return reply.send(reactJsxPreviewDocument(bytes.toString('utf8'), filename));
-    }
-    return reply.send(bytes);
+    const bytes = await artifactPreviewBytes(plan);
+    return sendArtifactPreview(reply, {
+      bytes,
+      path,
+      mime: version?.mime ?? null,
+      rendererHint: q.renderer,
+      headers: {
+        'X-Artifact-Scope': scope,
+        'X-Artifact-Canonical-Path': path,
+        'X-Artifact-Display-Path': displayPath,
+      },
+    });
   });
 
   app.get('/api/sessions/:id/artifacts/changes', async (req, reply) => {
