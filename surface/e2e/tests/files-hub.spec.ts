@@ -245,11 +245,12 @@ test.describe('Files Hub', () => {
       const vres = await ctx.get(`/api/files/${artifactId}/versions`);
       expect(vres.ok(), `versions (${vres.status()})`).toBeTruthy();
       const versions = ((await vres.json()) as { versions: Array<{ seq: number; isLatest: boolean }> }).versions;
-      expect(versions.length).toBeGreaterThanOrEqual(1);
-      expect(versions[0].isLatest).toBe(true);
+      const latest = versions[0];
+      expect(latest, 'at least one version').toBeTruthy();
+      expect(latest!.isLatest).toBe(true);
 
       // prior-version bytes via ?at
-      const at = await ctx.get(`/api/files/artifact/${artifactId}/content?at=${versions[0].seq}`);
+      const at = await ctx.get(`/api/files/artifact/${artifactId}/content?at=${latest!.seq}`);
       expect(at.status()).toBe(200);
       expect((await at.body()).byteLength).toBeGreaterThan(0);
 
