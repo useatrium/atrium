@@ -61,11 +61,11 @@ describe('WorkDrawer', () => {
   it('renders a tab per non-empty surface, with counts', () => {
     renderDrawer();
     const tabs = screen.getAllByRole('tab');
-    // what-changed + what-it-ran + the always-present Browse files/Published apps tabs.
+    // what-changed + what-it-ran + the always-present Files (hub) / Published apps tabs.
     expect(tabs).toHaveLength(4);
     expect(screen.getByRole('tab', { name: /What changed/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /What it ran/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^Files$/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
     // What changed tab is active → shows the file row, not the command.
     expect(screen.getByText('src/a.ts')).toBeTruthy();
@@ -74,16 +74,16 @@ describe('WorkDrawer', () => {
 
   it('omits the tab for an empty surface (but keeps the always-present Files tab)', () => {
     renderDrawer({ effects: [], sideEffectCount: 0 });
-    expect(screen.getAllByRole('tab')).toHaveLength(3); // changes + files + apps
+    expect(screen.getAllByRole('tab')).toHaveLength(3); // changes + files (hub) + apps
     expect(screen.queryByRole('tab', { name: /What it ran/ })).toBeNull();
-    expect(screen.getByRole('tab', { name: /Browse files/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^Files$/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
   });
 
-  it('shows the Files hub tab when a workspace is known', () => {
+  it('shows the Files hub tab (backed by the workspace when known)', () => {
     renderDrawer({ workspaceId: 'ws-1' });
-    // hub Files tab joins What changed + What it ran + Browse files + Published apps.
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    // What changed + What it ran + the always-present Files (hub) + Published apps.
+    expect(screen.getAllByRole('tab')).toHaveLength(4);
     expect(screen.getByRole('tab', { name: /^Files$/ })).toBeTruthy();
   });
 

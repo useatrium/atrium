@@ -1,5 +1,5 @@
 // Work drawer (Phase 4) — one tabbed surface consolidating the session's work
-// products (What changed · What it ran · Browse files) behind a single peek→pin→detach
+// products (What changed · What it ran · Files) behind a single peek→pin→detach
 // ladder. Opened from the summary strips; tabs switch without closing. Peek =
 // overlay over the transcript; pinned = a persistent side pane the transcript
 // reflows beside (single swappable slot — the DevTools dock model); detach =
@@ -10,12 +10,11 @@ import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '..
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
-import { FilesSurface } from './FilesSurface';
 import { FilesHub } from './FilesHub';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { AppsSurface } from './AppsSurface';
 
-export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'hubFiles' | 'files' | 'artifacts' | 'apps';
+export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'hubFiles' | 'artifacts' | 'apps';
 export type ActiveWorkTab = Exclude<WorkTab, 'artifacts'>;
 
 export function normalizeWorkTab(tab: WorkTab): ActiveWorkTab {
@@ -29,7 +28,6 @@ export const TAB_SLUG: Record<ActiveWorkTab, string> = {
   changes: 'changes',
   sideEffects: 'side-effects',
   hubFiles: 'hub-files',
-  files: 'files',
   apps: 'apps',
 };
 export const SLUG_TAB: Record<string, ActiveWorkTab> = {
@@ -38,7 +36,8 @@ export const SLUG_TAB: Record<string, ActiveWorkTab> = {
   'side-effects': 'sideEffects',
   artifacts: 'changes',
   'hub-files': 'hubFiles',
-  files: 'files',
+  // Back-compat: the retired "Browse files" surface now redirects to the hub.
+  files: 'hubFiles',
   apps: 'apps',
 };
 export const TAB_LABEL: Record<ActiveWorkTab, string> = {
@@ -46,7 +45,6 @@ export const TAB_LABEL: Record<ActiveWorkTab, string> = {
   changes: 'What changed',
   sideEffects: 'What it ran',
   hubFiles: 'Files',
-  files: 'Browse files',
   apps: 'Published apps',
 };
 
@@ -143,13 +141,12 @@ export function WorkDrawer({
     { key: 'changes', label: TAB_LABEL.changes, count: combinedChangeCount },
     { key: 'sideEffects', label: TAB_LABEL.sideEffects, count: sideEffectCount, danger: hasDanger },
   ];
-  // Files is always available (it browses the whole git+ledger tree, count-less).
+  // Files (the hub) is always available — it's the single files surface now that
+  // "Browse files" (FilesSurface) is retired; a missing workspace shows an empty state.
   const available = counted
     .filter((t) => (t.count ?? 0) > 0)
     .concat([
-      /* === lane-B: hub tab only when we know the workspace to browse === */
-      ...(workspaceId ? [{ key: 'hubFiles' as const, label: TAB_LABEL.hubFiles }] : []),
-      { key: 'files', label: TAB_LABEL.files },
+      { key: 'hubFiles', label: TAB_LABEL.hubFiles },
       { key: 'apps', label: TAB_LABEL.apps },
     ]);
   const normalizedTab = normalizeWorkTab(tab);
@@ -226,8 +223,6 @@ export function WorkDrawer({
             embedded
           />
         ) : null
-      ) : active === 'files' ? (
-        <FilesSurface sessionId={sessionId} onClose={onClose} embedded />
       ) : active === 'hubFiles' ? (
         workspaceId ? (
           <FilesHub workspaceId={workspaceId} channelId={channelId} />
