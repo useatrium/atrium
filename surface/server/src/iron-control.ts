@@ -169,6 +169,49 @@ export class IronControlAdminClient {
     });
   }
 
+  /**
+   * Generic proxy-side INJECT secret: adds `header` (optionally `Bearer`-style
+   * formatted) to requests matching `host`, sourced from a per-user broker
+   * credential (rotating) or an inline control-plane value (static). This is how
+   * a per-user subscription token reaches chatgpt.com / api.anthropic.com without
+   * ever entering the sandbox. Mutually exclusive with replace_config server-side.
+   */
+  async upsertInjectSecret(args: {
+    foreignId: string;
+    name: string;
+    header: string;
+    formatter?: string;
+    host: string;
+    source:
+      | { kind: 'token_broker'; brokerCredentialId: string }
+      | { kind: 'control_plane'; secret: string };
+    labels?: Record<string, unknown>;
+  }): Promise<IronControlSecret> {
+    const source =
+      args.source.kind === 'token_broker'
+        ? {
+            source_type: 'token_broker',
+            config: tokenBrokerSourceConfig(args.source.brokerCredentialId, this.namespace),
+          }
+        : { source_type: 'control_plane', secret: args.source.secret };
+    return this.write<IronControlSecret>(
+      'PUT',
+      `/api/v1/static_secrets/${encodeURIComponent(args.foreignId)}`,
+      {
+        namespace: this.namespace,
+        foreign_id: args.foreignId,
+        name: args.name,
+        labels: args.labels ?? {},
+        inject_config: {
+          header: args.header,
+          ...(args.formatter ? { formatter: args.formatter } : {}),
+        },
+        source,
+        rules: [{ host: args.host }],
+      },
+    );
+  }
+
   async upsertBrokerCredential(args: {
     foreignId: string;
     name: string;
@@ -366,6 +409,20 @@ export function githubAppUserBrokerCredentialForeignId(workspaceId: string, user
 
 export function githubAppInstallationBrokerCredentialForeignId(workspaceId: string, installationId: string): string {
   return `github-app-installation-${workspaceId}-installation-${installationId}`;
+}
+
+// Per-user subscription credential foreign ids (Codex broker + injects, Claude static).
+export function codexBrokerCredentialForeignId(workspaceId: string, userId: string): string {
+  return `codex-broker-${atriumPrincipalForeignId(workspaceId, userId)}`;
+}
+export function codexBearerSecretForeignId(workspaceId: string, userId: string): string {
+  return `codex-bearer-${atriumPrincipalForeignId(workspaceId, userId)}`;
+}
+export function codexAccountIdSecretForeignId(workspaceId: string, userId: string): string {
+  return `codex-account-${atriumPrincipalForeignId(workspaceId, userId)}`;
+}
+export function claudeStaticSecretForeignId(workspaceId: string, userId: string): string {
+  return `claude-token-${atriumPrincipalForeignId(workspaceId, userId)}`;
 }
 
 function unwrapData<T>(body: unknown): T {
