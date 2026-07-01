@@ -17,7 +17,8 @@ use centaur_iron_control::{
     SessionRegistrar, register_proxy_baseline, register_role,
 };
 use centaur_iron_proxy::{
-    ProxyFragment, SourceKind, SourcePolicy, bedrock_enabled, harness_auth_fragment, infra_fragment,
+    ProxyFragment, SourceKind, SourcePolicy, bedrock_enabled, harness_auth_fragment,
+    infra_fragment, per_user_harness_auth_fragment,
 };
 use centaur_sandbox_agent_k8s::{
     AgentSandboxBackend, AgentSandboxConfig, GitHubTokenRef, IronControlSettings, IronProxyConfig,
@@ -1910,6 +1911,16 @@ struct IronProxyHarnessArgs {
         env = "KUBERNETES_IRON_PROXY_HARNESS_AUTH_MODE"
     )]
     auth_mode: Option<String>,
+    /// Per-user subscription auth: deliver each user's ChatGPT/Claude token via a
+    /// per-principal iron-control grant instead of the deployment-wide broker, so
+    /// the access_token harness fragment injects nothing (only keeps the provider
+    /// host reachable). The sandbox still runs in access_token mode.
+    #[arg(
+        long = "kubernetes-iron-proxy-per-user-subscription",
+        env = "KUBERNETES_IRON_PROXY_PER_USER_SUBSCRIPTION",
+        default_value_t = false
+    )]
+    per_user_subscription: bool,
 }
 
 impl IronProxyHarnessArgs {
@@ -1923,14 +1934,36 @@ impl IronProxyHarnessArgs {
     /// The harness auth fragment — infra, baked in and selected by auth mode.
     /// Carries the harness credential secret(s) and, for access_token, the
     /// token-broker credential.
-    fn fragment(&self) -> Result<ProxyFragment, ServerError> {
+    /// The harness auth fragment for one engine/auth-mode, honoring per-user
+    /// subscription mode. In per-user + access_token mode the deployment-wide
+    /// broker fragment is replaced by the per-user variant (a host allowlist for
+    /// codex, nothing for claude-code) so a per-principal iron-control grant can
+    /// inject the real token without colliding with a shared broker.
+    fn fragment_for(
+        &self,
+        engine: &str,
+        auth_mode: &str,
+    ) -> Result<Option<ProxyFragment>, ServerError> {
+        if self.per_user_subscription && auth_mode == "access_token" {
+            return Ok(per_user_harness_auth_fragment(engine, auth_mode)?);
+        }
+        Ok(harness_auth_fragment(engine, auth_mode)?)
+    }
+
+    /// The configured engine's harness fragment. Required in the normal case
+    /// (startup fails without it); optional under per-user access_token mode,
+    /// where the per-principal grant carries the credential and the fragment may
+    /// legitimately be empty.
+    fn fragment(&self) -> Result<Option<ProxyFragment>, ServerError> {
         let engine = harness_fragment_engine_name(&self.engine);
         let auth_mode = self.resolved_auth_mode();
-        harness_auth_fragment(engine, &auth_mode)?.ok_or_else(|| {
-            ServerError::UnsupportedConfig(format!(
+        let fragment = self.fragment_for(engine, &auth_mode)?;
+        if fragment.is_none() && !(self.per_user_subscription && auth_mode == "access_token") {
+            return Err(ServerError::UnsupportedConfig(format!(
                 "no harness auth fragment for engine {engine} auth-mode {auth_mode}"
-            ))
-        })
+            )));
+        }
+        Ok(fragment)
     }
 
     /// Every harness auth fragment to register. The configured engine's
@@ -1939,7 +1972,10 @@ impl IronProxyHarnessArgs {
     /// so sessions restarted onto another harness still get working
     /// credentials through the proxy.
     fn fragments(&self) -> Result<Vec<ProxyFragment>, ServerError> {
-        let mut fragments = vec![self.fragment()?];
+        let mut fragments = Vec::new();
+        if let Some(fragment) = self.fragment()? {
+            fragments.push(fragment);
+        }
         for engine in [
             HarnessType::Codex,
             HarnessType::ClaudeCode,
@@ -1950,7 +1986,7 @@ impl IronProxyHarnessArgs {
             }
             let auth_mode = harness_auth_mode_env(&engine).unwrap_or_else(|| "api_key".to_owned());
             if let Some(fragment) =
-                harness_auth_fragment(harness_fragment_engine_name(&engine), &auth_mode)?
+                self.fragment_for(harness_fragment_engine_name(&engine), &auth_mode)?
             {
                 fragments.push(fragment);
             }

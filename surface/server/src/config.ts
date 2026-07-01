@@ -46,6 +46,24 @@ export const config = {
   ironControlBaseUrl: process.env.IRON_CONTROL_BASE_URL ?? '',
   ironControlApiKey: process.env.IRON_CONTROL_API_KEY ?? '',
   ironControlNamespace: process.env.IRON_CONTROL_NAMESPACE ?? 'default',
+  // Codex "Sign in with ChatGPT" device authorization grant. The public client
+  // id + issuer are the codex CLI's own (openai/codex codex-rs/login), reused so
+  // the tokens are genuine subscription tokens (aud includes chatgpt.com/backend-api).
+  codexOauthClientId:
+    process.env.CODEX_OAUTH_CLIENT_ID ?? 'app_EMoamEEZ73f0CkXaXp7hrann',
+  codexOauthIssuer: process.env.CODEX_OAUTH_ISSUER ?? 'https://auth.openai.com',
+  // Claude Code OAuth (authorization-code + PKCE, Anthropic hosted-callback code
+  // paste). Client id is Claude Code's public client; scope user:inference yields
+  // the ~1-year long-lived token (same flow `claude setup-token` runs).
+  claudeOauthClientId:
+    process.env.CLAUDE_OAUTH_CLIENT_ID ?? '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+  claudeOauthAuthorizeUrl:
+    process.env.CLAUDE_OAUTH_AUTHORIZE_URL ?? 'https://claude.com/cai/oauth/authorize',
+  claudeOauthTokenUrl:
+    process.env.CLAUDE_OAUTH_TOKEN_URL ?? 'https://platform.claude.com/v1/oauth/token',
+  claudeOauthRedirectUri:
+    process.env.CLAUDE_OAUTH_REDIRECT_URI ??
+    'https://platform.claude.com/oauth/code/callback',
   githubAppClientId: process.env.GITHUB_APP_CLIENT_ID ?? '',
   githubAppClientSecret: process.env.GITHUB_APP_CLIENT_SECRET ?? '',
   githubAppRedirectUrl: process.env.GITHUB_APP_REDIRECT_URL ?? '',

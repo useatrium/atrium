@@ -15,10 +15,12 @@ test('Claude Code spawn offers subscription auth without blocking default auth',
   await expect(page.getByRole('button', { name: 'Start session' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Connect Claude' }).click();
-  await expect(page.getByRole('dialog', { name: 'Connect Claude Code' })).toBeVisible();
-  await page.getByPlaceholder('Paste Claude token').fill(`e2e-token-${Date.now()}`);
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Connect Claude Code' })).toBeHidden();
+  const claudeDialog = page.getByRole('dialog', { name: 'Connect Claude Code' });
+  await expect(claudeDialog).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Claude sign-in' })).toBeVisible();
+  await expect(page.getByPlaceholder('Paste Claude code')).toBeVisible();
+  await claudeDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(claudeDialog).toBeHidden();
 
   await expect(page.getByRole('button', { name: 'Start session' })).toBeEnabled();
   await page.getByRole('button', { name: 'Start session' }).click();

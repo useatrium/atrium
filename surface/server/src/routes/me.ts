@@ -4,7 +4,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { githubConnectionAuditMetadata } from '../connection-audit.js';
 import { config } from '../config.js';
 import type { Connections, ConnectionStatusJson } from '../connections.js';
-import type { DbClient } from '../db.js';
+import type { Db, DbClient } from '../db.js';
+import { exchangeClaudeCode, startClaudeOauth } from '../claude-oauth.js';
+import { pollCodexDevice, startCodexDevice } from '../codex-oauth.js';
 import type { UserRef } from '../events.js';
 import {
   GitHubRepoValidationError,
@@ -26,10 +28,12 @@ import {
 } from '../github-iron-control.js';
 import { type AgentProfiles, providerFromProfileValue } from '../agent-profiles.js';
 import { CODEX_PROVIDER, type ProviderCredentials } from '../provider-credentials.js';
+import { PendingOAuthStore } from '../provider-oauth.js';
 import type { SessionRuns } from '../session-runs.js';
 
 export interface MeRouteDeps {
   hub: WsHub;
+  pool: Db;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   optionalOpId(body: unknown): string | undefined;
   connections: Connections;
@@ -72,6 +76,7 @@ function prefsPatch(input: Record<string, unknown>): Partial<UserPrefs> {
 export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void {
   const {
     hub,
+    pool,
     requireUser,
     optionalOpId,
     connections,
@@ -467,6 +472,83 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
       'github connection disconnected',
     );
     return { connection };
+  });
+
+  // === byo subscription onboarding (token-never-in-box, injected by iron-proxy) ===
+  const pendingOAuth = new PendingOAuthStore(pool);
+
+  // Resolve the caller's workspace and confirm iron-control is available, sending
+  // the appropriate error and returning null when either check fails.
+  const resolveByoWorkspace = async (
+    userId: string,
+    req: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<string | null> => {
+    const body = (req.body ?? {}) as { workspaceId?: unknown };
+    const requested = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
+    const workspaceId = await connections.resolveWorkspaceId(userId, requested);
+    if (!workspaceId) {
+      reply
+        .code(requested ? 404 : 403)
+        .send({ error: requested ? 'workspace_not_found' : 'no_workspace', message: 'workspace not found' });
+      return null;
+    }
+    if (!ironControl.configured) {
+      reply.code(503).send({ error: 'iron_control_unconfigured', message: 'iron-control is not configured' });
+      return null;
+    }
+    return workspaceId;
+  };
+
+  app.post('/api/me/provider-credentials/claude-code/oauth/start', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const workspaceId = await resolveByoWorkspace(user.id, req, reply);
+    if (!workspaceId) return;
+    return startClaudeOauth({ pendingOAuth }, user.id);
+  });
+
+  app.post('/api/me/provider-credentials/claude-code/oauth/exchange', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const workspaceId = await resolveByoWorkspace(user.id, req, reply);
+    if (!workspaceId) return;
+    const body = (req.body ?? {}) as { pendingId?: unknown; code?: unknown };
+    const pendingId = typeof body.pendingId === 'string' ? body.pendingId.trim() : '';
+    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    if (!pendingId || !code) {
+      return reply.code(400).send({ error: 'bad_request', message: 'pendingId and code required' });
+    }
+    const result = await exchangeClaudeCode({ pendingOAuth, ironControl }, user.id, workspaceId, pendingId, code);
+    if (result.status === 'connected') {
+      await providerCredentials.markConnectedViaProxy(user.id, 'claude-code');
+      await sessionRuns.clearProviderAuthRequired(user.id, 'claude-code');
+    }
+    return result;
+  });
+
+  app.post('/api/me/provider-credentials/codex/device/start', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const workspaceId = await resolveByoWorkspace(user.id, req, reply);
+    if (!workspaceId) return;
+    return startCodexDevice({ pendingOAuth }, user.id);
+  });
+
+  app.post('/api/me/provider-credentials/codex/device/poll', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const workspaceId = await resolveByoWorkspace(user.id, req, reply);
+    if (!workspaceId) return;
+    const body = (req.body ?? {}) as { pendingId?: unknown };
+    const pendingId = typeof body.pendingId === 'string' ? body.pendingId.trim() : '';
+    if (!pendingId) return reply.code(400).send({ error: 'bad_request', message: 'pendingId required' });
+    const result = await pollCodexDevice({ pendingOAuth, ironControl }, user.id, workspaceId, pendingId);
+    if (result.status === 'connected') {
+      await providerCredentials.markConnectedViaProxy(user.id, 'codex');
+      await sessionRuns.clearProviderAuthRequired(user.id, 'codex');
+    }
+    return result;
   });
 
   app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
