@@ -37,24 +37,56 @@ helm upgrade --install centaur centaur/contrib/chart \
 Later layers win. `deploy/values.box.yaml` should explain every intentional
 single-box override.
 
+## Active Vs Stale Values
+
+Most values listed below are active chart inputs. Two legacy values are still
+present in local override files but should not be used for new configuration:
+
+| Value | Status | Notes |
+| --- | --- | --- |
+| `api.enabled` | Legacy / inert | Kept `false` in `infra/values.local.yaml` as historical documentation. The current chart renders the Rust API from `apiRs.enabled`; no template reads `.Values.api.enabled`. |
+| `tokenBroker.enabled` | Stale / ignored | Present only in `infra/values.local.yaml`. The current chart has no `tokenBroker` default/schema/template. Use `console.enabled`, `console.worker.enabled`, and iron-control `token_broker` secret sources for managed broker credentials. |
+
 ## Expected Box Shape
 
 | Area | Expected value | Why |
 | --- | --- | --- |
-| `api.enabled` | `false` | The Rust `api-rs` service is the active Centaur API. |
+| `api.enabled` | `false` | Legacy/inert local override; the Rust `api-rs` service is controlled by `apiRs.enabled`. |
 | `apiRs.enabled` | `true` | Surface talks to `api-rs`. |
 | `console.enabled` | `true` | Iron-control stores per-principal grants and broker refresh state. |
 | `apiRs.ironProxy.mode` | `enabled` | Sandboxes reach model providers through per-sandbox iron-proxy. |
 | `apiRs.ironProxy.perUserSubscription` | `true` | ChatGPT/Claude subscription tokens are per user, not deployment-wide. |
 | `sandbox.codexAuthMode` | `access_token` | Codex uses user subscription auth. |
 | `sandbox.claudeCodeAuthMode` | `access_token` | Claude Code uses user subscription auth. |
-| `tokenBroker.enabled` | `false` | The box is not using deployment-wide broker credentials. |
+| `tokenBroker.enabled` | `false` | Stale/ignored local override; broker credentials now live in console/iron-control, not a chart-level `tokenBroker` service. |
 | `secretManager.backend` | `env` | Secrets come from `centaur-infra-env`. |
 | `repoCache.enabled` | `true` | Tools, workflows, and skills use the node-local checkout under `/var/lib/centaur/repos`. |
 | `networkPolicy.enabled` | `false` | Single-box bootstrap keeps sandbox egress open while policy is hardened separately. |
 | `nodeSync.enabled` | `true` | Host-side capture and artifact hydration are enabled. |
 | `nodeSync.atriumBaseUrl` | `http://10.42.0.1:3001` | k3s pods reach Surface through the host CNI address. |
 | `toolServer.enabled` | `true` | Local sandbox topology mirrors the runtime's tool server path. |
+
+## Repo Cache And Overlays
+
+`repoCache` is storage and sync: a node-local mirror under
+`/var/lib/centaur/repos`. The repo-cache DaemonSet periodically runs `git fetch`
+for configured repositories and exposes those checkouts read-only to api-rs,
+sandboxes, and node-sync.
+
+`overlays.sources` is intent: the ordered list of repos whose `tools/`,
+`workflows/`, `.agents/skills/`, personas, or prompt files should be available
+to the runtime. The chart automatically adds `overlays.sources[*].repo` to the
+repo-cache sync set when `repoCache.enabled=true`, and wires matching paths into
+api-rs/sandbox env.
+
+Use `repoCache.repositories` for a repo that should simply be mirrored on the
+node, for example a cache seed or a repo consumed by a custom path. Use
+`overlays.sources` when the repo is part of the runtime surface and should feed
+tools, workflows, skills, personas, prompts, or default session repo overlays.
+For private user repos, prefer the per-principal private repo path over a shared
+`repoCache.githubToken`: the session marks the repo private, api-rs scopes it to
+the user's iron-control principal, and a sandbox init clones/hydrates it through
+that sandbox's iron-proxy into a principal-scoped cache.
 
 ## Read-Only Audit Commands
 
