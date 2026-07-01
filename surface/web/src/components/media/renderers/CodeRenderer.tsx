@@ -102,6 +102,7 @@ export function CodeRenderer({ file, variant }: { file: PreviewFile; variant: Me
       ) : (
         <div
           className="media-code-view [&_.shiki]:m-0 [&_.shiki]:min-h-full [&_.shiki]:overflow-x-auto [&_.shiki]:bg-surface! [&_.shiki]:p-4 [&_.shiki]:font-mono [&_.shiki]:text-xs [&_.shiki]:leading-relaxed"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: HTML is produced by shiki from the file bytes; shiki HTML-escapes the code tokens, so this is highlighter output, not untrusted markup.
           dangerouslySetInnerHTML={{ __html: state.html }}
         />
       )}
