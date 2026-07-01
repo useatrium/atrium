@@ -134,6 +134,154 @@ function updateFile(files: HubFile[], artifactId: string, patch: Partial<HubFile
   return files.map((file) => (file.artifactId === artifactId ? { ...file, ...patch } : file));
 }
 
+function pathSegments(path: string): string[] {
+  return path.split('/').filter(Boolean);
+}
+
+function dirname(path: string): string {
+  const segments = pathSegments(path);
+  return segments.slice(0, -1).join('/');
+}
+
+function dirSegments(dir: string): string[] {
+  return dir ? dir.split('/').filter(Boolean) : [];
+}
+
+function joinDir(segments: string[]): string {
+  return segments.join('/');
+}
+
+function hasPrefix(segments: string[], prefix: string[]): boolean {
+  return prefix.every((segment, index) => segments[index] === segment);
+}
+
+interface FolderEntry {
+  name: string;
+  path: string;
+  fileCount: number;
+}
+
+function folderView(files: HubFile[], currentDir: string): { folders: FolderEntry[]; filesHere: HubFile[] } {
+  const currentSegments = dirSegments(currentDir);
+  const folderCounts = new Map<string, { path: string; fileCount: number }>();
+  const filesHere: HubFile[] = [];
+
+  for (const file of files) {
+    const fileDirSegments = dirSegments(dirname(file.path));
+    if (joinDir(fileDirSegments) === currentDir) {
+      filesHere.push(file);
+    }
+
+    if (fileDirSegments.length <= currentSegments.length || !hasPrefix(fileDirSegments, currentSegments)) {
+      continue;
+    }
+
+    const childName = fileDirSegments[currentSegments.length]!;
+    const childPath = joinDir([...currentSegments, childName]);
+    const current = folderCounts.get(childName);
+    if (current) {
+      current.fileCount += 1;
+    } else {
+      folderCounts.set(childName, { path: childPath, fileCount: 1 });
+    }
+  }
+
+  const folders = [...folderCounts.entries()]
+    .map(([name, value]) => ({ name, path: value.path, fileCount: value.fileCount }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return { folders, filesHere };
+}
+
+function FolderIcon({ size = 18, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+    </svg>
+  );
+}
+
+function FolderTile({ folder, onOpen }: { folder: FolderEntry; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex min-h-[7rem] min-w-0 flex-col justify-between rounded-md border border-edge bg-surface-raised/45 px-3 py-2 text-left transition-colors hover:border-edge-strong hover:bg-surface-raised"
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="grid size-8 shrink-0 place-items-center rounded-md border border-edge bg-surface text-fg-muted group-hover:text-fg-secondary">
+          <FolderIcon size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-2xs font-semibold text-fg-body" title={folder.path}>
+            {folder.name}
+          </div>
+          <div className="mt-1 text-3xs text-fg-muted">
+            {folder.fileCount} {folder.fileCount === 1 ? 'file' : 'files'}
+          </div>
+        </div>
+      </div>
+      <div className="truncate text-3xs text-fg-faint" title={folder.path}>
+        {folder.path}
+      </div>
+    </button>
+  );
+}
+
+function FolderBreadcrumb({
+  currentDir,
+  onNavigate,
+}: {
+  currentDir: string;
+  onNavigate: (dir: string) => void;
+}) {
+  const segments = dirSegments(currentDir);
+
+  return (
+    <nav aria-label="Folder breadcrumb" className="mb-3 flex min-w-0 flex-wrap items-center gap-1 text-2xs">
+      <button
+        type="button"
+        onClick={() => onNavigate('')}
+        className={`rounded px-1.5 py-1 font-semibold ${
+          currentDir ? 'text-fg-muted hover:bg-surface-overlay hover:text-fg-body' : 'text-fg-body'
+        }`}
+      >
+        Files
+      </button>
+      {segments.map((segment, index) => {
+        const dir = joinDir(segments.slice(0, index + 1));
+        const isCurrent = dir === currentDir;
+        return (
+          <span key={dir} className="flex min-w-0 items-center gap-1">
+            <span className="text-fg-faint">/</span>
+            <button
+              type="button"
+              onClick={() => onNavigate(dir)}
+              className={`max-w-40 truncate rounded px-1.5 py-1 font-mono ${
+                isCurrent ? 'text-fg-body' : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-body'
+              }`}
+              title={dir}
+            >
+              {segment}
+            </button>
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
+
 function FilterBar({
   filters,
   setFilters,
@@ -431,16 +579,22 @@ export function FilesHub({
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [commentArtifactId, setCommentArtifactId] = useState<string | null>(null);
+  const [currentDir, setCurrentDir] = useState('');
 
   const endpoint = channelId
     ? `/api/channels/${encodeURIComponent(channelId)}/files`
     : `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
-  const previews = useMemo(() => files.map(hubFileToPreview), [files]);
+  const searchActive = search.trim().length > 0 || debouncedSearch.trim().length > 0;
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 250);
     return () => clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    if (!searchActive) setCurrentDir('');
+    setLightboxIndex(null);
+  }, [searchActive]);
 
   const loadFiles = useCallback(
     async ({ cursor, append }: { cursor?: string | null; append?: boolean } = {}) => {
@@ -505,6 +659,11 @@ export function FilesHub({
   }, [debouncedSearch, endpoint, filters]);
 
   const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
+
+  const navigateToDir = useCallback((dir: string) => {
+    setCurrentDir(dir);
+    setLightboxIndex(null);
+  }, []);
 
   const toggleStar = useCallback(
     async (file: HubFile) => {
@@ -789,13 +948,24 @@ export function FilesHub({
     [files, filters.includeDeleted, loadFiles, replaceFile],
   );
 
-  const empty = !loading && !error && files.length === 0;
+  const { folders, filesHere } = useMemo(() => folderView(files, currentDir), [currentDir, files]);
+  const visibleFiles = searchActive ? files : filesHere;
+  const visiblePreviews = useMemo(() => visibleFiles.map(hubFileToPreview), [visibleFiles]);
+  const visibleItemCount = searchActive ? visibleFiles.length : folders.length + visibleFiles.length;
+  const showBreadcrumb = !searchActive && (currentDir !== '' || folders.length > 0);
+  const empty = !loading && !error && visibleItemCount === 0;
+  const emptyTitle = searchActive ? 'No matching files' : currentDir ? 'Empty folder' : 'No files';
+  const emptyHint = searchActive
+    ? 'Files matching the current search and filters will appear here.'
+    : currentDir
+      ? 'Files added to this folder will appear here.'
+      : 'Files matching the current filters will appear here.';
 
   return (
     <div data-testid="files-hub" className="relative flex min-h-0 flex-1 flex-col bg-surface">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-edge px-3">
         <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-fg">
-          Files <span className="tabular-nums text-fg-muted">/ {files.length}</span>
+          Files <span className="tabular-nums text-fg-muted">/ {visibleItemCount}</span>
         </h3>
         <span className="shrink-0 text-2xs text-fg-muted">{channelId ? 'Channel files' : 'All files'}</span>
       </div>
@@ -813,14 +983,19 @@ export function FilesHub({
             {error}
           </div>
         )}
-        {empty && <EmptyState title="No files" hint="Files matching the current filters will appear here." />}
-        {!loading && !error && files.length > 0 && (
+        {showBreadcrumb && <FolderBreadcrumb currentDir={currentDir} onNavigate={navigateToDir} />}
+        {empty && <EmptyState title={emptyTitle} hint={emptyHint} />}
+        {!loading && !error && visibleItemCount > 0 && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {files.map((file, index) => (
+            {!searchActive &&
+              folders.map((folder) => (
+                <FolderTile key={folder.path} folder={folder} onOpen={() => navigateToDir(folder.path)} />
+              ))}
+            {visibleFiles.map((file, index) => (
               <FileTile
                 key={file.artifactId}
                 file={file}
-                preview={previews[index]!}
+                preview={visiblePreviews[index]!}
                 onOpen={() => setLightboxIndex(index)}
                 onToggleStar={() => void toggleStar(file)}
                 onAddLabel={() => void addLabel(file)}
@@ -843,10 +1018,10 @@ export function FilesHub({
           </div>
         )}
       </div>
-      {lightboxIndex != null && previews.length > 0 && (
+      {lightboxIndex != null && visiblePreviews.length > 0 && (
         <Lightbox
-          files={previews}
-          index={Math.min(lightboxIndex, previews.length - 1)}
+          files={visiblePreviews}
+          index={Math.min(lightboxIndex, visiblePreviews.length - 1)}
           onIndexChange={setLightboxIndex}
           onClose={() => {
             setLightboxIndex(null);

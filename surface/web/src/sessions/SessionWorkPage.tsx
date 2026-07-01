@@ -1,5 +1,5 @@
 // Detach rung (Phase 4) — a standalone, full-viewport view of one work surface
-// (What changed · What it ran · Browse files), opened in its own browser tab via
+// (What changed · What it ran · Files), opened in its own browser tab via
 // /s/:id/work/:slug from the drawer's ⤢ control. It folds the same live session
 // stream the in-app pane does, so the detached tab stays in sync — one source of
 // truth, many views (never a copy). Top of the peek→pin→detach ladder.
@@ -16,7 +16,6 @@ import {
 import { useSessionStream } from './useSessionStream';
 import { ConflictSurface } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
-import { FilesSurface } from './FilesSurface';
 import { FilesHub } from './FilesHub';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { AppsSurface } from './AppsSurface';
@@ -69,8 +68,6 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         return sideEffectCount(effects);
       case 'hubFiles':
         return null;
-      case 'files':
-        return null;
       case 'apps':
         return null;
       default:
@@ -104,8 +101,6 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         );
       case 'sideEffects':
         return <SideEffectsSurface effects={effects} onClose={noop} embedded />;
-      case 'files':
-        return <FilesSurface sessionId={sessionId} onClose={noop} embedded />;
       case 'hubFiles':
         return sessionMeta ? (
           <FilesHub workspaceId={sessionMeta.workspaceId} channelId={sessionMeta.channelId} />
