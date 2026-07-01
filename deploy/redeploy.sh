@@ -116,12 +116,16 @@ _helm(){ local tag="$1"; ( cd "$REPO_DIR/centaur" && helm upgrade centaur contri
     --set apiRs.image.tag="$tag" --set ironProxy.image.tag="$tag" \
     --set sandbox.image.tag="$tag" --set nodeSync.image.tag="$tag" \
     --set console.image.tag="$tag" ); }
-# Wait for the console + console-worker rollouts (no-op when console.enabled=false
-# leaves no deployments). The worker matters too: it runs the broker token-refresh
-# jobs, so a crash-looping worker silently stops BYO credential refresh.
-_console_rollout(){ local timeout="$1" d
+# Wait for the console + console-worker rollouts (skipped only when the deployment
+# genuinely doesn't exist, i.e. console.enabled=false — any other kubectl failure is
+# a real error, not a skip, so a transient API blip can't silently bypass the gate).
+# The worker matters too: it runs the broker token-refresh jobs, so a crash-looping
+# worker silently stops BYO credential refresh.
+_console_rollout(){ local timeout="$1" d err
   for d in centaur-centaur-console centaur-centaur-console-worker; do
-    kubectl get deploy "$d" -n "$NS" >/dev/null 2>&1 || continue
+    if ! err=$(kubectl get deploy "$d" -n "$NS" 2>&1 >/dev/null); then
+      case "$err" in *NotFound*) continue ;; *) return 1 ;; esac
+    fi
     kubectl rollout status "deploy/$d" -n "$NS" --timeout="$timeout" || return 1
   done; }
 _rb_centaur(){ local last; last=$(cat "$STATE/last-good-centaur-sha" 2>/dev/null || true)
