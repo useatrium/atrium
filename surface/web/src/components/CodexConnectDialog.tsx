@@ -23,6 +23,7 @@ export function CodexConnectDialog({
   const [phase, setPhase] = useState<'starting' | 'waiting' | 'error' | 'expired'>('starting');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const completedRef = useRef(false);
   const connected = status?.connected === true;
 
@@ -94,6 +95,8 @@ export function CodexConnectDialog({
     if (!flow?.userCode) return;
     try {
       await navigator.clipboard.writeText(flow.userCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
     } catch {
       /* Clipboard access is best-effort. */
     }
@@ -164,9 +167,14 @@ export function CodexConnectDialog({
                 type="button"
                 onClick={copyCode}
                 disabled={!flow?.userCode}
-                className="rounded-md px-3 py-2 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                aria-live="polite"
+                className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 ${
+                  copied
+                    ? 'border-success bg-success/15 text-success'
+                    : 'border-edge-strong text-fg-secondary hover:bg-surface-overlay hover:text-fg active:bg-surface-overlay'
+                }`}
               >
-                Copy
+                {copied ? 'Copied!' : 'Copy'}
               </button>
             </div>
           </div>

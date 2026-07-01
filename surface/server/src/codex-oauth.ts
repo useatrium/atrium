@@ -91,7 +91,11 @@ export async function pollCodexDevice(
       client_id: config.codexOauthClientId,
       code: authorizationCode,
       code_verifier: codeVerifier,
-      redirect_uri: `${config.codexOauthIssuer}/codex/deviceauth/callback`,
+      // Device flow: redirect_uri is `{issuer}/deviceauth/callback` (NO `/codex/` —
+      // verified against openai/codex codex-rs/login `complete_device_code_login`).
+      // It must exactly match what the deviceauth grant used, or /oauth/token returns
+      // `token_exchange_user_error`.
+      redirect_uri: `${config.codexOauthIssuer}/deviceauth/callback`,
     });
     const tokenBody = jsonObject(token.body);
     if (!token.ok) {
