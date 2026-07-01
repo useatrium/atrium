@@ -9,9 +9,12 @@ import {
 } from 'react';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
-import { createDraftChangeDebouncer, randomId } from '@atrium/surface-client';
+import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
+
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 
 interface PendingFile {
   key: string;
@@ -74,10 +77,12 @@ export function Composer({
   // missing instead (cleared as soon as the text changes).
   const [agentNeedsTask, setAgentNeedsTask] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
+  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const filesRef = useRef<PendingFile[]>([]);
   const draftWriter = useMemo(
     () =>
       createDraftChangeDebouncer(
@@ -96,8 +101,28 @@ export function Composer({
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
 
   useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+
+  useEffect(
+    () => () => {
+      for (const file of filesRef.current) URL.revokeObjectURL(file.localUri);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!attachmentNotice) return;
+    const timer = window.setTimeout(() => setAttachmentNotice(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [attachmentNotice]);
+
+  useEffect(() => {
     setText('');
-    setFiles([]);
+    setFiles((prev) => {
+      for (const file of prev) URL.revokeObjectURL(file.localUri);
+      return [];
+    });
     if (ref.current) ref.current.style.height = 'auto';
   }, [draftKey]);
 
@@ -149,7 +174,6 @@ export function Composer({
         height,
         contentHash,
       });
-      URL.revokeObjectURL(localUri);
       setFiles((prev) =>
         prev.map((p) => (p.key === key ? { ...p, fileId, status: 'ready' } : p)),
       );
@@ -160,7 +184,11 @@ export function Composer({
 
   const addFiles = (list: FileList | File[]) => {
     if (!allowAttachments || disabled) return;
-    for (const f of Array.from(list).slice(0, Math.max(0, 10 - files.length))) {
+    for (const f of Array.from(list).slice(0, Math.max(0, MAX_ATTACHMENTS - files.length))) {
+      if (f.size > MAX_ATTACHMENT_BYTES) {
+        setAttachmentNotice(`${f.name || 'File'} is larger than 100 MB`);
+        continue;
+      }
       void startUpload(f);
     }
   };
@@ -168,7 +196,7 @@ export function Composer({
   const removeFile = (key: string) =>
     setFiles((prev) => {
       const file = prev.find((p) => p.key === key);
-      if (file && file.status !== 'uploading') URL.revokeObjectURL(file.localUri);
+      if (file) URL.revokeObjectURL(file.localUri);
       return prev.filter((p) => p.key !== key);
     });
 
@@ -205,7 +233,10 @@ export function Composer({
       draftWriter.saveNow(draftKey, '');
     }
     setText('');
-    setFiles([]);
+    setFiles((prev) => {
+      for (const file of prev) URL.revokeObjectURL(file.localUri);
+      return [];
+    });
     if (ref.current) ref.current.style.height = 'auto';
   };
 
@@ -282,8 +313,20 @@ export function Composer({
                     : 'border-edge-strong text-fg-secondary'
                 }`}
               >
-                <span aria-hidden>{p.file.type.startsWith('image/') ? '🖼️' : <FileIcon />}</span>
+                {p.file.type.startsWith('image/') ? (
+                  <img
+                    src={p.localUri}
+                    alt=""
+                    className="h-7 w-7 rounded object-cover"
+                    draggable={false}
+                  />
+                ) : (
+                  <span aria-hidden>
+                    <FileIcon />
+                  </span>
+                )}
                 <span className="max-w-40 truncate">{p.file.name || 'pasted image'}</span>
+                <span className="text-fg-muted">{formatBytes(p.file.size)}</span>
                 {p.status === 'uploading' && <span className="text-fg-muted">uploading…</span>}
                 {p.status === 'failed' && (
                   <button
@@ -306,6 +349,9 @@ export function Composer({
               </span>
             ))}
           </div>
+        )}
+        {attachmentNotice && (
+          <div className="mb-2 px-1 text-xs font-medium text-danger-text">{attachmentNotice}</div>
         )}
         <div className="flex items-end gap-2">
         {allowAttachments && !disabled && (

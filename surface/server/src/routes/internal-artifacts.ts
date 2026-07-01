@@ -105,7 +105,7 @@ export async function registerInternalArtifactRoutes(
     const v = await new ArtifactLedger(pool).resolveVersion(session.id, path, ref, {
       readableChannelIds: access.readableChannelIds,
     });
-    if (!v || v.kind === 'deleted') {
+    if (!v || v.kind === 'deleted' || v.tombstoned) {
       return reply.code(404).send({ error: 'not_found', message: 'no servable version' });
     }
     if (!v.blobSha || !v.s3Key) {

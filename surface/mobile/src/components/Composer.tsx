@@ -86,6 +86,17 @@ const VOICE_RECORDING_OPTIONS: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
   isMeteringEnabled: true,
 };
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+
+type PickedAttachment = {
+  uri: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  width?: number;
+  height?: number;
+};
 
 export function Composer({
   placeholder,
@@ -155,14 +166,7 @@ export function Composer({
     }
   }, [editingText]);
 
-  const startUpload = async (file: {
-    uri: string;
-    name: string;
-    mimeType: string;
-    size: number;
-    width?: number;
-    height?: number;
-  }) => {
+  const startUpload = async (file: PickedAttachment) => {
     if (!uploadFile) return;
     const key = `${Date.now()}-${file.name}-${Math.random()}`;
     const isImage = file.mimeType.startsWith('image/');
@@ -178,50 +182,92 @@ export function Composer({
     }
   };
 
+  const addPickedAttachments = (picked: PickedAttachment[]) => {
+    const remaining = Math.max(0, MAX_ATTACHMENTS - attachments.length);
+    const oversized: string[] = [];
+    for (const file of picked.slice(0, remaining)) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        oversized.push(file.name || 'File');
+        continue;
+      }
+      void startUpload(file);
+    }
+    if (oversized.length > 0) {
+      Alert.alert(
+        'File too large',
+        `${oversized[0]} is larger than 100 MB${oversized.length > 1 ? `, along with ${oversized.length - 1} more` : ''}.`,
+      );
+    }
+  };
+
+  const sizeForUri = async (uri: string, reportedSize?: number | null) => {
+    if (reportedSize != null) return reportedSize;
+    const info = await FileSystem.getInfoAsync(uri);
+    return info.exists ? (info.size ?? 0) : 0;
+  };
+
+  const attachmentFromImageAsset = async (
+    asset: ImagePicker.ImagePickerAsset,
+  ): Promise<PickedAttachment> => ({
+    uri: asset.uri,
+    name: asset.fileName ?? 'photo.jpg',
+    mimeType: asset.mimeType ?? 'image/jpeg',
+    size: await sizeForUri(asset.uri, asset.fileSize),
+    width: asset.width,
+    height: asset.height,
+  });
+
   const pickImages = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
-      selectionLimit: 5,
+      selectionLimit: MAX_ATTACHMENTS,
       quality: 0.8,
     });
     if (res.canceled) return;
-    for (const asset of res.assets) {
-      void startUpload({
-        uri: asset.uri,
-        name: asset.fileName ?? 'photo.jpg',
-        mimeType: asset.mimeType ?? 'image/jpeg',
-        size: asset.fileSize ?? 0,
-        width: asset.width,
-        height: asset.height,
-      });
+    addPickedAttachments(await Promise.all(res.assets.map(attachmentFromImageAsset)));
+  };
+
+  const takePhoto = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Camera access needed', 'Enable camera access to take a photo.');
+      return;
     }
+    const res = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+    });
+    if (res.canceled) return;
+    addPickedAttachments(await Promise.all(res.assets.map(attachmentFromImageAsset)));
   };
 
   const pickDocument = async () => {
     const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (res.canceled) return;
-    for (const asset of res.assets) {
-      void startUpload({
+    addPickedAttachments(
+      await Promise.all(res.assets.map(async (asset) => ({
         uri: asset.uri,
         name: asset.name,
         mimeType: asset.mimeType ?? 'application/octet-stream',
-        size: asset.size ?? 0,
-      });
-    }
+        size: await sizeForUri(asset.uri, asset.size),
+      }))),
+    );
   };
 
   const pickAttachment = () => {
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
-        { options: ['Photo library', 'File', 'Cancel'], cancelButtonIndex: 2 },
+        { options: ['Take photo', 'Photo library', 'File', 'Cancel'], cancelButtonIndex: 3 },
         (i) => {
-          if (i === 0) void pickImages();
-          if (i === 1) void pickDocument();
+          if (i === 0) void takePhoto();
+          if (i === 1) void pickImages();
+          if (i === 2) void pickDocument();
         },
       );
     } else {
       Alert.alert('Attach', undefined, [
+        { text: 'Take photo', onPress: () => void takePhoto() },
         { text: 'Photo library', onPress: () => void pickImages() },
         { text: 'File', onPress: () => void pickDocument() },
         { text: 'Cancel', style: 'cancel' },

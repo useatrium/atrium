@@ -54,6 +54,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function optionalUuid(value: unknown): string | null {
+  return typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value) ? value : null;
+}
+
 function parseVoicePost(
   input: unknown,
   attachments: AttachmentMeta[] | undefined,
@@ -127,7 +131,7 @@ async function landingPathForUpload(
 
 async function landUploadAttachmentAsArtifact(
   pool: Db,
-  params: { channelId: string; userId: string; file: MessageAttachmentFileRow },
+  params: { channelId: string; userId: string; file: MessageAttachmentFileRow; sourceMessageId?: string | null },
 ): Promise<void> {
   const channel = await pool.query<{ workspace_id: string }>(
     'SELECT workspace_id FROM channels WHERE id = $1',
@@ -177,6 +181,7 @@ async function landUploadAttachmentAsArtifact(
     sizeBytes,
     mime: params.file.content_type,
     author: `human:${params.userId}`,
+    sourceMessageId: params.sourceMessageId ?? null,
   });
 }
 
@@ -312,6 +317,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           channelId: body.channelId,
           userId: user.id,
           file,
+          sourceMessageId: optionalUuid(event.payload.client_msg_id),
         });
       } catch (err) {
         app.log.warn(

@@ -14,14 +14,18 @@
   "dependencies": {
     "@atrium/centaur-client": "workspace:*",
     "@atrium/surface-client": "workspace:*",
+    "@types/papaparse": "^5.5.2",
     "highlight.js": "^11.11.1",
     "idb": "^8.0.3",
     "livekit-client": "^2.15.13",
+    "papaparse": "^5.5.4",
+    "pdfjs-dist": "^6.0.227",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.2.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.6",

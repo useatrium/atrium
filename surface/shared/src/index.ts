@@ -20,3 +20,4 @@ export * from './handle';
 export * from './useWs';
 export * from './util';
 export * from './agentProfiles';
+export * from './files-hub';

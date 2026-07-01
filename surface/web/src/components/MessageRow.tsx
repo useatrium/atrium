@@ -27,6 +27,8 @@ import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-clien
 import { Avatar } from './Avatar';
 import { EntryComments } from './EntryComments';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
+import { Lightbox } from './media';
+import type { PreviewFile } from './media';
 import { MessageText } from './MessageText';
 import { useDialog } from '../useDialog';
 import { VoiceMessage } from '../VoiceMessage';
@@ -115,6 +117,8 @@ export const MessageRow = memo(function MessageRow({
   const mouseOpenedPickerRef = useRef(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [removedAttachmentIds, setRemovedAttachmentIds] = useState<Set<string>>(() => new Set());
   const copyResetRef = useRef<number | null>(null);
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -162,6 +166,40 @@ export const MessageRow = memo(function MessageRow({
   useEffect(() => {
     if (!canAnnotate) setCommentsOpen(false);
   }, [canAnnotate]);
+  const attachments = m.attachments ?? [];
+  const previewFiles: PreviewFile[] = attachments.map((a) => ({
+    id: a.id,
+    name: a.filename,
+    mime: a.contentType,
+    mediaKind: mediaKindForContentType(a.contentType),
+    sizeBytes: a.size,
+    width: a.width,
+    height: a.height,
+    contentUrl: `/api/files/${a.id}`,
+    ...(m.id != null ? { source: { kind: 'message' as const, id: String(m.id) } } : {}),
+  }));
+  const openAttachment = (index: number) => {
+    setLightboxIndex(index);
+  };
+  const closeLightbox = useCallback(() => setLightboxIndex(null), []);
+  const downloadPreviewFile = useCallback((file: PreviewFile) => {
+    window.open(`/api/files/${file.id}`, '_blank', 'noopener,noreferrer');
+  }, []);
+  const copyPreviewFileLink = useCallback((file: PreviewFile) => {
+    if (typeof navigator === 'undefined') return;
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) return;
+    const origin = typeof window === 'undefined' ? '' : window.location.origin;
+    void clipboard.writeText(`${origin}/api/files/${file.id}`).catch(() => {});
+  }, []);
+  const markAttachmentRemoved = useCallback((id: string) => {
+    setRemovedAttachmentIds((current) => {
+      if (current.has(id)) return current;
+      const next = new Set(current);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -294,17 +332,18 @@ export const MessageRow = memo(function MessageRow({
             ) : null}
           </div>
         )}
-        {!deleted && !m.voice && !isSessionRow && !isSessionEventRow && (m.attachments?.length ?? 0) > 0 && (
+        {!deleted && !m.voice && !isSessionRow && !isSessionEventRow && attachments.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-2">
-            {m.attachments!.map((a) =>
-              a.contentType.startsWith('image/') ? (
-                <a
+            {attachments.map((a, index) =>
+              removedAttachmentIds.has(a.id) ? (
+                <RemovedAttachmentPlaceholder key={a.id} filename={a.filename} />
+              ) : a.contentType.startsWith('image/') ? (
+                <button
                   key={a.id}
-                  href={`/api/files/${a.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  type="button"
+                  onClick={() => openAttachment(index)}
                   title={a.filename}
-                  className="block"
+                  className="block text-left"
                 >
                   <img
                     src={`/api/files/${a.id}`}
@@ -312,6 +351,7 @@ export const MessageRow = memo(function MessageRow({
                     width={a.width}
                     height={a.height}
                     loading="lazy"
+                    onError={() => markAttachmentRemoved(a.id)}
                     className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
                     style={
                       a.width && a.height
@@ -319,22 +359,31 @@ export const MessageRow = memo(function MessageRow({
                         : undefined
                     }
                   />
-                </a>
+                </button>
               ) : (
-                <a
+                <button
                   key={a.id}
-                  href={`/api/files/${a.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  type="button"
+                  onClick={() => openAttachment(index)}
                   className="flex items-center gap-2 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-sm text-fg-body hover:border-edge-strong"
                 >
                   <FileIcon />
                   <span className="max-w-56 truncate">{a.filename}</span>
                   <span className="text-xs text-fg-muted">{formatBytes(a.size)}</span>
-                </a>
+                </button>
               ),
             )}
           </div>
+        )}
+        {lightboxIndex != null && previewFiles.length > 0 && (
+          <Lightbox
+            files={previewFiles}
+            index={Math.min(lightboxIndex, previewFiles.length - 1)}
+            onIndexChange={setLightboxIndex}
+            onClose={closeLightbox}
+            onDownload={downloadPreviewFile}
+            onCopyLink={copyPreviewFileLink}
+          />
         )}
         {!deleted && !isSessionRow && !isSessionEventRow && (m.reactions?.length ?? 0) > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
@@ -529,6 +578,28 @@ export const MessageRow = memo(function MessageRow({
     </div>
   );
 });
+
+function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] {
+  if (contentType.startsWith('image/')) return 'image';
+  if (contentType.startsWith('video/')) return 'video';
+  if (contentType.startsWith('audio/')) return 'audio';
+  if (contentType === 'application/pdf') return 'document';
+  if (contentType.startsWith('text/')) return 'text';
+  return 'opaque';
+}
+
+function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {
+  return (
+    <div
+      role="status"
+      aria-label={`${filename} file removed`}
+      className="flex min-h-12 items-center gap-2 rounded-md border border-dashed border-edge bg-surface-raised/35 px-3 py-2 text-sm text-fg-muted"
+    >
+      <FileIcon />
+      <span className="max-w-56 truncate">File removed</span>
+    </div>
+  );
+}
 
 function LinkIcon(props: SVGProps<SVGSVGElement>) {
   return (
