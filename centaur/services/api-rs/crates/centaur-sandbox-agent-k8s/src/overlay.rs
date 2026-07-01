@@ -230,6 +230,7 @@ pub(crate) fn warm_flat_home_init_container_json(
             "runAsUser": 0,
             "capabilities": {
                 "drop": ["ALL"],
+                "add": ["CHOWN", "FOWNER"],
             },
             "seccompProfile": {
                 "type": "RuntimeDefault",

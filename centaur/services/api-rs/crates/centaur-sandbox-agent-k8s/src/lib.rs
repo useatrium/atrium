@@ -2121,6 +2121,15 @@ mod tests {
         let placeholder_command = placeholder.command.as_ref().unwrap().join(" ");
         assert!(placeholder_command.contains("/run/centaur/merged/asbx-warm/agent"));
         assert!(placeholder_command.contains("chown 1001:1001"));
+        assert_eq!(
+            placeholder
+                .security_context
+                .as_ref()
+                .and_then(|ctx| ctx.capabilities.as_ref())
+                .and_then(|caps| caps.add.as_ref())
+                .cloned(),
+            Some(vec!["CHOWN".to_owned(), "FOWNER".to_owned()])
+        );
         assert!(
             placeholder
                 .volume_mounts
