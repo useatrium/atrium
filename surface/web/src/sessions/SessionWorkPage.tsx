@@ -4,7 +4,7 @@
 // stream the in-app pane does, so the detached tab stays in sync — one source of
 // truth, many views (never a copy). Top of the peek→pin→detach ladder.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   artifactCount,
   changedPaths,
@@ -17,12 +17,15 @@ import { useSessionStream } from './useSessionStream';
 import { ConflictSurface } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import { FilesSurface } from './FilesSurface';
+import { FilesHub } from './FilesHub';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { AppsSurface } from './AppsSurface';
 import { TAB_LABEL, normalizeWorkTab, type WorkTab } from './WorkDrawer';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { useConflicts } from './useConflicts';
 import { useArtifactPresentations } from './useArtifactPresentations';
+import { sessionsApi } from './api';
+import type { SessionWire } from './types';
 
 const noop = () => {};
 
@@ -34,6 +37,22 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
   const activeTab = normalizeWorkTab(tab);
   const { stream, connected } = useSessionStream(sessionId);
   const { conflicts, resolve: resolveConflict } = useConflicts(sessionId, { enabled: activeTab === 'conflicts' });
+  const [sessionMeta, setSessionMeta] = useState<Pick<SessionWire, 'workspaceId' | 'channelId'> | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    sessionsApi
+      .get(sessionId)
+      .then(({ session }) => {
+        if (!disposed) setSessionMeta({ workspaceId: session.workspaceId, channelId: session.channelId });
+      })
+      .catch(() => {
+        if (!disposed) setSessionMeta(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [sessionId]);
 
   const changes = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
   const effects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
@@ -48,6 +67,8 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         return changedPaths(changes).length + artifactCount(artifacts);
       case 'sideEffects':
         return sideEffectCount(effects);
+      case 'hubFiles':
+        return null;
       case 'files':
         return null;
       case 'apps':
@@ -85,6 +106,12 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         return <SideEffectsSurface effects={effects} onClose={noop} embedded />;
       case 'files':
         return <FilesSurface sessionId={sessionId} onClose={noop} embedded />;
+      case 'hubFiles':
+        return sessionMeta ? (
+          <FilesHub workspaceId={sessionMeta.workspaceId} channelId={sessionMeta.channelId} />
+        ) : (
+          <div className="px-3 py-2 text-2xs text-fg-muted">loading files...</div>
+        );
       case 'apps':
         return <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />;
       default:

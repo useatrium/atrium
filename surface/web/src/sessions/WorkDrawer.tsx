@@ -9,11 +9,13 @@ import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@at
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
+import { EmptyState } from './EmptyState';
 import { FilesSurface } from './FilesSurface';
+import { FilesHub } from './FilesHub';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { AppsSurface } from './AppsSurface';
 
-export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'files' | 'artifacts' | 'apps';
+export type WorkTab = 'conflicts' | 'changes' | 'sideEffects' | 'hubFiles' | 'files' | 'artifacts' | 'apps';
 export type ActiveWorkTab = Exclude<WorkTab, 'artifacts'>;
 
 export function normalizeWorkTab(tab: WorkTab): ActiveWorkTab {
@@ -26,6 +28,7 @@ export const TAB_SLUG: Record<ActiveWorkTab, string> = {
   conflicts: 'conflicts',
   changes: 'changes',
   sideEffects: 'side-effects',
+  hubFiles: 'hub-files',
   files: 'files',
   apps: 'apps',
 };
@@ -34,6 +37,7 @@ export const SLUG_TAB: Record<string, ActiveWorkTab> = {
   changes: 'changes',
   'side-effects': 'sideEffects',
   artifacts: 'changes',
+  'hub-files': 'hubFiles',
   files: 'files',
   apps: 'apps',
 };
@@ -41,6 +45,7 @@ export const TAB_LABEL: Record<ActiveWorkTab, string> = {
   conflicts: 'Conflicts',
   changes: 'What changed',
   sideEffects: 'What it ran',
+  hubFiles: 'Files',
   files: 'Browse files',
   apps: 'Published apps',
 };
@@ -93,6 +98,8 @@ export function WorkDrawer({
   conflictCount = 0,
   onResolveConflict,
   sessionId,
+  workspaceId,
+  channelId,
   tab,
   onTab,
   pinned,
@@ -114,6 +121,8 @@ export function WorkDrawer({
   conflictCount?: number;
   onResolveConflict?: (artifactId: string, choice: ResolveChoice) => void | Promise<void>;
   sessionId: string;
+  workspaceId?: string;
+  channelId?: string | null;
   tab: WorkTab;
   onTab: (tab: ActiveWorkTab) => void;
   pinned: boolean;
@@ -138,6 +147,8 @@ export function WorkDrawer({
   const available = counted
     .filter((t) => (t.count ?? 0) > 0)
     .concat([
+      /* === lane-B === */
+      { key: 'hubFiles', label: TAB_LABEL.hubFiles },
       { key: 'files', label: TAB_LABEL.files },
       { key: 'apps', label: TAB_LABEL.apps },
     ]);
@@ -217,6 +228,12 @@ export function WorkDrawer({
         ) : null
       ) : active === 'files' ? (
         <FilesSurface sessionId={sessionId} onClose={onClose} embedded />
+      ) : active === 'hubFiles' ? (
+        workspaceId ? (
+          <FilesHub workspaceId={workspaceId} channelId={channelId} />
+        ) : (
+          <EmptyState title="Files unavailable" hint="This session is missing workspace metadata." />
+        )
       ) : active === 'apps' ? (
         <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />
       ) : active === 'changes' ? (

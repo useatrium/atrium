@@ -737,6 +737,8 @@ export function SessionPane({
             conflictCount={conflictsN}
             onResolveConflict={resolveConflict}
             sessionId={session.id}
+            workspaceId={session.workspaceId}
+            channelId={session.channelId}
             tab={workTab}
             onTab={setWorkTab}
             pinned={false}
@@ -869,6 +871,8 @@ export function SessionPane({
               conflictCount={conflictsN}
               onResolveConflict={resolveConflict}
               sessionId={session.id}
+              workspaceId={session.workspaceId}
+              channelId={session.channelId}
               tab={workTab}
               onTab={setWorkTab}
               pinned
