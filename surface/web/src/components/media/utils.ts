@@ -120,6 +120,13 @@ export function isDocxFile(file: PreviewFile) {
   return ext === 'docx' || ext === 'docm' || ext === 'dotx' || ext === 'dotm' || mime.includes('wordprocessingml');
 }
 
+// slice5: .pptx is a zipped OOXML presentation; legacy .ppt is not browser-renderable here.
+export function isPptxFile(file: PreviewFile) {
+  const ext = fileExtension(file.name);
+  const mime = file.mime.toLowerCase();
+  return ext === 'pptx' || ext === 'pptm' || ext === 'ppsx' || mime.includes('presentationml');
+}
+
 export function isNotebookFile(file: PreviewFile) {
   return fileExtension(file.name) === 'ipynb' || file.mime.toLowerCase().includes('ipynb');
 }

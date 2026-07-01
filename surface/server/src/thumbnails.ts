@@ -84,7 +84,7 @@ export async function ensureThumbnailForBlob(job: ThumbnailJob): Promise<string 
 
   const mediaKind = job.mediaKind ?? row.media_kind;
   const mime = job.mime ?? row.mime;
-  if (mediaKind !== 'image' && mediaKind !== 'video') return null;
+  if (mediaKind !== 'image' && mediaKind !== 'video' && mediaKind !== 'pdf') return null;
   const sourceBytes = job.bytes ?? (job.s3Key || row.s3_key ? await getObjectBytes((job.s3Key ?? row.s3_key)!) : null);
   if (!sourceBytes) return null;
 
@@ -133,10 +133,17 @@ export async function generateThumbnail(input: {
   if (input.mediaKind === 'video') {
     return videoThumbnail(input.bytes);
   }
+  if (input.mediaKind === 'pdf') {
+    return pdfThumbnail(input.bytes);
+  }
   return null;
 }
 
 async function imageThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
+  return webpImageThumbnail(bytes);
+}
+
+async function webpImageThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
   let sharp: typeof import('sharp');
   try {
     sharp = await import('sharp');
@@ -154,6 +161,22 @@ async function imageThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null>
     .webp({ quality: 78 })
     .toBuffer();
   return output.byteLength > 0 ? { bytes: output, mime: IMAGE_THUMBNAIL_MIME } : null;
+}
+
+async function pdfThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
+  let document: Awaited<ReturnType<typeof import('pdf-to-img').pdf>> | null = null;
+  try {
+    const { pdf } = await import('pdf-to-img');
+    document = await pdf(bytes, { scale: 2 });
+    for await (const pagePng of document) {
+      return await webpImageThumbnail(pagePng);
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    await document?.destroy().catch(() => undefined);
+  }
 }
 
 async function videoThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
