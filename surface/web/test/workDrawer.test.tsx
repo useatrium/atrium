@@ -80,6 +80,13 @@ describe('WorkDrawer', () => {
     expect(screen.getByRole('tab', { name: /Published apps/ })).toBeTruthy();
   });
 
+  it('shows the Files hub tab when a workspace is known', () => {
+    renderDrawer({ workspaceId: 'ws-1' });
+    // hub Files tab joins What changed + What it ran + Browse files + Published apps.
+    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    expect(screen.getByRole('tab', { name: /^Files$/ })).toBeTruthy();
+  });
+
   it('clicking the What it ran tab calls onTab', () => {
     const props = renderDrawer();
     fireEvent.click(screen.getByRole('tab', { name: /What it ran/ }));

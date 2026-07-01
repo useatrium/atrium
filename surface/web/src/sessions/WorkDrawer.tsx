@@ -147,8 +147,8 @@ export function WorkDrawer({
   const available = counted
     .filter((t) => (t.count ?? 0) > 0)
     .concat([
-      /* === lane-B === */
-      { key: 'hubFiles', label: TAB_LABEL.hubFiles },
+      /* === lane-B: hub tab only when we know the workspace to browse === */
+      ...(workspaceId ? [{ key: 'hubFiles' as const, label: TAB_LABEL.hubFiles }] : []),
       { key: 'files', label: TAB_LABEL.files },
       { key: 'apps', label: TAB_LABEL.apps },
     ]);
