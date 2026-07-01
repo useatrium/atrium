@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import type { FileOrigin, HubFile, HubFileListResult } from '@atrium/surface-client';
+import type { FileOrigin, HubFile, HubFileListResult, HubFileVersionsResponse } from '@atrium/surface-client';
 import { EntryComments } from '../components/EntryComments';
 import { showErrorToast } from '../components/Toasts';
 import { FileIcon, SearchIcon } from '../components/icons';
@@ -87,6 +87,7 @@ export function hubFileToPreview(f: HubFile): PreviewFile {
     mime: f.mime ?? 'application/octet-stream',
     mediaKind: asMediaKind(f.mediaKind),
     sizeBytes: f.sizeBytes ?? undefined,
+    tombstoned: f.tombstoned,
     width: f.width,
     height: f.height,
     contentUrl: contentUrl(f.artifactId),
@@ -622,9 +623,81 @@ export function FilesHub({
       onComment: (file) => {
         setCommentArtifactId(file.id);
       },
+      onListVersions: async (file, signal) => {
+        try {
+          const response = await fetch(`/api/files/${file.id}/versions`, {
+            credentials: 'same-origin',
+            signal,
+          });
+          if (!response.ok) throw new Error(await responseError(response, 'Could not load version history'));
+          const body = (await response.json()) as HubFileVersionsResponse;
+          return body.versions;
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            showErrorToast(err instanceof Error ? err.message : 'Could not load version history');
+          }
+          throw err;
+        }
+      },
+      onFetchVersionContent: async (file, seq, signal) => {
+        const params = new URLSearchParams();
+        if (seq != null) params.set('at', String(seq));
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        try {
+          const response = await fetch(`/api/files/artifact/${file.id}/content${suffix}`, {
+            credentials: 'same-origin',
+            signal,
+          });
+          if (!response.ok) throw new Error(await responseError(response, 'Could not load version content'));
+          return await response.blob();
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            showErrorToast(err instanceof Error ? err.message : 'Could not load version content');
+          }
+          throw err;
+        }
+      },
+      onRevertVersion: async (file, seq) => {
+        try {
+          const response = await fetch(`/api/files/${file.id}/revert`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ seq }),
+          });
+          if (!response.ok)
+            throw new Error(
+              await responseError(
+                response,
+                response.status === 409 ? 'That version cannot be restored' : 'Could not restore version',
+              ),
+            );
+          const body = (await response.json()) as { artifactId: string; seq: number; tombstoned: false };
+          setFiles((current) => updateFile(current, body.artifactId, { versionSeq: body.seq, tombstoned: false }));
+          await loadFiles();
+        } catch (err) {
+          showErrorToast(err instanceof Error ? err.message : 'Could not restore version');
+          throw err;
+        }
+      },
+      onRestoreFile: async (file) => {
+        try {
+          const response = await fetch(`/api/files/${file.id}/restore`, {
+            method: 'POST',
+            credentials: 'same-origin',
+          });
+          if (!response.ok) throw new Error(await responseError(response, 'Could not restore file'));
+          const body = (await response.json()) as { artifactId: string; tombstoned: false };
+          setFiles((current) => updateFile(current, body.artifactId, { tombstoned: body.tombstoned }));
+          await loadFiles();
+        } catch (err) {
+          showErrorToast(err instanceof Error ? err.message : 'Could not restore file');
+          throw err;
+        }
+      },
       canManage: () => true,
     }),
-    [files, filters.includeDeleted, replaceFile],
+    [files, filters.includeDeleted, loadFiles, replaceFile],
   );
 
   const empty = !loading && !error && files.length === 0;

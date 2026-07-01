@@ -228,4 +228,45 @@ test.describe('Files Hub', () => {
       await ctx.dispose();
     }
   });
+
+  test('version list, prior-version bytes (?at), and embeddable app preview', async () => {
+    const ctx = await apiAs(unique('ver'), 'Ver');
+    try {
+      const name = uniqueChannel('ver');
+      await createChannel(ctx, name);
+      const chanId = await channelId(ctx, name);
+      const html = Buffer.from('<!doctype html><title>hi</title><h1>hello app</h1>');
+      const fileId = await uploadViaApi(ctx, 'app.html', 'text/html', html);
+      await postWithAttachment(ctx, chanId, 'an app', fileId);
+      const artifactId = (await channelFiles(ctx, chanId)).find((f) => f.name === 'app.html')?.artifactId;
+      expect(artifactId).toBeTruthy();
+
+      // versions: at least the created version, newest marked latest.
+      const vres = await ctx.get(`/api/files/${artifactId}/versions`);
+      expect(vres.ok(), `versions (${vres.status()})`).toBeTruthy();
+      const versions = ((await vres.json()) as { versions: Array<{ seq: number; isLatest: boolean }> }).versions;
+      const latest = versions[0];
+      expect(latest, 'at least one version').toBeTruthy();
+      expect(latest!.isLatest).toBe(true);
+
+      // prior-version bytes via ?at
+      const at = await ctx.get(`/api/files/artifact/${artifactId}/content?at=${latest!.seq}`);
+      expect(at.status()).toBe(200);
+      expect((await at.body()).byteLength).toBeGreaterThan(0);
+
+      // app preview: embeddable HTML with CSP; but a top-level document navigation is refused.
+      const embed = await ctx.get(`/api/files/${artifactId}/preview?renderer=html-app`, {
+        headers: { 'sec-fetch-dest': 'iframe', 'sec-fetch-mode': 'navigate' },
+      });
+      expect(embed.status(), `preview embed (${embed.status()})`).toBe(200);
+      expect(embed.headers()['content-security-policy']).toBeTruthy();
+
+      const topLevel = await ctx.get(`/api/files/${artifactId}/preview?renderer=html-app`, {
+        headers: { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' },
+      });
+      expect(topLevel.status(), 'top-level preview navigation must be refused').toBe(403);
+    } finally {
+      await ctx.dispose();
+    }
+  });
 });

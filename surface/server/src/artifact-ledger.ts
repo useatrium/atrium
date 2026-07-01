@@ -641,6 +641,16 @@ export class ArtifactLedger {
     const artifactId = art.rows[0]?.id;
     if (!artifactId) return null;
 
+    return this.serveResolutionByArtifactId(artifactId);
+  }
+
+  async serveResolutionByArtifactId(artifactId: string): Promise<{
+    servedSeq: number | null;
+    servedKind: VersionKind | null;
+    conflicted: boolean;
+    conflictSeq: number | null;
+    latestSeq: number | null;
+  } | null> {
     const latest = await this.pool.query<{ seq: number; status: VersionStatus }>(
       `SELECT v.seq, v.status
          FROM artifact_pointers p
@@ -737,14 +747,21 @@ export class ArtifactLedger {
    * by-id resolve endpoint. */
   async artifactById(
     artifactId: string,
-  ): Promise<{ workspaceId: string; sessionId: string | null; channelId: string | null; path: string } | null> {
+  ): Promise<{
+    workspaceId: string;
+    sessionId: string | null;
+    channelId: string | null;
+    path: string;
+    tombstoned: boolean;
+  } | null> {
     const res = await this.pool.query<{
       workspace_id: string;
-      session_id: string;
-      channel_id: string;
+      session_id: string | null;
+      channel_id: string | null;
       path: string;
+      tombstoned_at: Date | string | null;
     }>(
-      `SELECT workspace_id, session_id, channel_id, path FROM artifacts WHERE id = $1`,
+      `SELECT workspace_id, session_id, channel_id, path, tombstoned_at FROM artifacts WHERE id = $1`,
       [artifactId],
     );
     const row = res.rows[0];
@@ -754,6 +771,7 @@ export class ArtifactLedger {
       sessionId: row.session_id,
       channelId: row.channel_id,
       path: row.path,
+      tombstoned: row.tombstoned_at != null,
     };
   }
 
@@ -1315,6 +1333,45 @@ export class ArtifactLedger {
     });
   }
 
+  /** Revert an artifact to an earlier version: append a new 'modified' version that reuses
+   * that seq's bytes and advance the 'latest' pointer. Also clears any tombstone. Returns the
+   * new head seq, or null if the target seq is missing/deleted/byte-less. */
+  async revertArtifactToSeq(
+    artifactId: string,
+    seq: number,
+    author: string,
+  ): Promise<{ newSeq: number } | null> {
+    return withTx(this.pool, async (client) => {
+      const locked = await client.query<{ id: string }>('SELECT id FROM artifacts WHERE id = $1 FOR UPDATE', [
+        artifactId,
+      ]);
+      if (!locked.rows[0]) return null;
+      const target = await client.query<{ blob_sha: string | null; kind: string }>(
+        'SELECT blob_sha, kind FROM artifact_versions WHERE artifact_id = $1 AND seq = $2',
+        [artifactId, seq],
+      );
+      const t = target.rows[0];
+      if (!t || t.kind === 'deleted' || !t.blob_sha) return null;
+      const latest = await this.latestVersion(client, artifactId);
+      if (!latest) return null;
+      let newSeq = seq;
+      if (latest.seq !== seq || latest.kind === 'deleted') {
+        newSeq = latest.seq + 1;
+        await this.insertVersion(client, {
+          artifactId,
+          seq: newSeq,
+          blobSha: t.blob_sha,
+          baseSeq: latest.seq,
+          author,
+          kind: 'modified',
+        });
+        await this.advancePointer(client, artifactId, 'latest', newSeq);
+      }
+      await client.query('UPDATE artifacts SET tombstoned_at = NULL WHERE id = $1', [artifactId]);
+      return { newSeq };
+    });
+  }
+
   // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
 
   async getSyncState(sessionId: string, path: string): Promise<SyncState | null> {
@@ -1613,6 +1670,10 @@ export class ArtifactLedger {
     const artifactId = art.rows[0]?.id;
     if (!artifactId) return null;
 
+    return this.resolveVersionByArtifactId(artifactId, ref);
+  }
+
+  async resolveVersionByArtifactId(artifactId: string, ref: VersionRef): Promise<ResolvedVersion | null> {
     let seq: number | undefined;
     if ('seq' in ref) {
       seq = ref.seq;

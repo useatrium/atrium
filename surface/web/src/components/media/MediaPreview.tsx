@@ -1,6 +1,7 @@
 import type { PreviewFile, MediaPreviewVariant } from './types';
-import { effectiveMediaKind, isMarkdownFile, isOfficeFile, isPdfFile } from './utils';
+import { effectiveMediaKind, isAppFile, isMarkdownFile, isOfficeFile, isPdfFile } from './utils';
 import { AudioRenderer } from './renderers/AudioRenderer';
+import { AppRenderer } from './renderers/AppRenderer';
 import { CodeRenderer } from './renderers/CodeRenderer';
 import { DataRenderer } from './renderers/DataRenderer';
 import { ImageRenderer } from './renderers/ImageRenderer';
@@ -13,6 +14,7 @@ import { VideoRenderer } from './renderers/VideoRenderer';
 export function MediaPreview({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
   const kind = effectiveMediaKind(file);
 
+  if (isAppFile(file)) return <AppRenderer file={file} variant={variant} />;
   if (isOfficeFile(file)) return <OfficeRenderer file={file} variant={variant} />;
   if (kind === 'image') return <ImageRenderer file={file} variant={variant} />;
   if (kind === 'video') return <VideoRenderer file={file} variant={variant} />;

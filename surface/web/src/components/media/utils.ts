@@ -29,6 +29,7 @@ const CODE_EXTENSIONS = new Set([
 ]);
 
 const DATA_EXTENSIONS = new Set(['csv', 'ipynb', 'json', 'jsonl', 'toml', 'tsv', 'yaml', 'yml']);
+const APP_EXTENSIONS = new Set(['html', 'htm', 'jsx', 'tsx']);
 const WORD_EXTENSIONS = new Set(['doc', 'docx', 'docm', 'dotx', 'dotm']);
 const SPREADSHEET_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm', 'xlsb', 'ods']);
 const PRESENTATION_EXTENSIONS = new Set(['ppt', 'pptx', 'pptm', 'pps', 'ppsx']);
@@ -65,6 +66,13 @@ export function isMarkdownFile(file: PreviewFile) {
 
 export function isPdfFile(file: PreviewFile) {
   return file.mime.toLowerCase() === 'application/pdf' || fileExtension(file.name) === 'pdf';
+}
+
+// App preview: HTML and JSX/TSX artifacts render through the sandboxed iframe endpoint.
+export function isAppFile(file: PreviewFile) {
+  const mime = file.mime.toLowerCase();
+  const ext = fileExtension(file.name);
+  return mime === 'text/html' || mime === 'application/xhtml+xml' || APP_EXTENSIONS.has(ext);
 }
 
 export function officeFileKind(file: PreviewFile): OfficeFileKind | null {
