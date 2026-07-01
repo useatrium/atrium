@@ -333,6 +333,9 @@ apiRs:
   sandboxIdleCleanupBackstopSecs: 21600 # 6 hours
   ironProxy:
     mode: enabled
+    # Per-user subscription auth (token-never-in-box via per-principal grants).
+    # When true, the access_token harness fragment injects nothing.
+    perUserSubscription: false
   metrics:
     # The Rust API always serves Prometheus text metrics at /metrics. This flag
     # only controls scrape annotations for Prometheus/VictoriaMetrics-style

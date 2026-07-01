@@ -39,6 +39,29 @@ pub fn harness_auth_fragment(engine: &str, auth_mode: &str) -> Result<Option<Pro
     load_fragment_str(yaml).map(Some)
 }
 
+/// The per-user-subscription variant of the `access_token` harness fragment.
+///
+/// In per-user mode the real subscription token is delivered by a *per-principal*
+/// iron-control grant (Authorization Bearer, and for codex the `chatgpt-account-id`
+/// header) rather than the deployment-wide `openai-codex` / `anthropic-claude`
+/// broker. So the harness fragment must NOT inject anything (that would collide
+/// with the grant and reference a broker that doesn't exist) — it only keeps the
+/// provider host reachable. Codex normally restricts egress to `chatgpt.com`, so
+/// the per-user variant re-applies just that allowlist; claude-code has no host
+/// restriction (proxy egress is default-allow), so it needs no fragment at all
+/// (`Ok(None)`). Returns `Ok(None)` for any pair without a per-user variant, so
+/// callers can treat "no fragment" as "the grant carries everything".
+pub fn per_user_harness_auth_fragment(
+    engine: &str,
+    auth_mode: &str,
+) -> Result<Option<ProxyFragment>> {
+    let yaml = match (engine, normalize_auth_mode(auth_mode).as_str()) {
+        ("codex", "access_token") => CODEX_ACCESS_TOKEN_PER_USER_FRAGMENT,
+        _ => return Ok(None),
+    };
+    load_fragment_str(yaml).map(Some)
+}
+
 /// The deployment's Bedrock region. iron-proxy re-signs Bedrock requests for
 /// this region only, and codex's `amazon-bedrock` provider talks to the
 /// region-specific `bedrock-mantle.<region>.api.aws` endpoint, so both the
@@ -185,6 +208,16 @@ transforms:
             header: Authorization
             formatter: "Bearer {{.Value}}"
           rules: [{ host: openrouter.ai }]
+"#;
+
+// Per-user subscription: allowlist chatgpt.com (codex's normal egress
+// restriction) but inject nothing — the per-principal iron-control grant carries
+// the Bearer + chatgpt-account-id. No deployment-wide `openai-codex` broker here.
+const CODEX_ACCESS_TOKEN_PER_USER_FRAGMENT: &str = r#"
+transforms:
+  - name: allowlist
+    config:
+      domains: ["chatgpt.com"]
 "#;
 
 // The `openai-codex` broker credential this references is managed by

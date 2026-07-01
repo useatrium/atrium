@@ -288,6 +288,13 @@ spec:
             # with the harness the sandbox image CMD actually runs.
             - name: KUBERNETES_IRON_PROXY_HARNESS_ENGINE
               value: {{ .Values.sandbox.harnessEngine | quote }}
+            {{- if .Values.apiRs.ironProxy.perUserSubscription }}
+            # Per-user subscription auth: each user's ChatGPT/Claude token is
+            # delivered by a per-principal iron-control grant, so the access_token
+            # harness fragment injects nothing (only allowlists the provider host).
+            - name: KUBERNETES_IRON_PROXY_PER_USER_SUBSCRIPTION
+              value: "true"
+            {{- end }}
             - name: ATRIUM_BASE_URL
               value: {{ .Values.nodeSync.atriumBaseUrl | quote }}
             - name: ATRIUM_CAPTURE_API_KEY
