@@ -2080,7 +2080,6 @@ impl SessionRuntime {
                         if let Some(repos_json) = composed_repos_json.as_deref()
                             && needs_claimed_overlay_prepare
                         {
-                            let post_claim_started = Instant::now();
                             let proxy_future = self.assign_claimed_warm_proxy(
                                 &id,
                                 thread_key,
@@ -2109,8 +2108,8 @@ impl SessionRuntime {
                             };
                             let (proxy_result, (prepare_result, prepare_duration)) =
                                 tokio::join!(proxy_future, prepare_future);
-                            let proxy_assign_duration = match proxy_result {
-                                Ok(duration) => duration,
+                            match proxy_result {
+                                Ok(()) => {}
                                 Err(error) => {
                                     let error_text = error.to_string();
                                     record_sandbox_warm_pool_claim("proxy_assign_error");
@@ -2140,7 +2139,6 @@ impl SessionRuntime {
                                 }
                             };
                             if let Err(error) = prepare_result {
-                                let post_claim_duration = post_claim_started.elapsed();
                                 record_sandbox_warm_pool_claim("post_claim_bind_error");
                                 let error_text = error.to_string();
                                 warn!(
@@ -2150,9 +2148,6 @@ impl SessionRuntime {
                                     execution_id,
                                     sandbox_id = %sandbox_id,
                                     post_claim_overlay_prepare_duration_ms = duration_millis_u64(prepare_duration),
-                                    post_claim_total_duration_ms = duration_millis_u64(post_claim_duration),
-                                    proxy_assign_performed = proxy_assign_duration.is_some(),
-                                    proxy_assign_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
                                     precomposed_overlay_home = warm_default_repos_match,
                                     error = %error_text,
                                     "retiring claimed warm sandbox after post-claim overlay preparation failed"
@@ -2183,7 +2178,6 @@ impl SessionRuntime {
                                 // Fall through to cold creation below. The cold
                                 // path uses the same composed repo JSON.
                             } else {
-                                let post_claim_duration = post_claim_started.elapsed();
                                 info!(
                                     component = COMPONENT_SESSION_RUNTIME,
                                     event = "sandbox_ensure_warm_post_claim_bind_completed",
@@ -2191,9 +2185,6 @@ impl SessionRuntime {
                                     execution_id,
                                     sandbox_id = %sandbox_id,
                                     post_claim_overlay_prepare_duration_ms = duration_millis_u64(prepare_duration),
-                                    post_claim_total_duration_ms = duration_millis_u64(post_claim_duration),
-                                    proxy_assign_performed = proxy_assign_duration.is_some(),
-                                    proxy_assign_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
                                     precomposed_overlay_home = warm_default_repos_match,
                                     "prepared claimed warm sandbox overlay home"
                                 );
@@ -2216,7 +2207,7 @@ impl SessionRuntime {
                                 return Ok(sandbox_id);
                             }
                         } else {
-                            let proxy_assign_duration = match self
+                            if let Err(error) = self
                                 .assign_claimed_warm_proxy(
                                     &id,
                                     thread_key,
@@ -2225,48 +2216,32 @@ impl SessionRuntime {
                                 )
                                 .await
                             {
-                                Ok(duration) => duration,
-                                Err(error) => {
-                                    let error_text = error.to_string();
-                                    record_sandbox_warm_pool_claim("proxy_assign_error");
-                                    self.retire_claimed_warm_sandbox(
+                                let error_text = error.to_string();
+                                record_sandbox_warm_pool_claim("proxy_assign_error");
+                                self.retire_claimed_warm_sandbox(
+                                    thread_key,
+                                    execution_id,
+                                    &sandbox_id,
+                                    &id,
+                                    &error_text,
+                                    "proxy assignment failed",
+                                )
+                                .await;
+                                self.store
+                                    .append_event(
                                         thread_key,
-                                        execution_id,
-                                        &sandbox_id,
-                                        &id,
-                                        &error_text,
-                                        "proxy assignment failed",
+                                        Some(execution_id),
+                                        "session.warm_sandbox_proxy_assign_failed",
+                                        json!({
+                                            "execution_id": execution_id,
+                                            "thread_key": thread_key.as_str(),
+                                            "sandbox_id": sandbox_id.as_str(),
+                                            "error": error_text,
+                                        }),
                                     )
-                                    .await;
-                                    self.store
-                                        .append_event(
-                                            thread_key,
-                                            Some(execution_id),
-                                            "session.warm_sandbox_proxy_assign_failed",
-                                            json!({
-                                                "execution_id": execution_id,
-                                                "thread_key": thread_key.as_str(),
-                                                "sandbox_id": sandbox_id.as_str(),
-                                                "error": error_text,
-                                            }),
-                                        )
-                                        .await?;
-                                    return Err(SessionRuntimeError::Sandbox(error));
-                                }
-                            };
-                            info!(
-                                component = COMPONENT_SESSION_RUNTIME,
-                                event = "sandbox_ensure_warm_post_claim_bind_completed",
-                                thread_key = %thread_key,
-                                execution_id,
-                                sandbox_id = %sandbox_id,
-                                post_claim_overlay_prepare_duration_ms = 0_u64,
-                                post_claim_total_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
-                                proxy_assign_performed = proxy_assign_duration.is_some(),
-                                proxy_assign_duration_ms = proxy_assign_duration.map(duration_millis_u64).unwrap_or(0),
-                                precomposed_overlay_home = false,
-                                "prepared claimed warm sandbox without overlay home changes"
-                            );
+                                    .await?;
+                                return Err(SessionRuntimeError::Sandbox(error));
+                            }
                             record_sandbox_warm_pool_claim("hit");
                             span.record("centaur.sandbox_id", sandbox_id.as_str());
                             span.record("sandbox_id", sandbox_id.as_str());
@@ -2419,11 +2394,10 @@ impl SessionRuntime {
         thread_key: &ThreadKey,
         execution_id: &str,
         iron_control_principal: Option<&str>,
-    ) -> Result<Option<Duration>, SandboxError> {
+    ) -> Result<(), SandboxError> {
         let Some(principal_id) = iron_control_principal else {
-            return Ok(None);
+            return Ok(());
         };
-        let started = Instant::now();
         match self
             .sandbox_runtime
             .manager
@@ -2431,7 +2405,6 @@ impl SessionRuntime {
             .await
         {
             Ok(()) => {
-                let duration = started.elapsed();
                 info!(
                     component = COMPONENT_SESSION_RUNTIME,
                     event = "sandbox_ensure_warm_proxy_assign_completed",
@@ -2439,13 +2412,11 @@ impl SessionRuntime {
                     execution_id,
                     sandbox_id = %id.as_str(),
                     principal_id,
-                    proxy_assign_duration_ms = duration_millis_u64(duration),
                     "assigned claimed warm sandbox proxy principal"
                 );
-                Ok(Some(duration))
+                Ok(())
             }
             Err(error) => {
-                let duration = started.elapsed();
                 warn!(
                     component = COMPONENT_SESSION_RUNTIME,
                     event = "sandbox_ensure_warm_proxy_assign_failed",
@@ -2453,7 +2424,6 @@ impl SessionRuntime {
                     execution_id,
                     sandbox_id = %id.as_str(),
                     principal_id,
-                    proxy_assign_duration_ms = duration_millis_u64(duration),
                     %error,
                     "failed to assign claimed warm sandbox proxy principal"
                 );
