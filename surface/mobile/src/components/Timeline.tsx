@@ -6,7 +6,6 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import {
   buildTimelineItems,
-  type AttachmentMeta,
   type Api,
   type ChatMessage,
   type Session,
@@ -35,8 +34,7 @@ export interface TimelineProps {
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
-  onOpenAttachment: (fileId: string) => void;
-  onOpenImageAttachment: (attachment: AttachmentMeta) => void;
+  onOpenAttachment: (message: ChatMessage, index: number) => void;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -60,7 +58,6 @@ export function Timeline({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
-  onOpenImageAttachment,
   onOpenSession,
 }: TimelineProps) {
   const { colors, reduceMotion } = useTheme();
@@ -123,7 +120,6 @@ export function Timeline({
           onToggleReaction={onToggleReaction}
           onRetry={onRetry}
           onOpenAttachment={onOpenAttachment}
-          onOpenImageAttachment={onOpenImageAttachment}
           onOpenSession={onOpenSession}
         />
       );
@@ -143,7 +139,6 @@ export function Timeline({
       onToggleReaction,
       onRetry,
       onOpenAttachment,
-      onOpenImageAttachment,
       onOpenSession,
     ],
   );
