@@ -15,6 +15,33 @@ import {
 // A real 64x64 PNG fixture (decodable by browsers AND sharp → produces a real thumbnail).
 const PNG_1x1 = readFileSync(fileURLToPath(new URL('./fixtures/sample.png', import.meta.url)));
 
+// A minimal, valid one-page PDF (correct xref offsets) that pdf-to-img can rasterize —
+// so the server generates a real first-page poster thumbnail for it.
+function onePagePdf(): Buffer {
+  const content = 'BT /F1 18 Tf 20 50 Td (PDF thumbnail) Tj ET\n';
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n',
+    `4 0 obj\n<< /Length ${Buffer.byteLength(content, 'ascii')} >>\nstream\n${content}endstream\nendobj\n`,
+    '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+  ];
+  let body = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(body, 'ascii'));
+    body += object;
+  }
+  const xrefOffset = Buffer.byteLength(body, 'ascii');
+  body += `xref\n0 ${objects.length + 1}\n`;
+  body += '0000000000 65535 f \n';
+  for (const offset of offsets.slice(1)) {
+    body += `${offset.toString().padStart(10, '0')} 00000 n \n`;
+  }
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, 'ascii');
+}
+
 // Upload bytes through the real pipeline: POST /api/uploads → presigned PUT to
 // MinIO → returns the fileId the message attachment references.
 async function uploadViaApi(
@@ -352,6 +379,40 @@ test.describe('Files Hub', () => {
         data: Buffer.from('not allowed'),
       });
       expect(binaryEdit.status(), 'binary edit rejected').toBe(415);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  test('PDF upload gets an eager server-generated first-page thumbnail', async () => {
+    const ctx = await apiAs(unique('pdf'), 'Pdf');
+    try {
+      const name = uniqueChannel('pdf');
+      await createChannel(ctx, name);
+      const chanId = await channelId(ctx, name);
+      const fileId = await uploadViaApi(ctx, 'doc.pdf', 'application/pdf', onePagePdf());
+      await postWithAttachment(ctx, chanId, 'a pdf', fileId);
+
+      // The PDF lands as a 'pdf' media-kind artifact.
+      const landed = (await channelFiles(ctx, chanId)).find((f) => f.name === 'doc.pdf');
+      expect(landed, 'pdf should appear as a channel file').toBeTruthy();
+      expect(landed?.mediaKind).toBe('pdf');
+
+      // Thumbnail generation is fire-and-forget (pdf-to-img → sharp webp) — poll for it.
+      let thumbUrl: string | null | undefined;
+      await expect
+        .poll(
+          async () => {
+            const f = (await channelFiles(ctx, chanId)).find((x) => x.name === 'doc.pdf');
+            thumbUrl = f?.thumbnailUrl;
+            return thumbUrl ?? null;
+          },
+          { timeout: 20_000, intervals: [500, 1000, 2000] },
+        )
+        .not.toBeNull();
+
+      const thumb = await ctx.get(`${apiURL}${thumbUrl}`, { maxRedirects: 0 });
+      expect([200, 302]).toContain(thumb.status());
     } finally {
       await ctx.dispose();
     }
