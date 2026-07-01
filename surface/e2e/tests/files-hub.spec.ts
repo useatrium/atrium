@@ -8,10 +8,9 @@ import {
   channelId,
   createChannel,
   login,
-  mainComposer,
   unique,
   uniqueChannel,
-} from './helpers';
+} from './helpers.js';
 
 // A real 64x64 PNG fixture (decodable by browsers AND sharp → produces a real thumbnail).
 const PNG_1x1 = readFileSync(fileURLToPath(new URL('./fixtures/sample.png', import.meta.url)));
