@@ -59,6 +59,8 @@ const CODEX_AUTH_JSON_ENV: &str = "CODEX_AUTH_JSON";
 const SESSION_REPOS_METADATA_KEY: &str = "centaur_session_repos";
 const AGENT_REPOS_JSON_ENV: &str = "AGENT_REPOS_JSON";
 const CENTAUR_WARM_SANDBOX_ENV: &str = "CENTAUR_WARM_SANDBOX";
+const CENTAUR_WARM_REPO_OVERLAY_VERSION_ENV: &str = "CENTAUR_WARM_REPO_OVERLAY_VERSION";
+const CENTAUR_WARM_REPO_OVERLAY_VERSION: &str = "2";
 const SANDBOX_REPO_CACHE_MOUNT_PATH: &str = "/cache";
 const OBSERVABILITY_TOOL_BLOCKLIST: &str =
     "vlogs,vmetrics,grafana,centaur_investigator,centaur-investigator";
@@ -2912,7 +2914,15 @@ impl SandboxWorkloadMode {
             Self::MockAppServer { .. } => self.spec_for(None, &HarnessType::Codex, None),
             Self::CodexAppServer { harness, .. } => self.spec_for(None, harness, None),
         };
-        spec.env(CENTAUR_WARM_SANDBOX_ENV, "1")
+        let spec = spec.env(CENTAUR_WARM_SANDBOX_ENV, "1");
+        if spec_env_value(&spec, AGENT_REPOS_JSON_ENV).is_some() {
+            spec.env(
+                CENTAUR_WARM_REPO_OVERLAY_VERSION_ENV,
+                CENTAUR_WARM_REPO_OVERLAY_VERSION,
+            )
+        } else {
+            spec
+        }
     }
 
     fn spec_for(
@@ -6972,6 +6982,14 @@ mod tests {
                 .find(|env| env.name == AGENT_REPOS_JSON_ENV)
                 .map(|env| env.value.as_str()),
             Some(r#"[{"repo":"acme/default","ref":"main"}]"#)
+        );
+        assert_eq!(
+            warm_spec
+                .env
+                .iter()
+                .find(|env| env.name == CENTAUR_WARM_REPO_OVERLAY_VERSION_ENV)
+                .map(|env| env.value.as_str()),
+            Some(CENTAUR_WARM_REPO_OVERLAY_VERSION)
         );
         assert!(
             warm_spec
