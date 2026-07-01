@@ -899,10 +899,10 @@ fn checkout_repo_ref(repo_dir: &Path, git_ref: &str) -> Result<(), String> {
 
     let local_ref = format!("{git_ref}^{{commit}}");
     let origin_ref = format!("origin/{git_ref}^{{commit}}");
-    let checkout_target = if git_verify_ref(repo_dir, &local_ref)? {
-        git_ref.to_owned()
-    } else if git_verify_ref(repo_dir, &origin_ref)? {
+    let checkout_target = if git_verify_ref(repo_dir, &origin_ref)? {
         format!("origin/{git_ref}")
+    } else if git_verify_ref(repo_dir, &local_ref)? {
+        git_ref.to_owned()
     } else {
         let output = Command::new("git")
             .arg("-C")
@@ -1307,6 +1307,61 @@ mod tests {
             plan.entries[0].cache_path,
             PathBuf::from("/cache/principals/principal-prn_user%3Aone/acme/private")
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn checkout_repo_ref_prefers_origin_ref_over_stale_local_branch() {
+        use std::process::Command;
+
+        fn git(repo: &Path, args: &[&str]) {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        fn head(repo: &Path) -> String {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-b", "master"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        git(&repo, &["config", "user.name", "Test User"]);
+        std::fs::write(repo.join("file.txt"), "old").unwrap();
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "-m", "old"]);
+        let old = head(&repo);
+
+        std::fs::write(repo.join("file.txt"), "new").unwrap();
+        git(&repo, &["commit", "-am", "new"]);
+        let new = head(&repo);
+
+        git(&repo, &["update-ref", "refs/remotes/origin/master", &new]);
+        git(&repo, &["update-ref", "refs/heads/master", &old]);
+        git(&repo, &["checkout", "--quiet", "--detach", &new]);
+
+        checkout_repo_ref(&repo, "master").unwrap();
+
+        assert_eq!(head(&repo), new);
     }
 
     #[test]
