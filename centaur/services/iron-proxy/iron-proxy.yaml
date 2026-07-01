@@ -37,17 +37,23 @@ transforms:
         - "jwt"
         - "anthropic-version"
         - "anthropic-beta"
+        # Claude Code client identity. iron-proxy MITMs the model hosts and would
+        # otherwise strip these; genuine Claude Code (incl. Pro/Max subscription
+        # OAuth) must present them, or Anthropic's client-identity checks can
+        # misread the request as a non-Claude-Code harness. NB: `user-agent` is
+        # generic and now also reaches other upstreams — benign client id, and
+        # hosts stay gated by the domain allowlist above.
+        - "anthropic-dangerous-direct-browser-access"
+        - "user-agent"
+        - "x-app"
         - "openai-organization"
         - "openai-project"
         - "chatgpt-account-id"
         - "x-request-id"
-        - "x-stainless-arch"
-        - "x-stainless-os"
-        - "x-stainless-lang"
-        - "x-stainless-runtime"
-        - "x-stainless-runtime-version"
-        - "x-stainless-package-version"
-        - "x-stainless-retry-count"
+        # SDK ("stainless") telemetry: arch/os/lang/runtime/runtime-version/
+        # package-version/retry-count/timeout. Regex keeps genuine Claude Code /
+        # Codex client telemetry intact across SDK version bumps.
+        - "/^x-stainless-.*$/"
         - "connection"
         - "transfer-encoding"
         - "te"
@@ -82,6 +88,7 @@ transforms:
         - "addepar-firm"
         - "clientid"
         - "x-as-user-email"
+        - "/^x-claude-.*$/"
         - "/^x-codex-.*$/"
         - "/^x-openai-.*$/"
         # AWS SigV4 request headers (x-amz-target, x-amz-date,

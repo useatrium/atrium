@@ -62,7 +62,7 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-fn path_is_empty(path: &PathBuf) -> bool {
+fn path_is_empty(path: &Path) -> bool {
     path.as_os_str().is_empty()
 }
 
