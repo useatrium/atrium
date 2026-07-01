@@ -111,8 +111,22 @@ export async function pollCodexDevice(
       return { status: 'error', message: 'token exchange returned missing fields' };
     }
 
-    await convergeCodexBrokerGrant(deps.ironControl, { workspaceId, userId, refreshToken, accountId });
+    const outcome = await convergeCodexBrokerGrant(deps.ironControl, {
+      workspaceId,
+      userId,
+      refreshToken,
+      accountId,
+    });
     await deps.pendingOAuth.consume(pendingId, userId);
+    if (outcome === 'dead') {
+      // The refresh token was rejected when the broker tried to mint — don't
+      // report a false "connected". The handshake is consumed, so Try Again
+      // starts a fresh device flow.
+      return {
+        status: 'error',
+        message: 'Codex sign-in could not be verified (token rejected). Please connect again.',
+      };
+    }
     return { status: 'connected' };
   }
 

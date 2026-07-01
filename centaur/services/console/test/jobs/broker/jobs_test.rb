@@ -16,6 +16,7 @@ module Broker
       future = make_credential
       future.update_columns(next_attempt_at: 1.hour.from_now)
 
+      clear_enqueued_jobs # drop eager create-time bootstrap enqueues; measure only the poll
       Broker::PollRefreshJob.perform_now
 
       enqueued_ids = enqueued_jobs
@@ -29,6 +30,7 @@ module Broker
       due = make_credential(grant: "password", username: "user", password: "pass", refresh_token: nil)
       due.update_columns(last_refresh: 1.hour.ago, next_attempt_at: 1.minute.ago)
 
+      clear_enqueued_jobs # drop eager create-time bootstrap enqueues; measure only the poll
       Broker::PollRefreshJob.perform_now
 
       enqueued_ids = enqueued_jobs
@@ -42,6 +44,7 @@ module Broker
                             api_key: "api-key", refresh_token: nil)
       due.update_columns(last_refresh: 1.hour.ago, next_attempt_at: 1.minute.ago)
 
+      clear_enqueued_jobs # drop eager create-time bootstrap enqueues; measure only the poll
       Broker::PollRefreshJob.perform_now
 
       enqueued_ids = enqueued_jobs

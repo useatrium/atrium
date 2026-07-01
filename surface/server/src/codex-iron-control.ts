@@ -8,10 +8,18 @@ import {
   codexBrokerCredentialForeignId,
 } from './iron-control.js';
 
+/**
+ * Result of wiring a Codex BYO grant. `live` = the broker minted an access token
+ * and the bearer is deliverable now; `pending` = still minting after the bounded
+ * wait (rare — the token should land shortly); `dead` = the refresh token was
+ * rejected, so the connection is not usable and the user must reconnect.
+ */
+export type CodexGrantOutcome = 'live' | 'pending' | 'dead';
+
 export async function convergeCodexBrokerGrant(
   ironControl: IronControlAdminClient,
   args: { workspaceId: string; userId: string; refreshToken: string; accountId: string },
-): Promise<void> {
+): Promise<CodexGrantOutcome> {
   const { workspaceId, userId, refreshToken, accountId } = args;
   const foreignId = atriumPrincipalForeignId(workspaceId, userId);
   const labels = {
@@ -74,5 +82,33 @@ export async function convergeCodexBrokerGrant(
     if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
       await ironControl.createPrincipalStaticGrant(principal.id, secret.id);
     }
+  }
+
+  // The broker mints the first access token asynchronously (console enqueues an
+  // eager refresh on seed). Wait — briefly — for it to land so the caller only
+  // reports "connected" once the bearer is actually deliverable, closing the race
+  // where a session spawned right after connect would inject no token.
+  return waitForCodexBrokerLive(ironControl, broker.id);
+}
+
+const BROKER_LIVE_TIMEOUT_MS = 6000;
+const BROKER_LIVE_POLL_MS = 400;
+
+async function waitForCodexBrokerLive(
+  ironControl: IronControlAdminClient,
+  brokerId: string,
+): Promise<CodexGrantOutcome> {
+  const deadline = Date.now() + BROKER_LIVE_TIMEOUT_MS;
+  for (;;) {
+    let status: string | undefined;
+    try {
+      status = (await ironControl.getBrokerCredential(brokerId)).status;
+    } catch {
+      // Transient read error — keep polling until the deadline.
+    }
+    if (status === 'live') return 'live';
+    if (status === 'dead') return 'dead';
+    if (Date.now() >= deadline) return 'pending';
+    await new Promise((resolve) => setTimeout(resolve, BROKER_LIVE_POLL_MS));
   }
 }
