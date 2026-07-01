@@ -9,7 +9,7 @@ export interface AppsOriginDeps {
   pool: Db;
   signingSecret?: string;
   storage?: {
-    getObjectStream(key: string): Promise<NodeJS.ReadableStream>;
+    getObjectStream(key: string): Promise<NodeJS.ReadableStream | { stream: NodeJS.ReadableStream }>;
   };
 }
 
@@ -64,7 +64,8 @@ export async function buildAppsOrigin(deps: AppsOriginDeps): Promise<FastifyInst
     reply.header('X-App-Id', file.appId);
     reply.header('X-App-Version', String(file.version));
     reply.header('X-App-Blob-Sha', file.blobSha);
-    return reply.send(await storage.getObjectStream(file.s3Key));
+    const object = await storage.getObjectStream(file.s3Key);
+    return reply.send('stream' in object ? object.stream : object);
   });
 
   return app;

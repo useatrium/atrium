@@ -187,10 +187,35 @@ export function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps
       filename: string;
       content_type: string;
       s3_key: string;
-    }>('SELECT filename, content_type, s3_key FROM files WHERE id = $1', [id]);
+      content_hash: string | null;
+    }>('SELECT filename, content_type, s3_key, content_hash FROM files WHERE id = $1', [id]);
     const file = res.rows[0];
     if (!file || !file.s3_key) {
       return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+    if (file.content_hash) {
+      const tombstone = await pool.query<{ tombstoned: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM events e
+             JOIN artifacts a
+               ON a.workspace_id = e.workspace_id
+              AND a.path LIKE ('shared/channels/' || e.channel_id::text || '/uploads/%')
+             JOIN artifact_versions v ON v.artifact_id = a.id
+            WHERE e.type = 'message.posted'
+              AND jsonb_typeof(e.payload->'attachments') = 'array'
+              AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements(e.payload->'attachments') att
+                 WHERE att->>'id' = $1
+              )
+              AND v.blob_sha = $2
+              AND a.tombstoned_at IS NOT NULL
+         ) AS tombstoned`,
+        [id, file.content_hash],
+      );
+      if (tombstone.rows[0]?.tombstoned) {
+        return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
+      }
     }
     const inline =
       file.content_type.startsWith('image/') || file.content_type === 'application/pdf';

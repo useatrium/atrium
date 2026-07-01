@@ -145,8 +145,21 @@ export async function getObjectBytes(key: string): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-export async function getObjectStream(key: string): Promise<NodeJS.ReadableStream> {
-  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+export async function getObjectStream(
+  key: string,
+  range?: string,
+): Promise<{
+  stream: NodeJS.ReadableStream;
+  contentLength: number | null;
+  contentRange: string | null;
+  contentType: string | null;
+}> {
+  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key, Range: range }));
   if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
-  return res.Body as NodeJS.ReadableStream;
+  return {
+    stream: res.Body as NodeJS.ReadableStream,
+    contentLength: res.ContentLength == null ? null : Number(res.ContentLength),
+    contentRange: res.ContentRange ?? null,
+    contentType: res.ContentType ?? null,
+  };
 }

@@ -624,7 +624,7 @@ export class SessionRuns {
     if (!v) {
       throw new DomainError(404, 'artifact_not_found', 'artifact not found');
     }
-    if (v.kind === 'deleted') {
+    if (v.kind === 'deleted' || v.tombstoned) {
       throw new DomainError(410, 'artifact_deleted', 'artifact was deleted');
     }
     if (!v.blobSha || !v.s3Key) {

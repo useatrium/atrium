@@ -339,7 +339,7 @@ export async function registerFileRoutes(app: FastifyInstance, deps: FileRouteDe
         },
       );
       if (!version) return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-      if (version.kind === 'deleted') {
+      if (version.kind === 'deleted' || version.tombstoned) {
         return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
       }
       if (!version.s3Key || !version.blobSha) {

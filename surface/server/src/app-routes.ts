@@ -16,6 +16,7 @@ import { registerClientErrorRoutes } from './routes/client-errors.js';
 import type { EntryAnnotationRateLimit } from './routes/entries.js';
 import { registerEntryRoutes } from './routes/entries.js';
 import { registerFileRoutes } from './routes/files.js';
+import { registerFilesHubRoutes } from './routes/files-hub.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerInternalArtifactRoutes } from './routes/internal-artifacts.js';
 import { registerInternalAtriumRoutes } from './routes/internal-atrium.js';
@@ -124,6 +125,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
     runMutation,
   });
   registerUploadRoutes(app, { pool, fileStorage, secret, requireUser, activeWorkspaceIdFor, noWorkspace });
+  await registerFilesHubRoutes(app, { pool, requireUser });
 
   await registerChannelArtifactWritebackRoutes(app, { pool, maxUploadBytes: config.maxUploadBytes, requireUser });
 

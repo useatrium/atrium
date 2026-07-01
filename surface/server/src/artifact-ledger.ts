@@ -9,12 +9,57 @@ import {
   canonicalizeSessionArtifactPath,
   canonicalizeWorkspaceArtifactPath,
 } from './artifact-path.js';
-import { readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
+import { classifyScope, readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
 import {
   classifyMediaFromMime,
   type MediaClassification,
   type MediaKind,
 } from './media-classifier.js';
+type FileOrigin = 'upload' | 'agent' | 'workspace';
+
+interface HubFile {
+  artifactId: string;
+  workspaceId: string;
+  path: string;
+  name: string;
+  mime: string | null;
+  mediaKind: string | null;
+  isText: boolean | null;
+  sizeBytes: number | null;
+  width?: number;
+  height?: number;
+  origin: FileOrigin;
+  uploader?: { id: string; name?: string };
+  channelId?: string | null;
+  sessionId?: string | null;
+  sourceMessageId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  versionSeq: number;
+  labels: string[];
+  starred: boolean;
+  tombstoned: boolean;
+}
+
+interface HubFileListQuery {
+  origin?: FileOrigin[];
+  mediaKind?: string[];
+  channelId?: string;
+  sessionId?: string;
+  label?: string;
+  starred?: boolean;
+  q?: string;
+  includeDeleted?: boolean;
+  includeScratch?: boolean;
+  sort?: 'recent' | 'name' | 'size';
+  cursor?: string;
+  limit?: number;
+}
+
+interface HubFileListResult {
+  files: HubFile[];
+  nextCursor?: string | null;
+}
 
 export type MergeClass = 'immutable-data' | 'mergeable-doc' | 'derived-output';
 export type VersionKind = 'created' | 'modified' | 'deleted';
@@ -44,6 +89,7 @@ export interface ResolvedVersion {
   textEncoding: string | null;
   sizeBytes: number | null;
   s3Key: string | null;
+  tombstoned: boolean;
 }
 
 export interface ChangedArtifact {
@@ -118,6 +164,7 @@ export interface CommitUploadParams {
   sizeBytes: number;
   mime: string;
   author: string;
+  sourceMessageId?: string | null;
 }
 
 export type CommitVersionResult =
@@ -181,6 +228,41 @@ function mergeClassForMime(mime: string): MergeClass {
   return normalized.startsWith('text/') ? 'mergeable-doc' : 'immutable-data';
 }
 
+function basenameForPath(path: string): string {
+  return path.split('/').filter(Boolean).pop() ?? path;
+}
+
+function isoDate(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function decodeOffsetCursor(cursor: string | undefined): number {
+  if (!cursor) return 0;
+  const decoded = Number.parseInt(Buffer.from(cursor, 'base64url').toString('utf8'), 10);
+  return Number.isFinite(decoded) && decoded >= 0 ? decoded : 0;
+}
+
+function encodeOffsetCursor(offset: number): string {
+  return Buffer.from(String(offset), 'utf8').toString('base64url');
+}
+
+function humanAuthorUserId(author: string): string | null {
+  const match = /^human:([0-9a-f-]{36})$/i.exec(author);
+  return match?.[1] ?? null;
+}
+
+function originFor(path: string, author: string): FileOrigin {
+  if (/^shared\/channels\/[^/]+\/uploads\/.+/.test(path) && author.startsWith('human:')) {
+    return 'upload';
+  }
+  return author.startsWith('human:') ? 'workspace' : 'agent';
+}
+
+function numericMeta(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 interface VersionRow {
   artifactId: string;
   seq: number;
@@ -190,6 +272,38 @@ interface VersionRow {
   kind: VersionKind;
   status?: VersionStatus;
   conflict?: unknown;
+  sourceMessageId?: string | null;
+}
+
+interface HubListParams {
+  workspaceId: string;
+  userId: string;
+  query?: HubFileListQuery;
+}
+
+interface HubListRow {
+  artifact_id: string;
+  workspace_id: string;
+  session_id: string | null;
+  channel_id: string | null;
+  path: string;
+  created_at: Date | string;
+  tombstoned_at: Date | string | null;
+  version_seq: number;
+  version_created_at: Date | string;
+  author: string;
+  kind: VersionKind;
+  source_message_id: string | null;
+  mime: string | null;
+  detected_mime: string | null;
+  media_kind: MediaKind | null;
+  is_text: boolean | null;
+  size_bytes: number | string | null;
+  classification_meta: Record<string, unknown> | null;
+  labels: string[] | null;
+  starred: boolean;
+  uploader_id: string | null;
+  uploader_name: string | null;
 }
 
 export class ArtifactLedger {
@@ -347,8 +461,8 @@ export class ArtifactLedger {
   async insertVersion(client: DbClient, v: VersionRow): Promise<void> {
     await client.query(
       `INSERT INTO artifact_versions
-         (artifact_id, seq, blob_sha, base_seq, author, kind, status, conflict)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         (artifact_id, seq, blob_sha, base_seq, author, kind, status, conflict, source_message_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         v.artifactId,
         v.seq,
@@ -358,6 +472,7 @@ export class ArtifactLedger {
         v.kind,
         v.status ?? 'normal',
         v.conflict != null ? JSON.stringify(v.conflict) : null,
+        v.sourceMessageId ?? null,
       ],
     );
   }
@@ -691,6 +806,457 @@ export class ArtifactLedger {
     }));
   }
 
+  async listWorkspaceFiles(params: HubListParams): Promise<HubFileListResult> {
+    return this.listHubFiles(params);
+  }
+
+  async listChannelFiles(params: HubListParams & { channelId: string }): Promise<HubFileListResult> {
+    return this.listHubFiles(params);
+  }
+
+  private async listHubFiles(params: HubListParams & { channelId?: string }): Promise<HubFileListResult> {
+    const query = params.query ?? {};
+    const limit = Math.min(Math.max(Number(query.limit ?? 50), 1), 200);
+    const offset = decodeOffsetCursor(query.cursor);
+    const includeScratch = query.includeScratch !== false;
+    const includeDeleted = query.includeDeleted === true;
+    const scope = await this.hubReadableScope(params.workspaceId, params.userId, params.channelId);
+    const conditions: string[] = ['a.workspace_id = $1'];
+    const values: unknown[] = [params.workspaceId, params.userId];
+    let index = values.length;
+
+    const sharedChannelPatterns =
+      params.channelId != null
+        ? [`shared/channels/${params.channelId}/%`]
+        : scope.readableChannelIds.map((id) => `shared/channels/${id}/%`);
+    const sharedPatterns =
+      params.channelId != null
+        ? sharedChannelPatterns
+        : ['shared/global/%', 'shared/apps/%', ...sharedChannelPatterns];
+    const scratchPatterns = includeScratch
+      ? scope.sessionIds.map((id) => `scratch/${id}/%`)
+      : [];
+    const readablePredicates: string[] = [];
+    if (sharedPatterns.length > 0) {
+      values.push(sharedPatterns);
+      readablePredicates.push(`a.path LIKE ANY($${++index}::text[])`);
+    }
+    if (scratchPatterns.length > 0) {
+      values.push(scratchPatterns);
+      readablePredicates.push(`a.path LIKE ANY($${++index}::text[])`);
+    }
+    if (readablePredicates.length === 0) {
+      return { files: [], nextCursor: null };
+    }
+    conditions.push(`(${readablePredicates.join(' OR ')})`);
+
+    if (!includeDeleted) conditions.push("a.tombstoned_at IS NULL AND l.kind <> 'deleted'");
+    if (query.mediaKind && query.mediaKind.length > 0) {
+      values.push(query.mediaKind);
+      conditions.push(`l.media_kind = ANY($${++index}::text[])`);
+    }
+    if (query.sessionId) {
+      values.push(query.sessionId);
+      conditions.push(`a.session_id = $${++index}`);
+    }
+    if (query.channelId) {
+      values.push(`shared/channels/${query.channelId}/%`);
+      conditions.push(`a.path LIKE $${++index}`);
+    }
+    if (query.label) {
+      values.push(query.label);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM artifact_labels lf WHERE lf.artifact_id = a.id AND lf.label = $${++index})`,
+      );
+    }
+    if (query.starred === true) {
+      values.push(params.userId);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM artifact_stars sf WHERE sf.artifact_id = a.id AND sf.user_id = $${++index})`,
+      );
+    } else if (query.starred === false) {
+      values.push(params.userId);
+      conditions.push(
+        `NOT EXISTS (SELECT 1 FROM artifact_stars sf WHERE sf.artifact_id = a.id AND sf.user_id = $${++index})`,
+      );
+    }
+    if (query.q && query.q.trim()) {
+      values.push(`%${query.q.trim()}%`);
+      const qParam = `$${++index}`;
+      conditions.push(`(a.path ILIKE ${qParam} OR regexp_replace(a.path, '^.*/', '') ILIKE ${qParam})`);
+    }
+    if (query.origin && query.origin.length > 0) {
+      values.push(query.origin);
+      conditions.push(`l.origin = ANY($${++index}::text[])`);
+    }
+
+    const orderBy =
+      query.sort === 'name'
+        ? "lower(regexp_replace(l.path, '^.*/', '')) ASC, l.artifact_id ASC"
+        : query.sort === 'size'
+          ? 'l.size_bytes DESC NULLS LAST, l.version_created_at DESC, l.artifact_id ASC'
+          : 'l.version_created_at DESC, l.artifact_id ASC';
+    values.push(limit, offset);
+    const limitParam = `$${++index}`;
+    const offsetParam = `$${++index}`;
+    const res = await this.pool.query<HubListRow>(
+      `WITH latest AS (
+         SELECT a.id AS artifact_id, a.workspace_id, a.session_id, a.channel_id, a.path,
+                a.created_at, a.tombstoned_at, p.seq AS version_seq,
+                v.created_at AS version_created_at, v.author, v.kind, v.source_message_id,
+                b.mime, b.detected_mime, b.media_kind, b.is_text, b.size_bytes, b.classification_meta,
+                CASE
+                  WHEN a.path ~ '^shared/channels/[^/]+/uploads/.+' AND v.author LIKE 'human:%' THEN 'upload'
+                  WHEN v.author LIKE 'human:%' THEN 'workspace'
+                  ELSE 'agent'
+                END AS origin,
+                CASE WHEN v.author ~ '^human:[0-9a-f-]{36}$' THEN substring(v.author from 7)::uuid ELSE NULL END AS uploader_uuid
+           FROM artifacts a
+           JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+           JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+           LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+       )
+       SELECT l.artifact_id, l.workspace_id, l.session_id, l.channel_id, l.path,
+              l.created_at, l.tombstoned_at, l.version_seq, l.version_created_at,
+              l.author, l.kind, l.source_message_id, l.mime, l.detected_mime,
+              l.media_kind, l.is_text, l.size_bytes, l.classification_meta,
+              COALESCE(labels.labels, ARRAY[]::text[]) AS labels,
+              EXISTS (
+                SELECT 1 FROM artifact_stars s
+                 WHERE s.artifact_id = l.artifact_id AND s.user_id = $2
+              ) AS starred,
+              u.id AS uploader_id, u.display_name AS uploader_name
+         FROM latest l
+         JOIN artifacts a ON a.id = l.artifact_id
+         LEFT JOIN LATERAL (
+           SELECT array_agg(al.label ORDER BY al.label ASC) AS labels
+             FROM artifact_labels al
+            WHERE al.artifact_id = l.artifact_id
+         ) labels ON true
+         LEFT JOIN users u ON u.id = l.uploader_uuid
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY ${orderBy}
+        LIMIT ${limitParam} OFFSET ${offsetParam}`,
+      values,
+    );
+    const files = res.rows.map((row) => this.hubFileFromRow(row));
+    return {
+      files,
+      nextCursor: files.length === limit ? encodeOffsetCursor(offset + files.length) : null,
+    };
+  }
+
+  private async hubReadableScope(
+    workspaceId: string,
+    userId: string,
+    channelId?: string,
+  ): Promise<{ readableChannelIds: string[]; sessionIds: string[] }> {
+    const channelFilter = channelId ? 'AND c.id = $3' : '';
+    const channelParams = channelId ? [workspaceId, userId, channelId] : [workspaceId, userId];
+    const channels = await this.pool.query<{ id: string }>(
+      `SELECT c.id
+         FROM channels c
+        WHERE c.workspace_id = $1
+          ${channelFilter}
+          AND (
+            (c.kind = 'public' AND EXISTS (
+              SELECT 1 FROM workspace_members wm
+               WHERE wm.workspace_id = c.workspace_id AND wm.user_id = $2
+            ))
+            OR EXISTS (
+              SELECT 1 FROM channel_members cm
+               WHERE cm.channel_id = c.id AND cm.user_id = $2
+            )
+          )
+        ORDER BY c.id ASC`,
+      channelParams,
+    );
+    const readableChannelIds = channels.rows.map((row) => row.id);
+    const sessionFilter = channelId ? 'AND channel_id = $3' : '';
+    const sessionParams = channelId ? [workspaceId, userId, channelId] : [workspaceId, userId];
+    const sessions = await this.pool.query<{ id: string }>(
+      `SELECT id
+         FROM sessions
+        WHERE workspace_id = $1
+          ${sessionFilter}
+          AND (spawned_by = $2 OR driver_id = $2)
+        ORDER BY created_at DESC`,
+      sessionParams,
+    );
+    return { readableChannelIds, sessionIds: sessions.rows.map((row) => row.id) };
+  }
+
+  private hubFileFromRow(row: HubListRow): HubFile {
+    const meta = row.classification_meta ?? {};
+    const origin = originFor(row.path, row.author);
+    const uploaderId = row.uploader_id ?? humanAuthorUserId(row.author);
+    return {
+      artifactId: row.artifact_id,
+      workspaceId: row.workspace_id,
+      path: row.path,
+      name: basenameForPath(row.path),
+      mime: row.detected_mime ?? row.mime,
+      mediaKind: row.media_kind,
+      isText: row.is_text,
+      sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
+      ...(numericMeta(meta.width) != null ? { width: numericMeta(meta.width) } : {}),
+      ...(numericMeta(meta.height) != null ? { height: numericMeta(meta.height) } : {}),
+      origin,
+      ...(uploaderId
+        ? { uploader: { id: uploaderId, ...(row.uploader_name ? { name: row.uploader_name } : {}) } }
+        : {}),
+      channelId: row.channel_id,
+      sessionId: row.session_id,
+      sourceMessageId: row.source_message_id,
+      createdAt: isoDate(row.created_at),
+      updatedAt: isoDate(row.version_created_at),
+      versionSeq: row.version_seq,
+      labels: row.labels ?? [],
+      starred: row.starred,
+      tombstoned: row.tombstoned_at != null,
+    };
+  }
+
+  async artifactReadableByUser(
+    artifactId: string,
+    userId: string,
+  ): Promise<{ workspaceId: string; path: string; tombstoned: boolean } | null> {
+    const res = await this.pool.query<{
+      workspace_id: string;
+      path: string;
+      tombstoned_at: Date | string | null;
+      channel_match: string | null;
+      scratch_session_id: string | null;
+      workspace_member: boolean;
+    }>(
+      `SELECT a.workspace_id, a.path, a.tombstoned_at,
+              (regexp_match(a.path, '^shared/channels/([^/]+)/'))[1] AS channel_match,
+              (regexp_match(a.path, '^scratch/([^/]+)/'))[1] AS scratch_session_id,
+              EXISTS (
+                SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = a.workspace_id AND wm.user_id = $2
+              ) AS workspace_member
+         FROM artifacts a
+        WHERE a.id = $1`,
+      [artifactId, userId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    const scope = classifyScope(row.path);
+    let readable = false;
+    if (scope === 'workspace') {
+      if (row.channel_match) {
+        const channel = await this.pool.query<{ ok: boolean }>(
+          `SELECT (
+             (c.kind = 'public' AND EXISTS (
+               SELECT 1 FROM workspace_members wm
+                WHERE wm.workspace_id = c.workspace_id AND wm.user_id = $2
+             ))
+             OR EXISTS (
+               SELECT 1 FROM channel_members cm
+                WHERE cm.channel_id = c.id AND cm.user_id = $2
+             )
+           ) AS ok
+             FROM channels c
+            WHERE c.id = $1 AND c.workspace_id = $3`,
+          [row.channel_match, userId, row.workspace_id],
+        );
+        readable = channel.rows[0]?.ok === true;
+      } else {
+        readable = row.workspace_member;
+      }
+    } else if (row.scratch_session_id) {
+      const session = await this.pool.query(
+        `SELECT 1
+           FROM sessions
+          WHERE id = $1 AND workspace_id = $2 AND (spawned_by = $3 OR driver_id = $3)`,
+        [row.scratch_session_id, row.workspace_id, userId],
+      );
+      readable = (session.rowCount ?? 0) > 0;
+    }
+    return readable
+      ? { workspaceId: row.workspace_id, path: row.path, tombstoned: row.tombstoned_at != null }
+      : null;
+  }
+
+  async artifactContentById(artifactId: string): Promise<{
+    artifactId: string;
+    workspaceId: string;
+    path: string;
+    seq: number;
+    kind: VersionKind;
+    blobSha: string | null;
+    s3Key: string | null;
+    mime: string | null;
+    mediaKind: MediaKind | null;
+    isText: boolean | null;
+    sizeBytes: number | null;
+    tombstoned: boolean;
+  } | null> {
+    const res = await this.pool.query<{
+      workspace_id: string;
+      path: string;
+      seq: number;
+      kind: VersionKind;
+      blob_sha: string | null;
+      s3_key: string | null;
+      mime: string | null;
+      detected_mime: string | null;
+      media_kind: MediaKind | null;
+      is_text: boolean | null;
+      size_bytes: number | string | null;
+      tombstoned_at: Date | string | null;
+    }>(
+      `SELECT a.workspace_id, a.path, p.seq, v.kind, v.blob_sha,
+              b.s3_key, b.mime, b.detected_mime, b.media_kind, b.is_text, b.size_bytes,
+              a.tombstoned_at
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+         LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+        WHERE a.id = $1`,
+      [artifactId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+      artifactId,
+      workspaceId: row.workspace_id,
+      path: row.path,
+      seq: row.seq,
+      kind: row.kind,
+      blobSha: row.blob_sha,
+      s3Key: row.s3_key,
+      mime: row.detected_mime ?? row.mime,
+      mediaKind: row.media_kind,
+      isText: row.is_text,
+      sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
+      tombstoned: row.tombstoned_at != null,
+    };
+  }
+
+  async labelsForArtifact(artifactId: string): Promise<string[]> {
+    const res = await this.pool.query<{ label: string }>(
+      `SELECT label FROM artifact_labels WHERE artifact_id = $1 ORDER BY label ASC`,
+      [artifactId],
+    );
+    return res.rows.map((row) => row.label);
+  }
+
+  async addLabel(artifactId: string, label: string, userId: string): Promise<string[]> {
+    await this.pool.query(
+      `INSERT INTO artifact_labels (artifact_id, label, created_by)
+       VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [artifactId, label, userId],
+    );
+    return this.labelsForArtifact(artifactId);
+  }
+
+  async removeLabel(artifactId: string, label: string): Promise<string[]> {
+    await this.pool.query('DELETE FROM artifact_labels WHERE artifact_id = $1 AND label = $2', [
+      artifactId,
+      label,
+    ]);
+    return this.labelsForArtifact(artifactId);
+  }
+
+  async setStar(artifactId: string, userId: string, starred: boolean): Promise<boolean> {
+    if (starred) {
+      await this.pool.query(
+        `INSERT INTO artifact_stars (artifact_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [artifactId, userId],
+      );
+      return true;
+    }
+    await this.pool.query('DELETE FROM artifact_stars WHERE artifact_id = $1 AND user_id = $2', [
+      artifactId,
+      userId,
+    ]);
+    return false;
+  }
+
+  async renameArtifact(artifactId: string, name: string): Promise<{ path: string; name: string }> {
+    const current = await this.pool.query<{ workspace_id: string; path: string }>(
+      'SELECT workspace_id, path FROM artifacts WHERE id = $1',
+      [artifactId],
+    );
+    const row = current.rows[0];
+    if (!row) throw new Error(`artifact not found: ${artifactId}`);
+    const slash = row.path.lastIndexOf('/');
+    const path = slash >= 0 ? `${row.path.slice(0, slash + 1)}${name}` : name;
+    await this.pool.query('UPDATE artifacts SET path = $2 WHERE id = $1', [artifactId, path]);
+    return { path, name };
+  }
+
+  async userCanManageArtifact(artifactId: string, userId: string): Promise<boolean> {
+    const res = await this.pool.query<{ ok: boolean }>(
+      `SELECT (
+         EXISTS (
+           SELECT 1 FROM artifacts a
+           JOIN workspace_members wm ON wm.workspace_id = a.workspace_id AND wm.user_id = $2
+           WHERE a.id = $1 AND wm.role IN ('admin', 'owner')
+         )
+         OR EXISTS (
+           SELECT 1 FROM artifact_versions v
+            WHERE v.artifact_id = $1 AND v.author = $3
+         )
+       ) AS ok`,
+      [artifactId, userId, `human:${userId}`],
+    );
+    return res.rows[0]?.ok === true;
+  }
+
+  async softDeleteArtifact(artifactId: string, author: string): Promise<void> {
+    await withTx(this.pool, async (client) => {
+      const locked = await client.query<{ id: string }>('SELECT id FROM artifacts WHERE id = $1 FOR UPDATE', [
+        artifactId,
+      ]);
+      if (!locked.rows[0]) throw new Error(`artifact not found: ${artifactId}`);
+      const latest = await this.latestVersion(client, artifactId);
+      if (!latest) throw new Error(`artifact has no versions: ${artifactId}`);
+      const seq = latest.kind === 'deleted' ? latest.seq : latest.seq + 1;
+      if (latest.kind !== 'deleted') {
+        await this.insertVersion(client, {
+          artifactId,
+          seq,
+          blobSha: null,
+          baseSeq: latest.seq,
+          author,
+          kind: 'deleted',
+        });
+        await this.advancePointer(client, artifactId, 'latest', seq);
+      }
+      await client.query('UPDATE artifacts SET tombstoned_at = COALESCE(tombstoned_at, now()) WHERE id = $1', [
+        artifactId,
+      ]);
+    });
+  }
+
+  async restoreArtifact(artifactId: string): Promise<boolean> {
+    return withTx(this.pool, async (client) => {
+      const locked = await client.query<{ id: string }>('SELECT id FROM artifacts WHERE id = $1 FOR UPDATE', [
+        artifactId,
+      ]);
+      if (!locked.rows[0]) return false;
+      const latestLive = await client.query<{ seq: number }>(
+        `SELECT seq
+           FROM artifact_versions
+          WHERE artifact_id = $1 AND kind <> 'deleted'
+          ORDER BY seq DESC
+          LIMIT 1`,
+        [artifactId],
+      );
+      const row = latestLive.rows[0];
+      if (!row) return false;
+      await this.advancePointer(client, artifactId, 'latest', row.seq);
+      await client.query('UPDATE artifacts SET tombstoned_at = NULL WHERE id = $1', [artifactId]);
+      return true;
+    });
+  }
+
   // === per-path sync-state (§8B #2; node mirrors, server is authoritative) ==
 
   async getSyncState(sessionId: string, path: string): Promise<SyncState | null> {
@@ -830,6 +1396,7 @@ export class ArtifactLedger {
         baseSeq: latest?.seq ?? null,
         author: params.author,
         kind: latest == null ? 'created' : 'modified',
+        sourceMessageId: params.sourceMessageId ?? null,
       });
       await this.advancePointer(client, artifactId, 'latest', seq);
       return { artifactId, seq };
@@ -1012,10 +1579,13 @@ export class ArtifactLedger {
       text_encoding: string | null;
       size_bytes: number | null;
       s3_key: string | null;
+      tombstoned_at: Date | string | null;
     }>(
       `SELECT v.seq, v.blob_sha, v.kind, v.status,
-              b.mime, b.detected_mime, b.media_kind, b.is_text, b.text_encoding, b.size_bytes, b.s3_key
+              b.mime, b.detected_mime, b.media_kind, b.is_text, b.text_encoding, b.size_bytes, b.s3_key,
+              a.tombstoned_at
          FROM artifact_versions v
+         JOIN artifacts a ON a.id = v.artifact_id
          LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
         WHERE v.artifact_id = $1 AND v.seq = $2`,
       [artifactId, seq],
@@ -1035,6 +1605,7 @@ export class ArtifactLedger {
       textEncoding: row.text_encoding,
       sizeBytes: row.size_bytes,
       s3Key: row.s3_key,
+      tombstoned: row.tombstoned_at != null,
     };
   }
 }
