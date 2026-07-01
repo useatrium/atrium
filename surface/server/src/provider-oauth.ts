@@ -180,6 +180,34 @@ export async function postForm<T = unknown>(
   return { ok: res.ok, status: res.status, body: body as T };
 }
 
+// ── JSON-body token-endpoint POST ────────────────────────────────────────────
+// Codex's device-authorization endpoints (`/api/accounts/deviceauth/*`) require
+// a JSON request body, not form encoding. (The `/oauth/token` exchange itself is
+// still form-encoded — use postForm for that.)
+export async function postJson<T = unknown>(
+  url: string,
+  payload: Record<string, unknown>,
+  init?: { headers?: Record<string, string> },
+): Promise<{ ok: boolean; status: number; body: T }> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...(init?.headers ?? {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  let body: unknown = null;
+  const text = await res.text();
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = { raw: text };
+  }
+  return { ok: res.ok, status: res.status, body: body as T };
+}
+
 // ── AES-256-GCM seal/unseal (shape-compatible with provider-credentials.ts) ──
 function seal(secret: string, value: unknown): string {
   const key = createHash('sha256').update(secret).digest();
