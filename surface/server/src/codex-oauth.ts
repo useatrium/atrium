@@ -1,19 +1,22 @@
 import { config } from './config.js';
 import { convergeCodexBrokerGrant } from './codex-iron-control.js';
 import type { IronControlAdminClient } from './iron-control.js';
-import { type PendingOAuthStore, postForm } from './provider-oauth.js';
+import { type PendingOAuthStore, postForm, postJson } from './provider-oauth.js';
 
 type JsonObject = Record<string, unknown>;
 
 type CodexDeviceState = {
   deviceAuthId: string;
+  // The poll endpoint (`/api/accounts/deviceauth/token`) requires the user_code
+  // alongside the device_auth_id, so we stash it with the handshake.
+  userCode: string;
 };
 
 export async function startCodexDevice(
   deps: { pendingOAuth: PendingOAuthStore },
   userId: string,
 ): Promise<{ userCode: string; verificationUri: string; pendingId: string; intervalSec: number }> {
-  const response = await postForm<unknown>(`${config.codexOauthIssuer}/api/accounts/deviceauth/usercode`, {
+  const response = await postJson<unknown>(`${config.codexOauthIssuer}/api/accounts/deviceauth/usercode`, {
     client_id: config.codexOauthClientId,
   });
   if (!response.ok) {
@@ -31,13 +34,19 @@ export async function startCodexDevice(
     throw new CodexOAuthError(502, 'codex_device_start_failed', 'Codex device authorization returned missing fields');
   }
 
-  const expiresIn = positiveNumberField(body, 'expires_in') ?? positiveNumberField(body, 'expiresIn') ?? 900;
+  // The usercode response carries an absolute `expires_at`; fall back to a
+  // 15-minute TTL (it historically returned `expires_in`, so honour that too).
+  const expiresIn =
+    positiveNumberField(body, 'expires_in') ??
+    positiveNumberField(body, 'expiresIn') ??
+    secondsUntil(stringField(body, 'expires_at') ?? stringField(body, 'expiresAt')) ??
+    900;
   const interval = positiveNumberField(body, 'interval') ?? positiveNumberField(body, 'interval_sec') ?? 5;
   const pendingId = await deps.pendingOAuth.start<CodexDeviceState>({
     userId,
     provider: 'codex',
     kind: 'device',
-    state: { deviceAuthId },
+    state: { deviceAuthId, userCode },
     ttlMs: expiresIn * 1000,
   });
 
@@ -58,13 +67,19 @@ export async function pollCodexDevice(
   const pending = await deps.pendingOAuth.get<CodexDeviceState>(pendingId, userId);
   if (!pending) return { status: 'expired' };
 
-  const response = await postForm<unknown>(`${config.codexOauthIssuer}/api/accounts/deviceauth/token`, {
+  const response = await postJson<unknown>(`${config.codexOauthIssuer}/api/accounts/deviceauth/token`, {
     device_auth_id: pending.state.deviceAuthId,
-    client_id: config.codexOauthClientId,
+    user_code: pending.state.userCode,
   });
   const body = jsonObject(response.body);
-  if (!response.ok && isAuthorizationPending(body)) {
-    return { status: 'pending' };
+  if (!response.ok) {
+    // While the user hasn't approved yet, the endpoint answers 403/404 with a
+    // `deviceauth_authorization_pending` (or slow_down) code — keep polling.
+    if (isAuthorizationPending(body) || response.status === 403 || response.status === 404) {
+      return { status: 'pending' };
+    }
+    await deps.pendingOAuth.markError(pendingId, JSON.stringify(body).slice(0, 300));
+    return { status: 'error', message: 'device auth failed' };
   }
 
   const authorizationCode =
@@ -76,7 +91,7 @@ export async function pollCodexDevice(
       client_id: config.codexOauthClientId,
       code: authorizationCode,
       code_verifier: codeVerifier,
-      redirect_uri: `${config.codexOauthIssuer}/deviceauth/callback`,
+      redirect_uri: `${config.codexOauthIssuer}/codex/deviceauth/callback`,
     });
     const tokenBody = jsonObject(token.body);
     if (!token.ok) {
@@ -125,16 +140,38 @@ function codexAccountIdFromIdToken(idToken: string): string | null {
 }
 
 function isAuthorizationPending(body: JsonObject): boolean {
-  const error = stringField(body, 'error')?.toLowerCase();
-  const errorDescription = stringField(body, 'error_description')?.toLowerCase();
-  const status = stringField(body, 'status')?.toLowerCase();
-  const text = [error, errorDescription, status].filter(Boolean).join(' ');
+  // The live endpoint nests the reason under an `error` object, e.g.
+  // { error: { code: "deviceauth_authorization_pending", message: "…" } }.
+  // Gather candidate strings from both the top level and the nested object.
+  const nested = jsonObject(body['error']);
+  const candidates = [
+    stringField(body, 'error'),
+    stringField(body, 'error_description'),
+    stringField(body, 'status'),
+    stringField(nested, 'code'),
+    stringField(nested, 'message'),
+    stringField(nested, 'type'),
+    stringField(nested, 'error'),
+  ];
+  const text = candidates
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
   return (
     text.includes('authorization_pending') ||
     text.includes('pending') ||
     text.includes('not_ready') ||
     text.includes('slow_down')
   );
+}
+
+/** Seconds from now until an ISO-8601 timestamp, or null if unparseable/past. */
+function secondsUntil(iso: string | null): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const seconds = Math.floor((ms - Date.now()) / 1000);
+  return seconds > 0 ? seconds : null;
 }
 
 function stringField(body: JsonObject, key: string): string | null {
