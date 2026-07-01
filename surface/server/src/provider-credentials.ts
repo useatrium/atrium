@@ -11,6 +11,10 @@ export const CLAUDE_CODE_PROVIDER = 'claude-code';
 export const CODEX_PROVIDER = 'codex';
 const CLAUDE_CODE_OAUTH_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 const CODEX_AUTH_JSON_ENV = 'CODEX_AUTH_JSON';
+// Marker for a provider connected via the iron-proxy path: the real token lives
+// in iron-control (injected on the wire), never in the sandbox. Stored so the UI
+// shows "connected", but getProviderSecret yields null for it (no env-injection).
+export const PROXY_CREDENTIAL_SENTINEL = 'proxy:iron-control';
 
 export type ProviderCredentialProvider = typeof CLAUDE_CODE_PROVIDER | typeof CODEX_PROVIDER;
 export type ProviderCredentialStatusValue = 'connected' | 'needs_auth';
@@ -144,7 +148,31 @@ export class ProviderCredentials {
     );
     const row = res.rows[0];
     if (!row || row.status !== 'connected') return null;
+    // Proxy-mode credential: connected, but the token is in iron-control, not
+    // here — never hand it to the sandbox.
+    if (row.token_ciphertext === PROXY_CREDENTIAL_SENTINEL) return null;
     return decryptSecret(this.secret, row.token_ciphertext);
+  }
+
+  /**
+   * Record a provider connected via iron-proxy (token-never-in-box). Shows as
+   * connected in list(); getProviderSecret returns null so no env token is injected.
+   */
+  async markConnectedViaProxy(
+    userId: string,
+    provider: ProviderCredentialProvider,
+  ): Promise<ProviderCredentialStatusJson> {
+    const res = await this.pool.query<CredentialRow>(
+      `INSERT INTO user_provider_credentials
+         (user_id, provider, token_ciphertext, status, last_validated_at, last_error)
+       VALUES ($1, $2, $3, 'connected', now(), NULL)
+       ON CONFLICT (user_id, provider) DO UPDATE
+       SET token_ciphertext = EXCLUDED.token_ciphertext,
+           status = 'connected', last_validated_at = now(), last_error = NULL, updated_at = now()
+       RETURNING user_id, provider, token_ciphertext, status, last_validated_at, last_error, updated_at`,
+      [userId, provider, PROXY_CREDENTIAL_SENTINEL],
+    );
+    return statusFromRow(provider, res.rows[0] ?? null);
   }
 
   async markClaudeAuthRequired(

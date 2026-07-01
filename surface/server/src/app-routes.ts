@@ -88,6 +88,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
 
   registerMeRoutes(app, {
     hub,
+    pool,
     requireUser,
     optionalOpId,
     runMutation,
