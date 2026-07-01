@@ -9,8 +9,10 @@ import {
   InfoIcon,
   LinkIcon,
   MessageIcon,
+  RotateIcon,
   TrashIcon,
 } from './Icon';
+import { VersionHistoryPanel } from './VersionHistoryPanel';
 import type { LightboxCallbacks, PreviewFile } from './types';
 import { effectiveMediaKind, formatBytes, formatDateTime, kindLabel } from './utils';
 
@@ -46,9 +48,13 @@ export function Lightbox({
   onDelete,
   onComment,
   canManage,
+  onListVersions,
+  onFetchVersionContent,
+  onRevertVersion,
+  onRestoreFile,
 }: LightboxProps) {
   const file = files[index];
-  const [infoOpen, setInfoOpen] = useState(true);
+  const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>('info');
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(file?.name ?? '');
   const [busy, setBusy] = useState(false);
@@ -204,10 +210,21 @@ export function Lightbox({
         >
           <LinkIcon size={16} />
         </button>
+        {onListVersions && (
+          <button
+            type="button"
+            className={`${iconButtonClass} ${openPanel === 'history' ? 'border-accent-border text-accent-text-strong' : ''}`}
+            onClick={() => setOpenPanel((panel) => (panel === 'history' ? null : 'history'))}
+            aria-label="Toggle version history"
+            title="History"
+          >
+            <RotateIcon size={16} />
+          </button>
+        )}
         <button
           type="button"
-          className={`${iconButtonClass} ${infoOpen ? 'border-accent-border text-accent-text-strong' : ''}`}
-          onClick={() => setInfoOpen((open) => !open)}
+          className={`${iconButtonClass} ${openPanel === 'info' ? 'border-accent-border text-accent-text-strong' : ''}`}
+          onClick={() => setOpenPanel((panel) => (panel === 'info' ? null : 'info'))}
           aria-label="Toggle info panel"
           title="Info"
         >
@@ -239,7 +256,7 @@ export function Lightbox({
             </button>
           </section>
 
-          {infoOpen && (
+          {openPanel === 'info' && (
             <aside className="flex w-[min(340px,38vw)] min-w-72 flex-col border-l border-edge bg-surface-raised">
               <div className="border-b border-edge px-4 py-3">
                 <div className="text-xs font-semibold text-fg">Info</div>
@@ -288,6 +305,17 @@ export function Lightbox({
                 </div>
               )}
             </aside>
+          )}
+
+          {openPanel === 'history' && (
+            <VersionHistoryPanel
+              file={file}
+              canManage={manageable}
+              onListVersions={onListVersions}
+              onFetchVersionContent={onFetchVersionContent}
+              onRevertVersion={onRevertVersion}
+              onRestoreFile={onRestoreFile}
+            />
           )}
         </div>
       </main>
