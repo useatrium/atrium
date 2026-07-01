@@ -104,3 +104,53 @@ describe('applySessionEvent repo/branch fold', () => {
     });
   });
 });
+
+describe('applySessionEvent status fold', () => {
+  function statusChanged(id: number, status: string): WireEvent {
+    return {
+      id,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type: 'session.status_changed',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-1', status },
+      createdAt: new Date(2000).toISOString(),
+      author: alice,
+    };
+  }
+
+  it('never regresses within a turn (running does not fall back to queued)', () => {
+    const s = applySessionEvent(optimistic({ status: 'running' }), statusChanged(5, 'queued'));
+    expect(s['sess-1']!.status).toBe('running');
+  });
+
+  it('a follow-up turn reactivates a completed session (terminal → active)', () => {
+    const s = applySessionEvent(
+      optimistic({ status: 'completed', completedAt: new Date(1500).toISOString() }),
+      statusChanged(6, 'running'),
+    );
+    expect(s['sess-1']!.status).toBe('running');
+    expect(s['sess-1']!.completedAt).toBeNull();
+  });
+
+  it('re-completion after a follow-up turn stamps a fresh completedAt', () => {
+    const reactivated = applySessionEvent(
+      optimistic({ status: 'completed', completedAt: new Date(1500).toISOString() }),
+      statusChanged(7, 'running'),
+    );
+    const done = applySessionEvent(reactivated, {
+      id: 8,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type: 'session.completed',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-1', status: 'completed' },
+      createdAt: new Date(9000).toISOString(),
+      author: alice,
+    });
+    expect(done['sess-1']!.status).toBe('completed');
+    expect(done['sess-1']!.completedAt).toBe(new Date(9000).toISOString());
+  });
+});

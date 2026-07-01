@@ -281,6 +281,9 @@ export function SessionPane({
   }, [session.id]);
   useEffect(() => {
     if (pendingSteers.length === 0) return;
+    // Compute the surviving set OUTSIDE the state updater: the updater must be
+    // pure (StrictMode double-invokes it), and consuming the echo map inside it
+    // made the second invocation see spent counts and resurrect the bubble.
     const echoed = new Map<string, number>();
     for (const it of stream.items) {
       if (it.type === 'user_message') {
@@ -288,19 +291,17 @@ export function SessionPane({
         echoed.set(t, (echoed.get(t) ?? 0) + 1);
       }
     }
-    setPendingSteers((prev) => {
-      const keep = prev.filter((p) => {
-        const t = p.text.trim();
-        const n = echoed.get(t) ?? 0;
-        if (n > 0) {
-          echoed.set(t, n - 1);
-          return false;
-        }
-        return true;
-      });
-      return keep.length === prev.length ? prev : keep;
+    const keep = pendingSteers.filter((p) => {
+      const t = p.text.trim();
+      const n = echoed.get(t) ?? 0;
+      if (n > 0) {
+        echoed.set(t, n - 1);
+        return false;
+      }
+      return true;
     });
-  }, [stream.items, pendingSteers.length]);
+    if (keep.length !== pendingSteers.length) setPendingSteers(keep);
+  }, [stream.items, pendingSteers]);
 
   // ---- driver seat (Phase 3) ----
   const driverId = sessionDriverId(session);
