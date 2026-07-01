@@ -8,14 +8,15 @@
 #    ChatGPT/Claude token on the wire from a per-principal grant; the access_token
 #    harness fragment injects nothing (no deployment-wide broker).
 #  - sandboxes run in access_token (subscription) mode with dummy default creds.
-#  - repo-cache off, sandbox NetworkPolicy off, node-sync capture ON.
+#  - repo-cache ON for node-local tools/workflow checkouts, sandbox NetworkPolicy
+#    off, node-sync capture ON.
 #
 # Image repositories point at the local registry so deploys push SHA-tagged
 # images and roll back by tag; the tag is passed per-deploy via --set (redeploy.sh).
 # console uses :latest (built+pushed by redeploy.sh, not SHA-pinned).
 
 repoCache:
-  enabled: false
+  enabled: true
 
 networkPolicy:
   enabled: false

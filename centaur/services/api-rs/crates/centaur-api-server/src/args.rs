@@ -364,7 +364,9 @@ impl ToolGitSource {
 fn run_git(command: &mut Command, operation: &str) -> Result<(), ServerError> {
     command.env("GIT_TERMINAL_PROMPT", "0");
     let askpass = configure_git_askpass(command)?;
-    let output = command.output()?;
+    let output = command.output().map_err(|error| {
+        ServerError::ToolSource(format!("{operation} failed to spawn git: {error}"))
+    })?;
     if let Some(path) = askpass {
         let _ = fs::remove_file(path);
     }
