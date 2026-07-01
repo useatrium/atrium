@@ -11,10 +11,12 @@ GitHub CD that drives it. Full setup: [`docs/self-host-ovh.md`](../docs/self-hos
 - **`setup-registry.sh`** — one-time: a local `registry:2` on `localhost:5000` + a
   k3s HTTP mirror so Centaur deploys push SHA-tagged images. ⚠️ restarts k3s (a
   one-time all-pods bounce) — run in a quiet window.
-- **`values.box.yaml`** — the box's Centaur Helm overrides (iron-proxy off,
-  repo-cache off, NetworkPolicy off, node-sync capture on @ `cni0`, image repos at
-  the registry), layered over `centaur/contrib/chart/values.dev.yaml` +
-  `infra/values.local.yaml`.
+- **`values.box.yaml`** — the box's Centaur Helm overrides (per-user
+  iron-proxy on, repo-cache on, NetworkPolicy off, node-sync capture on @ `cni0`,
+  image repos at the registry), layered over `centaur/contrib/chart/values.dev.yaml`
+  + `infra/values.local.yaml`.
+- **`BOX_CONFIG.md`** — inventory of committed and box-local config sources, the
+  expected live Centaur shape, and read-only drift audit commands.
 
 ## CD flow
 `master` is the integration branch. **Promote to ship:** merge `master` → `deploy`.

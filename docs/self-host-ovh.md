@@ -270,10 +270,12 @@ sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -
 > ⚠️ **Gotcha — sandbox stuck `Init` / "did not become running".** Three independent
 > causes we hit, all silent: (a) the `overlay-manifest-writer` init container needs the
 > `centaur-node-sync` image you didn't build → disable overlay provisioning; (b)
-> `repo-cache` crashloops on `/opt/centaur/gitconfig` perms → `repoCache.enabled=false`;
-> (c) the deny-by-default **NetworkPolicy** blocks the sandbox's egress to GitHub (tools
+> older repo-cache templates inherited the sandbox image's non-writable
+> `GIT_CONFIG_GLOBAL`; current templates set a writable git config path; (c) the
+> deny-by-default **NetworkPolicy** blocks the sandbox's egress to GitHub (tools
 > clone) *and* `api.openai.com` (Codex, since iron-proxy is off) → `networkPolicy.enabled=false`.
-> The three `--set` flags above clear all three.
+> The bootstrap `--set` flags above clear the image and NetworkPolicy blockers;
+> current committed box deploys use `deploy/values.box.yaml`.
 
 Smoke-test a sandbox spawns:
 ```sh
