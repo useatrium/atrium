@@ -133,19 +133,17 @@ impl WarmPoolManager {
             let ready = self.ensure_ready_warm_sandboxes(&desired_workload).await?;
             if state.pending_workload_key.as_deref() == Some(desired_workload.workload_key.as_str())
                 && ready >= self.config.target_size
-            {
-                if let Some(promoted) = self
+                && let Some(promoted) = self
                     .store
                     .promote_warm_pool_pending(
                         DEFAULT_WARM_POOL_NAME,
                         desired_workload.workload_key.as_str(),
                     )
                     .await?
-                {
-                    self.drain_stale_ready_warm_sandboxes(promoted.protected_workload_keys())
-                        .await?;
-                    return Ok(());
-                }
+            {
+                self.drain_stale_ready_warm_sandboxes(promoted.protected_workload_keys())
+                    .await?;
+                return Ok(());
             }
         }
 
