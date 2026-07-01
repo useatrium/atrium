@@ -13,7 +13,8 @@
 #
 # Image repositories point at the local registry so deploys push SHA-tagged
 # images and roll back by tag; the tag is passed per-deploy via --set (redeploy.sh).
-# console uses :latest (built+pushed by redeploy.sh, not SHA-pinned).
+# console included: it is SHA-pinned like the rest so helm upgrades actually roll
+# its pods and rollback can address the previous console build.
 
 repoCache:
   enabled: true
