@@ -56,6 +56,13 @@
         }
       ],
       [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
+      [
         "@livekit/react-native-expo-plugin",
         {
           "android": {

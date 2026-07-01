@@ -89,6 +89,7 @@ export function hubFileToPreview(f: HubFile): PreviewFile {
     width: f.width,
     height: f.height,
     contentUrl: contentUrl(f.artifactId),
+    ...(f.thumbnailUrl ? { thumbnailUrl: f.thumbnailUrl } : {}),
     uploader: f.uploader,
     createdAt: f.createdAt,
     source: f.channelId

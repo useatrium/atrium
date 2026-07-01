@@ -17,6 +17,7 @@ import { canonicalizeRouteArtifactPath, firstHeader, normalizeMime, parseBaseSeq
 import { writeBackArtifact, writeBackDelete } from '../artifact-writeback.js';
 import { classifyMedia } from '../media-classifier.js';
 import { copyObject, deleteObject, getObjectBytes, headObject, uploadObject, uploadObjectStream } from '../s3.js';
+import { enqueueThumbnailGeneration } from '../thumbnails.js';
 
 type InternalSessionRef = {
   id: string;
@@ -298,6 +299,14 @@ export async function registerInternalArtifactRoutes(
         if (!result.ok) {
           return reply.code(409).send({ error: 'stale_base', latestSeq: result.latestSeq, baseSeq: result.baseSeq });
         }
+        enqueueThumbnailGeneration({
+          pool,
+          sourceSha: sha,
+          mime: classification.detectedMime,
+          mediaKind: classification.mediaKind,
+          s3Key: finalKey,
+          logger: app.log,
+        });
         return reply.send({ seq: result.seq, status: 'normal' });
       } finally {
         if (!stagingDeleted) {
@@ -412,6 +421,20 @@ export async function registerInternalArtifactRoutes(
       files,
     });
     if (!result.ok) return reply.code(409).send(result);
+    for (const file of files) {
+      if (file.blobSha == null || file.kind === 'deleted') continue;
+      const classification = classifyMedia(Buffer.alloc(0), {
+        declaredMime: file.mime,
+        filename: file.path,
+      });
+      enqueueThumbnailGeneration({
+        pool,
+        sourceSha: file.blobSha,
+        mime: classification.detectedMime,
+        mediaKind: classification.mediaKind,
+        logger: app.log,
+      });
+    }
     return reply.send(result);
   });
 }

@@ -26,6 +26,7 @@ interface HubFile {
   mediaKind: string | null;
   isText: boolean | null;
   sizeBytes: number | null;
+  thumbnailUrl?: string | null;
   width?: number;
   height?: number;
   origin: FileOrigin;
@@ -299,6 +300,7 @@ interface HubListRow {
   media_kind: MediaKind | null;
   is_text: boolean | null;
   size_bytes: number | string | null;
+  thumbnail_sha: string | null;
   classification_meta: Record<string, unknown> | null;
   labels: string[] | null;
   starred: boolean;
@@ -904,7 +906,8 @@ export class ArtifactLedger {
          SELECT a.id AS artifact_id, a.workspace_id, a.session_id, a.channel_id, a.path,
                 a.created_at, a.tombstoned_at, p.seq AS version_seq,
                 v.created_at AS version_created_at, v.author, v.kind, v.source_message_id,
-                b.mime, b.detected_mime, b.media_kind, b.is_text, b.size_bytes, b.classification_meta,
+                b.mime, b.detected_mime, b.media_kind, b.is_text, b.size_bytes, b.thumbnail_sha,
+                b.classification_meta,
                 CASE
                   WHEN a.path ~ '^shared/channels/[^/]+/uploads/.+' AND v.author LIKE 'human:%' THEN 'upload'
                   WHEN v.author LIKE 'human:%' THEN 'workspace'
@@ -919,7 +922,7 @@ export class ArtifactLedger {
        SELECT l.artifact_id, l.workspace_id, l.session_id, l.channel_id, l.path,
               l.created_at, l.tombstoned_at, l.version_seq, l.version_created_at,
               l.author, l.kind, l.source_message_id, l.mime, l.detected_mime,
-              l.media_kind, l.is_text, l.size_bytes, l.classification_meta,
+              l.media_kind, l.is_text, l.size_bytes, l.thumbnail_sha, l.classification_meta,
               COALESCE(labels.labels, ARRAY[]::text[]) AS labels,
               EXISTS (
                 SELECT 1 FROM artifact_stars s
@@ -999,6 +1002,7 @@ export class ArtifactLedger {
       mediaKind: row.media_kind,
       isText: row.is_text,
       sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
+      thumbnailUrl: row.thumbnail_sha ? `/api/files/artifact/${row.artifact_id}/thumbnail` : null,
       ...(numericMeta(meta.width) != null ? { width: numericMeta(meta.width) } : {}),
       ...(numericMeta(meta.height) != null ? { height: numericMeta(meta.height) } : {}),
       origin,
@@ -1130,6 +1134,60 @@ export class ArtifactLedger {
       mime: row.detected_mime ?? row.mime,
       mediaKind: row.media_kind,
       isText: row.is_text,
+      sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
+      tombstoned: row.tombstoned_at != null,
+    };
+  }
+
+  async artifactThumbnailById(artifactId: string): Promise<{
+    artifactId: string;
+    workspaceId: string;
+    path: string;
+    seq: number;
+    kind: VersionKind;
+    sourceBlobSha: string | null;
+    thumbnailSha: string | null;
+    s3Key: string | null;
+    mime: string | null;
+    sizeBytes: number | null;
+    tombstoned: boolean;
+  } | null> {
+    const res = await this.pool.query<{
+      workspace_id: string;
+      path: string;
+      seq: number;
+      kind: VersionKind;
+      source_blob_sha: string | null;
+      thumbnail_sha: string | null;
+      s3_key: string | null;
+      mime: string | null;
+      detected_mime: string | null;
+      size_bytes: number | string | null;
+      tombstoned_at: Date | string | null;
+    }>(
+      `SELECT a.workspace_id, a.path, p.seq, v.kind, v.blob_sha AS source_blob_sha,
+              thumb.sha256 AS thumbnail_sha, thumb.s3_key, thumb.mime, thumb.detected_mime,
+              thumb.size_bytes, a.tombstoned_at
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+         LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+         LEFT JOIN cas_blobs thumb ON thumb.sha256 = b.thumbnail_sha
+        WHERE a.id = $1`,
+      [artifactId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+      artifactId,
+      workspaceId: row.workspace_id,
+      path: row.path,
+      seq: row.seq,
+      kind: row.kind,
+      sourceBlobSha: row.source_blob_sha,
+      thumbnailSha: row.thumbnail_sha,
+      s3Key: row.s3_key,
+      mime: row.detected_mime ?? row.mime,
       sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
       tombstoned: row.tombstoned_at != null,
     };

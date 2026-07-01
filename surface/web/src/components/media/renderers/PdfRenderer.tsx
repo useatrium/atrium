@@ -5,6 +5,7 @@ import { ChevronLeftIcon, ChevronRightIcon, FileIcon } from '../Icon';
 
 export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const tileThumbnailUrl = variant === 'tile' ? file.thumbnailUrl : undefined;
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -14,6 +15,7 @@ export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: Med
     setError(null);
     setPages(0);
     setPage(1);
+    if (tileThumbnailUrl) return undefined;
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
 
@@ -39,7 +41,7 @@ export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: Med
     return () => {
       cancelled = true;
     };
-  }, [file, variant]);
+  }, [file, tileThumbnailUrl, variant]);
 
   useEffect(() => {
     if (variant === 'tile' || pages === 0) return undefined;
@@ -68,6 +70,10 @@ export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: Med
   }, [file, page, pages, variant]);
 
   if (variant === 'tile') {
+    if (tileThumbnailUrl) {
+      return <img src={tileThumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-32 w-full bg-surface-raised object-cover" />;
+    }
+
     return (
       <div className="flex h-full min-h-32 items-center justify-center overflow-hidden bg-surface-raised/40 p-2">
         {error ? (

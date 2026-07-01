@@ -23,13 +23,10 @@ function outputText(output: NotebookOutput) {
   return Array.isArray(text) ? text.join('') : text ?? '';
 }
 
-function CsvTable({ text, compact }: { text: string; compact: boolean }) {
-  const rows = useMemo(() => {
-    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
-    return parsed.data.slice(0, compact ? 8 : 500);
-  }, [compact, text]);
-  const headers = rows[0] ?? [];
-  const body = rows.slice(1);
+export function PreviewTable({ rows, compact }: { rows: string[][]; compact: boolean }) {
+  const visibleRows = useMemo(() => rows.slice(0, compact ? 8 : 500), [compact, rows]);
+  const headers = visibleRows[0] ?? [];
+  const body = visibleRows.slice(1);
 
   return (
     <div className="h-full overflow-auto">
@@ -57,6 +54,15 @@ function CsvTable({ text, compact }: { text: string; compact: boolean }) {
       </table>
     </div>
   );
+}
+
+function CsvTable({ text, compact }: { text: string; compact: boolean }) {
+  const rows = useMemo(() => {
+    const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
+    return parsed.data;
+  }, [compact, text]);
+
+  return <PreviewTable rows={rows} compact={compact} />;
 }
 
 function NotebookView({ text, compact }: { text: string; compact: boolean }) {

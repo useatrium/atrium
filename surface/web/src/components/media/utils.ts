@@ -29,6 +29,11 @@ const CODE_EXTENSIONS = new Set([
 ]);
 
 const DATA_EXTENSIONS = new Set(['csv', 'ipynb', 'json', 'jsonl', 'toml', 'tsv', 'yaml', 'yml']);
+const WORD_EXTENSIONS = new Set(['doc', 'docx', 'docm', 'dotx', 'dotm']);
+const SPREADSHEET_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm', 'xlsb', 'ods']);
+const PRESENTATION_EXTENSIONS = new Set(['ppt', 'pptx', 'pptm', 'pps', 'ppsx']);
+
+export type OfficeFileKind = 'word' | 'spreadsheet' | 'presentation';
 
 export function fileExtension(name: string) {
   const clean = name.split('?')[0]?.split('#')[0] ?? name;
@@ -44,6 +49,7 @@ export function effectiveMediaKind(file: PreviewFile): MediaKind {
   if (VIDEO_MIME.test(mime)) return 'video';
   if (AUDIO_MIME.test(mime)) return 'audio';
   if (mime === 'application/pdf') return 'document';
+  if (isOfficeFile(file)) return 'document';
   if (mime.includes('csv') || DATA_EXTENSIONS.has(ext)) return 'data';
   if (mime.includes('json') || mime.includes('yaml')) return 'data';
   if (CODE_EXTENSIONS.has(ext)) return 'code';
@@ -59,6 +65,51 @@ export function isMarkdownFile(file: PreviewFile) {
 
 export function isPdfFile(file: PreviewFile) {
   return file.mime.toLowerCase() === 'application/pdf' || fileExtension(file.name) === 'pdf';
+}
+
+export function officeFileKind(file: PreviewFile): OfficeFileKind | null {
+  const ext = fileExtension(file.name);
+  const mime = file.mime.toLowerCase();
+
+  if (
+    WORD_EXTENSIONS.has(ext) ||
+    mime === 'application/msword' ||
+    mime.includes('wordprocessingml') ||
+    mime.includes('ms-word')
+  ) {
+    return 'word';
+  }
+
+  if (
+    SPREADSHEET_EXTENSIONS.has(ext) ||
+    (ext === 'csv' && mime === 'application/vnd.ms-excel') ||
+    mime === 'application/vnd.ms-excel' ||
+    mime.includes('spreadsheetml') ||
+    mime.includes('ms-excel')
+  ) {
+    return 'spreadsheet';
+  }
+
+  if (
+    PRESENTATION_EXTENSIONS.has(ext) ||
+    mime === 'application/vnd.ms-powerpoint' ||
+    mime.includes('presentationml') ||
+    mime.includes('ms-powerpoint')
+  ) {
+    return 'presentation';
+  }
+
+  return null;
+}
+
+export function isOfficeFile(file: PreviewFile) {
+  return officeFileKind(file) !== null;
+}
+
+export function isDocxFile(file: PreviewFile) {
+  const ext = fileExtension(file.name);
+  const mime = file.mime.toLowerCase();
+  return ext === 'docx' || ext === 'docm' || ext === 'dotx' || ext === 'dotm' || mime.includes('wordprocessingml');
 }
 
 export function isNotebookFile(file: PreviewFile) {

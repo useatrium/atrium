@@ -15,3 +15,5 @@ trustPolicyExclude:
   - semver@6.3.1
   - semver@5.7.2
   - ua-parser-js@0.7.41
+  # react-native-reanimated v4 peer; fresh release lacks provenance attestation (Expo SDK 56)
+  - react-native-worklets@0.8.1

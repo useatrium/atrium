@@ -8,7 +8,7 @@ export function ImageRenderer({ file, variant }: { file: PreviewFile; variant: M
   if (variant === 'tile') {
     return (
       <img
-        src={file.contentUrl}
+        src={file.thumbnailUrl ?? file.contentUrl}
         alt={file.name}
         loading="lazy"
         className="h-full min-h-32 w-full bg-surface-raised object-cover"

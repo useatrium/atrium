@@ -8,6 +8,15 @@ import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
 import type {
+  HubFileDeleteResponse,
+  HubFileLabelResponse,
+  HubFileListQuery,
+  HubFileListResult,
+  HubFileRenameResponse,
+  HubFileRestoreResponse,
+  HubFileStarResponse,
+} from './files-hub';
+import type {
   AgentProfile,
   AgentProfileProposal,
   AgentProfileProposalPayload,
@@ -137,6 +146,25 @@ export interface EntryAnnotations {
 
 export function createApi(opts: ApiOptions = {}) {
   const base = (opts.baseUrl ?? '').replace(/\/+$/, '');
+
+  function filesHubQuery(query?: HubFileListQuery): string {
+    if (!query) return '';
+    const params = new URLSearchParams();
+    if (query.origin && query.origin.length > 0) params.set('origin', query.origin.join(','));
+    if (query.mediaKind && query.mediaKind.length > 0) params.set('mediaKind', query.mediaKind.join(','));
+    if (query.channelId) params.set('channelId', query.channelId);
+    if (query.sessionId) params.set('sessionId', query.sessionId);
+    if (query.label) params.set('label', query.label);
+    if (query.starred !== undefined) params.set('starred', String(query.starred));
+    if (query.q) params.set('q', query.q);
+    if (query.includeDeleted !== undefined) params.set('includeDeleted', String(query.includeDeleted));
+    if (query.includeScratch !== undefined) params.set('includeScratch', String(query.includeScratch));
+    if (query.sort) params.set('sort', query.sort);
+    if (query.cursor) params.set('cursor', query.cursor);
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+  }
 
   async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const token = opts.getToken ? await opts.getToken() : null;
@@ -419,6 +447,50 @@ export function createApi(opts: ApiOptions = {}) {
      */
     fileSignedUrl: (fileId: string) =>
       req<{ url: string; expiresAt: string }>(`/api/files/${fileId}/url`),
+    // === files-hub (P1) ===
+    listWorkspaceFiles: (workspaceId: string, query?: HubFileListQuery) =>
+      req<HubFileListResult>(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/files${filesHubQuery(query)}`,
+      ),
+    listChannelFiles: (channelId: string, query?: HubFileListQuery) =>
+      req<HubFileListResult>(
+        `/api/channels/${encodeURIComponent(channelId)}/files${filesHubQuery(query)}`,
+      ),
+    starFile: (id: string) =>
+      req<HubFileStarResponse>(`/api/files/${encodeURIComponent(id)}/star`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    unstarFile: (id: string) =>
+      req<HubFileStarResponse>(`/api/files/${encodeURIComponent(id)}/star`, {
+        method: 'DELETE',
+      }),
+    addFileLabel: (id: string, label: string) =>
+      req<HubFileLabelResponse>(`/api/files/${encodeURIComponent(id)}/labels`, {
+        method: 'POST',
+        body: JSON.stringify({ label }),
+      }),
+    removeFileLabel: (id: string, label: string) =>
+      req<HubFileLabelResponse>(
+        `/api/files/${encodeURIComponent(id)}/labels/${encodeURIComponent(label)}`,
+        { method: 'DELETE' },
+      ),
+    renameFile: (id: string, name: string) =>
+      req<HubFileRenameResponse>(`/api/files/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      }),
+    deleteFile: (id: string) =>
+      req<HubFileDeleteResponse>(`/api/files/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    restoreFile: (id: string) =>
+      req<HubFileRestoreResponse>(`/api/files/${encodeURIComponent(id)}/restore`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    fileContentUrl: (artifactId: string) =>
+      `${base}/api/files/artifact/${encodeURIComponent(artifactId)}/content`,
     editMessage: (eventId: number, text: string, op: OpOptions = {}) =>
       req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
         method: 'PATCH',

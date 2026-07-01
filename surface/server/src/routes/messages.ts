@@ -22,6 +22,7 @@ import { classifyMediaFromMime } from '../media-classifier.js';
 import type { WsHub } from '../hub.js';
 import { sendMessagePush } from '../push.js';
 import { sanitizeFilename } from '../safe-filename.js';
+import { enqueueThumbnailGeneration } from '../thumbnails.js';
 
 interface MessageAttachmentFileRow {
   id: string;
@@ -131,7 +132,13 @@ async function landingPathForUpload(
 
 async function landUploadAttachmentAsArtifact(
   pool: Db,
-  params: { channelId: string; userId: string; file: MessageAttachmentFileRow; sourceMessageId?: string | null },
+  params: {
+    channelId: string;
+    userId: string;
+    file: MessageAttachmentFileRow;
+    sourceMessageId?: string | null;
+    logger?: { warn(obj: unknown, msg?: string): void };
+  },
 ): Promise<void> {
   const channel = await pool.query<{ workspace_id: string }>(
     'SELECT workspace_id FROM channels WHERE id = $1',
@@ -182,6 +189,14 @@ async function landUploadAttachmentAsArtifact(
     mime: params.file.content_type,
     author: `human:${params.userId}`,
     sourceMessageId: params.sourceMessageId ?? null,
+  });
+  enqueueThumbnailGeneration({
+    pool,
+    sourceSha: blobSha,
+    mime: params.file.content_type,
+    mediaKind: classification.mediaKind,
+    s3Key: params.file.s3_key,
+    logger: params.logger,
   });
 }
 
@@ -318,6 +333,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           userId: user.id,
           file,
           sourceMessageId: optionalUuid(event.payload.client_msg_id),
+          logger: app.log,
         });
       } catch (err) {
         app.log.warn(
