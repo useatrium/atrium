@@ -5,7 +5,6 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   formatTime,
   formatBytes,
-  type AttachmentMeta,
   type Api,
   type ChatMessage,
   type MessageReaction,
@@ -39,8 +38,7 @@ export interface MessageRowProps {
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
-  onOpenAttachment: (fileId: string) => void;
-  onOpenImageAttachment: (attachment: AttachmentMeta) => void;
+  onOpenAttachment: (message: ChatMessage, index: number) => void;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -99,20 +97,18 @@ function Attachments({
   message,
   fileUrl,
   fileHeaders,
-  onOpen,
-  onOpenImage,
+  onOpenAttachment,
 }: {
   message: ChatMessage;
   fileUrl: (id: string) => string;
   fileHeaders?: Record<string, string>;
-  onOpen: (fileId: string) => void;
-  onOpenImage: (attachment: AttachmentMeta) => void;
+  onOpenAttachment: (message: ChatMessage, index: number) => void;
 }) {
   const { colors } = useTheme();
   if (!message.attachments?.length) return null;
   return (
     <View style={{ gap: 6, marginTop: 4 }}>
-      {message.attachments.map((a) => {
+      {message.attachments.map((a, index) => {
         if (a.contentType.startsWith('image/')) {
           const ratio = a.width && a.height ? a.width / a.height : 4 / 3;
           const w = Math.min(IMAGE_MAX_W, a.width ?? IMAGE_MAX_W);
@@ -121,7 +117,7 @@ function Attachments({
               key={a.id}
               accessibilityRole="imagebutton"
               accessibilityLabel={a.filename}
-              onPress={() => onOpenImage(a)}
+              onPress={() => onOpenAttachment(message, index)}
             >
               <Image
                 source={{ uri: fileUrl(a.id), headers: fileHeaders }}
@@ -142,7 +138,7 @@ function Attachments({
             key={a.id}
             accessibilityRole="button"
             accessibilityLabel={`${a.filename}, ${formatBytes(a.size)}`}
-            onPress={() => onOpen(a.id)}
+            onPress={() => onOpenAttachment(message, index)}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -376,7 +372,6 @@ export const MessageRow = memo(function MessageRow({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
-  onOpenImageAttachment,
   onOpenSession,
 }: MessageRowProps) {
   const { colors } = useTheme();
@@ -445,8 +440,7 @@ export const MessageRow = memo(function MessageRow({
           message={m}
           fileUrl={fileUrl}
           fileHeaders={fileHeaders}
-          onOpen={onOpenAttachment}
-          onOpenImage={onOpenImageAttachment}
+          onOpenAttachment={onOpenAttachment}
         />
       )}
     </>

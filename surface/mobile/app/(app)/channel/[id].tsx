@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
   channelLabel,
   emptyTimeline,
-  type AttachmentMeta,
   type ChatMessage,
+  type HubFile,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
 import { font, useTheme } from '../../../src/lib/theme';
+import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { entryHandleForMessage } from '../../../src/lib/entryHandle';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer } from '../../../src/components/Composer';
 import { EntryComments } from '../../../src/components/EntryComments';
-import { ImageViewer } from '../../../src/components/ImageViewer';
+import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
+
+interface AttachmentLightboxState {
+  files: HubFile[];
+  initialIndex: number;
+}
 
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -49,7 +55,7 @@ export default function ChannelScreen() {
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
   const [commentsHandle, setCommentsHandle] = useState<string | null>(null);
-  const [imageTarget, setImageTarget] = useState<AttachmentMeta | null>(null);
+  const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
 
@@ -95,11 +101,24 @@ export default function ChannelScreen() {
     if (handle) setCommentsHandle(handle);
   }, []);
 
-  const openAttachment = useCallback(
-    (fileId: string) => {
-      void chat.openAttachment(fileId);
+  const openAttachment = useCallback((message: ChatMessage, index: number) => {
+    const attachments = message.attachments ?? [];
+    if (index < 0 || index >= attachments.length) return;
+    setAttachmentLightbox({
+      files: attachments.map(attachmentToHubFile),
+      initialIndex: index,
+    });
+  }, []);
+
+  const openExternal = useCallback(
+    async (file: HubFile) => {
+      const { url } = await chat.api.fileSignedUrl(file.artifactId);
+      const absoluteUrl = /^https?:\/\//i.test(url)
+        ? url
+        : `${new URL(chat.api.fileUrl(file.artifactId)).origin}${url}`;
+      await Linking.openURL(absoluteUrl);
     },
-    [chat],
+    [chat.api],
   );
 
   const showMembers = useCallback(async () => {
@@ -240,7 +259,6 @@ export default function ChannelScreen() {
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
           onOpenAttachment={openAttachment}
-          onOpenImageAttachment={setImageTarget}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
         />
         <TypingLine typing={chat.typing} />
@@ -287,12 +305,14 @@ export default function ChannelScreen() {
         me={me}
         onClose={() => setCommentsHandle(null)}
       />
-      <ImageViewer
-        attachment={imageTarget}
-        fileUrl={chat.fileUrl}
+      <MediaLightbox
+        visible={attachmentLightbox != null}
+        files={attachmentLightbox?.files ?? []}
+        initialIndex={attachmentLightbox?.initialIndex ?? 0}
+        fileContentUrl={chat.api.fileUrl}
         fileHeaders={chat.fileHeaders}
-        onClose={() => setImageTarget(null)}
-        onOpenExternal={(fileId) => void chat.openAttachment(fileId)}
+        onClose={() => setAttachmentLightbox(null)}
+        onOpenExternal={openExternal}
       />
     </View>
   );
