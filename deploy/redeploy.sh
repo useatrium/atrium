@@ -90,6 +90,15 @@ deploy_centaur(){
     sudo docker tag "$img:latest" "$REG/$img:$SHA"
     sudo docker push "$REG/$img:$SHA" >/dev/null 2>&1 || die "push $img"
   done
+  # console (iron-control): built when its own source changes; the chart pins
+  # console to :latest (not the per-deploy SHA), so it is tagged+pushed as :latest.
+  if [ "$FIRST" = 1 ] || changed '^centaur/services/console/'; then
+    ( cd "$REPO_DIR/centaur" && DOCKER_BUILDKIT=1 just build-one console ) || die "build console"
+  fi
+  if sudo docker image inspect centaur-console:latest >/dev/null 2>&1; then
+    sudo docker tag centaur-console:latest "$REG/centaur-console:latest"
+    sudo docker push "$REG/centaur-console:latest" >/dev/null 2>&1 || die "push console"
+  fi
   log "centaur: helm upgrade @ $SHA"
   _helm "$SHA" || { _rb_centaur; die "helm upgrade"; }
   kubectl rollout status deploy/centaur-centaur-api-rs -n "$NS" --timeout=200s || { _rb_centaur; die "rollout"; }
