@@ -1,6 +1,12 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { XIcon } from './icons';
-import type { ProviderCredentialStatus } from '../api';
+import {
+  exchangeClaudeCodeOAuth,
+  PROVIDER_CREDENTIALS_REFRESH_SENTINEL,
+  startClaudeCodeOAuth,
+  type ClaudeCodeOAuthStartResponse,
+  type ProviderCredentialStatus,
+} from '../api';
 
 export function ClaudeConnectDialog({
   status,
@@ -13,26 +19,61 @@ export function ClaudeConnectDialog({
   onSave: (token: string) => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
-  const [token, setToken] = useState('');
+  const [flow, setFlow] = useState<ClaudeCodeOAuthStartResponse | null>(null);
+  const [code, setCode] = useState('');
+  const [starting, setStarting] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const connected = status?.connected === true;
 
+  const start = useCallback(async () => {
+    setStarting(true);
+    setError(null);
+    setFlow(null);
+    setCode('');
+    try {
+      setFlow(await startClaudeCodeOAuth());
+    } catch (err) {
+      setError((err as Error).message || 'Could not start Claude sign-in');
+    } finally {
+      setStarting(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void start();
+  }, [start]);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const next = token.trim();
-    if (!next || busy) return;
+    const next = code.trim();
+    if (!flow?.pendingId || !next || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await onSave(next);
-      setToken('');
+      const result = await exchangeClaudeCodeOAuth(flow.pendingId, next);
+      if (result.status !== 'connected') {
+        setError(
+          result.message ||
+            (result.status === 'expired'
+              ? 'This Claude sign-in expired. Start a new one to continue.'
+              : 'Could not connect Claude'),
+        );
+        return;
+      }
+      await onSave(PROVIDER_CREDENTIALS_REFRESH_SENTINEL);
+      setCode('');
       onCancel();
     } catch (err) {
       setError((err as Error).message || 'Could not connect Claude');
     } finally {
       setBusy(false);
     }
+  }
+
+  function openSignIn() {
+    if (!flow?.authorizeUrl) return;
+    window.open(flow.authorizeUrl, '_blank', 'noopener,noreferrer');
   }
 
   async function disconnect() {
@@ -80,21 +121,30 @@ export function ClaudeConnectDialog({
         </header>
 
         <div className="space-y-3 px-4 py-3">
+          <button
+            type="button"
+            onClick={openSignIn}
+            disabled={!flow?.authorizeUrl || starting}
+            className="w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Open Claude sign-in
+          </button>
           <div className="rounded-md border border-edge bg-surface px-3 py-2 text-xs leading-relaxed text-fg-muted">
-            Run <span className="font-mono text-fg-secondary">claude setup-token</span> and paste
-            the token here.
+            Approve on claude.com, then paste the code it shows you.
           </div>
           <label className="block">
             <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-              Token
+              Code
             </span>
             <input
               autoFocus
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Paste Claude token"
-              className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Paste Claude code"
+              spellCheck={false}
+              autoComplete="off"
+              className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 font-mono text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
             />
           </label>
           {status?.lastError && (
@@ -103,8 +153,17 @@ export function ClaudeConnectDialog({
             </div>
           )}
           {error && (
-            <div role="alert" className="rounded-md border border-danger-edge bg-danger-surface px-3 py-2 text-xs text-danger-text">
-              {error}
+            <div role="alert" className="space-y-2 rounded-md border border-danger-edge bg-danger-surface px-3 py-2 text-xs text-danger-text">
+              <div>{error}</div>
+              {!busy && (
+                <button
+                  type="button"
+                  onClick={start}
+                  className="rounded-md bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+                >
+                  Try again
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -128,7 +187,7 @@ export function ClaudeConnectDialog({
             </button>
             <button
               type="submit"
-              disabled={!token.trim() || busy}
+              disabled={!flow?.pendingId || !code.trim() || busy || starting}
               className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {connected ? 'Reconnect' : 'Connect'}
