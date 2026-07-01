@@ -8,13 +8,18 @@ import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
 import type {
+  HubFileConflict,
   HubFileDeleteResponse,
   HubFileLabelResponse,
   HubFileListQuery,
   HubFileListResult,
   HubFileRenameResponse,
+  HubFileResolveChoice,
   HubFileRestoreResponse,
+  HubFileRevertResponse,
+  HubFileSaveResult,
   HubFileStarResponse,
+  HubFileVersionsResponse,
 } from './files-hub';
 import type {
   AgentProfile,
@@ -489,8 +494,60 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: '{}',
       }),
-    fileContentUrl: (artifactId: string) =>
-      `${base}/api/files/artifact/${encodeURIComponent(artifactId)}/content`,
+    fileContentUrl: (artifactId: string, atSeq?: number) =>
+      `${base}/api/files/artifact/${encodeURIComponent(artifactId)}/content${
+        atSeq != null ? `?at=${atSeq}` : ''
+      }`,
+    /** Embed-only HTML/app preview URL. Server returns 403 on a top-level document
+     * navigation, so callers must fetch it with `sec-fetch-dest: iframe` (or embed
+     * it in an iframe) rather than navigating a WebView straight to it. */
+    filePreviewUrl: (artifactId: string, renderer?: string) =>
+      `${base}/api/files/${encodeURIComponent(artifactId)}/preview${
+        renderer ? `?renderer=${encodeURIComponent(renderer)}` : ''
+      }`,
+    // === files-hub version history + text edit + conflict (web + mobile parity) ===
+    listFileVersions: (id: string) =>
+      req<HubFileVersionsResponse>(`/api/files/${encodeURIComponent(id)}/versions`),
+    revertFileVersion: (id: string, seq: number) =>
+      req<HubFileRevertResponse>(`/api/files/${encodeURIComponent(id)}/revert`, {
+        method: 'POST',
+        body: JSON.stringify({ seq }),
+      }),
+    saveTextFile: (id: string, text: string, baseSeq: number, mime = 'text/plain') =>
+      req<HubFileSaveResult>(`/api/files/${encodeURIComponent(id)}/content`, {
+        method: 'PUT',
+        headers: { 'content-type': mime, 'x-artifact-base-seq': String(baseSeq) },
+        body: text,
+      }),
+    loadFileConflict: (id: string) =>
+      req<HubFileConflict>(`/api/files/${encodeURIComponent(id)}/conflict`),
+    resolveFileConflict: (
+      id: string,
+      conflict: HubFileConflict,
+      choice: HubFileResolveChoice,
+      mime = 'text/plain',
+    ) => {
+      // Resolved bytes = the chosen side's text (or the hand-merged text). A side
+      // with a null sha is the "deleted" side of a delete-vs-edit conflict → stay deleted.
+      const text =
+        choice.kind === 'left'
+          ? conflict.left.text
+          : choice.kind === 'right'
+            ? conflict.right.text
+            : choice.text;
+      const stayDeleted =
+        (choice.kind === 'left' && conflict.left.sha === null) ||
+        (choice.kind === 'right' && conflict.right.sha === null);
+      return req<HubFileSaveResult>(`/api/files/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        headers: {
+          'content-type': mime,
+          'x-artifact-base-seq': String(conflict.conflictSeq),
+          ...(stayDeleted ? { 'x-artifact-delete': 'true' } : {}),
+        },
+        body: text,
+      });
+    },
     editMessage: (eventId: number, text: string, op: OpOptions = {}) =>
       req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
         method: 'PATCH',

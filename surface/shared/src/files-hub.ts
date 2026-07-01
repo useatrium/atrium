@@ -98,3 +98,46 @@ export interface HubFileRestoreResponse {
   artifactId: string;
   tombstoned: false;
 }
+
+// === text edit + diff3 conflict (shared by web + mobile) ===
+
+/** Result of a text writeback / conflict resolution. `conflict` means the base
+ * was stale and a diff3 merge produced markers now sitting at head. */
+export interface HubFileSaveResult {
+  seq: number;
+  status: 'normal' | 'conflict';
+}
+
+export interface HubFileConflictSide {
+  label: string;
+  author: string;
+  sha: string | null;
+  text: string;
+}
+
+/** The both-sides conflict payload the resolution UI renders (mirrors the
+ * server's `ArtifactConflictOut`). */
+export interface HubFileConflict {
+  artifactId: string;
+  path: string;
+  kind: string;
+  conflictSeq: number;
+  baseSeq: number | null;
+  base: { sha: string | null; text: string };
+  left: HubFileConflictSide;
+  right: HubFileConflictSide;
+  markers: string;
+}
+
+/** A user's conflict-resolution choice: keep the latest ('left'), keep the
+ * incoming edit ('right'), or supply a hand-merged text. */
+export type HubFileResolveChoice =
+  | { kind: 'left' }
+  | { kind: 'right' }
+  | { kind: 'merged'; text: string };
+
+export interface HubFileRevertResponse {
+  artifactId: string;
+  seq: number;
+  tombstoned: false;
+}
