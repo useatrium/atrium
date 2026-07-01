@@ -288,4 +288,21 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     }
     return reply.send(object.stream);
   });
+
+  app.get('/api/files/artifact/:artifactId/thumbnail', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+    if (!artifactId) return;
+    const file = await ledger.artifactThumbnailById(artifactId);
+    if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    if (file.tombstoned || file.kind === 'deleted') {
+      return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
+    }
+    if (!file.thumbnailSha || !file.s3Key) {
+      return reply.code(404).send({ error: 'thumbnail_not_found', message: 'thumbnail not found' });
+    }
+    const filename = `${basename(file.path) || 'artifact'}-thumbnail`;
+    return reply.redirect(await presignGet(file.s3Key, filename, true), 302);
+  });
 }

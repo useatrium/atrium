@@ -1,5 +1,5 @@
 // Bottom tab navigator (expo-router/ui headless Tabs) with a custom Liquid-Glass
-// bar. Chat · Agents · Activity · Search — Search bottom-right for thumb reach.
+// bar. Chat · Files · Agents · Activity · Search — Search bottom-right for thumb reach.
 // Real tabs: per-tab state preservation, no Stack back-arrow. Each tab screen
 // renders its own header (TabSlot has none); "You/More" is the header avatar.
 import { useMemo } from 'react';
@@ -25,6 +25,9 @@ export default function TabsLayout() {
         <GlassBar>
           <TabTrigger name="index" href="/" asChild>
             <GlassTabButton icon="chatbubbles" label="Chat" />
+          </TabTrigger>
+          <TabTrigger name="files" href="/files" asChild>
+            <GlassTabButton icon="folder-open" label="Files" />
           </TabTrigger>
           <TabTrigger name="sessions" href="/sessions" asChild>
             <GlassTabButton icon="sparkles" label="Agents" pulse={attention > 0} />

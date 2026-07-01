@@ -9,6 +9,7 @@ export interface PreviewFile {
   width?: number;
   height?: number;
   contentUrl: string;
+  thumbnailUrl?: string;
   textUrl?: string;
   uploader?: { id: string; name?: string };
   createdAt?: string;

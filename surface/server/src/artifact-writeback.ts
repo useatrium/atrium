@@ -11,6 +11,7 @@ import { canonicalizeSessionArtifactPath } from './artifact-path.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { classifyMedia, type MediaClassification } from './media-classifier.js';
+import { enqueueThumbnailGeneration } from './thumbnails.js';
 
 export interface ArtifactWritebackStorage {
   uploadObject(key: string, body: Buffer | Uint8Array, contentType: string): Promise<void>;
@@ -93,6 +94,13 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
   });
 
   if (committed.ok) {
+    enqueueThumbnailGeneration({
+      pool: params.pool,
+      sourceSha: sha,
+      bytes: params.bytes,
+      mime: classification.detectedMime,
+      mediaKind: classification.mediaKind,
+    });
     return { ok: true, seq: committed.seq, status: 'normal', idempotent: committed.idempotent };
   }
 
@@ -103,13 +111,23 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
   // both sides. Resolution (stay-deleted vs keep-edit) is a later explicit write.
   const latestRow0 = await latestVersionRow(params.pool, committed.artifactId);
   if (latestRow0 && (latestRow0.kind === 'deleted' || latestRow0.blob_sha == null)) {
-    return recordDeleteVsEditConflict({
+    const result = await recordDeleteVsEditConflict({
       ...params,
       ledger,
       incomingSha: sha,
       deletedSeq: latestRow0.seq,
       deletedAuthor: latestRow0.author,
     });
+    if (result.ok) {
+      enqueueThumbnailGeneration({
+        pool: params.pool,
+        sourceSha: sha,
+        bytes: params.bytes,
+        mime: classification.detectedMime,
+        mediaKind: classification.mediaKind,
+      });
+    }
+    return result;
   }
 
   const artifact = await findArtifactById(params.pool, committed.artifactId);
@@ -209,7 +227,16 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
   incomingBytes: Buffer;
   baseSeq: number;
 }): Promise<WriteBackArtifactResult> {
-  return withTx(args.pool, async (client) => {
+  type DeferredThumbnail = {
+    sourceSha: string;
+    bytes: Buffer;
+    mime: string;
+    mediaKind: MediaClassification['mediaKind'];
+  };
+  const tx = await withTx(args.pool, async (client): Promise<{
+    result: WriteBackArtifactResult;
+    thumbnail?: DeferredThumbnail;
+  }> => {
     const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
       sessionId: args.sessionId,
       channelId: args.channelId,
@@ -221,20 +248,26 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
     );
     if (artifact.rows[0]?.merge_class !== 'mergeable-doc') {
       const latest = await args.ledger.latestVersion(client, artifactId);
-      return { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest?.seq };
+      return {
+        result: { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest?.seq },
+      };
     }
 
     const latest = await args.ledger.latestVersion(client, artifactId);
     if (!latest) {
-      return { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq };
+      return { result: { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq } };
     }
     const baseRow = await versionBlob(client, artifactId, args.baseSeq);
     const latestRow = await versionBlob(client, artifactId, latest.seq);
     if (!baseRow) {
-      return { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq, latestSeq: latest.seq };
+      return {
+        result: { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq, latestSeq: latest.seq },
+      };
     }
     if (!latestRow?.s3_key || !baseRow.s3_key || latestRow.blob_sha == null || baseRow.blob_sha == null) {
-      return { ok: false, reason: 'blob_unavailable', baseSeq: args.baseSeq, latestSeq: latest.seq };
+      return {
+        result: { ok: false, reason: 'blob_unavailable', baseSeq: args.baseSeq, latestSeq: latest.seq },
+      };
     }
 
     const [baseBytes, latestBytes] = await Promise.all([
@@ -249,6 +282,7 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
     );
     const mergedBytes = Buffer.from(merged.result.join('\n'), 'utf8');
     const mergedSha = sha256(mergedBytes);
+    const mergedClassification = classifyMedia(mergedBytes, { declaredMime: args.mime, filename: args.path });
     await ensureCasBlobStored({
       pool: args.pool,
       ledger: args.ledger,
@@ -256,9 +290,15 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
       sha: mergedSha,
       bytes: mergedBytes,
       mime: args.mime,
-      classification: classifyMedia(mergedBytes, { declaredMime: args.mime, filename: args.path }),
+      classification: mergedClassification,
       client,
     });
+    const thumbnail: DeferredThumbnail = {
+      sourceSha: mergedSha,
+      bytes: mergedBytes,
+      mime: mergedClassification.detectedMime,
+      mediaKind: mergedClassification.mediaKind,
+    };
 
     const seq = latest.seq + 1;
     if (!merged.conflict) {
@@ -272,7 +312,10 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
         status: 'normal',
       });
       await args.ledger.advancePointer(client, artifactId, 'latest', seq);
-      return { ok: true, seq, status: 'normal', idempotent: false };
+      return {
+        result: { ok: true, seq, status: 'normal', idempotent: false },
+        thumbnail,
+      };
     }
 
     await args.ledger.insertVersion(client, {
@@ -290,8 +333,21 @@ async function mergeStaleWrite(args: WriteBackArtifactParams & {
       },
     });
     await args.ledger.advancePointer(client, artifactId, 'latest', seq);
-    return { ok: true, seq, status: 'conflict', idempotent: false };
+    return {
+      result: { ok: true, seq, status: 'conflict', idempotent: false },
+      thumbnail,
+    };
   });
+  if (tx.result.ok && tx.thumbnail) {
+    enqueueThumbnailGeneration({
+      pool: args.pool,
+      sourceSha: tx.thumbnail.sourceSha,
+      bytes: tx.thumbnail.bytes,
+      mime: tx.thumbnail.mime,
+      mediaKind: tx.thumbnail.mediaKind,
+    });
+  }
+  return tx.result;
 }
 
 interface LatestRow {

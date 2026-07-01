@@ -3,9 +3,14 @@ import type { PreviewFile, MediaPreviewVariant } from '../types';
 
 export function VideoRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
   if (variant === 'tile') {
+    const thumbnailUrl = file.thumbnailUrl;
     return (
       <div className="relative h-full min-h-32 bg-surface-raised">
-        <video src={file.contentUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
+        {thumbnailUrl ? (
+          <img src={thumbnailUrl} alt={file.name} loading="lazy" className="h-full w-full object-cover" />
+        ) : (
+          <video src={file.contentUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
+        )}
         <div className="absolute inset-0 grid place-items-center bg-surface/10">
           <div className="grid size-10 place-items-center rounded-full border border-edge-strong bg-surface-overlay/90 text-fg">
             <FileIcon size={18} />

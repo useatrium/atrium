@@ -63,6 +63,9 @@ export async function sweepUnreferencedBlobs(
           SELECT 1 FROM app_versions av WHERE av.blob_sha = b.sha256
         )
         AND NOT EXISTS (
+          SELECT 1 FROM cas_blobs source WHERE source.thumbnail_sha = b.sha256
+        )
+        AND NOT EXISTS (
           SELECT 1
             FROM agent_profile_versions apv
            WHERE apv.manifest_json->'bundles' @> jsonb_build_array(jsonb_build_object('sha256', b.sha256))

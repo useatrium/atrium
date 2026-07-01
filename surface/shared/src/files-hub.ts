@@ -14,6 +14,7 @@ export interface HubFile {
   mediaKind: string | null;
   isText: boolean | null;
   sizeBytes: number | null;
+  thumbnailUrl?: string | null;
   width?: number;
   height?: number;
   origin: FileOrigin;

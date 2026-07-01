@@ -15,6 +15,7 @@
     "@atrium/centaur-client": "workspace:*",
     "@atrium/surface-client": "workspace:*",
     "@types/papaparse": "^5.5.2",
+    "docx-preview": "^0.3.7",
     "highlight.js": "^11.11.1",
     "idb": "^8.0.3",
     "livekit-client": "^2.15.13",
@@ -25,7 +26,8 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "shiki": "^4.2.0"
+    "shiki": "^4.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.6",
