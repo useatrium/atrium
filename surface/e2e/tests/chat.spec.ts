@@ -512,8 +512,16 @@ test('offline edit and reaction land and survive reload', async ({ page, context
 
   await page.reload();
   await openChannel(page, room);
-  await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
-  await expect(messageRow(page, edited).getByRole('button', { name: '👍 1, including you' })).toBeVisible();
+  // Post-reload hydration re-fetches the channel history (a network round-trip
+  // on the cursor/structural-repair path), which is slow when parallel load
+  // saturates the shared server — so match the 15s budget the rest of this
+  // test's reconnect-crossing waits use. The default 8s races that refetch and
+  // is the sole cause of this test's local-parallel flake (CI already tolerates
+  // it via a 20s expect timeout + retries).
+  await expect(confirmedRowsWithText(page, edited)).toHaveCount(1, { timeout: 15_000 });
+  await expect(messageRow(page, edited).getByRole('button', { name: '👍 1, including you' })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(timelineText(page, original)).toHaveCount(0);
 });
 
