@@ -17,6 +17,20 @@
 
 repoCache:
   enabled: true
+  githubToken:
+    existingSecretName: centaur-repo-cache-github-token
+    secretKey: token
+
+overlays:
+  sources:
+    # Atrium vendors Centaur as a subtree. Use the private workspace repo as the
+    # single repo-cache source, and point Centaur runtime surfaces at the subtree
+    # paths while composing the full workspace under ~/repos/gbasin/atrium.
+    - repo: gbasin/atrium
+      ref: master
+      toolsSubdir: centaur/tools
+      workflowsSubdir: centaur/workflows
+      skillsSubdir: centaur/.agents/skills
 
 networkPolicy:
   enabled: false
