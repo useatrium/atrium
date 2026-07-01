@@ -42,6 +42,7 @@ console:
     repository: localhost:5000/library/centaur-console
 
 apiRs:
+  sandboxWarmPoolSize: 1
   image:
     repository: localhost:5000/library/centaur-api-rs
   # Enable iron-proxy (override infra/values.local.yaml's `disabled`) in per-user
