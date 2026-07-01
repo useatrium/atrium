@@ -20,6 +20,7 @@ const DEFAULT_CONTEXT_MOUNT_PATH: &str = "/home/agent/context";
 const DEFAULT_AGENT_UID: u32 = 1001;
 const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
 const READINESS_TIMEOUT_SECS: u64 = 120;
+const CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV: &str = "CENTAUR_WARM_RESOLVED_REPOS_JSON";
 
 const SESSION_UPPER_VOLUME: &str = "session-upper";
 const WORKSPACE_VOLUME: &str = "workspace";
@@ -64,6 +65,7 @@ pub(crate) struct OverlayMetadata {
     pub(crate) harness_home: Option<String>,
     pub(crate) repo: Option<String>,
     pub(crate) repos_json: Option<String>,
+    pub(crate) resolved_repos_json: Option<String>,
     pub(crate) warm_sandbox: bool,
 }
 
@@ -96,6 +98,8 @@ impl OverlayMetadata {
             harness_home,
             repo: env_value(spec, "AGENT_REPO").map(str::to_owned),
             repos_json: env_value(spec, "AGENT_REPOS_JSON").map(str::to_owned),
+            resolved_repos_json: env_value(spec, CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV)
+                .map(str::to_owned),
             warm_sandbox: env_value(spec, "CENTAUR_WARM_SANDBOX").is_some_and(truthy_env_value),
         }
     }
@@ -143,7 +147,15 @@ pub(crate) fn overlay_manifest_init_container_json(
         metadata.harness_home.as_deref(),
     );
     push_optional_arg(&mut args, "--repo", metadata.repo.as_deref());
-    push_optional_arg(&mut args, "--repos-json", metadata.repos_json.as_deref());
+    let manifest_repos_json = if metadata.warm_sandbox {
+        metadata
+            .resolved_repos_json
+            .as_deref()
+            .or(metadata.repos_json.as_deref())
+    } else {
+        metadata.repos_json.as_deref()
+    };
+    push_optional_arg(&mut args, "--repos-json", manifest_repos_json);
 
     json!({
         "name": "overlay-manifest-writer",
@@ -609,6 +621,29 @@ mod tests {
                 args.iter().any(|arg| arg.as_str() == Some("--flat-home")),
                 flat_home,
                 "flat_home={flat_home}"
+            );
+        }
+    }
+
+    #[test]
+    fn warm_manifest_prefers_resolved_repos_json() {
+        let overlay = OverlayConfig::new("centaur-node-sync:test");
+        let logical = r#"[{"repo":"acme/widget","ref":"main"}]"#;
+        let resolved = r#"[{"repo":"acme/widget","ref":"main","resolved_sha":"abc","cache_path":".snapshots/acme/widget/abc"}]"#;
+
+        for (warm_sandbox, expected) in [(false, logical), (true, resolved)] {
+            let metadata = OverlayMetadata {
+                repos_json: Some(logical.to_owned()),
+                resolved_repos_json: Some(resolved.to_owned()),
+                warm_sandbox,
+                ..OverlayMetadata::default()
+            };
+            let init = overlay_manifest_init_container_json(&overlay, "asbx-test", &metadata);
+            let args = init["args"].as_array().unwrap();
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair[0] == "--repos-json" && pair[1] == expected),
+                "warm_sandbox={warm_sandbox}"
             );
         }
     }

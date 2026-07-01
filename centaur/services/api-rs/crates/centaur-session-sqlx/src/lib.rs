@@ -50,6 +50,30 @@ pub struct WorkflowOwnedSandbox {
     pub sandbox_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, FromRow)]
+pub struct WarmPoolState {
+    pub pool_name: String,
+    pub active_workload_key: Option<String>,
+    pub pending_workload_key: Option<String>,
+    pub target_size: i32,
+    pub generation: i64,
+}
+
+impl WarmPoolState {
+    pub fn protected_workload_keys(&self) -> Vec<String> {
+        let mut keys = Vec::with_capacity(2);
+        if let Some(key) = &self.active_workload_key {
+            keys.push(key.clone());
+        }
+        if let Some(key) = &self.pending_workload_key
+            && !keys.iter().any(|existing| existing == key)
+        {
+            keys.push(key.clone());
+        }
+        keys
+    }
+}
+
 #[derive(Clone)]
 pub struct PgSessionStore {
     pool: PgPool,
@@ -869,6 +893,96 @@ impl PgSessionStore {
         .fetch_one(&self.pool)
         .await?;
         Ok(count)
+    }
+
+    pub async fn get_warm_pool_state(
+        &self,
+        pool_name: &str,
+    ) -> Result<Option<WarmPoolState>, SessionStoreError> {
+        let state = sqlx::query_as::<_, WarmPoolState>(
+            r#"
+            select pool_name, active_workload_key, pending_workload_key, target_size, generation
+            from session_warm_pool_state
+            where pool_name = $1
+            "#,
+        )
+        .bind(pool_name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(state)
+    }
+
+    pub async fn prepare_warm_pool_state(
+        &self,
+        pool_name: &str,
+        desired_workload_key: &str,
+        target_size: usize,
+    ) -> Result<WarmPoolState, SessionStoreError> {
+        let target_size = target_size.min(i32::MAX as usize) as i32;
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            r#"
+            insert into session_warm_pool_state (pool_name, active_workload_key, target_size)
+            values ($1, $2, $3)
+            on conflict (pool_name) do nothing
+            "#,
+        )
+        .bind(pool_name)
+        .bind(desired_workload_key)
+        .bind(target_size)
+        .execute(&mut *tx)
+        .await?;
+
+        let state = sqlx::query_as::<_, WarmPoolState>(
+            r#"
+            update session_warm_pool_state
+            set
+                active_workload_key = coalesce(active_workload_key, $2),
+                pending_workload_key = case
+                    when active_workload_key is null then null
+                    when active_workload_key = $2 then pending_workload_key
+                    else $2
+                end,
+                target_size = $3,
+                updated_at = now()
+            where pool_name = $1
+            returning pool_name, active_workload_key, pending_workload_key, target_size, generation
+            "#,
+        )
+        .bind(pool_name)
+        .bind(desired_workload_key)
+        .bind(target_size)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(state)
+    }
+
+    pub async fn promote_warm_pool_pending(
+        &self,
+        pool_name: &str,
+        pending_workload_key: &str,
+    ) -> Result<Option<WarmPoolState>, SessionStoreError> {
+        let state = sqlx::query_as::<_, WarmPoolState>(
+            r#"
+            update session_warm_pool_state
+            set
+                active_workload_key = pending_workload_key,
+                pending_workload_key = null,
+                generation = generation + 1,
+                updated_at = now()
+            where pool_name = $1
+              and pending_workload_key = $2
+            returning pool_name, active_workload_key, pending_workload_key, target_size, generation
+            "#,
+        )
+        .bind(pool_name)
+        .bind(pending_workload_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(state)
     }
 
     pub async fn claim_ready_warm_sandbox(

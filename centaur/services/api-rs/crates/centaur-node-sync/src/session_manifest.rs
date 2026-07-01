@@ -40,6 +40,10 @@ pub struct RepoMount {
     pub r#ref: Option<String>,
     #[serde(default)]
     pub subdir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_path: Option<String>,
     /// Private target repos are never read from the shared node-global cache.
     #[serde(default, skip_serializing_if = "is_false")]
     pub private: bool,
@@ -245,7 +249,13 @@ pub fn validate_repo_mount(repo: &RepoMount) -> Result<(), String> {
     if let Some(subdir) = &repo.subdir {
         validate_repo_subdir_syntax(subdir)?;
     }
+    if let Some(cache_path) = &repo.cache_path {
+        validate_repo_cache_snapshot_path_syntax(cache_path)?;
+    }
     if repo.private {
+        if repo.cache_path.is_some() {
+            return Err("private repo must not use an explicit shared cache path".to_string());
+        }
         match repo.cache_scope.as_ref() {
             Some(RepoCacheScope::Principal { principal_id }) => {
                 validate_principal_cache_scope(principal_id)?;
@@ -264,6 +274,19 @@ pub fn validate_repo_mount(repo: &RepoMount) -> Result<(), String> {
         }
         if git_ref.trim().is_empty() {
             return Err("repo ref must not be empty".to_string());
+        }
+    }
+    if let Some(resolved_sha) = &repo.resolved_sha {
+        if resolved_sha.contains('\0') {
+            return Err("resolved repo sha must not contain NUL bytes".to_string());
+        }
+        if resolved_sha.trim().is_empty() {
+            return Err("resolved repo sha must not be empty".to_string());
+        }
+        if resolved_sha.trim() != resolved_sha {
+            return Err(
+                "resolved repo sha must not contain leading or trailing whitespace".to_string(),
+            );
         }
     }
     Ok(())
@@ -314,6 +337,15 @@ pub fn validate_repo_cache_path_syntax(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn validate_repo_cache_snapshot_path_syntax(cache_path: &str) -> Result<(), String> {
+    validate_repo_cache_path_syntax(cache_path)?;
+    let mut components = Path::new(cache_path).components();
+    match components.next() {
+        Some(Component::Normal(name)) if name == std::ffi::OsStr::new(".snapshots") => Ok(()),
+        _ => Err("repo cache path must be under .snapshots".to_string()),
+    }
+}
+
 pub fn validate_repo_subdir_syntax(subdir: &str) -> Result<(), String> {
     if subdir.contains('\0') {
         return Err("repo subdir must not contain NUL bytes".to_string());
@@ -352,6 +384,8 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: Some("foo".to_string()),
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             }],
@@ -570,6 +604,8 @@ mod tests {
             repo: "../secret".to_string(),
             r#ref: None,
             subdir: Some("ok".to_string()),
+            resolved_sha: None,
+            cache_path: None,
             private: false,
             cache_scope: None,
         })
@@ -580,6 +616,8 @@ mod tests {
             repo: "acme/foo".to_string(),
             r#ref: None,
             subdir: Some("../secret".to_string()),
+            resolved_sha: None,
+            cache_path: None,
             private: false,
             cache_scope: None,
         })
@@ -593,6 +631,8 @@ mod tests {
             repo: "acme/private".to_string(),
             r#ref: None,
             subdir: None,
+            resolved_sha: None,
+            cache_path: None,
             private: true,
             cache_scope: None,
         })
@@ -603,10 +643,39 @@ mod tests {
             repo: "acme/private".to_string(),
             r#ref: None,
             subdir: None,
+            resolved_sha: None,
+            cache_path: None,
             private: true,
             cache_scope: Some(RepoCacheScope::Shared),
         })
         .unwrap_err();
         assert!(err.contains("shared repo cache"));
+    }
+
+    #[test]
+    fn repo_mount_cache_path_must_target_snapshot_namespace() {
+        let err = validate_repo_mount(&RepoMount {
+            repo: "acme/private".to_string(),
+            r#ref: None,
+            subdir: None,
+            resolved_sha: Some("abc123".to_string()),
+            cache_path: Some("principals/principal-user/acme/private".to_string()),
+            private: false,
+            cache_scope: None,
+        })
+        .unwrap_err();
+
+        assert!(err.contains(".snapshots"));
+
+        validate_repo_mount(&RepoMount {
+            repo: "acme/widget".to_string(),
+            r#ref: Some("main".to_string()),
+            subdir: None,
+            resolved_sha: Some("abc123".to_string()),
+            cache_path: Some(".snapshots/acme/widget/abc123".to_string()),
+            private: false,
+            cache_scope: None,
+        })
+        .unwrap();
     }
 }

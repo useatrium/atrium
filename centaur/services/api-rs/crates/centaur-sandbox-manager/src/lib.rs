@@ -13,7 +13,9 @@ pub use manager::{ManagedSandbox, SandboxManager};
 pub use reaper::{SandboxReaper, SandboxReaperConfig};
 pub use reconcile::{DriftReason, ReconcileAction, ReconcileOutcome, ReconcilePlan};
 pub use store::{DesiredStateStore, InMemoryDesiredStateStore};
-pub use warm_pool::{WarmPoolConfig, WarmPoolError, WarmPoolManager, WarmSandboxSpecFactory};
+pub use warm_pool::{
+    WarmPoolConfig, WarmPoolError, WarmPoolManager, WarmSandboxSpecFactory, WarmSandboxWorkload,
+};
 
 #[cfg(test)]
 mod tests {
