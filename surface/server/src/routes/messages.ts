@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
@@ -291,10 +292,14 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         };
       });
     }
-    const clientMsgId =
+    const rawClientMsgId =
       typeof body.clientMsgId === 'string' && body.clientMsgId.length <= 64
         ? body.clientMsgId
         : null;
+    const clientMsgId =
+      uploadAttachmentFiles.length > 0
+        ? (optionalUuid(rawClientMsgId) ?? randomUUID())
+        : rawClientMsgId;
     const threadRootEventId =
       body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
