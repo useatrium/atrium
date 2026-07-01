@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { ArtifactLedger } from '../src/artifact-ledger.js';
 import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
 import { withTx } from '../src/db.js';
-import { encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
+import { encodeArtifactHandle, encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
 import {
   deleteCommentTx,
   editCommentTx,
@@ -78,6 +79,21 @@ async function insertRecord(entryUid: string): Promise<void> {
      VALUES ($1, $2, 1, 0, 'message', 'agent', 'codex', 'lean', 'record text', '{}'::jsonb, $3::timestamptz)`,
     [sessionId, entryUid, '2026-01-01T00:00:00.000Z'],
   );
+}
+
+async function insertUploadArtifact(channelId = fx.channelId): Promise<string> {
+  const token = randomUUID().replace(/-/g, '');
+  const blobSha = `${token}${token}`.slice(0, 64);
+  const result = await new ArtifactLedger(pool).commitUpload({
+    workspaceId: fx.workspaceId,
+    channelId,
+    path: `shared/channels/${channelId}/uploads/comment-${token}.txt`,
+    blobSha,
+    sizeBytes: 12,
+    mime: 'text/plain',
+    author: `human:${fx.userId}`,
+  });
+  return result.artifactId;
 }
 
 async function postComment(cookie: string, handle: string, text: string): Promise<WireEvent> {
@@ -165,7 +181,7 @@ async function exerciseCommentLifecycle(cookie: string, handle: string): Promise
 }
 
 describe('entry annotations', () => {
-  it('posts, edits, deletes, and folds comments on chat events and transcript records', async () => {
+  it('posts, edits, deletes, and folds comments on chat events, transcript records, and file artifacts', async () => {
     const cookie = await authCookie(fx.userId);
     const message = await postMessage(pool, {
       workspaceId: fx.workspaceId,
@@ -177,6 +193,9 @@ describe('entry annotations', () => {
 
     await insertRecord('annotation_record_comment');
     await exerciseCommentLifecycle(cookie, encodeRecordHandle('annotation_record_comment'));
+
+    const artifactId = await insertUploadArtifact();
+    await exerciseCommentLifecycle(cookie, encodeArtifactHandle(artifactId));
   });
 
   it('tags agent-authored comments with via=agent (only "agent" honored)', async () => {
@@ -361,6 +380,22 @@ describe('entry annotations', () => {
       payload: { emoji: '👍', action: 'add' },
     });
     expect(reaction.statusCode).toBe(404);
+
+    const artifactHandle = encodeArtifactHandle(await insertUploadArtifact());
+    const artifactRead = await app.inject({
+      method: 'GET',
+      url: `/api/entries/${artifactHandle}/annotations`,
+      headers: { cookie: strangerCookie },
+    });
+    expect(artifactRead.statusCode).toBe(404);
+
+    const artifactComment = await app.inject({
+      method: 'POST',
+      url: `/api/entries/${artifactHandle}/comments`,
+      headers: { cookie: strangerCookie },
+      payload: { text: 'nope' },
+    });
+    expect(artifactComment.statusCode).toBe(404);
   });
 
   it('returns 400 for malformed handles and invalid entry reaction bodies', async () => {

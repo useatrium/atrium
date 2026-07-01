@@ -1,14 +1,17 @@
-import { decodeHandle, encodeEventHandle, encodeRecordHandle } from '@atrium/surface-client/handle';
-export {
-  decodeHandle,
+import {
+  decodeHandle as decodeBaseHandle,
   encodeEventHandle,
-  encodeHandle,
+  encodeHandle as encodeBaseHandle,
+  encodeRecordHandle,
+  InvalidHandleError,
+  tryDecodeHandle as tryDecodeBaseHandle,
+  type EntryHandle as BaseEntryHandle,
+} from '@atrium/surface-client/handle';
+export {
+  encodeEventHandle,
   encodeRecordHandle,
   eventIdFromTarget,
   InvalidHandleError,
-  tryDecodeHandle,
-  type EntryHandle,
-  type EntryHandleType,
 } from '@atrium/surface-client/handle';
 
 // === Lane C: resolve ===
@@ -17,7 +20,47 @@ import type { Db } from './db.js';
 import { canAccessChannel } from './events.js';
 import { workspaceMemberExists } from './membership.js';
 
-export type NormalizedEntryTargetType = 'event' | 'record';
+export type ArtifactEntryHandle = { type: 'artifact'; artifactId: string };
+export type EntryHandle = BaseEntryHandle | ArtifactEntryHandle;
+export type EntryHandleType = EntryHandle['type'];
+
+const ART_PREFIX = 'art_';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function encodeArtifactHandle(artifactId: string): string {
+  if (!UUID_RE.test(artifactId)) {
+    throw new InvalidHandleError(artifactId, 'artifact id must be a UUID');
+  }
+  return `${ART_PREFIX}${artifactId}`;
+}
+
+export function encodeHandle(handle: EntryHandle): string {
+  return handle.type === 'artifact' ? encodeArtifactHandle(handle.artifactId) : encodeBaseHandle(handle);
+}
+
+export function decodeHandle(handle: string): EntryHandle {
+  if (typeof handle === 'string' && handle.startsWith(ART_PREFIX)) {
+    const artifactId = handle.slice(ART_PREFIX.length);
+    if (!UUID_RE.test(artifactId)) {
+      throw new InvalidHandleError(handle, 'art_ body must be a UUID');
+    }
+    return { type: 'artifact', artifactId };
+  }
+  return decodeBaseHandle(handle);
+}
+
+export function tryDecodeHandle(handle: string): EntryHandle | null {
+  if (typeof handle === 'string' && handle.startsWith(ART_PREFIX)) {
+    try {
+      return decodeHandle(handle);
+    } catch {
+      return null;
+    }
+  }
+  return tryDecodeBaseHandle(handle);
+}
+
+export type NormalizedEntryTargetType = 'event' | 'record' | 'artifact';
 
 export interface NormalizedEntry {
   handle: string;
@@ -48,6 +91,14 @@ interface RecordResolveRow {
   meta: unknown;
 }
 
+interface ArtifactResolveRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string | null;
+  path: string;
+  tombstoned_at: Date | string | null;
+}
+
 export function visibleSessionPredicate(userParam: string): string {
   return `((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', userParam)})
           OR s.spawned_by = ${userParam}
@@ -66,6 +117,8 @@ export async function resolveEntry(
       return resolveEventEntry(db, decoded.eventId, userId);
     case 'record':
       return resolveRecordEntry(db, decoded.entryUid, userId);
+    case 'artifact':
+      return resolveArtifactEntry(db, decoded.artifactId, userId);
   }
 }
 
@@ -155,6 +208,47 @@ async function resolveRecordEntry(
   };
 }
 
+async function resolveArtifactEntry(
+  db: Db,
+  artifactId: string,
+  userId: string,
+): Promise<NormalizedEntry | null> {
+  const res = await db.query<ArtifactResolveRow>(
+    `SELECT id::text,
+            workspace_id::text,
+            channel_id::text,
+            path,
+            tombstoned_at
+       FROM artifacts
+      WHERE id = $1`,
+    [artifactId],
+  );
+  const row = res.rows[0];
+  if (!row?.channel_id) return null;
+
+  const { ArtifactLedger } = await import('./artifact-ledger.js');
+  const access = await new ArtifactLedger(db).artifactReadableByUser(artifactId, userId);
+  if (!access) return null;
+
+  const tombstoned = row.tombstoned_at != null || access.tombstoned;
+  const meta = {
+    artifactId: row.id,
+    workspaceId: row.workspace_id,
+    channelId: row.channel_id,
+    path: row.path,
+  };
+  return {
+    handle: encodeArtifactHandle(row.id),
+    kind: 'artifact',
+    actor: null,
+    text: artifactName(row.path),
+    meta,
+    targetType: 'artifact',
+    sourceRefs: [],
+    tombstoned,
+  };
+}
+
 function eventText(row: EventResolveRow, meta: Record<string, unknown>): string {
   if (row.type === 'message.posted' && row.edited_text != null) return row.edited_text;
   return typeof meta.text === 'string' ? meta.text : '';
@@ -171,4 +265,9 @@ function sourceRefsFromMeta(meta: Record<string, unknown>): string[] {
 function normalizeObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function artifactName(path: string): string {
+  const parts = path.split('/').filter(Boolean);
+  return parts.at(-1) ?? path;
 }

@@ -538,6 +538,26 @@ async function resolveAnnotationScopeTx(
         threadRootEventId: null,
       };
     }
+    case 'artifact': {
+      const res = await client.query<{
+        workspace_id: string;
+        channel_id: string | null;
+      }>(
+        `SELECT workspace_id, channel_id
+           FROM artifacts
+          WHERE id = $1`,
+        [decoded.artifactId],
+      );
+      const row = res.rows[0];
+      if (!row?.channel_id) {
+        throw new DomainError(404, 'entry_not_found', 'entry not found');
+      }
+      return {
+        workspaceId: row.workspace_id,
+        channelId: row.channel_id,
+        threadRootEventId: null,
+      };
+    }
   }
 }
 

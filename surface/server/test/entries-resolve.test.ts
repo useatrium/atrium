@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { ArtifactLedger } from '../src/artifact-ledger.js';
 import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
-import { encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
+import { encodeArtifactHandle, encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
 import { createChannel, postMessage } from '../src/events.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
@@ -103,6 +104,21 @@ async function insertRecord(args: {
       `2026-01-01T00:00:0${seq}.000Z`,
     ],
   );
+}
+
+async function insertUploadArtifact(): Promise<{ artifactId: string; path: string }> {
+  const token = randomUUID().replace(/-/g, '');
+  const path = `shared/channels/${fx.channelId}/uploads/resolve-${token}.txt`;
+  const result = await new ArtifactLedger(pool).commitUpload({
+    workspaceId: fx.workspaceId,
+    channelId: fx.channelId,
+    path,
+    blobSha: `${token}${token}`.slice(0, 64),
+    sizeBytes: 12,
+    mime: 'text/plain',
+    author: `human:${fx.userId}`,
+  });
+  return { artifactId: result.artifactId, path };
 }
 
 describe('GET /api/entries/:handle', () => {
@@ -240,6 +256,44 @@ describe('GET /api/entries/:handle', () => {
       });
       expect(denied.statusCode).toBe(404);
     }
+  });
+
+  it('resolves file artifacts for artifact readers and hides them from non-readers', async () => {
+    const memberCookie = await authCookie(fx.userId);
+    const strangerId = await insertUser('artifact-entry-stranger');
+    const strangerCookie = await authCookie(strangerId);
+
+    const { artifactId, path } = await insertUploadArtifact();
+    const handle = encodeArtifactHandle(artifactId);
+
+    const allowed = await app.inject({
+      method: 'GET',
+      url: `/api/entries/${handle}`,
+      headers: { cookie: memberCookie },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toMatchObject({
+      handle,
+      kind: 'artifact',
+      actor: null,
+      text: path.split('/').at(-1),
+      meta: {
+        artifactId,
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        path,
+      },
+      targetType: 'artifact',
+      sourceRefs: [],
+      tombstoned: false,
+    });
+
+    const denied = await app.inject({
+      method: 'GET',
+      url: `/api/entries/${handle}`,
+      headers: { cookie: strangerCookie },
+    });
+    expect(denied.statusCode).toBe(404);
   });
 
   it('rejects malformed and reserved handles', async () => {

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decodeHandle,
+  encodeArtifactHandle,
   encodeEventHandle,
   encodeHandle,
   encodeRecordHandle,
@@ -28,10 +29,18 @@ describe('entry handle codec', () => {
     }
   });
 
+  it('round-trips artifact handles', () => {
+    const artifactId = '123e4567-e89b-12d3-a456-426614174000';
+    const handle = encodeArtifactHandle(artifactId);
+    expect(handle).toBe(`art_${artifactId}`);
+    expect(decodeHandle(handle)).toEqual({ type: 'artifact', artifactId });
+  });
+
   it('encodeHandle is the inverse of decodeHandle', () => {
     const cases: EntryHandle[] = [
       { type: 'event', eventId: 7 },
       { type: 'record', entryUid: 'deadbeef' },
+      { type: 'artifact', artifactId: '123e4567-e89b-12d3-a456-426614174000' },
     ];
     for (const h of cases) {
       expect(decodeHandle(encodeHandle(h))).toEqual(h);
@@ -46,6 +55,12 @@ describe('entry handle codec', () => {
 
   it('rejects malformed record handles', () => {
     for (const bad of ['rec_', 'rec_has space', 'rec_has/slash', 'rec_emoji😀']) {
+      expect(() => decodeHandle(bad)).toThrow(InvalidHandleError);
+    }
+  });
+
+  it('rejects malformed artifact handles', () => {
+    for (const bad of ['art_', 'art_nope', 'art_123e4567-e89b-12d3-a456-42661417400z']) {
       expect(() => decodeHandle(bad)).toThrow(InvalidHandleError);
     }
   });
@@ -65,10 +80,15 @@ describe('entry handle codec', () => {
     expect(() => encodeEventHandle(1.5)).toThrow(InvalidHandleError);
     expect(() => encodeRecordHandle('')).toThrow(InvalidHandleError);
     expect(() => encodeRecordHandle('has space')).toThrow(InvalidHandleError);
+    expect(() => encodeArtifactHandle('nope')).toThrow(InvalidHandleError);
   });
 
   it('tryDecodeHandle returns null instead of throwing', () => {
     expect(tryDecodeHandle('nope')).toBeNull();
     expect(tryDecodeHandle('evt_5')).toEqual({ type: 'event', eventId: 5 });
+    expect(tryDecodeHandle('art_123e4567-e89b-12d3-a456-426614174000')).toEqual({
+      type: 'artifact',
+      artifactId: '123e4567-e89b-12d3-a456-426614174000',
+    });
   });
 });
