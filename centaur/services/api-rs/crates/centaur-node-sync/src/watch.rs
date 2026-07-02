@@ -391,13 +391,15 @@ mod imp {
             return;
         }
         if mask.intersects(EventMask::IGNORED | EventMask::UNMOUNT) {
-            if let Some(watched) = state.wd_dirs.remove(&wd) {
-                if mask.contains(EventMask::UNMOUNT) {
-                    with_shared(state, |shared| shared.mark_always_scan(&watched.session_id));
-                    let _ = state
-                        .dirty_tx
-                        .send(WatchMessage::Dirty(watched.session_id.clone()));
-                }
+            // The wd_dirs entry is removed for IGNORED too (remove runs as the
+            // first operand regardless of the UNMOUNT check).
+            if let Some(watched) = state.wd_dirs.remove(&wd)
+                && mask.contains(EventMask::UNMOUNT)
+            {
+                with_shared(state, |shared| shared.mark_always_scan(&watched.session_id));
+                let _ = state
+                    .dirty_tx
+                    .send(WatchMessage::Dirty(watched.session_id.clone()));
             }
             return;
         }
