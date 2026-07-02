@@ -761,9 +761,12 @@ function reduceToolResult(state: SessionState, eventId: number, event: AmpToolEv
 }
 
 /** Fold a codex `thread/tokenUsage/updated` snapshot. Output tokens (incl.
- * reasoning) grow smoothly during generation — that's the liveness signal;
- * totals jump with each request's input and would read as noise. Snapshots are
- * cumulative per thread, so take the max rather than adding. */
+ * reasoning) grow smoothly during generation — that's the liveness signal.
+ * ONLY the output fields count: totals include the request input/context
+ * (easily 100k+), and one input-inflated snapshot would pin the max-merged
+ * counter forever. A snapshot without output fields contributes nothing —
+ * the chars÷4 estimate covers that stream. Snapshots are cumulative per
+ * thread, so take the max rather than adding. */
 function reduceThreadTokenUsage(state: SessionState, raw: { tokenUsage?: unknown }): void {
   if (!isJsonObject(raw.tokenUsage)) return;
   const total = raw.tokenUsage.total;
@@ -772,9 +775,8 @@ function reduceThreadTokenUsage(state: SessionState, raw: { tokenUsage?: unknown
   const output =
     num(total.outputTokens ?? total.output_tokens) +
     num(total.reasoningOutputTokens ?? total.reasoning_output_tokens);
-  const snapshot = output > 0 ? output : num(total.totalTokens ?? total.total_tokens);
-  if (snapshot > 0) {
-    state.tokensUsed = Math.max(state.tokensUsed ?? 0, snapshot);
+  if (output > 0) {
+    state.tokensUsed = Math.max(state.tokensUsed ?? 0, output);
   }
 }
 

@@ -18,7 +18,9 @@ export type TurnPhase = 'thinking' | 'tool' | 'waiting' | 'done';
  * calm ticks (every ~50-100 tokens) without pretending to count precision the
  * chars÷4 estimate doesn't have. */
 export function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  // 999,950+ rounds to "1000.0k" — promote to the M tier at the display
+  // boundary, not the numeric one.
+  if (count >= 999_950) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
   return String(count);
 }

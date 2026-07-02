@@ -60,6 +60,11 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     let generation = 0;
     // Any sign of life on the wire (open, ping, frame) refreshes this.
     let liveAt = Date.now();
+    // Whether the CURRENT connection has delivered a named ping. Only then is
+    // prolonged silence proof of death — against a not-yet-rolled server that
+    // sends only SSE comments (invisible to EventSource), long frame silence
+    // is normal and recycling would churn a healthy stream.
+    let pingSeen = false;
     let frameAt: number | null = null;
     setStream(acc);
     setConnected(false);
@@ -101,6 +106,7 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
       const handleGeneration = generation;
       const isCurrent = () => !disposed && generation === handleGeneration;
       liveAt = Date.now();
+      pingSeen = false;
       handle = sessionsApi.openStream(sessionId, acc.lastEventId, {
         onFrame: (frame) => {
           if (isCurrent()) onFrame(frame);
@@ -113,6 +119,7 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
         onPing: (serverTs) => {
           if (!isCurrent()) return;
           liveAt = Date.now();
+          pingSeen = true;
           if (serverTs !== null) {
             const parsed = Date.parse(serverTs);
             if (!Number.isNaN(parsed)) setClockSkewMs(Date.now() - parsed);
@@ -137,27 +144,40 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
       });
     };
 
+    // Tear down the current handle so connect() can start a fresh one.
+    const recycle = () => {
+      handle?.close();
+      handle = null;
+      generation += 1;
+      setConnected(false);
+    };
+
     // Re-open the stream if it's currently closed (no live handle, no pending
     // retry). Safe to call spuriously — a no-op while connected or retrying.
+    // A handle that has been silently dead past the ping window is recycled
+    // rather than trusted: without this, a steer after a lost server FIN
+    // would no-op here and the new turn would never stream.
     ensureConnectedRef.current = () => {
-      if (disposed || handle || retryTimer) return;
+      if (disposed || retryTimer) return;
+      if (handle) {
+        if (Date.now() - liveAt < SILENT_DEATH_MS) return;
+        recycle();
+      }
       connect();
     };
 
     connect();
 
-    // Silent-death watchdog: a dead TCP path never fires EventSource.onerror,
-    // so with pings expected every 15s, prolonged total silence means the
-    // connection is gone — recycle it. Terminal folds are exempt (the server
-    // legitimately closes after replaying a finished session).
+    // Silent-death watchdog: a dead TCP path never fires EventSource.onerror.
+    // Once this connection has proven it serves named pings (15s cadence),
+    // prolonged total silence means the connection is gone — recycle it. No
+    // terminal exemption: a cleanly-closed post-replay stream nulls `handle`
+    // via onError, so a lingering handle on a terminal fold is exactly the
+    // dead-connection case (and must be recycled or a later steer starves).
     const watchdog = setInterval(() => {
-      if (disposed || !handle) return;
-      if (acc.status !== 'idle' && isTerminalExecutionStatus(acc.status)) return;
+      if (disposed || !handle || !pingSeen) return;
       if (Date.now() - liveAt < SILENT_DEATH_MS) return;
-      handle.close();
-      handle = null;
-      generation += 1;
-      setConnected(false);
+      recycle();
       connect();
     }, WATCHDOG_TICK_MS);
 

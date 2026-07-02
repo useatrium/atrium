@@ -249,13 +249,21 @@ export function SessionPane({
   // only thinking-phase silence is meaningful. Harness-agnostic.
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
-  // The newest tool_call still awaiting its result. A text item after an open
-  // tool means the agent moved on (its result frame was lost) — not running.
+  // The newest tool_call still awaiting its result. ANY later non-tool item
+  // (text, a steer's user_message, new reasoning, a question) means the agent
+  // moved past it — its result frame was lost or its turn was cancelled — so
+  // it must not be reported as running, or a stale tool would pin the 'tool'
+  // phase and suppress the quiet/stuck escalation for the whole next turn.
+  // (While a tool is genuinely running, every harness is silent: no non-tool
+  // item can legitimately appear after it.)
   const openTool = useMemo(() => {
     let candidate: ToolCallItem | null = null;
     for (const item of stream.items) {
-      if (item.type === 'tool_call' && item.result === undefined) candidate = item;
-      else if (item.type === 'text' && candidate !== null) candidate = null;
+      if (item.type === 'tool_call') {
+        if (item.result === undefined) candidate = item;
+      } else if (candidate !== null) {
+        candidate = null;
+      }
     }
     return candidate;
   }, [stream.items]);
@@ -273,13 +281,20 @@ export function SessionPane({
       : lastFrameTsMs !== null && lastFrameAt !== null
         ? lastFrameTsMs + (now - lastFrameAt)
         : now;
-  const turnStartMs = parseTs(stream.turnStartTs) ?? parseTs(session.createdAt);
+  // Clock only from stream-derived anchors — no createdAt/local fallbacks. A
+  // pane opened before the replay folds (or a steer observed via WS before the
+  // new execution's frames arrive — turnEndTs still closed) shows no clock
+  // rather than a days-since-creation or stale-turn number; it appears once
+  // the running execution_state / turn/started folds.
+  const turnStartMs = parseTs(stream.turnStartTs);
   const turnEndMs = parseTs(stream.turnEndTs);
   const turnElapsedMs =
     turnStartMs === null
       ? 0
       : activeTurn
-        ? Math.max(0, serverNowMs - turnStartMs)
+        ? turnEndMs === null
+          ? Math.max(0, serverNowMs - turnStartMs)
+          : 0
         : turnEndMs !== null
           ? Math.max(0, turnEndMs - turnStartMs)
           : 0;
@@ -291,6 +306,27 @@ export function SessionPane({
     lastFrameTsMs !== null
       ? Math.max(0, serverNowMs - lastFrameTsMs)
       : Math.max(0, now - (lastFrameAt ?? mountedAtRef.current));
+  // The waiting clock anchors to the question's own frame stamp — quietMs
+  // would reset on unrelated frames (artifact captures, usage) and undercount
+  // how long the agent has been blocked on a human.
+  const waitingSinceMs = useMemo(() => {
+    if (!pendingQuestion) return null;
+    const item = stream.items.find(
+      (it) => it.type === 'question' && it.questionId === pendingQuestion.questionId,
+    );
+    return parseTs(item?.ts);
+  }, [pendingQuestion, stream.items]);
+  const waitingMs = waitingSinceMs !== null ? Math.max(0, serverNowMs - waitingSinceMs) : 0;
+  // Reconnect display waits out a short grace from the actual disconnect
+  // moment (NOT quietMs — the agent may have been legitimately quiet for
+  // longer than the grace when a 1s transport blip happens).
+  const disconnectedAtRef = useRef<number>(Date.now());
+  const prevConnectedRef = useRef<boolean>(connected);
+  if (prevConnectedRef.current !== connected) {
+    prevConnectedRef.current = connected;
+    if (!connected) disconnectedAtRef.current = Date.now();
+  }
+  const disconnectedMs = connected ? 0 : Math.max(0, now - disconnectedAtRef.current);
   // Drive the single pinned status line: thinking → tool (a command/tool is
   // mid-run) → waiting (pending question) while active, then done on completion.
   // Suppressed entirely when a provider-auth reconnect is pending — that banner
@@ -313,7 +349,7 @@ export function SessionPane({
   const turnLiveness: TurnLiveness =
     !activeTurn
       ? 'live'
-      : !connected && quietMs >= RECONNECT_GRACE_MS
+      : !connected && disconnectedMs >= RECONNECT_GRACE_MS
         ? 'reconnecting'
         : stream.transport === 'reattaching'
           ? 'reattaching'
@@ -1125,14 +1161,14 @@ export function SessionPane({
           liveness={turnLiveness}
           label={turnStatusLabel}
           elapsedMs={turnElapsedMs}
-          quietMs={quietMs}
+          quietMs={turnPhase === 'waiting' ? waitingMs : quietMs}
           pulse={stream.frameSeq}
           tokens={tokensUsed}
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
           cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
-          onCancel={isDriver ? onCancel : undefined}
+          onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}
 

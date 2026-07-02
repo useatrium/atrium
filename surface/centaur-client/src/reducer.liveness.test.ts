@@ -148,6 +148,22 @@ describe("reduceSession liveness layer", () => {
     expect(deltas.deltaChars).toBe(20);
     expect(deltas.tokensUsed).toBeUndefined();
 
+    // A snapshot with only an input-inflated total contributes nothing — one
+    // such fold would otherwise pin the max-merged counter at ~context size.
+    const totalOnly = reduceSession(deltas, {
+      event: "amp_raw_event",
+      event_id: 4,
+      data: {
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: "t",
+          turnId: "u",
+          tokenUsage: { total: { totalTokens: 120_000, inputTokens: 120_000 } },
+        },
+      },
+    } as never);
+    expect(totalOnly.tokensUsed).toBeUndefined();
+
     const withReal = reduceSession(deltas, {
       event: "amp_raw_event",
       event_id: 4,
