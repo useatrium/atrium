@@ -758,6 +758,47 @@ if [[ "${hydrate_ok}" != "1" ]]; then
   kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu 'ls -la /workspace/shared 2>&1 || true' >&2 || true
   exit 1
 fi
+# The hydrated lower must SURVIVE later daemon ticks, not just the first mount:
+# a per-tick plan rebuilt without the artifact lower mismatches the overlay
+# signature and remounts the session without its hydrated artifacts. The
+# first-read assert above can win that race, so re-check after a few ticks.
+sleep 5
+if ! kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu \
+     'test "$(cat /workspace/shared/hydrated.md 2>/dev/null)" = "hydrated by atrium"'; then
+  echo "FAIL: hydrated artifact disappeared after later daemon ticks (remount dropped the artifact lower)" >&2
+  kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu 'ls -la /workspace/shared 2>&1 || true' >&2 || true
+  exit 1
+fi
+echo "OK: hydrated artifact still present after later daemon ticks"
+
+# The hydrated view must also survive a DAEMON RESTART (every deploy rolls the
+# DaemonSet). The mounted_overlays map is process-local, so a restarted daemon
+# sees the live session as first-seen; re-running hydration would remove_dir_all
+# an active lowerdir (readdir goes empty, new files never appear). The daemon
+# must take the re-attach branch instead — observable as: content intact,
+# readdir intact, and NO second hydration-scope fetch.
+kubectl -n "${NS}" delete pod "$(node_sync_pod)" --wait=true
+kubectl -n "${NS}" rollout status ds -l app.kubernetes.io/component=node-sync --timeout=180s
+restart_ok=0
+for _ in $(seq 1 15); do
+  if kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu \
+       'test "$(cat /workspace/shared/hydrated.md 2>/dev/null)" = "hydrated by atrium" && ls /workspace/shared | grep -q hydrated.md'; then
+    restart_ok=1
+    break
+  fi
+  sleep 2
+done
+if [[ "${restart_ok}" != "1" ]]; then
+  echo "FAIL: hydrated artifact damaged by daemon restart (destructive re-hydrate under live mount)" >&2
+  kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu 'ls -la /workspace/shared 2>&1 || true' >&2 || true
+  exit 1
+fi
+scope_fetches="$(kubectl -n "${NS}" logs "deploy/${CAPTURE_SINK}" 2>/dev/null | grep -c "GET .*${HYDRATE_SESSION}/hydration-scope" || true)"
+if [[ "${scope_fetches}" != "1" ]]; then
+  echo "FAIL: expected exactly 1 hydration-scope fetch across the daemon restart, saw ${scope_fetches} (restart re-ran hydration)" >&2
+  exit 1
+fi
+echo "OK: hydrated artifact survived a daemon restart without re-hydration"
 
 echo "==> [9/9] assert inbound adopt (remote edit -> merged) via pod logs"
 if [[ "${NODE_SYNC_E2E_INBOUND:-0}" == "1" ]]; then

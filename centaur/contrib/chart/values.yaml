@@ -548,6 +548,9 @@ nodeSync:
   apiKeySecret:
     name: centaur-infra-env
     key: ATRIUM_CAPTURE_API_KEY
+  # Extra literal env vars for the sync daemon (e.g. NODE_SYNC_GC_DIRS: "1" to
+  # let it delete evicted sessions' overlay dirs, NODE_SYNC_RECONCILE_SECS, …).
+  extraEnv: {}
   # VM-per-tenant (R2 / §8B #19) — NOT-VALIDATED-ON-MACOS. Off by default: the
   # single global DaemonSet above runs. Enable to render ONE DaemonSet per tenant,
   # node-pinned + optionally under a microVM runtimeClass. See the per-tenant

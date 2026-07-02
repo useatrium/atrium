@@ -28,15 +28,91 @@ const client = new S3Client({
 
 let bucketReady = false;
 
+/**
+ * Storage-readiness for /healthz (#215): `null` until startStorageBootstrap runs
+ * (test/dev app builds that never start it stay ungated), then false → true once
+ * the bucket check has succeeded. Sticky: a transient store outage after boot
+ * does not flip health back — the gate exists to catch never-provisioned
+ * storage (which otherwise fails silently for days), not to track liveness.
+ */
+let storageReadyState: boolean | null = null;
+
+export function storageReady(): boolean | null {
+  return storageReadyState;
+}
+
+/** Definitive bucket-not-found — the only error CreateBucket should answer.
+ * Creating on transient/auth errors masks the real failure (and scoped AWS
+ * credentials may not be allowed to create buckets at all). */
+export function isNoSuchBucketError(err: unknown): boolean {
+  const e = err as {
+    name?: string;
+    Code?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return (
+    e?.name === 'NotFound' ||
+    e?.name === 'NoSuchBucket' ||
+    e?.Code === 'NoSuchBucket' ||
+    e?.$metadata?.httpStatusCode === 404
+  );
+}
+
 /** Create the bucket on first use; cheap no-op afterwards. */
 export async function ensureBucket(): Promise<void> {
   if (bucketReady) return;
   try {
     await client.send(new HeadBucketCommand({ Bucket: config.s3Bucket }));
-  } catch {
+  } catch (err) {
+    if (!isNoSuchBucketError(err)) throw err;
     await client.send(new CreateBucketCommand({ Bucket: config.s3Bucket }));
   }
   bucketReady = true;
+  storageReadyState = true;
+}
+
+export interface StorageBootstrapHandle {
+  stop(): void;
+}
+
+/**
+ * Boot-time storage bootstrap (#215): retry the bucket check until it succeeds,
+ * logging loudly on each failure. The OVH box ran for days with the bucket
+ * missing — every capture 500ed while /healthz stayed green; this plus the
+ * healthz gate makes that misconfiguration fail a health-gated deploy instead.
+ */
+export function startStorageBootstrap(
+  log: { info: (o: object, m: string) => void; error: (o: object, m: string) => void },
+  opts: { retryMs?: number; ensure?: () => Promise<void> } = {},
+): StorageBootstrapHandle {
+  const retryMs = opts.retryMs ?? 15_000;
+  const ensure = opts.ensure ?? ensureBucket;
+  storageReadyState = false;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const attempt = async (): Promise<void> => {
+    try {
+      await ensure();
+      storageReadyState = true;
+      log.info({ bucket: config.s3Bucket }, 'storage bootstrap: bucket ready');
+    } catch (err) {
+      log.error(
+        { err, bucket: config.s3Bucket, retryMs },
+        'storage bootstrap: bucket unavailable; captures and uploads will fail — retrying',
+      );
+      if (!stopped) {
+        timer = setTimeout(() => void attempt(), retryMs);
+        timer.unref?.();
+      }
+    }
+  };
+  void attempt();
+  return {
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
 }
 
 export function presignPut(key: string, contentType: string): Promise<string> {
@@ -65,12 +141,15 @@ export async function deleteObject(key: string): Promise<void> {
 }
 
 /** Upload object bytes. The body is a Buffer/Uint8Array so the SDK can set
- * Content-Length without buffering a stream itself. */
+ * Content-Length without buffering a stream itself. Ensures the bucket first
+ * (memoized no-op after the first success): the CAS capture path reaches here
+ * without going through the upload routes' ensureBucket (#215). */
 export async function uploadObject(
   key: string,
   body: Buffer | Uint8Array,
   contentType: string,
 ): Promise<void> {
+  await ensureBucket();
   await client.send(
     new PutObjectCommand({
       Bucket: config.s3Bucket,
@@ -86,6 +165,7 @@ export async function uploadObjectStream(
   stream: Readable,
   contentType: string,
 ): Promise<void> {
+  await ensureBucket();
   await new Upload({
     client,
     params: {

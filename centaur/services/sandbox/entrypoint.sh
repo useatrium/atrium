@@ -676,6 +676,16 @@ fi
 # Signal readiness
 touch "$HOME_DIR/.ready"
 
+# Pod-liveness heartbeat: node-sync evicts sessions whose heartbeat goes stale
+# (the sidecar can't see pod state any other way — container mounts are invisible
+# in the host's /proc/mounts).
+(
+    while :; do
+        touch "$HOME_DIR/.heartbeat" 2>/dev/null || true
+        sleep 60
+    done
+) &
+
 # ── Background: slow auth tasks ─────────────────────────────────────────────
 {
     if [ -n "${GITHUB_TOKEN:-}" ]; then

@@ -8,7 +8,7 @@ import { buildAppsOrigin } from './apps-origin.js';
 import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
-import { deleteObject } from './s3.js';
+import { deleteObject, startStorageBootstrap } from './s3.js';
 import { startArtifactGcWorker, type ArtifactGcWorker } from './artifact-ledger-gc.js';
 import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
@@ -51,6 +51,11 @@ export async function main() {
   const app = await buildApp({ pool, hub, stt: sttWorker, rateLimit });
   const appsOrigin = config.appsPort > 0 ? await buildAppsOrigin({ pool }) : null;
 
+  // Storage bootstrap (#215): ensure the S3/MinIO bucket exists, retrying until
+  // it does; /healthz stays 503 until the first success so the health-gated
+  // deploy catches never-provisioned storage instead of shipping silent 500s.
+  const storageBootstrap = startStorageBootstrap(app.log);
+
   // === gc additions ===
   let artifactGc: ArtifactGcWorker | null = null;
   if (config.artifactGcEnabled) {
@@ -60,6 +65,7 @@ export async function main() {
   const shutdown = async () => {
     sttWorker.stop();
     artifactGc?.stop();
+    storageBootstrap.stop();
     clearInterval(heartbeat);
     clearInterval(idempotencyPrune);
     clearInterval(filePrune);

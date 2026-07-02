@@ -67,6 +67,10 @@ spec:
 {{- if .Values.nodeSync.hydrateArtifacts }}
 {{- printf "- name: NODE_SYNC_HYDRATE_ARTIFACTS\n  value: \"true\"" | nindent 12 }}
 {{- end }}
+{{- range $name, $value := .Values.nodeSync.extraEnv }}
+            - name: {{ $name | quote }}
+              value: {{ $value | quote }}
+{{- end }}
           volumeMounts:
             # ONE parent mount so overlayfs upperdir + workdir share a single
             # vfsmount. Separate per-subdir hostPath binds are distinct mounts and
