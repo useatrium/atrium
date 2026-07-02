@@ -37,6 +37,11 @@ pub struct WarmcacheManifestEntry {
 
 pub struct MaterializeOutcome {
     pub base_seqs: HashMap<String, u64>,
+    /// The entries that actually materialized — (path, seq, sha) exactly as
+    /// hydrated. The daemon seeds its sync state from these at mount time so
+    /// the working copy is known to hold the ledger version before the agent
+    /// (or the first change-feed poll) can act on the path.
+    pub hydrated: Vec<CasHydrateEntry>,
     pub reflinked: u64,
     pub copied: u64,
     pub fetched: u64,
@@ -136,6 +141,7 @@ pub fn materialize_cached(
 ) -> MaterializeOutcome {
     let mut out = MaterializeOutcome {
         base_seqs: HashMap::new(),
+        hydrated: vec![],
         reflinked: 0,
         copied: 0,
         fetched: 0,
@@ -163,6 +169,7 @@ pub fn materialize_cached(
         match r {
             Ok(()) => {
                 out.base_seqs.insert(e.path.clone(), e.seq);
+                out.hydrated.push(e.clone());
             }
             Err(err) => out.errors.push((e.path.clone(), err)),
         }
@@ -370,6 +377,11 @@ mod tests {
         assert_eq!(out.fetched, 2);
         assert_eq!(out.base_seqs.get("shared/a.txt"), Some(&11));
         assert_eq!(out.base_seqs.get("scratch/sess-1/b.txt"), Some(&12));
+        // the materialized entries come back verbatim so the daemon can seed
+        // its sync state (path, seq, sha) at mount time
+        let hydrated_paths: Vec<&str> = out.hydrated.iter().map(|e| e.path.as_str()).collect();
+        assert!(hydrated_paths.contains(&"shared/a.txt"));
+        assert!(hydrated_paths.contains(&"scratch/sess-1/b.txt"));
         assert_eq!(
             fs::read(lower.join("shared/a.txt")).unwrap(),
             b"shared bytes"
