@@ -645,13 +645,16 @@ export class SessionRuns {
   private async readMirroredState(id: string): Promise<ReturnType<typeof initialSessionState>> {
     const res = await this.readMirroredFrames(id, 0);
     let state = initialSessionState();
-    for (const r of res.rows) state = reduceSession(state, r.frame);
+    for (const r of res.rows) state = reduceSession(state, { ...r.frame, ts: r.created_at.toISOString() });
     return state;
   }
 
-  private readMirroredFrames(id: string, afterEventId: number): Promise<{ rows: { frame: CentaurEventFrame }[] }> {
-    return this.pool.query<{ frame: CentaurEventFrame }>(
-      `SELECT frame
+  private readMirroredFrames(
+    id: string,
+    afterEventId: number,
+  ): Promise<{ rows: { frame: CentaurEventFrame; created_at: Date }[] }> {
+    return this.pool.query<{ frame: CentaurEventFrame; created_at: Date }>(
+      `SELECT frame, created_at
        FROM session_events
        WHERE session_id = $1 AND centaur_event_id > $2
        ORDER BY centaur_event_id ASC`,
@@ -753,10 +756,10 @@ export class SessionRuns {
         session.id,
         mirrored.rows.map(({ frame }) => frame.event_id),
       );
-      for (const { frame } of mirrored.rows) {
+      for (const { frame, created_at } of mirrored.rows) {
         if (signal.aborted) break;
         cursor = Math.max(cursor, frame.event_id);
-        writeSessionFrame(raw, frame, replayHandles.get(frame.event_id));
+        writeSessionFrame(raw, frame, replayHandles.get(frame.event_id), created_at.toISOString());
       }
       // Only tail live for a session with an active execution. A terminal
       // session's mirror already contains its terminal execution_state, which we
@@ -775,7 +778,8 @@ export class SessionRuns {
           const recordHandles = frameMayCreateTranscriptRecord(frame)
             ? (await this.recordHandlesByEventId(session.id, [frame.event_id])).get(frame.event_id)
             : undefined;
-          writeSessionFrame(raw, frame, recordHandles);
+          // Live frames are happening now — receive time is the event time.
+          writeSessionFrame(raw, frame, recordHandles, new Date().toISOString());
         }
       }
     } finally {
@@ -2551,12 +2555,15 @@ function writeSessionFrame(
   raw: ServerResponse,
   frame: CentaurEventFrame,
   recordHandles?: SessionFrameRecordHandle[],
+  ts?: string,
 ): void {
   raw.write(`event: ${frame.event}\n`);
   raw.write(
     `data: ${JSON.stringify({
       ...frame.data,
       ...(recordHandles?.length ? { recordHandles } : {}),
+      // Namespaced so a raw harness payload's own `ts` can't be clobbered.
+      ...(ts ? { atrium_ts: ts } : {}),
       event_id: frame.event_id,
     })}\n\n`,
   );

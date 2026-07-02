@@ -476,4 +476,25 @@ describe("reduceSession", () => {
       sourceEventIds: [10, 12],
     });
   });
+
+  it("stamps items with the frame ts that created them and keeps the first stamp", () => {
+    const first = { ...userMessageFrame(5, "item_1", "do the thing"), ts: "2026-07-02T10:00:00.000Z" };
+    const one = reduceSession(initialSessionState(), first);
+    expect(one.items[0]).toMatchObject({
+      type: "user_message",
+      text: "do the thing",
+      ts: "2026-07-02T10:00:00.000Z",
+    });
+
+    // A later re-delivery of the same item must not move its timestamp.
+    const redelivered = { ...userMessageFrame(9, "item_1", "do the thing"), ts: "2026-07-02T10:05:00.000Z" };
+    const two = reduceSession(one, redelivered);
+    expect(two.items).toHaveLength(1);
+    expect(two.items[0]!.ts).toBe("2026-07-02T10:00:00.000Z");
+  });
+
+  it("leaves items unstamped when frames carry no ts", () => {
+    const state = reduceSession(initialSessionState(), userMessageFrame(5, "item_1", "hello"));
+    expect(state.items[0]!.ts).toBeUndefined();
+  });
 });

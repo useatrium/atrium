@@ -1,0 +1,144 @@
+// @vitest-environment jsdom
+// Session-pane UX: (a) transcript turns expose their wall-clock time on
+// mouseover (server-stamped frames → item.ts → hover label + title), and
+// (b) the split-view pane is drag-resizable with the width persisted.
+
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatTurnTime } from '@atrium/surface-client';
+import type { CentaurEventFrame } from '@atrium/centaur-client';
+import { SessionPane } from '../src/sessions/SessionPane';
+import { sessionsApi } from '../src/sessions/api';
+import type { Session } from '../src/sessions/types';
+import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+
+const me = { id: 'u-me', handle: 'me', displayName: 'Me' };
+
+const running: Session = {
+  id: 's-run',
+  workspaceId: 'ws-1',
+  channelId: 'ch-1',
+  threadRootEventId: null,
+  title: 'live task',
+  status: 'running',
+  harness: 'codex',
+  spawnedBy: 'u-alice',
+  spawnerName: 'Alice',
+  driverId: 'u-alice',
+  driverName: 'Alice',
+  pendingSeatRequests: [],
+  suggestions: [],
+  answerProposals: [],
+  seatEvents: [],
+  costUsd: 0,
+  resultText: null,
+  createdAt: new Date().toISOString(),
+  completedAt: null,
+  lastEventId: 0,
+  permalink: '/s/s-run',
+};
+
+beforeEach(() => {
+  FakeEventSource.reset();
+  installFakeEventSource();
+  window.localStorage.clear();
+  vi.spyOn(sessionsApi, 'listPresentations').mockResolvedValue({ presentations: [] });
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+function renderPane(session: Session = running) {
+  render(
+    <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+  );
+  const src = FakeEventSource.last();
+  src.open();
+  return src;
+}
+
+describe('turn timestamps', () => {
+  const STAMP = '2026-07-02T10:15:00.000Z';
+  const steerFrame: CentaurEventFrame = {
+    event: 'amp_raw_event',
+    event_id: 2,
+    ts: STAMP,
+    data: {
+      type: 'item.completed',
+      item: { id: 'steer-1', type: 'userMessage', content: [{ type: 'text', text: 'fix the parser' }] },
+    },
+  };
+
+  it('shows a hover timestamp on a stamped steer row', async () => {
+    const src = renderPane();
+    src.emitAll([
+      {
+        event: 'execution_state',
+        event_id: 1,
+        ts: STAMP,
+        data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e' },
+      } as CentaurEventFrame,
+      steerFrame,
+    ]);
+
+    const time = await screen.findByTestId('turn-time');
+    expect(time.textContent).toBe(formatTurnTime(STAMP));
+    // The row's wrapper carries a native tooltip with the same stamp.
+    expect(screen.getByTestId('user-steer').closest('[title]')?.getAttribute('title')).toBe(
+      formatTurnTime(STAMP),
+    );
+  });
+
+  it('renders no timestamp affordance for unstamped frames (older servers)', async () => {
+    const src = renderPane();
+    src.emitAll([{ ...steerFrame, ts: undefined }]);
+    await screen.findByTestId('user-steer');
+    expect(screen.queryByTestId('turn-time')).toBeNull();
+  });
+});
+
+describe('resizable session pane', () => {
+  it('drags wider from the left-edge handle and persists the width', async () => {
+    renderPane();
+    const handle = screen.getByTestId('pane-resize-handle');
+    const aside = handle.closest('aside')!;
+    expect(aside.style.width).toBe('min(520px, 70vw)');
+
+    // Drag 140px left → 140px wider (pane is anchored to the right edge).
+    // jsdom has no PointerEvent; MouseEvent carries button/clientX and React
+    // dispatches by event type, so it stands in fine.
+    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 800 }));
+    fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, clientX: 660 }));
+    await waitFor(() => expect(aside.style.width).toBe('min(660px, 70vw)'));
+    fireEvent(handle, new MouseEvent('pointerup', { bubbles: true, clientX: 660 }));
+
+    expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBe('660');
+  });
+
+  it('restores the persisted width on mount and resets on double-click', async () => {
+    window.localStorage.setItem('atrium.sessionPaneWidth', '640');
+    renderPane();
+    const handle = screen.getByTestId('pane-resize-handle');
+    const aside = handle.closest('aside')!;
+    expect(aside.style.width).toBe('min(640px, 70vw)');
+
+    fireEvent.doubleClick(handle);
+    await waitFor(() => expect(aside.style.width).toBe('min(520px, 70vw)'));
+    expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBe('520');
+  });
+
+  it('hides the resize handle in focus layout', () => {
+    render(
+      <SessionPane
+        session={running}
+        me={me}
+        layout="focus"
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    expect(screen.queryByTestId('pane-resize-handle')).toBeNull();
+  });
+});

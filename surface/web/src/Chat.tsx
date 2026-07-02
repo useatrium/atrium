@@ -42,6 +42,7 @@ import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { SessionPane } from './sessions/SessionPane';
+import { loadSessionPaneWidth } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
@@ -1118,8 +1119,15 @@ export function Chat({
       ) : state.openSessionId ? (
         <aside
           className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
-            isMobileViewport || view === 'focus' ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
+            isMobileViewport || view === 'focus' ? 'flex-1' : 'shrink-0'
           }`}
+          style={
+            // Match SessionPane's persisted width so the pane doesn't jump
+            // when it replaces this loading placeholder.
+            isMobileViewport || view === 'focus'
+              ? undefined
+              : { width: `min(${loadSessionPaneWidth()}px, 70vw)` }
+          }
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
             <h2 className="text-sm font-semibold text-fg">Session</h2>

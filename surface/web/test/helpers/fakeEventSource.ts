@@ -60,7 +60,11 @@ export class FakeEventSource {
     const fns = this.listeners.get(frame.event);
     if (!fns) return;
     const e = {
-      data: JSON.stringify({ event_id: frame.event_id, data: frame.data }),
+      data: JSON.stringify({
+        event_id: frame.event_id,
+        data: frame.data,
+        ...(frame.ts ? { atrium_ts: frame.ts } : {}),
+      }),
     } as MessageEvent<string>;
     for (const fn of fns) fn(e);
   }

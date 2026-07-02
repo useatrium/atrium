@@ -332,7 +332,10 @@ export type ProjectionEvent =
   | SystemObserved
   | ResultObserved;
 
-export type CentaurEventFrame =
+/** `ts` is the wall-clock stamp the Atrium proxy attaches per frame (mirror
+ * write time on replay, receive time on live tail). Absent on frames from
+ * servers that predate it. */
+export type CentaurEventFrame = { ts?: string } & (
   | { event: "execution_state"; event_id: number; data: ExecutionState }
   | { event: "execution_started"; event_id: number; data: ExecutionStartedObserved }
   | { event: "amp_raw_event"; event_id: number; data: AmpRawEvent }
@@ -345,7 +348,8 @@ export type CentaurEventFrame =
   | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved }
   | { event: "question_requested"; event_id: number; data: QuestionRequested }
   | { event: "question_resolved"; event_id: number; data: QuestionResolved }
-  | { event: "artifact.captured"; event_id: number; data: ArtifactCaptured };
+  | { event: "artifact.captured"; event_id: number; data: ArtifactCaptured }
+);
 
 export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
   return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";
