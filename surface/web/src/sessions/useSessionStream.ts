@@ -18,6 +18,10 @@ const RECONNECT_DELAY_MS = 1000;
 // connection silently died (EventSource never fires onerror for a dead TCP
 // path, e.g. through a tunnel) — tear down and reconnect from the cursor.
 const SILENT_DEATH_MS = 45_000;
+// Without ping proof (a connection that died before its first ping, or an
+// old comment-only server) death and legitimate silence look identical —
+// recycle on a much longer horizon instead of never.
+const SILENT_DEATH_FALLBACK_MS = 4 * 60_000;
 const WATCHDOG_TICK_MS = 10_000;
 
 export interface SessionStream {
@@ -60,11 +64,13 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     let generation = 0;
     // Any sign of life on the wire (open, ping, frame) refreshes this.
     let liveAt = Date.now();
-    // Whether the CURRENT connection has delivered a named ping. Only then is
-    // prolonged silence proof of death — against a not-yet-rolled server that
-    // sends only SSE comments (invisible to EventSource), long frame silence
-    // is normal and recycling would churn a healthy stream.
+    // Whether the CURRENT connection (and any connection this mount) has
+    // delivered a named ping. With ping proof, prolonged silence is death;
+    // without it (not-yet-rolled comment-only server, or a connection that
+    // died pre-ping) the watchdog falls back to a long horizon instead of
+    // either churning healthy quiet streams or never recycling dead ones.
     let pingSeen = false;
+    let pingEver = false;
     let frameAt: number | null = null;
     setStream(acc);
     setConnected(false);
@@ -120,6 +126,7 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
           if (!isCurrent()) return;
           liveAt = Date.now();
           pingSeen = true;
+          pingEver = true;
           if (serverTs !== null) {
             const parsed = Date.parse(serverTs);
             if (!Number.isNaN(parsed)) setClockSkewMs(Date.now() - parsed);
@@ -169,14 +176,16 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     connect();
 
     // Silent-death watchdog: a dead TCP path never fires EventSource.onerror.
-    // Once this connection has proven it serves named pings (15s cadence),
-    // prolonged total silence means the connection is gone — recycle it. No
-    // terminal exemption: a cleanly-closed post-replay stream nulls `handle`
-    // via onError, so a lingering handle on a terminal fold is exactly the
+    // With ping proof (this connection, or any earlier one this mount — a
+    // server doesn't downgrade), 45s of total silence means the connection is
+    // gone; without proof, use the long fallback horizon. No terminal
+    // exemption: a cleanly-closed post-replay stream nulls `handle` via
+    // onError, so a lingering handle on a terminal fold is exactly the
     // dead-connection case (and must be recycled or a later steer starves).
     const watchdog = setInterval(() => {
-      if (disposed || !handle || !pingSeen) return;
-      if (Date.now() - liveAt < SILENT_DEATH_MS) return;
+      if (disposed || !handle) return;
+      const threshold = pingSeen || pingEver ? SILENT_DEATH_MS : SILENT_DEATH_FALLBACK_MS;
+      if (Date.now() - liveAt < threshold) return;
       recycle();
       connect();
     }, WATCHDOG_TICK_MS);

@@ -107,8 +107,10 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                 // Per-turn reasoning effort for claude: the CLI fixes effort at
                 // process start, but the child is restartable — `--resume`
                 // carries the transcript, so applying a new effort is a respawn
-                // with a new `--effort`. Amp has no effort knob; codex takes it
-                // via `turn/start.effort` on its own path.
+                // with a new `--effort`. A steer that landed mid-turn stashed
+                // its effort in pending_reasoning; it applies now. Amp has no
+                // effort knob; codex takes it via `turn/start.effort`.
+                let reasoning = reasoning.or_else(|| blocks_state.pending_reasoning.take());
                 if harness.kind() == HarnessKind::ClaudeCode
                     && let Some(reasoning) = reasoning
                     && state.reasoning_effort.as_deref() != Some(reasoning.as_str())
@@ -271,6 +273,10 @@ pub(crate) struct BlocksState {
     uploads: HashMap<String, StagedAttachment>,
     staged: HashMap<String, StagedAttachment>,
     pending_questions: HashMap<String, PendingQuestion>,
+    /// Reasoning effort from a steer that landed MID-turn (the running child
+    /// can't be re-parameterized). Consumed between turns so the change
+    /// applies from the next turn instead of being dropped.
+    pub(crate) pending_reasoning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1297,8 +1303,14 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
                 reasoning,
                 trace_context: _,
             }) => {
-                if model.is_some() || provider.is_some() || reasoning.is_some() {
-                    eprintln!("blocks active steering ignored model/provider/reasoning overrides");
+                if model.is_some() || provider.is_some() {
+                    eprintln!("blocks active steering ignored model/provider overrides");
+                }
+                // The running child can't be re-parameterized, but the effort
+                // change shouldn't vanish either: stash it so the between-turns
+                // loop applies it from the NEXT turn.
+                if let Some(reasoning) = reasoning {
+                    active_blocks.blocks_state.pending_reasoning = Some(reasoning);
                 }
                 process.stdin.write_all(&harness.stdin_for_steer(&input)?)?;
                 process.stdin.flush()?;

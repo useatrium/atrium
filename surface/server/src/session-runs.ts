@@ -3,6 +3,7 @@ import { recordFrameObservation } from './frame-gap.js';
 import type { ServerResponse } from 'node:http';
 import { basename } from 'node:path';
 import { encodeRecordHandle } from '@atrium/surface-client/handle';
+import { HARNESS_EFFORT_LEVELS, isSessionEffortLevel } from '@atrium/surface-client/effort';
 import {
   CentaurApiError,
   CentaurClient,
@@ -465,10 +466,17 @@ export class SessionRuns {
       : '';
     // Seed the session's effort from the spawning profile so the UI can show
     // it without re-resolving (possibly superseded) profile versions later.
+    // Validated against the harness's vocabulary — an off-vocabulary manifest
+    // value (a typo, or a codex level in a claude profile) must not be seeded,
+    // or steers carrying the sticky selection would all fail 400.
     const profileSettings = selectedProfileVersion?.manifest.settings;
     const spawnEffortRaw =
       profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
-    const spawnEffort = typeof spawnEffortRaw === 'string' ? spawnEffortRaw : null;
+    const spawnEffort =
+      typeof spawnEffortRaw === 'string' &&
+      (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(spawnEffortRaw)
+        ? spawnEffortRaw
+        : null;
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,
@@ -1019,6 +1027,19 @@ export class SessionRuns {
     client: Db | DbClient = this.pool,
     effort?: SessionEffortLevel,
   ): Promise<void> {
+    // Stickiness is enforced HERE, at the single authoritative send point:
+    // harness effort is per-turn (an omitted field reverts codex to its config
+    // default, and a restarted claude child forgets its flag), so every steer
+    // re-carries the session's recorded effort even when the client sent none
+    // (mobile, suggestion-sends). The recorded value is re-validated in case
+    // it predates the vocabulary (or the harness's support).
+    if (
+      effort === undefined &&
+      row.model_effort &&
+      (HARNESS_EFFORT_LEVELS[row.harness] ?? []).includes(row.model_effort)
+    ) {
+      effort = row.model_effort;
+    }
     let generation = row.assignment_generation;
     if (generation == null) {
       const spawned = await this.spawnAssignment(row, client);
@@ -2604,22 +2625,10 @@ function userInputLine(text: string, effort?: string | null): string {
   });
 }
 
-/** Per-harness reasoning-effort vocabularies. Codex mirrors its
- * ReasoningEffort enum (`turn/start.effort`, validated again upstream).
- * Claude mirrors the CLI `--effort` values — the harness-server applies a
- * change by respawning the child with `--resume`, so even the session-only
- * `max` is fine. Amp has no effort knob. */
-export const HARNESS_EFFORT_LEVELS: Record<string, readonly string[]> = {
-  codex: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
-  'claude-code': ['low', 'medium', 'high', 'xhigh', 'max'],
-};
-
-const ALL_EFFORT_LEVELS = new Set(Object.values(HARNESS_EFFORT_LEVELS).flat());
 export type SessionEffortLevel = string;
-
-export function isSessionEffortLevel(value: unknown): value is SessionEffortLevel {
-  return typeof value === 'string' && ALL_EFFORT_LEVELS.has(value);
-}
+// Vocabulary + validation live in the shared package (single source with the
+// web picker); re-exported here for the interaction routes.
+export { HARNESS_EFFORT_LEVELS, isSessionEffortLevel };
 
 function writeSessionFrame(
   raw: ServerResponse,

@@ -244,6 +244,12 @@ export interface SessionRepoSpec {
  * a null driverId (optimistic rows, pre-Phase-3 payloads) falls back to the
  * spawner. Steer permission follows this id; cancel = spawner OR driver.
  */
+export {
+  HARNESS_EFFORT_LEVELS,
+  HARNESS_EFFORT_PICKER_OPTIONS,
+  isSessionEffortLevel,
+} from './effort';
+
 export function sessionDriverId(s: Session): string {
   return s.driverId ?? s.spawnedBy;
 }

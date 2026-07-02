@@ -3153,6 +3153,26 @@ describe('Phase 2 sessions', () => {
     expect(ev.rows).toHaveLength(1);
     expect(ev.rows[0].payload.effort).toBe('xhigh');
 
+    // Stickiness is server-side: a later steer WITHOUT an effort field still
+    // carries the recorded effort on its input line (mobile and suggestion
+    // steers must not silently revert the harness to its default).
+    const plain = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'and keep going' },
+    });
+    expect(plain.statusCode).toBe(202);
+    const plainExecute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const plainLines = (plainExecute?.body.input_lines ?? []) as string[];
+    expect(JSON.parse(plainLines[0]!)).toMatchObject({ reasoning: 'xhigh' });
+    // …and no duplicate effort_changed event for an unchanged value.
+    const evCount = await pool.query(
+      `SELECT count(*)::int AS n FROM events WHERE type = 'session.effort_changed' AND payload->>'sessionId' = $1`,
+      [id],
+    );
+    expect(evCount.rows[0].n).toBe(1);
+
     // Unknown levels are rejected outright…
     const bad = await app.inject({
       method: 'POST',

@@ -53,6 +53,7 @@ import { formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
 import {
+  HARNESS_EFFORT_PICKER_OPTIONS,
   formatCost,
   formatElapsed,
   isPendingSessionId,
@@ -83,14 +84,6 @@ import { SuggestionStrip } from './SessionSuggestions';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
-
-// Per-harness effort levels the picker offers (codex 'none' omitted — turning
-// reasoning off entirely is a config decision, not a steer-time nudge). Amp
-// has no effort knob, so no picker.
-const HARNESS_EFFORT_OPTIONS: Record<string, readonly string[]> = {
-  codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
-  'claude-code': ['low', 'medium', 'high', 'xhigh', 'max'],
-};
 
 // Thinking-phase silence thresholds (tool runs are exempt — harnesses emit
 // nothing between a tool's start and its result, however long it takes; but
@@ -257,24 +250,6 @@ export function SessionPane({
   // only thinking-phase silence is meaningful. Harness-agnostic.
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
-  // The newest tool_call still awaiting its result. ANY later non-tool item
-  // (text, a steer's user_message, new reasoning, a question) means the agent
-  // moved past it — its result frame was lost or its turn was cancelled — so
-  // it must not be reported as running, or a stale tool would pin the 'tool'
-  // phase and suppress the quiet/stuck escalation for the whole next turn.
-  // (While a tool is genuinely running, every harness is silent: no non-tool
-  // item can legitimately appear after it.)
-  const openTool = useMemo(() => {
-    let candidate: ToolCallItem | null = null;
-    for (const item of stream.items) {
-      if (item.type === 'tool_call') {
-        if (item.result === undefined) candidate = item;
-      } else if (candidate !== null) {
-        candidate = null;
-      }
-    }
-    return candidate;
-  }, [stream.items]);
   const parseTs = (ts: string | undefined): number | null => {
     if (!ts) return null;
     const ms = Date.parse(ts);
@@ -295,6 +270,27 @@ export function SessionPane({
   // rather than a days-since-creation or stale-turn number; it appears once
   // the running execution_state / turn/started folds.
   const turnStartMs = parseTs(stream.turnStartTs);
+  // The newest tool_call still awaiting its result, scoped to the CURRENT
+  // turn: a tool orphaned by a cancelled earlier turn (stamped before this
+  // turn's start) must not pin the 'tool' phase and suppress the quiet/stuck
+  // escalation. Only a later text item clears an open candidate (the agent
+  // moved on; its result frame was lost) — a steer's echoed user_message must
+  // NOT clear it, since mid-turn steers land while a tool is genuinely running.
+  const openTool = useMemo(() => {
+    let candidate: ToolCallItem | null = null;
+    for (const item of stream.items) {
+      if (item.type === 'tool_call') {
+        if (item.result !== undefined) continue;
+        const startedMs = parseTs(item.ts);
+        if (startedMs !== null && turnStartMs !== null && startedMs < turnStartMs) continue;
+        candidate = item;
+      } else if (item.type === 'text' && candidate !== null) {
+        candidate = null;
+      }
+    }
+    return candidate;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.items, turnStartMs]);
   const turnEndMs = parseTs(stream.turnEndTs);
   const turnElapsedMs =
     turnStartMs === null
@@ -324,7 +320,9 @@ export function SessionPane({
     );
     return parseTs(item?.ts);
   }, [pendingQuestion, stream.items]);
-  const waitingMs = waitingSinceMs !== null ? Math.max(0, serverNowMs - waitingSinceMs) : 0;
+  // Fallback to frame-silence when the question frame carries no stamp (old
+  // mirrors) — an undercount beats claiming the wait just started.
+  const waitingMs = waitingSinceMs !== null ? Math.max(0, serverNowMs - waitingSinceMs) : quietMs;
   // Reconnect display waits out a short grace from the actual disconnect
   // moment (NOT quietMs — the agent may have been legitimately quiet for
   // longer than the grace when a 1s transport blip happens).
@@ -408,7 +406,7 @@ export function SessionPane({
   // where the server records it and broadcasts session.effort_changed.
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const effortSelection = effortChoice ?? modelEffort ?? '';
-  const effortOptions = HARNESS_EFFORT_OPTIONS[session.harness];
+  const effortOptions = HARNESS_EFFORT_PICKER_OPTIONS[session.harness];
   const canPickEffort =
     sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
   // Seat-aware waiting copy: only the driver can actually answer — telling a
@@ -568,11 +566,17 @@ export function SessionPane({
     // echoes it back as a user_message (see the pendingSteers effect above).
     const pendingId = randomId();
     setPendingSteers((prev) => [...prev, { id: pendingId, text, ts: new Date().toISOString() }]);
-    // Codex effort is PER-TURN — an omitted field reverts that turn to the
-    // config default. So the selection is sticky: every steer carries it, the
-    // recorded session effort stays truthful, and the server only broadcasts
-    // an effort_changed event when the value actually moves.
-    const effortOverride = canPickEffort && effortSelection ? effortSelection : undefined;
+    // The server re-attaches the session's recorded effort to every steer
+    // (stickiness lives there, so mobile/suggestion steers inherit it too);
+    // the client only sends an explicit CHANGE, guarded to the harness's
+    // vocabulary so a stale recorded value can never 400 the message.
+    const effortOverride =
+      canPickEffort &&
+      effortSelection &&
+      effortSelection !== (modelEffort ?? '') &&
+      effortOptions?.includes(effortSelection)
+        ? effortSelection
+        : undefined;
     onSteer(session.id, text, effortOverride).catch(() => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
