@@ -64,7 +64,7 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
-import { useSessionPaneWidth } from './useSessionPaneWidth';
+import { sessionPaneSizing, useSessionPaneWidth } from './useSessionPaneWidth';
 import { Spinner, TurnStatusLine, type TurnPhase } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
@@ -353,6 +353,13 @@ export function SessionPane({
         .map((it) => ({ id: it.id, text: it.text })),
     [stream.items],
   );
+  // Hover timestamps, formatted once per fold — the 1Hz `useNow` tick re-renders
+  // the pane, and running Intl per row per second on a long transcript adds up.
+  const turnTimes = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of stream.items) if (it.ts) m.set(it.id, formatTurnTime(it.ts));
+    return m;
+  }, [stream.items]);
 
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
@@ -573,6 +580,7 @@ export function SessionPane({
 
   const focused = layout === 'focus';
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
+  const paneSizing = sessionPaneSizing(paneWidth);
   const canDetach = !isPendingSessionId(session.id);
   const githubIdentityLabel = session.githubIdentityMode
     ? githubIdentityModeLabel(session.githubIdentityMode)
@@ -581,9 +589,9 @@ export function SessionPane({
   return (
     <aside
       className={`relative flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
-        focused ? 'flex-1' : 'shrink-0'
+        focused ? 'flex-1' : `shrink-0 ${paneSizing.className}`
       }`}
-      style={focused ? undefined : { width: `min(${paneWidth}px, 70vw)` }}
+      style={focused ? undefined : paneSizing.style}
     >
       {!focused && (
         <div
@@ -896,7 +904,7 @@ export function SessionPane({
               {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
                   obvious and they anchor turn navigation). */}
-              <div className="group" title={item.ts ? formatTurnTime(item.ts) : undefined}>
+              <div className="group" title={turnTimes.get(item.id)}>
               {item.type === 'text' ? (
                 <div className="pl-3.5">
                   <TextBlock item={item} />
@@ -905,14 +913,7 @@ export function SessionPane({
                 <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
                   <div className="text-sm font-semibold text-fg">
                     {steerAuthor}
-                    {item.ts && (
-                      <span
-                        data-testid="turn-time"
-                        className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        {formatTurnTime(item.ts)}
-                      </span>
-                    )}
+                    <TurnTimeLabel time={turnTimes.get(item.id)} />
                   </div>
                   <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
                     {item.text}
@@ -964,9 +965,7 @@ export function SessionPane({
           >
             <div className="text-sm font-semibold text-fg">
               {steerAuthor}
-              <span className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100">
-                {formatTurnTime(p.ts)}
-              </span>
+              <TurnTimeLabel time={formatTurnTime(p.ts)} />
             </div>
             <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
           </div>
@@ -1152,6 +1151,19 @@ function githubIdentityModeLabel(mode: string): string {
     default:
       return mode;
   }
+}
+
+/** Hover-revealed wall-clock time beside a steer's author name. */
+function TurnTimeLabel({ time }: { time: string | undefined }) {
+  if (!time) return null;
+  return (
+    <span
+      data-testid="turn-time"
+      className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+    >
+      {time}
+    </span>
+  );
 }
 
 function AnnotatedTranscriptRow({

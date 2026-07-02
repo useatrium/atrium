@@ -118,4 +118,41 @@ describe('mobile session stream glue', () => {
     expect(state.items).toHaveLength(1);
     expect((state.items[0] as TextItem).text).toBe('hello world');
   });
+
+  it('lifts the atrium_ts stamp so folded items carry ts', async () => {
+    const stamp = '2026-07-02T10:15:00.000Z';
+    const body =
+      `id: 1\nevent: execution_state\ndata: ${JSON.stringify({
+        type: 'execution.state',
+        status: 'running',
+        thread_key: 't',
+        execution_id: 'e',
+        event_id: 1,
+        atrium_ts: stamp,
+      })}\n\n` +
+      `id: 2\nevent: amp_raw_event\ndata: ${JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'hi' }] },
+        event_id: 2,
+        atrium_ts: stamp,
+      })}\n\n`;
+    const fetchImpl: typeof fetch = async () =>
+      new Response(streamFromChunks([body]), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    const state = await streamSessionOnce(
+      {
+        baseUrl: 'http://server.test',
+        token: 'tok',
+        sessionId: 's-1',
+        afterEventId: 0,
+        signal: new AbortController().signal,
+        fetchImpl,
+      },
+      initialSessionState(),
+    );
+    expect(state.items).toHaveLength(1);
+    expect((state.items[0] as TextItem).ts).toBe(stamp);
+  });
 });
