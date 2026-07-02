@@ -118,12 +118,25 @@ describe('TurnStatusLine', () => {
     expect(screen.queryByTestId('token-count')).toBeNull();
   });
 
-  it('waiting: no spinner, no clock — the user is the blocker', () => {
+  it('waiting: no spinner — the human is the blocker, and the wait clock says for how long', () => {
     render(
       <TurnStatusLine {...base} phase="waiting" label="Waiting for your reply" elapsedMs={0} />,
     );
     const status = screen.getByTestId('turn-status');
     expect(status.textContent).toBe('Waiting for your reply');
     expect(screen.queryByTestId('heartbeat-dot')).toBeNull();
+  });
+
+  it('waiting: shows how long the agent has been blocked on a reply', () => {
+    render(
+      <TurnStatusLine
+        {...base}
+        phase="waiting"
+        label="Waiting for Gary"
+        elapsedMs={0}
+        quietMs={12 * 60_000}
+      />,
+    );
+    expect(screen.getByTestId('turn-status').textContent).toBe('Waiting for Gary12:00');
   });
 });

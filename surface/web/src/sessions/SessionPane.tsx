@@ -345,22 +345,29 @@ export function SessionPane({
       : stream.deltaChars > 0
         ? { count: Math.round(stream.deltaChars / 4), estimated: true }
         : null;
-  // Configured reasoning effort, from the spawning profile's manifest. Only
-  // codex profiles carry one (`model_reasoning_effort`); the claude adapter
-  // syncs no effort/thinking key today. Rendered as a suffix on the model chip.
+  // Configured reasoning effort, from the spawning profile's manifest —
+  // codex `model_reasoning_effort`, claude `effortLevel` (settings.json key;
+  // the adapter allowlists it). Rendered as a suffix on the model chip.
   const modelEffort = useMemo(() => {
     const versionId = session.agentProfileVersionId;
     if (!versionId) return null;
     const profile = agentProfiles.find((p) => p.currentVersionId === versionId);
     const settings = profile?.currentVersion?.manifest.settings;
-    const effort = settings?.['model_reasoning_effort'] ?? settings?.['effort'];
+    const effort = settings?.['model_reasoning_effort'] ?? settings?.['effortLevel'];
     return typeof effort === 'string' ? effort : null;
   }, [agentProfiles, session.agentProfileVersionId]);
+  // Seat-aware waiting copy: only the driver can actually answer — telling a
+  // spectator "waiting for YOUR reply" would send them hunting for an answer
+  // box they don't have.
+  const waitingOnMe = sessionDriverId(session) === me.id;
+  const waitingDriverName = session.driverName ?? session.spawnerName ?? 'the driver';
   const turnStatusLabel =
     turnPhase === 'tool' && openTool
       ? `Working: ${toolDisplay(openTool).title}`
       : turnPhase === 'waiting'
-        ? 'Waiting for your reply'
+        ? waitingOnMe
+          ? 'Waiting for your reply'
+          : `Waiting for ${waitingDriverName}`
         : turnPhase === 'done'
           ? 'Turn complete'
           : starting

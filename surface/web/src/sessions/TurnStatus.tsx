@@ -120,7 +120,14 @@ export function TurnStatusLine({
     >
       {!active ? (
         phase === 'waiting' ? (
-          <span className="font-medium">{label}</span>
+          <>
+            <span className="font-medium">{label}</span>
+            {/* How long the agent has been blocked on a human — quietMs works
+                because the question is the stream's last frame before silence. */}
+            {quietMs >= 1000 && (
+              <span className="tabular-nums text-fg-faint">{formatElapsed(quietMs)}</span>
+            )}
+          </>
         ) : (
           <>
             <span className="font-medium text-fg-secondary">✓ {label}</span>
