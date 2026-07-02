@@ -1322,6 +1322,7 @@ mod tests {
         let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
 
         for path in [
+            ".heartbeat",
             ".cargo/registry/foo.rs",
             ".config/app/settings.json",
             ".state/anything",
@@ -1518,6 +1519,7 @@ mod tests {
             reg(".claude/projects/x/transcript.jsonl"),
             reg(".codex/auth.json"),
             reg(".ssh/id_ed25519"),
+            reg(".heartbeat"),
         ];
         let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
         let repo_subdirs = vec![PathBuf::from("foo")];
@@ -1533,7 +1535,7 @@ mod tests {
             vec![Path::new("proj-x/note.md"), Path::new("src/app.ts")]
         );
         assert_eq!(partitioned.harness_entries.len(), 2);
-        assert_eq!(partitioned.denied_count, 3);
+        assert_eq!(partitioned.denied_count, 4);
 
         let mut files = HashMap::new();
         files.insert(PathBuf::from("proj-x/note.md"), b"note".to_vec());

@@ -11,7 +11,8 @@
 //!
 //! Global env: ATRIUM_BASE_URL, ATRIUM_CAPTURE_API_KEY, optional
 //!      NODE_SYNC_ATRIUM_ROOT, NODE_SYNC_INTERVAL_SECS, NODE_SYNC_DIRTY_BUDGET,
-//!      NODE_SYNC_LARGE_FILE_BYTES, NODE_SYNC_EVICT_GRACE_SECS,
+//!      NODE_SYNC_LARGE_FILE_BYTES, NODE_SYNC_EVICT_HEARTBEAT_STALE_SECS,
+//!      NODE_SYNC_EVICT_NO_HEARTBEAT_GRACE_SECS, NODE_SYNC_EVICT_GRACE_SECS,
 //!      NODE_SYNC_EVICT_RECHECK_SECS, NODE_SYNC_GC_DIRS,
 //!      NODE_SYNC_RECONCILE_SECS, NODE_SYNC_STREAM_ENABLED.
 //! Single-session env: NODE_SYNC_SESSION, NODE_SYNC_UPPER, NODE_SYNC_MERGED,
@@ -285,7 +286,9 @@ mod linux_daemon {
     use centaur_node_sync::depcache::{EvictStats, evict_depcache_lru};
     use centaur_node_sync::echo::EchoGuard;
     use centaur_node_sync::eviction::{
-        DEFAULT_EVICT_GRACE_SECS, DEFAULT_EVICT_RECHECK_SECS, SessionEvictionState, manifest_age,
+        DEFAULT_EVICT_GRACE_SECS, DEFAULT_EVICT_HEARTBEAT_STALE_SECS,
+        DEFAULT_EVICT_NO_HEARTBEAT_GRACE_SECS, DEFAULT_EVICT_RECHECK_SECS, EvictionSignals,
+        EvictionThresholds, SessionEvictionState, heartbeat_mtime_nanos, manifest_age,
         manifest_mtime_nanos,
     };
     use centaur_node_sync::feeds::{ArtifactFeed, AtriumFeed};
@@ -332,6 +335,8 @@ mod linux_daemon {
         depcache_evict_every_n_ticks: u64,
         budget: Budget,
         large_threshold: u64,
+        evict_heartbeat_stale: Duration,
+        evict_no_heartbeat_grace: Duration,
         evict_grace: Duration,
         evict_recheck: Duration,
         gc_dirs: bool,
@@ -401,6 +406,16 @@ mod linux_daemon {
             large_threshold: env("NODE_SYNC_LARGE_FILE_BYTES")
                 .parse::<u64>()
                 .unwrap_or(centaur_node_sync::runtime::DEFAULT_LARGE_FILE_BYTES),
+            evict_heartbeat_stale: Duration::from_secs(
+                env("NODE_SYNC_EVICT_HEARTBEAT_STALE_SECS")
+                    .parse::<u64>()
+                    .unwrap_or(DEFAULT_EVICT_HEARTBEAT_STALE_SECS),
+            ),
+            evict_no_heartbeat_grace: Duration::from_secs(
+                env("NODE_SYNC_EVICT_NO_HEARTBEAT_GRACE_SECS")
+                    .parse::<u64>()
+                    .unwrap_or(DEFAULT_EVICT_NO_HEARTBEAT_GRACE_SECS),
+            ),
             evict_grace: Duration::from_secs(
                 env("NODE_SYNC_EVICT_GRACE_SECS")
                     .parse::<u64>()
@@ -586,8 +601,6 @@ mod linux_daemon {
     #[derive(Clone)]
     struct ActiveSession {
         config: SessionConfig,
-        manifest_mtime_nanos: Option<u128>,
-        has_active_mount: bool,
     }
 
     #[derive(Clone)]
@@ -671,18 +684,39 @@ mod linux_daemon {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
                         let manifest_path = manifest_path(&overlays_root, &discovered.session);
                         let mtime_nanos = manifest_mtime_nanos(&manifest_path);
-                        let has_active_mount = has_active_overlay_mount(
-                            &discovered.manifest.merged,
-                        )
-                        .unwrap_or_else(|error| {
-                            eprintln!("session {}: mount guard: {error}", discovered.session);
-                            true
-                        });
+                        let heartbeat_mtime = heartbeat_mtime_nanos(&discovered.upper);
                         let eviction = evictions.entry(discovered.session.clone()).or_default();
                         if eviction.observe_manifest_mtime(mtime_nanos) {
                             eprintln!(
                                 "event=node_sync_un_evict session={} reason=manifest_mtime_changed",
                                 discovered.session
+                            );
+                        }
+                        if eviction.observe_heartbeat_mtime(heartbeat_mtime) {
+                            eprintln!(
+                                "event=node_sync_un_evict session={} reason=heartbeat_mtime_changed",
+                                discovered.session
+                            );
+                        }
+                        if let Some(reason) = eviction.maybe_evict(
+                            EvictionSignals {
+                                now,
+                                heartbeat_age: manifest_age(system_now, heartbeat_mtime),
+                                heartbeat_mtime_nanos: heartbeat_mtime,
+                                manifest_age: manifest_age(system_now, mtime_nanos),
+                                manifest_mtime_nanos: mtime_nanos,
+                            },
+                            EvictionThresholds {
+                                heartbeat_stale: global.evict_heartbeat_stale,
+                                no_heartbeat_grace: global.evict_no_heartbeat_grace,
+                            },
+                        ) {
+                            eprintln!(
+                                "event=node_sync_evict session={} reason={} heartbeat_stale_secs={} no_heartbeat_grace_secs={}",
+                                discovered.session,
+                                reason.as_str(),
+                                global.evict_heartbeat_stale.as_secs(),
+                                global.evict_no_heartbeat_grace.as_secs()
                             );
                         }
                         if eviction.is_evicted() {
@@ -702,39 +736,31 @@ mod linux_daemon {
                                 &overlays_root,
                                 &discovered,
                                 eviction,
-                                now,
-                                mtime_nanos,
-                                has_active_mount,
+                                GcSignals {
+                                    now,
+                                    manifest_mtime_nanos: mtime_nanos,
+                                    heartbeat_mtime_nanos: heartbeat_mtime,
+                                },
+                                &mut mounted_overlays,
                             );
                             continue;
                         }
 
-                        let mut plan = match plan_overlay_mount(
-                            &overlays_root,
-                            &discovered.session,
+                        let has_active_mount = has_active_overlay_mount(
                             &discovered.manifest.merged,
-                            &discovered.manifest.repo,
-                            &discovered.manifest.repos,
-                            None,
-                        ) {
-                            Ok(plan) => plan,
-                            Err(e) => {
-                                eprintln!("session {}: overlay plan: {e}", discovered.session);
-                                continue;
-                            }
-                        };
-                        if !discovered
-                            .manifest
-                            .generic_home_lower
-                            .as_os_str()
-                            .is_empty()
-                        {
-                            plan.extra_lowers
-                                .push(discovered.manifest.generic_home_lower.clone());
-                        }
-                        if !discovered.manifest.context_source.as_os_str().is_empty() {
-                            plan.context_source = Some(discovered.manifest.context_source.clone());
-                        }
+                        )
+                        .unwrap_or_else(|error| {
+                            eprintln!("session {}: mount guard: {error}", discovered.session);
+                            true
+                        });
+                        let mut plan =
+                            match build_overlay_plan_for_discovered(&overlays_root, &discovered) {
+                                Ok(plan) => plan,
+                                Err(e) => {
+                                    eprintln!("session {}: overlay plan: {e}", discovered.session);
+                                    continue;
+                                }
+                            };
                         // Hydrate the artifact lower only on FIRST mount. Re-hydrating
                         // an ACTIVE lowerdir would `remove_dir_all` it out from under the
                         // live overlay: the mount keeps the old dir inode pinned, so the
@@ -786,11 +812,7 @@ mod linux_daemon {
                             .entry(session.session.clone())
                             .or_insert_with(|| DaemonState::load(&session.state_file));
                         prepare_session_before_remote(&global, &session, state);
-                        active_sessions.push(ActiveSession {
-                            config: session,
-                            manifest_mtime_nanos: mtime_nanos,
-                            has_active_mount,
-                        });
+                        active_sessions.push(ActiveSession { config: session });
                     }
                 }
                 Err(e) => eprintln!("session discovery: {e}"),
@@ -866,22 +888,6 @@ mod linux_daemon {
                     }
                     Some(RemotePollOutcome::NotFound) => {
                         eviction.record_not_found();
-                        let age = manifest_age(system_now, active.manifest_mtime_nanos);
-                        if eviction.maybe_evict(
-                            now,
-                            age,
-                            active.manifest_mtime_nanos,
-                            active.has_active_mount,
-                            global.evict_grace,
-                        ) {
-                            eprintln!(
-                                "event=node_sync_evict session={} reason=not_found_streak grace_secs={} no_active_mount=true",
-                                session.session,
-                                global.evict_grace.as_secs()
-                            );
-                            let _ = state.save(&session.state_file);
-                            continue;
-                        }
                     }
                     Some(RemotePollOutcome::Error) | None => {}
                 }
@@ -1235,23 +1241,36 @@ mod linux_daemon {
         }
     }
 
+    /// The liveness observations GC needs, bundled to keep the helper's
+    /// signature within clippy's argument budget.
+    struct GcSignals {
+        now: Instant,
+        manifest_mtime_nanos: Option<u128>,
+        heartbeat_mtime_nanos: Option<u128>,
+    }
+
     fn maybe_gc_evicted_session(
         global: &GlobalConfig,
         overlays_root: &Path,
         discovered: &DiscoveredSession,
         eviction: &SessionEvictionState,
-        now: Instant,
-        manifest_mtime_nanos: Option<u128>,
-        has_active_mount: bool,
+        signals: GcSignals,
+        mounted_overlays: &mut HashMap<String, OverlayMountPlan>,
     ) {
         if !global.gc_dirs
             || !eviction.gc_eligible(
-                now,
-                manifest_mtime_nanos,
-                has_active_mount,
+                signals.now,
+                signals.manifest_mtime_nanos,
+                signals.heartbeat_mtime_nanos,
                 global.evict_grace,
             )
         {
+            return;
+        }
+        if let Err(error) =
+            unmount_evicted_overlay_if_needed(overlays_root, discovered, mounted_overlays)
+        {
+            eprintln!("session {}: gc unmount: {error}", discovered.session);
             return;
         }
         let overlay_dir = overlays_root.join(&discovered.session);
@@ -1282,6 +1301,21 @@ mod linux_daemon {
                 sidecar.display()
             ),
         }
+    }
+
+    fn unmount_evicted_overlay_if_needed(
+        overlays_root: &Path,
+        discovered: &DiscoveredSession,
+        mounted_overlays: &mut HashMap<String, OverlayMountPlan>,
+    ) -> Result<(), String> {
+        if let Some(plan) = mounted_overlays.remove(&discovered.session) {
+            return unmount_overlay(&plan);
+        }
+        if !has_active_overlay_mount(&discovered.manifest.merged)? {
+            return Ok(());
+        }
+        let plan = build_overlay_plan_for_discovered(overlays_root, discovered)?;
+        unmount_overlay(&plan)
     }
 
     fn has_active_overlay_mount(merged: &Path) -> Result<bool, String> {
@@ -1467,6 +1501,33 @@ mod linux_daemon {
                 eprintln!("session {session}: hydrate error: {e}");
             }
         }
+    }
+
+    fn build_overlay_plan_for_discovered(
+        overlays_root: &Path,
+        discovered: &DiscoveredSession,
+    ) -> Result<OverlayMountPlan, String> {
+        let mut plan = plan_overlay_mount(
+            overlays_root,
+            &discovered.session,
+            &discovered.manifest.merged,
+            &discovered.manifest.repo,
+            &discovered.manifest.repos,
+            None,
+        )?;
+        if !discovered
+            .manifest
+            .generic_home_lower
+            .as_os_str()
+            .is_empty()
+        {
+            plan.extra_lowers
+                .push(discovered.manifest.generic_home_lower.clone());
+        }
+        if !discovered.manifest.context_source.as_os_str().is_empty() {
+            plan.context_source = Some(discovered.manifest.context_source.clone());
+        }
+        Ok(plan)
     }
 
     fn cleanup_removed_overlays(
