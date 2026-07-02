@@ -274,11 +274,23 @@ export function SessionPane({
   // The session steer op is not optimistic, so a sent steer would only appear
   // once the harness echoes it back as a user_message. Render it immediately and
   // drop each pending bubble when a matching echoed user_message arrives
-  // (consume-once by trimmed text).
-  const [pendingSteers, setPendingSteers] = useState<{ id: string; text: string }[]>([]);
+  // (consume-once by trimmed text). Only Codex echoes user messages — on other
+  // harnesses the bubble persists as the steer's transcript row, so once the
+  // turn goes active we mark it delivered (sticky) and stop dimming it.
+  const [pendingSteers, setPendingSteers] = useState<
+    { id: string; text: string; delivered?: boolean }[]
+  >([]);
   useEffect(() => {
     setPendingSteers([]);
   }, [session.id]);
+  useEffect(() => {
+    if (!activeTurn) return;
+    // Same-reference return when nothing is undelivered keeps this loop-free
+    // with pendingSteers in the deps (covers steers sent mid-turn too).
+    setPendingSteers((prev) =>
+      prev.some((p) => !p.delivered) ? prev.map((p) => ({ ...p, delivered: true })) : prev,
+    );
+  }, [activeTurn, pendingSteers]);
   useEffect(() => {
     if (pendingSteers.length === 0) return;
     // Compute the surviving set OUTSIDE the state updater: the updater must be
@@ -912,7 +924,11 @@ export function SessionPane({
           </div>
         ))}
         {pendingSteers.map((p) => (
-          <div key={p.id} data-testid="user-steer-pending" className="pt-2 pb-0.5 opacity-60">
+          <div
+            key={p.id}
+            data-testid="user-steer-pending"
+            className={`pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
+          >
             <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
             <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
           </div>

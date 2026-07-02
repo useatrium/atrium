@@ -646,6 +646,51 @@ describe('session transcript rendering', () => {
     expect(screen.queryByTestId('session-result')).toBeNull();
   });
 
+  it('optimistic steer: dimmed at send, undims once the turn is active, replaced by the codex echo', async () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    const completed: Session = { ...running, status: 'completed', resultText: 'done', driverId: me.id };
+    const paneProps = {
+      me,
+      watchers: [],
+      onClose: () => {},
+      onAnswerQuestion: async () => {},
+      onSteer: async () => {},
+    };
+    const { rerender } = render(<SessionPane session={completed} {...paneProps} />);
+    const src = FakeEventSource.last();
+    src.open();
+
+    const box = screen.getByPlaceholderText('Steer the agent...');
+    fireEvent.change(box, { target: { value: 'follow up please' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    // Pending bubble renders immediately, dimmed (delivery unconfirmed).
+    const bubble = await screen.findByTestId('user-steer-pending');
+    expect(bubble.textContent).toContain('follow up please');
+    expect(bubble.className).toContain('opacity-60');
+
+    // The follow-up turn goes active (status_changed over WS) → sticky undim.
+    rerender(<SessionPane session={{ ...completed, status: 'running', completedAt: null }} {...paneProps} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('user-steer-pending').className).not.toContain('opacity-60'),
+    );
+
+    // Codex echoes the steer → bubble is replaced by the real transcript row.
+    src.emitAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 5,
+        data: {
+          type: 'item.completed',
+          item: { id: 'u9', type: 'userMessage', content: [{ type: 'text', text: 'follow up please' }] },
+        },
+      },
+    ] as CentaurEventFrame[]);
+    await waitFor(() => expect(screen.queryByTestId('user-steer-pending')).toBeNull());
+    expect(screen.getByTestId('user-steer').textContent).toContain('follow up please');
+  });
+
   it('builds a turn rail with one navigable entry per steer', async () => {
     FakeEventSource.reset();
     installFakeEventSource();
