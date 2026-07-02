@@ -557,10 +557,12 @@ export function FilesHub({
   workspaceId,
   channelId,
   defaultScope,
+  filesEventSeq = 0,
 }: {
   workspaceId: string;
   channelId?: string | null;
   defaultScope?: FileHubScope;
+  filesEventSeq?: number;
 }): JSX.Element {
   const resolvedDefaultScope = channelId ? (defaultScope ?? 'channel') : 'workspace';
   const [scope, setScope] = useState<FileHubScope>(resolvedDefaultScope);
@@ -669,7 +671,7 @@ export function FilesHub({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [debouncedSearch, endpoint, effectiveFilters]);
+  }, [debouncedSearch, endpoint, effectiveFilters, filesEventSeq]);
 
   const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
 
@@ -1018,7 +1020,9 @@ export function FilesHub({
         scopedChannel={scopedChannel}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {loading && <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>}
+        {loading && visibleItemCount === 0 && (
+          <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>
+        )}
         {error && (
           <div role="alert" className="px-1 py-2 text-2xs text-danger-text">
             {error}
@@ -1026,7 +1030,7 @@ export function FilesHub({
         )}
         {showBreadcrumb && <FolderBreadcrumb currentDir={currentDir} onNavigate={navigateToDir} />}
         {empty && <EmptyState title={emptyTitle} hint={emptyHint} />}
-        {!loading && !error && visibleItemCount > 0 && (
+        {!error && visibleItemCount > 0 && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {!searchActive &&
               folders.map((folder) => (

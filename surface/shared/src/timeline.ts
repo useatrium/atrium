@@ -8,6 +8,8 @@ export interface UserRef {
   displayName: string;
 }
 
+export const FILES_CHANGED_EVENT_TYPE = 'files.changed';
+
 export interface WireEvent {
   id: number;
   workspaceId: string;
@@ -23,6 +25,12 @@ export interface WireEvent {
   /** DEV MOCK only (sessions/devMock.ts): synthetic events that must not
    * advance the catch-up cursor. Never set on real server events. */
   mock?: boolean;
+}
+
+export function filesChangedWorkspaceId(ev: WireEvent): string | null {
+  if (ev.type !== FILES_CHANGED_EVENT_TYPE) return null;
+  const workspaceId = ev.payload.workspaceId;
+  return typeof workspaceId === 'string' ? workspaceId : ev.workspaceId;
 }
 
 export type MessageStatus = 'pending' | 'failed' | 'confirmed';

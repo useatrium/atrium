@@ -124,6 +124,53 @@ fn repo_name(repo: &str) -> String {
     }
 }
 
+/// Reconstruct a session's per-path sync state (base seqs/shas) from the
+/// change feed, once. Runs before inbound adoption; a failed drain leaves
+/// `hydrated` unset so it RESUMES next tick (the cursor already covers
+/// whatever landed). Marking hydrated on a failed drain would permanently
+/// forfeit the seeding: every pre-existing artifact would then look like an
+/// unknown local to `decide_adopt` — re-downloaded + copied up on adopt, and
+/// a locally edited one would capture with base 0 forever (server rejects
+/// with 409 base_required).
+#[cfg(any(target_os = "linux", test))]
+fn hydrate_state_if_needed(
+    session: &SessionConfig,
+    state: &mut centaur_node_sync::state::DaemonState,
+    client: &mut dyn centaur_node_sync::runtime::AtriumClient,
+) {
+    if state.hydrated {
+        return;
+    }
+    loop {
+        match client.poll_changes(&state.cursor) {
+            Ok((rows, next)) => {
+                if rows.is_empty() {
+                    break;
+                }
+                for (path, rc) in &rows {
+                    state.note_hydrated_version(path, rc.seq, rc.sha.clone());
+                }
+                state.cursor = next;
+            }
+            Err(e) => {
+                eprintln!(
+                    "session {}: hydrate poll: {e} (will retry next tick)",
+                    session.session
+                );
+                return;
+            }
+        }
+    }
+    state.hydrated = true;
+    let _ = state.save(&session.state_file);
+    println!(
+        "session {}: hydrated {} paths, cursor={}",
+        session.session,
+        state.paths.len(),
+        state.cursor
+    );
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn warmcache_capture_if_needed(
     client: &mut dyn centaur_node_sync::runtime::AtriumClient,
@@ -272,7 +319,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux_daemon {
     use super::{
-        SessionConfig, repo_worktrees, session_config_from_discovered, warmcache_capture_if_needed,
+        SessionConfig, hydrate_state_if_needed, repo_worktrees, session_config_from_discovered,
+        warmcache_capture_if_needed,
     };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
@@ -295,9 +343,11 @@ mod linux_daemon {
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
     use centaur_node_sync::materializer::materialize_changed_sessions;
+    use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
         OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
     };
+    use centaur_node_sync::pacing::{TickPacer, TickPacerAction};
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
         AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, credential_refresh_sweep,
@@ -310,11 +360,28 @@ mod linux_daemon {
     };
     use centaur_node_sync::sse::{ChangedEvent, DirtySet, SseOutput, SseParser};
     use centaur_node_sync::state::DaemonState;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::time::{Duration, Instant, SystemTime};
+
+    const WIP_FORCE_INTERVAL: Duration = Duration::from_secs(30);
+
+    /// In-memory WIP-gate state, keyed by `(session, repo_key)`. Deliberately
+    /// not persisted: losing it on restart just forces one WIP run.
+    #[derive(Default)]
+    struct WipGateState {
+        signatures: HashMap<(String, String), u64>,
+        active: HashMap<(String, String), bool>,
+    }
+
+    impl WipGateState {
+        fn retain_sessions(&mut self, keep: impl Fn(&str) -> bool) {
+            self.signatures.retain(|(session, _), _| keep(session));
+            self.active.retain(|(session, _), _| keep(session));
+        }
+    }
 
     #[derive(Default)]
     struct DaemonArgs {
@@ -429,7 +496,7 @@ mod linux_daemon {
             gc_dirs: env_truthy(&env("NODE_SYNC_GC_DIRS")),
             stream_enabled: env("NODE_SYNC_STREAM_ENABLED").trim() != "0",
             reconcile_interval: Duration::from_secs(
-                env("NODE_SYNC_RECONCILE_SECS").parse::<u64>().unwrap_or(30),
+                env("NODE_SYNC_RECONCILE_SECS").parse::<u64>().unwrap_or(15),
             ),
         };
 
@@ -583,11 +650,21 @@ mod linux_daemon {
         let lease = LeaseGate::new();
         let mut echo = EchoGuard::new();
         let mut state = DaemonState::load(&session.state_file);
+        let mut wip_gate = WipGateState::default();
+        let mut last_forced_wip: Option<Instant> = None;
         let mut tick: u64 = 0;
 
         loop {
             tick = tick.saturating_add(1);
-            if let Err(e) = run_one_session(&global, &session, &mut state, &mut echo, &lease) {
+            if let Err(e) = run_one_session(
+                &global,
+                &session,
+                &mut state,
+                &mut echo,
+                &lease,
+                &mut wip_gate,
+                &mut last_forced_wip,
+            ) {
                 eprintln!("session {}: {e}", session.session);
             }
             maybe_evict_depcache(&global, tick);
@@ -601,6 +678,8 @@ mod linux_daemon {
     #[derive(Clone)]
     struct ActiveSession {
         config: SessionConfig,
+        wip_remounted: bool,
+        wip_restored: bool,
     }
 
     #[derive(Clone)]
@@ -645,14 +724,17 @@ mod linux_daemon {
         let mut echoes: HashMap<String, EchoGuard> = HashMap::new();
         let mut mounted_overlays: HashMap<String, OverlayMountPlan> = HashMap::new();
         let mut evictions: HashMap<String, SessionEvictionState> = HashMap::new();
+        let mut wip_gate = WipGateState::default();
+        let mut last_forced_wip: HashMap<String, Instant> = HashMap::new();
         let batch_client = BatchHttpClient::new(&global.base_url, &global.api_key);
         let mut batch_endpoint = BatchEndpointState::default();
-        let stream_rx = if global.stream_enabled {
+        let mut stream_rx = if global.stream_enabled {
             Some(start_change_stream(&global.base_url, &global.api_key))
         } else {
             None
         };
         let mut stream_healthy = false;
+        let mut pending_stream_messages = VecDeque::new();
         let mut dirty = DirtySet::default();
         let mut last_reconcile: Option<Instant> = None;
         let mut tick: u64 = 0;
@@ -660,6 +742,7 @@ mod linux_daemon {
         loop {
             tick = tick.saturating_add(1);
             let now = Instant::now();
+            let tick_start = now;
             let system_now = SystemTime::now();
             let mut active_sessions = Vec::new();
             let mut probe_sessions = Vec::new();
@@ -679,6 +762,8 @@ mod linux_daemon {
                     states.retain(|session, _| active.contains(session));
                     echoes.retain(|session, _| active.contains(session));
                     evictions.retain(|session, _| active.contains(session));
+                    wip_gate.retain_sessions(|session| active.contains(session));
+                    last_forced_wip.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -774,7 +859,8 @@ mod linux_daemon {
                         // plan: the overlay signature covers extra lowers, so a plan
                         // rebuilt without it would mismatch and remount the session
                         // WITHOUT its hydrated artifacts.
-                        if !has_active_mount && !mounted_overlays.contains_key(&discovered.session)
+                        let hydrated_entries = if !has_active_mount
+                            && !mounted_overlays.contains_key(&discovered.session)
                         {
                             hydrate_artifacts_if_enabled(
                                 &global,
@@ -782,14 +868,17 @@ mod linux_daemon {
                                 &discovered.session,
                                 &discovered.atrium_session,
                                 &mut plan,
-                            );
+                            )
                         } else {
                             reattach_artifact_lower_into_plan(
                                 &overlays_root,
                                 &discovered.session,
                                 &mut plan,
                             );
-                        }
+                            Vec::new()
+                        };
+                        let wip_remounted = !has_active_mount
+                            || mounted_overlays.get(&discovered.session) != Some(&plan);
                         let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid))
                         {
                             Ok(plan) => plan,
@@ -811,16 +900,35 @@ mod linux_daemon {
                         let state = states
                             .entry(session.session.clone())
                             .or_insert_with(|| DaemonState::load(&session.state_file));
-                        prepare_session_before_remote(&global, &session, state);
-                        active_sessions.push(ActiveSession { config: session });
+                        // Seed sync state from what hydration just materialized: the
+                        // lower holds exactly these ledger versions, so record them
+                        // BEFORE the agent (or the first feed poll) can act on the
+                        // paths. Idempotent vs the feed-driven seeding — keeps newest.
+                        for entry in &hydrated_entries {
+                            state.note_hydrated_version(
+                                &entry.path,
+                                entry.seq,
+                                Some(entry.sha.clone()),
+                            );
+                        }
+                        let wip_restored = prepare_session_before_remote(&global, &session, state);
+                        active_sessions.push(ActiveSession {
+                            config: session,
+                            wip_remounted,
+                            wip_restored,
+                        });
                     }
                 }
                 Err(e) => eprintln!("session discovery: {e}"),
             }
 
-            if let Some(rx) = &stream_rx {
-                drain_stream_messages(rx, &mut stream_healthy, &mut dirty, &current_atrium_keys);
-            }
+            drain_stream_messages(
+                stream_rx.as_ref(),
+                &mut pending_stream_messages,
+                &mut stream_healthy,
+                &mut dirty,
+                &current_atrium_keys,
+            );
             let dirty_by_key = dirty.drain_for(current_atrium_keys.iter().map(String::as_str));
             let reconcile_due = stream_healthy
                 && last_reconcile
@@ -853,7 +961,11 @@ mod linux_daemon {
             }
 
             for active in active_sessions {
-                let session = active.config;
+                let ActiveSession {
+                    config: session,
+                    wip_remounted,
+                    wip_restored,
+                } = active;
                 let state = states
                     .entry(session.session.clone())
                     .or_insert_with(|| DaemonState::load(&session.state_file));
@@ -864,6 +976,9 @@ mod linux_daemon {
                     &global.api_key,
                     &session.atrium_session,
                 );
+                let wip_backstop_elapsed = last_forced_wip
+                    .get(&session.session)
+                    .is_none_or(|last| now.duration_since(*last) >= WIP_FORCE_INTERVAL);
                 let mut atrium_feed = None;
                 match remote_outcomes.get(&session.atrium_session) {
                     Some(RemotePollOutcome::Found(feeds)) => {
@@ -892,7 +1007,23 @@ mod linux_daemon {
                     Some(RemotePollOutcome::Error) | None => {}
                 }
 
-                run_local_capture(&global, &session, state, echo, &mut client);
+                let force_wip = centaur_node_sync::wip::should_force_wip(
+                    wip_remounted,
+                    wip_restored,
+                    wip_backstop_elapsed,
+                );
+                run_local_capture(
+                    &global,
+                    &session,
+                    state,
+                    echo,
+                    &mut client,
+                    force_wip,
+                    &mut wip_gate,
+                );
+                if force_wip {
+                    last_forced_wip.insert(session.session.clone(), now);
+                }
                 if let Some(atrium) = atrium_feed.as_ref() {
                     apply_atrium_feed(&global, &session, state, &client, atrium);
                 }
@@ -909,7 +1040,16 @@ mod linux_daemon {
             if once {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+            if wait_for_next_tick(
+                stream_rx.as_ref(),
+                &mut pending_stream_messages,
+                &mut stream_healthy,
+                &current_atrium_keys,
+                tick_start,
+                Duration::from_secs(interval_secs),
+            ) {
+                stream_rx = None;
+            }
         }
     }
 
@@ -930,12 +1070,12 @@ mod linux_daemon {
         global: &GlobalConfig,
         session: &SessionConfig,
         state: &mut DaemonState,
-    ) {
+    ) -> bool {
         let mut client =
             HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
-        restore_repo_wip(session, state);
+        restore_repo_wip(session, state)
     }
 
     fn run_local_capture(
@@ -944,10 +1084,19 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
+        force_wip: bool,
+        wip_gate: &mut WipGateState,
     ) {
-        outbound(global, session, state, echo, client);
+        let raw_entries = outbound(global, session, state, echo, client);
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
-        capture_repo_wip(session, state, client);
+        capture_repo_wip(
+            session,
+            state,
+            client,
+            raw_entries.as_deref(),
+            force_wip,
+            wip_gate,
+        );
     }
 
     fn apply_profile_feed(
@@ -1415,7 +1564,7 @@ mod linux_daemon {
                 }
             }
             std::thread::sleep(backoff);
-            backoff = (backoff * 2).min(Duration::from_secs(60));
+            backoff = (backoff * 2).min(Duration::from_secs(15));
         }
     }
 
@@ -1434,19 +1583,120 @@ mod linux_daemon {
     }
 
     fn drain_stream_messages(
-        rx: &mpsc::Receiver<StreamMessage>,
+        rx: Option<&mpsc::Receiver<StreamMessage>>,
+        pending: &mut VecDeque<StreamMessage>,
         stream_healthy: &mut bool,
         dirty: &mut DirtySet,
         current_atrium_keys: &HashSet<String>,
     ) {
+        while let Some(message) = pending.pop_front() {
+            handle_stream_message(message, stream_healthy, dirty, current_atrium_keys);
+        }
+        let Some(rx) = rx else {
+            return;
+        };
         while let Ok(message) = rx.try_recv() {
-            match message {
-                StreamMessage::Healthy => *stream_healthy = true,
-                StreamMessage::Unhealthy => *stream_healthy = false,
-                StreamMessage::Changed(event) => {
-                    dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
+            handle_stream_message(message, stream_healthy, dirty, current_atrium_keys);
+        }
+    }
+
+    fn handle_stream_message(
+        message: StreamMessage,
+        stream_healthy: &mut bool,
+        dirty: &mut DirtySet,
+        current_atrium_keys: &HashSet<String>,
+    ) {
+        match message {
+            StreamMessage::Healthy => *stream_healthy = true,
+            StreamMessage::Unhealthy => *stream_healthy = false,
+            StreamMessage::Changed(event) => {
+                dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
+            }
+        }
+    }
+
+    fn wait_for_next_tick(
+        rx: Option<&mpsc::Receiver<StreamMessage>>,
+        pending: &mut VecDeque<StreamMessage>,
+        stream_healthy: &mut bool,
+        current_atrium_keys: &HashSet<String>,
+        tick_start: Instant,
+        interval: Duration,
+    ) -> bool {
+        let Some(rx) = rx else {
+            std::thread::sleep(interval);
+            return false;
+        };
+        let deadline = tick_start + interval;
+        let mut pacer = TickPacer::default();
+        loop {
+            let decision = pacer.next(Instant::now(), tick_start, deadline);
+            let TickPacerAction::WaitMore(timeout) = decision.action else {
+                return false;
+            };
+            match rx.recv_timeout(timeout) {
+                Ok(message) => {
+                    let made_dirty = handle_wait_stream_message(
+                        message,
+                        pending,
+                        stream_healthy,
+                        current_atrium_keys,
+                    );
+                    let decision =
+                        pacer.observe_message(Instant::now(), tick_start, deadline, made_dirty);
+                    if matches!(decision.action, TickPacerAction::TickNow) {
+                        return false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let decision = pacer.observe_timeout(Instant::now(), tick_start, deadline);
+                    if matches!(decision.action, TickPacerAction::TickNow) {
+                        return false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    *stream_healthy = false;
+                    let decision = pacer.observe_disconnected(Instant::now(), deadline);
+                    if let TickPacerAction::WaitMore(timeout) = decision.action {
+                        std::thread::sleep(timeout);
+                    }
+                    return decision.stream_disconnected;
                 }
             }
+        }
+    }
+
+    fn handle_wait_stream_message(
+        message: StreamMessage,
+        pending: &mut VecDeque<StreamMessage>,
+        stream_healthy: &mut bool,
+        current_atrium_keys: &HashSet<String>,
+    ) -> bool {
+        match message {
+            StreamMessage::Healthy => {
+                *stream_healthy = true;
+                false
+            }
+            StreamMessage::Unhealthy => {
+                *stream_healthy = false;
+                false
+            }
+            StreamMessage::Changed(event) => {
+                let made_dirty = changed_event_targets_current_session(&event, current_atrium_keys);
+                pending.push_back(StreamMessage::Changed(event));
+                made_dirty
+            }
+        }
+    }
+
+    fn changed_event_targets_current_session(
+        event: &ChangedEvent,
+        current_atrium_keys: &HashSet<String>,
+    ) -> bool {
+        if let Some(key) = event.key.as_deref().filter(|key| !key.trim().is_empty()) {
+            current_atrium_keys.contains(key)
+        } else {
+            !current_atrium_keys.is_empty()
         }
     }
 
@@ -1470,15 +1720,17 @@ mod linux_daemon {
         );
     }
 
+    /// Returns the (path, seq, sha) entries that actually materialized so the
+    /// caller can seed the session's sync state once it is loaded.
     fn hydrate_artifacts_if_enabled(
         global: &GlobalConfig,
         overlays_root: &Path,
         session: &str,
         atrium_session: &str,
         plan: &mut OverlayMountPlan,
-    ) {
+    ) -> Vec<centaur_node_sync::cas::CasHydrateEntry> {
         if !global.hydrate_artifacts || global.base_url.is_empty() || global.api_key.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let mut client = HttpAtriumClient::new(&global.base_url, &global.api_key, atrium_session);
@@ -1496,9 +1748,11 @@ mod linux_daemon {
                     outcome.fetched,
                     outcome.errors.len()
                 );
+                outcome.hydrated
             }
             Err(e) => {
                 eprintln!("session {session}: hydrate error: {e}");
+                Vec::new()
             }
         }
     }
@@ -1554,57 +1808,45 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         lease: &LeaseGate,
+        wip_gate: &mut WipGateState,
+        last_forced_wip: &mut Option<Instant>,
     ) -> Result<(), String> {
+        let now = Instant::now();
         let mut client =
             HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
 
         materialize_profile_bundles_for_session(session, state, &client);
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
-        restore_repo_wip(session, state);
-        inbound(session, state, echo, lease, &mut client);
-        outbound(global, session, state, echo, &mut client);
+        let wip_restored = restore_repo_wip(session, state);
+        // Inbound adoption needs seeded state: without it every remote row looks
+        // like an unknown local and gets adopted (re-downloaded + copied up).
+        // Outbound stays on — new-file captures are safe unseeded, and an edited
+        // pre-existing path is server-guarded (409 base_required) until seeded.
+        if state.hydrated {
+            inbound(session, state, echo, lease, &mut client);
+        }
+        let raw_entries = outbound(global, session, state, echo, &mut client);
         warmcache_capture_if_needed(&mut client, session, state, &global.depcache_root);
-        capture_repo_wip(session, state, &mut client);
+        let wip_backstop_elapsed =
+            last_forced_wip.is_none_or(|last| now.duration_since(last) >= WIP_FORCE_INTERVAL);
+        let force_wip =
+            centaur_node_sync::wip::should_force_wip(false, wip_restored, wip_backstop_elapsed);
+        capture_repo_wip(
+            session,
+            state,
+            &mut client,
+            raw_entries.as_deref(),
+            force_wip,
+            wip_gate,
+        );
+        if force_wip {
+            *last_forced_wip = Some(now);
+        }
         materialize_atrium(global, session, state, &client);
         state
             .save(&session.state_file)
             .map_err(|e| format!("save state {}: {e}", session.state_file.display()))
-    }
-
-    fn hydrate_state_if_needed(
-        session: &SessionConfig,
-        state: &mut DaemonState,
-        client: &mut HttpAtriumClient,
-    ) {
-        if state.hydrated {
-            return;
-        }
-        loop {
-            match client.poll_changes(&state.cursor) {
-                Ok((rows, next)) => {
-                    if rows.is_empty() {
-                        break;
-                    }
-                    for (path, rc) in &rows {
-                        state.note_hydrated_version(path, rc.seq, rc.sha.clone());
-                    }
-                    state.cursor = next;
-                }
-                Err(e) => {
-                    eprintln!("session {}: hydrate poll: {e}", session.session);
-                    break;
-                }
-            }
-        }
-        state.hydrated = true;
-        let _ = state.save(&session.state_file);
-        println!(
-            "session {}: hydrated {} paths, cursor={}",
-            session.session,
-            state.paths.len(),
-            state.cursor
-        );
     }
 
     fn refresh_upper_sha(session: &SessionConfig, state: &mut DaemonState) {
@@ -1732,7 +1974,7 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
-    ) {
+    ) -> Option<Vec<RawEntry>> {
         match fs_linux::read_upper_entries(&session.upper) {
             Ok(entries) => {
                 let entries = entries
@@ -1913,12 +2155,16 @@ mod linux_daemon {
                         );
                     }
                 }
+                Some(entries)
             }
-            Err(e) => eprintln!(
-                "session {}: scan {}: {e}",
-                session.session,
-                session.upper.display()
-            ),
+            Err(e) => {
+                eprintln!(
+                    "session {}: scan {}: {e}",
+                    session.session,
+                    session.upper.display()
+                );
+                None
+            }
         }
     }
 
@@ -1984,7 +2230,8 @@ mod linux_daemon {
         }
     }
 
-    fn restore_repo_wip(session: &SessionConfig, state: &mut DaemonState) {
+    fn restore_repo_wip(session: &SessionConfig, state: &mut DaemonState) -> bool {
+        let mut attempted = false;
         for repo in &session.repo_worktrees {
             let latest_path = centaur_node_sync::wip::latest_path(&repo.key);
             let latest_file = session.merged.join(&latest_path);
@@ -2013,6 +2260,7 @@ mod linux_daemon {
             {
                 continue;
             }
+            attempted = true;
             match centaur_node_sync::wip::restore_snapshot(&repo.path, &session.merged, &manifest) {
                 Ok(()) => println!(
                     "session {}: wip restore: applied {} snapshot {}",
@@ -2024,14 +2272,43 @@ mod linux_daemon {
                 .wip_restore_attempted
                 .insert(repo.key.clone(), manifest.snapshot_id);
         }
+        attempted
     }
 
     fn capture_repo_wip(
         session: &SessionConfig,
         state: &mut DaemonState,
         client: &mut HttpAtriumClient,
+        raw_entries: Option<&[RawEntry]>,
+        force_wip: bool,
+        wip_gate: &mut WipGateState,
     ) {
         for repo in &session.repo_worktrees {
+            let gate_key = (session.session.clone(), repo.key.clone());
+            let current_signature = raw_entries.and_then(|entries| {
+                let prefix = repo.path.strip_prefix(&session.merged).ok()?;
+                Some(centaur_node_sync::wip::repo_signature(entries, prefix))
+            });
+            let decision = centaur_node_sync::wip::decide_wip_capture(
+                wip_gate.signatures.get(&gate_key).copied(),
+                current_signature,
+                force_wip,
+            );
+            let active = decision.should_capture;
+            if let Some(previous_active) = wip_gate.active.insert(gate_key.clone(), active)
+                && previous_active != active
+            {
+                eprintln!(
+                    "session {}: wip gate {} for {} ({:?})",
+                    session.session,
+                    if active { "active" } else { "idle" },
+                    repo.key,
+                    decision.reason
+                );
+            }
+            if !decision.should_capture {
+                continue;
+            }
             match centaur_node_sync::wip::capture_wip(&repo.path) {
                 Ok(patch) => {
                     let out = centaur_node_sync::runtime::wip_sweep(
@@ -2057,6 +2334,12 @@ mod linux_daemon {
                     }
                     for (path, error) in &out.errors {
                         eprintln!("session {}: wip error {path}: {error}", session.session);
+                    }
+                    // Record the signature only on success: a failed capture_wip must
+                    // keep retrying every tick (today's behavior), not wait for the
+                    // next repo change or the 30s backstop.
+                    if let Some(signature) = current_signature {
+                        wip_gate.signatures.insert(gate_key, signature);
                     }
                 }
                 Err(e) => eprintln!(
@@ -2157,10 +2440,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use centaur_node_sync::adopt::{RemoteChange, RemoteStatus};
     use centaur_node_sync::cas::WarmcacheManifestEntry;
     use centaur_node_sync::overlay_mount::{LowerKind, LowerSource, plan_overlay_mount};
     use centaur_node_sync::runtime::AtriumClient;
     use centaur_node_sync::session_manifest::{DiscoveredSession, RepoMount, SessionManifest};
+    use centaur_node_sync::state::DaemonState;
     use centaur_node_sync::warmcache::{
         WarmcacheReceipt, WarmcacheReceiptEntry, warmcache_receipt_path, write_warmcache_receipt,
     };
@@ -2208,6 +2493,84 @@ mod tests {
         fn atrium_doc(&self, _: &str, _: &str) -> Result<Vec<u8>, String> {
             unreachable!()
         }
+    }
+
+    struct FlakyFeedClient {
+        fail: bool,
+        rows: Vec<(String, RemoteChange)>,
+    }
+
+    impl AtriumClient for FlakyFeedClient {
+        fn post_capture(&mut self, _: &str, _: u64, _: &[u8]) -> Result<u64, String> {
+            unreachable!("state-hydration tests do not capture")
+        }
+
+        fn post_delete(&mut self, _: &str, _: u64) -> Result<u64, String> {
+            unreachable!("state-hydration tests do not delete")
+        }
+
+        fn fetch_bytes(&mut self, _: &str, _: u64) -> Result<Vec<u8>, String> {
+            unreachable!("state-hydration tests do not fetch bytes")
+        }
+
+        fn poll_changes(
+            &mut self,
+            cursor: &str,
+        ) -> Result<(Vec<(String, RemoteChange)>, String), String> {
+            if self.fail {
+                return Err("simulated feed outage (429)".to_string());
+            }
+            if self.rows.is_empty() {
+                return Ok((vec![], cursor.to_string()));
+            }
+            Ok((std::mem::take(&mut self.rows), "9.9".to_string()))
+        }
+
+        fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String> {
+            Ok((vec![], since.to_string()))
+        }
+
+        fn atrium_doc(&self, _: &str, _: &str) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn hydrate_state_retries_after_poll_error_instead_of_forfeiting_seeding() {
+        let dir = std::env::temp_dir().join(format!("hydrate-state-it-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut session = warmcache_test_session();
+        session.state_file = dir.join("state.json");
+        let mut state = DaemonState::load(&session.state_file);
+        let mut client = FlakyFeedClient {
+            fail: true,
+            rows: vec![(
+                "shared/doc.md".to_string(),
+                RemoteChange {
+                    seq: 5,
+                    sha: Some("sha5".to_string()),
+                    status: RemoteStatus::Normal,
+                    group_id: None,
+                },
+            )],
+        };
+
+        // Feed outage on the first tick: seeding must NOT be forfeited.
+        hydrate_state_if_needed(&session, &mut state, &mut client);
+        assert!(
+            !state.hydrated,
+            "a failed drain must not mark the state hydrated"
+        );
+        assert!(state.locals().is_empty());
+
+        // Next tick the feed recovers: the drain resumes and seeds.
+        client.fail = false;
+        hydrate_state_if_needed(&session, &mut state, &mut client);
+        assert!(state.hydrated);
+        assert_eq!(state.locals().get("shared/doc.md").unwrap().base_seq, 5);
+        assert_eq!(state.cursor, "9.9");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn warmcache_test_session() -> SessionConfig {

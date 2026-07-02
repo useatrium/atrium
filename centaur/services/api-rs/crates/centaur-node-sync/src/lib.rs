@@ -32,6 +32,7 @@ pub mod manifest;
 pub mod materializer;
 pub mod overlay;
 pub mod overlay_mount;
+pub mod pacing;
 pub mod profile_candidates;
 pub mod quiesce;
 pub mod runtime;
@@ -79,6 +80,7 @@ mod tests {
             file_type: RawFileType::Regular,
             rdev: 0,
             size,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }
@@ -88,6 +90,7 @@ mod tests {
             file_type: RawFileType::CharDevice,
             rdev: 0,
             size: 0,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }
@@ -97,6 +100,7 @@ mod tests {
             file_type: RawFileType::Dir,
             rdev: 0,
             size: 0,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }

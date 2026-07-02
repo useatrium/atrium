@@ -50,6 +50,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<RawEntry>) -> io::Result<()> {
             file_type: file_type.clone(),
             rdev: meta.rdev(),
             size: meta.size(),
+            mtime_ns: meta.mtime() * 1_000_000_000 + meta.mtime_nsec(),
             xattrs: read_overlay_xattrs(&path),
         });
         // Descend into real directories only (overlay encodes opaque/redirect on
