@@ -105,7 +105,7 @@ interface ChatContextValue {
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  steerSession: (sessionId: string, text: string) => Promise<void>;
+  steerSession: (sessionId: string, text: string, effort?: string) => Promise<void>;
   failedSessionSteers: Record<string, string>;
   clearFailedSessionSteer: (sessionId: string) => void;
   cancelSession: (sessionId: string) => Promise<void>;
@@ -434,12 +434,12 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
 
   const steerSession = useCallback(
-    async (sessionId: string, text: string): Promise<void> => {
+    async (sessionId: string, text: string, effort?: string): Promise<void> => {
       clearFailedSessionSteer(sessionId);
       await enqueueOp({
         opId: randomId(),
         opType: 'session.steer',
-        payload: { sessionId, text },
+        payload: { sessionId, text, ...(effort ? { effort } : {}) },
       });
     },
     [clearFailedSessionSteer, enqueueOp],
