@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { formatTokens, type TurnLiveness, type TurnPhase } from '@atrium/centaur-client';
+export { formatTokens };
 import { formatCost, formatElapsed } from './types';
 
 /** A small CSS spinner, accent-colored via `currentColor`. Used for the
@@ -12,27 +14,11 @@ export function Spinner({ className = '' }: { className?: string }) {
   );
 }
 
-export type TurnPhase = 'thinking' | 'tool' | 'waiting' | 'done';
 
-/** Compact token display: raw under 1k, then one decimal ("2.4k", "1.2M") —
- * calm ticks (every ~50-100 tokens) without pretending to count precision the
- * chars÷4 estimate doesn't have. */
-export function formatTokens(count: number): string {
-  // 999,950+ rounds to "1000.0k" — promote to the M tier at the display
-  // boundary, not the numeric one.
-  if (count >= 999_950) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
-  return String(count);
-}
 
-/** How alive the turn actually is, judged from the stream (not assumed):
- *  - live: frames are arriving (or silence is expected, e.g. a tool is running)
- *  - quiet: thinking-phase silence past ~30s — suspicious but not alarming
- *  - stuck: thinking-phase silence past ~5m — offer the exit
- *  - reconnecting: our SSE to the server is down
- *  - reattaching: the server lost the sandbox stdout pipe and is re-attaching
- */
-export type TurnLiveness = 'live' | 'quiet' | 'stuck' | 'reconnecting' | 'reattaching';
+// Phase/liveness are computed by the shared deriveTurnStatus (centaur-client
+// turnStatus.ts) so web and mobile agree; re-exported here for existing imports.
+export type { TurnLiveness, TurnPhase } from '@atrium/centaur-client';
 
 /**
  * Event-driven heartbeat: blips when `pulse` changes (a real frame arrived),

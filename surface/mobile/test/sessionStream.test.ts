@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { initialSessionState, type CentaurEventFrame, type TextItem } from '@atrium/centaur-client';
-import { streamSessionOnce } from '../src/lib/sessionStreamCore';
+import { silenceThresholdMs, streamSessionOnce } from '../src/lib/sessionStreamCore';
 
 const encoder = new TextEncoder();
 
@@ -28,6 +28,119 @@ function sse(frame: CentaurEventFrame): string {
 }
 
 describe('mobile session stream glue', () => {
+  it('reports ping activity without folding the ping event', async () => {
+    const stamp = '2026-07-02T10:15:00.000Z';
+    const body = `event: ping\ndata: ${JSON.stringify({ atrium_ts: stamp })}\n\n`;
+    const fetchImpl: typeof fetch = async () =>
+      new Response(streamFromChunks([body]), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    const states: unknown[] = [];
+    const activity: Array<['frame' | 'ping', string | null, boolean | undefined]> = [];
+
+    const state = await streamSessionOnce(
+      {
+        baseUrl: 'http://server.test',
+        token: 'tok',
+        sessionId: 's-1',
+        afterEventId: 0,
+        signal: new AbortController().signal,
+        fetchImpl,
+      },
+      initialSessionState(),
+      (next) => states.push(next),
+      undefined,
+      (kind, serverTs, folded) => activity.push([kind, serverTs, folded]),
+    );
+
+    expect(activity).toEqual([['ping', stamp, undefined]]);
+    expect(states).toHaveLength(0);
+    expect(state.lastEventId).toBe(0);
+    expect(state.frameSeq).toBe(0);
+  });
+
+  it('reports frame activity for folded frames', async () => {
+    const stamp = '2026-07-02T10:16:00.000Z';
+    const body = `id: 1\nevent: execution_state\ndata: ${JSON.stringify({
+      type: 'execution.state',
+      status: 'running',
+      thread_key: 't',
+      execution_id: 'e',
+      event_id: 1,
+      atrium_ts: stamp,
+    })}\n\n`;
+    const fetchImpl: typeof fetch = async () =>
+      new Response(streamFromChunks([body]), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    const activity: Array<['frame' | 'ping', string | null, boolean | undefined]> = [];
+
+    const state = await streamSessionOnce(
+      {
+        baseUrl: 'http://server.test',
+        token: 'tok',
+        sessionId: 's-1',
+        afterEventId: 0,
+        signal: new AbortController().signal,
+        fetchImpl,
+      },
+      initialSessionState(),
+      undefined,
+      undefined,
+      (kind, serverTs, folded) => activity.push([kind, serverTs, folded]),
+    );
+
+    expect(activity).toEqual([['frame', stamp, true]]);
+    expect(state.status).toBe('running');
+    expect(state.lastEventId).toBe(1);
+  });
+
+  it('reports unfolded activity for deduplicated replay frames (liveness, not a fold)', async () => {
+    const frame = {
+      event: 'execution_state',
+      event_id: 1,
+      data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e', event_id: 1 },
+    } as CentaurEventFrame;
+    // Same event id replayed twice: second fold is a no-op, but bytes flowed.
+    const body =
+      `id: 1\nevent: amp_raw_event\ndata: ${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: 'm1', delta: 'hi' }, event_id: 1 })}\n\n` +
+      `id: 1\nevent: amp_raw_event\ndata: ${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: 'm1', delta: 'hi' }, event_id: 1 })}\n\n`;
+    void frame;
+    const fetchImpl: typeof fetch = async () =>
+      new Response(streamFromChunks([body]), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    const activity: Array<['frame' | 'ping', string | null, boolean | undefined]> = [];
+
+    await streamSessionOnce(
+      {
+        baseUrl: 'http://server.test',
+        token: 'tok',
+        sessionId: 's-1',
+        afterEventId: 0,
+        signal: new AbortController().signal,
+        fetchImpl,
+      },
+      initialSessionState(),
+      undefined,
+      undefined,
+      (kind, serverTs, folded) => activity.push([kind, serverTs, folded]),
+    );
+
+    expect(activity.map(([kind, , folded]) => [kind, folded])).toEqual([
+      ['frame', true],
+      ['frame', false],
+    ]);
+  });
+
+  it('uses ping proof to choose the silent-death watchdog threshold', () => {
+    expect(silenceThresholdMs(true)).toBe(45_000);
+    expect(silenceThresholdMs(false)).toBe(240_000);
+  });
+
   it('folds SSE chunks and resumes with the last folded event id', async () => {
     const frames: CentaurEventFrame[] = [
       {
