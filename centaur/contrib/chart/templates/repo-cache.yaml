@@ -113,6 +113,8 @@ spec:
               umask 022
               ready_file=/cache/.repo-cache-ready
               ready_tmp="${ready_file}.tmp"
+              state_file=/cache/.repo-cache-state.json
+              state_tmp="${state_file}.tmp"
 
               repository_fingerprint() {
                 printf 'repositories=%s\nrepository_refs=%s\n' "$REPOSITORIES" "$REPOSITORY_REFS"
@@ -125,6 +127,77 @@ spec:
                     "$repo="*) printf '%s\n' "${entry#*=}"; return 0 ;;
                   esac
                 done
+              }
+
+              publish_repo_snapshot() {
+                local repo="$1"
+                local target="$2"
+                local sha
+                local snapshot
+                local tmp
+                sha="$(git -C "$target" rev-parse HEAD)"
+                snapshot="/cache/.snapshots/${repo}/${sha}"
+                tmp="${snapshot}.tmp"
+                if [ -d "${snapshot}/.git" ]; then
+                  return 0
+                fi
+                mkdir -p "$(dirname "$snapshot")"
+                rm -rf "$tmp"
+                mkdir -p "$tmp"
+                if ! cp -a --reflink=auto "$target/." "$tmp/" 2>/dev/null; then
+                  rm -rf "$tmp"
+                  mkdir -p "$tmp"
+                  cp -a "$target/." "$tmp/"
+                fi
+                mv "$tmp" "$snapshot"
+              }
+
+              write_repo_cache_state() {
+                python3 - "$state_tmp" <<'PY'
+              import datetime
+              import json
+              import os
+              import pathlib
+              import subprocess
+              import sys
+
+              refs = {}
+              for entry in os.environ.get("REPOSITORY_REFS", "").split():
+                  repo, sep, ref = entry.partition("=")
+                  if sep:
+                      refs[repo] = ref
+
+              repositories = []
+              for repo in os.environ.get("REPOSITORIES", "").split():
+                  target = pathlib.Path("/cache") / repo
+                  sha = subprocess.check_output(
+                      ["git", "-C", str(target), "rev-parse", "HEAD"],
+                      text=True,
+                  ).strip()
+                  cache_path = f".snapshots/{repo}/{sha}"
+                  snapshot = pathlib.Path("/cache") / cache_path
+                  if not (snapshot / ".git").is_dir():
+                      raise RuntimeError(f"snapshot missing for {repo}: {snapshot}")
+                  item = {
+                      "repo": repo,
+                      "resolved_sha": sha,
+                      "cache_path": cache_path,
+                  }
+                  if refs.get(repo):
+                      item["ref"] = refs[repo]
+                  repositories.append(item)
+
+              payload = {
+                  "repositories": repositories,
+                  "synced_at": datetime.datetime.now(datetime.timezone.utc)
+                      .replace(microsecond=0)
+                      .isoformat()
+                      .replace("+00:00", "Z"),
+              }
+              with open(sys.argv[1], "w", encoding="utf-8") as out:
+                  json.dump(payload, out, separators=(",", ":"))
+                  out.write("\n")
+              PY
               }
 
               checkout_repo() {
@@ -174,6 +247,7 @@ spec:
                   git -C "$target" remote set-head origin -a || true
                   checkout_repo "$repo" "$target"
                   git -C "$target" clean -fd
+                  publish_repo_snapshot "$repo" "$target"
                 else
                   echo "Cloning $repo"
                   # Also sweep any stale "${target}.tmp.*" dirs left by the
@@ -186,6 +260,7 @@ spec:
                   checkout_repo "$repo" "$tmp"
                   git -C "$tmp" clean -fd
                   mv "$tmp" "$target"
+                  publish_repo_snapshot "$repo" "$target"
                 fi
               }
 
@@ -197,14 +272,15 @@ spec:
                     sync_ok=0
                   fi
                 done
-                if [ "$sync_ok" = "1" ]; then
+                if [ "$sync_ok" = "1" ] && write_repo_cache_state; then
+                  mv "$state_tmp" "$state_file"
                   {
                     repository_fingerprint
                     printf 'synced_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                   } > "$ready_tmp"
                   mv "$ready_tmp" "$ready_file"
                 else
-                  rm -f "$ready_tmp" "$ready_file"
+                  rm -f "$ready_tmp" "$state_tmp" "$ready_file"
                 fi
                 sleep "$SYNC_INTERVAL_SECONDS"
               done
@@ -226,9 +302,11 @@ spec:
                 - -ec
                 - |
                   ready_file=/cache/.repo-cache-ready
+                  state_file=/cache/.repo-cache-state.json
                   expected="$(printf 'repositories=%s\nrepository_refs=%s\n' "$REPOSITORIES" "$REPOSITORY_REFS")"
                   actual="$(sed -n '1,2p' "$ready_file" 2>/dev/null || true)"
                   [ "$actual" = "$expected" ] || exit 1
+                  [ -s "$state_file" ] || exit 1
                   for repo in $REPOSITORIES; do
                     [ -d "/cache/$repo/.git" ] || exit 1
                   done

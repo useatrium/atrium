@@ -6,7 +6,7 @@
 
 use crate::session_manifest::{
     RepoCacheScope, RepoMount, validate_principal_cache_scope, validate_repo_cache_path_syntax,
-    validate_repo_mounts, validate_repo_subdir_syntax,
+    validate_repo_cache_snapshot_path_syntax, validate_repo_mounts, validate_repo_subdir_syntax,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -218,6 +218,17 @@ pub fn plan_repo_composition(
 }
 
 pub fn repo_cache_path(repo_cache_root: &Path, mount: &RepoMount) -> Result<PathBuf, String> {
+    if let Some(cache_path) = mount.cache_path.as_deref() {
+        validate_repo_cache_snapshot_path_syntax(cache_path)?;
+        if mount.private {
+            return Err(format!(
+                "private repo {:?} must not use explicit shared cache path {cache_path:?}",
+                mount.repo
+            ));
+        }
+        return Ok(repo_cache_root.join(cache_path));
+    }
+
     if !mount.private {
         return Ok(repo_cache_root.join(&mount.repo));
     }
@@ -684,7 +695,9 @@ fn materialize_repo_entry(entry: &RepoComposeEntry) -> Result<(), String> {
         clone_repo(&entry.mount.repo, &entry.target_path)?;
     }
 
-    if let Some(git_ref) = entry.mount.r#ref.as_deref() {
+    if let Some(resolved_sha) = entry.mount.resolved_sha.as_deref() {
+        checkout_repo_ref(&entry.target_path, resolved_sha)?;
+    } else if let Some(git_ref) = entry.mount.r#ref.as_deref() {
         checkout_repo_ref(&entry.target_path, git_ref)?;
     }
     eprintln!(
@@ -1244,6 +1257,8 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: None,
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1251,6 +1266,8 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: Some("main".to_string()),
                 subdir: None,
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1258,6 +1275,8 @@ mod tests {
                 repo: "acme/bar".to_string(),
                 r#ref: None,
                 subdir: Some("libbar".to_string()),
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1290,6 +1309,8 @@ mod tests {
                 repo: "acme/foo".to_string(),
                 r#ref: None,
                 subdir: None,
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1297,6 +1318,8 @@ mod tests {
                 repo: "acme/bar".to_string(),
                 r#ref: Some("release/v1".to_string()),
                 subdir: Some("vendor-bar".to_string()),
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1324,6 +1347,8 @@ mod tests {
             repo: "acme/private".to_string(),
             r#ref: Some("main".to_string()),
             subdir: None,
+            resolved_sha: None,
+            cache_path: None,
             private: true,
             cache_scope: Some(RepoCacheScope::Principal {
                 principal_id: "prn_user:one".to_string(),
@@ -1336,6 +1361,27 @@ mod tests {
         assert_eq!(
             plan.entries[0].cache_path,
             PathBuf::from("/cache/principals/principal-prn_user%3Aone/acme/private")
+        );
+    }
+
+    #[test]
+    fn compose_plan_uses_explicit_snapshot_cache_path() {
+        let repos = vec![RepoMount {
+            repo: "acme/widget".to_string(),
+            r#ref: Some("main".to_string()),
+            subdir: None,
+            resolved_sha: Some("abc123".to_string()),
+            cache_path: Some(".snapshots/acme/widget/abc123".to_string()),
+            private: false,
+            cache_scope: None,
+        }];
+
+        let plan = plan_repo_composition(Path::new("/lower"), Path::new("/cache"), &repos).unwrap();
+
+        assert_eq!(plan.entries[0].target_subdir, "repos/acme/widget");
+        assert_eq!(
+            plan.entries[0].cache_path,
+            PathBuf::from("/cache/.snapshots/acme/widget/abc123")
         );
     }
 
@@ -1400,6 +1446,8 @@ mod tests {
             repo: "acme/private".to_string(),
             r#ref: None,
             subdir: None,
+            resolved_sha: None,
+            cache_path: None,
             private: true,
             cache_scope: Some(RepoCacheScope::Principal {
                 principal_id: "prn_user:one".to_string(),
@@ -1466,6 +1514,8 @@ mkdir -p "$last/.git"
             repo: "acme/private".to_string(),
             r#ref: None,
             subdir: None,
+            resolved_sha: None,
+            cache_path: None,
             private: true,
             cache_scope: Some(RepoCacheScope::Principal {
                 principal_id: "prn_user:one".to_string(),
@@ -1509,6 +1559,8 @@ mkdir -p "$last/.git"
                 repo: "acme/app".to_string(),
                 r#ref: None,
                 subdir: None,
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1516,6 +1568,8 @@ mkdir -p "$last/.git"
                 repo: "globex/app".to_string(),
                 r#ref: None,
                 subdir: None,
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             },
@@ -1538,6 +1592,8 @@ mkdir -p "$last/.git"
                     repo: "acme/bar".to_string(),
                     r#ref: None,
                     subdir: Some("shared".to_string()),
+                    resolved_sha: None,
+                    cache_path: None,
                     private: false,
                     cache_scope: None,
                 },
@@ -1545,6 +1601,8 @@ mkdir -p "$last/.git"
                     repo: "globex/baz".to_string(),
                     r#ref: None,
                     subdir: Some("shared".to_string()),
+                    resolved_sha: None,
+                    cache_path: None,
                     private: false,
                     cache_scope: None,
                 },
@@ -1560,6 +1618,8 @@ mkdir -p "$last/.git"
                 repo: "/absolute/repo".to_string(),
                 r#ref: None,
                 subdir: Some("repo".to_string()),
+                resolved_sha: None,
+                cache_path: None,
                 private: false,
                 cache_scope: None,
             }],

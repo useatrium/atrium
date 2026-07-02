@@ -54,6 +54,14 @@ class BrokerCredential < ApplicationRecord
   # undeliverable. The operator must remove the references first.
   before_destroy :ensure_not_referenced
   after_commit :auto_grant_matching_principals, on: %i[create update], if: :oauth_app_id?
+  # A freshly seeded credential (refresh_token/username/... just set, none minted
+  # yet) would otherwise wait up to one Broker::PollRefreshJob tick (~60s) for its
+  # first access token. During that window token_broker secrets referencing it are
+  # undeliverable (SecretSource#deliverable? is false), so an agent session spawned
+  # right after a BYO connect fails auth. Enqueue the first refresh immediately so
+  # the token is minted within ~a second of the seed landing; PollRefreshJob stays
+  # the steady-state refresher.
+  after_commit :enqueue_bootstrap_refresh, on: %i[create update], if: :bootstrap_refresh_pending?
   before_validation :default_preqin_token_endpoint
   before_validation :default_github_app_installation_token_endpoint
   before_commit :bump_referencing_principal_sync_config_versions, if: :sync_config_relevant_change?
@@ -173,6 +181,25 @@ class BrokerCredential < ApplicationRecord
   end
 
   private
+
+  # Fresh seed material that carries a refresh capability just landed, and this
+  # same save did not mint an access token. Excluding saves that touched
+  # access_token is what breaks the loop: a successful refresh's own save (which
+  # sets access_token and may rotate refresh_token) and a retryable-failure save
+  # (which touches neither) never re-trigger the eager refresh. Covers both first
+  # connect and re-auth (re-supplying a refresh_token).
+  SEED_FIELDS = %w[refresh_token username password api_key github_private_key].freeze
+
+  def bootstrap_refresh_pending?
+    return false if dead?
+    return false if previous_changes.key?("access_token")
+
+    SEED_FIELDS.any? { |field| previous_changes.key?(field) }
+  end
+
+  def enqueue_bootstrap_refresh
+    Broker::RefreshCredentialJob.perform_later(id)
+  end
 
   def auto_grant_matching_principals
     PrincipalCredentialReconciliation.new.apply_for_credential(self)

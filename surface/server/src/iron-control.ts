@@ -239,6 +239,13 @@ export class IronControlAdminClient {
     );
   }
 
+  /** Fetch a broker credential's current state (notably `status`: bootstrapping/live/dead). */
+  async getBrokerCredential(id: string): Promise<IronControlBrokerCredential> {
+    return this.get<IronControlBrokerCredential>(
+      `/api/v1/broker_credentials/${encodeURIComponent(id)}`,
+    );
+  }
+
   async upsertGitHubAppInstallationBrokerCredential(args: {
     foreignId: string;
     name: string;

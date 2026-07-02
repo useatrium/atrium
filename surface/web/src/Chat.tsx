@@ -1059,7 +1059,11 @@ export function Chat({
           unreadDividerAfterId={unreadDividerAfterId}
         />
 
-        {active && !state.openSessionId && (
+        {/* Composer follows the channel <main>: shown in both channel and split
+            views (this block is already inside `view !== 'focus'`). Gating it on
+            `!openSessionId` used to blank the composer in split view, leaving the
+            channel with no way to type. */}
+        {active && (
           <>
             <TypingLine typing={typing} />
             <Composer
@@ -1079,7 +1083,7 @@ export function Chat({
               onDraftChange={saveDraft}
               onDraftPersisted={enqueueDraft}
               onDraftTouched={markDraftTouched}
-              autoFocus
+              autoFocus={!state.openSessionId}
               agentAware
               allowAttachments
             />

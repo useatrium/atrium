@@ -72,7 +72,7 @@ _rb_surface(){ local prev="$1"; [ -z "$prev" ] && return
   sudo docker tag deploy-server:rollback deploy-server:latest; "${DC[@]}" up -d --no-build server || true; }
 
 # ---------- centaur ----------
-declare -A IMG=([api-rs]=centaur-api-rs [iron-proxy]=centaur-iron-proxy [sandbox]=centaur-agent [node-sync]=centaur-node-sync)
+declare -A IMG=([api-rs]=centaur-api-rs [iron-proxy]=centaur-iron-proxy [sandbox]=centaur-agent [node-sync]=centaur-node-sync [console]=centaur-console)
 deploy_centaur(){
   command -v just >/dev/null || die "just not found"
   local to_build=()
@@ -80,28 +80,33 @@ deploy_centaur(){
   [ "$need_ironproxy" = 1 ] && to_build+=(iron-proxy)
   [ "$need_agent" = 1 ]     && to_build+=(sandbox)
   [ "$need_nodesync" = 1 ]  && to_build+=(node-sync)
+  # console (iron-control): rebuilt when its source changes, or when the local image
+  # is missing entirely (pruned box). The build MUST be decided here, before the
+  # retag loop — retagging :latest ahead of a pending rebuild would push the OLD
+  # console under the new SHA and silently deploy stale code with a fresh tag.
+  if [ "$FIRST" = 1 ] || changed '^centaur/services/console/' \
+     || ! sudo docker image inspect centaur-console:latest >/dev/null 2>&1; then
+    to_build+=(console)
+  fi
   log "centaur: rebuild=[${to_build[*]:-none}] sha=$SHA"
   for svc in "${to_build[@]:-}"; do [ -z "$svc" ] && continue
     ( cd "$REPO_DIR/centaur" && DOCKER_BUILDKIT=1 just build-one "$svc" ) || die "build $svc"; done
-  # tag+push every image at $SHA (rebuilt = new; unchanged = cheap retag of existing :latest)
-  for svc in api-rs iron-proxy sandbox node-sync; do
+  # tag+push every image at $SHA (rebuilt = new; unchanged = cheap retag of existing
+  # :latest). Console is SHA-pinned like the rest so a helm upgrade actually rolls
+  # its pods (a same-string :latest spec never re-pulls) and rollback can address
+  # the previous console build. Invariant: last-good-centaur-sha is written only
+  # after a successful deploy, and that run pushed console:$SHA first — so the
+  # rollback tag always exists in the registry.
+  for svc in api-rs iron-proxy sandbox node-sync console; do
     local img=${IMG[$svc]}
     sudo docker image inspect "$img:latest" >/dev/null 2>&1 || die "$img:latest missing"
     sudo docker tag "$img:latest" "$REG/$img:$SHA"
     sudo docker push "$REG/$img:$SHA" >/dev/null 2>&1 || die "push $img"
   done
-  # console (iron-control): built when its own source changes; the chart pins
-  # console to :latest (not the per-deploy SHA), so it is tagged+pushed as :latest.
-  if [ "$FIRST" = 1 ] || changed '^centaur/services/console/'; then
-    ( cd "$REPO_DIR/centaur" && DOCKER_BUILDKIT=1 just build-one console ) || die "build console"
-  fi
-  if sudo docker image inspect centaur-console:latest >/dev/null 2>&1; then
-    sudo docker tag centaur-console:latest "$REG/centaur-console:latest"
-    sudo docker push "$REG/centaur-console:latest" >/dev/null 2>&1 || die "push console"
-  fi
   log "centaur: helm upgrade @ $SHA"
   _helm "$SHA" || { _rb_centaur; die "helm upgrade"; }
   kubectl rollout status deploy/centaur-centaur-api-rs -n "$NS" --timeout=200s || { _rb_centaur; die "rollout"; }
+  _console_rollout 180s || { _rb_centaur; die "console rollout"; }
   health_centaur || { _rb_centaur; die "centaur unhealthy"; }
   echo "$SHA" > "$STATE/last-good-centaur-sha"
   log "centaur: OK (last-good=$SHA)"
@@ -109,11 +114,25 @@ deploy_centaur(){
 _helm(){ local tag="$1"; ( cd "$REPO_DIR/centaur" && helm upgrade centaur contrib/chart -n "$NS" \
     -f contrib/chart/values.dev.yaml -f ../infra/values.local.yaml -f ../deploy/values.box.yaml \
     --set apiRs.image.tag="$tag" --set ironProxy.image.tag="$tag" \
-    --set sandbox.image.tag="$tag" --set nodeSync.image.tag="$tag" ); }
+    --set sandbox.image.tag="$tag" --set nodeSync.image.tag="$tag" \
+    --set console.image.tag="$tag" ); }
+# Wait for the console + console-worker rollouts (skipped only when the deployment
+# genuinely doesn't exist, i.e. console.enabled=false — any other kubectl failure is
+# a real error, not a skip, so a transient API blip can't silently bypass the gate).
+# The worker matters too: it runs the broker token-refresh jobs, so a crash-looping
+# worker silently stops BYO credential refresh.
+_console_rollout(){ local timeout="$1" d err
+  for d in centaur-centaur-console centaur-centaur-console-worker; do
+    if ! err=$(kubectl get deploy "$d" -n "$NS" 2>&1 >/dev/null); then
+      case "$err" in *NotFound*) continue ;; *) return 1 ;; esac
+    fi
+    kubectl rollout status "deploy/$d" -n "$NS" --timeout="$timeout" || return 1
+  done; }
 _rb_centaur(){ local last; last=$(cat "$STATE/last-good-centaur-sha" 2>/dev/null || true)
   [ -z "$last" ] && { log "centaur: no last-good SHA (first deploy) — nothing to roll back to"; return; }
   log "centaur: ROLLING BACK to $last"; _helm "$last" || true
-  kubectl rollout status deploy/centaur-centaur-api-rs -n "$NS" --timeout=120s || true; }
+  kubectl rollout status deploy/centaur-centaur-api-rs -n "$NS" --timeout=120s || true
+  _console_rollout 120s || true; }
 
 backup_db
 case "$TARGET" in

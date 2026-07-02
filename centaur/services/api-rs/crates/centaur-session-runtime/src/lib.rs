@@ -3,6 +3,7 @@ mod cleanup;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     env,
+    path::{Component, Path},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -15,7 +16,7 @@ use centaur_sandbox_core::{
 };
 use centaur_sandbox_manager::{
     SandboxManager, SandboxReaper, SandboxReaperConfig, WarmPoolConfig, WarmPoolError,
-    WarmPoolManager, WarmSandboxSpecFactory,
+    WarmPoolManager, WarmSandboxSpecFactory, WarmSandboxWorkload,
 };
 use centaur_session_core::{
     ExecutionStatus, HarnessType, MessageRole, SandboxCapabilities as SessionSandboxCapabilities,
@@ -58,9 +59,12 @@ const CLAUDE_CODE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 const CODEX_AUTH_JSON_ENV: &str = "CODEX_AUTH_JSON";
 const SESSION_REPOS_METADATA_KEY: &str = "centaur_session_repos";
 const AGENT_REPOS_JSON_ENV: &str = "AGENT_REPOS_JSON";
+const CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV: &str = "CENTAUR_WARM_RESOLVED_REPOS_JSON";
 const CENTAUR_WARM_SANDBOX_ENV: &str = "CENTAUR_WARM_SANDBOX";
 const CENTAUR_WARM_REPO_OVERLAY_VERSION_ENV: &str = "CENTAUR_WARM_REPO_OVERLAY_VERSION";
 const CENTAUR_WARM_REPO_OVERLAY_VERSION: &str = "2";
+const REPOS_PATH_ENV: &str = "REPOS_PATH";
+const REPO_CACHE_STATE_FILE: &str = ".repo-cache-state.json";
 const SANDBOX_REPO_CACHE_MOUNT_PATH: &str = "/cache";
 const OBSERVABILITY_TOOL_BLOCKLIST: &str =
     "vlogs,vmetrics,grafana,centaur_investigator,centaur-investigator";
@@ -196,7 +200,6 @@ pub struct SandboxRuntime {
     manager: Arc<SandboxManager>,
     spec_factory: SandboxSpecFactory,
     warm_spec_factory: Option<WarmSandboxSpecFactory>,
-    workload_key: Option<String>,
     warm_repos_json: Option<String>,
     /// The harness warm sandboxes boot with. A warm claim is only valid for a
     /// session on the same harness; other sessions get a cold sandbox.
@@ -478,10 +481,7 @@ impl SessionRuntime {
             return self;
         }
 
-        let (Some(spec_factory), Some(workload_key)) = (
-            self.sandbox_runtime.warm_spec_factory.clone(),
-            self.sandbox_runtime.workload_key.clone(),
-        ) else {
+        let Some(spec_factory) = self.sandbox_runtime.warm_spec_factory.clone() else {
             warn!(
                 target_size = config.target_size,
                 "session sandbox warm pool requested for runtime without a warm sandbox spec"
@@ -493,7 +493,6 @@ impl SessionRuntime {
             self.sandbox_runtime.manager.clone(),
             self.store.clone(),
             spec_factory,
-            workload_key,
             config,
         ));
         pool.clone().spawn_replenisher();
@@ -2075,7 +2074,9 @@ impl SessionRuntime {
                 })
             {
                 match warm_pool.claim(thread_key.as_str()).await {
-                    Ok(Some(sandbox_id)) => {
+                    Ok(Some(claimed)) => {
+                        let sandbox_id = claimed.sandbox_id;
+                        let workload_key = claimed.workload_key;
                         let id = SandboxId::new(sandbox_id.as_str());
                         if let Some(repos_json) = composed_repos_json.as_deref()
                             && needs_claimed_overlay_prepare
@@ -2197,7 +2198,7 @@ impl SessionRuntime {
                                     execution_id,
                                     sandbox_id: sandbox_id.as_str(),
                                     harness_type,
-                                    workload_key: warm_pool.workload_key(),
+                                    workload_key: workload_key.as_str(),
                                     iron_control_principal,
                                     desired_capabilities,
                                     ready_duration,
@@ -2251,7 +2252,7 @@ impl SessionRuntime {
                                 execution_id,
                                 sandbox_id: sandbox_id.as_str(),
                                 harness_type,
-                                workload_key: warm_pool.workload_key(),
+                                workload_key: workload_key.as_str(),
                                 iron_control_principal,
                                 desired_capabilities,
                                 ready_duration,
@@ -2966,7 +2967,6 @@ impl SandboxRuntime {
             manager: Arc::new(SandboxManager::new(backend)),
             spec_factory: Arc::new(spec_factory),
             warm_spec_factory: None,
-            workload_key: None,
             warm_repos_json: None,
             warm_harness: None,
         }
@@ -2984,16 +2984,18 @@ impl SandboxRuntime {
             + 'static,
         W: Fn() -> SandboxSpec + Send + Sync + 'static,
     {
-        let warm_spec_factory: WarmSandboxSpecFactory = Arc::new(warm_spec_factory);
-        let warm_spec = warm_spec_factory();
-        let workload_key = sandbox_spec_key(&warm_spec);
-        let warm_repos_json =
-            spec_env_value(&warm_spec, AGENT_REPOS_JSON_ENV).and_then(canonical_repos_json);
+        let warm_spec_factory: WarmSandboxSpecFactory = Arc::new(move || {
+            let spec = warm_spec_with_resolved_repos(warm_spec_factory());
+            let workload_key = sandbox_spec_key(&spec);
+            WarmSandboxWorkload { spec, workload_key }
+        });
+        let warm_workload = warm_spec_factory();
+        let warm_repos_json = spec_env_value(&warm_workload.spec, AGENT_REPOS_JSON_ENV)
+            .and_then(canonical_repos_json);
         Self {
             manager: Arc::new(SandboxManager::new(backend)),
             spec_factory: Arc::new(spec_factory),
             warm_spec_factory: Some(warm_spec_factory),
-            workload_key: Some(workload_key),
             warm_repos_json,
             warm_harness: None,
         }
@@ -3180,6 +3182,104 @@ fn sandbox_spec_key(spec: &SandboxSpec) -> String {
     let encoded = serde_json::to_vec(spec).expect("sandbox specs should serialize");
     let digest = Sha256::digest(encoded);
     format!("sandbox-spec-sha256:{digest:x}")
+}
+
+fn warm_spec_with_resolved_repos(mut spec: SandboxSpec) -> SandboxSpec {
+    let resolved_repos_json = resolved_warm_repos_json(&spec);
+    remove_spec_env(&mut spec, CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV);
+    match resolved_repos_json {
+        Some(repos_json) => spec.env(CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV, repos_json),
+        None => spec,
+    }
+}
+
+fn resolved_warm_repos_json(spec: &SandboxSpec) -> Option<String> {
+    let repos_json = spec_env_value(spec, AGENT_REPOS_JSON_ENV)?;
+    let repo_cache_root = env::var(REPOS_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())?;
+    let state_path = Path::new(&repo_cache_root).join(REPO_CACHE_STATE_FILE);
+    let state = std::fs::read(&state_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<RepoCacheState>(&bytes).ok())?;
+    resolved_repos_json_from_state(repos_json, Path::new(&repo_cache_root), &state)
+}
+
+fn resolved_repos_json_from_state(
+    repos_json: &str,
+    repo_cache_root: &Path,
+    state: &RepoCacheState,
+) -> Option<String> {
+    let mut repos = parse_repo_array(Some(repos_json));
+    if repos.is_empty() {
+        return None;
+    }
+
+    for repo in &mut repos {
+        if repo_is_private(repo) {
+            return None;
+        }
+        let repo_name = repo.get("repo").and_then(Value::as_str)?.to_owned();
+        let repo_ref = repo
+            .get("ref")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let resolved = state.repositories.iter().find(|candidate| {
+            candidate.repo == repo_name && candidate.r#ref.as_deref() == repo_ref.as_deref()
+        })?;
+        if resolved.resolved_sha.trim().is_empty()
+            || resolved.cache_path.trim().is_empty()
+            || !repo_cache_snapshot_exists(repo_cache_root, &resolved.cache_path)
+        {
+            return None;
+        }
+        let object = repo.as_object_mut()?;
+        object.insert(
+            "resolved_sha".to_owned(),
+            Value::String(resolved.resolved_sha.clone()),
+        );
+        object.insert(
+            "cache_path".to_owned(),
+            Value::String(resolved.cache_path.clone()),
+        );
+    }
+
+    Some(Value::Array(repos).to_string())
+}
+
+fn repo_cache_snapshot_exists(repo_cache_root: &Path, cache_path: &str) -> bool {
+    if cache_path.contains('\0') || cache_path.trim().is_empty() || cache_path.trim() != cache_path
+    {
+        return false;
+    }
+    let cache_path = Path::new(cache_path);
+    if cache_path.components().any(|component| {
+        matches!(
+            component,
+            Component::CurDir | Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return false;
+    }
+    repo_cache_root.join(cache_path).join(".git").is_dir()
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoCacheState {
+    #[serde(default)]
+    repositories: Vec<RepoCacheStateEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoCacheStateEntry {
+    repo: String,
+    #[serde(default, rename = "ref")]
+    r#ref: Option<String>,
+    resolved_sha: String,
+    cache_path: String,
 }
 
 fn spec_env_value<'a>(spec: &'a SandboxSpec, name: &str) -> Option<&'a str> {
@@ -5841,8 +5941,20 @@ fn parse_repo_array(repos_json: Option<&str>) -> Vec<Value> {
         return Vec::new();
     };
     match serde_json::from_str::<Value>(repos_json) {
-        Ok(Value::Array(entries)) => entries,
+        Ok(Value::Array(mut entries)) => {
+            for entry in &mut entries {
+                strip_internal_repo_cache_fields(entry);
+            }
+            entries
+        }
         Ok(_) | Err(_) => Vec::new(),
+    }
+}
+
+fn strip_internal_repo_cache_fields(repo: &mut Value) {
+    if let Some(object) = repo.as_object_mut() {
+        object.remove("cache_path");
+        object.remove("resolved_sha");
     }
 }
 
@@ -6336,6 +6448,42 @@ mod tests {
             json!([
                 {"repo":"acme/work","ref":"feature"},
                 {"repo":"acme/default","ref":"main"}
+            ])
+        );
+    }
+
+    #[test]
+    fn compose_spec_repos_json_strips_internal_cache_fields() {
+        let mut spec = SandboxSpec::new("centaur-agent:latest").env(
+            AGENT_REPOS_JSON_ENV,
+            r#"[{
+                "repo":"acme/default",
+                "ref":"main",
+                "cache_path":".snapshots/acme/default/old",
+                "resolved_sha":"old"
+            }]"#,
+        );
+
+        let repos_json = compose_spec_repos_json(
+            &mut spec,
+            Some(
+                r#"[{
+                    "repo":"acme/work",
+                    "ref":"feature",
+                    "cache_path":"principals/private/repo",
+                    "resolved_sha":"private"
+                }]"#,
+            ),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&repos_json).unwrap(),
+            json!([
+                {"repo":"acme/default","ref":"main"},
+                {"repo":"acme/work","ref":"feature"}
             ])
         );
     }
@@ -7033,6 +7181,44 @@ mod tests {
     }
 
     #[test]
+    fn resolved_repos_json_from_state_adds_snapshot_fields() {
+        let root = std::env::temp_dir().join(format!(
+            "centaur-repo-cache-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let snapshot = root.join(".snapshots/acme/widget/abc123/.git");
+        std::fs::create_dir_all(&snapshot).unwrap();
+
+        let state = RepoCacheState {
+            repositories: vec![RepoCacheStateEntry {
+                repo: "acme/widget".to_owned(),
+                r#ref: Some("main".to_owned()),
+                resolved_sha: "abc123".to_owned(),
+                cache_path: ".snapshots/acme/widget/abc123".to_owned(),
+            }],
+        };
+        let resolved = resolved_repos_json_from_state(
+            r#"[{"repo":"acme/widget","ref":"main","subdir":"widget"}]"#,
+            &root,
+            &state,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&resolved).unwrap();
+
+        assert_eq!(value[0]["repo"], "acme/widget");
+        assert_eq!(value[0]["ref"], "main");
+        assert_eq!(value[0]["subdir"], "widget");
+        assert_eq!(value[0]["resolved_sha"], "abc123");
+        assert_eq!(value[0]["cache_path"], ".snapshots/acme/widget/abc123");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn codex_workload_pins_harness_via_container_args() {
         let workload = SandboxWorkloadMode::codex_app_server(
             "centaur-agent:latest",
@@ -7616,7 +7802,9 @@ mod adoption_tests {
             let pool = sqlx::PgPool::connect(&url)
                 .await
                 .expect("connect to reset test executions");
-            sqlx::query("truncate table session_executions, session_warm_sandboxes cascade")
+            sqlx::query(
+                "truncate table session_executions, session_warm_sandboxes, session_warm_pool_state cascade",
+            )
                 .execute(&pool)
                 .await
                 .expect("reset session runtime test tables");
@@ -7718,11 +7906,6 @@ mod adoption_tests {
                 .warm_spec_factory
                 .clone()
                 .expect("warm spec factory"),
-            runtime
-                .sandbox_runtime
-                .workload_key
-                .clone()
-                .expect("workload key"),
             WarmPoolConfig {
                 target_size: 1,
                 replenish_interval: Duration::from_secs(60 * 60),
@@ -7756,11 +7939,16 @@ mod adoption_tests {
     ) {
         let workload_key = runtime
             .sandbox_runtime
-            .workload_key
-            .as_deref()
-            .expect("warm workload key");
+            .warm_spec_factory
+            .as_ref()
+            .expect("warm spec factory")()
+        .workload_key;
         store
-            .insert_ready_warm_sandbox(sandbox_id, workload_key)
+            .prepare_warm_pool_state("session-default", workload_key.as_str(), 1)
+            .await
+            .expect("prepare warm pool state");
+        store
+            .insert_ready_warm_sandbox(sandbox_id, workload_key.as_str())
             .await
             .expect("insert warm sandbox");
     }
