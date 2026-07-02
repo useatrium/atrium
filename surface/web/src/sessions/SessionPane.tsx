@@ -330,6 +330,15 @@ export function SessionPane({
     if (!tail) return null;
     return tail.length > 80 ? `${tail.slice(0, 79)}…` : tail;
   }, [stream.items]);
+  // Output tokens so far: real when the stream reports usage (codex snapshots,
+  // usage_observed), else streamed-chars ÷ 4 marked with ≈. A count that stops
+  // climbing mid-thinking is the "something's off" tell Claude Code users know.
+  const tokensUsed =
+    stream.tokensUsed !== undefined
+      ? { count: stream.tokensUsed, estimated: false }
+      : stream.deltaChars > 0
+        ? { count: Math.round(stream.deltaChars / 4), estimated: true }
+        : null;
   const turnStatusLabel =
     turnPhase === 'tool' && openTool
       ? `Working: ${toolDisplay(openTool).title}`
@@ -1094,6 +1103,7 @@ export function SessionPane({
           elapsedMs={turnElapsedMs}
           quietMs={quietMs}
           pulse={stream.frameSeq}
+          tokens={tokensUsed}
           costUsd={costUsd}
           models={stream.models}
           cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}

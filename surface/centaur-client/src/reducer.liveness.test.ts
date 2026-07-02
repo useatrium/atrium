@@ -125,6 +125,83 @@ describe("reduceSession liveness layer", () => {
     expect(state.turnEndTs).toBeUndefined();
   });
 
+  it("estimates tokens from streamed delta chars until real usage arrives", () => {
+    const deltas = reduceAll([
+      running(1, "2026-07-02T10:00:00.000Z"),
+      {
+        event: "amp_raw_event",
+        event_id: 2,
+        data: {
+          method: "item/reasoning/textDelta",
+          params: { itemId: "r1", delta: "twelve chars" }, // 12
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 3,
+        data: {
+          method: "item/agentMessage/delta",
+          params: { itemId: "m1", delta: "eight ch" }, // 8
+        },
+      },
+    ]);
+    expect(deltas.deltaChars).toBe(20);
+    expect(deltas.tokensUsed).toBeUndefined();
+
+    const withReal = reduceSession(deltas, {
+      event: "amp_raw_event",
+      event_id: 4,
+      data: {
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: "t",
+          turnId: "u",
+          tokenUsage: {
+            total: { totalTokens: 900, inputTokens: 700, outputTokens: 150, reasoningOutputTokens: 50 },
+            last: { totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+          },
+        },
+      },
+    } as never);
+    // Real output tokens (150 + 50), not the input-inflated total.
+    expect(withReal.tokensUsed).toBe(200);
+
+    // Snapshots are cumulative — a stale/smaller one never regresses the count.
+    const stale = reduceSession(withReal, {
+      event: "amp_raw_event",
+      event_id: 5,
+      data: {
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: "t",
+          turnId: "u",
+          tokenUsage: {
+            total: { totalTokens: 100, inputTokens: 0, outputTokens: 90, reasoningOutputTokens: 10 },
+            last: { totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+          },
+        },
+      },
+    } as never);
+    expect(stale.tokensUsed).toBe(200);
+  });
+
+  it("accumulates usage_observed output tokens", () => {
+    const state = reduceAll([
+      running(1, "2026-07-02T10:00:00.000Z"),
+      {
+        event: "usage_observed",
+        event_id: 2,
+        data: { type: "obs.usage", model: "m", cost_usd: 0.01, output_tokens: 120 },
+      } as never,
+      {
+        event: "usage_observed",
+        event_id: 3,
+        data: { type: "obs.usage", model: "m", cost_usd: 0.01, output_tokens: 80 },
+      } as never,
+    ]);
+    expect(state.tokensUsed).toBe(200);
+  });
+
   it("flags the transport on stdout_pump_failed and clears it on recovery", () => {
     const failed: CentaurEventFrame = {
       event: "system_event_observed",

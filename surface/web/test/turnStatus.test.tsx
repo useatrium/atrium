@@ -95,6 +95,20 @@ describe('TurnStatusLine', () => {
     expect(status.textContent).toContain('gpt-5.5');
   });
 
+  it('token counter: estimated shows ≈, real shows the bare count', () => {
+    const { rerender } = render(
+      <TurnStatusLine {...base} tokens={{ count: 2413, estimated: true }} />,
+    );
+    expect(screen.getByTestId('token-count').textContent).toBe('≈2,413 tok');
+    rerender(<TurnStatusLine {...base} tokens={{ count: 2413, estimated: false }} />);
+    expect(screen.getByTestId('token-count').textContent).toBe('2,413 tok');
+  });
+
+  it('token counter: hidden when the stream has reported nothing', () => {
+    render(<TurnStatusLine {...base} tokens={null} />);
+    expect(screen.queryByTestId('token-count')).toBeNull();
+  });
+
   it('waiting: no spinner, no clock — the user is the blocker', () => {
     render(
       <TurnStatusLine {...base} phase="waiting" label="Waiting for your reply" elapsedMs={0} />,

@@ -72,6 +72,7 @@ export function TurnStatusLine({
   elapsedMs,
   quietMs,
   pulse,
+  tokens,
   costUsd,
   models,
   cancelLabel,
@@ -85,13 +86,17 @@ export function TurnStatusLine({
   quietMs: number;
   /** Monotonic frame counter; each change is one heartbeat blip. */
   pulse: number;
+  /** Output tokens so far. The ticking number is a liveness instrument — it
+   * freezing mid-thinking corroborates the quiet state. `estimated` (streamed
+   * chars ÷ 4, for harnesses that never report usage) renders with ≈. */
+  tokens?: { count: number; estimated: boolean } | null;
   costUsd: number;
   models: string[];
   cancelLabel?: string;
   onCancel?: () => void;
 }) {
   const active = phase === 'thinking' || phase === 'tool';
-  const showMeta = costUsd > 0 || models.length > 0;
+  const showMeta = Boolean(tokens) || costUsd > 0 || models.length > 0;
   const clock = elapsedMs >= 1000 && (
     <span className="tabular-nums text-fg-faint">{formatElapsed(elapsedMs)}</span>
   );
@@ -150,6 +155,13 @@ export function TurnStatusLine({
       )}
       {showMeta && (
         <span className="ml-auto flex shrink-0 items-center gap-1.5 tabular-nums text-fg-faint">
+          {tokens && (
+            <span data-testid="token-count">
+              {tokens.estimated ? '≈' : ''}
+              {tokens.count.toLocaleString('en-US')} tok
+            </span>
+          )}
+          {tokens && (costUsd > 0 || models.length > 0) && <span>·</span>}
           {costUsd > 0 && <span>{formatCost(costUsd)}</span>}
           {costUsd > 0 && models.length > 0 && <span>·</span>}
           {models.length > 0 && <span>{models.join(', ')}</span>}

@@ -163,6 +163,13 @@ export interface SessionState {
   lastFrameTs?: string;
   /** Monotonic count of folded frames; the UI heartbeat pulses on change. */
   frameSeq: number;
+  /** Real output-token count when the stream reports one (codex
+   * `thread/tokenUsage/updated` snapshots, `usage_observed` increments). */
+  tokensUsed?: number;
+  /** Characters of streamed text/reasoning deltas — ÷4 approximates tokens for
+   * harnesses that never report usage mid-turn (claude/amp). A ticking count is
+   * the liveness instrument; the UI marks the estimate with ≈. */
+  deltaChars: number;
   /** Sandbox stdout pipe health, from api-rs `session.stdout_pump_*` events. */
   transport: "ok" | "reattaching";
   items: SessionItem[];
@@ -190,6 +197,7 @@ export function initialSessionState(): SessionState {
   return {
     status: "idle",
     frameSeq: 0,
+    deltaChars: 0,
     transport: "ok",
     items: [],
     fileChanges: [],
@@ -303,6 +311,9 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
 
   if (frame.event === "usage_observed") {
     next.costUsd += typeof frame.data.cost_usd === "number" ? frame.data.cost_usd : 0;
+    if (typeof frame.data.output_tokens === "number") {
+      next.tokensUsed = (next.tokensUsed ?? 0) + frame.data.output_tokens;
+    }
     next.models = mergeModels(next.models, [frame.data.model]);
     return next;
   }
@@ -318,6 +329,8 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
   if (raw.type === "turn.started") {
     if (frame.ts) next.turnStartTs = frame.ts;
     delete next.turnEndTs;
+  } else if (raw.type === "thread.tokenUsage") {
+    reduceThreadTokenUsage(next, raw);
   } else if (raw.type === "turn.completed") {
     if (frame.ts) next.turnEndTs = frame.ts;
   } else if (raw.type === "assistant") {
@@ -353,6 +366,8 @@ function normalizeRawEvent(event: CentaurEventFrame["data"]): CentaurEventFrame[
       return { type: "turn.started", ...params } as CentaurEventFrame["data"];
     case "turn/completed":
       return { type: "turn.completed", ...params } as CentaurEventFrame["data"];
+    case "thread/tokenUsage/updated":
+      return { type: "thread.tokenUsage", ...params } as CentaurEventFrame["data"];
     case "item/started":
       return { type: "item.started", ...params } as CentaurEventFrame["data"];
     case "item/completed":
@@ -601,6 +616,7 @@ function appendStreamingText(
   text: string,
   handle?: string,
 ): void {
+  state.deltaChars += text.length;
   const last = state.items[state.items.length - 1];
   if (last?.type === "text" && !last.uuid) {
     last.text += text;
@@ -744,6 +760,24 @@ function reduceToolResult(state: SessionState, eventId: number, event: AmpToolEv
   }
 }
 
+/** Fold a codex `thread/tokenUsage/updated` snapshot. Output tokens (incl.
+ * reasoning) grow smoothly during generation — that's the liveness signal;
+ * totals jump with each request's input and would read as noise. Snapshots are
+ * cumulative per thread, so take the max rather than adding. */
+function reduceThreadTokenUsage(state: SessionState, raw: { tokenUsage?: unknown }): void {
+  if (!isJsonObject(raw.tokenUsage)) return;
+  const total = raw.tokenUsage.total;
+  if (!isJsonObject(total)) return;
+  const num = (value: unknown): number => (typeof value === "number" ? value : 0);
+  const output =
+    num(total.outputTokens ?? total.output_tokens) +
+    num(total.reasoningOutputTokens ?? total.reasoning_output_tokens);
+  const snapshot = output > 0 ? output : num(total.totalTokens ?? total.total_tokens);
+  if (snapshot > 0) {
+    state.tokensUsed = Math.max(state.tokensUsed ?? 0, snapshot);
+  }
+}
+
 function reduceCodexAgentMessageDelta(
   state: SessionState,
   eventId: number,
@@ -752,6 +786,7 @@ function reduceCodexAgentMessageDelta(
   if (!event.delta) {
     return;
   }
+  state.deltaChars += event.delta.length;
   appendCodexStreamingText(state, eventId, codexItemId(event), event.delta);
 }
 
@@ -792,6 +827,7 @@ function reduceReasoningTextDelta(
   if (!event.delta) {
     return;
   }
+  state.deltaChars += event.delta.length;
   appendReasoningText(state, eventId, codexItemId(event), event.delta);
 }
 
@@ -803,6 +839,7 @@ function reduceReasoningSummaryTextDelta(
   if (!event.delta) {
     return;
   }
+  state.deltaChars += event.delta.length;
   appendReasoningSummary(state, eventId, codexItemId(event), event.delta);
 }
 
