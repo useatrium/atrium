@@ -1282,6 +1282,7 @@ mod tests {
             file_type: RawFileType::Regular,
             rdev: 0,
             size: 4,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }
@@ -1291,6 +1292,7 @@ mod tests {
             file_type: RawFileType::CharDevice,
             rdev: 0,
             size: 0,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }
@@ -2205,6 +2207,7 @@ mod tests {
             file_type: RawFileType::Regular,
             rdev: 0,
             size,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }

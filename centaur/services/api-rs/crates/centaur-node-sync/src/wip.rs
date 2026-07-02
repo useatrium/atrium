@@ -9,8 +9,11 @@
 //! Trade-off (accepted): a recovery point, not a faithful clone — in-progress
 //! rebase/merge, staged-vs-unstaged, and submodule state aren't captured.
 
+use crate::overlay::{RawEntry, RawFileType};
 use crate::secret;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::Command;
 
@@ -50,6 +53,91 @@ pub struct WipSnapshot {
     pub files: Vec<(String, Vec<u8>, &'static str)>,
     pub latest_path: String,
     pub latest_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WipGateReason {
+    FirstSight,
+    Changed,
+    Forced,
+    FailOpen,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WipGateDecision {
+    pub should_capture: bool,
+    pub reason: WipGateReason,
+}
+
+pub fn repo_signature(entries: &[RawEntry], repo_upper_prefix: &Path) -> u64 {
+    let mut items = entries
+        .iter()
+        .filter_map(|entry| {
+            let rel_path = entry.rel_path.strip_prefix(repo_upper_prefix).ok()?;
+            Some((
+                rel_path.to_path_buf(),
+                entry.size,
+                entry.mtime_ns,
+                raw_file_type_discriminant(&entry.file_type),
+            ))
+        })
+        .collect::<Vec<_>>();
+    items.sort();
+
+    let mut hasher = DefaultHasher::new();
+    items.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn raw_file_type_discriminant(file_type: &RawFileType) -> u8 {
+    match file_type {
+        RawFileType::Regular => 0,
+        RawFileType::Dir => 1,
+        RawFileType::CharDevice => 2,
+        RawFileType::Symlink => 3,
+        RawFileType::Other => 4,
+    }
+}
+
+pub fn decide_wip_capture(
+    previous_signature: Option<u64>,
+    current_signature: Option<u64>,
+    force: bool,
+) -> WipGateDecision {
+    if force {
+        return WipGateDecision {
+            should_capture: true,
+            reason: WipGateReason::Forced,
+        };
+    }
+    let Some(current) = current_signature else {
+        return WipGateDecision {
+            should_capture: true,
+            reason: WipGateReason::FailOpen,
+        };
+    };
+    let Some(previous) = previous_signature else {
+        return WipGateDecision {
+            should_capture: true,
+            reason: WipGateReason::FirstSight,
+        };
+    };
+    if previous != current {
+        WipGateDecision {
+            should_capture: true,
+            reason: WipGateReason::Changed,
+        }
+    } else {
+        WipGateDecision {
+            should_capture: false,
+            reason: WipGateReason::Unchanged,
+        }
+    }
+}
+
+pub fn should_force_wip(remounted: bool, restored: bool, backstop_elapsed: bool) -> bool {
+    remounted || restored || backstop_elapsed
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -392,6 +480,7 @@ fn restore_untracked(
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use std::process::Command;
 
     fn sh(repo: &Path, args: &[&str]) {
@@ -413,6 +502,155 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         base
+    }
+
+    fn raw(path: &str, size: u64, mtime_ns: i64, file_type: RawFileType) -> RawEntry {
+        RawEntry {
+            rel_path: PathBuf::from(path),
+            file_type,
+            rdev: 0,
+            size,
+            mtime_ns,
+            xattrs: vec![],
+        }
+    }
+
+    fn signature_entries() -> Vec<RawEntry> {
+        vec![
+            raw("repos/acme/app/src/main.rs", 10, 100, RawFileType::Regular),
+            raw("repos/acme/app/.git/index", 20, 200, RawFileType::Regular),
+            raw("repos/acme/app/src", 0, 300, RawFileType::Dir),
+            raw(
+                "repos/acme/other/src/main.rs",
+                999,
+                999,
+                RawFileType::Regular,
+            ),
+        ]
+    }
+
+    #[test]
+    fn repo_signature_identical_input_is_identical_and_order_independent() {
+        let prefix = Path::new("repos/acme/app");
+        let entries = signature_entries();
+        let mut reversed = entries.clone();
+        reversed.reverse();
+
+        assert_eq!(
+            repo_signature(&entries, prefix),
+            repo_signature(&reversed, prefix)
+        );
+    }
+
+    #[test]
+    fn repo_signature_differs_on_size_only_change() {
+        let prefix = Path::new("repos/acme/app");
+        let mut changed = signature_entries();
+        changed[0].size += 1;
+
+        assert_ne!(
+            repo_signature(&signature_entries(), prefix),
+            repo_signature(&changed, prefix)
+        );
+    }
+
+    #[test]
+    fn repo_signature_differs_on_mtime_only_change() {
+        let prefix = Path::new("repos/acme/app");
+        let mut changed = signature_entries();
+        changed[0].mtime_ns += 1;
+
+        assert_ne!(
+            repo_signature(&signature_entries(), prefix),
+            repo_signature(&changed, prefix)
+        );
+    }
+
+    #[test]
+    fn repo_signature_differs_on_added_deleted_path_and_file_type_change() {
+        let prefix = Path::new("repos/acme/app");
+        let base = signature_entries();
+
+        let mut added = base.clone();
+        added.push(raw("repos/acme/app/new.txt", 1, 1, RawFileType::Regular));
+        assert_ne!(
+            repo_signature(&base, prefix),
+            repo_signature(&added, prefix)
+        );
+
+        let deleted = base[1..].to_vec();
+        assert_ne!(
+            repo_signature(&base, prefix),
+            repo_signature(&deleted, prefix)
+        );
+
+        let mut type_changed = base.clone();
+        type_changed[0].file_type = RawFileType::Symlink;
+        assert_ne!(
+            repo_signature(&base, prefix),
+            repo_signature(&type_changed, prefix)
+        );
+    }
+
+    #[test]
+    fn repo_signature_includes_git_paths_and_ignores_outside_prefix() {
+        let prefix = Path::new("repos/acme/app");
+        let base = signature_entries();
+        let mut git_changed = base.clone();
+        git_changed[1].mtime_ns += 1;
+        assert_ne!(
+            repo_signature(&base, prefix),
+            repo_signature(&git_changed, prefix),
+            ".git changes must affect the signature"
+        );
+
+        let mut outside_changed = base.clone();
+        outside_changed[3].size += 1;
+        outside_changed.push(raw("repos/acme/other/new.txt", 1, 1, RawFileType::Regular));
+        assert_eq!(
+            repo_signature(&base, prefix),
+            repo_signature(&outside_changed, prefix)
+        );
+    }
+
+    #[test]
+    fn wip_gate_fires_on_first_sight_skips_unchanged_and_fires_on_changed() {
+        assert_eq!(
+            decide_wip_capture(None, Some(10), false),
+            WipGateDecision {
+                should_capture: true,
+                reason: WipGateReason::FirstSight
+            }
+        );
+        assert_eq!(
+            decide_wip_capture(Some(10), Some(10), false),
+            WipGateDecision {
+                should_capture: false,
+                reason: WipGateReason::Unchanged
+            }
+        );
+        assert_eq!(
+            decide_wip_capture(Some(10), Some(11), false),
+            WipGateDecision {
+                should_capture: true,
+                reason: WipGateReason::Changed
+            }
+        );
+    }
+
+    #[test]
+    fn wip_gate_force_fires_on_remount_restore_or_backstop() {
+        assert!(should_force_wip(true, false, false));
+        assert!(should_force_wip(false, true, false));
+        assert!(should_force_wip(false, false, true));
+        assert!(!should_force_wip(false, false, false));
+        assert_eq!(
+            decide_wip_capture(Some(10), Some(10), true),
+            WipGateDecision {
+                should_capture: true,
+                reason: WipGateReason::Forced
+            }
+        );
     }
 
     #[test]

@@ -37,6 +37,7 @@ pub struct RawEntry {
     pub file_type: RawFileType,
     pub rdev: u64,
     pub size: u64,
+    pub mtime_ns: i64,
     pub xattrs: Vec<(String, Vec<u8>)>,
 }
 
@@ -172,6 +173,7 @@ mod tests {
             file_type: ft,
             rdev: 0,
             size: 0,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }
