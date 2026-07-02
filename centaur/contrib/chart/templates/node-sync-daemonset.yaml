@@ -33,6 +33,18 @@ spec:
       # trusted.overlay.* xattrs need CAP_SYS_ADMIN) and writes through `merged`.
       hostPID: true
       serviceAccountName: {{ include "centaur.componentName" (dict "root" . "component" "node-sync") }}
+      initContainers:
+        - name: node-sync-inotify-sysctl
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - >
+              sysctl -w
+              fs.inotify.max_user_watches={{ .Values.nodeSync.inotify.maxUserWatches }}
+              fs.inotify.max_queued_events={{ .Values.nodeSync.inotify.maxQueuedEvents }}
+          securityContext:
+            privileged: true
       containers:
         - name: node-sync
           image: "{{ .Values.nodeSync.image.repository }}:{{ .Values.nodeSync.image.tag }}"
