@@ -367,6 +367,21 @@ mod linux_daemon {
 
     const WIP_FORCE_INTERVAL: Duration = Duration::from_secs(30);
 
+    /// In-memory WIP-gate state, keyed by `(session, repo_key)`. Deliberately
+    /// not persisted: losing it on restart just forces one WIP run.
+    #[derive(Default)]
+    struct WipGateState {
+        signatures: HashMap<(String, String), u64>,
+        active: HashMap<(String, String), bool>,
+    }
+
+    impl WipGateState {
+        fn retain_sessions(&mut self, keep: impl Fn(&str) -> bool) {
+            self.signatures.retain(|(session, _), _| keep(session));
+            self.active.retain(|(session, _), _| keep(session));
+        }
+    }
+
     #[derive(Default)]
     struct DaemonArgs {
         once: bool,
@@ -634,8 +649,7 @@ mod linux_daemon {
         let lease = LeaseGate::new();
         let mut echo = EchoGuard::new();
         let mut state = DaemonState::load(&session.state_file);
-        let mut wip_signatures: HashMap<(String, String), u64> = HashMap::new();
-        let mut wip_gate_active: HashMap<(String, String), bool> = HashMap::new();
+        let mut wip_gate = WipGateState::default();
         let mut last_forced_wip: Option<Instant> = None;
         let mut tick: u64 = 0;
 
@@ -647,8 +661,7 @@ mod linux_daemon {
                 &mut state,
                 &mut echo,
                 &lease,
-                &mut wip_signatures,
-                &mut wip_gate_active,
+                &mut wip_gate,
                 &mut last_forced_wip,
             ) {
                 eprintln!("session {}: {e}", session.session);
@@ -710,8 +723,7 @@ mod linux_daemon {
         let mut echoes: HashMap<String, EchoGuard> = HashMap::new();
         let mut mounted_overlays: HashMap<String, OverlayMountPlan> = HashMap::new();
         let mut evictions: HashMap<String, SessionEvictionState> = HashMap::new();
-        let mut wip_signatures: HashMap<(String, String), u64> = HashMap::new();
-        let mut wip_gate_active: HashMap<(String, String), bool> = HashMap::new();
+        let mut wip_gate = WipGateState::default();
         let mut last_forced_wip: HashMap<String, Instant> = HashMap::new();
         let batch_client = BatchHttpClient::new(&global.base_url, &global.api_key);
         let mut batch_endpoint = BatchEndpointState::default();
@@ -747,8 +759,7 @@ mod linux_daemon {
                     states.retain(|session, _| active.contains(session));
                     echoes.retain(|session, _| active.contains(session));
                     evictions.retain(|session, _| active.contains(session));
-                    wip_signatures.retain(|(session, _), _| active.contains(session));
-                    wip_gate_active.retain(|(session, _), _| active.contains(session));
+                    wip_gate.retain_sessions(|session| active.contains(session));
                     last_forced_wip.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
@@ -1001,8 +1012,7 @@ mod linux_daemon {
                     echo,
                     &mut client,
                     force_wip,
-                    &mut wip_signatures,
-                    &mut wip_gate_active,
+                    &mut wip_gate,
                 );
                 if force_wip {
                     last_forced_wip.insert(session.session.clone(), now);
@@ -1059,8 +1069,7 @@ mod linux_daemon {
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
         force_wip: bool,
-        wip_signatures: &mut HashMap<(String, String), u64>,
-        wip_gate_active: &mut HashMap<(String, String), bool>,
+        wip_gate: &mut WipGateState,
     ) {
         let raw_entries = outbound(global, session, state, echo, client);
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
@@ -1070,8 +1079,7 @@ mod linux_daemon {
             client,
             raw_entries.as_deref(),
             force_wip,
-            wip_signatures,
-            wip_gate_active,
+            wip_gate,
         );
     }
 
@@ -1683,8 +1691,7 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         lease: &LeaseGate,
-        wip_signatures: &mut HashMap<(String, String), u64>,
-        wip_gate_active: &mut HashMap<(String, String), bool>,
+        wip_gate: &mut WipGateState,
         last_forced_wip: &mut Option<Instant>,
     ) -> Result<(), String> {
         let now = Instant::now();
@@ -1714,8 +1721,7 @@ mod linux_daemon {
             &mut client,
             raw_entries.as_deref(),
             force_wip,
-            wip_signatures,
-            wip_gate_active,
+            wip_gate,
         );
         if force_wip {
             *last_forced_wip = Some(now);
@@ -2158,8 +2164,7 @@ mod linux_daemon {
         client: &mut HttpAtriumClient,
         raw_entries: Option<&[RawEntry]>,
         force_wip: bool,
-        wip_signatures: &mut HashMap<(String, String), u64>,
-        wip_gate_active: &mut HashMap<(String, String), bool>,
+        wip_gate: &mut WipGateState,
     ) {
         for repo in &session.repo_worktrees {
             let gate_key = (session.session.clone(), repo.key.clone());
@@ -2168,12 +2173,12 @@ mod linux_daemon {
                 Some(centaur_node_sync::wip::repo_signature(entries, prefix))
             });
             let decision = centaur_node_sync::wip::decide_wip_capture(
-                wip_signatures.get(&gate_key).copied(),
+                wip_gate.signatures.get(&gate_key).copied(),
                 current_signature,
                 force_wip,
             );
             let active = decision.should_capture;
-            if let Some(previous_active) = wip_gate_active.insert(gate_key.clone(), active)
+            if let Some(previous_active) = wip_gate.active.insert(gate_key.clone(), active)
                 && previous_active != active
             {
                 eprintln!(
@@ -2217,7 +2222,7 @@ mod linux_daemon {
                     // keep retrying every tick (today's behavior), not wait for the
                     // next repo change or the 30s backstop.
                     if let Some(signature) = current_signature {
-                        wip_signatures.insert(gate_key, signature);
+                        wip_gate.signatures.insert(gate_key, signature);
                     }
                 }
                 Err(e) => eprintln!(
