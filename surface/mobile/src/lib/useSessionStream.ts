@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetch as expoFetch } from 'expo/fetch';
 import { initialSessionState, type SessionState } from '@atrium/centaur-client';
 import { useRequiredSession } from './session';
@@ -17,12 +17,23 @@ export interface SessionStream {
   clockSkewMs: number | null;
 }
 
-export function useSessionStream(sessionId: string | null): SessionStream {
+/**
+ * `active` should be true whenever the session has (or is about to have) a
+ * live turn. The retry loop legitimately stops after folding a terminal
+ * execution — so when a follow-up steer regresses a completed session back to
+ * running (observed via the session entity, not this stream), nothing would
+ * re-open the stream. `active` flipping true forces one reconnect from the
+ * folded cursor (web parity — see surface/web useSessionStream).
+ */
+export function useSessionStream(sessionId: string | null, active = false): SessionStream {
   const { serverUrl, token } = useRequiredSession();
   const [stream, setStream] = useState<SessionState>(initialSessionState);
   const [connected, setConnected] = useState(false);
   const [lastFrameAt, setLastFrameAt] = useState<number | null>(null);
   const [clockSkewMs, setClockSkewMs] = useState<number | null>(null);
+  // Set per mount to the current run's forced-reconnect trigger; the
+  // `active`-watch effect below calls it. Nulled on cleanup.
+  const ensureConnectedRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -56,8 +67,8 @@ export function useSessionStream(sessionId: string | null): SessionStream {
       scheduleReconnect();
     };
 
-    const connect = () => {
-      if (disposed || currentAttempt || streamIsTerminal(acc)) return;
+    const connect = (force = false) => {
+      if (disposed || currentAttempt || (!force && streamIsTerminal(acc))) return;
       const controller = new AbortController();
       currentAttempt = controller;
       liveAt = Date.now();
@@ -109,6 +120,14 @@ export function useSessionStream(sessionId: string | null): SessionStream {
 
     connect();
 
+    // Force one reconnect past the terminal stop when the session goes active
+    // again (steer on a completed session). No-op while an attempt or retry
+    // is in flight.
+    ensureConnectedRef.current = () => {
+      if (disposed || currentAttempt || retryTimer) return;
+      connect(true);
+    };
+
     watchdogTimer = setInterval(() => {
       if (disposed || !currentAttempt || currentAttempt.signal.aborted) return;
       if (streamIsTerminal(acc)) return;
@@ -120,11 +139,16 @@ export function useSessionStream(sessionId: string | null): SessionStream {
 
     return () => {
       disposed = true;
+      ensureConnectedRef.current = null;
       if (retryTimer) clearTimeout(retryTimer);
       if (watchdogTimer) clearInterval(watchdogTimer);
       currentAttempt?.abort();
     };
   }, [serverUrl, sessionId, token]);
+
+  useEffect(() => {
+    if (active) ensureConnectedRef.current?.();
+  }, [active, sessionId]);
 
   return { stream, connected, lastFrameAt, clockSkewMs };
 }

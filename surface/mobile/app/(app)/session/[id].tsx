@@ -572,9 +572,12 @@ export default function SessionScreen() {
   const chat = useChat();
   const { colors, reduceMotion } = useTheme();
   const { api, me, state, upsertSession, setActiveSessionId } = chat;
-  const { stream, connected, lastFrameAt, clockSkewMs } = useSessionStream(id ?? null);
-  const headerHeight = useHeaderHeight();
   const cached = id ? (state.sessions[id] ?? null) : null;
+  const { stream, connected, lastFrameAt, clockSkewMs } = useSessionStream(
+    id ?? null,
+    cached ? !isTerminalSessionStatus(cached.status) : false,
+  );
+  const headerHeight = useHeaderHeight();
   const [snapshot, setSnapshot] = useState<Session | null>(cached);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
