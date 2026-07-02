@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::overlay_mount::OverlayMountPlan;
 use crate::runtime::AtriumClient;
@@ -184,6 +184,32 @@ pub fn hydrate_artifact_lower(
     ))
 }
 
+/// Where a session's hydrated artifact lower lives under the overlays root.
+pub fn artifact_lower_path(overlays_root: &Path, session: &str) -> PathBuf {
+    overlays_root.join("artifact-lower").join(session)
+}
+
+/// Re-attach an already-hydrated artifact lower to a rebuilt mount plan.
+///
+/// Hydration runs only on a session's first mount (re-running it would
+/// `remove_dir_all` an active lowerdir), but the daemon rebuilds the plan from
+/// the manifest every tick. The overlay signature covers extra lowers, so a
+/// rebuilt plan that omits the artifact lower would mismatch and remount the
+/// session WITHOUT its hydrated artifacts. Returns whether the lower was
+/// attached.
+pub fn reattach_artifact_lower_into_plan(
+    overlays_root: &Path,
+    session: &str,
+    plan: &mut OverlayMountPlan,
+) -> bool {
+    let artifact_lower = artifact_lower_path(overlays_root, session);
+    if artifact_lower.is_dir() {
+        plan.extra_lowers.push(artifact_lower);
+        return true;
+    }
+    false
+}
+
 pub fn hydrate_artifact_lower_into_plan(
     client: &mut dyn AtriumClient,
     cas_dir: &Path,
@@ -191,7 +217,7 @@ pub fn hydrate_artifact_lower_into_plan(
     session: &str,
     plan: &mut OverlayMountPlan,
 ) -> Result<MaterializeOutcome, String> {
-    let artifact_lower = overlays_root.join("artifact-lower").join(session);
+    let artifact_lower = artifact_lower_path(overlays_root, session);
     if artifact_lower.exists() {
         fs::remove_dir_all(&artifact_lower)
             .map_err(|e| format!("reset artifact lower {}: {e}", artifact_lower.display()))?;
@@ -444,6 +470,47 @@ mod tests {
             plan.extra_lowers,
             vec![home_lower, overlays_root.join("artifact-lower/sess-1")]
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reattach_artifact_lower_readds_hydrated_lower_to_rebuilt_plan() {
+        let root = tmp("reattach");
+        let overlays_root = root.join("overlays");
+        let home_lower = overlays_root.join(".warm-home-lower/sess-1");
+        let mut plan = OverlayMountPlan {
+            session: "sess-1".to_string(),
+            upper: overlays_root.join("sess-1"),
+            merged: root.join("merged/sess-1"),
+            work: root.join("work/sess-1"),
+            lower: LowerSource {
+                path: root.join("lower/sess-1"),
+                kind: LowerKind::Fixture,
+            },
+            extra_lowers: vec![home_lower.clone()],
+            context_source: None,
+            repo_mounts: Vec::new(),
+            repo_cache_root: PathBuf::from("/cache"),
+        };
+
+        // No hydrated lower on disk yet -> nothing to re-attach.
+        assert!(!reattach_artifact_lower_into_plan(
+            &overlays_root,
+            "sess-1",
+            &mut plan
+        ));
+        assert_eq!(plan.extra_lowers, vec![home_lower.clone()]);
+
+        // Once hydration has materialized the lower, later ticks re-attach it
+        // after the manifest-derived lowers — same order hydration produced.
+        let artifact_lower = artifact_lower_path(&overlays_root, "sess-1");
+        fs::create_dir_all(&artifact_lower).unwrap();
+        assert!(reattach_artifact_lower_into_plan(
+            &overlays_root,
+            "sess-1",
+            &mut plan
+        ));
+        assert_eq!(plan.extra_lowers, vec![home_lower, artifact_lower]);
         let _ = fs::remove_dir_all(&root);
     }
 
