@@ -783,9 +783,8 @@ mod linux_daemon {
             }
             let dirty_by_key = dirty.drain_for(current_atrium_keys.iter().map(String::as_str));
             let reconcile_due = stream_healthy
-                && last_reconcile.map_or(true, |last| {
-                    now.duration_since(last) >= global.reconcile_interval
-                });
+                && last_reconcile
+                    .is_none_or(|last| now.duration_since(last) >= global.reconcile_interval);
             let full_remote_poll = !global.stream_enabled || !stream_healthy || reconcile_due;
             if reconcile_due {
                 last_reconcile = Some(now);
