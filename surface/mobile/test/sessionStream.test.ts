@@ -37,7 +37,7 @@ describe('mobile session stream glue', () => {
         headers: { 'content-type': 'text/event-stream' },
       });
     const states: unknown[] = [];
-    const activity: Array<['frame' | 'ping', string | null]> = [];
+    const activity: Array<['frame' | 'ping', string | null, boolean | undefined]> = [];
 
     const state = await streamSessionOnce(
       {
@@ -51,10 +51,10 @@ describe('mobile session stream glue', () => {
       initialSessionState(),
       (next) => states.push(next),
       undefined,
-      (kind, serverTs) => activity.push([kind, serverTs]),
+      (kind, serverTs, folded) => activity.push([kind, serverTs, folded]),
     );
 
-    expect(activity).toEqual([['ping', stamp]]);
+    expect(activity).toEqual([['ping', stamp, undefined]]);
     expect(states).toHaveLength(0);
     expect(state.lastEventId).toBe(0);
     expect(state.frameSeq).toBe(0);
@@ -75,7 +75,7 @@ describe('mobile session stream glue', () => {
         status: 200,
         headers: { 'content-type': 'text/event-stream' },
       });
-    const activity: Array<['frame' | 'ping', string | null]> = [];
+    const activity: Array<['frame' | 'ping', string | null, boolean | undefined]> = [];
 
     const state = await streamSessionOnce(
       {
@@ -89,12 +89,51 @@ describe('mobile session stream glue', () => {
       initialSessionState(),
       undefined,
       undefined,
-      (kind, serverTs) => activity.push([kind, serverTs]),
+      (kind, serverTs, folded) => activity.push([kind, serverTs, folded]),
     );
 
-    expect(activity).toEqual([['frame', stamp]]);
+    expect(activity).toEqual([['frame', stamp, true]]);
     expect(state.status).toBe('running');
     expect(state.lastEventId).toBe(1);
+  });
+
+  it('reports unfolded activity for deduplicated replay frames (liveness, not a fold)', async () => {
+    const frame = {
+      event: 'execution_state',
+      event_id: 1,
+      data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e', event_id: 1 },
+    } as CentaurEventFrame;
+    // Same event id replayed twice: second fold is a no-op, but bytes flowed.
+    const body =
+      `id: 1\nevent: amp_raw_event\ndata: ${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: 'm1', delta: 'hi' }, event_id: 1 })}\n\n` +
+      `id: 1\nevent: amp_raw_event\ndata: ${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: 'm1', delta: 'hi' }, event_id: 1 })}\n\n`;
+    void frame;
+    const fetchImpl: typeof fetch = async () =>
+      new Response(streamFromChunks([body]), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    const activity: Array<['frame' | 'ping', string | null, boolean | undefined]> = [];
+
+    await streamSessionOnce(
+      {
+        baseUrl: 'http://server.test',
+        token: 'tok',
+        sessionId: 's-1',
+        afterEventId: 0,
+        signal: new AbortController().signal,
+        fetchImpl,
+      },
+      initialSessionState(),
+      undefined,
+      undefined,
+      (kind, serverTs, folded) => activity.push([kind, serverTs, folded]),
+    );
+
+    expect(activity.map(([kind, , folded]) => [kind, folded])).toEqual([
+      ['frame', true],
+      ['frame', false],
+    ]);
   });
 
   it('uses ping proof to choose the silent-death watchdog threshold', () => {

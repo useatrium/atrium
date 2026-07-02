@@ -19,6 +19,7 @@ import {
   collectSideEffects,
   deriveTurnStatus,
   fileChangeFromToolCall,
+  turnStatusLabel,
   isTerminalExecutionStatus,
   sideEffectCount,
   toolDisplay,
@@ -318,18 +319,13 @@ export function SessionPane({
   // box they don't have.
   const waitingOnMe = sessionDriverId(session) === me.id;
   const waitingDriverName = session.driverName ?? session.spawnerName ?? 'the driver';
-  const turnStatusLabel =
-    turnPhase === 'tool' && openTool
-      ? `Working: ${toolDisplay(openTool).title}`
-      : turnPhase === 'waiting'
-        ? waitingOnMe
-          ? 'Waiting for your reply'
-          : `Waiting for ${waitingDriverName}`
-        : turnPhase === 'done'
-          ? 'Turn complete'
-          : starting
-            ? 'Starting'
-            : (turnStatus.headline ?? 'Thinking');
+  const statusLabel = turnStatusLabel({
+    phase: turnPhase,
+    starting,
+    headline: turnStatus.headline,
+    openTool,
+    waitingLabel: waitingOnMe ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+  });
 
   // ── Optimistic steer ───────────────────────────────────────────────────────
   // The session steer op is not optimistic, so a sent steer would only appear
@@ -1089,7 +1085,7 @@ export function SessionPane({
         <TurnStatusLine
           phase={turnPhase}
           liveness={turnLiveness}
-          label={turnStatusLabel}
+          label={statusLabel}
           elapsedMs={turnElapsedMs}
           quietMs={turnPhase === 'waiting' ? waitingMs : quietMs}
           pulse={stream.frameSeq}

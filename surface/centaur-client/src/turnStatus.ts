@@ -9,6 +9,7 @@
 // thinking-phase silence is meaningful. Harness-agnostic.
 
 import type { SessionItem, SessionState, ToolCallItem } from "./reducer.js";
+import { toolDisplay } from "./toolDisplay.js";
 
 export type TurnPhase = "thinking" | "tool" | "waiting" | "done";
 
@@ -120,6 +121,66 @@ function reasoningHeadline(items: SessionItem[]): string | null {
   return tail.length > 80 ? `${tail.slice(0, 79)}…` : tail;
 }
 
+/** Compact token display: raw under 1k, then one decimal ("2.4k", "1.2M") —
+ * calm ticks without pretending to precision the chars÷4 estimate lacks.
+ * 999,950+ promotes to the M tier at the DISPLAY boundary (toFixed rounds). */
+export function formatTokens(count: number): string {
+  if (count >= 999_950) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return String(count);
+}
+
+/** The fixed status-line vocabulary, shared verbatim by web and mobile. The
+ * seat-aware waiting copy is the one platform-supplied string (it needs the
+ * viewer's seat + the driver's name). */
+export function turnStatusLabel(args: {
+  phase: TurnPhase | null;
+  starting: boolean;
+  headline: string | null;
+  openTool: ToolCallItem | null;
+  waitingLabel: string;
+}): string {
+  const { phase, starting, headline, openTool, waitingLabel } = args;
+  if (phase === "tool" && openTool) return `Working: ${toolDisplay(openTool).title}`;
+  if (phase === "waiting") return waitingLabel;
+  if (phase === "done") return "Turn complete";
+  if (starting) return "Starting";
+  return headline ?? "Thinking";
+}
+
+/** Item-derived pieces cached on the items array's identity — the reducer
+ * replaces the array on every fold, so identity is a correct fold-version key.
+ * deriveTurnStatus runs on a 1s ticker; without this every tick would rescan
+ * the full transcript (and re-split the reasoning tail) for nothing. */
+interface ItemDerived {
+  turnStartMs: number | null;
+  openTool: ToolCallItem | null;
+  headline: string | null;
+  questionTs: Map<string, number | null>;
+}
+const itemDerivedCache = new WeakMap<SessionItem[], ItemDerived>();
+
+function itemDerived(items: SessionItem[], turnStartMs: number | null): ItemDerived {
+  const cached = itemDerivedCache.get(items);
+  if (cached && cached.turnStartMs === turnStartMs) return cached;
+  const entry: ItemDerived = {
+    turnStartMs,
+    openTool: openToolCall(items, turnStartMs),
+    headline: reasoningHeadline(items),
+    questionTs: new Map(),
+  };
+  itemDerivedCache.set(items, entry);
+  return entry;
+}
+
+function questionAskedTs(derived: ItemDerived, items: SessionItem[], questionId: string): number | null {
+  if (derived.questionTs.has(questionId)) return derived.questionTs.get(questionId) ?? null;
+  const question = items.find((item) => item.type === "question" && item.questionId === questionId);
+  const ts = parseTs(question?.ts);
+  derived.questionTs.set(questionId, ts);
+  return ts;
+}
+
 export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
   const {
     stream,
@@ -176,16 +237,15 @@ export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
   // how long the agent has been blocked on a human. Fallback to frame-silence
   // when the question frame carries no stamp (old mirrors) — an undercount
   // beats claiming the wait just started.
+  const derived = itemDerived(stream.items, turnStartMs);
+
   let waitingMs = quietMs;
   if (pendingQuestionId !== null) {
-    const question = stream.items.find(
-      (item) => item.type === "question" && item.questionId === pendingQuestionId,
-    );
-    const sinceMs = parseTs(question?.ts);
+    const sinceMs = questionAskedTs(derived, stream.items, pendingQuestionId);
     if (sinceMs !== null) waitingMs = Math.max(0, serverNowMs - sinceMs);
   }
 
-  const openTool = openToolCall(stream.items, turnStartMs);
+  const openTool = derived.openTool;
 
   // Drive the single pinned status line: thinking → tool (a command/tool is
   // mid-run) → waiting (pending question) while active, then done on
@@ -238,7 +298,7 @@ export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
     quietMs,
     waitingMs,
     openTool,
-    headline: phase === "thinking" && liveness === "live" ? reasoningHeadline(stream.items) : null,
+    headline: phase === "thinking" && liveness === "live" ? derived.headline : null,
     tokens,
   };
 }

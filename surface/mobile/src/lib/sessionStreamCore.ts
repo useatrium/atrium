@@ -23,7 +23,14 @@ export interface StreamSessionOptions {
 }
 
 export type StreamActivityKind = 'frame' | 'ping';
-export type StreamActivityCallback = (kind: StreamActivityKind, serverTs: string | null) => void;
+/** `folded` is false for deduplicated replay frames — still liveness (bytes
+ * are flowing; the watchdog must not recycle a healthy replay), but not a new
+ * fold (the lastFrameAt clock only advances on real folds). */
+export type StreamActivityCallback = (
+  kind: StreamActivityKind,
+  serverTs: string | null,
+  folded?: boolean,
+) => void;
 
 const SILENT_DEATH_MS = 45_000;
 const SILENT_DEATH_FALLBACK_MS = 4 * 60_000;
@@ -121,9 +128,10 @@ export async function streamSessionOnce(
     const frame = frameFromParsedSse(parsed);
     if (!frame) continue;
     const next = foldSessionFrame(acc, frame);
-    if (next !== acc) {
+    const folded = next !== acc;
+    onActivity?.('frame', frame.ts ?? null, folded);
+    if (folded) {
       acc = next;
-      onActivity?.('frame', frame.ts ?? null);
       onState?.(acc);
     }
   }

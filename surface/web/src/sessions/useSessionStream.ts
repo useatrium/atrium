@@ -64,12 +64,12 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     let generation = 0;
     // Any sign of life on the wire (open, ping, frame) refreshes this.
     let liveAt = Date.now();
-    // Whether the CURRENT connection (and any connection this mount) has
-    // delivered a named ping. With ping proof, prolonged silence is death;
-    // without it (not-yet-rolled comment-only server, or a connection that
-    // died pre-ping) the watchdog falls back to a long horizon instead of
-    // either churning healthy quiet streams or never recycling dead ones.
-    let pingSeen = false;
+    // Whether any connection this mount has delivered a named ping. With
+    // ping proof, prolonged silence is death; without it (not-yet-rolled
+    // comment-only server, or a connection that died pre-ping) the watchdog
+    // falls back to a long horizon instead of either churning healthy quiet
+    // streams or never recycling dead ones. (A server doesn't downgrade, so
+    // proof from an earlier connection carries forward.)
     let pingEver = false;
     let frameAt: number | null = null;
     setStream(acc);
@@ -112,7 +112,6 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
       const handleGeneration = generation;
       const isCurrent = () => !disposed && generation === handleGeneration;
       liveAt = Date.now();
-      pingSeen = false;
       handle = sessionsApi.openStream(sessionId, acc.lastEventId, {
         onFrame: (frame) => {
           if (isCurrent()) onFrame(frame);
@@ -125,7 +124,6 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
         onPing: (serverTs) => {
           if (!isCurrent()) return;
           liveAt = Date.now();
-          pingSeen = true;
           pingEver = true;
           if (serverTs !== null) {
             const parsed = Date.parse(serverTs);
@@ -184,7 +182,7 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     // dead-connection case (and must be recycled or a later steer starves).
     const watchdog = setInterval(() => {
       if (disposed || !handle) return;
-      const threshold = pingSeen || pingEver ? SILENT_DEATH_MS : SILENT_DEATH_FALLBACK_MS;
+      const threshold = pingEver ? SILENT_DEATH_MS : SILENT_DEATH_FALLBACK_MS;
       if (Date.now() - liveAt < threshold) return;
       recycle();
       connect();

@@ -6,15 +6,9 @@ import {
   Text,
   View,
 } from 'react-native';
-import type { TurnLiveness, TurnPhase } from '@atrium/centaur-client';
+import { formatTokens, type TurnLiveness, type TurnPhase } from '@atrium/centaur-client';
 import { formatCost, formatElapsed } from '@atrium/surface-client';
 import { font, space, useTheme } from '../lib/theme';
-
-export function formatTokens(count: number): string {
-  if (count >= 999_950) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
-  return String(count);
-}
 
 function HeartbeatDot({ pulse, parked }: { pulse: number; parked: boolean }) {
   const { colors, reduceMotion } = useTheme();

@@ -34,6 +34,10 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
   // Set per mount to the current run's forced-reconnect trigger; the
   // `active`-watch effect below calls it. Nulled on cleanup.
   const ensureConnectedRef = useRef<(() => void) | null>(null);
+  // The session entity's liveness, readable inside the stream loop's guards
+  // without re-running the effect.
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
     if (!sessionId) return;
@@ -43,15 +47,20 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     let watchdogTimer: ReturnType<typeof setInterval> | null = null;
     let currentAttempt: AbortController | null = null;
     let liveAt = Date.now();
-    let pingSeen = false;
     let pingEver = false;
     setStream(acc);
     setConnected(false);
     setLastFrameAt(null);
     setClockSkewMs(null);
 
+    // The loop stops on a terminal fold ONLY while the session entity agrees
+    // it's over: a steer that revives a completed session flips `active` true
+    // (via activeRef), which both re-arms these guards and lets the retry path
+    // keep trying if the forced reopen itself fails.
+    const shouldStop = () => streamIsTerminal(acc) && !activeRef.current;
+
     const scheduleReconnect = () => {
-      if (disposed || retryTimer || streamIsTerminal(acc)) return;
+      if (disposed || retryTimer || shouldStop()) return;
       retryTimer = setTimeout(() => {
         retryTimer = null;
         connect();
@@ -67,12 +76,11 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
       scheduleReconnect();
     };
 
-    const connect = (force = false) => {
-      if (disposed || currentAttempt || (!force && streamIsTerminal(acc))) return;
+    const connect = () => {
+      if (disposed || currentAttempt || shouldStop()) return;
       const controller = new AbortController();
       currentAttempt = controller;
       liveAt = Date.now();
-      pingSeen = false;
       setConnected(false);
       const isCurrentAttempt = () => !disposed && currentAttempt === controller;
       streamSessionOnce(
@@ -95,15 +103,14 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
           liveAt = Date.now();
           setConnected(true);
         },
-        (kind, serverTs) => {
+        (kind, serverTs, folded) => {
           if (!isCurrentAttempt()) return;
           const now = Date.now();
           liveAt = now;
           if (kind === 'frame') {
-            setLastFrameAt(now);
+            if (folded) setLastFrameAt(now);
             return;
           }
-          pingSeen = true;
           pingEver = true;
           if (serverTs === null) return;
           const parsed = Date.parse(serverTs);
@@ -120,18 +127,28 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
 
     connect();
 
-    // Force one reconnect past the terminal stop when the session goes active
-    // again (steer on a completed session). No-op while an attempt or retry
-    // is in flight.
+    // Reconnect when the session goes active again (steer on a completed
+    // session). A no-op while a retry is pending; a silently-dead lingering
+    // attempt past the silence threshold is recycled rather than trusted —
+    // otherwise the revive-steer would starve behind a hung fetch.
     ensureConnectedRef.current = () => {
-      if (disposed || currentAttempt || retryTimer) return;
-      connect(true);
+      if (disposed || retryTimer) return;
+      if (currentAttempt) {
+        if (Date.now() - liveAt < silenceThresholdMs(pingEver)) return;
+        currentAttempt.abort();
+        return; // settleAttempt reconnects via scheduleReconnect
+      }
+      connect();
     };
 
+    // NO terminal exemption: a healthy terminal replay settles and nulls
+    // currentAttempt, so a lingering attempt on a terminal fold is exactly the
+    // silently-dead-connection case and must be recycled or a later steer
+    // starves behind it (settleAttempt's shouldStop() decides whether the
+    // recycle also reconnects).
     watchdogTimer = setInterval(() => {
       if (disposed || !currentAttempt || currentAttempt.signal.aborted) return;
-      if (streamIsTerminal(acc)) return;
-      const threshold = silenceThresholdMs(pingSeen || pingEver);
+      const threshold = silenceThresholdMs(pingEver);
       if (Date.now() - liveAt < threshold) return;
       setConnected(false);
       currentAttempt.abort();

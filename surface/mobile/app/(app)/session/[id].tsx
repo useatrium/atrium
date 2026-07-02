@@ -45,6 +45,7 @@ import {
   collectSideEffects,
   deriveTurnStatus,
   fileChangeFromToolCall,
+  turnStatusLabel,
   sideEffectCount,
   toolDisplay,
 } from '@atrium/centaur-client';
@@ -641,7 +642,9 @@ export default function SessionScreen() {
   const isDriver = !!session && sessionDriverId(session) === me.id;
   const isSpawner = !!session && session.spawnedBy === me.id;
   const canCancel = !!session && (isDriver || isSpawner) && !terminal;
-  const canSteer = !!session && isDriver && !terminal;
+  // A completed session is resumable (a steer regresses it to queued) — only
+  // failed/cancelled are read-only, matching web and the server.
+  const canSteer = !!session && isDriver && !isEnded;
   const pendingQuestion =
     session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
   const activeTurn = !terminal && !stalled;
@@ -685,7 +688,7 @@ export default function SessionScreen() {
   const modelEffort = session?.modelEffort ?? null;
   const effortOptions = session ? HARNESS_EFFORT_PICKER_OPTIONS[session.harness] : undefined;
   const effortSelection = effortChoice ?? modelEffort ?? '';
-  const canPickEffort = !!session && isDriver && !terminal && effortOptions !== undefined;
+  const canPickEffort = !!session && isDriver && !isEnded && effortOptions !== undefined;
 
   // Work surfaces (Phase 4 parity): derive from the shared stream exactly like
   // web — Changes · Side-effects · Artifacts. Each non-empty surface gets a strip
@@ -781,18 +784,14 @@ export default function SessionScreen() {
   const driverName = session?.driverName ?? 'the driver';
   const waitingDriverName = session?.driverName ?? session?.spawnerName ?? 'the driver';
   const turnPhase = turnStatus.phase;
-  const turnStatusLabel =
-    turnPhase === 'tool' && turnStatus.openTool
-      ? `Working: ${toolDisplay(turnStatus.openTool).title}`
-      : turnPhase === 'waiting'
-        ? driverId === me.id
-          ? 'Waiting for your reply'
-          : `Waiting for ${waitingDriverName}`
-        : turnPhase === 'done'
-          ? 'Turn complete'
-          : starting
-            ? 'Starting'
-            : (turnStatus.headline ?? 'Thinking');
+  const statusLabel = turnStatusLabel({
+    phase: turnPhase,
+    starting,
+    headline: turnStatus.headline,
+    openTool: turnStatus.openTool,
+    waitingLabel:
+      driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+  });
   const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter(
     (r) => !ignoredSeatRequests.has(r.userId),
   );
@@ -821,6 +820,12 @@ export default function SessionScreen() {
     setEffortOpen(false);
   }, [session?.id]);
 
+  // Close the picker whenever it becomes unpickable — a stale open flag would
+  // pop the modal unprompted when pickability returns (e.g. a later revive).
+  useEffect(() => {
+    if (!canPickEffort) setEffortOpen(false);
+  }, [canPickEffort]);
+
   useEffect(() => {
     if (cancelAsk !== 'confirm') return;
     const timer = setTimeout(() => setCancelAsk('idle'), 5000);
@@ -837,37 +842,33 @@ export default function SessionScreen() {
       contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
   };
 
+  // The server re-attaches the recorded effort to effort-less steers; the
+  // client only sends an explicit change, guarded to the harness vocabulary.
+  const effortOverride = () =>
+    canPickEffort &&
+    effortSelection &&
+    effortSelection !== (modelEffort ?? '') &&
+    effortOptions?.includes(effortSelection)
+      ? effortSelection
+      : undefined;
+
   const sendSteer = () => {
     if (!id) return;
     const text = steerText.trim();
     if (!text) return;
-    const effortOverride =
-      canPickEffort &&
-      effortSelection &&
-      effortSelection !== (modelEffort ?? '') &&
-      effortOptions?.includes(effortSelection)
-        ? effortSelection
-        : undefined;
     setSteerText('');
     setSteerError(null);
     chat.clearFailedSessionSteer(id);
-    chat.steerSession(id, text, effortOverride).catch(() => setSteerError(text));
+    chat.steerSession(id, text, effortOverride()).catch(() => setSteerError(text));
   };
 
   const retrySteer = () => {
     const visibleSteerError = id ? (steerError ?? chat.failedSessionSteers[id] ?? null) : steerError;
     if (!id || !visibleSteerError) return;
     const text = visibleSteerError;
-    const effortOverride =
-      canPickEffort &&
-      effortSelection &&
-      effortSelection !== (modelEffort ?? '') &&
-      effortOptions?.includes(effortSelection)
-        ? effortSelection
-        : undefined;
     setSteerError(null);
     chat.clearFailedSessionSteer(id);
-    chat.steerSession(id, text, effortOverride).catch(() => setSteerError(text));
+    chat.steerSession(id, text, effortOverride()).catch(() => setSteerError(text));
   };
 
   const cancel = () => {
@@ -1165,7 +1166,7 @@ export default function SessionScreen() {
           <TurnStatusLine
             phase={turnPhase}
             liveness={turnStatus.liveness}
-            label={turnStatusLabel}
+            label={statusLabel}
             elapsedMs={turnStatus.elapsedMs}
             quietMs={turnPhase === 'waiting' ? turnStatus.waitingMs : turnStatus.quietMs}
             pulse={stream.frameSeq}
