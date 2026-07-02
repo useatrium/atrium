@@ -64,6 +64,7 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
+import { Spinner, TurnStatusLine, type TurnPhase } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
 import { SessionMarkdown } from './Markdown';
@@ -131,7 +132,13 @@ export function SessionPane({
   /** Toggle between split and focus; omit to hide the expand control. */
   onToggleFocus?: () => void;
 }) {
-  const { stream, connected } = useSessionStream(session.id);
+  // `active` re-opens the SSE the server closes after a terminal session's
+  // replay, so a follow-up steer (which flips the session back to running over
+  // WS) streams live instead of appearing only on the next pane mount.
+  const { stream, connected } = useSessionStream(
+    session.id,
+    !isTerminalSessionStatus(session.status),
+  );
 
   // Changes work-surface (Phase 4): Claude/amp edits from the transcript items +
   // codex fileChange edits the reducer captured.
@@ -217,6 +224,97 @@ export function SessionPane({
     [questionEvents],
   );
 
+  // ── Live activity cue ──────────────────────────────────────────────────────
+  // A turn is in flight whenever the session isn't terminal and hasn't stalled.
+  // Drives the "Thinking…" footer; together with the per-tool spinners it keeps
+  // the transcript feeling live even when the harness emits no reasoning summaries.
+  // Harness-agnostic — nothing here is Codex- or Claude-specific.
+  const activeTurn = !displayTerminal && !stalled;
+  const lastItem = stream.items[stream.items.length - 1];
+  const runningToolTitle =
+    lastItem && lastItem.type === 'tool_call' && lastItem.result === undefined
+      ? toolDisplay(lastItem).title
+      : null;
+  const turnStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (activeTurn) {
+      if (turnStartRef.current === null) turnStartRef.current = Date.now();
+    } else {
+      turnStartRef.current = null;
+    }
+  }, [activeTurn]);
+  const turnElapsedMs =
+    activeTurn && turnStartRef.current !== null ? Math.max(0, now - turnStartRef.current) : 0;
+  // Drive the single pinned status line: thinking → tool (a command/tool is
+  // mid-run) → waiting (pending question) while active, then done on completion.
+  // Suppressed entirely when a provider-auth reconnect is pending — that banner
+  // already owns the state, and "Thinking…" would contradict it.
+  const turnPhase: TurnPhase | null =
+    session.providerAuthRequired
+      ? null
+      : activeTurn && pendingQuestion
+        ? 'waiting'
+        : activeTurn && runningToolTitle
+          ? 'tool'
+          : activeTurn
+            ? 'thinking'
+            : displayStatus === 'completed'
+              ? 'done'
+              : null;
+  const turnStatusLabel =
+    turnPhase === 'tool'
+      ? `Working: ${runningToolTitle}`
+      : turnPhase === 'waiting'
+        ? 'Waiting for your reply'
+        : turnPhase === 'done'
+          ? 'Turn complete'
+          : 'Thinking';
+
+  // ── Optimistic steer ───────────────────────────────────────────────────────
+  // The session steer op is not optimistic, so a sent steer would only appear
+  // once the harness echoes it back as a user_message. Render it immediately and
+  // drop each pending bubble when a matching echoed user_message arrives
+  // (consume-once by trimmed text). Only Codex echoes user messages — on other
+  // harnesses the bubble persists as the steer's transcript row, so once the
+  // turn goes active we mark it delivered (sticky) and stop dimming it.
+  const [pendingSteers, setPendingSteers] = useState<
+    { id: string; text: string; delivered?: boolean }[]
+  >([]);
+  useEffect(() => {
+    setPendingSteers([]);
+  }, [session.id]);
+  useEffect(() => {
+    if (!activeTurn) return;
+    // Same-reference return when nothing is undelivered keeps this loop-free
+    // with pendingSteers in the deps (covers steers sent mid-turn too).
+    setPendingSteers((prev) =>
+      prev.some((p) => !p.delivered) ? prev.map((p) => ({ ...p, delivered: true })) : prev,
+    );
+  }, [activeTurn, pendingSteers]);
+  useEffect(() => {
+    if (pendingSteers.length === 0) return;
+    // Compute the surviving set OUTSIDE the state updater: the updater must be
+    // pure (StrictMode double-invokes it), and consuming the echo map inside it
+    // made the second invocation see spent counts and resurrect the bubble.
+    const echoed = new Map<string, number>();
+    for (const it of stream.items) {
+      if (it.type === 'user_message') {
+        const t = it.text.trim();
+        echoed.set(t, (echoed.get(t) ?? 0) + 1);
+      }
+    }
+    const keep = pendingSteers.filter((p) => {
+      const t = p.text.trim();
+      const n = echoed.get(t) ?? 0;
+      if (n > 0) {
+        echoed.set(t, n - 1);
+        return false;
+      }
+      return true;
+    });
+    if (keep.length !== pendingSteers.length) setPendingSteers(keep);
+  }, [stream.items, pendingSteers]);
+
   // ---- driver seat (Phase 3) ----
   const driverId = sessionDriverId(session);
   const isDriver = driverId === me.id;
@@ -298,7 +396,14 @@ export function SessionPane({
   const sendSteer = (text: string) => {
     setLocalSteerError(null);
     onClearFailedSteer();
-    onSteer(session.id, text).catch(() => setLocalSteerError(text));
+    // Optimistic: show the steer immediately; reconciled away when the harness
+    // echoes it back as a user_message (see the pendingSteers effect above).
+    const pendingId = randomId();
+    setPendingSteers((prev) => [...prev, { id: pendingId, text }]);
+    onSteer(session.id, text).catch(() => {
+      setLocalSteerError(text);
+      setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
+    });
   };
 
   // Suggestion queue (Phase 2). Spectators compose suggestions; the driver
@@ -749,7 +854,7 @@ export function SessionPane({
         )}
         <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
         <PlanPanel todos={stream.todos} plan={stream.plan} />
-        {stream.items.length === 0 && (
+        {stream.items.length === 0 && !activeTurn && (
           <div className="flex h-full items-center justify-center text-xs text-fg-muted">
             {!displayTerminal ? (
               <span className="animate-pulse">Waiting for agent output…</span>
@@ -818,32 +923,19 @@ export function SessionPane({
             <InlineFileChange change={a.change} />
           </div>
         ))}
+        {pendingSteers.map((p) => (
+          <div
+            key={p.id}
+            data-testid="user-steer-pending"
+            className={`pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
+          >
+            <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
+            <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
+          </div>
+        ))}
         {artifactPresentations.length > 0 && (
           <div className="pl-3.5">
             <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />
-          </div>
-        )}
-        {displayStatus === 'completed' && (resultText || costUsd > 0) && (
-          <div
-            data-testid="turn-card"
-            className="mt-3 rounded-lg border border-edge bg-surface-raised/40 px-3.5 py-3"
-          >
-            <div className="flex items-center gap-2 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
-              <span>Turn complete</span>
-              {(costUsd > 0 || stream.models.length > 0) && (
-                <span className="ml-auto flex items-center gap-1.5 font-normal normal-case tracking-normal text-fg-faint">
-                  {costUsd > 0 && <span className="tabular-nums">{formatCost(costUsd)}</span>}
-                  {costUsd > 0 && stream.models.length > 0 && <span>·</span>}
-                  {stream.models.length > 0 && <span>{stream.models.join(', ')}</span>}
-                </span>
-              )}
-            </div>
-            {resultText && (
-              <div className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
-                {resultText}
-              </div>
-            )}
-            <div className="mt-2 text-2xs text-fg-muted">What next? Steer the agent below.</div>
           </div>
         )}
         </div>
@@ -883,6 +975,16 @@ export function SessionPane({
           </div>
         )}
       </div>
+
+      {!isEnded && turnPhase && (
+        <TurnStatusLine
+          phase={turnPhase}
+          label={turnStatusLabel}
+          elapsedMs={turnElapsedMs}
+          costUsd={costUsd}
+          models={stream.models}
+        />
+      )}
 
       {isEnded ? (
         <div className="shrink-0 border-t border-edge px-4 py-2.5 text-2xs text-fg-muted">
@@ -1171,6 +1273,11 @@ const ToolCard = memo(
     onToggle: () => void;
   }) {
     const running = item.result === undefined;
+    // Live "running" clock: first render of an in-flight tool ≈ its start; ticks
+    // once a second until the result lands, so a slow bash/shell visibly works.
+    const startedRef = useRef<number>(Date.now());
+    const now = useNow(running);
+    const elapsedMs = running ? Math.max(0, now - startedRef.current) : 0;
     const isError = item.result?.is_error === true;
     const command = typeof item.input['command'] === 'string' ? (item.input['command'] as string) : null;
     const rest = Object.fromEntries(Object.entries(item.input).filter(([k]) => k !== 'command'));
@@ -1202,9 +1309,16 @@ const ToolCard = memo(
               {descriptor.subtitle}
             </span>
           )}
-          <span className="ml-auto shrink-0">
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {running ? (
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent-text" />
+              <>
+                {elapsedMs >= 1000 && (
+                  <span className="tabular-nums text-2xs text-fg-faint">
+                    {formatElapsed(elapsedMs)}
+                  </span>
+                )}
+                <Spinner className="text-accent-text-strong" />
+              </>
             ) : isError ? (
               <span className="font-semibold text-danger">error</span>
             ) : (

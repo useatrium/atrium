@@ -4,6 +4,11 @@ import tailwindcss from '@tailwindcss/vite';
 
 const apiTarget = process.env.ATRIUM_API_TARGET ?? 'http://localhost:3001';
 const wsTarget = apiTarget.replace(/^http/, 'ws');
+// Optional Host override for the dev proxy: lets the local web point at a
+// remote deployment through a host-routed reverse proxy (e.g. an SSH tunnel to
+// its Caddy), which routes by Host header.
+const proxyHost = process.env.ATRIUM_PROXY_HOST;
+const proxyHeaders = proxyHost ? { headers: { host: proxyHost } } : {};
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -48,9 +53,9 @@ export default defineConfig({
       allow: ['.', '../shared', '../centaur-client'],
     },
     proxy: {
-      '/api': apiTarget,
-      '/auth': apiTarget,
-      '/ws': { target: wsTarget, ws: true },
+      '/api': { target: apiTarget, ...proxyHeaders },
+      '/auth': { target: apiTarget, ...proxyHeaders },
+      '/ws': { target: wsTarget, ws: true, ...proxyHeaders },
     },
   },
 });

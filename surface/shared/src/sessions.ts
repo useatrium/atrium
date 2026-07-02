@@ -446,9 +446,22 @@ export function applySessionEvent(
   if (ev.type === 'session.status_changed') {
     const status = asSessionStatus(p.status);
     if (!status) return sessions;
-    const nextStatus = maxSessionStatus(prev.status, status);
+    // A follow-up steer legitimately regresses a terminal session to an active
+    // status (completed → queued/running): that's a NEW TURN, not a stale
+    // out-of-order event, so it bypasses the non-regression clamp. Clear the
+    // stale completion so panes/cards go live again (the server nulls
+    // completed_at on the same transition).
+    const newTurn = isTerminalSessionStatus(prev.status) && !isTerminalSessionStatus(status);
+    const nextStatus = newTurn ? status : maxSessionStatus(prev.status, status);
     if (nextStatus === prev.status) return sessions;
-    return { ...sessions, [sessionId]: { ...prev, status: nextStatus } };
+    return {
+      ...sessions,
+      [sessionId]: {
+        ...prev,
+        status: nextStatus,
+        ...(newTurn ? { completedAt: null, pendingQuestion: null } : {}),
+      },
+    };
   }
 
   if (ev.type === 'session.completed') {

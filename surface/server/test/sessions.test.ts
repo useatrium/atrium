@@ -11,6 +11,7 @@ import { config } from '../src/config.js';
 import { createChannel, getOrCreateDm } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { addWorkspaceMember } from '../src/membership.js';
+import { ProviderCredentials } from '../src/provider-credentials.js';
 import { githubPatSecretForeignId, IronControlAdminClient } from '../src/iron-control.js';
 import { SeededPrng } from './chaosHarness.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
@@ -1434,6 +1435,54 @@ describe('Phase 2 sessions', () => {
       expect(authEvent.rows[0].payload).toMatchObject({ sessionId: id, provider: 'codex' });
     });
     expect(fake.requests.some((r) => r.path.endsWith('/cancel'))).toBe(true);
+    await app.close();
+  });
+
+  it('self-heals a proxy-backed Codex credential after a successful run', async () => {
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 9,
+        data: {
+          type: 'execution.state',
+          status: 'completed',
+          result_text: 'done',
+        },
+      },
+    ]);
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const { cookie, userId } = await loginUser(app, 'alice-codex-proxy-heal', 'Alice Codex Proxy Heal');
+    const credentials = new ProviderCredentials(pool, config.providerCredentialSecret);
+    await credentials.markConnectedViaProxy(userId, 'codex');
+    await credentials.markCodexAuthRequired(userId, 'transient codex auth failure');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'auth recovered', harness: 'codex' },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().session.id;
+
+    await waitFor(async () => {
+      const session = await pool.query(`SELECT status FROM sessions WHERE id = $1`, [id]);
+      expect(session.rows[0].status).toBe('completed');
+      const provider = await pool.query(
+        `SELECT status, last_error
+         FROM user_provider_credentials
+         WHERE user_id = $1 AND provider = 'codex'`,
+        [userId],
+      );
+      expect(provider.rows[0]).toMatchObject({
+        status: 'connected',
+        last_error: null,
+      });
+    });
     await app.close();
   });
 

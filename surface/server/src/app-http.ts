@@ -17,6 +17,12 @@ export async function installAppHttp(app: FastifyInstance, rateLimit: AppRateLim
     await app.register(fastifyRateLimit, {
       max: rateLimit?.max ?? 600,
       timeWindow: '1 minute',
+      // Internal service routes (Centaur node-sync capture/changes polling) are
+      // authenticated by their own bearer key and arrive from a single gateway
+      // IP — sharing the per-IP browser bucket both throttles capture traffic
+      // (observed live: /api/internal capture 429s) and lets that traffic
+      // exhaust the bucket for real clients behind the same NAT.
+      allowList: (req) => req.url.startsWith('/api/internal/'),
       errorResponseBuilder: (_req, context) => ({
         statusCode: context.statusCode,
         error: 'rate_limited',

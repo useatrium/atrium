@@ -1731,6 +1731,9 @@ export class SessionRuns {
       if (status === 'failed' && terminalGitHubAuthFailureEventId != null) {
         await this.markGitHubNeedsAuth(id, undefined, frame.event_id);
       }
+      if (status === 'completed' && terminalAuthFailureEventId == null) {
+        await this.markProviderConnectedIfProxy(id);
+      }
       await this.completeSession(id, status, resultText, frame.event_id);
     } else {
       await this.updateStatus(id, status);
@@ -1821,6 +1824,20 @@ export class SessionRuns {
 
   async clearClaudeAuthRequired(userId: string): Promise<void> {
     await this.clearProviderAuthRequired(userId, CLAUDE_CODE_PROVIDER);
+  }
+
+  private async markProviderConnectedIfProxy(id: string): Promise<void> {
+    const res = await this.pool.query<Pick<SessionRow, 'harness' | 'spawned_by' | 'provider_credential_user_id'>>(
+      `SELECT harness, spawned_by, provider_credential_user_id
+       FROM sessions
+       WHERE id = $1`,
+      [id],
+    );
+    const row = res.rows[0];
+    const provider = row ? providerForHarness(row.harness) : null;
+    if (!row || !provider) return;
+    const ownerId = row.provider_credential_user_id ?? row.spawned_by;
+    await this.providerCredentials.markConnectedIfProxy(ownerId, provider);
   }
 
   async clearProviderAuthRequired(

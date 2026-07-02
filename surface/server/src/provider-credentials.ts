@@ -175,6 +175,27 @@ export class ProviderCredentials {
     return statusFromRow(provider, res.rows[0] ?? null);
   }
 
+  /**
+   * Re-assert a proxy-backed credential after a successful run. This only
+   * touches the proxy placeholder row; real-token rows remain unchanged.
+   */
+  async markConnectedIfProxy(
+    userId: string,
+    provider: ProviderCredentialProvider,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE user_provider_credentials
+       SET status = 'connected',
+           last_error = NULL,
+           updated_at = now()
+       WHERE user_id = $1
+         AND provider = $2
+         AND token_ciphertext = $3
+         AND status <> 'connected'`,
+      [userId, provider, PROXY_CREDENTIAL_SENTINEL],
+    );
+  }
+
   async markClaudeAuthRequired(
     userId: string,
     message: string,
