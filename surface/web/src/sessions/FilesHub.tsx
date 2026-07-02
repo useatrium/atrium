@@ -12,6 +12,7 @@ import { EmptyState } from './EmptyState';
 type SortMode = 'recent' | 'name' | 'size';
 type OriginFilter = 'all' | FileOrigin;
 type MediaFilter = 'all' | MediaKind;
+type FileHubScope = 'channel' | 'workspace';
 
 interface Filters {
   origin: OriginFilter;
@@ -555,10 +556,14 @@ function FileTile({
 export function FilesHub({
   workspaceId,
   channelId,
+  defaultScope,
 }: {
   workspaceId: string;
   channelId?: string | null;
+  defaultScope?: FileHubScope;
 }): JSX.Element {
+  const resolvedDefaultScope = channelId ? (defaultScope ?? 'channel') : 'workspace';
+  const [scope, setScope] = useState<FileHubScope>(resolvedDefaultScope);
   const [filters, setFilters] = useState<Filters>({
     origin: 'all',
     mediaKind: 'all',
@@ -581,9 +586,17 @@ export function FilesHub({
   const [commentArtifactId, setCommentArtifactId] = useState<string | null>(null);
   const [currentDir, setCurrentDir] = useState('');
 
-  const endpoint = channelId
-    ? `/api/channels/${encodeURIComponent(channelId)}/files`
-    : `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
+  useEffect(() => {
+    setScope(resolvedDefaultScope);
+  }, [resolvedDefaultScope]);
+
+  const scopedChannelId = channelId && scope === 'channel' ? channelId : null;
+  const scopedChannel = scopedChannelId != null;
+  const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
+  const effectiveFilters = useMemo(
+    () => (scopedChannelId ? { ...filters, channelId: scopedChannelId } : filters),
+    [filters, scopedChannelId],
+  );
   const searchActive = search.trim().length > 0 || debouncedSearch.trim().length > 0;
 
   useEffect(() => {
@@ -605,7 +618,7 @@ export function FilesHub({
         setError(null);
       }
       try {
-        const query = queryFor(filters, debouncedSearch, cursor);
+        const query = queryFor(effectiveFilters, debouncedSearch, cursor);
         const response = await fetch(`${endpoint}?${query.toString()}`, {
           credentials: 'same-origin',
           signal: controller.signal,
@@ -626,14 +639,14 @@ export function FilesHub({
       }
       return () => controller.abort();
     },
-    [debouncedSearch, endpoint, filters],
+    [debouncedSearch, endpoint, effectiveFilters],
   );
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    const query = queryFor(filters, debouncedSearch);
+    const query = queryFor(effectiveFilters, debouncedSearch);
     fetch(`${endpoint}?${query.toString()}`, { credentials: 'same-origin', signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(await responseError(response, 'Could not load files'));
@@ -656,7 +669,7 @@ export function FilesHub({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [debouncedSearch, endpoint, filters]);
+  }, [debouncedSearch, endpoint, effectiveFilters]);
 
   const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
 
@@ -967,14 +980,42 @@ export function FilesHub({
         <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-fg">
           Files <span className="tabular-nums text-fg-muted">/ {visibleItemCount}</span>
         </h3>
-        <span className="shrink-0 text-2xs text-fg-muted">{channelId ? 'Channel files' : 'All files'}</span>
+        {channelId && (
+          <div
+            role="group"
+            aria-label="File scope"
+            className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5"
+          >
+            {(['channel', 'workspace'] as const).map((nextScope) => {
+              const active = scope === nextScope;
+              return (
+                <button
+                  key={nextScope}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setScope(nextScope)}
+                  className={`h-6 rounded px-2 text-3xs font-semibold ${
+                    active
+                      ? 'bg-surface-overlay text-fg'
+                      : 'text-fg-tertiary hover:bg-surface-overlay/60 hover:text-fg-body'
+                  }`}
+                >
+                  {nextScope === 'channel' ? 'Channel' : 'Workspace'}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <span className="shrink-0 text-2xs text-fg-muted">
+          {scopedChannel ? 'Channel files' : 'Workspace files'}
+        </span>
       </div>
       <FilterBar
         filters={filters}
         setFilters={setFilters}
         search={search}
         setSearch={setSearch}
-        scopedChannel={Boolean(channelId)}
+        scopedChannel={scopedChannel}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {loading && <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>}

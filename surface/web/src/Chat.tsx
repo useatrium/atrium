@@ -33,7 +33,7 @@ import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
 import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
-import { LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
+import { FileIcon, LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
@@ -41,6 +41,7 @@ import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
+import { FilesHub } from './sessions/FilesHub';
 import { SessionPane } from './sessions/SessionPane';
 import { loadSessionPaneWidth } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
@@ -84,6 +85,7 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
+type MainSurface = 'chat' | 'files';
 
 type EnqueueOpOptions = {
   onStored?: () => void;
@@ -321,6 +323,7 @@ export function Chat({
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
+  const [mainSurface, setMainSurface] = useState<MainSurface>('chat');
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [demoStarting, setDemoStarting] = useState(false);
@@ -801,13 +804,17 @@ export function Chat({
         setIsSidebarOpen(false);
         return;
       }
+      if (mainSurface === 'files') {
+        setMainSurface('chat');
+        return;
+      }
       const s = stateRef.current;
       if (s.openSessionId) dispatch({ type: 'close-session' });
       else if (s.openThreadRootId != null) dispatch({ type: 'close-thread' });
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isSidebarOpen, switcherOpen]);
+  }, [isSidebarOpen, mainSurface, switcherOpen]);
 
   // ---- unread badge in the tab title ----
   const unreadCount = Object.values(state.unread).filter(Boolean).length;
@@ -852,17 +859,19 @@ export function Chat({
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
+  const showFilesSurface = mainSurface === 'files';
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
         workspaceName={workspace.name}
         channels={state.channels}
-        activeChannelId={state.activeChannelId}
+        activeChannelId={mainSurface === 'chat' ? state.activeChannelId : null}
         unread={state.unread}
         me={me}
         wsStatus={state.wsStatus}
         onSelect={(channelId) => {
           selectChannel(channelId);
+          setMainSurface('chat');
           setIsSidebarOpen(false);
         }}
         onSetMute={setMute}
@@ -870,6 +879,12 @@ export function Chat({
         onStartDm={startDm}
         onOpenSession={(sessionId) => {
           openSession(sessionId);
+          setMainSurface('chat');
+          setIsSidebarOpen(false);
+        }}
+        activeSurface={mainSurface}
+        onOpenFiles={() => {
+          setMainSurface('files');
           setIsSidebarOpen(false);
         }}
         sessionEventSeq={sessionEventSeq}
@@ -900,76 +915,104 @@ export function Chat({
                 <span className="block h-px w-4 bg-current" />
               </span>
             </button>
-            <h1 className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none">
-            {active?.kind === 'dm' || active?.kind === 'gdm' ? (
-              <>
-                <Avatar
-                  name={channelAvatarName(active, me.id)}
-                  seed={dmPartner(active, me.id)?.id ?? active.id}
-                  size={18}
-                />
-                {channelLabel(active, me.id)}
-              </>
-            ) : (
-              <>
-                <span className="mr-0.5 shrink-0 text-fg-muted">
-                  {active?.kind === 'private' ? <LockIcon size={14} /> : '#'}
-                </span>
-                <span className="truncate">{active?.name ?? '…'}</span>
-              </>
+            <h1
+              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none"
+              aria-label={
+                showFilesSurface ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}` : undefined
+              }
+            >
+              {showFilesSurface ? (
+                <>
+                  <FileIcon size={16} className="shrink-0 text-fg-muted" />
+                  <span className="truncate">Files</span>
+                  <span aria-hidden="true" className="hidden text-xs font-medium text-fg-faint sm:inline">
+                    /
+                  </span>
+                  <span className="hidden truncate text-xs font-medium text-fg-muted sm:inline">
+                    {active ? channelLabel(active, me.id) : workspace.name}
+                  </span>
+                </>
+              ) : active?.kind === 'dm' || active?.kind === 'gdm' ? (
+                <>
+                  <Avatar
+                    name={channelAvatarName(active, me.id)}
+                    seed={dmPartner(active, me.id)?.id ?? active.id}
+                    size={18}
+                  />
+                  {channelLabel(active, me.id)}
+                </>
+              ) : (
+                <>
+                  <span className="mr-0.5 shrink-0 text-fg-muted">
+                    {active?.kind === 'private' ? <LockIcon size={14} /> : '#'}
+                  </span>
+                  <span className="truncate">{active?.name ?? '…'}</span>
+                </>
+              )}
+            </h1>
+            {!showFilesSurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
+              <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
             )}
-          </h1>
-          {active && (active.kind === 'private' || active.kind === 'gdm') && (
-            <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
-          )}
-          <button
-            onClick={() => setSpawnOpen(true)}
-            disabled={!active}
-            title="New agent"
-            aria-label="New agent"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted md:ml-auto"
-          >
-            <PlusIcon size={14} />
-            <span className="hidden sm:inline">New agent</span>
-          </button>
-          {state.openSessionId && (
-            <div className="hidden md:flex">
-              <ViewToggle view={view} hasSession onSetView={setView} />
-            </div>
-          )}
-          {/* Calls unconfigured: keep the phone visible but grayed with a setup
+            {showFilesSurface ? (
+              <button
+                type="button"
+                onClick={() => setMainSurface('chat')}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:ml-auto"
+              >
+                Chat
+              </button>
+            ) : (
+              <button
+                onClick={() => setSpawnOpen(true)}
+                disabled={!active}
+                title="New agent"
+                aria-label="New agent"
+                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted md:ml-auto"
+              >
+                <PlusIcon size={14} />
+                <span className="hidden sm:inline">New agent</span>
+              </button>
+            )}
+            {!showFilesSurface && state.openSessionId && (
+              <div className="hidden md:flex">
+                <ViewToggle view={view} hasSession onSetView={setView} />
+              </div>
+            )}
+            {/* Calls unconfigured: keep the phone visible but grayed with a setup
               hint (tooltip + click), so the feature is discoverable instead of
               hidden — rather than a dead button that fails on click. */}
-          <button
-            onClick={() => {
-              if (!callsAvailable) {
-                showErrorToast(
-                  'Voice calls aren’t set up. Configure LiveKit (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) to enable calls.',
-                );
-                return;
-              }
-              if (active) void calls.startCall(active.id);
-            }}
-            disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
-            aria-disabled={!callsAvailable || undefined}
-            title={
-              !callsAvailable
-                ? 'Voice calls aren’t set up — configure LiveKit to enable'
-                : calls.activeCall
-                  ? 'Already in a call'
-                  : calls.starting
-                    ? 'Starting call…'
-                    : 'Start voice call'
-            }
-            aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
-            className={
-              callsAvailable
-                ? 'rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
-                : 'rounded-md border border-edge bg-surface-raised/20 px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
-            }
-          >
-            <PhoneIcon size={15} />
-          </button>
+            {!showFilesSurface && (
+              <button
+                onClick={() => {
+                  if (!callsAvailable) {
+                    showErrorToast(
+                      'Voice calls aren’t set up. Configure LiveKit (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) to enable calls.',
+                    );
+                    return;
+                  }
+                  if (active) void calls.startCall(active.id);
+                }}
+                disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
+                aria-disabled={!callsAvailable || undefined}
+                title={
+                  !callsAvailable
+                    ? 'Voice calls aren’t set up — configure LiveKit to enable'
+                    : calls.activeCall
+                      ? 'Already in a call'
+                      : calls.starting
+                        ? 'Starting call…'
+                        : 'Start voice call'
+                }
+                aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
+                className={
+                  callsAvailable
+                    ? 'rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
+                    : 'rounded-md border border-edge bg-surface-raised/20 px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
+                }
+              >
+                <PhoneIcon size={15} />
+              </button>
+            )}
           <button
             onClick={() => setSwitcherOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
@@ -980,7 +1023,7 @@ export function Chat({
               ⌘K
             </kbd>
           </button>
-          {presentUsers.length > 0 && (
+          {!showFilesSurface && presentUsers.length > 0 && (
             <div
               className="hidden items-center gap-2 md:flex"
               title="Viewing this channel right now"
@@ -1034,37 +1077,46 @@ export function Chat({
           </div>
         )}
 
-        <Timeline
-          messages={timeline.main}
-          loaded={timeline.loaded}
-          hasMoreBefore={timeline.hasMoreBefore}
-          sessions={state.sessions}
-          spectators={spectators}
-          meId={me.id}
-          meHandle={me.handle}
-          editRequestId={editRequestId}
-          highlightId={highlightId}
-          onEditRequestHandled={() => setEditRequestId(null)}
-          onLoadEarlier={loadEarlier}
-          onOpenThread={openThread}
-          onOpenSession={openSession}
-          onRunDemoAgent={active ? startDemoSession : undefined}
-          demoAgentBusy={demoStarting}
-          onInsertAgentCommand={() => putTextInComposer('@agent ')}
-          onSayHello={() => putTextInComposer('Hello!')}
-          onConnectProvider={openProviderConnect}
-          onRetry={retry}
-          onEdit={editMessage}
-          onDelete={removeMessage}
-          onReact={reactToMessage}
-          unreadDividerAfterId={unreadDividerAfterId}
-        />
+        {showFilesSurface ? (
+          <FilesHub
+            key={`main-files:${active?.id ?? 'workspace'}`}
+            workspaceId={workspace.id}
+            channelId={active?.id ?? null}
+            defaultScope={active ? 'channel' : 'workspace'}
+          />
+        ) : (
+          <Timeline
+            messages={timeline.main}
+            loaded={timeline.loaded}
+            hasMoreBefore={timeline.hasMoreBefore}
+            sessions={state.sessions}
+            spectators={spectators}
+            meId={me.id}
+            meHandle={me.handle}
+            editRequestId={editRequestId}
+            highlightId={highlightId}
+            onEditRequestHandled={() => setEditRequestId(null)}
+            onLoadEarlier={loadEarlier}
+            onOpenThread={openThread}
+            onOpenSession={openSession}
+            onRunDemoAgent={active ? startDemoSession : undefined}
+            demoAgentBusy={demoStarting}
+            onInsertAgentCommand={() => putTextInComposer('@agent ')}
+            onSayHello={() => putTextInComposer('Hello!')}
+            onConnectProvider={openProviderConnect}
+            onRetry={retry}
+            onEdit={editMessage}
+            onDelete={removeMessage}
+            onReact={reactToMessage}
+            unreadDividerAfterId={unreadDividerAfterId}
+          />
+        )}
 
         {/* Composer follows the channel <main>: shown in both channel and split
             views (this block is already inside `view !== 'focus'`). Gating it on
             `!openSessionId` used to blank the composer in split view, leaving the
             channel with no way to type. */}
-        {active && (
+        {active && !showFilesSurface && (
           <>
             <TypingLine typing={typing} />
             <Composer

@@ -61,6 +61,46 @@ describe('Sidebar', () => {
     expect(screen.queryByText('AY')).toBeNull();
   });
 
+  it('shows Files as a workspace destination', () => {
+    const onOpenFiles = vi.fn();
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      { activeSurface: 'files', activeChannelId: null, onOpenFiles },
+    );
+
+    const files = screen.getByRole('button', { name: 'Files' });
+    expect(files.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(files);
+    expect(onOpenFiles).toHaveBeenCalledOnce();
+  });
+
+  it('groups sidebar navigation into workspace, conversations, and agents', () => {
+    renderSidebar([
+      {
+        id: 'ch-general',
+        workspaceId: 'ws-1',
+        name: 'general',
+        kind: 'public',
+        muted: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    expect(screen.getByText('Workspace')).toBeTruthy();
+    expect(screen.getByText('Conversations')).toBeTruthy();
+    expect(screen.getByText('Agents')).toBeTruthy();
+    expect(screen.queryByText('Sessions')).toBeNull();
+  });
+
   it('shows unavailable GitHub connection state without breaking provider settings', () => {
     renderSidebar(
       [

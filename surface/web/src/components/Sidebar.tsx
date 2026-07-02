@@ -34,7 +34,7 @@ import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
 import { useTheme } from '../theme';
 import { Avatar } from './Avatar';
-import { BellIcon, BellOffIcon, GearIcon, LockIcon } from './icons';
+import { BellIcon, BellOffIcon, FileIcon, GearIcon, LockIcon } from './icons';
 import { useDialog } from '../useDialog';
 
 const BELL_TITLES: Record<NotifyState, string> = {
@@ -46,6 +46,23 @@ const BELL_TITLES: Record<NotifyState, string> = {
 
 const SOURCE_URL = 'https://github.com/gbasin/atrium';
 const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`;
+const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
+const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised/25 py-1';
+const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
+const SIDEBAR_ITEM_BASE_CLASS = 'group mx-1 flex min-h-7 items-center rounded-md';
+const SIDEBAR_ROW_BUTTON_CLASS = 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm';
+
+function sidebarItemClass(active: boolean, level: UnreadLevel | false, muted = false): string {
+  return `${SIDEBAR_ITEM_BASE_CLASS} ${
+    active
+      ? 'bg-accent/20 font-medium text-fg'
+      : level
+        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
+        : muted
+          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
+          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
+  }`;
+}
 
 export function Sidebar({
   workspaceName,
@@ -59,6 +76,8 @@ export function Sidebar({
   onCreateChannel,
   onStartDm,
   onOpenSession,
+  activeSurface = 'chat',
+  onOpenFiles,
   sessionEventSeq,
   githubConnection,
   connectionsAvailable = true,
@@ -80,6 +99,8 @@ export function Sidebar({
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
+  activeSurface?: 'chat' | 'files';
+  onOpenFiles?: () => void;
   sessionEventSeq: number;
   githubConnection?: ConnectionStatus;
   connectionsAvailable?: boolean;
@@ -215,202 +236,201 @@ export function Sidebar({
         </span>
       </header>
 
-      <div className="flex-1 overflow-y-auto py-3">
-        <div className="flex items-center justify-between px-4 pb-1">
-          <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-            Channels
-          </h2>
-          <button
-            onClick={() => {
-              setCreating((v) => !v);
-              setError(null);
-            }}
-            title="Create channel"
-            aria-label="Create channel"
-            className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-          >
-            +
-          </button>
-        </div>
+      <div className="flex-1 overflow-y-auto px-2 py-3">
+        <section>
+          <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Workspace</h2>
+          <div className={SIDEBAR_PANEL_CLASS}>
+            <button
+              type="button"
+              aria-current={activeSurface === 'files' ? 'page' : undefined}
+              onClick={onOpenFiles}
+              className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] ${
+                activeSurface === 'files'
+                  ? 'bg-accent/20 font-medium text-fg'
+                  : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
+              }`}
+            >
+              <FileIcon size={15} className="shrink-0 text-fg-muted" />
+              <span className="truncate">Files</span>
+            </button>
+          </div>
+        </section>
 
-        {creating && (
-          <form onSubmit={submit} className="px-3 pb-2">
-            <input
-              autoFocus
-              value={name}
-              aria-label="Channel name"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Escape') return;
-                e.stopPropagation(); // don't also close an open side panel
-                setCreating(false);
-              }}
-              placeholder="new-channel-name"
-              className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
-            />
-            <label className="mt-1 flex items-center gap-2 text-2xs text-fg-tertiary">
-              <input
-                type="checkbox"
-                checked={privateChannel}
-                onChange={(e) => setPrivateChannel(e.target.checked)}
-                className="accent-accent-hover"
-              />
-              Private
-            </label>
-            {error && <div role="alert" className="pt-1 text-2xs text-danger">{error}</div>}
-          </form>
-        )}
-
-        <ul>
-          {publicChannels.map((c) => {
-            const active = c.id === activeChannelId;
-            const level = c.muted || active ? false : unread[c.id] ?? false;
-            return (
-              <li key={c.id} className="group flex items-center">
-                <button
-                  onClick={() => onSelect(c.id)}
-                  className={`flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-4 text-left text-sm ${
-                    active
-                      ? 'bg-accent/20 font-medium text-fg'
-                      : level
-                        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
-                        : c.muted
-                          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
-                          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
-                  }`}
-                >
-                  <span className="text-fg-muted">
-                    {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
-                  </span>
-                  <span className="truncate">{c.name}</span>
-                  {unreadBadge(c.id, active)}
-                </button>
-                <button
-                  onClick={() => onSetMute(c.id, !c.muted)}
-                  title={c.muted ? 'Unmute channel' : 'Mute channel'}
-                  aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
-                  className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
-                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-                  }`}
-                >
-                  {c.muted ? <BellOffIcon /> : <BellIcon />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-
-        <div className="mt-4 flex items-center justify-between px-4 pb-1">
-          <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-            Direct messages
-          </h2>
-          <button
-            onClick={openDmPicker}
-            title="Start a DM"
-            aria-label="Start a DM"
-            className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-          >
-            +
-          </button>
-        </div>
-
-        {dmPicking && (
-          <div className="px-3 pb-2">
-            <input
-              autoFocus
-              value={dmQuery}
-              onChange={(e) => setDmQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Escape') return;
-                e.stopPropagation();
-                setDmPicking(false);
-              }}
-              placeholder="who?"
-              aria-label="Find a person to message"
-              className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
-            />
-            <ul className="mt-1 max-h-40 overflow-y-auto">
-              {people === null && <li className="px-2 py-1 text-2xs text-fg-muted">loading…</li>}
-              {dmCandidates.map((u) => (
-                <li key={u.id}>
-                  <button
-                    onClick={() => {
-                      setSelectedDmIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(u.id)) next.delete(u.id);
-                        else next.add(u.id);
-                        return next;
-                      });
-                    }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
-                  >
-                    <Avatar name={u.displayName} seed={u.id} size={16} />
-                    <span className="truncate">{u.displayName}</span>
-                    <span className="truncate text-fg-muted">@{u.handle}</span>
-                    {u.id === me.id && <span className="text-fg-muted">(you)</span>}
-                    {selectedDmIds.has(u.id) && <span className="ml-auto text-accent-text-strong">✓</span>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {selectedDmIds.size > 0 && (
+        <section className="mt-3">
+          <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Conversations</h2>
+          <div className={SIDEBAR_PANEL_CLASS}>
+            <div className={SIDEBAR_SUBHEAD_CLASS}>
+              <span>Channels</span>
               <button
                 onClick={() => {
-                  setDmPicking(false);
-                  onStartDm([...selectedDmIds]);
+                  setCreating((v) => !v);
+                  setError(null);
                 }}
-                className="mt-2 w-full rounded-md bg-accent-hover px-2 py-1 text-xs font-semibold text-on-accent"
+                title="Create channel"
+                aria-label="Create channel"
+                className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
               >
-                Start {selectedDmIds.size > 1 ? 'group DM' : 'DM'}
+                +
               </button>
+            </div>
+
+            {creating && (
+              <form onSubmit={submit} className="px-2 pb-2">
+                <input
+                  autoFocus
+                  value={name}
+                  aria-label="Channel name"
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Escape') return;
+                    e.stopPropagation(); // don't also close an open side panel
+                    setCreating(false);
+                  }}
+                  placeholder="new-channel-name"
+                  className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
+                />
+                <label className="mt-1 flex items-center gap-2 text-2xs text-fg-tertiary">
+                  <input
+                    type="checkbox"
+                    checked={privateChannel}
+                    onChange={(e) => setPrivateChannel(e.target.checked)}
+                    className="accent-accent-hover"
+                  />
+                  Private
+                </label>
+                {error && <div role="alert" className="pt-1 text-2xs text-danger">{error}</div>}
+              </form>
             )}
+
+            <ul className="max-h-80 overflow-y-auto pb-1">
+              {publicChannels.map((c) => {
+                const active = c.id === activeChannelId;
+                const level = c.muted || active ? false : unread[c.id] ?? false;
+                return (
+                  <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
+                    <button onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
+                      <span className="grid w-4 shrink-0 place-items-center text-fg-muted">
+                        {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
+                      </span>
+                      <span className="truncate">{c.name}</span>
+                      {unreadBadge(c.id, active)}
+                    </button>
+                    <button
+                      onClick={() => onSetMute(c.id, !c.muted)}
+                      title={c.muted ? 'Unmute channel' : 'Mute channel'}
+                      aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
+                      className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
+                        c.muted
+                          ? 'text-fg-muted'
+                          : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                      }`}
+                    >
+                      {c.muted ? <BellOffIcon /> : <BellIcon />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className={`${SIDEBAR_SUBHEAD_CLASS} mt-2 border-t border-edge pt-2`}>
+              <span>Direct messages</span>
+              <button
+                onClick={openDmPicker}
+                title="Start a DM"
+                aria-label="Start a DM"
+                className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+              >
+                +
+              </button>
+            </div>
+
+            {dmPicking && (
+              <div className="px-2 pb-2">
+                <input
+                  autoFocus
+                  value={dmQuery}
+                  onChange={(e) => setDmQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Escape') return;
+                    e.stopPropagation();
+                    setDmPicking(false);
+                  }}
+                  placeholder="who?"
+                  aria-label="Find a person to message"
+                  className="w-full rounded-md border border-edge-strong bg-surface-raised px-2 py-1 text-xs text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
+                />
+                <ul className="mt-1 max-h-40 overflow-y-auto">
+                  {people === null && <li className="px-2 py-1 text-2xs text-fg-muted">loading…</li>}
+                  {dmCandidates.map((u) => (
+                    <li key={u.id}>
+                      <button
+                        onClick={() => {
+                          setSelectedDmIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(u.id)) next.delete(u.id);
+                            else next.add(u.id);
+                            return next;
+                          });
+                        }}
+                        className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
+                      >
+                        <Avatar name={u.displayName} seed={u.id} size={16} />
+                        <span className="truncate">{u.displayName}</span>
+                        <span className="truncate text-fg-muted">@{u.handle}</span>
+                        {u.id === me.id && <span className="text-fg-muted">(you)</span>}
+                        {selectedDmIds.has(u.id) && <span className="ml-auto text-accent-text-strong">✓</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {selectedDmIds.size > 0 && (
+                  <button
+                    onClick={() => {
+                      setDmPicking(false);
+                      onStartDm([...selectedDmIds]);
+                    }}
+                    className="mt-2 w-full rounded-md bg-accent-hover px-2 py-1 text-xs font-semibold text-on-accent"
+                  >
+                    Start {selectedDmIds.size > 1 ? 'group DM' : 'DM'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <ul>
+              {dms.map((c) => {
+                const active = c.id === activeChannelId;
+                const level = c.muted || active ? false : unread[c.id] ?? false;
+                const label = channelLabel(c, me.id);
+                const partner = dmPartner(c, me.id);
+                const avatarName = channelAvatarName(c, me.id);
+                return (
+                  <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
+                    <button onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
+                      <Avatar name={avatarName} seed={partner?.id ?? c.id} size={16} />
+                      <span className="truncate">{label}</span>
+                      {unreadBadge(c.id, active)}
+                    </button>
+                    <button
+                      onClick={() => onSetMute(c.id, !c.muted)}
+                      title={c.muted ? 'Unmute DM' : 'Mute DM'}
+                      aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
+                      className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
+                        c.muted
+                          ? 'text-fg-muted'
+                          : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                      }`}
+                    >
+                      {c.muted ? <BellOffIcon /> : <BellIcon />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-        )}
+        </section>
 
-        <ul>
-        {dms.map((c) => {
-            const active = c.id === activeChannelId;
-            const level = c.muted || active ? false : unread[c.id] ?? false;
-            const label = channelLabel(c, me.id);
-            const partner = dmPartner(c, me.id);
-            const avatarName = channelAvatarName(c, me.id);
-            return (
-              <li key={c.id} className="group flex items-center">
-                <button
-                  onClick={() => onSelect(c.id)}
-                  className={`flex min-w-0 flex-1 items-center gap-2 py-1 pl-4 text-left text-sm ${
-                    active
-                      ? 'bg-accent/20 font-medium text-fg'
-                      : level
-                        ? 'font-semibold text-fg hover:bg-surface-overlay/70'
-                        : c.muted
-                          ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
-                          : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
-                  }`}
-                >
-                  <Avatar name={avatarName} seed={partner?.id ?? c.id} size={16} />
-                  <span className="truncate">{label}</span>
-                  {unreadBadge(c.id, active)}
-                </button>
-                <button
-                  onClick={() => onSetMute(c.id, !c.muted)}
-                  title={c.muted ? 'Unmute DM' : 'Mute DM'}
-                  aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
-                  className={`shrink-0 px-3 py-1 text-xs hover:bg-surface-overlay hover:text-fg-body ${
-                    c.muted ? 'text-fg-muted' : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-                  }`}
-                >
-                  {c.muted ? <BellOffIcon /> : <BellIcon />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-
-        <SessionSidebarSection
-          refreshKey={sessionEventSeq}
-          onOpenSession={onOpenSession}
-        />
+        <SessionSidebarSection refreshKey={sessionEventSeq} onOpenSession={onOpenSession} />
       </div>
 
       <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">
@@ -773,42 +793,42 @@ function SessionSidebarSection({
 
   return (
     <>
-      <div className="mt-4 flex items-center justify-between px-4 pb-1">
-        <h2 className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-          Sessions
-        </h2>
-        <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold tabular-nums text-fg-tertiary">
-          {running.length}
-        </span>
-      </div>
-      <ul>
-        {preview.map((session) => (
-          <li key={session.id}>
-            <button
-              onClick={() => open(session.id)}
-              className="flex w-full min-w-0 flex-col gap-1 px-4 py-1.5 text-left hover:bg-surface-overlay/70"
-            >
-              <span className="flex min-w-0 items-center gap-1.5">
-                <StatusChip status={session.status} />
-                <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-body">
-                  {session.title}
-                </span>
-              </span>
-              <span className="truncate pl-1 text-2xs text-fg-faint">
-                #{session.channelName}
-              </span>
-            </button>
-          </li>
-        ))}
-        <li>
-          <button
-            onClick={() => setModalOpen(true)}
-            className="w-full px-4 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
-          >
-            View all
-          </button>
-        </li>
-      </ul>
+      <section className="mt-3">
+        <div className="flex items-center justify-between">
+          <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Agents</h2>
+          <span className="mb-1 rounded bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold tabular-nums text-fg-tertiary">
+            {running.length}
+          </span>
+        </div>
+        <div className={SIDEBAR_PANEL_CLASS}>
+          <ul>
+            {preview.map((session) => (
+              <li key={session.id} className="mx-1">
+                <button
+                  onClick={() => open(session.id)}
+                  className="flex min-h-9 w-full min-w-0 flex-col gap-1 rounded-md px-2 py-1.5 text-left hover:bg-surface-overlay/70"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <StatusChip status={session.status} />
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-body">
+                      {session.title}
+                    </span>
+                  </span>
+                  <span className="truncate pl-1 text-2xs text-fg-faint">#{session.channelName}</span>
+                </button>
+              </li>
+            ))}
+            <li className="mx-1">
+              <button
+                onClick={() => setModalOpen(true)}
+                className="flex min-h-7 w-full items-center rounded-md px-2 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
+              >
+                View all agent sessions
+              </button>
+            </li>
+          </ul>
+        </div>
+      </section>
       {modalOpen && (
         <SessionBrowserModal
           sessions={sessions}
@@ -838,7 +858,7 @@ function SessionBrowserModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Browse sessions"
+      aria-label="Browse agent sessions"
     >
       <div
         ref={dialogRef}
@@ -846,7 +866,7 @@ function SessionBrowserModal({
         className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <h2 className="border-b border-edge px-3 py-2.5 text-sm font-semibold text-fg">
-          Sessions
+          Agent sessions
         </h2>
         <div className="max-h-[60vh] overflow-y-auto py-1">
           {sessions.map((session) => (
@@ -870,7 +890,7 @@ function SessionBrowserModal({
             </button>
           ))}
           {sessions.length === 0 && (
-            <div className="px-3 py-8 text-center text-sm text-fg-muted">No sessions yet</div>
+            <div className="px-3 py-8 text-center text-sm text-fg-muted">No agent sessions yet</div>
           )}
         </div>
       </div>
