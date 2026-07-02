@@ -40,9 +40,16 @@ pub struct EvictionThresholds {
 #[derive(Debug, Clone, Default)]
 pub struct SessionEvictionState {
     evicted_since: Option<Instant>,
+    evicted_reason: Option<EvictionReason>,
     evicted_manifest_mtime_nanos: Option<u128>,
     evicted_heartbeat_mtime_nanos: Option<u128>,
     last_probe: Option<Instant>,
+    /// True after the server last answered `found:false` for this session.
+    /// Gates the missing-heartbeat eviction path: a claimed session that is
+    /// alive in the server's DB (`found:true`) but runs a pre-heartbeat
+    /// sandbox image must never be reaped by the 24h manifest fallback —
+    /// observed live: 23h-old claimed pods were one hour from wrongful GC.
+    server_disowned: bool,
 }
 
 impl SessionEvictionState {
@@ -84,11 +91,22 @@ impl SessionEvictionState {
         false
     }
 
+    /// Server answered `found:true`. Un-evicts ONLY a missing-heartbeat
+    /// eviction (the claimed-live protection healing itself); a stale-heartbeat
+    /// eviction stays — claimed-dead sessions return `found:true` forever, and
+    /// their frozen heartbeat is the definitive death signal.
     pub fn record_found(&mut self) -> bool {
+        self.server_disowned = false;
+        if self.is_evicted() && self.evicted_reason == Some(EvictionReason::HeartbeatMissing) {
+            self.reset();
+            return true;
+        }
         false
     }
 
-    pub fn record_not_found(&mut self) {}
+    pub fn record_not_found(&mut self) {
+        self.server_disowned = true;
+    }
 
     pub fn maybe_evict(
         &mut self,
@@ -104,15 +122,17 @@ impl SessionEvictionState {
             }
             (Some(_), _) => return None,
             (None, _)
-                if signals
-                    .manifest_age
-                    .is_some_and(|age| age > thresholds.no_heartbeat_grace) =>
+                if self.server_disowned
+                    && signals
+                        .manifest_age
+                        .is_some_and(|age| age > thresholds.no_heartbeat_grace) =>
             {
                 EvictionReason::HeartbeatMissing
             }
             (None, _) => return None,
         };
         self.evicted_since = Some(signals.now);
+        self.evicted_reason = Some(reason);
         self.evicted_manifest_mtime_nanos = signals.manifest_mtime_nanos;
         self.evicted_heartbeat_mtime_nanos = signals.heartbeat_mtime_nanos;
         self.last_probe = Some(signals.now);
@@ -146,6 +166,7 @@ impl SessionEvictionState {
 
     fn reset(&mut self) {
         self.evicted_since = None;
+        self.evicted_reason = None;
         self.evicted_manifest_mtime_nanos = None;
         self.evicted_heartbeat_mtime_nanos = None;
         self.last_probe = None;
@@ -248,7 +269,16 @@ mod tests {
     fn missing_heartbeat_uses_manifest_age_fallback() {
         let now = Instant::now();
         let mut state = SessionEvictionState::default();
-
+        // The fallback additionally requires the server to have DISOWNED the
+        // session: without a found:false answer, no missing-heartbeat eviction.
+        assert_eq!(
+            state.maybe_evict(
+                signals(now, None, None, Some(86_401), Some(10)),
+                thresholds()
+            ),
+            None
+        );
+        state.record_not_found();
         assert_eq!(
             state.maybe_evict(
                 signals(now, None, None, Some(86_400), Some(10)),
@@ -264,6 +294,52 @@ mod tests {
             Some(EvictionReason::HeartbeatMissing)
         );
         assert!(state.is_evicted());
+    }
+
+    #[test]
+    fn claimed_live_session_on_pre_heartbeat_image_never_evicts() {
+        // found:true + no heartbeat + ancient manifest = a live claimed session
+        // running the old sandbox image. Must never take the fallback path.
+        let now = Instant::now();
+        let mut state = SessionEvictionState::default();
+        state.record_found();
+        assert_eq!(
+            state.maybe_evict(
+                signals(now, None, None, Some(1_000_000), Some(10)),
+                thresholds()
+            ),
+            None
+        );
+        assert!(!state.is_evicted());
+    }
+
+    #[test]
+    fn found_true_unevicts_missing_heartbeat_but_not_stale_heartbeat() {
+        let now = Instant::now();
+        // Missing-heartbeat eviction heals on found:true…
+        let mut missing = SessionEvictionState::default();
+        missing.record_not_found();
+        assert_eq!(
+            missing.maybe_evict(
+                signals(now, None, None, Some(86_401), Some(10)),
+                thresholds()
+            ),
+            Some(EvictionReason::HeartbeatMissing)
+        );
+        assert!(missing.record_found());
+        assert!(!missing.is_evicted());
+
+        // …a stale-heartbeat eviction does not (claimed-dead: found:true forever).
+        let mut stale = SessionEvictionState::default();
+        assert_eq!(
+            stale.maybe_evict(
+                signals(now, Some(901), Some(1), Some(10_000), Some(10)),
+                thresholds()
+            ),
+            Some(EvictionReason::HeartbeatStale)
+        );
+        assert!(!stale.record_found());
+        assert!(stale.is_evicted());
     }
 
     #[test]
