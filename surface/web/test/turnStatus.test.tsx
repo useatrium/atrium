@@ -95,13 +95,22 @@ describe('TurnStatusLine', () => {
     expect(status.textContent).toContain('gpt-5.5');
   });
 
-  it('token counter: estimated shows ≈, real shows the bare count', () => {
+  it('token counter: k-format, estimated shows ≈, real shows the bare count', () => {
     const { rerender } = render(
       <TurnStatusLine {...base} tokens={{ count: 2413, estimated: true }} />,
     );
-    expect(screen.getByTestId('token-count').textContent).toBe('≈2,413 tok');
+    expect(screen.getByTestId('token-count').textContent).toBe('≈2.4k tok');
     rerender(<TurnStatusLine {...base} tokens={{ count: 2413, estimated: false }} />);
-    expect(screen.getByTestId('token-count').textContent).toBe('2,413 tok');
+    expect(screen.getByTestId('token-count').textContent).toBe('2.4k tok');
+    rerender(<TurnStatusLine {...base} tokens={{ count: 847, estimated: true }} />);
+    expect(screen.getByTestId('token-count').textContent).toBe('≈847 tok');
+    rerender(<TurnStatusLine {...base} tokens={{ count: 1_260_000, estimated: false }} />);
+    expect(screen.getByTestId('token-count').textContent).toBe('1.3M tok');
+  });
+
+  it('model chip carries the configured reasoning effort', () => {
+    render(<TurnStatusLine {...base} models={['gpt-5.5']} effort="xhigh" />);
+    expect(screen.getByTestId('turn-status').textContent).toContain('gpt-5.5 xhigh');
   });
 
   it('token counter: hidden when the stream has reported nothing', () => {

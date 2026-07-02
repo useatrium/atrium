@@ -14,6 +14,15 @@ export function Spinner({ className = '' }: { className?: string }) {
 
 export type TurnPhase = 'thinking' | 'tool' | 'waiting' | 'done';
 
+/** Compact token display: raw under 1k, then one decimal ("2.4k", "1.2M") —
+ * calm ticks (every ~50-100 tokens) without pretending to count precision the
+ * chars÷4 estimate doesn't have. */
+export function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return String(count);
+}
+
 /** How alive the turn actually is, judged from the stream (not assumed):
  *  - live: frames are arriving (or silence is expected, e.g. a tool is running)
  *  - quiet: thinking-phase silence past ~30s — suspicious but not alarming
@@ -75,6 +84,7 @@ export function TurnStatusLine({
   tokens,
   costUsd,
   models,
+  effort,
   cancelLabel,
   onCancel,
 }: {
@@ -92,6 +102,8 @@ export function TurnStatusLine({
   tokens?: { count: number; estimated: boolean } | null;
   costUsd: number;
   models: string[];
+  /** Configured reasoning effort ("high", "xhigh"…) — suffixes the model chip. */
+  effort?: string | null;
   cancelLabel?: string;
   onCancel?: () => void;
 }) {
@@ -158,13 +170,18 @@ export function TurnStatusLine({
           {tokens && (
             <span data-testid="token-count">
               {tokens.estimated ? '≈' : ''}
-              {tokens.count.toLocaleString('en-US')} tok
+              {formatTokens(tokens.count)} tok
             </span>
           )}
           {tokens && (costUsd > 0 || models.length > 0) && <span>·</span>}
           {costUsd > 0 && <span>{formatCost(costUsd)}</span>}
           {costUsd > 0 && models.length > 0 && <span>·</span>}
-          {models.length > 0 && <span>{models.join(', ')}</span>}
+          {models.length > 0 && (
+            <span>
+              {models.join(', ')}
+              {effort ? ` ${effort}` : ''}
+            </span>
+          )}
         </span>
       )}
     </div>

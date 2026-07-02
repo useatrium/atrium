@@ -28,6 +28,7 @@ import {
 import {
   ApiError,
   api,
+  type AgentProfile,
   type AgentProfileProposal,
   type ConnectionStatus,
   type ProviderCredentialProvider,
@@ -110,6 +111,7 @@ export function SessionPane({
   githubConnection,
   onConnectProvider,
   onConnectGitHub,
+  agentProfiles = [],
   layout = 'split',
   onToggleFocus,
 }: {
@@ -137,6 +139,10 @@ export function SessionPane({
   githubConnection?: ConnectionStatus;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onConnectGitHub?: () => void;
+  /** The viewer's agent profiles — matched by version id to surface the
+   * session's configured reasoning effort (codex `model_reasoning_effort`).
+   * Watchers without the spawner's profile simply see no effort. */
+  agentProfiles?: AgentProfile[];
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
@@ -339,6 +345,17 @@ export function SessionPane({
       : stream.deltaChars > 0
         ? { count: Math.round(stream.deltaChars / 4), estimated: true }
         : null;
+  // Configured reasoning effort, from the spawning profile's manifest. Only
+  // codex profiles carry one (`model_reasoning_effort`); the claude adapter
+  // syncs no effort/thinking key today. Rendered as a suffix on the model chip.
+  const modelEffort = useMemo(() => {
+    const versionId = session.agentProfileVersionId;
+    if (!versionId) return null;
+    const profile = agentProfiles.find((p) => p.currentVersionId === versionId);
+    const settings = profile?.currentVersion?.manifest.settings;
+    const effort = settings?.['model_reasoning_effort'] ?? settings?.['effort'];
+    return typeof effort === 'string' ? effort : null;
+  }, [agentProfiles, session.agentProfileVersionId]);
   const turnStatusLabel =
     turnPhase === 'tool' && openTool
       ? `Working: ${toolDisplay(openTool).title}`
@@ -1106,6 +1123,7 @@ export function SessionPane({
           tokens={tokensUsed}
           costUsd={costUsd}
           models={stream.models}
+          effort={modelEffort}
           cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
           onCancel={isDriver ? onCancel : undefined}
         />
