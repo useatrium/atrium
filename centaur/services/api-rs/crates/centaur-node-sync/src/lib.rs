@@ -21,9 +21,12 @@
 
 pub mod adopt;
 pub mod backpressure;
+pub mod batch;
 pub mod cas;
 pub mod depcache;
 pub mod echo;
+pub mod eviction;
+pub mod feeds;
 pub mod http_client;
 pub mod manifest;
 pub mod materializer;
@@ -35,6 +38,7 @@ pub mod runtime;
 pub mod safety;
 pub mod secret;
 pub mod session_manifest;
+pub mod sse;
 pub mod state;
 pub mod tornread;
 pub mod warmcache;

@@ -21,6 +21,16 @@ pub fn materialize_once<C: AtriumClient + ?Sized>(
     since: &str,
 ) -> Result<String, String> {
     let (session_ids, next_cursor) = client.atrium_changes(since)?;
+    materialize_changed_sessions(client, atrium_root, since, session_ids, next_cursor)
+}
+
+pub fn materialize_changed_sessions<C: AtriumClient + ?Sized>(
+    client: &C,
+    atrium_root: &Path,
+    since: &str,
+    session_ids: Vec<String>,
+    next_cursor: String,
+) -> Result<String, String> {
     if session_ids.is_empty() {
         return Ok(since.to_string());
     }

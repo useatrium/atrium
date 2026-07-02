@@ -5,7 +5,11 @@
 
 use crate::adopt::RemoteChange;
 use crate::cas::CasHydrateEntry;
-use crate::runtime::{AtriumClient, BundleRef, status_of};
+use crate::feeds::{
+    ArtifactFeed, AtriumFeed, local_artifact_paths, parse_artifact_changes, parse_atrium_changes,
+    parse_profile_bundles,
+};
+use crate::runtime::{AtriumClient, BundleRef};
 use serde::Deserialize;
 
 pub struct HttpAtriumClient {
@@ -36,6 +40,83 @@ impl HttpAtriumClient {
             "{}/api/internal/sessions/{}{}",
             self.base_url, self.session_id, suffix
         )
+    }
+
+    pub fn poll_changes_feed(&mut self, cursor: &str) -> Result<ArtifactFeed, HttpFeedError> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/artifacts/changes?since={}", enc(cursor))))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| http_feed_error("poll", e))?;
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| HttpFeedError::Parse(e.to_string()))?;
+        Ok(parse_artifact_changes(&value, cursor, &self.session_id))
+    }
+
+    pub fn atrium_changes_feed(&self, since: &str) -> Result<AtriumFeed, HttpFeedError> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/atrium/changes?since={}", enc(since))))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| http_feed_error("atrium changes", e))?;
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| HttpFeedError::Parse(e.to_string()))?;
+        Ok(parse_atrium_changes(&value, since))
+    }
+
+    pub fn get_profile_bundles_feed(&self, harness: &str) -> Result<Vec<BundleRef>, HttpFeedError> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/profile-bundles?harness={}", enc(harness))))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| http_feed_error("get profile bundles", e))?;
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| HttpFeedError::Parse(e.to_string()))?;
+        parse_profile_bundles(&value, harness).map_err(HttpFeedError::Parse)
+    }
+}
+
+#[derive(Debug)]
+pub enum HttpFeedError {
+    Status { status: u16, message: String },
+    Transport(String),
+    Parse(String),
+}
+
+impl HttpFeedError {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Status { status: 404, .. })
+    }
+}
+
+impl std::fmt::Display for HttpFeedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Status { message, .. } | Self::Transport(message) | Self::Parse(message) => {
+                f.write_str(message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for HttpFeedError {}
+
+fn http_feed_error(context: &str, error: ureq::Error) -> HttpFeedError {
+    match error {
+        ureq::Error::Status(status, response) => {
+            let body = response.into_string().unwrap_or_default();
+            HttpFeedError::Status {
+                status,
+                message: format!("{context}: status code {status}: {body}"),
+            }
+        }
+        ureq::Error::Transport(error) => HttpFeedError::Transport(format!("{context}: {error}")),
     }
 }
 
@@ -104,19 +185,6 @@ fn parse_hydration_scope(
         })
         .flatten()
         .collect())
-}
-
-fn local_artifact_paths(path: &str, active_prefix: Option<&str>, session_id: &str) -> Vec<String> {
-    if let Some(prefix) = active_prefix.map(|value| value.trim_matches('/'))
-        && let Some(rest) = path.strip_prefix(&format!("{prefix}/"))
-    {
-        return vec![rest.to_string(), path.to_string()];
-    }
-    let scratch_prefix = format!("scratch/{session_id}/");
-    if let Some(rest) = path.strip_prefix(&scratch_prefix) {
-        return vec![format!("scratch/{rest}")];
-    }
-    vec![path.to_string()]
 }
 
 impl AtriumClient for HttpAtriumClient {
@@ -386,20 +454,8 @@ impl AtriumClient for HttpAtriumClient {
     }
 
     fn get_profile_bundles(&self, harness: &str) -> Result<Vec<BundleRef>, String> {
-        let resp = self
-            .agent
-            .get(&self.url(&format!("/profile-bundles?harness={}", enc(harness))))
-            .set("x-api-key", &self.api_key)
-            .call()
-            .map_err(|e| format!("get profile bundles {harness}: {e}"))?;
-        let value: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
-        serde_json::from_value::<Vec<BundleRef>>(
-            value
-                .get("bundles")
-                .cloned()
-                .unwrap_or_else(|| serde_json::Value::Array(vec![])),
-        )
-        .map_err(|e| format!("parse profile bundles {harness}: {e}"))
+        self.get_profile_bundles_feed(harness)
+            .map_err(|e| e.to_string())
     }
 
     fn get_profile_bundle_blob(&self, sha256: &str) -> Result<Vec<u8>, String> {
@@ -418,81 +474,13 @@ impl AtriumClient for HttpAtriumClient {
         &mut self,
         cursor: &str,
     ) -> Result<(Vec<(String, RemoteChange)>, String), String> {
-        // The change-feed lives at the public session route (the node is allowed to
-        // read it via the same api-key gate exposed on the internal mirror).
-        let resp = self
-            .agent
-            .get(&self.url(&format!("/artifacts/changes?since={}", enc(cursor))))
-            .set("x-api-key", &self.api_key)
-            .call()
-            .map_err(|e| format!("poll {cursor}: {e}"))?;
-        let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
-        let next = v
-            .get("next_cursor")
-            .and_then(|c| c.as_str())
-            .unwrap_or(cursor)
-            .to_string();
-        let active_prefix = v.get("activePrefix").and_then(|p| p.as_str());
-        let mut out = Vec::new();
-        if let Some(rows) = v.get("rows").and_then(|r| r.as_array()) {
-            for row in rows {
-                let canonical_path = row
-                    .get("path")
-                    .and_then(|p| p.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                let seq = row.get("seq").and_then(|s| s.as_u64()).unwrap_or(0);
-                let sha = row
-                    .get("sha")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.to_string());
-                let status = status_of(
-                    row.get("status")
-                        .and_then(|s| s.as_str())
-                        .unwrap_or("normal"),
-                );
-                let group_id = row
-                    .get("group_id")
-                    .and_then(|g| g.as_str())
-                    .map(|g| g.to_string());
-                for path in local_artifact_paths(&canonical_path, active_prefix, &self.session_id) {
-                    out.push((
-                        path,
-                        RemoteChange {
-                            seq,
-                            sha: sha.clone(),
-                            status,
-                            group_id: group_id.clone(),
-                        },
-                    ));
-                }
-            }
-        }
-        Ok((out, next))
+        let feed = self.poll_changes_feed(cursor).map_err(|e| e.to_string())?;
+        Ok((feed.changes, feed.next_cursor))
     }
 
     fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String> {
-        let resp = self
-            .agent
-            .get(&self.url(&format!("/atrium/changes?since={}", enc(since))))
-            .set("x-api-key", &self.api_key)
-            .call()
-            .map_err(|e| format!("atrium changes {since}: {e}"))?;
-        let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
-        let next = v
-            .get("next_cursor")
-            .and_then(|c| c.as_str())
-            .unwrap_or(since)
-            .to_string();
-        let mut session_ids = Vec::new();
-        if let Some(rows) = v.get("rows").and_then(|r| r.as_array()) {
-            for row in rows {
-                if let Some(session_id) = row.get("sessionId").and_then(|s| s.as_str()) {
-                    session_ids.push(session_id.to_string());
-                }
-            }
-        }
-        Ok((session_ids, next))
+        let feed = self.atrium_changes_feed(since).map_err(|e| e.to_string())?;
+        Ok((feed.session_ids, feed.next_cursor))
     }
 
     fn atrium_doc(&self, target_id: &str, doc: &str) -> Result<Vec<u8>, String> {
