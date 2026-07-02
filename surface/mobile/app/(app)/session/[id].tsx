@@ -53,6 +53,7 @@ import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/wo
 import { WorkStrips, type WorkStripItem } from '../../../src/components/work/WorkStrips';
 import { TurnsSheet } from '../../../src/components/work/TurnsSheet';
 import { TurnCard } from '../../../src/components/work/TurnCard';
+import { SteerRow } from '../../../src/components/work/SteerRow';
 import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
 import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip';
@@ -1049,11 +1050,7 @@ export default function SessionScreen() {
                 {item.type === 'text' ? (
                   <TextBlock item={item} />
                 ) : item.type === 'user_message' ? (
-                  <View
-                    style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
-                  >
-                    <Text style={{ color: colors.text, fontSize: font.sm }}>{item.text}</Text>
-                  </View>
+                  <SteerRow text={item.text} ts={item.ts} />
                 ) : item.type === 'question' ? (
                   <MobileQuestionTranscriptCard
                     item={item}
