@@ -3309,6 +3309,9 @@ describe('Phase 2 sessions', () => {
     expect(streamed.statusCode).toBe(200);
     expect(sseEventIds(streamed.body)).toEqual([54]);
     expect(streamed.body).toContain('"status":"completed"');
+    // Post-replay server-clock ping: EventSource-visible liveness + skew source.
+    expect(streamed.body).toContain('event: ping');
+    expect(streamed.body).toMatch(/event: ping\ndata: \{"atrium_ts":"[^"]+"\}/);
     await app.close();
   });
 

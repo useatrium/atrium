@@ -65,7 +65,7 @@ import {
 } from './types';
 import { useSessionStream } from './useSessionStream';
 import { sessionPaneSizing, useSessionPaneWidth } from './useSessionPaneWidth';
-import { Spinner, TurnStatusLine, type TurnPhase } from './TurnStatus';
+import { Spinner, TurnStatusLine, type TurnLiveness, type TurnPhase } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
 import { SessionMarkdown } from './Markdown';
@@ -82,6 +82,15 @@ import { SuggestionStrip } from './SessionSuggestions';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
+
+// Thinking-phase silence thresholds (tool runs are exempt — harnesses emit
+// nothing between a tool's start and its result, however long it takes; but
+// they stream token deltas continuously while thinking, so this silence is
+// meaningful). Quiet is informational; stuck offers the exit.
+const QUIET_AFTER_MS = 30_000;
+const STUCK_AFTER_QUIET_MS = 5 * 60_000;
+// Don't flash "Reconnecting…" during the moment an EventSource (re)opens.
+const RECONNECT_GRACE_MS = 3_000;
 
 export function SessionPane({
   session,
@@ -136,7 +145,7 @@ export function SessionPane({
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
   // WS) streams live instead of appearing only on the next pane mount.
-  const { stream, connected } = useSessionStream(
+  const { stream, connected, lastFrameAt, clockSkewMs } = useSessionStream(
     session.id,
     !isTerminalSessionStatus(session.status),
   );
@@ -226,26 +235,56 @@ export function SessionPane({
   );
 
   // ── Live activity cue ──────────────────────────────────────────────────────
-  // A turn is in flight whenever the session isn't terminal and hasn't stalled.
-  // Drives the "Thinking…" footer; together with the per-tool spinners it keeps
-  // the transcript feeling live even when the harness emits no reasoning summaries.
-  // Harness-agnostic — nothing here is Codex- or Claude-specific.
+  // The status line only claims what the stream proves (see TurnStatus.tsx).
+  // Clocks are anchored to server-stamped frame times — correct when opening a
+  // pane mid-turn, identical for every viewer — and "quiet" is phase-aware:
+  // every harness is legitimately silent while a tool runs (start → result,
+  // nothing between), but streams token deltas continuously while thinking, so
+  // only thinking-phase silence is meaningful. Harness-agnostic.
   const activeTurn = !displayTerminal && !stalled;
-  const lastItem = stream.items[stream.items.length - 1];
-  const runningToolTitle =
-    lastItem && lastItem.type === 'tool_call' && lastItem.result === undefined
-      ? toolDisplay(lastItem).title
-      : null;
-  const turnStartRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (activeTurn) {
-      if (turnStartRef.current === null) turnStartRef.current = Date.now();
-    } else {
-      turnStartRef.current = null;
+  const starting = displayStatus === 'spawning' || displayStatus === 'queued';
+  // The newest tool_call still awaiting its result. A text item after an open
+  // tool means the agent moved on (its result frame was lost) — not running.
+  const openTool = useMemo(() => {
+    let candidate: ToolCallItem | null = null;
+    for (const item of stream.items) {
+      if (item.type === 'tool_call' && item.result === undefined) candidate = item;
+      else if (item.type === 'text' && candidate !== null) candidate = null;
     }
-  }, [activeTurn]);
+    return candidate;
+  }, [stream.items]);
+  const parseTs = (ts: string | undefined): number | null => {
+    if (!ts) return null;
+    const ms = Date.parse(ts);
+    return Number.isNaN(ms) ? null : ms;
+  };
+  const lastFrameTsMs = parseTs(stream.lastFrameTs);
+  // Estimated server "now": ping skew when we have it, else project the last
+  // frame's stamp forward from its local receipt. Local clock as a last resort.
+  const serverNowMs =
+    clockSkewMs !== null
+      ? now - clockSkewMs
+      : lastFrameTsMs !== null && lastFrameAt !== null
+        ? lastFrameTsMs + (now - lastFrameAt)
+        : now;
+  const turnStartMs = parseTs(stream.turnStartTs) ?? parseTs(session.createdAt);
+  const turnEndMs = parseTs(stream.turnEndTs);
   const turnElapsedMs =
-    activeTurn && turnStartRef.current !== null ? Math.max(0, now - turnStartRef.current) : 0;
+    turnStartMs === null
+      ? 0
+      : activeTurn
+        ? Math.max(0, serverNowMs - turnStartMs)
+        : turnEndMs !== null
+          ? Math.max(0, turnEndMs - turnStartMs)
+          : 0;
+  // How long the stream has been silent, on the server's clock — so a reload
+  // mid-silence resumes the true count instead of restarting at zero. With no
+  // frames at all (e.g. the SSE never came up), silence counts from pane mount.
+  const mountedAtRef = useRef(Date.now());
+  const quietMs =
+    lastFrameTsMs !== null
+      ? Math.max(0, serverNowMs - lastFrameTsMs)
+      : Math.max(0, now - (lastFrameAt ?? mountedAtRef.current));
   // Drive the single pinned status line: thinking → tool (a command/tool is
   // mid-run) → waiting (pending question) while active, then done on completion.
   // Suppressed entirely when a provider-auth reconnect is pending — that banner
@@ -255,21 +294,54 @@ export function SessionPane({
       ? null
       : activeTurn && pendingQuestion
         ? 'waiting'
-        : activeTurn && runningToolTitle
+        : activeTurn && openTool
           ? 'tool'
           : activeTurn
             ? 'thinking'
             : displayStatus === 'completed'
               ? 'done'
               : null;
+  // Judge aliveness from evidence. Spawning/queued sessions can't have frames
+  // yet, and tool runs are expected silence — both are exempt from quiet/stuck.
+  const silenceMatters = turnPhase === 'thinking' && !starting;
+  const turnLiveness: TurnLiveness =
+    !activeTurn
+      ? 'live'
+      : !connected && quietMs >= RECONNECT_GRACE_MS
+        ? 'reconnecting'
+        : stream.transport === 'reattaching'
+          ? 'reattaching'
+          : silenceMatters && quietMs >= STUCK_AFTER_QUIET_MS
+            ? 'stuck'
+            : silenceMatters && quietMs >= QUIET_AFTER_MS
+              ? 'quiet'
+              : 'live';
+  // While frames flow, narrate with the model's own words: the tail line of the
+  // reasoning it is streaming right now. Fixed vocabulary otherwise.
+  const reasoningHeadline = useMemo(() => {
+    const last = stream.items[stream.items.length - 1];
+    if (!last || last.type !== 'reasoning') return null;
+    const source = last.summary?.trim() ? last.summary : last.text;
+    const lines = (source ?? '')
+      .split('\n')
+      .map((line) => line.replace(/\*\*/g, '').trim())
+      .filter(Boolean);
+    const tail = lines[lines.length - 1];
+    if (!tail) return null;
+    return tail.length > 80 ? `${tail.slice(0, 79)}…` : tail;
+  }, [stream.items]);
   const turnStatusLabel =
-    turnPhase === 'tool'
-      ? `Working: ${runningToolTitle}`
+    turnPhase === 'tool' && openTool
+      ? `Working: ${toolDisplay(openTool).title}`
       : turnPhase === 'waiting'
         ? 'Waiting for your reply'
         : turnPhase === 'done'
           ? 'Turn complete'
-          : 'Thinking';
+          : starting
+            ? 'Starting'
+            : turnLiveness === 'live' && reasoningHeadline
+              ? reasoningHeadline
+              : 'Thinking';
 
   // ── Optimistic steer ───────────────────────────────────────────────────────
   // The session steer op is not optimistic, so a sent steer would only appear
@@ -941,6 +1013,7 @@ export function SessionPane({
                         [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
                       }))
                     }
+                    clockSkewMs={clockSkewMs}
                   />
                 </div>
               ) : null}
@@ -1016,10 +1089,15 @@ export function SessionPane({
       {!isEnded && turnPhase && (
         <TurnStatusLine
           phase={turnPhase}
+          liveness={turnLiveness}
           label={turnStatusLabel}
           elapsedMs={turnElapsedMs}
+          quietMs={quietMs}
+          pulse={stream.frameSeq}
           costUsd={costUsd}
           models={stream.models}
+          cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+          onCancel={isDriver ? onCancel : undefined}
         />
       )}
 
@@ -1299,17 +1377,19 @@ function TranscriptTool({
   item,
   expanded,
   onToggle,
+  clockSkewMs,
 }: {
   item: ToolCallItem;
   expanded: boolean;
   onToggle: () => void;
+  clockSkewMs?: number | null;
 }) {
   const fileChange = fileChangeFromToolCall(item);
   if (fileChange) {
     const status = item.result === undefined ? 'running' : item.result.is_error ? 'error' : 'done';
     return <InlineFileChange change={fileChange} status={status} />;
   }
-  return <ToolCard item={item} expanded={expanded} onToggle={onToggle} />;
+  return <ToolCard item={item} expanded={expanded} onToggle={onToggle} clockSkewMs={clockSkewMs} />;
 }
 
 const ToolCard = memo(
@@ -1317,17 +1397,24 @@ const ToolCard = memo(
     item,
     expanded,
     onToggle,
+    clockSkewMs = null,
   }: {
     item: ToolCallItem;
     expanded: boolean;
     onToggle: () => void;
+    clockSkewMs?: number | null;
   }) {
     const running = item.result === undefined;
-    // Live "running" clock: first render of an in-flight tool ≈ its start; ticks
-    // once a second until the result lands, so a slow bash/shell visibly works.
+    // Live "running" clock, anchored to the tool's server-stamped start when we
+    // have one (correct for a pane opened mid-run) — first render otherwise.
     const startedRef = useRef<number>(Date.now());
+    const stampedStart = item.ts !== undefined ? Date.parse(item.ts) : NaN;
+    const startedAt =
+      !Number.isNaN(stampedStart) && clockSkewMs !== null
+        ? stampedStart + clockSkewMs
+        : startedRef.current;
     const now = useNow(running);
-    const elapsedMs = running ? Math.max(0, now - startedRef.current) : 0;
+    const elapsedMs = running ? Math.max(0, now - startedAt) : 0;
     const isError = item.result?.is_error === true;
     const command = typeof item.input['command'] === 'string' ? (item.input['command'] as string) : null;
     const rest = Object.fromEntries(Object.entries(item.input).filter(([k]) => k !== 'command'));

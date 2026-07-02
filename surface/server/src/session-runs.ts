@@ -744,9 +744,15 @@ export class SessionRuns {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
     const viewId = this.openSessionView(session.id, userId);
-    const keepAlive = setInterval(() => {
-      raw.write(': keep-alive\n\n');
-    }, 15_000);
+    // Named event (not a bare comment) so EventSource clients can observe it:
+    // it proves the connection is alive and carries a server clock for
+    // skew-free elapsed displays. Not a Centaur frame — no event_id, never
+    // folded into the session reducer. The first ping goes out after the
+    // mirror replay (below), so replay frames stay the stream's first bytes.
+    const writePing = () => {
+      raw.write(`event: ping\ndata: ${JSON.stringify({ atrium_ts: new Date().toISOString() })}\n\n`);
+    };
+    const keepAlive = setInterval(writePing, 15_000);
     keepAlive.unref?.();
     try {
       let cursor = afterEventId;
@@ -761,6 +767,9 @@ export class SessionRuns {
         cursor = Math.max(cursor, frame.event_id);
         writeSessionFrame(raw, frame, replayHandles.get(frame.event_id), created_at.toISOString());
       }
+      // Caught up: give the client its first server-clock ping now rather than
+      // waiting out the first keep-alive interval.
+      if (!signal.aborted) writePing();
       // Only tail live for a session with an active execution. A terminal
       // session's mirror already contains its terminal execution_state, which we
       // just replayed; the live tail would start past it (afterEventId: cursor)

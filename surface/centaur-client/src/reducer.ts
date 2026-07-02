@@ -153,6 +153,18 @@ export interface ArtifactPresentation {
 
 export interface SessionState {
   status: ExecutionStatus | "idle";
+  /** Server-stamped start of the current turn — `turn/started` when the harness
+   * emits it, else the execution_state frame that flipped us into running. */
+  turnStartTs?: string;
+  /** Server-stamped end of the last turn (`turn/completed` or a terminal
+   * execution_state). Cleared when a new turn starts. */
+  turnEndTs?: string;
+  /** Server stamp of the newest folded frame — the "agent last spoke" clock. */
+  lastFrameTs?: string;
+  /** Monotonic count of folded frames; the UI heartbeat pulses on change. */
+  frameSeq: number;
+  /** Sandbox stdout pipe health, from api-rs `session.stdout_pump_*` events. */
+  transport: "ok" | "reattaching";
   items: SessionItem[];
   /** Codex `fileChange` edits (claude/amp edits are derived from items instead). */
   fileChanges: FileChange[];
@@ -177,6 +189,8 @@ export interface SessionState {
 export function initialSessionState(): SessionState {
   return {
     status: "idle",
+    frameSeq: 0,
+    transport: "ok",
     items: [],
     fileChanges: [],
     artifacts: [],
@@ -217,17 +231,39 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
       ? { plan: state.plan ? { ...state.plan, sourceEventIds: [...state.plan.sourceEventIds] } : null }
       : {}),
     lastEventId: Math.max(state.lastEventId, frame.event_id),
+    frameSeq: state.frameSeq + 1,
+    ...(frame.ts ? { lastFrameTs: frame.ts } : {}),
   };
   const recordHandles = recordHandleHints(frame);
 
   if (frame.event === "execution_state") {
+    const wasActive = state.status !== "idle" && !isTerminalExecutionStatus(state.status);
     next.status = frame.data.status;
     if (frame.data.result_text) {
       next.resultText = frame.data.result_text;
     }
     if (isTerminalExecutionStatus(frame.data.status)) {
       next.pendingQuestion = null;
+      if (frame.ts && next.turnEndTs === undefined) next.turnEndTs = frame.ts;
       resolveOpenQuestions(next, frame.event_id, "cancelled");
+    } else if (!wasActive) {
+      // A fresh execution began (first turn, or a steer after completion).
+      // `turn/started` refines this anchor when the harness emits one.
+      if (frame.ts) next.turnStartTs = frame.ts;
+      delete next.turnEndTs;
+    }
+    return next;
+  }
+
+  if (frame.event === "system_event_observed") {
+    const subtype = (frame.data as { subtype?: unknown }).subtype;
+    if (subtype === "session.stdout_pump_failed") {
+      next.transport = "reattaching";
+    } else if (
+      subtype === "session.stdout_pump_reattached" ||
+      subtype === "session.stdout_pump_recovered"
+    ) {
+      next.transport = "ok";
     }
     return next;
   }
@@ -275,8 +311,16 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     return next;
   }
 
+  // Real harness output on the wire proves the sandbox pipe is healthy.
+  next.transport = "ok";
+
   const raw = normalizeRawEvent(frame.data);
-  if (raw.type === "assistant") {
+  if (raw.type === "turn.started") {
+    if (frame.ts) next.turnStartTs = frame.ts;
+    delete next.turnEndTs;
+  } else if (raw.type === "turn.completed") {
+    if (frame.ts) next.turnEndTs = frame.ts;
+  } else if (raw.type === "assistant") {
     reduceAssistant(next, frame.event_id, raw, recordHandles);
   } else if (raw.type === "tool") {
     reduceToolResult(next, frame.event_id, raw);
@@ -305,6 +349,10 @@ function normalizeRawEvent(event: CentaurEventFrame["data"]): CentaurEventFrame[
   if (typeof raw.method !== "string" || !isJsonObject(raw.params)) return event;
   const params = raw.params;
   switch (raw.method) {
+    case "turn/started":
+      return { type: "turn.started", ...params } as CentaurEventFrame["data"];
+    case "turn/completed":
+      return { type: "turn.completed", ...params } as CentaurEventFrame["data"];
     case "item/started":
       return { type: "item.started", ...params } as CentaurEventFrame["data"];
     case "item/completed":

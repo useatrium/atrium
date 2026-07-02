@@ -14,10 +14,21 @@ import {
 import { sessionsApi, type SessionStreamHandle } from './api';
 
 const RECONNECT_DELAY_MS = 1000;
+// The server pings every 15s (and once at open); three missed beats means the
+// connection silently died (EventSource never fires onerror for a dead TCP
+// path, e.g. through a tunnel) — tear down and reconnect from the cursor.
+const SILENT_DEATH_MS = 45_000;
+const WATCHDOG_TICK_MS = 10_000;
 
 export interface SessionStream {
   stream: SessionState;
   connected: boolean;
+  /** Local receipt time (ms epoch) of the newest folded frame — pairs with
+   * `stream.lastFrameTs` for skew-free "quiet for Ns" and elapsed clocks. */
+  lastFrameAt: number | null;
+  /** `localNow - serverNow` from the latest ping; add to a server timestamp
+   * to compare it against Date.now(). Null until the first ping. */
+  clockSkewMs: number | null;
 }
 
 /**
@@ -33,6 +44,8 @@ export interface SessionStream {
 export function useSessionStream(sessionId: string | null, active = false): SessionStream {
   const [stream, setStream] = useState<SessionState>(initialSessionState);
   const [connected, setConnected] = useState(false);
+  const [lastFrameAt, setLastFrameAt] = useState<number | null>(null);
+  const [clockSkewMs, setClockSkewMs] = useState<number | null>(null);
   // Set per mount to the current run's reconnect trigger; the `active`-watch
   // effect below calls it. Nulled on cleanup so it never fires a disposed run.
   const ensureConnectedRef = useRef<(() => void) | null>(null);
@@ -45,8 +58,13 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let flushScheduled = false;
     let generation = 0;
+    // Any sign of life on the wire (open, ping, frame) refreshes this.
+    let liveAt = Date.now();
+    let frameAt: number | null = null;
     setStream(acc);
     setConnected(false);
+    setLastFrameAt(null);
+    setClockSkewMs(null);
 
     // Batch per-frame folds into one React commit per animation frame — the
     // LONGSTREAM capture delivers >1k frames in a couple of seconds.
@@ -59,14 +77,18 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
           : (cb: () => void) => setTimeout(cb, 16);
       raf(() => {
         flushScheduled = false;
-        if (!disposed) setStream(acc);
+        if (disposed) return;
+        setStream(acc);
+        setLastFrameAt(frameAt);
       });
     };
 
     const onFrame = (frame: CentaurEventFrame) => {
+      liveAt = Date.now();
       // Dedupe on resume: skip already-folded ids, but allow execution_state
       // (the terminal snapshot is legitimately re-emitted on replay).
       if (frame.event_id <= acc.lastEventId && frame.event !== 'execution_state') return;
+      frameAt = Date.now();
       acc = reduceSession(acc, frame);
       scheduleFlush();
     };
@@ -78,12 +100,23 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
       generation += 1;
       const handleGeneration = generation;
       const isCurrent = () => !disposed && generation === handleGeneration;
+      liveAt = Date.now();
       handle = sessionsApi.openStream(sessionId, acc.lastEventId, {
         onFrame: (frame) => {
           if (isCurrent()) onFrame(frame);
         },
         onOpen: () => {
-          if (isCurrent()) setConnected(true);
+          if (!isCurrent()) return;
+          liveAt = Date.now();
+          setConnected(true);
+        },
+        onPing: (serverTs) => {
+          if (!isCurrent()) return;
+          liveAt = Date.now();
+          if (serverTs !== null) {
+            const parsed = Date.parse(serverTs);
+            if (!Number.isNaN(parsed)) setClockSkewMs(Date.now() - parsed);
+          }
         },
         onError: () => {
           if (!isCurrent()) return;
@@ -113,10 +146,26 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
 
     connect();
 
+    // Silent-death watchdog: a dead TCP path never fires EventSource.onerror,
+    // so with pings expected every 15s, prolonged total silence means the
+    // connection is gone — recycle it. Terminal folds are exempt (the server
+    // legitimately closes after replaying a finished session).
+    const watchdog = setInterval(() => {
+      if (disposed || !handle) return;
+      if (acc.status !== 'idle' && isTerminalExecutionStatus(acc.status)) return;
+      if (Date.now() - liveAt < SILENT_DEATH_MS) return;
+      handle.close();
+      handle = null;
+      generation += 1;
+      setConnected(false);
+      connect();
+    }, WATCHDOG_TICK_MS);
+
     return () => {
       disposed = true;
       ensureConnectedRef.current = null;
       if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(watchdog);
       handle?.close();
     };
   }, [sessionId]);
@@ -128,5 +177,5 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
     if (active) ensureConnectedRef.current?.();
   }, [active, sessionId]);
 
-  return { stream, connected };
+  return { stream, connected, lastFrameAt, clockSkewMs };
 }
