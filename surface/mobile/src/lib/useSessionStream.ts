@@ -9,6 +9,11 @@ const RECONNECT_DELAY_MS = 1000;
 export interface SessionStream {
   stream: SessionState;
   connected: boolean;
+  /** Local receipt time (ms epoch) of the newest folded frame — pairs with
+   * `stream.lastFrameTs` for the shared turn-status clocks. */
+  lastFrameAt: number | null;
+  /** `localNow - serverNow` from the latest server ping; null until seen. */
+  clockSkewMs: number | null;
 }
 
 export function useSessionStream(sessionId: string | null): SessionStream {
@@ -70,5 +75,7 @@ export function useSessionStream(sessionId: string | null): SessionStream {
     };
   }, [serverUrl, sessionId, token]);
 
-  return { stream, connected };
+  // lastFrameAt/clockSkewMs are populated by the stream-liveness work; the
+  // interface lands first so consumers can build against it.
+  return { stream, connected, lastFrameAt: null, clockSkewMs: null };
 }
