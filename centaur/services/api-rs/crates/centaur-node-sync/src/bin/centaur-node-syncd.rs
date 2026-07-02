@@ -736,9 +736,11 @@ mod linux_daemon {
                                 &overlays_root,
                                 &discovered,
                                 eviction,
-                                now,
-                                mtime_nanos,
-                                heartbeat_mtime,
+                                GcSignals {
+                                    now,
+                                    manifest_mtime_nanos: mtime_nanos,
+                                    heartbeat_mtime_nanos: heartbeat_mtime,
+                                },
                                 &mut mounted_overlays,
                             );
                             continue;
@@ -1239,21 +1241,27 @@ mod linux_daemon {
         }
     }
 
+    /// The liveness observations GC needs, bundled to keep the helper's
+    /// signature within clippy's argument budget.
+    struct GcSignals {
+        now: Instant,
+        manifest_mtime_nanos: Option<u128>,
+        heartbeat_mtime_nanos: Option<u128>,
+    }
+
     fn maybe_gc_evicted_session(
         global: &GlobalConfig,
         overlays_root: &Path,
         discovered: &DiscoveredSession,
         eviction: &SessionEvictionState,
-        now: Instant,
-        manifest_mtime_nanos: Option<u128>,
-        heartbeat_mtime_nanos: Option<u128>,
+        signals: GcSignals,
         mounted_overlays: &mut HashMap<String, OverlayMountPlan>,
     ) {
         if !global.gc_dirs
             || !eviction.gc_eligible(
-                now,
-                manifest_mtime_nanos,
-                heartbeat_mtime_nanos,
+                signals.now,
+                signals.manifest_mtime_nanos,
+                signals.heartbeat_mtime_nanos,
                 global.evict_grace,
             )
         {
