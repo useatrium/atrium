@@ -343,6 +343,7 @@ mod linux_daemon {
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
     use centaur_node_sync::materializer::materialize_changed_sessions;
+    use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
         OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
     };
@@ -363,6 +364,8 @@ mod linux_daemon {
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::time::{Duration, Instant, SystemTime};
+
+    const WIP_FORCE_INTERVAL: Duration = Duration::from_secs(30);
 
     #[derive(Default)]
     struct DaemonArgs {
@@ -631,11 +634,23 @@ mod linux_daemon {
         let lease = LeaseGate::new();
         let mut echo = EchoGuard::new();
         let mut state = DaemonState::load(&session.state_file);
+        let mut wip_signatures: HashMap<(String, String), u64> = HashMap::new();
+        let mut wip_gate_active: HashMap<(String, String), bool> = HashMap::new();
+        let mut last_forced_wip: Option<Instant> = None;
         let mut tick: u64 = 0;
 
         loop {
             tick = tick.saturating_add(1);
-            if let Err(e) = run_one_session(&global, &session, &mut state, &mut echo, &lease) {
+            if let Err(e) = run_one_session(
+                &global,
+                &session,
+                &mut state,
+                &mut echo,
+                &lease,
+                &mut wip_signatures,
+                &mut wip_gate_active,
+                &mut last_forced_wip,
+            ) {
                 eprintln!("session {}: {e}", session.session);
             }
             maybe_evict_depcache(&global, tick);
@@ -649,6 +664,8 @@ mod linux_daemon {
     #[derive(Clone)]
     struct ActiveSession {
         config: SessionConfig,
+        wip_remounted: bool,
+        wip_restored: bool,
     }
 
     #[derive(Clone)]
@@ -693,6 +710,9 @@ mod linux_daemon {
         let mut echoes: HashMap<String, EchoGuard> = HashMap::new();
         let mut mounted_overlays: HashMap<String, OverlayMountPlan> = HashMap::new();
         let mut evictions: HashMap<String, SessionEvictionState> = HashMap::new();
+        let mut wip_signatures: HashMap<(String, String), u64> = HashMap::new();
+        let mut wip_gate_active: HashMap<(String, String), bool> = HashMap::new();
+        let mut last_forced_wip: HashMap<String, Instant> = HashMap::new();
         let batch_client = BatchHttpClient::new(&global.base_url, &global.api_key);
         let mut batch_endpoint = BatchEndpointState::default();
         let stream_rx = if global.stream_enabled {
@@ -727,6 +747,9 @@ mod linux_daemon {
                     states.retain(|session, _| active.contains(session));
                     echoes.retain(|session, _| active.contains(session));
                     evictions.retain(|session, _| active.contains(session));
+                    wip_signatures.retain(|(session, _), _| active.contains(session));
+                    wip_gate_active.retain(|(session, _), _| active.contains(session));
+                    last_forced_wip.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -840,6 +863,8 @@ mod linux_daemon {
                             );
                             Vec::new()
                         };
+                        let wip_remounted = !has_active_mount
+                            || mounted_overlays.get(&discovered.session) != Some(&plan);
                         let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid))
                         {
                             Ok(plan) => plan,
@@ -872,8 +897,12 @@ mod linux_daemon {
                                 Some(entry.sha.clone()),
                             );
                         }
-                        prepare_session_before_remote(&global, &session, state);
-                        active_sessions.push(ActiveSession { config: session });
+                        let wip_restored = prepare_session_before_remote(&global, &session, state);
+                        active_sessions.push(ActiveSession {
+                            config: session,
+                            wip_remounted,
+                            wip_restored,
+                        });
                     }
                 }
                 Err(e) => eprintln!("session discovery: {e}"),
@@ -914,7 +943,11 @@ mod linux_daemon {
             }
 
             for active in active_sessions {
-                let session = active.config;
+                let ActiveSession {
+                    config: session,
+                    wip_remounted,
+                    wip_restored,
+                } = active;
                 let state = states
                     .entry(session.session.clone())
                     .or_insert_with(|| DaemonState::load(&session.state_file));
@@ -925,6 +958,9 @@ mod linux_daemon {
                     &global.api_key,
                     &session.atrium_session,
                 );
+                let wip_backstop_elapsed = last_forced_wip
+                    .get(&session.session)
+                    .is_none_or(|last| now.duration_since(*last) >= WIP_FORCE_INTERVAL);
                 let mut atrium_feed = None;
                 match remote_outcomes.get(&session.atrium_session) {
                     Some(RemotePollOutcome::Found(feeds)) => {
@@ -953,7 +989,24 @@ mod linux_daemon {
                     Some(RemotePollOutcome::Error) | None => {}
                 }
 
-                run_local_capture(&global, &session, state, echo, &mut client);
+                let force_wip = centaur_node_sync::wip::should_force_wip(
+                    wip_remounted,
+                    wip_restored,
+                    wip_backstop_elapsed,
+                );
+                run_local_capture(
+                    &global,
+                    &session,
+                    state,
+                    echo,
+                    &mut client,
+                    force_wip,
+                    &mut wip_signatures,
+                    &mut wip_gate_active,
+                );
+                if force_wip {
+                    last_forced_wip.insert(session.session.clone(), now);
+                }
                 if let Some(atrium) = atrium_feed.as_ref() {
                     apply_atrium_feed(&global, &session, state, &client, atrium);
                 }
@@ -991,12 +1044,12 @@ mod linux_daemon {
         global: &GlobalConfig,
         session: &SessionConfig,
         state: &mut DaemonState,
-    ) {
+    ) -> bool {
         let mut client =
             HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
-        restore_repo_wip(session, state);
+        restore_repo_wip(session, state)
     }
 
     fn run_local_capture(
@@ -1005,10 +1058,21 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
+        force_wip: bool,
+        wip_signatures: &mut HashMap<(String, String), u64>,
+        wip_gate_active: &mut HashMap<(String, String), bool>,
     ) {
-        outbound(global, session, state, echo, client);
+        let raw_entries = outbound(global, session, state, echo, client);
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
-        capture_repo_wip(session, state, client);
+        capture_repo_wip(
+            session,
+            state,
+            client,
+            raw_entries.as_deref(),
+            force_wip,
+            wip_signatures,
+            wip_gate_active,
+        );
     }
 
     fn apply_profile_feed(
@@ -1619,14 +1683,18 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         lease: &LeaseGate,
+        wip_signatures: &mut HashMap<(String, String), u64>,
+        wip_gate_active: &mut HashMap<(String, String), bool>,
+        last_forced_wip: &mut Option<Instant>,
     ) -> Result<(), String> {
+        let now = Instant::now();
         let mut client =
             HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
 
         materialize_profile_bundles_for_session(session, state, &client);
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
-        restore_repo_wip(session, state);
+        let wip_restored = restore_repo_wip(session, state);
         // Inbound adoption needs seeded state: without it every remote row looks
         // like an unknown local and gets adopted (re-downloaded + copied up).
         // Outbound stays on — new-file captures are safe unseeded, and an edited
@@ -1634,9 +1702,24 @@ mod linux_daemon {
         if state.hydrated {
             inbound(session, state, echo, lease, &mut client);
         }
-        outbound(global, session, state, echo, &mut client);
+        let raw_entries = outbound(global, session, state, echo, &mut client);
         warmcache_capture_if_needed(&mut client, session, state, &global.depcache_root);
-        capture_repo_wip(session, state, &mut client);
+        let wip_backstop_elapsed =
+            last_forced_wip.is_none_or(|last| now.duration_since(last) >= WIP_FORCE_INTERVAL);
+        let force_wip =
+            centaur_node_sync::wip::should_force_wip(false, wip_restored, wip_backstop_elapsed);
+        capture_repo_wip(
+            session,
+            state,
+            &mut client,
+            raw_entries.as_deref(),
+            force_wip,
+            wip_signatures,
+            wip_gate_active,
+        );
+        if force_wip {
+            *last_forced_wip = Some(now);
+        }
         materialize_atrium(global, session, state, &client);
         state
             .save(&session.state_file)
@@ -1768,7 +1851,7 @@ mod linux_daemon {
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
-    ) {
+    ) -> Option<Vec<RawEntry>> {
         match fs_linux::read_upper_entries(&session.upper) {
             Ok(entries) => {
                 let entries = entries
@@ -1949,12 +2032,16 @@ mod linux_daemon {
                         );
                     }
                 }
+                Some(entries)
             }
-            Err(e) => eprintln!(
-                "session {}: scan {}: {e}",
-                session.session,
-                session.upper.display()
-            ),
+            Err(e) => {
+                eprintln!(
+                    "session {}: scan {}: {e}",
+                    session.session,
+                    session.upper.display()
+                );
+                None
+            }
         }
     }
 
@@ -2020,7 +2107,8 @@ mod linux_daemon {
         }
     }
 
-    fn restore_repo_wip(session: &SessionConfig, state: &mut DaemonState) {
+    fn restore_repo_wip(session: &SessionConfig, state: &mut DaemonState) -> bool {
+        let mut attempted = false;
         for repo in &session.repo_worktrees {
             let latest_path = centaur_node_sync::wip::latest_path(&repo.key);
             let latest_file = session.merged.join(&latest_path);
@@ -2049,6 +2137,7 @@ mod linux_daemon {
             {
                 continue;
             }
+            attempted = true;
             match centaur_node_sync::wip::restore_snapshot(&repo.path, &session.merged, &manifest) {
                 Ok(()) => println!(
                     "session {}: wip restore: applied {} snapshot {}",
@@ -2060,14 +2149,44 @@ mod linux_daemon {
                 .wip_restore_attempted
                 .insert(repo.key.clone(), manifest.snapshot_id);
         }
+        attempted
     }
 
     fn capture_repo_wip(
         session: &SessionConfig,
         state: &mut DaemonState,
         client: &mut HttpAtriumClient,
+        raw_entries: Option<&[RawEntry]>,
+        force_wip: bool,
+        wip_signatures: &mut HashMap<(String, String), u64>,
+        wip_gate_active: &mut HashMap<(String, String), bool>,
     ) {
         for repo in &session.repo_worktrees {
+            let gate_key = (session.session.clone(), repo.key.clone());
+            let current_signature = raw_entries.and_then(|entries| {
+                let prefix = repo.path.strip_prefix(&session.merged).ok()?;
+                Some(centaur_node_sync::wip::repo_signature(entries, prefix))
+            });
+            let decision = centaur_node_sync::wip::decide_wip_capture(
+                wip_signatures.get(&gate_key).copied(),
+                current_signature,
+                force_wip,
+            );
+            let active = decision.should_capture;
+            if let Some(previous_active) = wip_gate_active.insert(gate_key.clone(), active)
+                && previous_active != active
+            {
+                eprintln!(
+                    "session {}: wip gate {} for {} ({:?})",
+                    session.session,
+                    if active { "active" } else { "idle" },
+                    repo.key,
+                    decision.reason
+                );
+            }
+            if !decision.should_capture {
+                continue;
+            }
             match centaur_node_sync::wip::capture_wip(&repo.path) {
                 Ok(patch) => {
                     let out = centaur_node_sync::runtime::wip_sweep(
@@ -2093,6 +2212,12 @@ mod linux_daemon {
                     }
                     for (path, error) in &out.errors {
                         eprintln!("session {}: wip error {path}: {error}", session.session);
+                    }
+                    // Record the signature only on success: a failed capture_wip must
+                    // keep retrying every tick (today's behavior), not wait for the
+                    // next repo change or the 30s backstop.
+                    if let Some(signature) = current_signature {
+                        wip_signatures.insert(gate_key, signature);
                     }
                 }
                 Err(e) => eprintln!(
