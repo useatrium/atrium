@@ -22,6 +22,7 @@ export const SESSION_RECORD_CHANGE_CURSOR_ZERO: SessionRecordChangeCursor = {
   xid: '0',
   id: '0',
 };
+export const SESSION_RECORD_CHANGES_NOTIFY_CHANNEL = 'atrium_changes_advanced';
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 5000;
@@ -45,15 +46,24 @@ export async function emitSessionRecordChange(
       `SELECT pg_advisory_xact_lock_shared(
                 hashtextextended('session_record_changes', 0))`,
     );
-    const res = await client.query(
+    const res = await client.query<{ id: string; workspace_id: string }>(
       `INSERT INTO session_record_changes (session_id, workspace_id, record_count)
        SELECT s.id, s.workspace_id, $2::int
          FROM sessions s
         WHERE s.id = $1
-       RETURNING id`,
+       RETURNING id::text AS id, workspace_id`,
       [sessionId, count],
     );
-    if (res.rowCount === 0) throw new Error('session not found');
+    const row = res.rows[0];
+    if (!row) throw new Error('session not found');
+    await client.query("SELECT pg_notify('atrium_changes_advanced', $1)", [
+      JSON.stringify({
+        sessionId,
+        workspaceId: row.workspace_id,
+        changeId: row.id,
+        recordCount: count,
+      }),
+    ]);
   };
 
   if (isPool(clientOrPool)) {

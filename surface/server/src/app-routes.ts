@@ -20,6 +20,7 @@ import { registerFilesHubRoutes } from './routes/files-hub.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerInternalArtifactRoutes } from './routes/internal-artifacts.js';
 import { registerInternalAtriumRoutes } from './routes/internal-atrium.js';
+import { registerInternalChangesRoutes } from './routes/internal-changes.js';
 import { registerInternalSessionRuntimeRoutes } from './routes/internal-session-runtime.js';
 import { registerInternalWarmcacheRoutes } from './routes/internal-warmcache.js';
 import { registerMeRoutes } from './routes/me.js';
@@ -181,6 +182,12 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
     requireCaptureKey,
     canViewFull,
     fullViewForbidden,
+  });
+
+  registerInternalChangesRoutes(app, {
+    pool,
+    requireCaptureKey,
+    resolveInternalSessionRef,
   });
 
   await registerInternalWarmcacheRoutes(app, {

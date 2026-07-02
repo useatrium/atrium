@@ -25,6 +25,7 @@ type Queryable = Pick<Db | DbClient, 'query'>;
 const ADAPTER_VERSION_FALLBACK = 'atrium-v0';
 const MAX_PROFILE_JSON_BYTES = 512 * 1024;
 const MAX_BUNDLE_BYTES = 256 * 1024;
+export const PROFILE_BUNDLES_NOTIFY_CHANNEL = 'profile_bundles_advanced';
 
 const SECRET_KEY_RE =
   /(api[_-]?key|auth|bearer|client[_-]?secret|credential|oauth|password|private[_-]?key|refresh[_-]?token|secret|token)/i;
@@ -310,6 +311,7 @@ export class AgentProfiles {
         ],
       );
       await client.query('UPDATE sessions SET agent_profile_version_id = NULL WHERE id = $1', [sessionId]);
+      if (proposal.session_id) await notifyProfileBundlesAdvanced(client, proposal.session_id, proposal.provider);
       return updateProposalStatus(client, proposalId, userId, 'applied_to_lineage');
     });
   }
@@ -692,6 +694,17 @@ async function bindSessionSnapshot(
       [sessionId, version.id],
     );
   }
+  await notifyProfileBundlesAdvanced(client, sessionId, version.provider);
+}
+
+async function notifyProfileBundlesAdvanced(
+  client: Queryable,
+  sessionId: string,
+  provider: AgentProfileProvider,
+): Promise<void> {
+  await client.query("SELECT pg_notify('profile_bundles_advanced', $1)", [
+    JSON.stringify({ sessionId, provider }),
+  ]);
 }
 
 async function updateProposalStatus(

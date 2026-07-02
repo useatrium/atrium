@@ -972,7 +972,7 @@ pub fn materialize_profile_bundles(
     harness_home: &Path,
     root: &Path,
     already_materialized: &mut HashMap<String, String>,
-    mut write: impl FnMut(&Path, &[u8], bool) -> Result<(), String>,
+    write: impl FnMut(&Path, &[u8], bool) -> Result<(), String>,
 ) -> ProfileBundleMaterializeOutcome {
     let mut out = ProfileBundleMaterializeOutcome::default();
     let bundles = match client.get_profile_bundles(harness.atrium_harness()) {
@@ -983,6 +983,27 @@ pub fn materialize_profile_bundles(
             return out;
         }
     };
+    materialize_profile_bundles_from_refs(
+        client,
+        harness,
+        harness_home,
+        root,
+        already_materialized,
+        bundles,
+        write,
+    )
+}
+
+pub fn materialize_profile_bundles_from_refs(
+    client: &dyn AtriumClient,
+    _harness: HarnessTranscriptKind,
+    harness_home: &Path,
+    root: &Path,
+    already_materialized: &mut HashMap<String, String>,
+    bundles: Vec<BundleRef>,
+    mut write: impl FnMut(&Path, &[u8], bool) -> Result<(), String>,
+) -> ProfileBundleMaterializeOutcome {
+    let mut out = ProfileBundleMaterializeOutcome::default();
     for bundle in bundles {
         let rel_path = materialized_bundle_path(harness_home, &bundle.path);
         if is_denied_profile_path(&rel_path) {

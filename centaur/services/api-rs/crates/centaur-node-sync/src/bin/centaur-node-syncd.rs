@@ -11,7 +11,9 @@
 //!
 //! Global env: ATRIUM_BASE_URL, ATRIUM_CAPTURE_API_KEY, optional
 //!      NODE_SYNC_ATRIUM_ROOT, NODE_SYNC_INTERVAL_SECS, NODE_SYNC_DIRTY_BUDGET,
-//!      NODE_SYNC_LARGE_FILE_BYTES.
+//!      NODE_SYNC_LARGE_FILE_BYTES, NODE_SYNC_EVICT_GRACE_SECS,
+//!      NODE_SYNC_EVICT_RECHECK_SECS, NODE_SYNC_GC_DIRS,
+//!      NODE_SYNC_RECONCILE_SECS, NODE_SYNC_STREAM_ENABLED.
 //! Single-session env: NODE_SYNC_SESSION, NODE_SYNC_UPPER, NODE_SYNC_MERGED,
 //!      optional NODE_SYNC_HARNESS, NODE_SYNC_HARNESS_THREAD_ID,
 //!      NODE_SYNC_HARNESS_HOME, NODE_SYNC_REPO, NODE_SYNC_STATE.
@@ -273,12 +275,21 @@ mod linux_daemon {
     };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
+    use centaur_node_sync::batch::{
+        BatchEndpointState, BatchFeeds, BatchHttpClient, BatchPollError, BatchRequestSession,
+        BatchSessionOutcome,
+    };
     use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
     use centaur_node_sync::depcache::{EvictStats, evict_depcache_lru};
     use centaur_node_sync::echo::EchoGuard;
+    use centaur_node_sync::eviction::{
+        DEFAULT_EVICT_GRACE_SECS, DEFAULT_EVICT_RECHECK_SECS, SessionEvictionState, manifest_age,
+        manifest_mtime_nanos,
+    };
+    use centaur_node_sync::feeds::{ArtifactFeed, AtriumFeed};
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
-    use centaur_node_sync::materialize_once;
+    use centaur_node_sync::materializer::materialize_changed_sessions;
     use centaur_node_sync::overlay_mount::{
         OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
     };
@@ -286,12 +297,19 @@ mod linux_daemon {
     use centaur_node_sync::runtime::{
         AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, credential_refresh_sweep,
         harness_transcript_sweep, inbound_sweep, materialize_profile_bundles,
-        partition_entries_by_lane, profile_baseline_sweep, profile_candidate_sweep, sha_hex,
+        materialize_profile_bundles_from_refs, partition_entries_by_lane, profile_baseline_sweep,
+        profile_candidate_sweep, sha_hex,
     };
-    use centaur_node_sync::session_manifest::discover_sessions;
+    use centaur_node_sync::session_manifest::{
+        DiscoveredSession, discover_sessions, manifest_path,
+    };
+    use centaur_node_sync::sse::{ChangedEvent, DirtySet, SseOutput, SseParser};
     use centaur_node_sync::state::DaemonState;
     use std::collections::{HashMap, HashSet};
+    use std::io::Read;
     use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant, SystemTime};
 
     #[derive(Default)]
     struct DaemonArgs {
@@ -312,6 +330,11 @@ mod linux_daemon {
         depcache_evict_every_n_ticks: u64,
         budget: Budget,
         large_threshold: u64,
+        evict_grace: Duration,
+        evict_recheck: Duration,
+        gc_dirs: bool,
+        stream_enabled: bool,
+        reconcile_interval: Duration,
     }
 
     struct HardenedReader {
@@ -376,6 +399,21 @@ mod linux_daemon {
             large_threshold: env("NODE_SYNC_LARGE_FILE_BYTES")
                 .parse::<u64>()
                 .unwrap_or(centaur_node_sync::runtime::DEFAULT_LARGE_FILE_BYTES),
+            evict_grace: Duration::from_secs(
+                env("NODE_SYNC_EVICT_GRACE_SECS")
+                    .parse::<u64>()
+                    .unwrap_or(DEFAULT_EVICT_GRACE_SECS),
+            ),
+            evict_recheck: Duration::from_secs(
+                env("NODE_SYNC_EVICT_RECHECK_SECS")
+                    .parse::<u64>()
+                    .unwrap_or(DEFAULT_EVICT_RECHECK_SECS),
+            ),
+            gc_dirs: env_truthy(&env("NODE_SYNC_GC_DIRS")),
+            stream_enabled: env("NODE_SYNC_STREAM_ENABLED").trim() != "0",
+            reconcile_interval: Duration::from_secs(
+                env("NODE_SYNC_RECONCILE_SECS").parse::<u64>().unwrap_or(30),
+            ),
         };
 
         if let Some(overlays_root) = args.overlays_root {
@@ -543,6 +581,44 @@ mod linux_daemon {
         }
     }
 
+    #[derive(Clone)]
+    struct ActiveSession {
+        config: SessionConfig,
+        manifest_mtime_nanos: Option<u128>,
+        has_active_mount: bool,
+    }
+
+    #[derive(Clone)]
+    struct ProbeSession {
+        session: String,
+        atrium_session: String,
+        profile_harness: HarnessTranscriptKind,
+    }
+
+    #[derive(Debug)]
+    enum RemotePollOutcome {
+        Found(RemoteFeeds),
+        NotFound,
+        Error,
+    }
+
+    #[derive(Debug)]
+    struct RemoteFeeds {
+        profile_harness: HarnessTranscriptKind,
+        artifacts: Option<ArtifactFeed>,
+        atrium: Option<AtriumFeed>,
+        profile_bundles: Option<Vec<centaur_node_sync::runtime::BundleRef>>,
+    }
+
+    #[derive(Clone)]
+    struct PollTarget {
+        session: String,
+        atrium_session: String,
+        artifacts_since: String,
+        atrium_since: String,
+        profile_harness: HarnessTranscriptKind,
+    }
+
     fn run_multi_session(
         global: GlobalConfig,
         overlays_root: PathBuf,
@@ -553,10 +629,27 @@ mod linux_daemon {
         let mut states: HashMap<String, DaemonState> = HashMap::new();
         let mut echoes: HashMap<String, EchoGuard> = HashMap::new();
         let mut mounted_overlays: HashMap<String, OverlayMountPlan> = HashMap::new();
+        let mut evictions: HashMap<String, SessionEvictionState> = HashMap::new();
+        let batch_client = BatchHttpClient::new(&global.base_url, &global.api_key);
+        let mut batch_endpoint = BatchEndpointState::default();
+        let stream_rx = if global.stream_enabled {
+            Some(start_change_stream(&global.base_url, &global.api_key))
+        } else {
+            None
+        };
+        let mut stream_healthy = false;
+        let mut dirty = DirtySet::default();
+        let mut last_reconcile: Option<Instant> = None;
         let mut tick: u64 = 0;
 
         loop {
             tick = tick.saturating_add(1);
+            let now = Instant::now();
+            let system_now = SystemTime::now();
+            let mut active_sessions = Vec::new();
+            let mut probe_sessions = Vec::new();
+            let mut current_atrium_keys = HashSet::new();
+
             match discover_sessions(&overlays_root) {
                 Ok(discovery) => {
                     for warning in discovery.warnings {
@@ -570,8 +663,50 @@ mod linux_daemon {
                     cleanup_removed_overlays(&active, &mut mounted_overlays);
                     states.retain(|session, _| active.contains(session));
                     echoes.retain(|session, _| active.contains(session));
+                    evictions.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
+                        current_atrium_keys.insert(discovered.atrium_session.clone());
+                        let manifest_path = manifest_path(&overlays_root, &discovered.session);
+                        let mtime_nanos = manifest_mtime_nanos(&manifest_path);
+                        let has_active_mount = has_active_overlay_mount(
+                            &discovered.manifest.merged,
+                        )
+                        .unwrap_or_else(|error| {
+                            eprintln!("session {}: mount guard: {error}", discovered.session);
+                            true
+                        });
+                        let eviction = evictions.entry(discovered.session.clone()).or_default();
+                        if eviction.observe_manifest_mtime(mtime_nanos) {
+                            eprintln!(
+                                "event=node_sync_un_evict session={} reason=manifest_mtime_changed",
+                                discovered.session
+                            );
+                        }
+                        if eviction.is_evicted() {
+                            if eviction.should_probe(now, global.evict_recheck) {
+                                eviction.mark_probe(now);
+                                states
+                                    .entry(discovered.session.clone())
+                                    .or_insert_with(|| DaemonState::load(&discovered.state_file));
+                                probe_sessions.push(ProbeSession {
+                                    session: discovered.session.clone(),
+                                    atrium_session: discovered.atrium_session.clone(),
+                                    profile_harness: profile_harness_for_discovered(&discovered),
+                                });
+                            }
+                            maybe_gc_evicted_session(
+                                &global,
+                                &overlays_root,
+                                &discovered,
+                                eviction,
+                                now,
+                                mtime_nanos,
+                                has_active_mount,
+                            );
+                            continue;
+                        }
+
                         let mut plan = match plan_overlay_mount(
                             &overlays_root,
                             &discovered.session,
@@ -632,13 +767,118 @@ mod linux_daemon {
                         let state = states
                             .entry(session.session.clone())
                             .or_insert_with(|| DaemonState::load(&session.state_file));
-                        let echo = echoes.entry(session.session.clone()).or_default();
-                        if let Err(e) = run_one_session(&global, &session, state, echo, &lease) {
-                            eprintln!("session {}: {e}", session.session);
-                        }
+                        prepare_session_before_remote(&global, &session, state);
+                        active_sessions.push(ActiveSession {
+                            config: session,
+                            manifest_mtime_nanos: mtime_nanos,
+                            has_active_mount,
+                        });
                     }
                 }
                 Err(e) => eprintln!("session discovery: {e}"),
+            }
+
+            if let Some(rx) = &stream_rx {
+                drain_stream_messages(rx, &mut stream_healthy, &mut dirty, &current_atrium_keys);
+            }
+            let dirty_by_key = dirty.drain_for(current_atrium_keys.iter().map(String::as_str));
+            let reconcile_due = stream_healthy
+                && last_reconcile
+                    .is_none_or(|last| now.duration_since(last) >= global.reconcile_interval);
+            let full_remote_poll = !global.stream_enabled || !stream_healthy || reconcile_due;
+            if reconcile_due {
+                last_reconcile = Some(now);
+            }
+            let poll_targets = select_poll_targets(
+                &active_sessions,
+                &probe_sessions,
+                &states,
+                &dirty_by_key,
+                full_remote_poll,
+            );
+            let remote_outcomes = poll_remote_targets(
+                &global,
+                &batch_client,
+                &mut batch_endpoint,
+                now,
+                &poll_targets,
+            );
+
+            for probe in probe_sessions {
+                apply_probe_outcome(
+                    &probe,
+                    remote_outcomes.get(&probe.atrium_session),
+                    evictions.entry(probe.session.clone()).or_default(),
+                );
+            }
+
+            for active in active_sessions {
+                let session = active.config;
+                let state = states
+                    .entry(session.session.clone())
+                    .or_insert_with(|| DaemonState::load(&session.state_file));
+                let echo = echoes.entry(session.session.clone()).or_default();
+                let eviction = evictions.entry(session.session.clone()).or_default();
+                let mut client = HttpAtriumClient::new(
+                    &global.base_url,
+                    &global.api_key,
+                    &session.atrium_session,
+                );
+                let mut atrium_feed = None;
+                match remote_outcomes.get(&session.atrium_session) {
+                    Some(RemotePollOutcome::Found(feeds)) => {
+                        if eviction.record_found() {
+                            eprintln!(
+                                "event=node_sync_un_evict session={} reason=server_found",
+                                session.session
+                            );
+                        }
+                        apply_profile_feed(&session, state, &client, feeds);
+                        if let Some(artifacts) = feeds.artifacts.as_ref() {
+                            apply_inbound_feed(
+                                &session,
+                                state,
+                                echo,
+                                &lease,
+                                &mut client,
+                                artifacts,
+                            );
+                        }
+                        atrium_feed = feeds.atrium.clone();
+                    }
+                    Some(RemotePollOutcome::NotFound) => {
+                        eviction.record_not_found();
+                        let age = manifest_age(system_now, active.manifest_mtime_nanos);
+                        if eviction.maybe_evict(
+                            now,
+                            age,
+                            active.manifest_mtime_nanos,
+                            active.has_active_mount,
+                            global.evict_grace,
+                        ) {
+                            eprintln!(
+                                "event=node_sync_evict session={} reason=not_found_streak grace_secs={} no_active_mount=true",
+                                session.session,
+                                global.evict_grace.as_secs()
+                            );
+                            let _ = state.save(&session.state_file);
+                            continue;
+                        }
+                    }
+                    Some(RemotePollOutcome::Error) | None => {}
+                }
+
+                run_local_capture(&global, &session, state, echo, &mut client);
+                if let Some(atrium) = atrium_feed.as_ref() {
+                    apply_atrium_feed(&global, &session, state, &client, atrium);
+                }
+                if let Err(e) = state.save(&session.state_file) {
+                    eprintln!(
+                        "session {}: save state {}: {e}",
+                        session.session,
+                        session.state_file.display()
+                    );
+                }
             }
 
             maybe_evict_depcache(&global, tick);
@@ -646,6 +886,515 @@ mod linux_daemon {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+        }
+    }
+
+    fn profile_harness_for_session(session: &SessionConfig) -> HarnessTranscriptKind {
+        session.harness.unwrap_or(HarnessTranscriptKind::Codex)
+    }
+
+    fn profile_harness_for_discovered(discovered: &DiscoveredSession) -> HarnessTranscriptKind {
+        discovered
+            .manifest
+            .harness
+            .as_deref()
+            .and_then(HarnessTranscriptKind::parse)
+            .unwrap_or(HarnessTranscriptKind::Codex)
+    }
+
+    fn prepare_session_before_remote(
+        global: &GlobalConfig,
+        session: &SessionConfig,
+        state: &mut DaemonState,
+    ) {
+        let mut client =
+            HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
+        hydrate_state_if_needed(session, state, &mut client);
+        refresh_upper_sha(session, state);
+        restore_repo_wip(session, state);
+    }
+
+    fn run_local_capture(
+        global: &GlobalConfig,
+        session: &SessionConfig,
+        state: &mut DaemonState,
+        echo: &mut EchoGuard,
+        client: &mut HttpAtriumClient,
+    ) {
+        outbound(global, session, state, echo, client);
+        warmcache_capture_if_needed(client, session, state, &global.depcache_root);
+        capture_repo_wip(session, state, client);
+    }
+
+    fn apply_profile_feed(
+        session: &SessionConfig,
+        state: &mut DaemonState,
+        client: &HttpAtriumClient,
+        feeds: &RemoteFeeds,
+    ) {
+        let Some(bundles) = feeds.profile_bundles.clone() else {
+            return;
+        };
+        let harness = feeds.profile_harness;
+        let harness_home = if session.harness_home.is_empty() {
+            PathBuf::from(harness.default_home_rel())
+        } else {
+            PathBuf::from(&session.harness_home)
+        };
+        let out = materialize_profile_bundles_from_refs(
+            client,
+            harness,
+            &harness_home,
+            &session.merged,
+            &mut state.materialized_profile_bundles,
+            bundles,
+            write_profile_bundle_file,
+        );
+        if out.written > 0 {
+            println!(
+                "session {}: profile bundles: materialized {} files for {}",
+                session.session,
+                out.written,
+                harness.atrium_harness()
+            );
+        }
+        for (path, error) in &out.errors {
+            eprintln!(
+                "session {}: profile bundle materialize {path}: {error}",
+                session.session
+            );
+        }
+    }
+
+    fn apply_inbound_feed(
+        session: &SessionConfig,
+        state: &mut DaemonState,
+        echo: &mut EchoGuard,
+        lease: &LeaseGate,
+        client: &mut HttpAtriumClient,
+        feed: &ArtifactFeed,
+    ) {
+        if !feed.changes.is_empty() {
+            apply_inbound_changes(session, state, echo, lease, client, &feed.changes);
+        }
+        state.cursor = feed.next_cursor.clone();
+    }
+
+    fn apply_atrium_feed(
+        global: &GlobalConfig,
+        session: &SessionConfig,
+        state: &mut DaemonState,
+        client: &HttpAtriumClient,
+        feed: &AtriumFeed,
+    ) {
+        let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
+        match materialize_changed_sessions(
+            client,
+            &atrium_root,
+            &state.atrium_cursor,
+            feed.session_ids.clone(),
+            feed.next_cursor.clone(),
+        ) {
+            Ok(next) => {
+                if next != state.atrium_cursor {
+                    println!("atrium materializer: cursor={next}");
+                }
+                state.atrium_cursor = next;
+            }
+            Err(e) => eprintln!("atrium materializer: {e}"),
+        }
+    }
+
+    fn select_poll_targets(
+        active_sessions: &[ActiveSession],
+        probe_sessions: &[ProbeSession],
+        states: &HashMap<String, DaemonState>,
+        dirty_by_key: &HashMap<String, centaur_node_sync::sse::DirtyFeeds>,
+        full_remote_poll: bool,
+    ) -> Vec<PollTarget> {
+        let mut out = Vec::new();
+        for active in active_sessions {
+            let session = &active.config;
+            if !full_remote_poll && !dirty_by_key.contains_key(&session.atrium_session) {
+                continue;
+            }
+            let Some(state) = states.get(&session.session) else {
+                continue;
+            };
+            out.push(PollTarget {
+                session: session.session.clone(),
+                atrium_session: session.atrium_session.clone(),
+                artifacts_since: state.cursor.clone(),
+                atrium_since: state.atrium_cursor.clone(),
+                profile_harness: profile_harness_for_session(session),
+            });
+        }
+        for probe in probe_sessions {
+            let Some(state) = states.get(&probe.session) else {
+                continue;
+            };
+            out.push(PollTarget {
+                session: probe.session.clone(),
+                atrium_session: probe.atrium_session.clone(),
+                artifacts_since: state.cursor.clone(),
+                atrium_since: state.atrium_cursor.clone(),
+                profile_harness: probe.profile_harness,
+            });
+        }
+        out
+    }
+
+    fn poll_remote_targets(
+        global: &GlobalConfig,
+        batch_client: &BatchHttpClient,
+        batch_endpoint: &mut BatchEndpointState,
+        now: Instant,
+        targets: &[PollTarget],
+    ) -> HashMap<String, RemotePollOutcome> {
+        if targets.is_empty() {
+            return HashMap::new();
+        }
+        if batch_endpoint.should_try(now) {
+            match poll_batch_targets(batch_client, targets) {
+                Ok(outcomes) => {
+                    batch_endpoint.record_success();
+                    return outcomes;
+                }
+                Err(BatchPollError::Unsupported(_)) => {
+                    batch_endpoint.record_unsupported(now);
+                    eprintln!(
+                        "node-sync batch changes endpoint unsupported; falling back to legacy GETs"
+                    );
+                }
+                Err(error) => {
+                    eprintln!("node-sync batch poll: {error}");
+                    return targets
+                        .iter()
+                        .map(|target| (target.atrium_session.clone(), RemotePollOutcome::Error))
+                        .collect();
+                }
+            }
+        }
+        poll_legacy_targets(global, targets)
+    }
+
+    fn poll_batch_targets(
+        batch_client: &BatchHttpClient,
+        targets: &[PollTarget],
+    ) -> Result<HashMap<String, RemotePollOutcome>, BatchPollError> {
+        let requests = targets
+            .iter()
+            .map(|target| BatchRequestSession {
+                key: target.atrium_session.clone(),
+                artifacts_since: target.artifacts_since.clone(),
+                atrium_since: target.atrium_since.clone(),
+                profile_harness: target.profile_harness.atrium_harness().to_string(),
+            })
+            .collect::<Vec<_>>();
+        let mut out = HashMap::new();
+        for outcome in batch_client.poll(&requests)? {
+            match outcome {
+                BatchSessionOutcome::Found(feeds) => {
+                    out.insert(
+                        feeds.key.clone(),
+                        RemotePollOutcome::Found(batch_feeds(feeds)),
+                    );
+                }
+                BatchSessionOutcome::NotFound { key } => {
+                    out.insert(key, RemotePollOutcome::NotFound);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn batch_feeds(feeds: BatchFeeds) -> RemoteFeeds {
+        RemoteFeeds {
+            profile_harness: HarnessTranscriptKind::parse(&feeds.profile_harness)
+                .unwrap_or(HarnessTranscriptKind::Codex),
+            artifacts: Some(feeds.artifacts),
+            atrium: Some(feeds.atrium),
+            profile_bundles: Some(feeds.profile_bundles),
+        }
+    }
+
+    fn poll_legacy_targets(
+        global: &GlobalConfig,
+        targets: &[PollTarget],
+    ) -> HashMap<String, RemotePollOutcome> {
+        let mut out = HashMap::new();
+        for target in targets {
+            out.insert(
+                target.atrium_session.clone(),
+                poll_legacy_target(global, target),
+            );
+        }
+        out
+    }
+
+    fn poll_legacy_target(global: &GlobalConfig, target: &PollTarget) -> RemotePollOutcome {
+        let mut client =
+            HttpAtriumClient::new(&global.base_url, &global.api_key, &target.atrium_session);
+        let mut not_found = 0usize;
+        let mut successes = 0usize;
+
+        let artifacts = match client.poll_changes_feed(&target.artifacts_since) {
+            Ok(feed) => {
+                successes += 1;
+                Some(feed)
+            }
+            Err(error) if error.is_not_found() => {
+                not_found += 1;
+                None
+            }
+            Err(error) => {
+                eprintln!("session {}: poll: {error}", target.session);
+                None
+            }
+        };
+        let atrium = match client.atrium_changes_feed(&target.atrium_since) {
+            Ok(feed) => {
+                successes += 1;
+                Some(feed)
+            }
+            Err(error) if error.is_not_found() => {
+                not_found += 1;
+                None
+            }
+            Err(error) => {
+                eprintln!("session {}: atrium changes: {error}", target.session);
+                None
+            }
+        };
+        let profile_bundles =
+            match client.get_profile_bundles_feed(target.profile_harness.atrium_harness()) {
+                Ok(feed) => {
+                    successes += 1;
+                    Some(feed)
+                }
+                Err(error) if error.is_not_found() => {
+                    not_found += 1;
+                    None
+                }
+                Err(error) => {
+                    eprintln!("session {}: profile bundles: {error}", target.session);
+                    None
+                }
+            };
+
+        if not_found == 3 {
+            RemotePollOutcome::NotFound
+        } else if successes > 0 {
+            RemotePollOutcome::Found(RemoteFeeds {
+                profile_harness: target.profile_harness,
+                artifacts,
+                atrium,
+                profile_bundles,
+            })
+        } else {
+            RemotePollOutcome::Error
+        }
+    }
+
+    fn apply_probe_outcome(
+        probe: &ProbeSession,
+        outcome: Option<&RemotePollOutcome>,
+        eviction: &mut SessionEvictionState,
+    ) {
+        match outcome {
+            Some(RemotePollOutcome::Found(_)) => {
+                if eviction.record_found() {
+                    eprintln!(
+                        "event=node_sync_un_evict session={} reason=server_found",
+                        probe.session
+                    );
+                }
+            }
+            Some(RemotePollOutcome::NotFound) => {
+                eviction.record_not_found();
+            }
+            Some(RemotePollOutcome::Error) | None => {}
+        }
+    }
+
+    fn maybe_gc_evicted_session(
+        global: &GlobalConfig,
+        overlays_root: &Path,
+        discovered: &DiscoveredSession,
+        eviction: &SessionEvictionState,
+        now: Instant,
+        manifest_mtime_nanos: Option<u128>,
+        has_active_mount: bool,
+    ) {
+        if !global.gc_dirs
+            || !eviction.gc_eligible(
+                now,
+                manifest_mtime_nanos,
+                has_active_mount,
+                global.evict_grace,
+            )
+        {
+            return;
+        }
+        let overlay_dir = overlays_root.join(&discovered.session);
+        let sidecar = manifest_path(overlays_root, &discovered.session);
+        match std::fs::remove_dir_all(&overlay_dir) {
+            Ok(()) => eprintln!(
+                "event=node_sync_gc session={} path={} reason=evicted_grace_elapsed",
+                discovered.session,
+                overlay_dir.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!(
+                "session {}: gc remove {}: {error}",
+                discovered.session,
+                overlay_dir.display()
+            ),
+        }
+        match std::fs::remove_file(&sidecar) {
+            Ok(()) => eprintln!(
+                "event=node_sync_gc session={} path={} reason=evicted_grace_elapsed",
+                discovered.session,
+                sidecar.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!(
+                "session {}: gc remove {}: {error}",
+                discovered.session,
+                sidecar.display()
+            ),
+        }
+    }
+
+    fn has_active_overlay_mount(merged: &Path) -> Result<bool, String> {
+        let target = merged
+            .canonicalize()
+            .unwrap_or_else(|_| merged.to_path_buf())
+            .to_string_lossy()
+            .into_owned();
+        let mounts = match std::fs::read_to_string("/proc/mounts") {
+            Ok(mounts) => mounts,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("read /proc/mounts: {error}")),
+        };
+        for line in mounts.lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 3 {
+                continue;
+            }
+            if fields[2] == "overlay" && unescape_proc_mounts(fields[1]) == target {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn unescape_proc_mounts(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        let bytes = value.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\'
+                && i + 3 < bytes.len()
+                && let Ok(octal) = u8::from_str_radix(&value[i + 1..i + 4], 8)
+            {
+                out.push(octal as char);
+                i += 4;
+                continue;
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
+    }
+
+    #[derive(Debug)]
+    enum StreamMessage {
+        Healthy,
+        Unhealthy,
+        Changed(ChangedEvent),
+    }
+
+    fn start_change_stream(base_url: &str, api_key: &str) -> mpsc::Receiver<StreamMessage> {
+        let (tx, rx) = mpsc::channel();
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let api_key = api_key.to_string();
+        std::thread::spawn(move || stream_reader_loop(base_url, api_key, tx));
+        rx
+    }
+
+    fn stream_reader_loop(base_url: String, api_key: String, tx: mpsc::Sender<StreamMessage>) {
+        let url = format!("{base_url}/api/internal/changes/stream");
+        let agent = ureq::AgentBuilder::new()
+            .timeout_read(Duration::from_secs(46))
+            .build();
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            let response = agent.get(&url).set("x-api-key", &api_key).call();
+            match response {
+                Ok(response) => {
+                    let _ = tx.send(StreamMessage::Healthy);
+                    backoff = Duration::from_secs(1);
+                    let mut parser = SseParser::default();
+                    let mut reader = response.into_reader();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        match reader.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                for output in parser.push(&buf[..n]) {
+                                    forward_sse_output(&tx, output);
+                                }
+                            }
+                            Err(error) => {
+                                eprintln!("node-sync changes stream read: {error}");
+                                break;
+                            }
+                        }
+                    }
+                    for output in parser.finish() {
+                        forward_sse_output(&tx, output);
+                    }
+                    let _ = tx.send(StreamMessage::Unhealthy);
+                }
+                Err(error) => {
+                    eprintln!("node-sync changes stream connect: {error}");
+                    let _ = tx.send(StreamMessage::Unhealthy);
+                }
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_secs(60));
+        }
+    }
+
+    fn forward_sse_output(tx: &mpsc::Sender<StreamMessage>, output: SseOutput) {
+        match output {
+            SseOutput::Hello { .. } => {
+                let _ = tx.send(StreamMessage::Healthy);
+            }
+            SseOutput::Changed(event) => {
+                let _ = tx.send(StreamMessage::Changed(event));
+            }
+            SseOutput::Malformed { event, error } => {
+                eprintln!("node-sync changes stream malformed {event}: {error}");
+            }
+        }
+    }
+
+    fn drain_stream_messages(
+        rx: &mpsc::Receiver<StreamMessage>,
+        stream_healthy: &mut bool,
+        dirty: &mut DirtySet,
+        current_atrium_keys: &HashSet<String>,
+    ) {
+        while let Ok(message) = rx.try_recv() {
+            match message {
+                StreamMessage::Healthy => *stream_healthy = true,
+                StreamMessage::Unhealthy => *stream_healthy = false,
+                StreamMessage::Changed(event) => {
+                    dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
+                }
+            }
         }
     }
 
@@ -800,90 +1549,101 @@ mod linux_daemon {
     ) {
         match client.poll_changes(&state.cursor) {
             Ok((changes, next)) => {
-                if !changes.is_empty() {
-                    use centaur_node_sync::manifest::{
-                        ManifestApply, apply_manifest_atomic, partition_manifests,
-                    };
-
-                    let plan = inbound_sweep(&changes, state.locals(), echo, client);
-
-                    let mut group_size: HashMap<String, usize> = HashMap::new();
-                    for (_p, rc) in &changes {
-                        if let Some(group_id) = &rc.group_id {
-                            *group_size.entry(group_id.clone()).or_default() += 1;
-                        }
-                    }
-                    let tagged = plan
-                        .to_write
-                        .into_iter()
-                        .map(|(path, seq, bytes)| {
-                            let (group_id, sha) = changes
-                                .iter()
-                                .find(|(p, rc)| p == &path && rc.seq == seq)
-                                .map(|(_, rc)| (rc.group_id.clone(), rc.sha.clone()))
-                                .unwrap_or((None, None));
-                            (path, seq, group_id, sha, bytes)
-                        })
-                        .collect();
-                    let part = partition_manifests(tagged, &group_size);
-
-                    let mut adopted = 0usize;
-                    let (written, loose_deferred) =
-                        apply_quiesced_writes(part.loose, lease, |rel, bytes| {
-                            write_through_merged(&session.merged, rel, bytes)
-                        });
-                    for (path, seq) in &written {
-                        let sha = changes
-                            .iter()
-                            .find(|(p, rc)| p == path && rc.seq == *seq)
-                            .and_then(|(_, rc)| rc.sha.clone());
-                        state.sync_to(path, *seq, sha, true);
-                        adopted += 1;
-                    }
-
-                    let mut group_deferred = 0usize;
-                    for manifest in &part.manifests {
-                        match apply_manifest_atomic(
-                            manifest,
-                            lease,
-                            |rel, bytes| stage_through_merged(&session.merged, rel, bytes),
-                            |rel| commit_through_merged(&session.merged, rel),
-                            |rel| abort_staged(&session.merged, rel),
-                        ) {
-                            ManifestApply::Applied(entries) => {
-                                for (path, seq, sha) in entries {
-                                    state.sync_to(&path, seq, sha, true);
-                                    adopted += 1;
-                                }
-                            }
-                            ManifestApply::Deferred(reason) => {
-                                group_deferred += 1;
-                                eprintln!(
-                                    "session {}: group {} deferred: {reason}",
-                                    session.session, manifest.group_id
-                                );
-                            }
-                        }
-                    }
-                    println!(
-                        "session {}: inbound: {adopted} adopted ({} groups), {} loose-deferred, {group_deferred} group-deferred, {} incomplete, {} reconcile, {} conflicts",
-                        session.session,
-                        part.manifests.len(),
-                        loose_deferred.len(),
-                        part.deferred_incomplete.len(),
-                        plan.to_reconcile.len(),
-                        plan.conflicts.len()
-                    );
-                    for (path, seq) in &plan.conflicts {
-                        eprintln!(
-                            "session {}: CONFLICT at {path} seq {seq} -- needs resolution",
-                            session.session
-                        );
-                    }
-                }
+                apply_inbound_changes(session, state, echo, lease, client, &changes);
                 state.cursor = next;
             }
             Err(e) => eprintln!("session {}: poll: {e}", session.session),
+        }
+    }
+
+    fn apply_inbound_changes(
+        session: &SessionConfig,
+        state: &mut DaemonState,
+        echo: &mut EchoGuard,
+        lease: &LeaseGate,
+        client: &mut HttpAtriumClient,
+        changes: &[(String, centaur_node_sync::adopt::RemoteChange)],
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        use centaur_node_sync::manifest::{
+            ManifestApply, apply_manifest_atomic, partition_manifests,
+        };
+
+        let plan = inbound_sweep(changes, state.locals(), echo, client);
+
+        let mut group_size: HashMap<String, usize> = HashMap::new();
+        for (_p, rc) in changes {
+            if let Some(group_id) = &rc.group_id {
+                *group_size.entry(group_id.clone()).or_default() += 1;
+            }
+        }
+        let tagged = plan
+            .to_write
+            .into_iter()
+            .map(|(path, seq, bytes)| {
+                let (group_id, sha) = changes
+                    .iter()
+                    .find(|(p, rc)| p == &path && rc.seq == seq)
+                    .map(|(_, rc)| (rc.group_id.clone(), rc.sha.clone()))
+                    .unwrap_or((None, None));
+                (path, seq, group_id, sha, bytes)
+            })
+            .collect();
+        let part = partition_manifests(tagged, &group_size);
+
+        let mut adopted = 0usize;
+        let (written, loose_deferred) = apply_quiesced_writes(part.loose, lease, |rel, bytes| {
+            write_through_merged(&session.merged, rel, bytes)
+        });
+        for (path, seq) in &written {
+            let sha = changes
+                .iter()
+                .find(|(p, rc)| p == path && rc.seq == *seq)
+                .and_then(|(_, rc)| rc.sha.clone());
+            state.sync_to(path, *seq, sha, true);
+            adopted += 1;
+        }
+
+        let mut group_deferred = 0usize;
+        for manifest in &part.manifests {
+            match apply_manifest_atomic(
+                manifest,
+                lease,
+                |rel, bytes| stage_through_merged(&session.merged, rel, bytes),
+                |rel| commit_through_merged(&session.merged, rel),
+                |rel| abort_staged(&session.merged, rel),
+            ) {
+                ManifestApply::Applied(entries) => {
+                    for (path, seq, sha) in entries {
+                        state.sync_to(&path, seq, sha, true);
+                        adopted += 1;
+                    }
+                }
+                ManifestApply::Deferred(reason) => {
+                    group_deferred += 1;
+                    eprintln!(
+                        "session {}: group {} deferred: {reason}",
+                        session.session, manifest.group_id
+                    );
+                }
+            }
+        }
+        println!(
+            "session {}: inbound: {adopted} adopted ({} groups), {} loose-deferred, {group_deferred} group-deferred, {} incomplete, {} reconcile, {} conflicts",
+            session.session,
+            part.manifests.len(),
+            loose_deferred.len(),
+            part.deferred_incomplete.len(),
+            plan.to_reconcile.len(),
+            plan.conflicts.len()
+        );
+        for (path, seq) in &plan.conflicts {
+            eprintln!(
+                "session {}: CONFLICT at {path} seq {seq} -- needs resolution",
+                session.session
+            );
         }
     }
 
@@ -1236,7 +1996,7 @@ mod linux_daemon {
         client: &HttpAtriumClient,
     ) {
         let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
-        match materialize_once(client, &atrium_root, &state.atrium_cursor) {
+        match centaur_node_sync::materialize_once(client, &atrium_root, &state.atrium_cursor) {
             Ok(next) => {
                 if next != state.atrium_cursor {
                     println!("atrium materializer: cursor={next}");
