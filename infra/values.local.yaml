@@ -58,6 +58,10 @@ nodeSync:
   overlayProvisioning:
     enabled: true
     flatHome: true
+  extraEnv:
+    # #213: the daemon deletes evicted (dead) sessions' overlay dirs so disk
+    # stays bounded — eviction alone only stops the polling, not the pileup.
+    NODE_SYNC_GC_DIRS: "1"
   atriumBaseUrl: "http://172.18.0.3:3001"
   atriumEgress:
     enabled: true

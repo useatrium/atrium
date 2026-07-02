@@ -99,6 +99,11 @@ cd ~/atrium/surface/deploy
 # key settings: BIND_HOST=127.0.0.1, DB/MinIO/server on loopback, AUTH_OPEN=1
 #   (Cloudflare Access is the gate), S3_ENDPOINT=http://minio:9000 (flip to the public
 #   files host once the tunnel is up), CENTAUR_* filled in Phase 6.
+# The server creates the S3_BUCKET at boot (retrying until the store is up) and
+# /healthz stays 503 until that first succeeds — a health-gated deploy fails
+# loudly if storage is misconfigured instead of 500ing every capture silently
+# (#215). Manual fallback: docker exec deploy-minio-1 sh -c
+#   'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && mc mb local/atrium-files'
 
 # web SPA (build in a node container to avoid host Node)
 docker run --rm -v ~/atrium/surface:/app -w /app node:24-alpine \
