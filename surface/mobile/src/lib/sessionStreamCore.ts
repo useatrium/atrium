@@ -22,6 +22,16 @@ export interface StreamSessionOptions {
   fetchImpl: FetchLike;
 }
 
+export type StreamActivityKind = 'frame' | 'ping';
+export type StreamActivityCallback = (kind: StreamActivityKind, serverTs: string | null) => void;
+
+const SILENT_DEATH_MS = 45_000;
+const SILENT_DEATH_FALLBACK_MS = 4 * 60_000;
+
+export function silenceThresholdMs(pingProof: boolean): number {
+  return pingProof ? SILENT_DEATH_MS : SILENT_DEATH_FALLBACK_MS;
+}
+
 export function normalizeExecutionStatus(status: ExecutionStatus): SessionStatus {
   switch (status) {
     case 'queued':
@@ -81,6 +91,7 @@ export async function streamSessionOnce(
   state: SessionState = initialSessionState(),
   onState?: (state: SessionState) => void,
   onOpen?: () => void,
+  onActivity?: StreamActivityCallback,
 ): Promise<SessionState> {
   const url = `${options.baseUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(
     options.sessionId,
@@ -99,11 +110,20 @@ export async function streamSessionOnce(
   onOpen?.();
   let acc = state;
   for await (const parsed of parseSseStream(response.body)) {
+    if (parsed.event === 'ping') {
+      const serverTs =
+        isJsonObject(parsed.data) && typeof parsed.data.atrium_ts === 'string'
+          ? parsed.data.atrium_ts
+          : null;
+      onActivity?.('ping', serverTs);
+      continue;
+    }
     const frame = frameFromParsedSse(parsed);
     if (!frame) continue;
     const next = foldSessionFrame(acc, frame);
     if (next !== acc) {
       acc = next;
+      onActivity?.('frame', frame.ts ?? null);
       onState?.(acc);
     }
   }
