@@ -99,24 +99,29 @@ describe('turn timestamps', () => {
 });
 
 describe('resizable session pane', () => {
-  it('drags wider from the left-edge handle and persists the width', async () => {
+  it('renders the adaptive default class until the user drags, then persists the dragged width', async () => {
     renderPane();
     const handle = screen.getByTestId('pane-resize-handle');
     const aside = handle.closest('aside')!;
-    expect(aside.style.width).toBe('min(520px, 70vw)');
+    // No stored preference → the pre-resize adaptive width (min(520px,42vw)),
+    // via class, with no inline width.
+    expect(aside.className).toContain('w-[min(520px,42vw)]');
+    expect(aside.style.width).toBe('');
 
-    // Drag 140px left → 140px wider (pane is anchored to the right edge).
+    // Drag 140px left → 140px wider (pane is anchored to the right edge; the
+    // unmeasurable jsdom rect falls back to the 520px drag baseline).
     // jsdom has no PointerEvent; MouseEvent carries button/clientX and React
     // dispatches by event type, so it stands in fine.
     fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 800 }));
     fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, clientX: 660 }));
+    // Mid-drag the width is applied imperatively (no React re-render per move).
     await waitFor(() => expect(aside.style.width).toBe('min(660px, 70vw)'));
     fireEvent(handle, new MouseEvent('pointerup', { bubbles: true, clientX: 660 }));
 
     expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBe('660');
   });
 
-  it('restores the persisted width on mount and resets on double-click', async () => {
+  it('restores the persisted width on mount and double-click resets to the adaptive default', async () => {
     window.localStorage.setItem('atrium.sessionPaneWidth', '640');
     renderPane();
     const handle = screen.getByTestId('pane-resize-handle');
@@ -124,8 +129,9 @@ describe('resizable session pane', () => {
     expect(aside.style.width).toBe('min(640px, 70vw)');
 
     fireEvent.doubleClick(handle);
-    await waitFor(() => expect(aside.style.width).toBe('min(520px, 70vw)'));
-    expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBe('520');
+    await waitFor(() => expect(aside.className).toContain('w-[min(520px,42vw)]'));
+    expect(aside.style.width).toBe('');
+    expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBeNull();
   });
 
   it('hides the resize handle in focus layout', () => {

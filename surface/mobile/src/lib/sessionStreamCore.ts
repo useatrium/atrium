@@ -57,7 +57,14 @@ export function frameFromParsedSse(parsed: {
           : undefined;
 
   if (eventId === undefined) return null;
-  return { event: parsed.event, event_id: eventId, data: parsed.data } as CentaurEventFrame;
+  // Proxy wall-clock stamp (see web parseFrame) — feeds item.ts in the reducer.
+  const ts = typeof parsed.data.atrium_ts === 'string' ? parsed.data.atrium_ts : undefined;
+  return {
+    event: parsed.event,
+    event_id: eventId,
+    data: parsed.data,
+    ...(ts ? { ts } : {}),
+  } as CentaurEventFrame;
 }
 
 function isJsonObject(value: JsonValue): value is JsonObject {

@@ -192,10 +192,12 @@ export function initialSessionState(): SessionState {
 export function reduceSession(state: SessionState, frame: CentaurEventFrame): SessionState {
   const next = reduceSessionFrame(state, frame);
   if (frame.ts) {
-    // Stamp items this frame touched that have no time yet — for a stamped
-    // stream that is exactly the items the frame created.
+    // Stamp only items this frame CREATED (their first source event). Matching
+    // any touched event id would let a stamped update-frame (tool result,
+    // question resolution, delta) mis-stamp an item created by an unstamped
+    // frame — reachable when a stream mixes pre- and post-stamping servers.
     for (const item of next.items) {
-      if (item.ts === undefined && item.sourceEventIds.includes(frame.event_id)) {
+      if (item.ts === undefined && item.sourceEventIds[0] === frame.event_id) {
         item.ts = frame.ts;
       }
     }
