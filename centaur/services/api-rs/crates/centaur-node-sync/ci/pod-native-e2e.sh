@@ -758,6 +758,18 @@ if [[ "${hydrate_ok}" != "1" ]]; then
   kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu 'ls -la /workspace/shared 2>&1 || true' >&2 || true
   exit 1
 fi
+# The hydrated lower must SURVIVE later daemon ticks, not just the first mount:
+# a per-tick plan rebuilt without the artifact lower mismatches the overlay
+# signature and remounts the session without its hydrated artifacts. The
+# first-read assert above can win that race, so re-check after a few ticks.
+sleep 5
+if ! kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu \
+     'test "$(cat /workspace/shared/hydrated.md 2>/dev/null)" = "hydrated by atrium"'; then
+  echo "FAIL: hydrated artifact disappeared after later daemon ticks (remount dropped the artifact lower)" >&2
+  kubectl -n "${NS}" exec "${HYDRATE_POD}" -c agent -- /bin/sh -ceu 'ls -la /workspace/shared 2>&1 || true' >&2 || true
+  exit 1
+fi
+echo "OK: hydrated artifact still present after later daemon ticks"
 
 echo "==> [9/9] assert inbound adopt (remote edit -> merged) via pod logs"
 if [[ "${NODE_SYNC_E2E_INBOUND:-0}" == "1" ]]; then

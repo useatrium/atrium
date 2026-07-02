@@ -279,7 +279,9 @@ mod linux_daemon {
         BatchEndpointState, BatchFeeds, BatchHttpClient, BatchPollError, BatchRequestSession,
         BatchSessionOutcome,
     };
-    use centaur_node_sync::cas::hydrate_artifact_lower_into_plan;
+    use centaur_node_sync::cas::{
+        hydrate_artifact_lower_into_plan, reattach_artifact_lower_into_plan,
+    };
     use centaur_node_sync::depcache::{EvictStats, evict_depcache_lru};
     use centaur_node_sync::echo::EchoGuard;
     use centaur_node_sync::eviction::{
@@ -737,12 +739,22 @@ mod linux_daemon {
                         // every scan would `remove_dir_all` the artifact-lower out from
                         // under the live overlay (it is an active lowerdir), emptying the
                         // agent's view. The mount is idempotent; the hydration must not be.
+                        // On later ticks the hydrated lower must still be part of the
+                        // plan: the overlay signature covers extra lowers, so a plan
+                        // rebuilt without it would mismatch and remount the session
+                        // WITHOUT its hydrated artifacts.
                         if !mounted_overlays.contains_key(&discovered.session) {
                             hydrate_artifacts_if_enabled(
                                 &global,
                                 &overlays_root,
                                 &discovered.session,
                                 &discovered.atrium_session,
+                                &mut plan,
+                            );
+                        } else {
+                            reattach_artifact_lower_into_plan(
+                                &overlays_root,
+                                &discovered.session,
                                 &mut plan,
                             );
                         }
