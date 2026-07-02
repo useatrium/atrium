@@ -498,7 +498,7 @@ export default function FilesTab() {
 
   useEffect(() => {
     void loadFiles({ reset: true });
-  }, [loadFiles]);
+  }, [chat.filesEventSeq, loadFiles]);
 
   const searchActive = search.trim().length > 0;
   const { folders, filesHere } = useMemo(() => folderView(files, currentDir), [currentDir, files]);

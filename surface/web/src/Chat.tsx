@@ -7,7 +7,9 @@ import {
 import { isDesktop, desktopWsUrl } from './desktop';
 import {
   DurableOpQueue,
+  FILES_CHANGED_EVENT_TYPE,
   appReducer,
+  filesChangedWorkspaceId,
   queuedChangesLabel,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
@@ -158,6 +160,18 @@ export function Chat({
   const markQueueNudged = useCallback(() => {
     setQueueNudgeSeq((n) => n + 1);
   }, []);
+  const [filesEventSeq, setFilesEventSeq] = useState(0);
+
+  const handleFilesChangedEvent = useCallback(
+    (event: WireEvent) => {
+      if (event.type !== FILES_CHANGED_EVENT_TYPE) return false;
+      if (filesChangedWorkspaceId(event) === workspace.id) {
+        setFilesEventSeq((n) => n + 1);
+      }
+      return true;
+    },
+    [workspace.id],
+  );
 
   const onApiError = useCallback(
     (err: unknown) => {
@@ -168,6 +182,7 @@ export function Chat({
 
   const queueDispatch = useCallback(
     (action: Parameters<typeof dispatch>[0]) => {
+      if (action.type === 'server-event' && handleFilesChangedEvent(action.event)) return;
       dispatch(action);
       if (action.type === 'server-event') {
         if (action.event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
@@ -177,7 +192,7 @@ export function Chat({
       if (action.type === 'sync-cursor') cacheSyncCursor(action.cursor);
       if (action.type === 'mute-changed') cacheMute(action.channelId, action.muted);
     },
-    [cacheMute, cacheSyncCursor],
+    [cacheMute, cacheSyncCursor, handleFilesChangedEvent],
   );
 
   const opRegistry = useMemo(() => createChatOpRegistry(), []);
@@ -549,6 +564,7 @@ export function Chat({
     wsKeys,
     {
       onEvent: (event: WireEvent) => {
+        if (handleFilesChangedEvent(event)) return;
         if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
         // A message landing ends that author's "is typing…" immediately.
         if (event.type === 'message.posted' && event.actorId) {
@@ -1090,6 +1106,7 @@ export function Chat({
             workspaceId={workspace.id}
             channelId={active?.id ?? null}
             defaultScope={active ? 'channel' : 'workspace'}
+            filesEventSeq={filesEventSeq}
           />
         ) : (
           <Timeline

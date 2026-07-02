@@ -5,7 +5,10 @@ import type pg from 'pg';
 import { PROFILE_BUNDLES_NOTIFY_CHANNEL } from '../agent-profiles.js';
 import { ArtifactLedger, CHANGE_CURSOR_ZERO, type ChangeCursor } from '../artifact-ledger.js';
 import type { Db } from '../db.js';
+import { FilesChangedDebouncer } from '../files-nudge.js';
 import { isHarness, type Harness } from '../harness-transcript.js';
+import type { WsHub } from '../hub.js';
+import { workspaceMemberIds } from '../membership.js';
 import { CLAUDE_CODE_PROVIDER, CODEX_PROVIDER } from '../provider-credentials.js';
 import { listSessionProfileBundles } from '../profile-bundles.js';
 import {
@@ -49,6 +52,7 @@ const MAX_QUEUED_SSE_FRAMES = 1000;
 
 export interface InternalChangesRouteDeps {
   pool: Db;
+  hub?: WsHub;
   requireCaptureKey(req: FastifyRequest, reply: FastifyReply): boolean;
   resolveInternalSessionRef(sessionRef: string): Promise<InternalSessionRef | null>;
   heartbeatMs?: number;
@@ -57,8 +61,16 @@ export interface InternalChangesRouteDeps {
 class BadBatchRequest extends Error {}
 
 export function registerInternalChangesRoutes(app: FastifyInstance, deps: InternalChangesRouteDeps): void {
-  const { pool, requireCaptureKey, resolveInternalSessionRef } = deps;
-  const broadcaster = new InternalChangeBroadcaster(pool, app.log);
+  const { pool, hub, requireCaptureKey, resolveInternalSessionRef } = deps;
+  const filesNudge = hub
+    ? new FilesChangedDebouncer({
+        publish: async (event) => {
+          hub.publishToUsers(await workspaceMemberIds(pool, event.workspaceId), event);
+        },
+        onError: (err) => app.log.warn({ err }, 'files.changed nudge failed'),
+      })
+    : null;
+  const broadcaster = new InternalChangeBroadcaster(pool, app.log, filesNudge);
   const heartbeatMs = deps.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
 
   app.addHook('onClose', async () => {
@@ -252,6 +264,7 @@ class InternalChangeBroadcaster {
   constructor(
     private readonly pool: Db,
     private readonly log: Logger,
+    private readonly filesNudge: FilesChangedDebouncer | null = null,
   ) {}
 
   async start(): Promise<void> {
@@ -275,6 +288,7 @@ class InternalChangeBroadcaster {
 
   async close(): Promise<void> {
     for (const subscriber of [...this.subscribers]) subscriber.close();
+    this.filesNudge?.close();
     if (!this.client) return;
     const client = this.client;
     this.client = null;
@@ -305,6 +319,9 @@ class InternalChangeBroadcaster {
   private async processNotification(notification: pg.Notification): Promise<void> {
     const change = await this.mapNotification(notification);
     if (!change) return;
+    if (change.feed === 'artifacts' && change.workspaceId) {
+      this.filesNudge?.nudge(change.workspaceId);
+    }
     this.seq += 1;
     this.broadcast({ ...change, seq: this.seq });
   }

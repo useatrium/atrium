@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import type { WsHub } from '../src/hub.js';
 import { emitSessionRecordChange } from '../src/session-record-changefeed.js';
 import { registerInternalChangesRoutes } from '../src/routes/internal-changes.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
@@ -300,6 +301,38 @@ describe('GET /api/internal/changes/stream', () => {
     }
   });
 
+  it('publishes debounced files.changed nudges for artifact notifications only', async () => {
+    const known = await session();
+    const publishToUsers = vi.fn();
+    const hub = { publishToUsers } as unknown as WsHub;
+    const streamApp = await buildStreamOnlyApp(15_000, hub);
+    const stream = await openSse(streamApp);
+    try {
+      await stream.waitFor((frame) => frame.event === 'hello');
+
+      await captureArtifact(known, 'hub-nudge.md');
+      await stream.waitForChanged('artifacts', known.key);
+      await vi.waitFor(() => expect(publishToUsers).toHaveBeenCalledTimes(1), { timeout: 3000 });
+
+      const [userIds, event] = publishToUsers.mock.calls[0]!;
+      expect(userIds).toContain(fx.userId);
+      expect(event).toMatchObject({
+        type: 'files.changed',
+        workspaceId: fx.workspaceId,
+        channelId: null,
+        payload: { workspaceId: fx.workspaceId },
+      });
+
+      await bindProfileWithBundle(known);
+      await stream.waitForChanged('profile', known.key);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      expect(publishToUsers).toHaveBeenCalledTimes(1);
+    } finally {
+      await stream.close();
+      await streamApp.close();
+    }
+  });
+
   it('emits heartbeat comments and closes subscriptions cleanly', async () => {
     const streamApp = await buildStreamOnlyApp(25);
     const stream = await openSse(streamApp);
@@ -314,10 +347,11 @@ describe('GET /api/internal/changes/stream', () => {
   });
 });
 
-async function buildStreamOnlyApp(heartbeatMs: number): Promise<FastifyInstance> {
+async function buildStreamOnlyApp(heartbeatMs: number, hub?: WsHub): Promise<FastifyInstance> {
   const streamApp = Fastify({ logger: { level: 'error' } });
   registerInternalChangesRoutes(streamApp, {
     pool,
+    hub,
     heartbeatMs,
     requireCaptureKey(req, reply) {
       if (req.headers['x-api-key'] !== KEY) {
