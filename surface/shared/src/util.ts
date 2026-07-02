@@ -107,6 +107,14 @@ export function formatGutterTime(iso: string): string {
   });
 }
 
+/** Hover timestamp for a transcript turn: time-of-day today, day + time otherwise. */
+export function formatTurnTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  if (sameDay(d, new Date())) return formatTime(iso);
+  return `${formatDay(iso)}, ${formatTime(iso)}`;
+}
+
 export function formatDay(iso: string): string {
   const d = new Date(iso);
   const today = new Date();

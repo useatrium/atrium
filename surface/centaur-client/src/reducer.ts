@@ -26,6 +26,8 @@ export interface TextItem {
   messageId?: string;
   uuid?: string;
   handle?: string | null;
+  /** Wall-clock time of the frame that created this item (from `CentaurEventFrame.ts`, the proxy stamp). */
+  ts?: string;
   sourceEventIds: number[];
 }
 
@@ -39,6 +41,7 @@ export interface ToolCallItem {
     is_error: boolean;
   };
   handle?: string | null;
+  ts?: string;
   sourceEventIds: number[];
 }
 
@@ -49,6 +52,7 @@ export interface ReasoningItem {
   summary?: string;
   messageId?: string;
   handle?: string | null;
+  ts?: string;
   sourceEventIds: number[];
 }
 
@@ -61,6 +65,7 @@ export interface QuestionItem {
   status: "pending" | "resolved";
   reason?: QuestionResolved["reason"];
   handle?: string | null;
+  ts?: string;
   sourceEventIds: number[];
 }
 
@@ -69,6 +74,7 @@ export interface UserMessageItem {
   id: string;
   text: string;
   handle?: string | null;
+  ts?: string;
   sourceEventIds: number[];
 }
 
@@ -184,6 +190,20 @@ export function initialSessionState(): SessionState {
 }
 
 export function reduceSession(state: SessionState, frame: CentaurEventFrame): SessionState {
+  const next = reduceSessionFrame(state, frame);
+  if (frame.ts) {
+    // Stamp items this frame touched that have no time yet — for a stamped
+    // stream that is exactly the items the frame created.
+    for (const item of next.items) {
+      if (item.ts === undefined && item.sourceEventIds.includes(frame.event_id)) {
+        item.ts = frame.ts;
+      }
+    }
+  }
+  return next;
+}
+
+function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): SessionState {
   const next: SessionState = {
     ...state,
     items: state.items.map((item) => ({ ...item, sourceEventIds: [...item.sourceEventIds] })),

@@ -48,7 +48,7 @@ import {
   XIcon,
 } from '../components/icons';
 import type { UserRef } from '@atrium/surface-client';
-import { formatTime, randomId } from '@atrium/surface-client';
+import { formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
 import {
@@ -64,6 +64,7 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
+import { useSessionPaneWidth } from './useSessionPaneWidth';
 import { Spinner, TurnStatusLine, type TurnPhase } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
@@ -278,7 +279,7 @@ export function SessionPane({
   // harnesses the bubble persists as the steer's transcript row, so once the
   // turn goes active we mark it delivered (sticky) and stop dimming it.
   const [pendingSteers, setPendingSteers] = useState<
-    { id: string; text: string; delivered?: boolean }[]
+    { id: string; text: string; ts: string; delivered?: boolean }[]
   >([]);
   useEffect(() => {
     setPendingSteers([]);
@@ -399,7 +400,7 @@ export function SessionPane({
     // Optimistic: show the steer immediately; reconciled away when the harness
     // echoes it back as a user_message (see the pendingSteers effect above).
     const pendingId = randomId();
-    setPendingSteers((prev) => [...prev, { id: pendingId, text }]);
+    setPendingSteers((prev) => [...prev, { id: pendingId, text, ts: new Date().toISOString() }]);
     onSteer(session.id, text).catch(() => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
@@ -571,6 +572,7 @@ export function SessionPane({
   };
 
   const focused = layout === 'focus';
+  const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const canDetach = !isPendingSessionId(session.id);
   const githubIdentityLabel = session.githubIdentityMode
     ? githubIdentityModeLabel(session.githubIdentityMode)
@@ -578,10 +580,25 @@ export function SessionPane({
 
   return (
     <aside
-      className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
-        focused ? 'flex-1' : 'w-[min(520px,42vw)] shrink-0'
+      className={`relative flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
+        focused ? 'flex-1' : 'shrink-0'
       }`}
+      style={focused ? undefined : { width: `min(${paneWidth}px, 70vw)` }}
     >
+      {!focused && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize session panel"
+          title="Drag to resize · double-click to reset"
+          data-testid="pane-resize-handle"
+          onPointerDown={startResize}
+          onDoubleClick={resetWidth}
+          className={`absolute inset-y-0 -left-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 ${
+            resizing ? 'bg-accent/50' : ''
+          }`}
+        />
+      )}
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3">
         <StatusChip status={displayStatus} stalled={stalled} />
         <div className="min-w-0 flex-1">
@@ -876,13 +893,27 @@ export function SessionPane({
               </div>
             ))}
             <AnnotatedTranscriptRow handle={item.handle ?? null}>
+              {/* `group` + title: every row gets a native mouseover timestamp;
+                  steer rows also reveal an inline one (their hover target is
+                  obvious and they anchor turn navigation). */}
+              <div className="group" title={item.ts ? formatTurnTime(item.ts) : undefined}>
               {item.type === 'text' ? (
                 <div className="pl-3.5">
                   <TextBlock item={item} />
                 </div>
               ) : item.type === 'user_message' ? (
                 <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                  <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
+                  <div className="text-sm font-semibold text-fg">
+                    {steerAuthor}
+                    {item.ts && (
+                      <span
+                        data-testid="turn-time"
+                        className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        {formatTurnTime(item.ts)}
+                      </span>
+                    )}
+                  </div>
                   <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
                     {item.text}
                   </div>
@@ -912,6 +943,7 @@ export function SessionPane({
                   />
                 </div>
               ) : null}
+              </div>
             </AnnotatedTranscriptRow>
           </Fragment>
         ))}
@@ -927,9 +959,15 @@ export function SessionPane({
           <div
             key={p.id}
             data-testid="user-steer-pending"
-            className={`pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
+            title={formatTurnTime(p.ts)}
+            className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
           >
-            <div className="text-sm font-semibold text-fg">{steerAuthor}</div>
+            <div className="text-sm font-semibold text-fg">
+              {steerAuthor}
+              <span className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100">
+                {formatTurnTime(p.ts)}
+              </span>
+            </div>
             <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
           </div>
         ))}

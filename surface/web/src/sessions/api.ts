@@ -111,7 +111,13 @@ export function parseFrame(name: string, raw: string): CentaurEventFrame | null 
         : typeof data.event_id === 'number'
           ? data.event_id
           : 0;
-    return { event: name, event_id: eventId, data } as CentaurEventFrame;
+    const ts =
+      typeof parsed.atrium_ts === 'string'
+        ? parsed.atrium_ts
+        : typeof data.atrium_ts === 'string'
+          ? data.atrium_ts
+          : undefined;
+    return { event: name, event_id: eventId, data, ...(ts ? { ts } : {}) } as CentaurEventFrame;
   } catch {
     return null;
   }

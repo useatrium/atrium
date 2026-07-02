@@ -2274,6 +2274,16 @@ describe('Phase 2 sessions', () => {
     expect(res.body.indexOf('old turn')).toBeLessThan(res.body.indexOf('old result'));
     expect(res.body.indexOf('old result')).toBeLessThan(res.body.indexOf('live turn'));
 
+    // Every frame carries a wall-clock stamp: mirror write time on replay,
+    // receive time on live tail (drives per-turn hover timestamps in the UI).
+    const dataLines = res.body.split('\n').filter((l) => l.startsWith('data: '));
+    expect(dataLines.length).toBeGreaterThan(0);
+    for (const line of dataLines) {
+      const body = JSON.parse(line.slice('data: '.length));
+      expect(typeof body.atrium_ts).toBe('string');
+      expect(Number.isNaN(Date.parse(body.atrium_ts))).toBe(false);
+    }
+
     await app.close();
   });
 
