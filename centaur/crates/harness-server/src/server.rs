@@ -94,15 +94,31 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                 input,
                 client_user_message_id,
                 model,
-                // Provider selection and reasoning effort only apply to the codex
-                // harness; the emulated (claude/amp) app-server has no equivalent
-                // knob (its provider is fixed at thread start from session params).
+                // Provider selection only applies to the codex harness; the
+                // emulated (claude/amp) app-server has no equivalent knob (its
+                // provider is fixed at thread start from session params).
                 provider: _,
-                reasoning: _,
+                reasoning,
                 trace_context,
             }) => {
                 if let Some(model) = model {
                     state.model = model;
+                }
+                // Per-turn reasoning effort for claude: the CLI fixes effort at
+                // process start, but the child is restartable — `--resume`
+                // carries the transcript, so applying a new effort is a respawn
+                // with a new `--effort`. A steer that landed mid-turn stashed
+                // its effort in pending_reasoning; it applies now. Amp has no
+                // effort knob; codex takes it via `turn/start.effort`.
+                let reasoning = reasoning.or_else(|| blocks_state.pending_reasoning.take());
+                if harness.kind() == HarnessKind::ClaudeCode
+                    && let Some(reasoning) = reasoning
+                    && state.reasoning_effort.as_deref() != Some(reasoning.as_str())
+                {
+                    state.reasoning_effort = Some(reasoning);
+                    // Dropping the idle child kills it (HarnessChild::drop);
+                    // the next ensure_harness_process respawns with the flag.
+                    state.process = None;
                 }
                 if let Err(error) = run_blocks_turn(
                     harness,
@@ -257,6 +273,10 @@ pub(crate) struct BlocksState {
     uploads: HashMap<String, StagedAttachment>,
     staged: HashMap<String, StagedAttachment>,
     pending_questions: HashMap<String, PendingQuestion>,
+    /// Reasoning effort from a steer that landed MID-turn (the running child
+    /// can't be re-parameterized). Consumed between turns so the change
+    /// applies from the next turn instead of being dropped.
+    pub(crate) pending_reasoning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -992,6 +1012,7 @@ fn resumed_thread_state<H: HarnessServer>(
             .clone()
             .unwrap_or_else(|| harness.default_model_provider().to_string()),
         service_tier: params.service_tier.clone().flatten(),
+        reasoning_effort: None,
         harness_session_id: Some(params.thread_id.clone()),
         completed_turns: Vec::new(),
         process: None,
@@ -1282,8 +1303,14 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
                 reasoning,
                 trace_context: _,
             }) => {
-                if model.is_some() || provider.is_some() || reasoning.is_some() {
-                    eprintln!("blocks active steering ignored model/provider/reasoning overrides");
+                if model.is_some() || provider.is_some() {
+                    eprintln!("blocks active steering ignored model/provider overrides");
+                }
+                // The running child can't be re-parameterized, but the effort
+                // change shouldn't vanish either: stash it so the between-turns
+                // loop applies it from the NEXT turn.
+                if let Some(reasoning) = reasoning {
+                    active_blocks.blocks_state.pending_reasoning = Some(reasoning);
                 }
                 process.stdin.write_all(&harness.stdin_for_steer(&input)?)?;
                 process.stdin.flush()?;

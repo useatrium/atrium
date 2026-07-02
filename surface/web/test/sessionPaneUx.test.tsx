@@ -148,3 +148,80 @@ describe('resizable session pane', () => {
     expect(screen.queryByTestId('pane-resize-handle')).toBeNull();
   });
 });
+
+describe('effort picker', () => {
+  const driving: Session = { ...running, spawnedBy: me.id, driverId: me.id, driverName: 'Me' };
+
+  it('driver on a codex session gets the picker; steers carry the sticky selection', async () => {
+    const onSteer = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SessionPane
+        session={driving}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onSteer={onSteer}
+      />,
+    );
+    FakeEventSource.last().open();
+
+    const picker = await screen.findByTestId('effort-picker');
+    const select = picker.querySelector('select')!;
+    // No recorded effort yet → "default" is offered.
+    expect(select.value).toBe('');
+    fireEvent.change(select, { target: { value: 'xhigh' } });
+
+    const composer = screen.getByPlaceholderText('Steer the agent...');
+    fireEvent.change(composer, { target: { value: 'dig deeper' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(onSteer).toHaveBeenCalledWith(driving.id, 'dig deeper', 'xhigh'));
+  });
+
+  it('recorded session effort hides "default" and preselects the level', async () => {
+    render(
+      <SessionPane
+        session={{ ...driving, modelEffort: 'high' }}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    FakeEventSource.last().open();
+    const picker = await screen.findByTestId('effort-picker');
+    const select = picker.querySelector('select')!;
+    expect(select.value).toBe('high');
+    expect(Array.from(select.options).map((o) => o.value)).not.toContain('');
+  });
+
+  it('claude sessions get the picker with the claude vocabulary (incl. max)', async () => {
+    render(
+      <SessionPane
+        session={{ ...driving, harness: 'claude-code' }}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    FakeEventSource.last().open();
+    const picker = await screen.findByTestId('effort-picker');
+    const values = Array.from(picker.querySelector('select')!.options).map((o) => o.value);
+    expect(values).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('amp sessions get no picker — no effort knob exists', () => {
+    render(
+      <SessionPane
+        session={{ ...driving, harness: 'amp' }}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    FakeEventSource.last().open();
+    expect(screen.queryByTestId('effort-picker')).toBeNull();
+  });
+});

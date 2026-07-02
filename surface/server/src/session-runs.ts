@@ -3,6 +3,7 @@ import { recordFrameObservation } from './frame-gap.js';
 import type { ServerResponse } from 'node:http';
 import { basename } from 'node:path';
 import { encodeRecordHandle } from '@atrium/surface-client/handle';
+import { HARNESS_EFFORT_LEVELS, isSessionEffortLevel } from '@atrium/surface-client/effort';
 import {
   CentaurApiError,
   CentaurClient,
@@ -78,6 +79,9 @@ export interface SessionJson {
   githubIdentityMode: string | null;
   providerConnectionId: string | null;
   agentProfileVersionId: string | null;
+  /** Current reasoning effort — seeded from the profile at spawn, updated by
+   * per-turn steer overrides (codex only). Null = harness default. */
+  modelEffort: string | null;
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
@@ -272,6 +276,7 @@ interface SessionRow {
   provider_connection_id: string | null;
   github_identity_mode: string | null;
   agent_profile_version_id: string | null;
+  model_effort: string | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -459,14 +464,27 @@ export class SessionRuns {
     const conflictClause = args.clientSpawnId
       ? `ON CONFLICT (spawned_by, client_spawn_id) WHERE client_spawn_id IS NOT NULL DO NOTHING`
       : '';
+    // Seed the session's effort from the spawning profile so the UI can show
+    // it without re-resolving (possibly superseded) profile versions later.
+    // Validated against the harness's vocabulary — an off-vocabulary manifest
+    // value (a typo, or a codex level in a claude profile) must not be seeded,
+    // or steers carrying the sticky selection would all fail 400.
+    const profileSettings = selectedProfileVersion?.manifest.settings;
+    const spawnEffortRaw =
+      profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
+    const spawnEffort =
+      typeof spawnEffortRaw === 'string' &&
+      (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(spawnEffortRaw)
+        ? spawnEffortRaw
+        : null;
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,
          title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id,
-         provider_connection_id, github_identity_mode, agent_profile_version_id
+         provider_connection_id, github_identity_mode, agent_profile_version_id, model_effort
        )
        -- driver_id starts as the spawner ($10 used for both spawned_by + driver_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13, $14, $15, $16)
        ${conflictClause}
        RETURNING *`,
       [
@@ -486,6 +504,7 @@ export class SessionRuns {
           (args.githubIdentityMode && args.githubIdentityMode !== 'automatic' ? 'github' : null),
         args.githubIdentityMode ?? 'automatic',
         selectedProfileVersion?.id ?? null,
+        spawnEffort,
       ],
     );
     let row = inserted.rows[0];
@@ -744,9 +763,15 @@ export class SessionRuns {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
     const viewId = this.openSessionView(session.id, userId);
-    const keepAlive = setInterval(() => {
-      raw.write(': keep-alive\n\n');
-    }, 15_000);
+    // Named event (not a bare comment) so EventSource clients can observe it:
+    // it proves the connection is alive and carries a server clock for
+    // skew-free elapsed displays. Not a Centaur frame — no event_id, never
+    // folded into the session reducer. The first ping goes out after the
+    // mirror replay (below), so replay frames stay the stream's first bytes.
+    const writePing = () => {
+      raw.write(`event: ping\ndata: ${JSON.stringify({ atrium_ts: new Date().toISOString() })}\n\n`);
+    };
+    const keepAlive = setInterval(writePing, 15_000);
     keepAlive.unref?.();
     try {
       let cursor = afterEventId;
@@ -761,6 +786,9 @@ export class SessionRuns {
         cursor = Math.max(cursor, frame.event_id);
         writeSessionFrame(raw, frame, replayHandles.get(frame.event_id), created_at.toISOString());
       }
+      // Caught up: give the client its first server-clock ping now rather than
+      // waiting out the first keep-alive interval.
+      if (!signal.aborted) writePing();
       // Only tail live for a session with an active execution. A terminal
       // session's mirror already contains its terminal execution_state, which we
       // just replayed; the live tail would start past it (afterEventId: cursor)
@@ -845,10 +873,38 @@ export class SessionRuns {
     this.startTailer(id);
   }
 
-  async postUserMessageInTx(client: DbClient, id: string, userId: string, text: string): Promise<void> {
+  /** Steer with an optional per-turn reasoning-effort override. Codex takes
+   * it natively (`turn/start.effort`); claude gets a child respawn with a new
+   * `--effort` (`--resume` keeps the transcript); amp has no channel. Returns
+   * the effort-changed wire event when the override sticks, for the route to
+   * publish post-commit. */
+  async postUserMessageInTx(
+    client: DbClient,
+    id: string,
+    userId: string,
+    text: string,
+    effort?: SessionEffortLevel,
+  ): Promise<WireEvent | null> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
-    await this.postUserMessageOnce(row, userId, text, true, client);
+    if (effort && !(HARNESS_EFFORT_LEVELS[row.harness] ?? []).includes(effort)) {
+      throw new DomainError(
+        400,
+        'effort_not_supported',
+        `the ${row.harness} harness does not support effort "${effort}"`,
+      );
+    }
+    await this.postUserMessageOnce(row, userId, text, true, client, effort);
+    if (!effort || effort === row.model_effort) return null;
+    await client.query('UPDATE sessions SET model_effort = $1 WHERE id = $2', [effort, id]);
+    return appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.effort_changed',
+      actorId: userId,
+      payload: { sessionId: id, effort, by: userId },
+    });
   }
 
   afterPostUserMessage(id: string): void {
@@ -969,7 +1025,21 @@ export class SessionRuns {
     text: string,
     allowStaleRetry: boolean,
     client: Db | DbClient = this.pool,
+    effort?: SessionEffortLevel,
   ): Promise<void> {
+    // Stickiness is enforced HERE, at the single authoritative send point:
+    // harness effort is per-turn (an omitted field reverts codex to its config
+    // default, and a restarted claude child forgets its flag), so every steer
+    // re-carries the session's recorded effort even when the client sent none
+    // (mobile, suggestion-sends). The recorded value is re-validated in case
+    // it predates the vocabulary (or the harness's support).
+    if (
+      effort === undefined &&
+      row.model_effort &&
+      (HARNESS_EFFORT_LEVELS[row.harness] ?? []).includes(row.model_effort)
+    ) {
+      effort = row.model_effort;
+    }
     let generation = row.assignment_generation;
     if (generation == null) {
       const spawned = await this.spawnAssignment(row, client);
@@ -988,7 +1058,7 @@ export class SessionRuns {
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
         const refreshed = await this.clearAssignment(row.id, client);
-        await this.postUserMessageOnce(refreshed, userId, text, false, client);
+        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort);
         return;
       }
       if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
@@ -1018,7 +1088,7 @@ export class SessionRuns {
     const executeId = await this.reserveExecuteId(row.id, client);
     const exec = await this.executeWithProviderEnvironment(row, generation, {
       executeId,
-      inputLines: [userInputLine(text)],
+      inputLines: [userInputLine(text, effort)],
     });
     await client.query(
       `UPDATE sessions
@@ -2542,14 +2612,23 @@ function normalizeStatus(status: string): SessionStatus {
   return 'running';
 }
 
-function userInputLine(text: string): string {
+/** One harness stdin line. `effort` rides as the top-level `reasoning` field —
+ * the harness-server's per-turn effort channel (codex `turn/start.effort`);
+ * the claude/amp paths ignore it, so callers gate on harness first. */
+function userInputLine(text: string, effort?: string | null): string {
   return JSON.stringify({
     type: 'user',
     message: {
       content: [{ type: 'text', text }],
     },
+    ...(effort ? { reasoning: effort } : {}),
   });
 }
+
+export type SessionEffortLevel = string;
+// Vocabulary + validation live in the shared package (single source with the
+// web picker); re-exported here for the interaction routes.
+export { HARNESS_EFFORT_LEVELS, isSessionEffortLevel };
 
 function writeSessionFrame(
   raw: ServerResponse,
@@ -2764,6 +2843,7 @@ function toJson(
     githubIdentityMode: row.github_identity_mode ?? 'automatic',
     providerConnectionId: row.provider_connection_id,
     agentProfileVersionId: row.agent_profile_version_id,
+    modelEffort: row.model_effort,
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,

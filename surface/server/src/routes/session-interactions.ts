@@ -1,7 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { DbClient } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
-import type { QuestionAnswerBody, SessionRuns } from '../session-runs.js';
+import {
+  isSessionEffortLevel,
+  type QuestionAnswerBody,
+  type SessionEffortLevel,
+  type SessionRuns,
+} from '../session-runs.js';
 
 export interface SessionInteractionRouteDeps {
   sessionRuns: SessionRuns;
@@ -64,7 +69,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+    const body = (req.body ?? {}) as { text?: string; effort?: unknown; opId?: unknown };
     const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
     if (text.trim().length === 0) {
@@ -73,17 +78,22 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (Buffer.byteLength(text, 'utf8') > maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
+    if (body.effort !== undefined && !isSessionEffortLevel(body.effort)) {
+      return reply.code(400).send({ error: 'invalid_effort', message: 'unknown effort level' });
+    }
+    const effort = body.effort as SessionEffortLevel | undefined;
     try {
       await runMutation({
         userId: user.id,
         opId,
         opType: 'session.steer',
-        body: { sessionId: id, text },
+        body: { sessionId: id, text, ...(effort ? { effort } : {}) },
         fn: async (client) => {
-          await sessionRuns.postUserMessageInTx(client, id, user.id, text);
-          return { ok: true as const };
+          const event = await sessionRuns.postUserMessageInTx(client, id, user.id, text, effort);
+          return { ok: true as const, event };
         },
-        onApplied: () => {
+        onApplied: (result) => {
+          if (result.event) publishEvent(result.event);
           sessionRuns.afterPostUserMessage(id);
         },
       });

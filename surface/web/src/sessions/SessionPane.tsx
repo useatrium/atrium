@@ -28,6 +28,7 @@ import {
 import {
   ApiError,
   api,
+  type AgentProfile,
   type AgentProfileProposal,
   type ConnectionStatus,
   type ProviderCredentialProvider,
@@ -52,6 +53,7 @@ import { formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
 import {
+  HARNESS_EFFORT_PICKER_OPTIONS,
   formatCost,
   formatElapsed,
   isPendingSessionId,
@@ -65,7 +67,7 @@ import {
 } from './types';
 import { useSessionStream } from './useSessionStream';
 import { sessionPaneSizing, useSessionPaneWidth } from './useSessionPaneWidth';
-import { Spinner, TurnStatusLine, type TurnPhase } from './TurnStatus';
+import { Spinner, TurnStatusLine, type TurnLiveness, type TurnPhase } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
 import { SessionMarkdown } from './Markdown';
@@ -82,6 +84,15 @@ import { SuggestionStrip } from './SessionSuggestions';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
+
+// Thinking-phase silence thresholds (tool runs are exempt — harnesses emit
+// nothing between a tool's start and its result, however long it takes; but
+// they stream token deltas continuously while thinking, so this silence is
+// meaningful). Quiet is informational; stuck offers the exit.
+const QUIET_AFTER_MS = 30_000;
+const STUCK_AFTER_QUIET_MS = 5 * 60_000;
+// Don't flash "Reconnecting…" during the moment an EventSource (re)opens.
+const RECONNECT_GRACE_MS = 3_000;
 
 export function SessionPane({
   session,
@@ -101,6 +112,7 @@ export function SessionPane({
   githubConnection,
   onConnectProvider,
   onConnectGitHub,
+  agentProfiles = [],
   layout = 'split',
   onToggleFocus,
 }: {
@@ -118,7 +130,7 @@ export function SessionPane({
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  onSteer?: (sessionId: string, text: string) => Promise<void>;
+  onSteer?: (sessionId: string, text: string, effort?: string) => Promise<void>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
   onCancelSession?: (sessionId: string) => Promise<void>;
@@ -128,6 +140,10 @@ export function SessionPane({
   githubConnection?: ConnectionStatus;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onConnectGitHub?: () => void;
+  /** The viewer's agent profiles — matched by version id to surface the
+   * session's configured reasoning effort (codex `model_reasoning_effort`).
+   * Watchers without the spawner's profile simply see no effort. */
+  agentProfiles?: AgentProfile[];
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
@@ -136,7 +152,7 @@ export function SessionPane({
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
   // WS) streams live instead of appearing only on the next pane mount.
-  const { stream, connected } = useSessionStream(
+  const { stream, connected, lastFrameAt, clockSkewMs } = useSessionStream(
     session.id,
     !isTerminalSessionStatus(session.status),
   );
@@ -226,26 +242,97 @@ export function SessionPane({
   );
 
   // ── Live activity cue ──────────────────────────────────────────────────────
-  // A turn is in flight whenever the session isn't terminal and hasn't stalled.
-  // Drives the "Thinking…" footer; together with the per-tool spinners it keeps
-  // the transcript feeling live even when the harness emits no reasoning summaries.
-  // Harness-agnostic — nothing here is Codex- or Claude-specific.
+  // The status line only claims what the stream proves (see TurnStatus.tsx).
+  // Clocks are anchored to server-stamped frame times — correct when opening a
+  // pane mid-turn, identical for every viewer — and "quiet" is phase-aware:
+  // every harness is legitimately silent while a tool runs (start → result,
+  // nothing between), but streams token deltas continuously while thinking, so
+  // only thinking-phase silence is meaningful. Harness-agnostic.
   const activeTurn = !displayTerminal && !stalled;
-  const lastItem = stream.items[stream.items.length - 1];
-  const runningToolTitle =
-    lastItem && lastItem.type === 'tool_call' && lastItem.result === undefined
-      ? toolDisplay(lastItem).title
-      : null;
-  const turnStartRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (activeTurn) {
-      if (turnStartRef.current === null) turnStartRef.current = Date.now();
-    } else {
-      turnStartRef.current = null;
+  const starting = displayStatus === 'spawning' || displayStatus === 'queued';
+  const parseTs = (ts: string | undefined): number | null => {
+    if (!ts) return null;
+    const ms = Date.parse(ts);
+    return Number.isNaN(ms) ? null : ms;
+  };
+  const lastFrameTsMs = parseTs(stream.lastFrameTs);
+  // Estimated server "now": ping skew when we have it, else project the last
+  // frame's stamp forward from its local receipt. Local clock as a last resort.
+  const serverNowMs =
+    clockSkewMs !== null
+      ? now - clockSkewMs
+      : lastFrameTsMs !== null && lastFrameAt !== null
+        ? lastFrameTsMs + (now - lastFrameAt)
+        : now;
+  // Clock only from stream-derived anchors — no createdAt/local fallbacks. A
+  // pane opened before the replay folds (or a steer observed via WS before the
+  // new execution's frames arrive — turnEndTs still closed) shows no clock
+  // rather than a days-since-creation or stale-turn number; it appears once
+  // the running execution_state / turn/started folds.
+  const turnStartMs = parseTs(stream.turnStartTs);
+  // The newest tool_call still awaiting its result, scoped to the CURRENT
+  // turn: a tool orphaned by a cancelled earlier turn (stamped before this
+  // turn's start) must not pin the 'tool' phase and suppress the quiet/stuck
+  // escalation. Only a later text item clears an open candidate (the agent
+  // moved on; its result frame was lost) — a steer's echoed user_message must
+  // NOT clear it, since mid-turn steers land while a tool is genuinely running.
+  const openTool = useMemo(() => {
+    let candidate: ToolCallItem | null = null;
+    for (const item of stream.items) {
+      if (item.type === 'tool_call') {
+        if (item.result !== undefined) continue;
+        const startedMs = parseTs(item.ts);
+        if (startedMs !== null && turnStartMs !== null && startedMs < turnStartMs) continue;
+        candidate = item;
+      } else if (item.type === 'text' && candidate !== null) {
+        candidate = null;
+      }
     }
-  }, [activeTurn]);
+    return candidate;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.items, turnStartMs]);
+  const turnEndMs = parseTs(stream.turnEndTs);
   const turnElapsedMs =
-    activeTurn && turnStartRef.current !== null ? Math.max(0, now - turnStartRef.current) : 0;
+    turnStartMs === null
+      ? 0
+      : activeTurn
+        ? turnEndMs === null
+          ? Math.max(0, serverNowMs - turnStartMs)
+          : 0
+        : turnEndMs !== null
+          ? Math.max(0, turnEndMs - turnStartMs)
+          : 0;
+  // How long the stream has been silent, on the server's clock — so a reload
+  // mid-silence resumes the true count instead of restarting at zero. With no
+  // frames at all (e.g. the SSE never came up), silence counts from pane mount.
+  const mountedAtRef = useRef(Date.now());
+  const quietMs =
+    lastFrameTsMs !== null
+      ? Math.max(0, serverNowMs - lastFrameTsMs)
+      : Math.max(0, now - (lastFrameAt ?? mountedAtRef.current));
+  // The waiting clock anchors to the question's own frame stamp — quietMs
+  // would reset on unrelated frames (artifact captures, usage) and undercount
+  // how long the agent has been blocked on a human.
+  const waitingSinceMs = useMemo(() => {
+    if (!pendingQuestion) return null;
+    const item = stream.items.find(
+      (it) => it.type === 'question' && it.questionId === pendingQuestion.questionId,
+    );
+    return parseTs(item?.ts);
+  }, [pendingQuestion, stream.items]);
+  // Fallback to frame-silence when the question frame carries no stamp (old
+  // mirrors) — an undercount beats claiming the wait just started.
+  const waitingMs = waitingSinceMs !== null ? Math.max(0, serverNowMs - waitingSinceMs) : quietMs;
+  // Reconnect display waits out a short grace from the actual disconnect
+  // moment (NOT quietMs — the agent may have been legitimately quiet for
+  // longer than the grace when a 1s transport blip happens).
+  const disconnectedAtRef = useRef<number>(Date.now());
+  const prevConnectedRef = useRef<boolean>(connected);
+  if (prevConnectedRef.current !== connected) {
+    prevConnectedRef.current = connected;
+    if (!connected) disconnectedAtRef.current = Date.now();
+  }
+  const disconnectedMs = connected ? 0 : Math.max(0, now - disconnectedAtRef.current);
   // Drive the single pinned status line: thinking → tool (a command/tool is
   // mid-run) → waiting (pending question) while active, then done on completion.
   // Suppressed entirely when a provider-auth reconnect is pending — that banner
@@ -255,21 +342,92 @@ export function SessionPane({
       ? null
       : activeTurn && pendingQuestion
         ? 'waiting'
-        : activeTurn && runningToolTitle
+        : activeTurn && openTool
           ? 'tool'
           : activeTurn
             ? 'thinking'
             : displayStatus === 'completed'
               ? 'done'
               : null;
+  // Judge aliveness from evidence. Spawning/queued sessions can't have frames
+  // yet, and tool runs are expected silence — both are exempt from quiet/stuck.
+  const silenceMatters = turnPhase === 'thinking' && !starting;
+  const turnLiveness: TurnLiveness =
+    !activeTurn
+      ? 'live'
+      : !connected && disconnectedMs >= RECONNECT_GRACE_MS
+        ? 'reconnecting'
+        : stream.transport === 'reattaching'
+          ? 'reattaching'
+          : silenceMatters && quietMs >= STUCK_AFTER_QUIET_MS
+            ? 'stuck'
+            : silenceMatters && quietMs >= QUIET_AFTER_MS
+              ? 'quiet'
+              : 'live';
+  // While frames flow, narrate with the model's own words: the tail line of the
+  // reasoning it is streaming right now. Fixed vocabulary otherwise.
+  const reasoningHeadline = useMemo(() => {
+    const last = stream.items[stream.items.length - 1];
+    if (!last || last.type !== 'reasoning') return null;
+    const source = last.summary?.trim() ? last.summary : last.text;
+    const lines = (source ?? '')
+      .split('\n')
+      .map((line) => line.replace(/\*\*/g, '').trim())
+      .filter(Boolean);
+    const tail = lines[lines.length - 1];
+    if (!tail) return null;
+    return tail.length > 80 ? `${tail.slice(0, 79)}…` : tail;
+  }, [stream.items]);
+  // Output tokens so far: real when the stream reports usage (codex snapshots,
+  // usage_observed), else streamed-chars ÷ 4 marked with ≈. A count that stops
+  // climbing mid-thinking is the "something's off" tell Claude Code users know.
+  const tokensUsed =
+    stream.tokensUsed !== undefined
+      ? { count: stream.tokensUsed, estimated: false }
+      : stream.deltaChars > 0
+        ? { count: Math.round(stream.deltaChars / 4), estimated: true }
+        : null;
+  // The session's reasoning effort, rendered as a suffix on the model chip.
+  // The session record is authoritative (seeded from the profile at spawn,
+  // updated by per-turn overrides); the client-side profile join covers only
+  // pre-migration sessions and requires the version to still be current.
+  const modelEffort = useMemo(() => {
+    if (session.modelEffort) return session.modelEffort;
+    const versionId = session.agentProfileVersionId;
+    if (!versionId) return null;
+    const profile = agentProfiles.find((p) => p.currentVersionId === versionId);
+    const settings = profile?.currentVersion?.manifest.settings;
+    const effort = settings?.['model_reasoning_effort'] ?? settings?.['effortLevel'];
+    return typeof effort === 'string' ? effort : null;
+  }, [agentProfiles, session.agentProfileVersionId, session.modelEffort]);
+  // Per-turn effort override. Codex takes it natively per turn; for claude
+  // the runtime respawns the harness child with a new --effort (--resume
+  // keeps the transcript). Staged by the footer picker; rides the next steer,
+  // where the server records it and broadcasts session.effort_changed.
+  const [effortChoice, setEffortChoice] = useState<string | null>(null);
+  const effortSelection = effortChoice ?? modelEffort ?? '';
+  const effortOptions = HARNESS_EFFORT_PICKER_OPTIONS[session.harness];
+  const canPickEffort =
+    sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
+  // Seat-aware waiting copy: only the driver can actually answer — telling a
+  // spectator "waiting for YOUR reply" would send them hunting for an answer
+  // box they don't have.
+  const waitingOnMe = sessionDriverId(session) === me.id;
+  const waitingDriverName = session.driverName ?? session.spawnerName ?? 'the driver';
   const turnStatusLabel =
-    turnPhase === 'tool'
-      ? `Working: ${runningToolTitle}`
+    turnPhase === 'tool' && openTool
+      ? `Working: ${toolDisplay(openTool).title}`
       : turnPhase === 'waiting'
-        ? 'Waiting for your reply'
+        ? waitingOnMe
+          ? 'Waiting for your reply'
+          : `Waiting for ${waitingDriverName}`
         : turnPhase === 'done'
           ? 'Turn complete'
-          : 'Thinking';
+          : starting
+            ? 'Starting'
+            : turnLiveness === 'live' && reasoningHeadline
+              ? reasoningHeadline
+              : 'Thinking';
 
   // ── Optimistic steer ───────────────────────────────────────────────────────
   // The session steer op is not optimistic, so a sent steer would only appear
@@ -408,7 +566,18 @@ export function SessionPane({
     // echoes it back as a user_message (see the pendingSteers effect above).
     const pendingId = randomId();
     setPendingSteers((prev) => [...prev, { id: pendingId, text, ts: new Date().toISOString() }]);
-    onSteer(session.id, text).catch(() => {
+    // The server re-attaches the session's recorded effort to every steer
+    // (stickiness lives there, so mobile/suggestion steers inherit it too);
+    // the client only sends an explicit CHANGE, guarded to the harness's
+    // vocabulary so a stale recorded value can never 400 the message.
+    const effortOverride =
+      canPickEffort &&
+      effortSelection &&
+      effortSelection !== (modelEffort ?? '') &&
+      effortOptions?.includes(effortSelection)
+        ? effortSelection
+        : undefined;
+    onSteer(session.id, text, effortOverride).catch(() => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
     });
@@ -941,6 +1110,7 @@ export function SessionPane({
                         [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
                       }))
                     }
+                    clockSkewMs={clockSkewMs}
                   />
                 </div>
               ) : null}
@@ -1016,10 +1186,17 @@ export function SessionPane({
       {!isEnded && turnPhase && (
         <TurnStatusLine
           phase={turnPhase}
+          liveness={turnLiveness}
           label={turnStatusLabel}
           elapsedMs={turnElapsedMs}
+          quietMs={turnPhase === 'waiting' ? waitingMs : quietMs}
+          pulse={stream.frameSeq}
+          tokens={tokensUsed}
           costUsd={costUsd}
           models={stream.models}
+          effort={modelEffort}
+          cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+          onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}
 
@@ -1095,7 +1272,32 @@ export function SessionPane({
             onSend={isDriver ? sendSteer : sendSuggestion}
             onTyping={onComposerTyping}
             footer={
-              isDriver ? undefined : (
+              isDriver ? (
+                canPickEffort ? (
+                  <label
+                    data-testid="effort-picker"
+                    className="flex items-center gap-1.5 text-fg-faint"
+                    title="Reasoning effort for the next turn"
+                  >
+                    <span>effort</span>
+                    <select
+                      value={effortSelection}
+                      onChange={(e) => setEffortChoice(e.target.value)}
+                      className="rounded border border-edge bg-surface-raised px-1 py-0.5 text-2xs text-fg-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    >
+                      {/* Once an effort is recorded there's no way back to
+                          "default" (per-turn semantics would silently revert
+                          while the chip kept the old value) — only levels. */}
+                      {modelEffort == null && <option value="">default</option>}
+                      {(effortOptions ?? []).map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : undefined
+              ) : (
                 <span data-testid="seat-footer" className="flex items-center gap-2">
                   {seatRequested ? (
                     <span>
@@ -1299,17 +1501,19 @@ function TranscriptTool({
   item,
   expanded,
   onToggle,
+  clockSkewMs,
 }: {
   item: ToolCallItem;
   expanded: boolean;
   onToggle: () => void;
+  clockSkewMs?: number | null;
 }) {
   const fileChange = fileChangeFromToolCall(item);
   if (fileChange) {
     const status = item.result === undefined ? 'running' : item.result.is_error ? 'error' : 'done';
     return <InlineFileChange change={fileChange} status={status} />;
   }
-  return <ToolCard item={item} expanded={expanded} onToggle={onToggle} />;
+  return <ToolCard item={item} expanded={expanded} onToggle={onToggle} clockSkewMs={clockSkewMs} />;
 }
 
 const ToolCard = memo(
@@ -1317,17 +1521,24 @@ const ToolCard = memo(
     item,
     expanded,
     onToggle,
+    clockSkewMs = null,
   }: {
     item: ToolCallItem;
     expanded: boolean;
     onToggle: () => void;
+    clockSkewMs?: number | null;
   }) {
     const running = item.result === undefined;
-    // Live "running" clock: first render of an in-flight tool ≈ its start; ticks
-    // once a second until the result lands, so a slow bash/shell visibly works.
+    // Live "running" clock, anchored to the tool's server-stamped start when we
+    // have one (correct for a pane opened mid-run) — first render otherwise.
     const startedRef = useRef<number>(Date.now());
+    const stampedStart = item.ts !== undefined ? Date.parse(item.ts) : NaN;
+    const startedAt =
+      !Number.isNaN(stampedStart) && clockSkewMs !== null
+        ? stampedStart + clockSkewMs
+        : startedRef.current;
     const now = useNow(running);
-    const elapsedMs = running ? Math.max(0, now - startedRef.current) : 0;
+    const elapsedMs = running ? Math.max(0, now - startedAt) : 0;
     const isError = item.result?.is_error === true;
     const command = typeof item.input['command'] === 'string' ? (item.input['command'] as string) : null;
     const rest = Object.fromEntries(Object.entries(item.input).filter(([k]) => k !== 'command'));

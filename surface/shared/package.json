@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./handle": "./src/handle.ts",
     "./prefs": "./src/prefs.ts",
-    "./agentProfiles": "./src/agentProfiles.ts"
+    "./agentProfiles": "./src/agentProfiles.ts",
+    "./effort": "./src/effort.ts"
   },
   "scripts": {
     "test": "vitest run",

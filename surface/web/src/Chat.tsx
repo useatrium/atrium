@@ -1174,6 +1174,7 @@ export function Chat({
           githubConnection={githubConnection}
           onConnectProvider={setProviderDialog}
           onConnectGitHub={() => setConnectionDialog('github')}
+          agentProfiles={agentProfiles}
         />
       ) : state.openSessionId ? (
         <aside

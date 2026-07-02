@@ -180,6 +180,22 @@ export interface CodexReasoningSummaryTextDeltaEvent {
   [key: string]: unknown;
 }
 
+export interface CodexThreadTokenUsageEvent {
+  type: "thread.tokenUsage";
+  tokenUsage?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface CodexTurnStartedEvent {
+  type: "turn.started";
+  [key: string]: unknown;
+}
+
+export interface CodexTurnCompletedEvent {
+  type: "turn.completed";
+  [key: string]: unknown;
+}
+
 export interface JsonRpcAmpRawEvent {
   type?: undefined;
   method: string;
@@ -199,6 +215,9 @@ export type AmpRawEvent =
   | CodexCommandExecutionOutputDeltaEvent
   | CodexReasoningTextDeltaEvent
   | CodexReasoningSummaryTextDeltaEvent
+  | CodexTurnStartedEvent
+  | CodexTurnCompletedEvent
+  | CodexThreadTokenUsageEvent
   | JsonRpcAmpRawEvent;
 
 interface ObservationBase {
