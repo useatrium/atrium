@@ -1125,6 +1125,7 @@ mod tests {
             file_type: RawFileType::Regular,
             rdev: 0,
             size: 1,
+            mtime_ns: 0,
             xattrs: vec![],
         }
     }
@@ -1332,6 +1333,7 @@ headers = {{ Authorization = "Bearer {secret}", "X-{secret}" = "value" }}
                     file_type: RawFileType::Regular,
                     rdev: 0,
                     size: 44,
+                    mtime_ns: 0,
                     xattrs: vec![],
                 },
                 RawEntry {
@@ -1339,6 +1341,7 @@ headers = {{ Authorization = "Bearer {secret}", "X-{secret}" = "value" }}
                     file_type: RawFileType::Regular,
                     rdev: 0,
                     size: PROFILE_BUNDLE_MAX_BYTES + 1,
+                    mtime_ns: 0,
                     xattrs: vec![],
                 },
                 reg(".codex/skills/credentials/SKILL.md"),
