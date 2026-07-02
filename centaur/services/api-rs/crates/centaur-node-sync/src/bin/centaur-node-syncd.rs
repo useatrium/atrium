@@ -736,14 +736,20 @@ mod linux_daemon {
                             plan.context_source = Some(discovered.manifest.context_source.clone());
                         }
                         // Hydrate the artifact lower only on FIRST mount. Re-hydrating
-                        // every scan would `remove_dir_all` the artifact-lower out from
-                        // under the live overlay (it is an active lowerdir), emptying the
-                        // agent's view. The mount is idempotent; the hydration must not be.
+                        // an ACTIVE lowerdir would `remove_dir_all` it out from under the
+                        // live overlay: the mount keeps the old dir inode pinned, so the
+                        // agent's readdir goes empty, re-materialized files never become
+                        // visible, and stale content serves until the dcache drops. The
+                        // mount is idempotent; the hydration must not be.
+                        // "First mount" must survive a daemon restart: mounted_overlays
+                        // is process-local, so a restarted daemon sees live sessions as
+                        // first-seen — the node-level mount check is what protects them.
                         // On later ticks the hydrated lower must still be part of the
                         // plan: the overlay signature covers extra lowers, so a plan
                         // rebuilt without it would mismatch and remount the session
                         // WITHOUT its hydrated artifacts.
-                        if !mounted_overlays.contains_key(&discovered.session) {
+                        if !has_active_mount && !mounted_overlays.contains_key(&discovered.session)
+                        {
                             hydrate_artifacts_if_enabled(
                                 &global,
                                 &overlays_root,
