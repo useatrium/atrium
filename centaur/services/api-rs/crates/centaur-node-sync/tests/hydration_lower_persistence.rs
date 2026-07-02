@@ -135,6 +135,85 @@ fn hydrated_artifact_lower_survives_subsequent_ticks() {
     assert_eq!(seen.unwrap(), HYDRATED_BODY);
 }
 
+/// Daemon-RESTART regression: the process-local `mounted_overlays` map is empty
+/// after a restart, so a live session looks first-seen. Re-running hydration
+/// there would `remove_dir_all` an ACTIVE lowerdir — the mount keeps the old dir
+/// inode pinned, so readdir goes empty, re-materialized files never appear, and
+/// stale content serves until the dcache drops (characterized on real overlayfs;
+/// see PR). The daemon therefore gates hydration on the NODE-level mount check
+/// (`has_active_overlay_mount`), not just the map, and re-attaches instead:
+/// this test replays that restart tick and asserts the agent's view is
+/// untouched, with no re-fetch.
+#[test]
+fn daemon_restart_reattaches_live_mount_instead_of_rehydrating() {
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("SKIP: restart regression test requires root");
+        return;
+    }
+
+    let session = "hydration-restart-it";
+    let root = test_root("restart");
+    let _ = fs::remove_dir_all(&root);
+    let overlays_root = root.join("overlays");
+    let merged = root.join("merged").join(session);
+    fs::create_dir_all(&overlays_root).unwrap();
+    fs::create_dir_all(&merged).unwrap();
+    let cas_dir = root.join("cas");
+
+    // Pre-restart life: hydrate v1 + mount (same as the daemon's first tick).
+    let mut plan = plan_overlay_mount(&overlays_root, session, &merged, "", &[], None).unwrap();
+    let mut client_v1 = FakeAtriumClient {
+        entries: vec![CasHydrateEntry {
+            path: "shared/hydrated.md".to_string(),
+            seq: 1,
+            sha: "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        }],
+        bytes: HashMap::from([(
+            ("shared/hydrated.md".to_string(), 1),
+            HYDRATED_BODY.to_vec(),
+        )]),
+    };
+    hydrate_artifact_lower_into_plan(&mut client_v1, &cas_dir, &overlays_root, session, &mut plan)
+        .unwrap();
+    let mounted = mount_overlay(plan, None).unwrap();
+    assert_eq!(
+        fs::read(merged.join("shared/hydrated.md")).unwrap(),
+        HYDRATED_BODY
+    );
+
+    // --- daemon restarts: map empty, but the node-level mount is live, so the
+    // daemon's tick takes the re-attach branch (centaur-node-syncd.rs,
+    // `!has_active_mount && !mounted_overlays.contains_key(...)`). No hydration,
+    // no fetches — just the rebuilt plan with the on-disk lower re-attached.
+    let mut plan_restart =
+        plan_overlay_mount(&overlays_root, session, &merged, "", &[], None).unwrap();
+    assert!(
+        reattach_artifact_lower_into_plan(&overlays_root, session, &mut plan_restart),
+        "restart tick: the on-disk artifact lower must re-attach to the rebuilt plan"
+    );
+    let remounted = mount_overlay(plan_restart, None).unwrap();
+
+    // The agent's view is untouched: same content, and readdir still works
+    // (the destructive re-hydrate left readdir EMPTY while stale paths kept
+    // serving — the worst kind of half-broken).
+    assert_eq!(
+        fs::read(merged.join("shared/hydrated.md")).unwrap(),
+        HYDRATED_BODY,
+        "restart must not disturb the hydrated artifact"
+    );
+    let listing: Vec<String> = fs::read_dir(merged.join("shared"))
+        .unwrap()
+        .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+        .collect();
+    let ok = listing == vec!["hydrated.md".to_string()];
+
+    let _ = unmount_overlay(&remounted);
+    let _ = unmount_overlay(&mounted);
+    let _ = fs::remove_dir_all(&root);
+
+    assert!(ok, "restart must keep readdir intact, got {listing:?}");
+}
+
 /// The companion invariant: a rebuilt plan that OMITS an extra lower is a real
 /// signature change and MUST remount without it (this is how warm-claim manifest
 /// rewrites re-compose a session's home). This is exactly why the daemon has to
