@@ -19,11 +19,13 @@ import {
   ApiError,
   DEFAULT_PREFS,
   DurableOpQueue,
+  FILES_CHANGED_EVENT_TYPE,
   appReducer,
   createDefaultOpRegistry,
   createApi,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
+  filesChangedWorkspaceId,
   initialAppState,
   isPendingSessionId,
   isTerminalSessionStatus,
@@ -149,6 +151,7 @@ interface ChatContextValue {
   /** From search: load the message's channel (paging back as needed) + highlight. */
   jumpToMessage: (event: WireEvent) => Promise<void>;
   highlightId: number | null;
+  filesEventSeq: number;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -875,6 +878,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   // (seat hand-off, suggestions, answer proposals) fold onto the entity —
   // mirrors web's wsKeys. The session screen sets activeSessionId on focus.
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [filesEventSeq, setFilesEventSeq] = useState(0);
   const wsKeys = useMemo(() => {
     const keys = state.channels.map((c) => c.id);
     if (activeSessionId) keys.push(`session:${activeSessionId}`);
@@ -902,6 +906,13 @@ export function ChatProvider({ session, children }: { session: Session; children
     wsKeys,
     {
       onEvent: (event: WireEvent) => {
+        if (event.type === FILES_CHANGED_EVENT_TYPE) {
+          const workspaceId = filesChangedWorkspaceId(event);
+          if (workspaceId && stateRef.current.channels.some((channel) => channel.workspaceId === workspaceId)) {
+            setFilesEventSeq((n) => n + 1);
+          }
+          return;
+        }
         if (event.type === 'message.posted' && event.actorId) {
           setTyping((prev) => {
             if (!prev[event.actorId!]) return prev;
@@ -1621,6 +1632,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       setActiveDraftKey,
       jumpToMessage,
       highlightId,
+      filesEventSeq,
     }),
     [
       state,
@@ -1674,6 +1686,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       setActiveDraftKey,
       jumpToMessage,
       highlightId,
+      filesEventSeq,
     ],
   );
 
