@@ -19,12 +19,12 @@ export function useSessionActions({
   enqueueOp: SessionActionEnqueue;
 }) {
   const steerSession = useCallback(
-    async (sessionId: string, text: string): Promise<void> => {
+    async (sessionId: string, text: string, effort?: string): Promise<void> => {
       clearFailedSteer(sessionId);
       await enqueueOp({
         opId: randomId(),
         opType: 'session.steer',
-        payload: { sessionId, text },
+        payload: { sessionId, text, ...(effort ? { effort } : {}) },
       });
     },
     [clearFailedSteer, enqueueOp],

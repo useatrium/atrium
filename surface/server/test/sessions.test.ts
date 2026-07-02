@@ -175,6 +175,11 @@ class FakeCentaur {
           harness: metadata.harness,
           delivery: { platform: 'dev' },
           ...(isRecord(body.environment) ? { environment: body.environment } : {}),
+          // Only when present — an empty array would break idempotent-replay
+          // body equality for pre-seeded executes (boot resume sends []).
+          ...(Array.isArray(body.input_lines) && body.input_lines.length > 0
+            ? { input_lines: body.input_lines }
+            : {}),
           ...(executeId ? { execute_id: executeId } : {}),
         };
         this.recordLegacy('POST', '/agent/execute', legacyBody, url.searchParams);
@@ -3101,6 +3106,92 @@ describe('Phase 2 sessions', () => {
     const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].centaur_message_id).toBeNull();
     expect(row.rows[0].current_execution_id).toBe('exe_fake_1');
+    await app.close();
+  });
+
+  it('steer with an effort override sends the reasoning field, records it, and emits the event', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-effort', 'codex', 'effort steer', 'running', $3, $3, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-effort', 1);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'think harder about this', effort: 'xhigh' },
+    });
+    expect(res.statusCode).toBe(202);
+
+    // The per-turn override rides the harness input line as `reasoning`.
+    const execute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const lines = (execute?.body.input_lines ?? []) as string[];
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ reasoning: 'xhigh' });
+
+    // Recorded on the session and surfaced in its JSON…
+    const detail = await app.inject({ method: 'GET', url: `/api/sessions/${id}`, headers: { cookie } });
+    expect(detail.json().session.modelEffort).toBe('xhigh');
+    // …and broadcast as a session.effort_changed event.
+    const ev = await pool.query(
+      `SELECT payload FROM events WHERE type = 'session.effort_changed' AND payload->>'sessionId' = $1`,
+      [id],
+    );
+    expect(ev.rows).toHaveLength(1);
+    expect(ev.rows[0].payload.effort).toBe('xhigh');
+
+    // Unknown levels are rejected outright.
+    const bad = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'x', effort: 'turbo' },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('invalid_effort');
+    await app.close();
+  });
+
+  it('effort override on a claude session is refused — no per-turn channel', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-effort-claude', 'claude-code', 'claude effort', 'running', $3, $3, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-effort-claude', 1);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'go', effort: 'high' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('effort_not_supported');
     await app.close();
   });
 

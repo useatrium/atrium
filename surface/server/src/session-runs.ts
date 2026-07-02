@@ -78,6 +78,9 @@ export interface SessionJson {
   githubIdentityMode: string | null;
   providerConnectionId: string | null;
   agentProfileVersionId: string | null;
+  /** Current reasoning effort — seeded from the profile at spawn, updated by
+   * per-turn steer overrides (codex only). Null = harness default. */
+  modelEffort: string | null;
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
@@ -272,6 +275,7 @@ interface SessionRow {
   provider_connection_id: string | null;
   github_identity_mode: string | null;
   agent_profile_version_id: string | null;
+  model_effort: string | null;
   last_event_id: number;
   result_text: string | null;
   cost_usd: string | number;
@@ -459,14 +463,20 @@ export class SessionRuns {
     const conflictClause = args.clientSpawnId
       ? `ON CONFLICT (spawned_by, client_spawn_id) WHERE client_spawn_id IS NOT NULL DO NOTHING`
       : '';
+    // Seed the session's effort from the spawning profile so the UI can show
+    // it without re-resolving (possibly superseded) profile versions later.
+    const profileSettings = selectedProfileVersion?.manifest.settings;
+    const spawnEffortRaw =
+      profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
+    const spawnEffort = typeof spawnEffortRaw === 'string' ? spawnEffortRaw : null;
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,
          title, status, spawned_by, driver_id, client_spawn_id, provider_credential_user_id,
-         provider_connection_id, github_identity_mode, agent_profile_version_id
+         provider_connection_id, github_identity_mode, agent_profile_version_id, model_effort
        )
        -- driver_id starts as the spawner ($10 used for both spawned_by + driver_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'spawning', $10, $10, $11, $12, $13, $14, $15, $16)
        ${conflictClause}
        RETURNING *`,
       [
@@ -486,6 +496,7 @@ export class SessionRuns {
           (args.githubIdentityMode && args.githubIdentityMode !== 'automatic' ? 'github' : null),
         args.githubIdentityMode ?? 'automatic',
         selectedProfileVersion?.id ?? null,
+        spawnEffort,
       ],
     );
     let row = inserted.rows[0];
@@ -854,10 +865,37 @@ export class SessionRuns {
     this.startTailer(id);
   }
 
-  async postUserMessageInTx(client: DbClient, id: string, userId: string, text: string): Promise<void> {
+  /** Steer with an optional per-turn reasoning-effort override (codex only —
+   * the claude harness fixes effort at process start). Returns the
+   * effort-changed wire event when the override sticks, for the route to
+   * publish post-commit. */
+  async postUserMessageInTx(
+    client: DbClient,
+    id: string,
+    userId: string,
+    text: string,
+    effort?: SessionEffortLevel,
+  ): Promise<WireEvent | null> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
-    await this.postUserMessageOnce(row, userId, text, true, client);
+    if (effort && row.harness !== 'codex') {
+      throw new DomainError(
+        400,
+        'effort_not_supported',
+        `the ${row.harness} harness cannot change reasoning effort mid-session`,
+      );
+    }
+    await this.postUserMessageOnce(row, userId, text, true, client, effort);
+    if (!effort || effort === row.model_effort) return null;
+    await client.query('UPDATE sessions SET model_effort = $1 WHERE id = $2', [effort, id]);
+    return appendEvent(client, {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id,
+      type: 'session.effort_changed',
+      actorId: userId,
+      payload: { sessionId: id, effort, by: userId },
+    });
   }
 
   afterPostUserMessage(id: string): void {
@@ -978,6 +1016,7 @@ export class SessionRuns {
     text: string,
     allowStaleRetry: boolean,
     client: Db | DbClient = this.pool,
+    effort?: SessionEffortLevel,
   ): Promise<void> {
     let generation = row.assignment_generation;
     if (generation == null) {
@@ -997,7 +1036,7 @@ export class SessionRuns {
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
         const refreshed = await this.clearAssignment(row.id, client);
-        await this.postUserMessageOnce(refreshed, userId, text, false, client);
+        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort);
         return;
       }
       if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
@@ -1027,7 +1066,7 @@ export class SessionRuns {
     const executeId = await this.reserveExecuteId(row.id, client);
     const exec = await this.executeWithProviderEnvironment(row, generation, {
       executeId,
-      inputLines: [userInputLine(text)],
+      inputLines: [userInputLine(text, effort)],
     });
     await client.query(
       `UPDATE sessions
@@ -2551,13 +2590,25 @@ function normalizeStatus(status: string): SessionStatus {
   return 'running';
 }
 
-function userInputLine(text: string): string {
+/** One harness stdin line. `effort` rides as the top-level `reasoning` field —
+ * the harness-server's per-turn effort channel (codex `turn/start.effort`);
+ * the claude/amp paths ignore it, so callers gate on harness first. */
+function userInputLine(text: string, effort?: string | null): string {
   return JSON.stringify({
     type: 'user',
     message: {
       content: [{ type: 'text', text }],
     },
+    ...(effort ? { reasoning: effort } : {}),
   });
+}
+
+/** Codex ReasoningEffort enum (validation mirror of the harness-server's). */
+export const SESSION_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+export type SessionEffortLevel = (typeof SESSION_EFFORT_LEVELS)[number];
+
+export function isSessionEffortLevel(value: unknown): value is SessionEffortLevel {
+  return typeof value === 'string' && (SESSION_EFFORT_LEVELS as readonly string[]).includes(value);
 }
 
 function writeSessionFrame(
@@ -2773,6 +2824,7 @@ function toJson(
     githubIdentityMode: row.github_identity_mode ?? 'automatic',
     providerConnectionId: row.provider_connection_id,
     agentProfileVersionId: row.agent_profile_version_id,
+    modelEffort: row.model_effort,
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,

@@ -129,7 +129,7 @@ export function SessionPane({
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  onSteer?: (sessionId: string, text: string) => Promise<void>;
+  onSteer?: (sessionId: string, text: string, effort?: string) => Promise<void>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
   onCancelSession?: (sessionId: string) => Promise<void>;
@@ -381,17 +381,25 @@ export function SessionPane({
       : stream.deltaChars > 0
         ? { count: Math.round(stream.deltaChars / 4), estimated: true }
         : null;
-  // Configured reasoning effort, from the spawning profile's manifest —
-  // codex `model_reasoning_effort`, claude `effortLevel` (settings.json key;
-  // the adapter allowlists it). Rendered as a suffix on the model chip.
+  // The session's reasoning effort, rendered as a suffix on the model chip.
+  // The session record is authoritative (seeded from the profile at spawn,
+  // updated by per-turn overrides); the client-side profile join covers only
+  // pre-migration sessions and requires the version to still be current.
   const modelEffort = useMemo(() => {
+    if (session.modelEffort) return session.modelEffort;
     const versionId = session.agentProfileVersionId;
     if (!versionId) return null;
     const profile = agentProfiles.find((p) => p.currentVersionId === versionId);
     const settings = profile?.currentVersion?.manifest.settings;
     const effort = settings?.['model_reasoning_effort'] ?? settings?.['effortLevel'];
     return typeof effort === 'string' ? effort : null;
-  }, [agentProfiles, session.agentProfileVersionId]);
+  }, [agentProfiles, session.agentProfileVersionId, session.modelEffort]);
+  // Per-turn effort override (codex only — claude fixes effort at process
+  // start). Staged by the footer picker; rides the next steer, where the
+  // server records it and broadcasts session.effort_changed.
+  const [effortChoice, setEffortChoice] = useState<string | null>(null);
+  const effortSelection = effortChoice ?? modelEffort ?? '';
+  const canPickEffort = sessionDriverId(session) === me.id && session.harness === 'codex' && !isEnded;
   // Seat-aware waiting copy: only the driver can actually answer — telling a
   // spectator "waiting for YOUR reply" would send them hunting for an answer
   // box they don't have.
@@ -549,7 +557,12 @@ export function SessionPane({
     // echoes it back as a user_message (see the pendingSteers effect above).
     const pendingId = randomId();
     setPendingSteers((prev) => [...prev, { id: pendingId, text, ts: new Date().toISOString() }]);
-    onSteer(session.id, text).catch(() => {
+    // Codex effort is PER-TURN — an omitted field reverts that turn to the
+    // config default. So the selection is sticky: every steer carries it, the
+    // recorded session effort stays truthful, and the server only broadcasts
+    // an effort_changed event when the value actually moves.
+    const effortOverride = canPickEffort && effortSelection ? effortSelection : undefined;
+    onSteer(session.id, text, effortOverride).catch(() => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
     });
@@ -1244,7 +1257,32 @@ export function SessionPane({
             onSend={isDriver ? sendSteer : sendSuggestion}
             onTyping={onComposerTyping}
             footer={
-              isDriver ? undefined : (
+              isDriver ? (
+                canPickEffort ? (
+                  <label
+                    data-testid="effort-picker"
+                    className="flex items-center gap-1.5 text-fg-faint"
+                    title="Reasoning effort for the next turn"
+                  >
+                    <span>effort</span>
+                    <select
+                      value={effortSelection}
+                      onChange={(e) => setEffortChoice(e.target.value)}
+                      className="rounded border border-edge bg-surface-raised px-1 py-0.5 text-2xs text-fg-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    >
+                      {/* Once an effort is recorded there's no way back to
+                          "default" (per-turn semantics would silently revert
+                          while the chip kept the old value) — only levels. */}
+                      {modelEffort == null && <option value="">default</option>}
+                      <option value="minimal">minimal</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                  </label>
+                ) : undefined
+              ) : (
                 <span data-testid="seat-footer" className="flex items-center gap-2">
                   {seatRequested ? (
                     <span>
