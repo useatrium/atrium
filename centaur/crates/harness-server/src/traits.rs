@@ -22,6 +22,10 @@ pub struct ThreadState {
     pub model: String,
     pub model_provider: String,
     pub service_tier: Option<String>,
+    /// Reasoning effort applied to the harness process (claude `--effort`).
+    /// A mid-session change restarts the idle child (blocks User handler);
+    /// `--resume` carries the transcript across the restart.
+    pub reasoning_effort: Option<String>,
     pub harness_session_id: Option<String>,
     pub completed_turns: Vec<Turn>,
     pub process: Option<HarnessChild>,
@@ -80,6 +84,7 @@ pub trait HarnessServer {
             model,
             model_provider,
             service_tier: params.service_tier.clone().flatten(),
+            reasoning_effort: None,
             harness_session_id: None,
             completed_turns: Vec::new(),
             process: None,

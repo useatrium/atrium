@@ -621,10 +621,14 @@ export function createApi(opts: ApiOptions = {}) {
       const qs = q.toString();
       return req<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
     },
-    steerSession: (id: string, text: string, op: OpOptions = {}) =>
+    steerSession: (id: string, text: string, op: OpOptions = {}, effort?: string) =>
       req<{ ok: true }>(`/api/sessions/${id}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
+        body: JSON.stringify({
+          text,
+          ...(effort ? { effort } : {}),
+          ...(op.opId ? { opId: op.opId } : {}),
+        }),
       }),
     answerSessionQuestion: (
       id: string,

@@ -33,6 +33,9 @@ export interface SessionStreamCallbacks {
   onOpen?: () => void;
   /** Stream broke — caller decides whether to recreate with a fresh cursor. */
   onError?: () => void;
+  /** Server heartbeat (~15s, plus once at open). `serverTs` is the server's
+   * wall clock for skew-free elapsed displays; null if the payload didn't parse. */
+  onPing?: (serverTs: string | null) => void;
 }
 
 export interface AppListRow {
@@ -297,6 +300,16 @@ export const sessionsApi = {
     );
     es.onopen = () => cb.onOpen?.();
     es.onerror = () => cb.onError?.();
+    es.addEventListener('ping', (e) => {
+      let serverTs: string | null = null;
+      try {
+        const data = JSON.parse((e as MessageEvent<string>).data) as { atrium_ts?: unknown };
+        if (typeof data.atrium_ts === 'string') serverTs = data.atrium_ts;
+      } catch {
+        /* malformed ping — still counts as liveness */
+      }
+      cb.onPing?.(serverTs);
+    });
     for (const name of FRAME_EVENT_NAMES) {
       es.addEventListener(name, (e) => {
         const frame = parseFrame(name, (e as MessageEvent<string>).data);

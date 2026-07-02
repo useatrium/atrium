@@ -129,6 +129,8 @@ export interface SessionAnswerPayload {
 export interface SessionSteerPayload {
   sessionId: string;
   text: string;
+  /** Per-turn reasoning-effort override (codex only). */
+  effort?: string;
 }
 
 export interface SessionCancelPayload {
@@ -883,7 +885,8 @@ export function createDefaultOpRegistry(): OpRegistry {
       onRejected: () => {},
     },
     'session.steer': {
-      execute: (api, payload, op) => api.steerSession(payload.sessionId, payload.text, { opId: op.opId }),
+      execute: (api, payload, op) =>
+        api.steerSession(payload.sessionId, payload.text, { opId: op.opId }, payload.effort),
       onConfirmed: () => {},
       onRejected: () => {},
     },

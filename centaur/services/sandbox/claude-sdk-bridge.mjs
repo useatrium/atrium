@@ -322,6 +322,13 @@ function queryOptions(abortController) {
       ...process.env,
       CLAUDE_AGENT_SDK_CLIENT_APP:
         process.env.CLAUDE_AGENT_SDK_CLIENT_APP || "centaur/claude-sdk-bridge",
+      // Per-turn reasoning effort: harness-server respawns this bridge with
+      // CENTAUR_CLAUDE_EFFORT when the session's effort changes; the env var
+      // is Claude Code's highest-precedence effort control, so it applies
+      // regardless of SDK option support.
+      ...(process.env.CENTAUR_CLAUDE_EFFORT
+        ? { CLAUDE_CODE_EFFORT_LEVEL: process.env.CENTAUR_CLAUDE_EFFORT }
+        : {}),
     },
   };
   if (permissionMode === "bypassPermissions") {

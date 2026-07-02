@@ -303,6 +303,25 @@ body {
   background-color: #e11d48;
 }
 
+/* Turn-status heartbeat: one expanding ring per arriving stream frame
+   (TurnStatus.tsx retriggers the class). Event-driven, not a looping timer. */
+@keyframes heartbeat-blip {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent-text-strong) 65%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+.heartbeat-blip {
+  animation: heartbeat-blip 0.45s ease-out;
+}
+
+:root[data-motion='reduced'] .heartbeat-blip {
+  animation: none;
+}
+
 :root[data-motion='reduced'] .animate-pulse {
   animation: none;
 }
@@ -312,6 +331,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .heartbeat-blip {
+    animation: none;
+  }
+
   :root:not([data-motion='full']) .animate-pulse {
     animation: none;
   }

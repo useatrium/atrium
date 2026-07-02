@@ -37,9 +37,11 @@ heavy `node-sync-pod-e2e` (kind cluster). The `depot-*` runners upstream fall ba
 The workflow **always runs** (no top-level path filter) but the heavy jobs gate on a
 `ci_changes` detector — so a non-centaur PR just runs the detector + aggregator (heavy jobs
 skip, ~15s) and reports green. This makes **`Centaur CI success` a safe required check**
-(it reports on every PR). **`node-sync-pod-e2e` (kind) is excluded from the required
-aggregator** — it still runs and reports, but its flakier cluster path must not block merges.
-A centaur PR takes ~5–6 min (rust-api is the long pole), running in parallel with `Surface`.
+(it reports on every PR). **`node-sync-pod-e2e` (kind) runs whenever node-sync paths
+change — PRs included — and is part of the required aggregator** (allowed-skips covers the
+non-node-sync case). It was once excluded as "flaky", but its only real failures were real
+bugs, and the exclusion let a hydration regression (#220) merge and sit silently red on
+master for two days. A node-sync PR takes ~6–7 min (the kind e2e is the long pole).
 
 **Not ported (intentional):**
 - *Bot test jobs* (`slackbot/linearbot/discord/teams`) — deferred; peripheral to atrium. Add

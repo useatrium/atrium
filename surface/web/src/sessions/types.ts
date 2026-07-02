@@ -24,6 +24,7 @@ export type {
   Session,
 } from '@atrium/surface-client';
 export {
+  HARNESS_EFFORT_PICKER_OPTIONS,
   sessionDriverId,
   PENDING_SESSION_PREFIX,
   isPendingSessionId,

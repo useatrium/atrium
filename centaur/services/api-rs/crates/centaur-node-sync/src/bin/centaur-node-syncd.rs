@@ -124,6 +124,53 @@ fn repo_name(repo: &str) -> String {
     }
 }
 
+/// Reconstruct a session's per-path sync state (base seqs/shas) from the
+/// change feed, once. Runs before inbound adoption; a failed drain leaves
+/// `hydrated` unset so it RESUMES next tick (the cursor already covers
+/// whatever landed). Marking hydrated on a failed drain would permanently
+/// forfeit the seeding: every pre-existing artifact would then look like an
+/// unknown local to `decide_adopt` — re-downloaded + copied up on adopt, and
+/// a locally edited one would capture with base 0 forever (server rejects
+/// with 409 base_required).
+#[cfg(any(target_os = "linux", test))]
+fn hydrate_state_if_needed(
+    session: &SessionConfig,
+    state: &mut centaur_node_sync::state::DaemonState,
+    client: &mut dyn centaur_node_sync::runtime::AtriumClient,
+) {
+    if state.hydrated {
+        return;
+    }
+    loop {
+        match client.poll_changes(&state.cursor) {
+            Ok((rows, next)) => {
+                if rows.is_empty() {
+                    break;
+                }
+                for (path, rc) in &rows {
+                    state.note_hydrated_version(path, rc.seq, rc.sha.clone());
+                }
+                state.cursor = next;
+            }
+            Err(e) => {
+                eprintln!(
+                    "session {}: hydrate poll: {e} (will retry next tick)",
+                    session.session
+                );
+                return;
+            }
+        }
+    }
+    state.hydrated = true;
+    let _ = state.save(&session.state_file);
+    println!(
+        "session {}: hydrated {} paths, cursor={}",
+        session.session,
+        state.paths.len(),
+        state.cursor
+    );
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn warmcache_capture_if_needed(
     client: &mut dyn centaur_node_sync::runtime::AtriumClient,
@@ -272,7 +319,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux_daemon {
     use super::{
-        SessionConfig, repo_worktrees, session_config_from_discovered, warmcache_capture_if_needed,
+        SessionConfig, hydrate_state_if_needed, repo_worktrees, session_config_from_discovered,
+        warmcache_capture_if_needed,
     };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
@@ -774,7 +822,8 @@ mod linux_daemon {
                         // plan: the overlay signature covers extra lowers, so a plan
                         // rebuilt without it would mismatch and remount the session
                         // WITHOUT its hydrated artifacts.
-                        if !has_active_mount && !mounted_overlays.contains_key(&discovered.session)
+                        let hydrated_entries = if !has_active_mount
+                            && !mounted_overlays.contains_key(&discovered.session)
                         {
                             hydrate_artifacts_if_enabled(
                                 &global,
@@ -782,14 +831,15 @@ mod linux_daemon {
                                 &discovered.session,
                                 &discovered.atrium_session,
                                 &mut plan,
-                            );
+                            )
                         } else {
                             reattach_artifact_lower_into_plan(
                                 &overlays_root,
                                 &discovered.session,
                                 &mut plan,
                             );
-                        }
+                            Vec::new()
+                        };
                         let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid))
                         {
                             Ok(plan) => plan,
@@ -811,6 +861,17 @@ mod linux_daemon {
                         let state = states
                             .entry(session.session.clone())
                             .or_insert_with(|| DaemonState::load(&session.state_file));
+                        // Seed sync state from what hydration just materialized: the
+                        // lower holds exactly these ledger versions, so record them
+                        // BEFORE the agent (or the first feed poll) can act on the
+                        // paths. Idempotent vs the feed-driven seeding — keeps newest.
+                        for entry in &hydrated_entries {
+                            state.note_hydrated_version(
+                                &entry.path,
+                                entry.seq,
+                                Some(entry.sha.clone()),
+                            );
+                        }
                         prepare_session_before_remote(&global, &session, state);
                         active_sessions.push(ActiveSession { config: session });
                     }
@@ -1470,15 +1531,17 @@ mod linux_daemon {
         );
     }
 
+    /// Returns the (path, seq, sha) entries that actually materialized so the
+    /// caller can seed the session's sync state once it is loaded.
     fn hydrate_artifacts_if_enabled(
         global: &GlobalConfig,
         overlays_root: &Path,
         session: &str,
         atrium_session: &str,
         plan: &mut OverlayMountPlan,
-    ) {
+    ) -> Vec<centaur_node_sync::cas::CasHydrateEntry> {
         if !global.hydrate_artifacts || global.base_url.is_empty() || global.api_key.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let mut client = HttpAtriumClient::new(&global.base_url, &global.api_key, atrium_session);
@@ -1496,9 +1559,11 @@ mod linux_daemon {
                     outcome.fetched,
                     outcome.errors.len()
                 );
+                outcome.hydrated
             }
             Err(e) => {
                 eprintln!("session {session}: hydrate error: {e}");
+                Vec::new()
             }
         }
     }
@@ -1562,7 +1627,13 @@ mod linux_daemon {
         hydrate_state_if_needed(session, state, &mut client);
         refresh_upper_sha(session, state);
         restore_repo_wip(session, state);
-        inbound(session, state, echo, lease, &mut client);
+        // Inbound adoption needs seeded state: without it every remote row looks
+        // like an unknown local and gets adopted (re-downloaded + copied up).
+        // Outbound stays on — new-file captures are safe unseeded, and an edited
+        // pre-existing path is server-guarded (409 base_required) until seeded.
+        if state.hydrated {
+            inbound(session, state, echo, lease, &mut client);
+        }
         outbound(global, session, state, echo, &mut client);
         warmcache_capture_if_needed(&mut client, session, state, &global.depcache_root);
         capture_repo_wip(session, state, &mut client);
@@ -1570,41 +1641,6 @@ mod linux_daemon {
         state
             .save(&session.state_file)
             .map_err(|e| format!("save state {}: {e}", session.state_file.display()))
-    }
-
-    fn hydrate_state_if_needed(
-        session: &SessionConfig,
-        state: &mut DaemonState,
-        client: &mut HttpAtriumClient,
-    ) {
-        if state.hydrated {
-            return;
-        }
-        loop {
-            match client.poll_changes(&state.cursor) {
-                Ok((rows, next)) => {
-                    if rows.is_empty() {
-                        break;
-                    }
-                    for (path, rc) in &rows {
-                        state.note_hydrated_version(path, rc.seq, rc.sha.clone());
-                    }
-                    state.cursor = next;
-                }
-                Err(e) => {
-                    eprintln!("session {}: hydrate poll: {e}", session.session);
-                    break;
-                }
-            }
-        }
-        state.hydrated = true;
-        let _ = state.save(&session.state_file);
-        println!(
-            "session {}: hydrated {} paths, cursor={}",
-            session.session,
-            state.paths.len(),
-            state.cursor
-        );
     }
 
     fn refresh_upper_sha(session: &SessionConfig, state: &mut DaemonState) {
@@ -2157,10 +2193,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use centaur_node_sync::adopt::{RemoteChange, RemoteStatus};
     use centaur_node_sync::cas::WarmcacheManifestEntry;
     use centaur_node_sync::overlay_mount::{LowerKind, LowerSource, plan_overlay_mount};
     use centaur_node_sync::runtime::AtriumClient;
     use centaur_node_sync::session_manifest::{DiscoveredSession, RepoMount, SessionManifest};
+    use centaur_node_sync::state::DaemonState;
     use centaur_node_sync::warmcache::{
         WarmcacheReceipt, WarmcacheReceiptEntry, warmcache_receipt_path, write_warmcache_receipt,
     };
@@ -2208,6 +2246,84 @@ mod tests {
         fn atrium_doc(&self, _: &str, _: &str) -> Result<Vec<u8>, String> {
             unreachable!()
         }
+    }
+
+    struct FlakyFeedClient {
+        fail: bool,
+        rows: Vec<(String, RemoteChange)>,
+    }
+
+    impl AtriumClient for FlakyFeedClient {
+        fn post_capture(&mut self, _: &str, _: u64, _: &[u8]) -> Result<u64, String> {
+            unreachable!("state-hydration tests do not capture")
+        }
+
+        fn post_delete(&mut self, _: &str, _: u64) -> Result<u64, String> {
+            unreachable!("state-hydration tests do not delete")
+        }
+
+        fn fetch_bytes(&mut self, _: &str, _: u64) -> Result<Vec<u8>, String> {
+            unreachable!("state-hydration tests do not fetch bytes")
+        }
+
+        fn poll_changes(
+            &mut self,
+            cursor: &str,
+        ) -> Result<(Vec<(String, RemoteChange)>, String), String> {
+            if self.fail {
+                return Err("simulated feed outage (429)".to_string());
+            }
+            if self.rows.is_empty() {
+                return Ok((vec![], cursor.to_string()));
+            }
+            Ok((std::mem::take(&mut self.rows), "9.9".to_string()))
+        }
+
+        fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String> {
+            Ok((vec![], since.to_string()))
+        }
+
+        fn atrium_doc(&self, _: &str, _: &str) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn hydrate_state_retries_after_poll_error_instead_of_forfeiting_seeding() {
+        let dir = std::env::temp_dir().join(format!("hydrate-state-it-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut session = warmcache_test_session();
+        session.state_file = dir.join("state.json");
+        let mut state = DaemonState::load(&session.state_file);
+        let mut client = FlakyFeedClient {
+            fail: true,
+            rows: vec![(
+                "shared/doc.md".to_string(),
+                RemoteChange {
+                    seq: 5,
+                    sha: Some("sha5".to_string()),
+                    status: RemoteStatus::Normal,
+                    group_id: None,
+                },
+            )],
+        };
+
+        // Feed outage on the first tick: seeding must NOT be forfeited.
+        hydrate_state_if_needed(&session, &mut state, &mut client);
+        assert!(
+            !state.hydrated,
+            "a failed drain must not mark the state hydrated"
+        );
+        assert!(state.locals().is_empty());
+
+        // Next tick the feed recovers: the drain resumes and seeds.
+        client.fail = false;
+        hydrate_state_if_needed(&session, &mut state, &mut client);
+        assert!(state.hydrated);
+        assert_eq!(state.locals().get("shared/doc.md").unwrap().base_seq, 5);
+        assert_eq!(state.cursor, "9.9");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn warmcache_test_session() -> SessionConfig {
