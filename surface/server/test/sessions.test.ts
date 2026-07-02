@@ -3153,7 +3153,7 @@ describe('Phase 2 sessions', () => {
     expect(ev.rows).toHaveLength(1);
     expect(ev.rows[0].payload.effort).toBe('xhigh');
 
-    // Unknown levels are rejected outright.
+    // Unknown levels are rejected outright…
     const bad = await app.inject({
       method: 'POST',
       url: `/api/sessions/${id}/messages`,
@@ -3162,10 +3162,19 @@ describe('Phase 2 sessions', () => {
     });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toBe('invalid_effort');
+    // …and levels another harness owns are refused per-harness (claude-only max).
+    const wrongHarness = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'x', effort: 'max' },
+    });
+    expect(wrongHarness.statusCode).toBe(400);
+    expect(wrongHarness.json().error).toBe('effort_not_supported');
     await app.close();
   });
 
-  it('effort override on a claude session is refused — no per-turn channel', async () => {
+  it('effort override on a claude session rides the input line too (harness respawns with --effort)', async () => {
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
@@ -3188,10 +3197,24 @@ describe('Phase 2 sessions', () => {
       method: 'POST',
       url: `/api/sessions/${id}/messages`,
       headers: { cookie },
-      payload: { text: 'go', effort: 'high' },
+      payload: { text: 'go', effort: 'max' },
     });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe('effort_not_supported');
+    expect(res.statusCode).toBe(202);
+    const execute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const lines = (execute?.body.input_lines ?? []) as string[];
+    expect(JSON.parse(lines[0]!)).toMatchObject({ reasoning: 'max' });
+    const detail = await app.inject({ method: 'GET', url: `/api/sessions/${id}`, headers: { cookie } });
+    expect(detail.json().session.modelEffort).toBe('max');
+
+    // A codex-only level is refused for claude.
+    const wrong = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'x', effort: 'minimal' },
+    });
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json().error).toBe('effort_not_supported');
     await app.close();
   });
 

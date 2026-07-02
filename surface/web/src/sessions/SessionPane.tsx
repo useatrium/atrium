@@ -84,6 +84,14 @@ import { SuggestionStrip } from './SessionSuggestions';
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 
+// Per-harness effort levels the picker offers (codex 'none' omitted — turning
+// reasoning off entirely is a config decision, not a steer-time nudge). Amp
+// has no effort knob, so no picker.
+const HARNESS_EFFORT_OPTIONS: Record<string, readonly string[]> = {
+  codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+  'claude-code': ['low', 'medium', 'high', 'xhigh', 'max'],
+};
+
 // Thinking-phase silence thresholds (tool runs are exempt — harnesses emit
 // nothing between a tool's start and its result, however long it takes; but
 // they stream token deltas continuously while thinking, so this silence is
@@ -394,12 +402,15 @@ export function SessionPane({
     const effort = settings?.['model_reasoning_effort'] ?? settings?.['effortLevel'];
     return typeof effort === 'string' ? effort : null;
   }, [agentProfiles, session.agentProfileVersionId, session.modelEffort]);
-  // Per-turn effort override (codex only — claude fixes effort at process
-  // start). Staged by the footer picker; rides the next steer, where the
-  // server records it and broadcasts session.effort_changed.
+  // Per-turn effort override. Codex takes it natively per turn; for claude
+  // the runtime respawns the harness child with a new --effort (--resume
+  // keeps the transcript). Staged by the footer picker; rides the next steer,
+  // where the server records it and broadcasts session.effort_changed.
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const effortSelection = effortChoice ?? modelEffort ?? '';
-  const canPickEffort = sessionDriverId(session) === me.id && session.harness === 'codex' && !isEnded;
+  const effortOptions = HARNESS_EFFORT_OPTIONS[session.harness];
+  const canPickEffort =
+    sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
   // Seat-aware waiting copy: only the driver can actually answer — telling a
   // spectator "waiting for YOUR reply" would send them hunting for an answer
   // box they don't have.
@@ -1274,11 +1285,11 @@ export function SessionPane({
                           "default" (per-turn semantics would silently revert
                           while the chip kept the old value) — only levels. */}
                       {modelEffort == null && <option value="">default</option>}
-                      <option value="minimal">minimal</option>
-                      <option value="low">low</option>
-                      <option value="medium">medium</option>
-                      <option value="high">high</option>
-                      <option value="xhigh">xhigh</option>
+                      {(effortOptions ?? []).map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
                     </select>
                   </label>
                 ) : undefined

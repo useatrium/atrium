@@ -226,6 +226,9 @@ impl HarnessServer for ClaudeCodeHarness {
             if let Some(session_id) = &state.harness_session_id {
                 command.env("CENTAUR_CLAUDE_RESUME_SESSION_ID", session_id);
             }
+            if let Some(effort) = &state.reasoning_effort {
+                command.env("CENTAUR_CLAUDE_EFFORT", effort);
+            }
             return command;
         }
 
@@ -245,6 +248,9 @@ impl HarnessServer for ClaudeCodeHarness {
         ]);
         if !state.model.is_empty() {
             command.args(["--model", &state.model]);
+        }
+        if let Some(effort) = &state.reasoning_effort {
+            command.args(["--effort", effort]);
         }
         if PathBuf::from("AGENTS.md").is_file() {
             command.args(["--append-system-prompt-file", "AGENTS.md"]);
@@ -294,6 +300,41 @@ mod tests {
 
     fn normalize(normalizer: &mut ClaudeEventNormalizer, event: Value) -> Vec<NormalizedEvent> {
         normalizer.normalize(serde_json::from_value(event).unwrap())
+    }
+
+    #[test]
+    fn command_for_turn_applies_reasoning_effort() {
+        let harness = ClaudeCodeHarness;
+        let mut state = crate::ThreadState {
+            id: "thread-1".to_string(),
+            cwd: std::path::PathBuf::from("/tmp"),
+            model: String::new(),
+            model_provider: "anthropic".to_string(),
+            service_tier: None,
+            reasoning_effort: None,
+            harness_session_id: None,
+            completed_turns: Vec::new(),
+            process: None,
+            thread_started_sent: false,
+        };
+
+        let args = |state: &crate::ThreadState| -> Vec<String> {
+            harness
+                .command_for_turn(state)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+
+        assert!(!args(&state).contains(&"--effort".to_string()));
+
+        state.reasoning_effort = Some("xhigh".to_string());
+        let with_effort = args(&state);
+        let flag = with_effort
+            .iter()
+            .position(|arg| arg == "--effort")
+            .expect("--effort present");
+        assert_eq!(with_effort.get(flag + 1).map(String::as_str), Some("xhigh"));
     }
 
     fn agent_texts(events: &[NormalizedEvent]) -> Vec<(Option<String>, String)> {

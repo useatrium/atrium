@@ -94,15 +94,29 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                 input,
                 client_user_message_id,
                 model,
-                // Provider selection and reasoning effort only apply to the codex
-                // harness; the emulated (claude/amp) app-server has no equivalent
-                // knob (its provider is fixed at thread start from session params).
+                // Provider selection only applies to the codex harness; the
+                // emulated (claude/amp) app-server has no equivalent knob (its
+                // provider is fixed at thread start from session params).
                 provider: _,
-                reasoning: _,
+                reasoning,
                 trace_context,
             }) => {
                 if let Some(model) = model {
                     state.model = model;
+                }
+                // Per-turn reasoning effort for claude: the CLI fixes effort at
+                // process start, but the child is restartable — `--resume`
+                // carries the transcript, so applying a new effort is a respawn
+                // with a new `--effort`. Amp has no effort knob; codex takes it
+                // via `turn/start.effort` on its own path.
+                if harness.kind() == HarnessKind::ClaudeCode
+                    && let Some(reasoning) = reasoning
+                    && state.reasoning_effort.as_deref() != Some(reasoning.as_str())
+                {
+                    state.reasoning_effort = Some(reasoning);
+                    // Dropping the idle child kills it (HarnessChild::drop);
+                    // the next ensure_harness_process respawns with the flag.
+                    state.process = None;
                 }
                 if let Err(error) = run_blocks_turn(
                     harness,
@@ -992,6 +1006,7 @@ fn resumed_thread_state<H: HarnessServer>(
             .clone()
             .unwrap_or_else(|| harness.default_model_provider().to_string()),
         service_tier: params.service_tier.clone().flatten(),
+        reasoning_effort: None,
         harness_session_id: Some(params.thread_id.clone()),
         completed_turns: Vec::new(),
         process: None,

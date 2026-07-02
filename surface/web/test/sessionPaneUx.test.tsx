@@ -195,10 +195,26 @@ describe('effort picker', () => {
     expect(Array.from(select.options).map((o) => o.value)).not.toContain('');
   });
 
-  it('claude sessions get no picker — effort is fixed at process start', () => {
+  it('claude sessions get the picker with the claude vocabulary (incl. max)', async () => {
     render(
       <SessionPane
         session={{ ...driving, harness: 'claude-code' }}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    FakeEventSource.last().open();
+    const picker = await screen.findByTestId('effort-picker');
+    const values = Array.from(picker.querySelector('select')!.options).map((o) => o.value);
+    expect(values).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('amp sessions get no picker — no effort knob exists', () => {
+    render(
+      <SessionPane
+        session={{ ...driving, harness: 'amp' }}
         me={me}
         watchers={[]}
         onClose={() => {}}

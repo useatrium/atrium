@@ -865,9 +865,10 @@ export class SessionRuns {
     this.startTailer(id);
   }
 
-  /** Steer with an optional per-turn reasoning-effort override (codex only —
-   * the claude harness fixes effort at process start). Returns the
-   * effort-changed wire event when the override sticks, for the route to
+  /** Steer with an optional per-turn reasoning-effort override. Codex takes
+   * it natively (`turn/start.effort`); claude gets a child respawn with a new
+   * `--effort` (`--resume` keeps the transcript); amp has no channel. Returns
+   * the effort-changed wire event when the override sticks, for the route to
    * publish post-commit. */
   async postUserMessageInTx(
     client: DbClient,
@@ -878,11 +879,11 @@ export class SessionRuns {
   ): Promise<WireEvent | null> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
-    if (effort && row.harness !== 'codex') {
+    if (effort && !(HARNESS_EFFORT_LEVELS[row.harness] ?? []).includes(effort)) {
       throw new DomainError(
         400,
         'effort_not_supported',
-        `the ${row.harness} harness cannot change reasoning effort mid-session`,
+        `the ${row.harness} harness does not support effort "${effort}"`,
       );
     }
     await this.postUserMessageOnce(row, userId, text, true, client, effort);
@@ -2603,12 +2604,21 @@ function userInputLine(text: string, effort?: string | null): string {
   });
 }
 
-/** Codex ReasoningEffort enum (validation mirror of the harness-server's). */
-export const SESSION_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
-export type SessionEffortLevel = (typeof SESSION_EFFORT_LEVELS)[number];
+/** Per-harness reasoning-effort vocabularies. Codex mirrors its
+ * ReasoningEffort enum (`turn/start.effort`, validated again upstream).
+ * Claude mirrors the CLI `--effort` values — the harness-server applies a
+ * change by respawning the child with `--resume`, so even the session-only
+ * `max` is fine. Amp has no effort knob. */
+export const HARNESS_EFFORT_LEVELS: Record<string, readonly string[]> = {
+  codex: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+  'claude-code': ['low', 'medium', 'high', 'xhigh', 'max'],
+};
+
+const ALL_EFFORT_LEVELS = new Set(Object.values(HARNESS_EFFORT_LEVELS).flat());
+export type SessionEffortLevel = string;
 
 export function isSessionEffortLevel(value: unknown): value is SessionEffortLevel {
-  return typeof value === 'string' && (SESSION_EFFORT_LEVELS as readonly string[]).includes(value);
+  return typeof value === 'string' && ALL_EFFORT_LEVELS.has(value);
 }
 
 function writeSessionFrame(
