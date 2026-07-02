@@ -347,6 +347,7 @@ mod linux_daemon {
     use centaur_node_sync::overlay_mount::{
         OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
     };
+    use centaur_node_sync::pacing::{TickPacer, TickPacerAction};
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
         AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, credential_refresh_sweep,
@@ -359,7 +360,7 @@ mod linux_daemon {
     };
     use centaur_node_sync::sse::{ChangedEvent, DirtySet, SseOutput, SseParser};
     use centaur_node_sync::state::DaemonState;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
@@ -495,7 +496,7 @@ mod linux_daemon {
             gc_dirs: env_truthy(&env("NODE_SYNC_GC_DIRS")),
             stream_enabled: env("NODE_SYNC_STREAM_ENABLED").trim() != "0",
             reconcile_interval: Duration::from_secs(
-                env("NODE_SYNC_RECONCILE_SECS").parse::<u64>().unwrap_or(30),
+                env("NODE_SYNC_RECONCILE_SECS").parse::<u64>().unwrap_or(15),
             ),
         };
 
@@ -727,12 +728,13 @@ mod linux_daemon {
         let mut last_forced_wip: HashMap<String, Instant> = HashMap::new();
         let batch_client = BatchHttpClient::new(&global.base_url, &global.api_key);
         let mut batch_endpoint = BatchEndpointState::default();
-        let stream_rx = if global.stream_enabled {
+        let mut stream_rx = if global.stream_enabled {
             Some(start_change_stream(&global.base_url, &global.api_key))
         } else {
             None
         };
         let mut stream_healthy = false;
+        let mut pending_stream_messages = VecDeque::new();
         let mut dirty = DirtySet::default();
         let mut last_reconcile: Option<Instant> = None;
         let mut tick: u64 = 0;
@@ -740,6 +742,7 @@ mod linux_daemon {
         loop {
             tick = tick.saturating_add(1);
             let now = Instant::now();
+            let tick_start = now;
             let system_now = SystemTime::now();
             let mut active_sessions = Vec::new();
             let mut probe_sessions = Vec::new();
@@ -919,9 +922,13 @@ mod linux_daemon {
                 Err(e) => eprintln!("session discovery: {e}"),
             }
 
-            if let Some(rx) = &stream_rx {
-                drain_stream_messages(rx, &mut stream_healthy, &mut dirty, &current_atrium_keys);
-            }
+            drain_stream_messages(
+                stream_rx.as_ref(),
+                &mut pending_stream_messages,
+                &mut stream_healthy,
+                &mut dirty,
+                &current_atrium_keys,
+            );
             let dirty_by_key = dirty.drain_for(current_atrium_keys.iter().map(String::as_str));
             let reconcile_due = stream_healthy
                 && last_reconcile
@@ -1033,7 +1040,16 @@ mod linux_daemon {
             if once {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+            if wait_for_next_tick(
+                stream_rx.as_ref(),
+                &mut pending_stream_messages,
+                &mut stream_healthy,
+                &current_atrium_keys,
+                tick_start,
+                Duration::from_secs(interval_secs),
+            ) {
+                stream_rx = None;
+            }
         }
     }
 
@@ -1548,7 +1564,7 @@ mod linux_daemon {
                 }
             }
             std::thread::sleep(backoff);
-            backoff = (backoff * 2).min(Duration::from_secs(60));
+            backoff = (backoff * 2).min(Duration::from_secs(15));
         }
     }
 
@@ -1567,19 +1583,120 @@ mod linux_daemon {
     }
 
     fn drain_stream_messages(
-        rx: &mpsc::Receiver<StreamMessage>,
+        rx: Option<&mpsc::Receiver<StreamMessage>>,
+        pending: &mut VecDeque<StreamMessage>,
         stream_healthy: &mut bool,
         dirty: &mut DirtySet,
         current_atrium_keys: &HashSet<String>,
     ) {
+        while let Some(message) = pending.pop_front() {
+            handle_stream_message(message, stream_healthy, dirty, current_atrium_keys);
+        }
+        let Some(rx) = rx else {
+            return;
+        };
         while let Ok(message) = rx.try_recv() {
-            match message {
-                StreamMessage::Healthy => *stream_healthy = true,
-                StreamMessage::Unhealthy => *stream_healthy = false,
-                StreamMessage::Changed(event) => {
-                    dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
+            handle_stream_message(message, stream_healthy, dirty, current_atrium_keys);
+        }
+    }
+
+    fn handle_stream_message(
+        message: StreamMessage,
+        stream_healthy: &mut bool,
+        dirty: &mut DirtySet,
+        current_atrium_keys: &HashSet<String>,
+    ) {
+        match message {
+            StreamMessage::Healthy => *stream_healthy = true,
+            StreamMessage::Unhealthy => *stream_healthy = false,
+            StreamMessage::Changed(event) => {
+                dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
+            }
+        }
+    }
+
+    fn wait_for_next_tick(
+        rx: Option<&mpsc::Receiver<StreamMessage>>,
+        pending: &mut VecDeque<StreamMessage>,
+        stream_healthy: &mut bool,
+        current_atrium_keys: &HashSet<String>,
+        tick_start: Instant,
+        interval: Duration,
+    ) -> bool {
+        let Some(rx) = rx else {
+            std::thread::sleep(interval);
+            return false;
+        };
+        let deadline = tick_start + interval;
+        let mut pacer = TickPacer::default();
+        loop {
+            let decision = pacer.next(Instant::now(), tick_start, deadline);
+            let TickPacerAction::WaitMore(timeout) = decision.action else {
+                return false;
+            };
+            match rx.recv_timeout(timeout) {
+                Ok(message) => {
+                    let made_dirty = handle_wait_stream_message(
+                        message,
+                        pending,
+                        stream_healthy,
+                        current_atrium_keys,
+                    );
+                    let decision =
+                        pacer.observe_message(Instant::now(), tick_start, deadline, made_dirty);
+                    if matches!(decision.action, TickPacerAction::TickNow) {
+                        return false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let decision = pacer.observe_timeout(Instant::now(), tick_start, deadline);
+                    if matches!(decision.action, TickPacerAction::TickNow) {
+                        return false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    *stream_healthy = false;
+                    let decision = pacer.observe_disconnected(Instant::now(), deadline);
+                    if let TickPacerAction::WaitMore(timeout) = decision.action {
+                        std::thread::sleep(timeout);
+                    }
+                    return decision.stream_disconnected;
                 }
             }
+        }
+    }
+
+    fn handle_wait_stream_message(
+        message: StreamMessage,
+        pending: &mut VecDeque<StreamMessage>,
+        stream_healthy: &mut bool,
+        current_atrium_keys: &HashSet<String>,
+    ) -> bool {
+        match message {
+            StreamMessage::Healthy => {
+                *stream_healthy = true;
+                false
+            }
+            StreamMessage::Unhealthy => {
+                *stream_healthy = false;
+                false
+            }
+            StreamMessage::Changed(event) => {
+                let made_dirty = changed_event_targets_current_session(&event, current_atrium_keys);
+                pending.push_back(StreamMessage::Changed(event));
+                made_dirty
+            }
+        }
+    }
+
+    fn changed_event_targets_current_session(
+        event: &ChangedEvent,
+        current_atrium_keys: &HashSet<String>,
+    ) -> bool {
+        if let Some(key) = event.key.as_deref().filter(|key| !key.trim().is_empty()) {
+            current_atrium_keys.contains(key)
+        } else {
+            !current_atrium_keys.is_empty()
         }
     }
 
