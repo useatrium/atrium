@@ -164,6 +164,7 @@ export interface SessionWire {
   githubIdentityMode?: string | null;
   providerConnectionId?: string | null;
   agentProfileVersionId?: string | null;
+  modelEffort?: string | null;
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -216,6 +217,9 @@ export interface Session {
   githubIdentityMode?: string | null;
   providerConnectionId?: string | null;
   agentProfileVersionId?: string | null;
+  /** Current reasoning effort — seeded from the spawning profile, updated by
+   * per-turn steer overrides (codex only). Null/absent = harness default. */
+  modelEffort?: string | null;
   /** Live-only client audit log folded from session.question_* events. */
   questionEvents?: SessionQuestionEvent[];
   /** Seat handoff audit log folded from session.seat_changed, oldest-first. */
@@ -240,6 +244,12 @@ export interface SessionRepoSpec {
  * a null driverId (optimistic rows, pre-Phase-3 payloads) falls back to the
  * spawner. Steer permission follows this id; cancel = spawner OR driver.
  */
+export {
+  HARNESS_EFFORT_LEVELS,
+  HARNESS_EFFORT_PICKER_OPTIONS,
+  isSessionEffortLevel,
+} from './effort';
+
 export function sessionDriverId(s: Session): string {
   return s.driverId ?? s.spawnedBy;
 }
@@ -330,6 +340,7 @@ export function sessionFromWire(w: SessionWire): Session {
     githubIdentityMode: w.githubIdentityMode ?? null,
     providerConnectionId: w.providerConnectionId ?? null,
     agentProfileVersionId: w.agentProfileVersionId ?? null,
+    modelEffort: w.modelEffort ?? null,
     questionEvents: [],
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
@@ -372,6 +383,8 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     answerProposals:
       live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
     pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
+    // A live effort change (WS event mid-flight) wins over the fetch snapshot.
+    modelEffort: live.modelEffort ?? resp.modelEffort ?? null,
     providerAuthRequired: live.providerAuthRequired ?? resp.providerAuthRequired ?? null,
     questionEvents:
       (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
@@ -442,6 +455,12 @@ export function applySessionEvent(
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore
+
+  if (ev.type === 'session.effort_changed') {
+    const effort = typeof p.effort === 'string' ? p.effort : null;
+    if (!effort || effort === prev.modelEffort) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, modelEffort: effort } };
+  }
 
   if (ev.type === 'session.status_changed') {
     const status = asSessionStatus(p.status);

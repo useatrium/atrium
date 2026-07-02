@@ -914,6 +914,7 @@ fn is_allowed_claude_setting(key: &str) -> bool {
     matches!(
         key,
         "model"
+            | "effortLevel"
             | "permissions"
             | "includeCoAuthoredBy"
             | "cleanupPeriodDays"
@@ -1363,6 +1364,7 @@ headers = {{ Authorization = "Bearer {secret}", "X-{secret}" = "value" }}
             PathBuf::from(".claude/settings.json"),
             br#"{
   "model": "claude-opus-4-8",
+  "effortLevel": "xhigh",
   "permissions": {
     "defaultMode": "bypassPermissions",
     "additionalDirectories": ["/home/agent/workspace", "/home/agent/.ssh"]
@@ -1400,6 +1402,8 @@ headers = {{ Authorization = "Bearer {secret}", "X-{secret}" = "value" }}
         let serialized = serde_json::to_string(&payload).unwrap();
 
         assert!(serialized.contains("claude-opus-4-8"));
+        assert!(serialized.contains("effortLevel"));
+        assert!(serialized.contains("xhigh"));
         assert!(serialized.contains("mcpServers"));
         assert!(serialized.contains("GITHUB_TOKEN"));
         assert!(!serialized.contains("ghp_secret"));

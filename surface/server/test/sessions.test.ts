@@ -175,6 +175,11 @@ class FakeCentaur {
           harness: metadata.harness,
           delivery: { platform: 'dev' },
           ...(isRecord(body.environment) ? { environment: body.environment } : {}),
+          // Only when present — an empty array would break idempotent-replay
+          // body equality for pre-seeded executes (boot resume sends []).
+          ...(Array.isArray(body.input_lines) && body.input_lines.length > 0
+            ? { input_lines: body.input_lines }
+            : {}),
           ...(executeId ? { execute_id: executeId } : {}),
         };
         this.recordLegacy('POST', '/agent/execute', legacyBody, url.searchParams);
@@ -3104,6 +3109,135 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('steer with an effort override sends the reasoning field, records it, and emits the event', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-effort', 'codex', 'effort steer', 'running', $3, $3, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-effort', 1);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'think harder about this', effort: 'xhigh' },
+    });
+    expect(res.statusCode).toBe(202);
+
+    // The per-turn override rides the harness input line as `reasoning`.
+    const execute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const lines = (execute?.body.input_lines ?? []) as string[];
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ reasoning: 'xhigh' });
+
+    // Recorded on the session and surfaced in its JSON…
+    const detail = await app.inject({ method: 'GET', url: `/api/sessions/${id}`, headers: { cookie } });
+    expect(detail.json().session.modelEffort).toBe('xhigh');
+    // …and broadcast as a session.effort_changed event.
+    const ev = await pool.query(
+      `SELECT payload FROM events WHERE type = 'session.effort_changed' AND payload->>'sessionId' = $1`,
+      [id],
+    );
+    expect(ev.rows).toHaveLength(1);
+    expect(ev.rows[0].payload.effort).toBe('xhigh');
+
+    // Stickiness is server-side: a later steer WITHOUT an effort field still
+    // carries the recorded effort on its input line (mobile and suggestion
+    // steers must not silently revert the harness to its default).
+    const plain = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'and keep going' },
+    });
+    expect(plain.statusCode).toBe(202);
+    const plainExecute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const plainLines = (plainExecute?.body.input_lines ?? []) as string[];
+    expect(JSON.parse(plainLines[0]!)).toMatchObject({ reasoning: 'xhigh' });
+    // …and no duplicate effort_changed event for an unchanged value.
+    const evCount = await pool.query(
+      `SELECT count(*)::int AS n FROM events WHERE type = 'session.effort_changed' AND payload->>'sessionId' = $1`,
+      [id],
+    );
+    expect(evCount.rows[0].n).toBe(1);
+
+    // Unknown levels are rejected outright…
+    const bad = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'x', effort: 'turbo' },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('invalid_effort');
+    // …and levels another harness owns are refused per-harness (claude-only max).
+    const wrongHarness = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'x', effort: 'max' },
+    });
+    expect(wrongHarness.statusCode).toBe(400);
+    expect(wrongHarness.json().error).toBe('effort_not_supported');
+    await app.close();
+  });
+
+  it('effort override on a claude session rides the input line too (harness respawns with --effort)', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-effort-claude', 'claude-code', 'claude effort', 'running', $3, $3, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-effort-claude', 1);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'go', effort: 'max' },
+    });
+    expect(res.statusCode).toBe(202);
+    const execute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const lines = (execute?.body.input_lines ?? []) as string[];
+    expect(JSON.parse(lines[0]!)).toMatchObject({ reasoning: 'max' });
+    const detail = await app.inject({ method: 'GET', url: `/api/sessions/${id}`, headers: { cookie } });
+    expect(detail.json().session.modelEffort).toBe('max');
+
+    // A codex-only level is refused for claude.
+    const wrong = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'x', effort: 'minimal' },
+    });
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json().error).toBe('effort_not_supported');
+    await app.close();
+  });
+
   it('steer reuses a pending message id after Centaur accepted the message before a crash', async () => {
     const app = await buildApp({
       pool,
@@ -3309,6 +3443,9 @@ describe('Phase 2 sessions', () => {
     expect(streamed.statusCode).toBe(200);
     expect(sseEventIds(streamed.body)).toEqual([54]);
     expect(streamed.body).toContain('"status":"completed"');
+    // Post-replay server-clock ping: EventSource-visible liveness + skew source.
+    expect(streamed.body).toContain('event: ping');
+    expect(streamed.body).toMatch(/event: ping\ndata: \{"atrium_ts":"[^"]+"\}/);
     await app.close();
   });
 
