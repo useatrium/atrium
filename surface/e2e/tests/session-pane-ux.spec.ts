@@ -144,3 +144,15 @@ test('session pane resizes by dragging its left edge and the width persists acro
   const reloaded = (await page.locator('aside').filter({ has: page.getByTestId('pane-resize-handle') }).boundingBox())!;
   expect(Math.round(reloaded.width)).toBe(Math.round(after.width));
 });
+
+test('undragged pane keeps the adaptive default on narrow desktop windows', async ({ page }) => {
+  // 900px is non-mobile (≥768) → split view. With no stored width the pane
+  // must scale with the viewport (min(520px, 42vw) = 378), not sit at 520px.
+  await page.setViewportSize({ width: 900, height: 700 });
+  await openSeededSession(page, 'narrow');
+
+  const handle = page.getByTestId('pane-resize-handle');
+  await expect(handle).toBeVisible();
+  const pane = (await page.locator('aside').filter({ has: handle }).boundingBox())!;
+  expect(Math.round(pane.width)).toBe(Math.round(900 * 0.42));
+});

@@ -497,4 +497,17 @@ describe("reduceSession", () => {
     const state = reduceSession(initialSessionState(), userMessageFrame(5, "item_1", "hello"));
     expect(state.items[0]!.ts).toBeUndefined();
   });
+
+  it("does not stamp an unstamped item from a later stamped update-frame", () => {
+    // Mixed stream: created by a pre-stamping server, then updated by a
+    // post-stamping one (re-delivery). The update time is NOT the turn time —
+    // better no stamp than a wrong one.
+    const created = reduceSession(initialSessionState(), userMessageFrame(5, "item_1", "hello"));
+    const updated = reduceSession(created, {
+      ...userMessageFrame(9, "item_1", "hello"),
+      ts: "2026-07-02T10:05:00.000Z",
+    });
+    expect(updated.items).toHaveLength(1);
+    expect(updated.items[0]!.ts).toBeUndefined();
+  });
 });
