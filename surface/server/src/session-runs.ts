@@ -1671,8 +1671,10 @@ export class SessionRuns {
     let lastProjectAt = 0;
     let providerAuthFailureEventId: number | null = null;
     let githubAuthFailureEventId: number | null = null;
-    // Frame-gap observability (addressable-entries H1): track the next id we expect
-    // and record any gap/late frame. OBSERVABILITY ONLY — no behavior change.
+    // Frame-order observability (addressable-entries H1): Centaur event ids are
+    // global replay watermarks, so forward jumps are normal. Track the next
+    // watermark only to catch late/regressive frames. OBSERVABILITY ONLY — no
+    // behavior change.
     let expectedEventId: number | null = row.last_event_id > 0 ? row.last_event_id + 1 : null;
     try {
       for await (const frame of this.centaur.tailEvents(row.centaur_thread_key, {
@@ -1733,24 +1735,15 @@ export class SessionRuns {
   }
 
   /**
-   * Record a frame's ordering against the expected next id and log the first gap
-   * (or late frame) per session. OBSERVABILITY ONLY — never alters the tail. A gap
-   * here means Centaur skipped ids relative to our resume point (eviction or sparse
-   * ids); a persistent post-resume gap is irreducible Centaur-side loss (H1).
+   * Record a frame's ordering against the expected next watermark and log the
+   * first late frame per session. OBSERVABILITY ONLY — never alters the tail.
+   * Forward jumps are expected because Centaur event ids are global, not
+   * session-local sequence numbers.
    */
   private observeFrameOrder(id: string, expected: number | null, eventId: number): void {
     const { order, firstOfKind } = recordFrameObservation(id, expected, eventId);
-    if (order === 'ok' || !firstOfKind) return;
-    if (order === 'gap') {
-      console.warn('session frame gap observed', {
-        sessionId: id,
-        expected,
-        got: eventId,
-        missing: eventId - (expected as number),
-      });
-    } else {
-      console.warn('session late frame observed', { sessionId: id, expected, got: eventId });
-    }
+    if (order !== 'late' || !firstOfKind) return;
+    console.warn('session late frame observed', { sessionId: id, expected, got: eventId });
   }
 
   private async mirrorFrame(id: string, frame: CentaurEventFrame): Promise<void> {

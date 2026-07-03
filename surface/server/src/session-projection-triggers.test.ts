@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import type { CentaurClient, CentaurEventFrame } from '@atrium/centaur-client';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from '../test/helpers.js';
+import { getFrameGapStats, resetFrameGapStats } from './frame-gap.js';
 import { WsHub } from './hub.js';
 import { releaseSessionProjectionState } from './session-records.js';
 import { projectIncrementalAndEmit } from './session-record-changefeed.js';
@@ -23,6 +24,8 @@ beforeEach(async () => {
   await truncateAll(pool);
   fx = await seedFixture(pool);
 });
+
+afterEach(() => resetFrameGapStats());
 
 describe('session projection triggers', () => {
   it('projects incrementally and emits change-feed rows only for dirty records', async () => {
@@ -125,6 +128,38 @@ describe('session projection triggers', () => {
     expect(status.rows[0]?.status).toBe('failed');
     releaseSessionProjectionState(sessionId);
   });
+
+  it('treats sparse Centaur event ids as valid global watermarks', async () => {
+    const sessionId = await insertSession();
+    const runs = new SessionRuns(pool, new WsHub(), {
+      autoResume: false,
+      centaur: centaurTail([
+        completedItemFrame(10, 'user-1', 'userMessage', 'Sparse first item.'),
+        completedItemFrame(14, 'agent-1', 'agentMessage', 'Sparse second item.'),
+        completedExecutionFrame(22),
+      ]),
+      apiKey: 'test',
+    });
+
+    await runPrivateTailer(runs, sessionId);
+
+    const mirrored = await pool.query<{ centaur_event_id: number }>(
+      `SELECT centaur_event_id
+         FROM session_events
+        WHERE session_id = $1
+        ORDER BY centaur_event_id ASC`,
+      [sessionId],
+    );
+    expect(mirrored.rows.map((row) => row.centaur_event_id)).toEqual([10, 14, 22]);
+    const row = await pool.query<{ last_event_id: number; status: string }>(
+      `SELECT last_event_id, status FROM sessions WHERE id = $1`,
+      [sessionId],
+    );
+    expect(row.rows[0]?.last_event_id).toBe(22);
+    expect(row.rows[0]?.status).toBe('completed');
+    expect(getFrameGapStats(sessionId)).toBeUndefined();
+    releaseSessionProjectionState(sessionId);
+  });
 });
 
 async function insertSession(): Promise<string> {
@@ -190,6 +225,20 @@ function usageFrame(eventId: number): CentaurEventFrame {
       input_tokens: 10,
       output_tokens: 5,
       total_tokens: 15,
+    },
+  };
+}
+
+function completedExecutionFrame(eventId: number): CentaurEventFrame {
+  return {
+    event: 'execution_state',
+    event_id: eventId,
+    data: {
+      type: 'execution.state',
+      status: 'completed',
+      thread_key: 'thread',
+      execution_id: 'exec-test',
+      result_text: 'done',
     },
   };
 }
