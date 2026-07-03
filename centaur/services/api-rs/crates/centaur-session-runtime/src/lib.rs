@@ -4693,6 +4693,24 @@ enum TerminalOutput {
     },
 }
 
+/// When the user interrupted the turn, a `Failed` terminal (the harness reports
+/// `interrupted` with no final answer) becomes a clean user-stop so the session
+/// stays steerable, not failed. Every other terminal — including a turn that
+/// completed normally in the interrupt race — passes through unchanged. Pure so
+/// the coercion can be unit-tested without a store.
+fn coerce_terminal_for_user_interrupt(
+    terminal: TerminalOutput,
+    user_interrupted: bool,
+) -> TerminalOutput {
+    match terminal {
+        TerminalOutput::Failed { .. } if user_interrupted => TerminalOutput::Completed {
+            reason: "stopped_by_user",
+            result_text: None,
+        },
+        other => other,
+    }
+}
+
 async fn record_terminal_output(
     ctx: &RuntimeContext,
     thread_key: &ThreadKey,
@@ -4702,22 +4720,10 @@ async fn record_terminal_output(
 ) -> Result<(), SessionRuntimeError> {
     // A user-initiated turn interrupt surfaces here as a `Failed` terminal
     // ("interrupted before final answer"). Coerce it to a clean user-stop so
-    // the session stays steerable (completed) instead of failed. Any other
-    // terminal clears the marker so it can't leak onto a later turn.
-    let terminal = match terminal {
-        TerminalOutput::Failed { .. }
-            if ctx.user_interrupts.remove(execution_id).is_some() =>
-        {
-            TerminalOutput::Completed {
-                reason: "stopped_by_user",
-                result_text: None,
-            }
-        }
-        other => {
-            ctx.user_interrupts.remove(execution_id);
-            other
-        }
-    };
+    // the session stays steerable (completed) instead of failed. `remove` also
+    // clears the marker unconditionally so it can't leak onto a later turn.
+    let user_interrupted = ctx.user_interrupts.remove(execution_id).is_some();
+    let terminal = coerce_terminal_for_user_interrupt(terminal, user_interrupted);
     let mut failure_class = None;
     let (terminal_execution, terminal_status) = match terminal {
         TerminalOutput::Completed {
@@ -6370,6 +6376,54 @@ mod tests {
             Some(TerminalOutput::Failed {
                 error: "turn completed with status interrupted before final answer".to_owned()
             })
+        );
+    }
+
+    #[test]
+    fn user_interrupt_coerces_failed_to_stopped() {
+        // The exact terminal a user stop-turn produces (interrupted, no answer).
+        let out = coerce_terminal_for_user_interrupt(
+            TerminalOutput::Failed {
+                error: "turn completed with status interrupted before final answer".to_owned(),
+            },
+            true,
+        );
+        assert_eq!(
+            out,
+            TerminalOutput::Completed {
+                reason: "stopped_by_user",
+                result_text: None,
+            }
+        );
+    }
+
+    #[test]
+    fn non_user_interrupt_failure_stays_failed() {
+        let out = coerce_terminal_for_user_interrupt(
+            TerminalOutput::Failed {
+                error: "boom".to_owned(),
+            },
+            false,
+        );
+        assert_eq!(out, TerminalOutput::Failed { error: "boom".to_owned() });
+    }
+
+    #[test]
+    fn user_interrupt_leaves_a_normal_completion_untouched() {
+        // A turn that completed normally in the interrupt race must not be relabelled.
+        let out = coerce_terminal_for_user_interrupt(
+            TerminalOutput::Completed {
+                reason: "turn_completed",
+                result_text: Some("done".to_owned()),
+            },
+            true,
+        );
+        assert_eq!(
+            out,
+            TerminalOutput::Completed {
+                reason: "turn_completed",
+                result_text: Some("done".to_owned()),
+            }
         );
     }
 
