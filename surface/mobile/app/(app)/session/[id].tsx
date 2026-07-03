@@ -1234,7 +1234,7 @@ export default function SessionScreen() {
           onDismiss={(sid, note) => resolveSuggestionAction(sid, 'dismiss', note ? { note } : undefined)}
         />
 
-        {terminal ? (
+        {isEnded ? (
           <View style={{ borderTopWidth: 1, borderTopColor: colors.border, padding: space.sm }}>
             <Text style={{ color: colors.textMuted, fontSize: font.xs, textAlign: 'center' }}>
               Session ended. Transcript is read-only.
