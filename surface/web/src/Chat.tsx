@@ -319,7 +319,7 @@ export function Chat({
 
   const { markRead, noteReadCursor } = useReadMarks({ dispatch, enqueueOp, onApiError });
 
-  const { answerSessionQuestion, cancelSession, steerSession } = useSessionActions({
+  const { answerSessionQuestion, cancelSession, steerSession, stopTurn } = useSessionActions({
     clearFailedCancel,
     clearFailedSteer,
     enqueueOp,
@@ -1295,6 +1295,7 @@ export function Chat({
           failedSteer={failedSteers[paneSession.id] ?? null}
           onClearFailedSteer={() => clearFailedSteer(paneSession.id)}
           onCancelSession={cancelSession}
+          onStopTurn={stopTurn}
           failedCancel={failedCancels[paneSession.id] === true}
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
           providerCredentials={providerCredentials}

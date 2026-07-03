@@ -681,6 +681,11 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
       }),
+    stopTurn: (id: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/stop-turn`, {
+        method: 'POST',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
+      }),
     // Control loop (collaborative steering): seat hand-off, the suggestion queue,
     // and answer proposals. Endpoints already exist server-side (web uses them);
     // these expose them on the shared client so mobile can reach them too.

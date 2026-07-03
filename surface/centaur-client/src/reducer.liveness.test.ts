@@ -21,6 +21,30 @@ const completed = (eventId: number, ts?: string): CentaurEventFrame =>
     ...(ts ? { ts } : {}),
   }) as CentaurEventFrame;
 
+const stoppedByUser = (eventId: number): CentaurEventFrame =>
+  ({
+    event: "execution_state",
+    event_id: eventId,
+    data: { type: "execution.state", status: "completed", completion_reason: "stopped_by_user" },
+  }) as CentaurEventFrame;
+
+describe("reduceSession stopped-by-user", () => {
+  it("folds completion_reason=stopped_by_user onto stoppedByUser", () => {
+    const state = reduceAll([running(1), stoppedByUser(2)]);
+    expect(state.stoppedByUser).toBe(true);
+  });
+
+  it("leaves stoppedByUser falsy for a normal completion", () => {
+    const state = reduceAll([running(1), completed(2)]);
+    expect(state.stoppedByUser).toBeFalsy();
+  });
+
+  it("clears stoppedByUser when a new turn starts (steer after stop)", () => {
+    const state = reduceAll([running(1), stoppedByUser(2), running(3)]);
+    expect(state.stoppedByUser).toBe(false);
+  });
+});
+
 describe("reduceSession liveness layer", () => {
   it("stamps lastFrameTs and increments frameSeq on every fold", () => {
     const state = reduceAll([

@@ -105,6 +105,7 @@ export function SessionPane({
   failedSteer = null,
   onClearFailedSteer = () => {},
   onCancelSession = async () => {},
+  onStopTurn = async () => {},
   failedCancel = false,
   onClearFailedCancel = () => {},
   providerCredentials,
@@ -133,6 +134,7 @@ export function SessionPane({
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
   onCancelSession?: (sessionId: string) => Promise<void>;
+  onStopTurn?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
@@ -249,6 +251,11 @@ export function SessionPane({
   // only thinking-phase silence is meaningful. Harness-agnostic.
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
+  const canStopTurn = activeTurn && !starting;
+  // "stopped by you" is folded from the durable terminal event (reducer
+  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
+  // clears automatically when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
   // Silence counts from mount when no frame ever arrived; the reconnect grace
   // anchors to the actual disconnect moment (see deriveTurnStatus).
   const mountedAtRef = useRef(Date.now());
@@ -324,13 +331,15 @@ export function SessionPane({
   // box they don't have.
   const waitingOnMe = sessionDriverId(session) === me.id;
   const waitingDriverName = session.driverName ?? session.spawnerName ?? 'the driver';
-  const statusLabel = turnStatusLabel({
-    phase: turnPhase,
-    starting,
-    headline: turnStatus.headline,
-    openTool,
-    waitingLabel: waitingOnMe ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
-  });
+  const statusLabel = stoppedByUser
+    ? 'stopped by you'
+    : turnStatusLabel({
+        phase: turnPhase,
+        starting,
+        headline: turnStatus.headline,
+        openTool,
+        waitingLabel: waitingOnMe ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+      });
 
   // ── Optimistic steer ───────────────────────────────────────────────────────
   // The session steer op is not optimistic, so a sent steer would only appear
@@ -574,6 +583,12 @@ export function SessionPane({
     return () => clearTimeout(t);
   }, [cancelAsk]);
   const onCancel = () => {
+    if (canStopTurn) {
+      setCancelAsk('idle');
+      onClearFailedCancel();
+      onStopTurn(session.id).catch(() => setCancelAsk('failed'));
+      return;
+    }
     if (displayCancelAsk === 'idle') {
       setCancelAsk('confirm');
       return;
@@ -788,18 +803,26 @@ export function SessionPane({
         {(isSpawner || isDriver) && !displayTerminal && (
           <button
             onClick={onCancel}
-            title="Cancel this session"
+            title={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}
             className={`rounded-md border px-2 py-1 text-2xs font-medium ${
-              displayCancelAsk === 'confirm'
+              displayCancelAsk === 'failed'
                 ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
+                : canStopTurn
+                  ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
+                  : displayCancelAsk === 'confirm'
+                    ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                    : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
             }`}
           >
-            {displayCancelAsk === 'confirm'
-              ? 'Confirm cancel'
-              : displayCancelAsk === 'failed'
-                ? 'Cancel failed — retry'
-                : 'Cancel'}
+            {canStopTurn
+              ? displayCancelAsk === 'failed'
+                ? 'Cancel turn failed — retry'
+                : 'Cancel turn'
+              : displayCancelAsk === 'confirm'
+                ? 'Confirm cancel'
+                : displayCancelAsk === 'failed'
+                  ? 'Cancel failed — retry'
+                  : 'Cancel'}
           </button>
         )}
         <div className="relative">
@@ -1182,7 +1205,13 @@ export function SessionPane({
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
-          cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+          cancelLabel={
+            canStopTurn
+              ? 'Cancel turn'
+              : displayCancelAsk === 'confirm'
+                ? 'Confirm cancel'
+                : 'Cancel'
+          }
           onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}

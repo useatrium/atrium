@@ -119,6 +119,14 @@ pub struct CancelSessionResponse {
     pub stop_error: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InterruptSessionResponse {
+    pub ok: bool,
+    pub interrupted: bool,
+    pub execution_id: Option<String>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct EventsQuery {
     pub after_event_id: Option<i64>,

@@ -15,7 +15,7 @@ export function sessionQueueFailureFromOp(
       return { type: 'steer', sessionId: payload.sessionId, text: payload.text };
     }
   }
-  if (op.opType === 'session.cancel') {
+  if (op.opType === 'session.cancel' || op.opType === 'session.stop_turn') {
     const payload = op.payload as { sessionId?: unknown };
     if (typeof payload.sessionId === 'string') {
       return { type: 'cancel', sessionId: payload.sessionId };

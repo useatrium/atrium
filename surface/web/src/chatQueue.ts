@@ -66,6 +66,8 @@ export function queuedFailureMessage(opType: OpType, err?: unknown): string {
       return "Couldn't send the session message.";
     case 'session.cancel':
       return "Couldn't cancel the session.";
+    case 'session.stop_turn':
+      return "Couldn't cancel the turn.";
     case 'prefs.set':
       return "Couldn't sync settings.";
     case 'draft.set':
