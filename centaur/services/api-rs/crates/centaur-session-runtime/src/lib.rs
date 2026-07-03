@@ -9058,6 +9058,72 @@ mod adoption_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn interrupt_active_turn_delivers_frame_to_sandbox_stdin() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:interrupt-{}", uuid::Uuid::new_v4())).unwrap();
+        let execution_id = orphaned_execution(&store, &thread_key, Some("mock-sbx"), true).await;
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let (io, _stdout_far, stdin_far) = mock_io();
+        backend.push_io(io).await;
+        let runtime = runtime_with(&store, backend.clone());
+
+        let outcome = runtime.interrupt_active_turn(&thread_key).await.unwrap();
+        assert!(
+            outcome.interrupted,
+            "should deliver an interrupt to the active turn: {outcome:?}"
+        );
+        assert_eq!(outcome.execution_id.as_deref(), Some(execution_id.as_str()));
+
+        // The interrupt frame actually reached the sandbox stdin pipe.
+        let mut reader = BufReader::new(stdin_far);
+        let mut line = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("read sandbox stdin within timeout")
+            .expect("read sandbox stdin line");
+        assert!(read > 0, "expected an interrupt frame on sandbox stdin");
+        assert!(
+            line.contains("\"type\":\"interrupt\""),
+            "unexpected sandbox stdin frame: {line}"
+        );
+
+        // Delivery was recorded.
+        let all = events(&store, &thread_key).await;
+        assert!(
+            all.iter()
+                .any(|event| event.event_type == "session.turn_interrupt_delivered"),
+            "expected a turn_interrupt_delivered event"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn interrupt_with_no_active_turn_is_a_noop() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:interrupt-noop-{}", uuid::Uuid::new_v4())).unwrap();
+        store
+            .create_or_get_session(&thread_key, &HarnessType::Codex, None, json!({}))
+            .await
+            .expect("create session");
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let runtime = runtime_with(&store, backend.clone());
+        let outcome = runtime.interrupt_active_turn(&thread_key).await.unwrap();
+        assert!(
+            !outcome.interrupted,
+            "no active turn to interrupt: {outcome:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancel_during_sandbox_setup_stops_created_sandbox_and_keeps_execution_cancelled() {
         let Some(store) = test_store().await else {
             return;
