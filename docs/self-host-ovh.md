@@ -219,6 +219,12 @@ disable:
   - traefik
   - servicelb
 write-kubeconfig-mode: "0644"
+# Reclaim the containerd image store early — the box fills with SHA-tagged images
+# from every deploy, and the 85% default fires too late. (Idempotent re-tune later:
+# deploy/setup-k3s.sh, which writes a config.yaml.d drop-in and restarts k3s.)
+kubelet-arg:
+  - "image-gc-high-threshold=70"
+  - "image-gc-low-threshold=55"
 YAML
 curl -sfL https://get.k3s.io | sh -
 mkdir -p ~/.kube && sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config && sudo chown ubuntu:ubuntu ~/.kube/config
@@ -372,6 +378,29 @@ calls the LLM directly. Then spawn an agent and watch it respond.
     "policy": [ { "reservedSpace": "5GB", "maxUsedSpace": "20GB" } ] } } }
   JSON
   sudo docker builder prune -f && sudo systemctl restart docker   # bounces containers ~10s
+  ```
+  `deploy/redeploy.sh` also prunes build cache + old SHA-tagged image copies after
+  every successful deploy, so this daemon cap is the backstop, not the only defense.
+- **Bound the k3s image store.** `deploy/setup-k3s.sh` tunes kubelet image GC
+  (start at 70% disk, reclaim to 55%) via a `config.yaml.d` drop-in — kubelet then
+  evicts unused images on its own. ⚠️ restarts k3s once (running pods survive). It's a
+  no-op re-run. The **biggest** consumer is image sprawl, not app data: three stores
+  accumulate SHA-tagged copies (docker build host, k3s containerd, the local registry)
+  — a full sweep once reclaimed ~95 GB.
+- **Bound the local registry** (10 GB range; the *smallest* of the three stores).
+  ⚠️ Do **not** run `registry:2 garbage-collect` on this version — its mark phase does
+  not follow OCI image-index → blob references, so it deletes blobs for *in-use* images
+  and corrupts the tags (verified: a sweep took the registry to a broken 5 MB and had to
+  be rebuilt). Until we move to a GC-correct registry, bound it by **recreating on a
+  fresh volume and re-pushing** the current images from Docker `:latest`:
+  ```sh
+  sudo docker rm -f registry && sudo docker volume create atrium-registry
+  sudo docker run -d --restart=always -p 127.0.0.1:5000:5000 --name registry \
+    -v atrium-registry:/var/lib/registry registry:2
+  SHA=$(cat ~/atrium-deploy/last-good-centaur-sha)
+  for i in api-rs iron-proxy agent node-sync console; do
+    sudo docker tag centaur-$i:latest localhost:5000/library/centaur-$i:$SHA
+    sudo docker push localhost:5000/library/centaur-$i:$SHA; done
   ```
 
 ## Dev loop — rebuild & reload

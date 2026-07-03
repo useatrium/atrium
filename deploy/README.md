@@ -11,6 +11,15 @@ GitHub CD that drives it. Full setup: [`docs/self-host-ovh.md`](../docs/self-hos
 - **`setup-registry.sh`** — one-time: a local `registry:2` on `localhost:5000` + a
   k3s HTTP mirror so Centaur deploys push SHA-tagged images. ⚠️ restarts k3s (a
   one-time all-pods bounce) — run in a quiet window.
+- **`setup-k3s.sh`** — one-time (idempotent): tune kubelet image GC (start 70% /
+  reclaim to 55%) via a `config.yaml.d` drop-in so the k3s image store self-bounds.
+  ⚠️ restarts k3s only when the drop-in changes.
+
+Image sprawl across three stores (docker build host, k3s containerd, local registry)
+is the box's dominant disk consumer. `redeploy.sh` prunes the first two after each
+deploy and `setup-k3s.sh` keeps the runtime store bounded; the registry is bounded by
+a clean recreate (see `docs/self-host-ovh.md` — its `garbage-collect` is unsafe on this
+`registry:2` version).
 - **`values.box.yaml`** — the box's Centaur Helm overrides (per-user
   iron-proxy on, repo-cache on, NetworkPolicy off, node-sync capture on @ `cni0`,
   image repos at the registry), layered over `centaur/contrib/chart/values.dev.yaml`
