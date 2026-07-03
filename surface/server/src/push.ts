@@ -7,13 +7,21 @@ import type { WsHub } from './hub.js';
 import type { WireEvent } from './events.js';
 import { config } from './config.js';
 import { mentionedHandles } from './mentions.js';
+import {
+  getWebPushSender,
+  type WebPushPayload,
+  type WebPushSender,
+  type WebPushSubscription,
+  type WebPushUrgency,
+} from './webpush.js';
+import { normalizeNotificationPrefs, type NotificationPrefs } from '@atrium/surface-client/prefs';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const CHUNK = 100; // Expo's max messages per request
 const RECEIPT_DELAY_MS = 15 * 60 * 1000;
 
-type PushReason = 'dm' | 'mention' | 'thread';
+type PushReason = 'dm' | 'mention' | 'thread' | 'channel';
 
 interface PushRecipient {
   userId: string;
@@ -30,6 +38,7 @@ interface PushRecipientResult {
 interface SendMessagePushOptions {
   fetchImpl?: typeof fetch;
   receiptDelayMs?: number;
+  webPushSender?: WebPushSender;
 }
 
 export interface ExpoReceiptTicket {
@@ -60,6 +69,33 @@ async function dropMutedRecipients(
     [channelId, [...recipients.keys()]],
   );
   for (const row of muted.rows) recipients.delete(row.user_id);
+}
+
+async function notificationPrefsFor(
+  pool: Db,
+  userIds: string[],
+): Promise<Map<string, NotificationPrefs>> {
+  if (userIds.length === 0) return new Map();
+  const prefs = await pool.query<{ id: string; prefs: unknown }>(
+    'SELECT id, prefs FROM users WHERE id = ANY($1::uuid[])',
+    [userIds],
+  );
+  return new Map(
+    prefs.rows.map((row) => {
+      const raw = (typeof row.prefs === 'object' && row.prefs !== null ? row.prefs : {}) as {
+        notifications?: unknown;
+      };
+      return [row.id, normalizeNotificationPrefs(raw.notifications)];
+    }),
+  );
+}
+
+async function dropMessagePrefsOff(pool: Db, recipients: Map<string, PushReason>): Promise<void> {
+  if (recipients.size === 0) return;
+  const prefs = await notificationPrefsFor(pool, [...recipients.keys()]);
+  for (const userId of [...recipients.keys()]) {
+    if (prefs.get(userId)?.messages === 'off') recipients.delete(userId);
+  }
 }
 
 /** Private channels: a mention/thread recipient who isn't a member must not
@@ -106,6 +142,7 @@ export async function pushRecipientsFor(
       addRecipient(recipients, member.user_id, ev.actorId, 'dm');
     }
     await dropMutedRecipients(pool, ev.channelId, recipients);
+    await dropMessagePrefsOff(pool, recipients);
     return {
       userIds: [...recipients.keys()],
       channelName: row.name,
@@ -139,12 +176,26 @@ export async function pushRecipientsFor(
     }
   }
 
+  const allMessageMembers = await pool.query<{ user_id: string }>(
+    `SELECT cm.user_id
+     FROM channel_members cm
+     JOIN users u ON u.id = cm.user_id
+     WHERE cm.channel_id = $1
+       AND cm.user_id <> $2
+       AND u.prefs->'notifications'->>'messages' = 'all'`,
+    [ev.channelId, ev.actorId],
+  );
+  for (const member of allMessageMembers.rows) {
+    addRecipient(recipients, member.user_id, ev.actorId, 'channel');
+  }
+
   // Private channels: never push to a non-member (mention/thread of a handle
   // outside the channel would otherwise leak the message text out of band).
   if (row.kind === 'private') {
     await dropNonMembers(pool, ev.channelId, recipients);
   }
   await dropMutedRecipients(pool, ev.channelId, recipients);
+  await dropMessagePrefsOff(pool, recipients);
   return {
     userIds: [...recipients.keys()],
     channelName: row.name,
@@ -170,17 +221,24 @@ function sendMessagePushOptions(
   fetchOrOpts: typeof fetch | SendMessagePushOptions,
 ): Required<SendMessagePushOptions> {
   if (typeof fetchOrOpts === 'function') {
-    return { fetchImpl: fetchOrOpts, receiptDelayMs: RECEIPT_DELAY_MS };
+    return {
+      fetchImpl: fetchOrOpts,
+      receiptDelayMs: RECEIPT_DELAY_MS,
+      webPushSender: getWebPushSender(config, fetchOrOpts),
+    };
   }
+  const fetchImpl = fetchOrOpts.fetchImpl ?? fetch;
   return {
-    fetchImpl: fetchOrOpts.fetchImpl ?? fetch,
+    fetchImpl,
     receiptDelayMs: fetchOrOpts.receiptDelayMs ?? RECEIPT_DELAY_MS,
+    webPushSender: fetchOrOpts.webPushSender ?? getWebPushSender(config, fetchImpl),
   };
 }
 
 function titleFor(reason: PushReason, author: string, channelName: string): string {
   if (reason === 'dm') return author;
   if (reason === 'mention') return `${author} mentioned you in #${channelName}`;
+  if (reason === 'channel') return `${author} in #${channelName}`;
   return `${author} replied in #${channelName}`;
 }
 
@@ -251,7 +309,57 @@ interface ExpoPushMessage {
   title: string;
   body: string;
   sound: 'default';
+  badge: number;
   data: Record<string, unknown>;
+}
+
+interface PushTokenRow {
+  token: string;
+  user_id: string;
+  kind: 'expo' | 'webpush';
+  subscription: WebPushSubscription | null;
+}
+
+async function unreadChannelCountFor(pool: Db, userId: string): Promise<number> {
+  const res = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM channels c
+     LEFT JOIN channel_read_cursors rc
+       ON rc.channel_id = c.id AND rc.user_id = $1
+     LEFT JOIN channel_mutes mute
+       ON mute.channel_id = c.id AND mute.user_id = $1
+     LEFT JOIN LATERAL (
+       SELECT MAX(e.id) AS latest_event_id
+       FROM events e
+       WHERE e.channel_id = c.id
+         AND e.type IN ('message.posted', 'session.spawned')
+     ) latest ON true
+     WHERE mute.user_id IS NULL
+       AND COALESCE(latest.latest_event_id, 0) > COALESCE(rc.last_read_event_id, 0)
+       AND (
+         (c.kind = 'public'
+          AND EXISTS (
+            SELECT 1 FROM workspace_members wm
+            WHERE wm.workspace_id = c.workspace_id AND wm.user_id = $1
+          ))
+         OR EXISTS (
+           SELECT 1 FROM channel_members m
+           WHERE m.channel_id = c.id AND m.user_id = $1
+         )
+       )`,
+    [userId],
+  );
+  return Number(res.rows[0]?.count ?? 0);
+}
+
+async function unreadCountsFor(pool: Db, userIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  await Promise.all(
+    [...new Set(userIds)].map(async (userId) => {
+      counts.set(userId, await unreadChannelCountFor(pool, userId));
+    }),
+  );
+  return counts;
 }
 
 async function sendExpoPushes(
@@ -290,6 +398,31 @@ async function sendExpoPushes(
   scheduleReceiptCheck(pool, receiptTickets, fetchImpl, receiptDelayMs);
 }
 
+async function sendWebPushes(
+  pool: Db,
+  sender: WebPushSender,
+  messages: Array<{
+    token: string;
+    subscription: WebPushSubscription;
+    payload: WebPushPayload;
+    urgency: WebPushUrgency;
+  }>,
+): Promise<void> {
+  if (messages.length === 0 || sender.name === 'noop') return;
+  const results = await Promise.all(
+    messages.map(async (message) => {
+      const result = await sender.send(message.subscription, message.payload, {
+        urgency: message.urgency,
+      });
+      if (result.status === 'failed') {
+        console.warn('webpush delivery failed', { endpoint: message.token, error: result.error });
+      }
+      return result.status === 'dead' ? message.token : null;
+    }),
+  );
+  await pruneTokens(pool, results.filter((token): token is string => token !== null));
+}
+
 /**
  * Send the push fanout for a freshly posted message. Users with a socket
  * focused on the channel are reading it live and are skipped. Tokens Expo
@@ -308,25 +441,49 @@ export async function sendMessagePush(
   if (targets.length === 0) return;
 
   const reasonByUserId = new Map(targets.map((recipient) => [recipient.userId, recipient.reason]));
-  const tokens = await pool.query<{ token: string; user_id: string }>(
-    "SELECT token, user_id FROM push_tokens WHERE user_id = ANY($1::uuid[]) AND kind = 'expo'",
+  const tokens = await pool.query<PushTokenRow>(
+    `SELECT token, user_id, kind, subscription
+     FROM push_tokens
+     WHERE user_id = ANY($1::uuid[]) AND kind IN ('expo', 'webpush')`,
     [[...reasonByUserId.keys()]],
   );
   if (tokens.rows.length === 0) return;
 
-  const { fetchImpl, receiptDelayMs } = sendMessagePushOptions(fetchOrOpts);
+  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
   const author = event.author?.displayName ?? 'Someone';
   const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
   const body = config.pushRedactContent ? 'New message' : (text || '(attachment)').slice(0, 140);
-  const messages = tokens.rows.map((r) => ({
+  const badges = await unreadCountsFor(pool, [...reasonByUserId.keys()]);
+  const payloadFor = (userId: string, title: string): WebPushPayload => ({
+    title,
+    body,
+    tag: `channel:${event.channelId ?? ''}`,
+    badge: badges.get(userId) ?? 0,
+    data: { channelId: event.channelId, eventId: event.id },
+  });
+  const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
     to: r.token,
     title: titleFor(reasonByUserId.get(r.user_id) ?? 'thread', author, channelName),
     body,
     sound: 'default' as const,
+    badge: badges.get(r.user_id) ?? 0,
     data: { channelId: event.channelId, eventId: event.id },
   }));
+  const webMessages = tokens.rows
+    .filter((r) => r.kind === 'webpush' && r.subscription)
+    .map((r) => {
+      const reason = reasonByUserId.get(r.user_id) ?? 'thread';
+      const title = titleFor(reason, author, channelName);
+      return {
+        token: r.token,
+        subscription: r.subscription!,
+        payload: payloadFor(r.user_id, title),
+        urgency: (reason === 'mention' ? 'high' : 'normal') as WebPushUrgency,
+      };
+    });
 
-  await sendExpoPushes(pool, messages, fetchImpl, receiptDelayMs);
+  await sendExpoPushes(pool, expoMessages, fetchImpl, receiptDelayMs);
+  await sendWebPushes(pool, webPushSender, webMessages);
 }
 
 export async function sendQuestionPush(
@@ -339,32 +496,122 @@ export async function sendQuestionPush(
   const recipients = new Map<string, PushReason>([[event.actorId, 'thread']]);
   await dropMutedRecipients(pool, event.channelId, recipients);
   if (recipients.size === 0 || hub.isUserPresent(event.channelId, event.actorId)) return;
+  const prefs = await notificationPrefsFor(pool, [event.actorId]);
+  if (prefs.get(event.actorId)?.sessions === false) return;
 
-  const tokens = await pool.query<{ token: string }>(
-    "SELECT token FROM push_tokens WHERE user_id = $1 AND kind = 'expo'",
+  const tokens = await pool.query<PushTokenRow>(
+    `SELECT token, user_id, kind, subscription
+     FROM push_tokens
+     WHERE user_id = $1 AND kind IN ('expo', 'webpush')`,
     [event.actorId],
   );
   if (tokens.rows.length === 0) return;
 
-  const { fetchImpl, receiptDelayMs } = sendMessagePushOptions(fetchOrOpts);
+  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
   const questionId = typeof event.payload.questionId === 'string' ? event.payload.questionId : '';
   const permalink =
     typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
   const body = firstQuestionText(event.payload).slice(0, 140);
-  const messages = tokens.rows.map((r) => ({
+  const badge = await unreadChannelCountFor(pool, event.actorId);
+  const data = {
+    channelId: event.channelId,
+    eventId: event.id,
+    permalink,
+    sessionId,
+    questionId,
+  };
+  const webPayload: WebPushPayload = {
+    title: 'Centaur needs your input',
+    body,
+    tag: `session:${sessionId || event.id}`,
+    badge,
+    data,
+  };
+  const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
     to: r.token,
     title: 'Centaur needs your input',
     body,
     sound: 'default' as const,
-    data: {
-      channelId: event.channelId,
-      eventId: event.id,
-      permalink,
-      sessionId,
-      questionId,
-    },
+    badge,
+    data,
   }));
+  const webMessages = tokens.rows
+    .filter((r) => r.kind === 'webpush' && r.subscription)
+    .map((r) => ({
+      token: r.token,
+      subscription: r.subscription!,
+      payload: webPayload,
+      urgency: 'normal' as WebPushUrgency,
+    }));
 
-  await sendExpoPushes(pool, messages, fetchImpl, receiptDelayMs);
+  await sendExpoPushes(pool, expoMessages, fetchImpl, receiptDelayMs);
+  await sendWebPushes(pool, webPushSender, webMessages);
+}
+
+export async function sendSessionCompletedPush(
+  pool: Db,
+  hub: WsHub,
+  event: WireEvent,
+  fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
+): Promise<void> {
+  if (!event.channelId || !event.actorId) return;
+  if (hub.isUserPresent(event.channelId, event.actorId)) return;
+  const recipients = new Map<string, PushReason>([[event.actorId, 'thread']]);
+  await dropMutedRecipients(pool, event.channelId, recipients);
+  if (recipients.size === 0) return;
+  const prefs = await notificationPrefsFor(pool, [event.actorId]);
+  if (prefs.get(event.actorId)?.sessions === false) return;
+
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
+  const session = sessionId
+    ? await pool.query<{ title: string }>('SELECT title FROM sessions WHERE id::text = $1', [sessionId])
+    : { rows: [] as Array<{ title: string }> };
+  const sessionTitle = session.rows[0]?.title?.trim() || 'session';
+  const tokens = await pool.query<PushTokenRow>(
+    `SELECT token, user_id, kind, subscription
+     FROM push_tokens
+     WHERE user_id = $1 AND kind IN ('expo', 'webpush')`,
+    [event.actorId],
+  );
+  if (tokens.rows.length === 0) return;
+
+  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
+  const body =
+    config.pushRedactContent
+      ? 'Session finished'
+      : typeof event.payload.resultExcerpt === 'string' && event.payload.resultExcerpt.trim()
+        ? event.payload.resultExcerpt.slice(0, 140)
+        : 'Open Atrium to review.';
+  const permalink =
+    typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const title = `Session finished: ${sessionTitle}`;
+  const badge = await unreadChannelCountFor(pool, event.actorId);
+  const data = { channelId: event.channelId, eventId: event.id, permalink, sessionId };
+  const webPayload: WebPushPayload = {
+    title,
+    body,
+    tag: `session:${sessionId || event.id}`,
+    badge,
+    data,
+  };
+  const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
+    to: r.token,
+    title,
+    body,
+    sound: 'default' as const,
+    badge,
+    data,
+  }));
+  const webMessages = tokens.rows
+    .filter((r) => r.kind === 'webpush' && r.subscription)
+    .map((r) => ({
+      token: r.token,
+      subscription: r.subscription!,
+      payload: webPayload,
+      urgency: 'normal' as WebPushUrgency,
+    }));
+
+  await sendExpoPushes(pool, expoMessages, fetchImpl, receiptDelayMs);
+  await sendWebPushes(pool, webPushSender, webMessages);
 }
