@@ -85,7 +85,7 @@ describe('extracted routes', () => {
       keys: {
         p256dh:
           'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
-        auth: 'BTBZMqHH6r4Tts7J_aSIgg',
+        auth: 'BTBZMqHH6r4Tts7J_aSIgg', // gitleaks:allow — public RFC 8291 Appendix A test vector
       },
     };
 
