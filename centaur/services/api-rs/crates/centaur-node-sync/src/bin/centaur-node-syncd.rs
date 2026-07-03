@@ -311,6 +311,18 @@ fn warmcache_mtime_nanos(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn should_run_local_capture(
+    always_scan: bool,
+    dirty: bool,
+    remounted: bool,
+    restored: bool,
+    reconcile_due: bool,
+    just_attached: bool,
+) -> bool {
+    always_scan || dirty || remounted || restored || reconcile_due || just_attached
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     linux_daemon::main();
@@ -345,7 +357,8 @@ mod linux_daemon {
     use centaur_node_sync::materializer::materialize_changed_sessions;
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
-        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
+        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
+        session_sibling_dirs, unmount_overlay,
     };
     use centaur_node_sync::pacing::{TickPacer, TickPacerAction};
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
@@ -356,10 +369,11 @@ mod linux_daemon {
         profile_candidate_sweep, sha_hex,
     };
     use centaur_node_sync::session_manifest::{
-        DiscoveredSession, discover_sessions, manifest_path,
+        DiscoveredSession, discover_sessions, manifest_path, state_path,
     };
     use centaur_node_sync::sse::{ChangedEvent, DirtySet, SseOutput, SseParser};
     use centaur_node_sync::state::DaemonState;
+    use centaur_node_sync::watch::{DirtySessions, UpperWatcher, WatchMessage};
     use std::collections::{HashMap, HashSet, VecDeque};
     use std::io::Read;
     use std::path::{Path, PathBuf};
@@ -728,15 +742,21 @@ mod linux_daemon {
         let mut last_forced_wip: HashMap<String, Instant> = HashMap::new();
         let batch_client = BatchHttpClient::new(&global.base_url, &global.api_key);
         let mut batch_endpoint = BatchEndpointState::default();
-        let mut stream_rx = if global.stream_enabled {
-            Some(start_change_stream(&global.base_url, &global.api_key))
-        } else {
-            None
-        };
+        let (wake_tx, wake_rx) = mpsc::channel();
+        if global.stream_enabled {
+            start_change_stream(&global.base_url, &global.api_key, wake_tx.clone());
+        }
+        let (watch_tx, watch_rx) = mpsc::channel();
+        let watcher = UpperWatcher::from_env(watch_tx);
+        start_watch_bridge(watch_rx, wake_tx.clone());
         let mut stream_healthy = false;
-        let mut pending_stream_messages = VecDeque::new();
+        let mut pending_wake_messages = VecDeque::new();
         let mut dirty = DirtySet::default();
+        let mut local_dirty = DirtySessions::default();
+        let mut watched_sessions = HashSet::new();
+        let mut just_attached_sessions = HashSet::new();
         let mut last_reconcile: Option<Instant> = None;
+        let mut last_local_reconcile: Option<Instant> = None;
         let mut tick: u64 = 0;
 
         loop {
@@ -747,6 +767,7 @@ mod linux_daemon {
             let mut active_sessions = Vec::new();
             let mut probe_sessions = Vec::new();
             let mut current_atrium_keys = HashSet::new();
+            just_attached_sessions.clear();
 
             match discover_sessions(&overlays_root) {
                 Ok(discovery) => {
@@ -759,11 +780,13 @@ mod linux_daemon {
                         .map(|session| session.session.clone())
                         .collect();
                     cleanup_removed_overlays(&active, &mut mounted_overlays);
+                    cleanup_removed_watches(&active, &mut watched_sessions, &watcher);
                     states.retain(|session, _| active.contains(session));
                     echoes.retain(|session, _| active.contains(session));
                     evictions.retain(|session, _| active.contains(session));
                     wip_gate.retain_sessions(|session| active.contains(session));
                     last_forced_wip.retain(|session, _| active.contains(session));
+                    local_dirty.retain_sessions(|session| active.contains(session));
 
                     for discovered in discovery.sessions {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -805,6 +828,9 @@ mod linux_daemon {
                             );
                         }
                         if eviction.is_evicted() {
+                            watcher.remove_session(&discovered.session);
+                            watched_sessions.remove(&discovered.session);
+                            local_dirty.clear_for_scan(&discovered.session);
                             if eviction.should_probe(now, global.evict_recheck) {
                                 eviction.mark_probe(now);
                                 states
@@ -889,6 +915,15 @@ mod linux_daemon {
                         };
                         let session = session_config_from_discovered(&discovered, &mounted);
                         mounted_overlays.insert(discovered.session.clone(), mounted);
+                        if watcher.is_enabled()
+                            && (wip_remounted || !watched_sessions.contains(&session.session))
+                        {
+                            let result = watcher.add_session(&session.session, &session.upper);
+                            watched_sessions.insert(session.session.clone());
+                            if result.attached {
+                                just_attached_sessions.insert(session.session.clone());
+                            }
+                        }
                         let first_seen = !states.contains_key(&session.session);
                         if first_seen {
                             eprintln!(
@@ -922,20 +957,26 @@ mod linux_daemon {
                 Err(e) => eprintln!("session discovery: {e}"),
             }
 
-            drain_stream_messages(
-                stream_rx.as_ref(),
-                &mut pending_stream_messages,
+            drain_wake_messages(
+                &wake_rx,
+                &mut pending_wake_messages,
                 &mut stream_healthy,
                 &mut dirty,
+                &mut local_dirty,
                 &current_atrium_keys,
             );
             let dirty_by_key = dirty.drain_for(current_atrium_keys.iter().map(String::as_str));
             let reconcile_due = stream_healthy
                 && last_reconcile
                     .is_none_or(|last| now.duration_since(last) >= global.reconcile_interval);
+            let local_reconcile_due = last_local_reconcile
+                .is_none_or(|last| now.duration_since(last) >= global.reconcile_interval);
             let full_remote_poll = !global.stream_enabled || !stream_healthy || reconcile_due;
             if reconcile_due {
                 last_reconcile = Some(now);
+            }
+            if local_reconcile_due {
+                last_local_reconcile = Some(now);
             }
             let poll_targets = select_poll_targets(
                 &active_sessions,
@@ -1012,17 +1053,36 @@ mod linux_daemon {
                     wip_restored,
                     wip_backstop_elapsed,
                 );
-                run_local_capture(
-                    &global,
-                    &session,
-                    state,
-                    echo,
-                    &mut client,
-                    force_wip,
-                    &mut wip_gate,
-                );
-                if force_wip {
-                    last_forced_wip.insert(session.session.clone(), now);
+                let had_local_dirty = local_dirty.contains(&session.session);
+                // force_wip participates in the scan gate, and the WIP force
+                // timer only resets when the scan (and thus WIP) actually ran —
+                // otherwise an event-quiet session would reset the 30s backstop
+                // forever without ever running it.
+                let should_scan = super::should_run_local_capture(
+                    watcher.is_always_scan(&session.session),
+                    had_local_dirty,
+                    wip_remounted,
+                    wip_restored,
+                    local_reconcile_due,
+                    just_attached_sessions.contains(&session.session),
+                ) || force_wip;
+                if should_scan {
+                    let cleared_dirty = local_dirty.clear_for_scan(&session.session);
+                    let scan_ok = run_local_capture(
+                        &global,
+                        &session,
+                        state,
+                        echo,
+                        &mut client,
+                        force_wip,
+                        &mut wip_gate,
+                    );
+                    if !scan_ok && cleared_dirty {
+                        local_dirty.mark(session.session.clone());
+                    }
+                    if force_wip {
+                        last_forced_wip.insert(session.session.clone(), now);
+                    }
                 }
                 if let Some(atrium) = atrium_feed.as_ref() {
                     apply_atrium_feed(&global, &session, state, &client, atrium);
@@ -1041,14 +1101,15 @@ mod linux_daemon {
                 break;
             }
             if wait_for_next_tick(
-                stream_rx.as_ref(),
-                &mut pending_stream_messages,
+                &wake_rx,
+                &mut pending_wake_messages,
                 &mut stream_healthy,
+                &mut local_dirty,
                 &current_atrium_keys,
                 tick_start,
                 Duration::from_secs(interval_secs),
             ) {
-                stream_rx = None;
+                stream_healthy = false;
             }
         }
     }
@@ -1086,8 +1147,9 @@ mod linux_daemon {
         client: &mut HttpAtriumClient,
         force_wip: bool,
         wip_gate: &mut WipGateState,
-    ) {
+    ) -> bool {
         let raw_entries = outbound(global, session, state, echo, client);
+        let scan_ok = raw_entries.is_some();
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
         capture_repo_wip(
             session,
@@ -1097,6 +1159,7 @@ mod linux_daemon {
             force_wip,
             wip_gate,
         );
+        scan_ok
     }
 
     fn apply_profile_feed(
@@ -1398,6 +1461,12 @@ mod linux_daemon {
         heartbeat_mtime_nanos: Option<u128>,
     }
 
+    #[derive(Clone, Copy)]
+    enum PathKind {
+        Dir,
+        File,
+    }
+
     fn maybe_gc_evicted_session(
         global: &GlobalConfig,
         overlays_root: &Path,
@@ -1422,34 +1491,36 @@ mod linux_daemon {
             eprintln!("session {}: gc unmount: {error}", discovered.session);
             return;
         }
-        let overlay_dir = overlays_root.join(&discovered.session);
-        let sidecar = manifest_path(overlays_root, &discovered.session);
-        match std::fs::remove_dir_all(&overlay_dir) {
-            Ok(()) => eprintln!(
-                "event=node_sync_gc session={} path={} reason=evicted_grace_elapsed",
-                discovered.session,
-                overlay_dir.display()
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => eprintln!(
-                "session {}: gc remove {}: {error}",
-                discovered.session,
-                overlay_dir.display()
-            ),
+        // Reclaim every path the session created. Removing only `overlays/<session>`
+        // + its manifest leaked the overlayfs work/lower siblings — which live under
+        // the host root, outside `overlays_root` — forever; the composed-repos lower
+        // holds MB–GB of materialized checkouts. `session_sibling_dirs` is the single
+        // source of truth shared with `plan_overlay_mount`, so cleanup can't drift
+        // from creation again. NotFound is expected (unused lower layout, already-gone
+        // state file) and silently ignored.
+        let session = &discovered.session;
+        let remove = |kind: PathKind, path: &Path| {
+            let result = match kind {
+                PathKind::Dir => std::fs::remove_dir_all(path),
+                PathKind::File => std::fs::remove_file(path),
+            };
+            match result {
+                Ok(()) => eprintln!(
+                    "event=node_sync_gc session={session} path={} reason=evicted_grace_elapsed",
+                    path.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    eprintln!("session {session}: gc remove {}: {error}", path.display())
+                }
+            }
+        };
+        remove(PathKind::Dir, &overlays_root.join(session));
+        for sibling in session_sibling_dirs(overlays_root, session) {
+            remove(PathKind::Dir, &sibling);
         }
-        match std::fs::remove_file(&sidecar) {
-            Ok(()) => eprintln!(
-                "event=node_sync_gc session={} path={} reason=evicted_grace_elapsed",
-                discovered.session,
-                sidecar.display()
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => eprintln!(
-                "session {}: gc remove {}: {error}",
-                discovered.session,
-                sidecar.display()
-            ),
-        }
+        remove(PathKind::File, &manifest_path(overlays_root, session));
+        remove(PathKind::File, &state_path(overlays_root, session));
     }
 
     fn unmount_evicted_overlay_if_needed(
@@ -1516,15 +1587,33 @@ mod linux_daemon {
         Changed(ChangedEvent),
     }
 
-    fn start_change_stream(base_url: &str, api_key: &str) -> mpsc::Receiver<StreamMessage> {
-        let (tx, rx) = mpsc::channel();
+    #[derive(Debug)]
+    enum WakeMessage {
+        Stream(StreamMessage),
+        LocalDirty(String),
+    }
+
+    fn start_change_stream(base_url: &str, api_key: &str, tx: mpsc::Sender<WakeMessage>) {
         let base_url = base_url.trim_end_matches('/').to_string();
         let api_key = api_key.to_string();
         std::thread::spawn(move || stream_reader_loop(base_url, api_key, tx));
-        rx
     }
 
-    fn stream_reader_loop(base_url: String, api_key: String, tx: mpsc::Sender<StreamMessage>) {
+    fn start_watch_bridge(rx: mpsc::Receiver<WatchMessage>, tx: mpsc::Sender<WakeMessage>) {
+        std::thread::spawn(move || {
+            while let Ok(message) = rx.recv() {
+                match message {
+                    WatchMessage::Dirty(session) => {
+                        if tx.send(WakeMessage::LocalDirty(session)).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn stream_reader_loop(base_url: String, api_key: String, tx: mpsc::Sender<WakeMessage>) {
         let url = format!("{base_url}/api/internal/changes/stream");
         let agent = ureq::AgentBuilder::new()
             .timeout_read(Duration::from_secs(46))
@@ -1534,7 +1623,7 @@ mod linux_daemon {
             let response = agent.get(&url).set("x-api-key", &api_key).call();
             match response {
                 Ok(response) => {
-                    let _ = tx.send(StreamMessage::Healthy);
+                    let _ = tx.send(WakeMessage::Stream(StreamMessage::Healthy));
                     backoff = Duration::from_secs(1);
                     let mut parser = SseParser::default();
                     let mut reader = response.into_reader();
@@ -1556,11 +1645,11 @@ mod linux_daemon {
                     for output in parser.finish() {
                         forward_sse_output(&tx, output);
                     }
-                    let _ = tx.send(StreamMessage::Unhealthy);
+                    let _ = tx.send(WakeMessage::Stream(StreamMessage::Unhealthy));
                 }
                 Err(error) => {
                     eprintln!("node-sync changes stream connect: {error}");
-                    let _ = tx.send(StreamMessage::Unhealthy);
+                    let _ = tx.send(WakeMessage::Stream(StreamMessage::Unhealthy));
                 }
             }
             std::thread::sleep(backoff);
@@ -1568,13 +1657,13 @@ mod linux_daemon {
         }
     }
 
-    fn forward_sse_output(tx: &mpsc::Sender<StreamMessage>, output: SseOutput) {
+    fn forward_sse_output(tx: &mpsc::Sender<WakeMessage>, output: SseOutput) {
         match output {
             SseOutput::Hello { .. } => {
-                let _ = tx.send(StreamMessage::Healthy);
+                let _ = tx.send(WakeMessage::Stream(StreamMessage::Healthy));
             }
             SseOutput::Changed(event) => {
-                let _ = tx.send(StreamMessage::Changed(event));
+                let _ = tx.send(WakeMessage::Stream(StreamMessage::Changed(event)));
             }
             SseOutput::Malformed { event, error } => {
                 eprintln!("node-sync changes stream malformed {event}: {error}");
@@ -1582,51 +1671,62 @@ mod linux_daemon {
         }
     }
 
-    fn drain_stream_messages(
-        rx: Option<&mpsc::Receiver<StreamMessage>>,
-        pending: &mut VecDeque<StreamMessage>,
+    fn drain_wake_messages(
+        rx: &mpsc::Receiver<WakeMessage>,
+        pending: &mut VecDeque<WakeMessage>,
         stream_healthy: &mut bool,
         dirty: &mut DirtySet,
+        local_dirty: &mut DirtySessions,
         current_atrium_keys: &HashSet<String>,
     ) {
         while let Some(message) = pending.pop_front() {
-            handle_stream_message(message, stream_healthy, dirty, current_atrium_keys);
+            handle_wake_message(
+                message,
+                stream_healthy,
+                dirty,
+                local_dirty,
+                current_atrium_keys,
+            );
         }
-        let Some(rx) = rx else {
-            return;
-        };
         while let Ok(message) = rx.try_recv() {
-            handle_stream_message(message, stream_healthy, dirty, current_atrium_keys);
+            handle_wake_message(
+                message,
+                stream_healthy,
+                dirty,
+                local_dirty,
+                current_atrium_keys,
+            );
         }
     }
 
-    fn handle_stream_message(
-        message: StreamMessage,
+    fn handle_wake_message(
+        message: WakeMessage,
         stream_healthy: &mut bool,
         dirty: &mut DirtySet,
+        local_dirty: &mut DirtySessions,
         current_atrium_keys: &HashSet<String>,
     ) {
         match message {
-            StreamMessage::Healthy => *stream_healthy = true,
-            StreamMessage::Unhealthy => *stream_healthy = false,
-            StreamMessage::Changed(event) => {
+            WakeMessage::Stream(StreamMessage::Healthy) => *stream_healthy = true,
+            WakeMessage::Stream(StreamMessage::Unhealthy) => *stream_healthy = false,
+            WakeMessage::Stream(StreamMessage::Changed(event)) => {
                 dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
+            }
+            WakeMessage::LocalDirty(session) => {
+                local_dirty.mark(session);
             }
         }
     }
 
     fn wait_for_next_tick(
-        rx: Option<&mpsc::Receiver<StreamMessage>>,
-        pending: &mut VecDeque<StreamMessage>,
+        rx: &mpsc::Receiver<WakeMessage>,
+        pending: &mut VecDeque<WakeMessage>,
         stream_healthy: &mut bool,
+        local_dirty: &mut DirtySessions,
         current_atrium_keys: &HashSet<String>,
         tick_start: Instant,
         interval: Duration,
     ) -> bool {
-        let Some(rx) = rx else {
-            std::thread::sleep(interval);
-            return false;
-        };
         let deadline = tick_start + interval;
         let mut pacer = TickPacer::default();
         loop {
@@ -1636,10 +1736,11 @@ mod linux_daemon {
             };
             match rx.recv_timeout(timeout) {
                 Ok(message) => {
-                    let made_dirty = handle_wait_stream_message(
+                    let made_dirty = handle_wait_wake_message(
                         message,
                         pending,
                         stream_healthy,
+                        local_dirty,
                         current_atrium_keys,
                     );
                     let decision =
@@ -1666,26 +1767,28 @@ mod linux_daemon {
         }
     }
 
-    fn handle_wait_stream_message(
-        message: StreamMessage,
-        pending: &mut VecDeque<StreamMessage>,
+    fn handle_wait_wake_message(
+        message: WakeMessage,
+        pending: &mut VecDeque<WakeMessage>,
         stream_healthy: &mut bool,
+        local_dirty: &mut DirtySessions,
         current_atrium_keys: &HashSet<String>,
     ) -> bool {
         match message {
-            StreamMessage::Healthy => {
+            WakeMessage::Stream(StreamMessage::Healthy) => {
                 *stream_healthy = true;
                 false
             }
-            StreamMessage::Unhealthy => {
+            WakeMessage::Stream(StreamMessage::Unhealthy) => {
                 *stream_healthy = false;
                 false
             }
-            StreamMessage::Changed(event) => {
+            WakeMessage::Stream(StreamMessage::Changed(event)) => {
                 let made_dirty = changed_event_targets_current_session(&event, current_atrium_keys);
-                pending.push_back(StreamMessage::Changed(event));
+                pending.push_back(WakeMessage::Stream(StreamMessage::Changed(event)));
                 made_dirty
             }
+            WakeMessage::LocalDirty(session) => local_dirty.mark(session),
         }
     }
 
@@ -1799,6 +1902,22 @@ mod linux_daemon {
             {
                 eprintln!("session {session}: overlay unmount: {e}");
             }
+        }
+    }
+
+    fn cleanup_removed_watches(
+        active: &HashSet<String>,
+        watched_sessions: &mut HashSet<String>,
+        watcher: &UpperWatcher,
+    ) {
+        let removed = watched_sessions
+            .iter()
+            .filter(|session| !active.contains(*session))
+            .cloned()
+            .collect::<Vec<_>>();
+        for session in removed {
+            watcher.remove_session(&session);
+            watched_sessions.remove(&session);
         }
     }
 
@@ -2614,6 +2733,20 @@ mod tests {
             scoped_atrium_root(Path::new("/var/lib/centaur/atrium"), "asbx-test"),
             PathBuf::from("/var/lib/centaur/atrium/asbx-test")
         );
+    }
+
+    #[test]
+    fn local_capture_gate_scans_on_any_backstop_or_dirty_reason() {
+        assert!(!should_run_local_capture(
+            false, false, false, false, false, false
+        ));
+        for reason in 0..6 {
+            let mut flags = [false; 6];
+            flags[reason] = true;
+            assert!(should_run_local_capture(
+                flags[0], flags[1], flags[2], flags[3], flags[4], flags[5]
+            ));
+        }
     }
 
     #[test]

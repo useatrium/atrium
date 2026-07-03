@@ -43,6 +43,7 @@ pub mod sse;
 pub mod state;
 pub mod tornread;
 pub mod warmcache;
+pub mod watch;
 pub mod wip;
 
 #[cfg(target_os = "linux")]
