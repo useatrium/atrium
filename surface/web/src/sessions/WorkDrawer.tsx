@@ -11,7 +11,7 @@ import { isDesktop } from '../desktop';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
-import { FilesHub } from './FilesHub';
+import { FilesHub, type FilesHubDefaultScope, type FilesHubSessionScope } from './FilesHub';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { AppsSurface } from './AppsSurface';
 
@@ -99,6 +99,8 @@ export function WorkDrawer({
   sessionId,
   workspaceId,
   channelId,
+  filesSessionScope,
+  filesDefaultScope,
   tab,
   onTab,
   pinned,
@@ -122,6 +124,8 @@ export function WorkDrawer({
   sessionId: string;
   workspaceId?: string;
   channelId?: string | null;
+  filesSessionScope?: FilesHubSessionScope;
+  filesDefaultScope?: FilesHubDefaultScope;
   tab: WorkTab;
   onTab: (tab: ActiveWorkTab) => void;
   pinned: boolean;
@@ -227,7 +231,13 @@ export function WorkDrawer({
         ) : null
       ) : active === 'hubFiles' ? (
         workspaceId ? (
-          <FilesHub workspaceId={workspaceId} channelId={channelId} sessionId={sessionId} />
+          <FilesHub
+            workspaceId={workspaceId}
+            channelId={channelId}
+            sessionId={sessionId}
+            sessionScope={filesSessionScope}
+            defaultScope={filesDefaultScope}
+          />
         ) : (
           <EmptyState title="Files unavailable" hint="This session is missing workspace metadata." />
         )
