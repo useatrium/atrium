@@ -31,9 +31,14 @@ jobs:
           set -euo pipefail
           cd "$HOME/atrium"
           git fetch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deploy
-          git reset FETCH_HEAD          # HEAD+index -> deploy; working tree untouched
-          git checkout -f -- .          # materialize tracked files (first-run conversion-safe)
-          git reset --hard FETCH_HEAD   # finalize; box-local untracked files (.env, overrides) preserved
+          git reset --hard FETCH_HEAD
+          clean_excludes=(
+            -e surface/deploy/docker-compose.tunnel.yml
+            -e surface/deploy/docker-compose.override.yml
+            -e 'surface/deploy/*.local.yml'
+          )
+          git clean -ffd -n "${clean_excludes[@]}"
+          git clean -ffd "${clean_excludes[@]}"
           echo "deploying:"; git log --oneline -1
       - name: Redeploy (build-changed, health-gated, auto-rollback)
         run: |
