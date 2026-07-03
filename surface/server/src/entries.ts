@@ -66,6 +66,8 @@ export interface NormalizedEntry {
   handle: string;
   kind: string;
   actor: string | null;
+  /** Human-readable actor (display name for user actors); null when unknown. */
+  actorLabel: string | null;
   text: string;
   meta: Record<string, unknown>;
   targetType: NormalizedEntryTargetType;
@@ -87,6 +89,7 @@ interface EventResolveRow {
   channel_name: string | null;
   type: string;
   actor_id: string | null;
+  actor_display_name: string | null;
   payload: unknown;
   edited_text: string | null;
   is_deleted: boolean;
@@ -149,11 +152,13 @@ async function resolveEventEntry(
             c.name AS channel_name,
             e.type,
             e.actor_id,
+            u.display_name AS actor_display_name,
             e.payload,
             edit.text AS edited_text,
             (del.id IS NOT NULL) AS is_deleted
        FROM events e
        LEFT JOIN channels c ON c.id = e.channel_id
+       LEFT JOIN users u ON u.id = e.actor_id
        LEFT JOIN LATERAL (
          SELECT x.payload->>'text' AS text
           FROM events x
@@ -182,6 +187,7 @@ async function resolveEventEntry(
     handle: encodeEventHandle(row.id),
     kind: row.type,
     actor: row.actor_id,
+    actorLabel: row.actor_display_name ?? null,
     text: tombstoned ? '' : eventText(row, meta),
     meta,
     targetType: 'event',
@@ -230,6 +236,7 @@ async function resolveRecordEntry(
     handle: encodeRecordHandle(row.entry_uid),
     kind: row.kind,
     actor: row.actor,
+    actorLabel: row.actor,
     text: row.text,
     meta,
     targetType: 'record',
@@ -280,6 +287,7 @@ async function resolveArtifactEntry(
     handle: encodeArtifactHandle(row.id),
     kind: 'artifact',
     actor: null,
+    actorLabel: null,
     text: artifactName(row.path),
     meta,
     targetType: 'artifact',

@@ -104,7 +104,7 @@ export function EntryQuoteCard({ entry }: { entry: ResolvedEntryQuote }) {
         <span className="text-accent-text">
           <TargetIcon targetType={entry.targetType} />
         </span>
-        <span className="font-medium text-fg">{entry.actor || targetLabel(entry.targetType)}</span>
+        <span className="font-medium text-fg">{entry.actorLabel || targetLabel(entry.targetType)}</span>
         <span className="text-fg-muted">{targetLabel(entry.targetType)}</span>
       </div>
       <blockquote className="mt-1 border-l-2 border-edge-strong pl-2 text-sm leading-relaxed text-fg-body">

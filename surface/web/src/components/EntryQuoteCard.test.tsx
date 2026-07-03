@@ -23,6 +23,7 @@ function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote 
     handle: 'evt_1',
     kind: 'message',
     actor: 'Ada',
+    actorLabel: 'Ada',
     text: 'This is the quoted entry text with useful context.',
     targetType: 'event',
     tombstoned: false,

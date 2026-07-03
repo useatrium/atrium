@@ -7,6 +7,7 @@ export interface ResolvedEntryQuote {
   handle: string;
   kind: string;
   actor: string;
+  actorLabel: string | null;
   text: string;
   targetType: EntryQuoteTargetType;
   tombstoned: boolean;
