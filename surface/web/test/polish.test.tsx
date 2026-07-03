@@ -57,6 +57,21 @@ describe('MessageText formatting', () => {
     expect(root.textContent).toContain('done');
   });
 
+  it('copies fenced code blocks from the inline code control', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<MessageText text={['```ts', 'const x = 1;', '```'].join('\n')} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('const x = 1;'));
+    expect(screen.getByRole('button', { name: 'Copied code' })).toBeTruthy();
+  });
+
   it('skips unsafe inline html and collapses long markdown', () => {
     render(
       <div data-testid="root">

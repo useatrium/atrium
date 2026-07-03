@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactNode } from 'react';
+import { isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
@@ -100,6 +100,66 @@ function mentionSpan(handle: string, meHandle?: string) {
     >
       @{handle}
     </span>
+  );
+}
+
+function nodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join('');
+  if (isValidElement<{ children?: ReactNode }>(node)) return nodeText(node.props.children);
+  return '';
+}
+
+function CopyIcon({ copied }: { copied: boolean }) {
+  if (copied) {
+    return (
+      <span aria-hidden="true" className="text-[10px] font-bold leading-none">
+        OK
+      </span>
+    );
+  }
+  return (
+    <span aria-hidden="true" className="relative h-3.5 w-3.5 text-current">
+      <span className="absolute left-1 top-1 h-2.5 w-2.5 rounded-[2px] border border-current" />
+      <span className="absolute left-0 top-0 h-2.5 w-2.5 rounded-[2px] border border-current bg-surface" />
+    </span>
+  );
+}
+
+function CopyablePre({ children, ...props }: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const code = nodeText(children).replace(/\n$/, '');
+
+  const copyCode = () => {
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText || !code) return;
+    void clipboard.writeText(code).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    });
+  };
+
+  return (
+    <div className="group relative my-2">
+      <pre
+        className="overflow-x-auto rounded-md border border-edge bg-surface px-3 py-2 pr-11 font-mono text-xs leading-relaxed text-fg-body"
+        {...props}
+      >
+        {children}
+      </pre>
+      <button
+        type="button"
+        aria-label={copied ? 'Copied code' : 'Copy code'}
+        title={copied ? 'Copied code' : 'Copy code'}
+        onClick={(event) => {
+          event.stopPropagation();
+          copyCode();
+        }}
+        className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded border border-edge bg-surface-raised/95 text-fg-muted shadow-sm transition hover:border-edge-strong hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <CopyIcon copied={copied} />
+      </button>
+    </div>
   );
 }
 
@@ -226,14 +286,7 @@ function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
         </code>
       );
     },
-    pre: ({ children, node: _node, ...props }) => (
-      <pre
-        className="my-2 overflow-x-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-xs leading-relaxed text-fg-body"
-        {...props}
-      >
-        {children}
-      </pre>
-    ),
+    pre: ({ children, node: _node, ...props }) => <CopyablePre {...props}>{children}</CopyablePre>,
     table: ({ children, node: _node, ...props }) => (
       <div className="my-2 overflow-x-auto rounded-md border border-edge">
         <table className="min-w-full border-collapse text-left text-xs leading-relaxed text-fg-body" {...props}>

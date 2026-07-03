@@ -1,5 +1,7 @@
-import { Component, memo, useMemo, type ReactNode } from 'react';
-import { Linking, Platform, ScrollView, Text, View, type TextStyle, type ViewStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import { Component, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Linking, Platform, Pressable, ScrollView, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import MarkdownDisplay, {
   MarkdownIt,
   renderRules,
@@ -8,6 +10,7 @@ import MarkdownDisplay, {
 } from 'react-native-markdown-display';
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
+import { selectionHaptic } from '../lib/haptics';
 import { font, radius, space, useTheme, type Colors } from '../lib/theme';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
@@ -155,6 +158,106 @@ function syntaxTheme(colors: Colors) {
   };
 }
 
+function CopyableCodeBlock({
+  nodeKey,
+  content,
+  language,
+  colors,
+}: {
+  nodeKey: string;
+  content: string;
+  language: string;
+  colors: Colors;
+}) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const code = trimTrailingNewline(content);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
+
+  const copyCode = () => {
+    if (!code) return;
+    selectionHaptic();
+    void Clipboard.setStringAsync(code).then(() => {
+      setCopied(true);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setCopied(false), 1400);
+    });
+  };
+
+  return (
+    <View
+      key={nodeKey}
+      style={{
+        backgroundColor: colors.bgElevated,
+        borderColor: colors.border,
+        borderRadius: radius.sm,
+        borderWidth: 1,
+        marginVertical: space.xs,
+        overflow: 'hidden',
+      }}
+    >
+      <View
+        style={{
+          alignItems: 'center',
+          borderBottomColor: colors.border,
+          borderBottomWidth: 1,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          minHeight: 34,
+          paddingLeft: space.sm,
+          paddingRight: space.xs,
+        }}
+      >
+        <Text
+          style={{
+            color: colors.textMuted,
+            fontFamily: monoFont,
+            fontSize: font.xs,
+            textTransform: 'uppercase',
+          }}
+        >
+          {language}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={copied ? 'Copied code' : 'Copy code'}
+          onPress={copyCode}
+          style={{
+            alignItems: 'center',
+            borderRadius: radius.sm,
+            flexDirection: 'row',
+            gap: 4,
+            minHeight: 30,
+            paddingHorizontal: space.sm,
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={16} color={colors.textSecondary} />
+          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
+            {copied ? 'Copied' : 'Copy'}
+          </Text>
+        </Pressable>
+      </View>
+      <SyntaxHighlighter
+        highlighter="hljs"
+        language={language}
+        style={syntaxTheme(colors)}
+        fontFamily={monoFont}
+        fontSize={font.xs}
+        PreTag={ScrollView}
+        CodeTag={ScrollView}
+      >
+        {code}
+      </SyntaxHighlighter>
+    </View>
+  );
+}
+
 function compactMarkdownSource(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, (match) => {
@@ -275,29 +378,13 @@ function makeRules(colors: Colors, variant: 'session' | 'message' | 'compact', m
   const highlightedCode = (node: ASTNode) => {
     const sourceNode = node as SourceNode;
     return (
-      <View
+      <CopyableCodeBlock
         key={node.key}
-        style={{
-          backgroundColor: colors.bgElevated,
-          borderColor: colors.border,
-          borderRadius: radius.sm,
-          borderWidth: 1,
-          marginVertical: space.xs,
-          overflow: 'hidden',
-        }}
-      >
-        <SyntaxHighlighter
-          highlighter="hljs"
-          language={normalizeLanguage(sourceNode.sourceInfo)}
-          style={syntaxTheme(colors)}
-          fontFamily={monoFont}
-          fontSize={font.xs}
-          PreTag={ScrollView}
-          CodeTag={ScrollView}
-        >
-          {trimTrailingNewline(node.content)}
-        </SyntaxHighlighter>
-      </View>
+        nodeKey={node.key}
+        content={node.content}
+        language={normalizeLanguage(sourceNode.sourceInfo)}
+        colors={colors}
+      />
     );
   };
 
