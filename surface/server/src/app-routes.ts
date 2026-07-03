@@ -25,6 +25,7 @@ import { registerInternalChangesRoutes } from './routes/internal-changes.js';
 import { registerInternalSessionRuntimeRoutes } from './routes/internal-session-runtime.js';
 import { registerInternalWarmcacheRoutes } from './routes/internal-warmcache.js';
 import { registerMeRoutes } from './routes/me.js';
+import { registerMarkupFeedbackRoutes } from './routes/markup-feedback.js';
 import { registerMessageRoutes } from './routes/messages.js';
 import { registerPushRoutes } from './routes/push.js';
 import { registerSessionRoutes } from './routes/sessions.js';
@@ -133,6 +134,17 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
   await registerFilesHubRoutes(app, { pool, requireUser });
 
   await registerChannelArtifactWritebackRoutes(app, { pool, maxUploadBytes: config.maxUploadBytes, requireUser });
+
+  // === mk703-feedback additions ===
+  await registerMarkupFeedbackRoutes(app, {
+    pool,
+    sessionRuns,
+    requireUser,
+    optionalOpId,
+    runMutation,
+    publishEvent: (event) => hub.publishEvent(event),
+  });
+  // === end mk703-feedback additions ===
 
   registerSessionRoutes(app, {
     pool,

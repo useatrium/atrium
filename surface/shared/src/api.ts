@@ -768,5 +768,32 @@ export function createApi(opts: ApiOptions = {}) {
         }[];
       }>(`/api/search/sessions?${q.toString()}`);
     },
+    // === mk703-extract additions ===
+    extractEntry: (handle: string) =>
+      req<{ artifactId: string; path: string; seq: number; workspaceId: string }>(
+        `/api/entries/${encodeURIComponent(handle)}/extract`,
+        { method: 'POST', body: '{}' },
+      ),
+    // === end mk703-extract additions ===
+    // === mk703-feedback additions ===
+    sendArtifactFeedback: (
+      artifactId: string,
+      body: {
+        content: string;
+        baseSeq: number;
+        sessionId: string;
+        note?: string;
+        intent?: 'response' | 'revise';
+        opId?: string;
+      },
+    ) =>
+      req<{ seq: number; status: 'normal' | 'conflict'; steered: true }>(
+        `/api/files/${encodeURIComponent(artifactId)}/feedback`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      ),
+    // === end mk703-feedback additions ===
   };
 }
