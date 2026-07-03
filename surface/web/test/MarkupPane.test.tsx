@@ -121,6 +121,80 @@ describe('MarkupPane', () => {
     expect(screen.getByRole('dialog', { name: 'Result Notes' })).toBeTruthy();
   });
 
+  it('writes markup content and sends an entry-link reply in reply mode', async () => {
+    const onClose = vi.fn();
+    const onSendThreadReply = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MarkupPane
+        source={source}
+        mode={{ kind: 'reply', channelId: 'ch-1', threadRootEventId: 101 }}
+        onClose={onClose}
+        onSendThreadReply={onSendThreadReply}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText('Mock markup editor'), {
+      target: { value: '# Body\n{++new++}\n' },
+    });
+    fireEvent.change(screen.getByLabelText('Say something about your changes'), {
+      target: { value: 'please review this' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledWith('/api/files/art-1/content', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: {
+        'X-Artifact-Base-Seq': '7',
+        'Content-Type': 'text/markdown; charset=utf-8',
+      },
+      body: '---\ntitle: "Result Notes"\n---\n\n# Body\n{++new++}\n',
+    });
+    expect(onSendThreadReply).toHaveBeenCalledWith({
+      channelId: 'ch-1',
+      threadRootEventId: 101,
+      text: `please review this\n${window.location.origin}/e/art_art-1`,
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps reply markup open on stale write-back', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      json: vi.fn().mockResolvedValue({ error: 'stale_base' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MarkupPane
+        source={source}
+        mode={{ kind: 'reply', channelId: 'ch-1', threadRootEventId: 101 }}
+        onClose={() => {}}
+        onSendThreadReply={vi.fn()}
+      />,
+    );
+
+    const editor = await screen.findByLabelText('Mock markup editor') as HTMLTextAreaElement;
+    fireEvent.change(editor, {
+      target: { value: '# Body\n{++new++}\n' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'This document changed since you started — reopen to retry.',
+    );
+    expect((screen.getByLabelText('Mock markup editor') as HTMLTextAreaElement).value).toBe('# Body\n{++new++}\n');
+  });
+
   it('confirms before closing dirty markup', async () => {
     const onClose = vi.fn();
     const confirm = vi.fn(() => false);

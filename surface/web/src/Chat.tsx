@@ -28,7 +28,9 @@ import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
 import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
+import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { FileIcon, LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
+import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
@@ -69,7 +71,12 @@ import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
-import { entryParamFromSearch, stripEntryParamFromLocation, threadRootParamFromSearch } from './EntryLinkRoute';
+import {
+  entryParamFromSearch,
+  fileParamFromSearch,
+  stripEntryParamFromLocation,
+  threadRootParamFromSearch,
+} from './EntryLinkRoute';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -221,6 +228,8 @@ export function Chat({
     setQueueNudgeSeq((n) => n + 1);
   }, []);
   const [filesEventSeq, setFilesEventSeq] = useState(0);
+  const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
+  const [markupMode, setMarkupMode] = useState<MarkupPaneMode | null>(null);
 
   // === web-client additions ===
   const openNotificationTarget = useCallback(
@@ -431,6 +440,7 @@ export function Chat({
   const [mainSurface, setMainSurface] = useState<MainSurface>('chat');
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnInitialTask, setSpawnInitialTask] = useState('');
   const [demoStarting, setDemoStarting] = useState(false);
   const agentProfiles = useAgentProfiles();
   const {
@@ -800,6 +810,35 @@ export function Chat({
     void openThreadInChannel(active.id, rootEventId).catch(onApiError);
   };
 
+  const openMarkupReply = useCallback(
+    async (handle: string, message: { channelId: string; id: number | null; threadRootEventId: number | null }) => {
+      const threadRootEventId = message.threadRootEventId ?? message.id;
+      if (threadRootEventId == null) return;
+      try {
+        const extracted = await api.extractEntry(handle);
+        const response = await fetch(`/api/files/artifact/${encodeURIComponent(extracted.artifactId)}/content`, {
+          credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Could not load markup source');
+        const content = await response.text();
+        const { frontmatter, body } = splitMarkdownFrontmatter(content);
+        setMarkupSource({
+          artifactId: extracted.artifactId,
+          path: extracted.path,
+          seq: extracted.seq,
+          workspaceId: extracted.workspaceId,
+          sessionId: '',
+          frontmatter,
+          body,
+        });
+        setMarkupMode({ kind: 'reply', channelId: message.channelId, threadRootEventId });
+      } catch (err) {
+        showErrorToast(err instanceof Error ? err.message : 'Could not open markup pane');
+      }
+    },
+    [],
+  );
+
   const openDiscussThread = useCallback(
     (payload: TranscriptDiscussPayload) => {
       setMainSurface('chat');
@@ -816,6 +855,20 @@ export function Chat({
     },
     [markDraftTouched, onApiError, openThreadInChannel, saveDraft, selectChannel],
   );
+
+  const seedActiveChannelComposer = useCallback(
+    (draft: string) => {
+      setMainSurface('chat');
+      dispatch({ type: 'close-thread' });
+      putTextInComposer(draft);
+    },
+    [putTextInComposer],
+  );
+
+  const openSpawnWithInitialTask = useCallback((task: string) => {
+    setSpawnInitialTask(task);
+    setSpawnOpen(true);
+  }, []);
 
   const {
     hasChannelSessions,
@@ -846,7 +899,10 @@ export function Chat({
     dispatch,
     enqueueOp,
     me,
-    onSpawnDialogClose: () => setSpawnOpen(false),
+    onSpawnDialogClose: () => {
+      setSpawnOpen(false);
+      setSpawnInitialTask('');
+    },
   });
 
   // ---- jump to a message from search: page history back until it's loaded ----
@@ -859,11 +915,20 @@ export function Chat({
     if (initialThreadRootEventId != null) return initialThreadRootEventId;
     return typeof window === 'undefined' ? null : threadRootParamFromSearch(window.location.search);
   });
+  const [pendingFileArtifactId, setPendingFileArtifactId] = useState<string | null>(() => {
+    return typeof window === 'undefined' ? null : fileParamFromSearch(window.location.search);
+  });
   useEffect(() => {
     if (highlightId == null) return;
     const t = setTimeout(() => setHighlightId(null), 2500);
     return () => clearTimeout(t);
   }, [highlightId]);
+
+  useEffect(() => {
+    if (!pendingFileArtifactId || !active) return;
+    setMainSurface('files');
+    stripEntryParamFromLocation();
+  }, [active, pendingFileArtifactId]);
 
   useEffect(() => {
     if (!pendingEntryHandle || pendingEntryHandle.startsWith('rec_') || pendingEntryThreadRootId != null) return;
@@ -1157,7 +1222,10 @@ export function Chat({
               </button>
             ) : (
               <button
-                onClick={() => setSpawnOpen(true)}
+                onClick={() => {
+                  setSpawnInitialTask('');
+                  setSpawnOpen(true);
+                }}
                 disabled={!active}
                 title="New agent"
                 aria-label="New agent"
@@ -1285,33 +1353,43 @@ export function Chat({
               channelId={active?.id ?? null}
               defaultScope={active ? 'channel' : 'workspace'}
               filesEventSeq={filesEventSeq}
+              sessions={state.sessions}
+              initialOpenArtifactId={pendingFileArtifactId}
+              onInitialOpenArtifactHandled={(artifactId) => {
+                if (pendingFileArtifactId === artifactId) setPendingFileArtifactId(null);
+              }}
+              onSeedChannelComposer={active ? seedActiveChannelComposer : undefined}
+              onStartAgentWithTask={active ? openSpawnWithInitialTask : undefined}
             />
           ) : (
-            <Timeline
-              messages={timeline.main}
-              loaded={timeline.loaded}
-              hasMoreBefore={timeline.hasMoreBefore}
-              sessions={state.sessions}
-              spectators={spectators}
-              meId={me.id}
-              meHandle={me.handle}
-              editRequestId={editRequestId}
-              highlightId={highlightId}
-              onEditRequestHandled={() => setEditRequestId(null)}
-              onLoadEarlier={loadEarlier}
-              onOpenThread={openThread}
-              onOpenSession={openSession}
-              onRunDemoAgent={active ? startDemoSession : undefined}
-              demoAgentBusy={demoStarting}
-              onInsertAgentCommand={() => putTextInComposer('@agent ')}
-              onSayHello={() => putTextInComposer('Hello!')}
-              onConnectProvider={openProviderConnect}
-              onRetry={retry}
-              onEdit={editMessage}
-              onDelete={removeMessage}
-              onReact={reactToMessage}
-              unreadDividerAfterId={unreadDividerAfterId}
-            />
+            <EntryQuoteApplyContextProvider value={active ? { channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask } : null}>
+              <Timeline
+                messages={timeline.main}
+                loaded={timeline.loaded}
+                hasMoreBefore={timeline.hasMoreBefore}
+                sessions={state.sessions}
+                spectators={spectators}
+                meId={me.id}
+                meHandle={me.handle}
+                editRequestId={editRequestId}
+                highlightId={highlightId}
+                onEditRequestHandled={() => setEditRequestId(null)}
+                onLoadEarlier={loadEarlier}
+                onOpenThread={openThread}
+                onOpenSession={openSession}
+                onRunDemoAgent={active ? startDemoSession : undefined}
+                demoAgentBusy={demoStarting}
+                onInsertAgentCommand={() => putTextInComposer('@agent ')}
+                onSayHello={() => putTextInComposer('Hello!')}
+                onConnectProvider={openProviderConnect}
+                onRetry={retry}
+                onEdit={editMessage}
+                onDelete={removeMessage}
+                onReact={reactToMessage}
+                onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
+                unreadDividerAfterId={unreadDividerAfterId}
+              />
+            </EntryQuoteApplyContextProvider>
           )}
 
           {/* Composer follows the channel <main>: shown in both channel and split
@@ -1410,30 +1488,33 @@ export function Chat({
         </aside>
       ) : openThreadRoot && active ? (
         <div className="hidden md:contents">
-          <ThreadPanel
-            root={openThreadRoot}
-            replies={threadReplies}
-            loaded={threadLoaded}
-            sessions={state.sessions}
-            spectators={spectators}
-            meId={me.id}
-            meHandle={me.handle}
-            onClose={() => dispatch({ type: 'close-thread' })}
-            onSend={(text, attachments, attachmentRefs, voice) =>
-              send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
-            }
-            queueUpload={queueUpload}
-            onOpenSession={openSession}
-            onRetry={retry}
-            onEdit={editMessage}
-            onDelete={removeMessage}
-            onReact={reactToMessage}
-            draftKey={threadDraftKey}
-            initialDraft={drafts[threadDraftKey] ?? ''}
-            onDraftChange={saveDraft}
-            onDraftPersisted={enqueueDraft}
-            onDraftTouched={markDraftTouched}
-          />
+          <EntryQuoteApplyContextProvider value={{ channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }}>
+            <ThreadPanel
+              root={openThreadRoot}
+              replies={threadReplies}
+              loaded={threadLoaded}
+              sessions={state.sessions}
+              spectators={spectators}
+              meId={me.id}
+              meHandle={me.handle}
+              onClose={() => dispatch({ type: 'close-thread' })}
+              onSend={(text, attachments, attachmentRefs, voice) =>
+                send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
+              }
+              queueUpload={queueUpload}
+              onOpenSession={openSession}
+              onRetry={retry}
+              onEdit={editMessage}
+              onDelete={removeMessage}
+              onReact={reactToMessage}
+              onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
+              draftKey={threadDraftKey}
+              initialDraft={drafts[threadDraftKey] ?? ''}
+              onDraftChange={saveDraft}
+              onDraftPersisted={enqueueDraft}
+              onDraftTouched={markDraftTouched}
+            />
+          </EntryQuoteApplyContextProvider>
         </div>
       ) : (
         active &&
@@ -1467,12 +1548,17 @@ export function Chat({
 
       {spawnOpen && active && (
         <SpawnDialog
+          key={`spawn:${spawnInitialTask}`}
           channelName={
             active.kind === 'dm' || active.kind === 'gdm'
               ? channelLabel(active, me.id)
               : `${active.kind === 'private' ? '' : '#'}${active.name}`
           }
-          onCancel={() => setSpawnOpen(false)}
+          initialTask={spawnInitialTask}
+          onCancel={() => {
+            setSpawnOpen(false);
+            setSpawnInitialTask('');
+          }}
           onSpawn={startConfiguredSession}
           providerStatuses={providerCredentials}
           githubConnection={githubConnection}
@@ -1480,6 +1566,23 @@ export function Chat({
           profiles={agentProfiles}
           onConnectGitHub={() => setConnectionDialog('github')}
           onConnectProvider={setProviderDialog}
+        />
+      )}
+
+      {markupSource && markupMode && (
+        <MarkupPane
+          source={markupSource}
+          mode={markupMode}
+          onClose={() => {
+            setMarkupSource(null);
+            setMarkupMode(null);
+          }}
+          onSendThreadReply={({ channelId, threadRootEventId, text }) => {
+            send(channelId, text, threadRootEventId);
+            setMainSurface('chat');
+            selectChannel(channelId);
+            void openThreadInChannel(channelId, threadRootEventId).catch(onApiError);
+          }}
         />
       )}
 

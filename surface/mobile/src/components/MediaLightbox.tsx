@@ -22,11 +22,10 @@ import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import Pdf from 'react-native-pdf';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatBytes, type Api, type HubFile, type UserRef } from '@atrium/surface-client';
+import { formatBytes, type Api, type HubFile } from '@atrium/surface-client';
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
 import { SessionMarkdown } from './Markdown';
-import { EntryComments } from './EntryComments';
 import { TextEditorPane } from './TextEditorPane';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { AppPreviewPane } from './AppPreviewPane';
@@ -43,10 +42,9 @@ export interface MediaLightboxProps {
   fileHeaders?: Record<string, string>;
   onClose: () => void;
   onOpenExternal: (file: HubFile) => Promise<void>;
-  /** When provided, unlocks the parity affordances: comments, version history,
+  /** When provided, unlocks the parity affordances: version history,
    * text editing, and HTML/app preview. Omit for a plain read-only viewer. */
   api?: Api;
-  me?: UserRef;
   /** Called after an edit / revert / restore lands, so the opener can refresh. */
   onFileChanged?: () => void;
 }
@@ -642,7 +640,6 @@ export function MediaLightbox({
   onClose,
   onOpenExternal,
   api,
-  me,
   onFileChanged,
 }: MediaLightboxProps) {
   const { colors, reduceMotion } = useTheme();
@@ -653,7 +650,6 @@ export function MediaLightbox({
   const [infoOpen, setInfoOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const current = files[index];
 
@@ -663,17 +659,15 @@ export function MediaLightbox({
     setInfoOpen(false);
     setEditing(false);
     setHistoryOpen(false);
-    setCommentsOpen(false);
     requestAnimationFrame(() => {
       listRef.current?.scrollToIndex({ index: Math.max(0, Math.min(initialIndex, files.length - 1)), animated: false });
     });
   }, [files.length, initialIndex, visible]);
 
-  // Swiping to another file closes any per-file surface (editor/history/comments).
+  // Swiping to another file closes any per-file surface (editor/history).
   useEffect(() => {
     setEditing(false);
     setHistoryOpen(false);
-    setCommentsOpen(false);
   }, [index]);
 
   const handleFileChanged = useCallback(() => {
@@ -741,9 +735,6 @@ export function MediaLightbox({
             {api ? (
               <ChromeButton icon="git-branch-outline" label="Version history" onPress={() => setHistoryOpen(true)} />
             ) : null}
-            {api && me ? (
-              <ChromeButton icon="chatbubble-outline" label="Comments" onPress={() => setCommentsOpen(true)} />
-            ) : null}
             <ChromeButton
               icon={infoOpen ? 'information-circle' : 'information-circle-outline'}
               label={infoOpen ? 'Hide file info' : 'Show file info'}
@@ -805,15 +796,6 @@ export function MediaLightbox({
             canManage
             onClose={() => setHistoryOpen(false)}
             onChanged={handleFileChanged}
-          />
-        ) : null}
-        {commentsOpen && current && api && me ? (
-          <EntryComments
-            api={api}
-            handle={`art_${current.artifactId}`}
-            visible
-            me={me}
-            onClose={() => setCommentsOpen(false)}
           />
         ) : null}
       </View>

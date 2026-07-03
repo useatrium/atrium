@@ -24,6 +24,10 @@ const MARKUP_PAIRS = [
   { open: '{>>', close: '<<}' },
 ] as const;
 
+export function hasCriticMarkup(content: string): boolean {
+  return MARKUP_PAIRS.some((pair) => content.includes(pair.open));
+}
+
 export function composeFeedbackSteer(args: ComposeFeedbackSteerArgs): string {
   const markedBody = stripYamlFrontmatter(args.markedUpContent);
   const preamble =

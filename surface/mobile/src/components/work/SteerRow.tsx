@@ -1,7 +1,8 @@
 import { Text, View } from 'react-native';
 import { containsCriticMarkup, formatTurnTime, parseMarkupSteer } from '@atrium/surface-client';
 import { font, space, useTheme } from '../../lib/theme';
-import { CriticMarkupText, MarkupSteerCard } from './MarkupSteerCard';
+import { CriticMarkupText } from '../CriticMarkupText';
+import { MarkupSteerCard } from './MarkupSteerCard';
 
 /**
  * A user steer in the session transcript — a turn boundary. Mobile has no

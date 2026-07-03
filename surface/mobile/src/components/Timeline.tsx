@@ -14,7 +14,7 @@ import {
 import { font, space, useTheme } from '../lib/theme';
 import { DayDivider } from './bits';
 import { MessageRow } from './MessageRow';
-import type { EntryResolver } from '../lib/entryResolve';
+import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
 
 export interface TimelineProps {
   messages: ChatMessage[];
@@ -30,10 +30,10 @@ export interface TimelineProps {
   api: Api;
   serverUrl: string;
   resolveEntry: EntryResolver;
+  resolveArtifactContent?: ArtifactContentResolver;
   fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
   onLongPress: (m: ChatMessage) => void;
-  onOpenComments?: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
@@ -56,10 +56,10 @@ export function Timeline({
   api,
   serverUrl,
   resolveEntry,
+  resolveArtifactContent,
   fileHeaders,
   onLoadEarlier,
   onLongPress,
-  onOpenComments,
   onOpenThread,
   onToggleReaction,
   onRetry,
@@ -122,9 +122,9 @@ export function Timeline({
           api={api}
           serverUrl={serverUrl}
           resolveEntry={resolveEntry}
+          resolveArtifactContent={resolveArtifactContent}
           fileHeaders={fileHeaders}
           onLongPress={onLongPress}
-          onOpenComments={onOpenComments}
           onOpenThread={onOpenThread}
           onToggleReaction={onToggleReaction}
           onRetry={onRetry}
@@ -144,9 +144,9 @@ export function Timeline({
       api,
       serverUrl,
       resolveEntry,
+      resolveArtifactContent,
       fileHeaders,
       onLongPress,
-      onOpenComments,
       onOpenThread,
       onToggleReaction,
       onRetry,

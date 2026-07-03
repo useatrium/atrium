@@ -12,10 +12,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
 import { font, useTheme } from '../../../src/lib/theme';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
-import { entryHandleForMessage } from '../../../src/lib/entryHandle';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer } from '../../../src/components/Composer';
-import { EntryComments } from '../../../src/components/EntryComments';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
@@ -54,7 +52,6 @@ export default function ChannelScreen() {
   }, [channelGone]);
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
-  const [commentsHandle, setCommentsHandle] = useState<string | null>(null);
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
@@ -95,11 +92,6 @@ export default function ChannelScreen() {
     },
     [id],
   );
-
-  const openComments = useCallback((m: ChatMessage) => {
-    const handle = entryHandleForMessage(m);
-    if (handle) setCommentsHandle(handle);
-  }, []);
 
   const openAttachment = useCallback((message: ChatMessage, index: number) => {
     const attachments = message.attachments ?? [];
@@ -253,10 +245,10 @@ export default function ChannelScreen() {
           api={chat.api}
           serverUrl={chat.serverUrl}
           resolveEntry={chat.resolveEntry}
+          resolveArtifactContent={chat.resolveArtifactContent}
           fileHeaders={chat.fileHeaders}
           onLoadEarlier={() => chat.loadEarlier(id)}
           onLongPress={setActionsTarget}
-          onOpenComments={openComments}
           onOpenThread={openThread}
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
@@ -293,20 +285,11 @@ export default function ChannelScreen() {
         message={actionsTarget}
         mine={actionsTarget?.author.id === me.id}
         canReply={actionsTarget?.threadRootEventId == null}
-        canComment={entryHandleForMessage(actionsTarget) != null}
         onClose={() => setActionsTarget(null)}
         onReact={(m, e) => void chat.react(m, e)}
         onReply={openThread}
-        onComments={openComments}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
-      />
-      <EntryComments
-        api={chat.api}
-        handle={commentsHandle}
-        visible={commentsHandle != null}
-        me={me}
-        onClose={() => setCommentsHandle(null)}
       />
       <MediaLightbox
         visible={attachmentLightbox != null}

@@ -27,6 +27,7 @@ export function Timeline({
   onEdit,
   onDelete,
   onReact,
+  onMarkupEntry,
   unreadDividerAfterId,
 }: {
   messages: ChatMessage[];
@@ -54,6 +55,7 @@ export function Timeline({
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  onMarkupEntry?: (handle: string, message: ChatMessage) => void;
   unreadDividerAfterId?: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -224,6 +226,7 @@ export function Timeline({
               onEdit={onEdit}
               onDelete={onDelete}
               onReact={onReact}
+              onMarkupEntry={onMarkupEntry}
             />
           </div>
         );
