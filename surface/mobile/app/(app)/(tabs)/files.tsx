@@ -699,7 +699,6 @@ export default function FilesTab() {
         onClose={() => setLightboxIndex(null)}
         onOpenExternal={openExternal}
         api={chat.api}
-        me={chat.me}
         onFileChanged={() => void loadFiles({ reset: true })}
       />
     </View>

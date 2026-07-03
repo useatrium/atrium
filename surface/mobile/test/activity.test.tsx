@@ -5,6 +5,7 @@ import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ActivityScreen from '../app/(app)/(tabs)/activity';
 import { renderWithTheme } from './rnTestUtils';
+import { Text } from 'react-native';
 
 const routerMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -34,6 +35,17 @@ vi.mock('react-native-safe-area-context', () => ({
 
 vi.mock('../src/lib/chat', () => ({
   useChat: () => chatMock,
+}));
+
+vi.mock('../src/components/Markdown', () => ({
+  MarkdownText: ({ text }: { text: string }) => (
+    <Text>
+      {text
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/\*\*/g, '')
+        .replace(/`/g, '')}
+    </Text>
+  ),
 }));
 
 afterEach(cleanup);
@@ -80,7 +92,7 @@ describe('mobile Activity screen', () => {
           channelName: 'general',
           actorId: 'u-alice',
           actorName: 'Alice',
-          snippet: 'hello @me',
+          snippet: 'hello **@me** with `code` and [docs](https://example.com)',
           createdAt: '2026-01-01T00:01:00.000Z',
         },
       ],
@@ -106,6 +118,7 @@ describe('mobile Activity screen', () => {
 
     expect(await screen.findByText('Agent needs your input')).toBeInTheDocument();
     expect(screen.getByText('Alice mentioned you')).toBeInTheDocument();
+    expect(screen.getByText(/hello @me with code and docs/)).toBeInTheDocument();
     expect(screen.getByText('Investigate failure')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Alice mentioned you'));

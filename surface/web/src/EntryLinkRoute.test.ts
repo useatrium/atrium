@@ -3,6 +3,7 @@ import {
   destinationForEntry,
   entryHandleFromPath,
   entryParamFromSearch,
+  fileParamFromSearch,
   threadRootParamFromSearch,
   type EntryLinkDestination,
 } from './EntryLinkRoute';
@@ -64,19 +65,23 @@ describe('EntryLinkRoute helpers', () => {
     });
   });
 
-  it('routes events and artifacts to the channel shell with entry params', () => {
+  it('routes events to the channel shell with entry params', () => {
     expect(destinationForEntry(entry({ handle: 'evt_9' }))).toMatchObject({
       pathname: '/',
       search: 'entry=evt_9',
       initialChannelId: 'ch_1',
       initialSessionId: null,
     });
+  });
+
+  it('routes artifacts to the channel files surface with file params', () => {
     expect(destinationForEntry(entry({ handle: 'art_00000000-0000-0000-0000-000000000001', targetType: 'artifact' })))
       .toMatchObject({
         pathname: '/',
-        search: 'entry=art_00000000-0000-0000-0000-000000000001',
+        search: 'file=00000000-0000-0000-0000-000000000001',
         initialChannelId: 'ch_1',
         initialSessionId: null,
+        initialFileArtifactId: '00000000-0000-0000-0000-000000000001',
       });
   });
 
@@ -107,6 +112,8 @@ describe('EntryLinkRoute helpers', () => {
   it('extracts entry query params', () => {
     expect(entryParamFromSearch('?entry=evt_7&x=1')).toBe('evt_7');
     expect(entryParamFromSearch('?x=1')).toBeNull();
+    expect(fileParamFromSearch('?file=art-1&x=1')).toBe('art-1');
+    expect(fileParamFromSearch('?x=1')).toBeNull();
     expect(threadRootParamFromSearch('?entry=evt_7&threadRoot=9')).toBe(9);
     expect(threadRootParamFromSearch('?entry=evt_7&threadRoot=nope')).toBeNull();
   });

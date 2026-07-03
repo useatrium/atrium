@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EntryQuoteCard } from './EntryQuoteCard';
 import { MessageText } from './MessageText';
@@ -25,6 +25,7 @@ function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote 
     actor: 'Ada',
     actorLabel: 'Ada',
     text: 'This is the quoted entry text with useful context.',
+    meta: {},
     targetType: 'event',
     tombstoned: false,
     location: {
@@ -43,7 +44,10 @@ beforeEach(() => {
   resolveEntryMock.mockReset();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe('entry links', () => {
   it('detects current-origin absolute links and relative links while ignoring invalid and cross-origin links', () => {
@@ -92,6 +96,90 @@ describe('entry links', () => {
     expect(screen.getByText('deleted entry')).toBeTruthy();
     expect(screen.queryByText('Hidden text')).toBeNull();
     expect(screen.getByText('#general - Planning session')).toBeTruthy();
+  });
+
+  it('upgrades small markup artifacts into a tracked-changes card with clamp and expand', async () => {
+    const headers = new Headers({
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Content-Length': '180',
+      'X-Artifact-Seq': '4',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers,
+        text: vi.fn().mockResolvedValue(
+          [
+            '---',
+            'title: "Edited memo"',
+            '---',
+            '',
+            '# Memo',
+            'Keep {--old--}{++new++} wording.',
+            '{==Check this==}{>>needs source<<}',
+          ].join('\n'),
+        ),
+      }),
+    );
+
+    render(
+      <EntryQuoteCard
+        entry={entry({
+          handle: 'art_00000000-0000-0000-0000-000000000001',
+          targetType: 'artifact',
+          text: 'memo.md',
+          meta: {
+            artifactId: '00000000-0000-0000-0000-000000000001',
+            path: 'docs/memo.md',
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('memo.md')).toBeTruthy();
+    expect(await screen.findByText('Edited memo')).toBeTruthy();
+    expect(screen.getByText('markup')).toBeTruthy();
+    expect(screen.getByText('Show all changes (2)')).toBeTruthy();
+    expect(screen.getByText('old').className).toContain('atrium-critic-view-del');
+    expect(screen.getByText('new').className).toContain('atrium-critic-view-ins');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all changes (2)' }));
+    expect(screen.getByRole('button', { name: 'Show fewer changes' })).toBeTruthy();
+  });
+
+  it('leaves non-markup artifact cards on the excerpt renderer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers: new Headers({
+          'Content-Type': 'text/markdown; charset=utf-8',
+          'Content-Length': '32',
+          'X-Artifact-Seq': '3',
+        }),
+        text: vi.fn().mockResolvedValue('# Plain doc\nNo tracked changes.\n'),
+      }),
+    );
+
+    render(
+      <EntryQuoteCard
+        entry={entry({
+          handle: 'art_00000000-0000-0000-0000-000000000002',
+          targetType: 'artifact',
+          text: 'Plain doc excerpt',
+          meta: {
+            artifactId: '00000000-0000-0000-0000-000000000002',
+            path: 'docs/plain.md',
+          },
+        })}
+      />,
+    );
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Plain doc excerpt')).toBeTruthy();
+    expect(screen.queryByText('markup')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Show all changes/ })).toBeNull();
   });
 
   it('caches resolved entries across renders', async () => {

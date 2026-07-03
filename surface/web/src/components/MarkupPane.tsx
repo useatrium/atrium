@@ -18,6 +18,10 @@ export interface MarkupPaneSource {
   body: string;
 }
 
+export type MarkupPaneMode =
+  | { kind: 'steer'; sessionId: string }
+  | { kind: 'reply'; channelId: string; threadRootEventId: number };
+
 export function splitMarkdownFrontmatter(content: string): { frontmatter: string; body: string } {
   if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) {
     return { frontmatter: '', body: content };
@@ -45,18 +49,44 @@ function composeFeedbackContent(frontmatter: string, body: string): string {
   return frontmatter ? `${frontmatter}\n${body}` : body;
 }
 
+async function writeArtifactContent(artifactId: string, content: string, baseSeq: number): Promise<void> {
+  const response = await fetch(`/api/files/${encodeURIComponent(artifactId)}/content`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      'X-Artifact-Base-Seq': String(baseSeq),
+      'Content-Type': 'text/markdown; charset=utf-8',
+    },
+    body: content,
+  });
+  if (response.ok) return;
+  if (response.status === 409) throw new ApiError(409, 'stale_base', 'stale');
+  let message = response.statusText || 'Could not save markup';
+  try {
+    const body = (await response.json()) as { message?: string; error?: string };
+    message = body.message ?? body.error ?? message;
+  } catch {
+    /* non-JSON error body */
+  }
+  throw new Error(message);
+}
+
 function randomOpId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `markup-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export function MarkupPane({
   source,
+  mode,
   onClose,
   onSent,
+  onSendThreadReply,
 }: {
   source: MarkupPaneSource;
+  mode?: MarkupPaneMode;
   onClose: () => void;
   onSent?: () => void;
+  onSendThreadReply?: (input: { channelId: string; threadRootEventId: number; text: string }) => void;
 }) {
   const editorRef = useRef<MarkupEditorHandle | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -68,6 +98,8 @@ export function MarkupPane({
     () => titleFromFrontmatter(source.frontmatter) ?? source.path,
     [source.frontmatter, source.path],
   );
+  const effectiveMode = mode ?? { kind: 'steer' as const, sessionId: source.sessionId };
+  const isReplyMode = effectiveMode.kind === 'reply';
   const noteFilled = note.trim().length > 0;
   const canSend = (dirty || noteFilled) && !sending;
 
@@ -105,13 +137,27 @@ export function MarkupPane({
     setSending(true);
     setError(null);
     try {
-      await api.sendArtifactFeedback(source.artifactId, {
-        content: composeFeedbackContent(source.frontmatter, editorRef.current.serialize()),
-        baseSeq: source.seq,
-        sessionId: source.sessionId,
-        note: note.trim() || undefined,
-        opId: randomOpId(),
-      });
+      const content = composeFeedbackContent(source.frontmatter, editorRef.current.serialize());
+      if (effectiveMode.kind === 'reply') {
+        await writeArtifactContent(source.artifactId, content, source.seq);
+        if (!onSendThreadReply) throw new Error('Reply target is not available');
+        const origin = typeof window === 'undefined' ? '' : window.location.origin;
+        const link = `${origin}/e/art_${source.artifactId}`;
+        const trimmedNote = note.trim();
+        onSendThreadReply({
+          channelId: effectiveMode.channelId,
+          threadRootEventId: effectiveMode.threadRootEventId,
+          text: trimmedNote ? `${trimmedNote}\n${link}` : link,
+        });
+      } else {
+        await api.sendArtifactFeedback(source.artifactId, {
+          content,
+          baseSeq: source.seq,
+          sessionId: effectiveMode.sessionId,
+          note: note.trim() || undefined,
+          opId: randomOpId(),
+        });
+      }
       onSent?.();
       onClose();
     } catch (err) {
@@ -145,7 +191,9 @@ export function MarkupPane({
             <h2 id="markup-pane-title" className="truncate text-sm font-semibold text-fg">
               {title}
             </h2>
-            <div className="truncate text-2xs text-fg-muted">Mark up and send to agent</div>
+            <div className="truncate text-2xs text-fg-muted">
+              {isReplyMode ? 'Mark up and reply in thread' : 'Mark up and send to agent'}
+            </div>
           </div>
           <button
             ref={closeButtonRef}
@@ -161,7 +209,7 @@ export function MarkupPane({
             onClick={() => void send()}
             className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
           >
-            {sending ? 'Sending...' : 'Send to agent'}
+            {sending ? 'Sending...' : isReplyMode ? 'Reply in thread' : 'Send to agent'}
           </button>
         </header>
         {error && (
@@ -182,8 +230,8 @@ export function MarkupPane({
             type="text"
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Add a note..."
-            aria-label="Add a note"
+            placeholder={isReplyMode ? 'Say something about your changes…' : 'Add a note...'}
+            aria-label={isReplyMode ? 'Say something about your changes' : 'Add a note'}
             className="h-9 shrink-0 rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent-hover"
           />
         </div>

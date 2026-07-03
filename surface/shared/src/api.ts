@@ -144,13 +144,6 @@ export interface AgentAttachmentRef {
   versionSeq?: number;
   path?: string;
 }
-export interface EntryComment {
-  id: number;
-  author?: UserRef;
-  text: string;
-  createdAt: string;
-  deleted?: boolean;
-}
 export interface EntryAnnotations {
   comments: WireEvent[];
   reactions: { emoji: string; userIds: string[] }[];
@@ -614,11 +607,6 @@ export function createApi(opts: ApiOptions = {}) {
     // === entry-annotation client additions ===
     getEntryAnnotations: (handle: string) =>
       req<EntryAnnotations>(`/api/entries/${encodeURIComponent(handle)}/annotations`),
-    postEntryComment: (handle: string, text: string, op: OpOptions = {}) =>
-      req<{ event: WireEvent }>(`/api/entries/${encodeURIComponent(handle)}/comments`, {
-        method: 'POST',
-        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
     search: (q: string, limit = 8) =>
       req<{ results: { event: WireEvent; channelName: string }[] }>(
         `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
@@ -838,5 +826,14 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify({ handles }),
       }),
     // === end mk709-refs additions ===
+    // === mk712-server additions ===
+    applyArtifactMarkup: (artifactId: string, body: { sessionId: string; opId?: string }) =>
+      req<{ seq: number; status: 'normal'; steered: true; applied: true }>(
+        `/api/files/${encodeURIComponent(artifactId)}/feedback`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ mode: 'apply', ...body }),
+        },
+      ),
   };
 }

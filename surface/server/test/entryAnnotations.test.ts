@@ -5,14 +5,8 @@ import { buildApp } from '../src/app.js';
 import { ArtifactLedger } from '../src/artifact-ledger.js';
 import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
-import { withTx } from '../src/db.js';
 import { encodeArtifactHandle, encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
-import {
-  deleteCommentTx,
-  editCommentTx,
-  postMessage,
-  type WireEvent,
-} from '../src/events.js';
+import { postMessage, type WireEvent } from '../src/events.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -96,17 +90,6 @@ async function insertUploadArtifact(channelId = fx.channelId): Promise<string> {
   return result.artifactId;
 }
 
-async function postComment(cookie: string, handle: string, text: string): Promise<WireEvent> {
-  const res = await app.inject({
-    method: 'POST',
-    url: `/api/entries/${handle}/comments`,
-    headers: { cookie },
-    payload: { text },
-  });
-  expect(res.statusCode).toBe(201);
-  return res.json().event as WireEvent;
-}
-
 async function annotations(cookie: string, handle: string) {
   const res = await app.inject({
     method: 'GET',
@@ -130,110 +113,48 @@ async function reactionNet(handle: string, actorId: string, emoji: string): Prom
   return res.rows[0]?.net ?? 0;
 }
 
-async function exerciseCommentLifecycle(cookie: string, handle: string): Promise<void> {
-  const posted = await postComment(cookie, handle, 'initial note');
-  expect(posted.type).toBe('comment.posted');
-  expect(posted.payload).toMatchObject({ target: handle, text: 'initial note' });
-
-  const edited = await withTx(pool, (client) =>
-    editCommentTx(client, {
-      commentEventId: posted.id,
-      actorId: fx.userId,
-      text: 'edited note',
-    }),
-  );
-  expect(edited.type).toBe('comment.edited');
-  expect(edited.payload).toMatchObject({ target: encodeEventHandle(posted.id), text: 'edited note' });
-
-  let folded = await annotations(cookie, handle);
-  expect(folded.comments).toHaveLength(1);
-  expect(folded.comments[0]!.id).toBe(posted.id);
-  expect(folded.comments[0]!.payload).toMatchObject({
-    target: handle,
-    text: 'edited note',
-    edited: true,
-  });
-
-  const strangerId = await insertUser(`comment-stranger-${posted.id}`);
-  await expect(
-    withTx(pool, (client) =>
-      editCommentTx(client, {
-        commentEventId: posted.id,
-        actorId: strangerId,
-        text: 'hijack',
-      }),
-    ),
-  ).rejects.toMatchObject({ statusCode: 403 });
-
-  const deleted = await withTx(pool, (client) =>
-    deleteCommentTx(client, { commentEventId: posted.id, actorId: fx.userId }),
-  );
-  expect(deleted.type).toBe('comment.deleted');
-  expect(deleted.payload).toEqual({ target: encodeEventHandle(posted.id) });
-
-  folded = await annotations(cookie, handle);
-  expect(folded.comments).toHaveLength(1);
-  expect(folded.comments[0]!.payload).toMatchObject({
-    target: handle,
-    text: '',
-    deleted: true,
-  });
-}
-
 describe('entry annotations', () => {
-  it('posts, edits, deletes, and folds comments on chat events, transcript records, and file artifacts', async () => {
+  it('keeps historical comments readable while comment writes are retired', async () => {
     const cookie = await authCookie(fx.userId);
     const message = await postMessage(pool, {
       workspaceId: fx.workspaceId,
       channelId: fx.channelId,
       actorId: fx.userId,
-      text: 'chat target',
-    });
-    await exerciseCommentLifecycle(cookie, encodeEventHandle(message.id));
-
-    await insertRecord('annotation_record_comment');
-    await exerciseCommentLifecycle(cookie, encodeRecordHandle('annotation_record_comment'));
-
-    const artifactId = await insertUploadArtifact();
-    await exerciseCommentLifecycle(cookie, encodeArtifactHandle(artifactId));
-  });
-
-  it('tags agent-authored comments with via=agent (only "agent" honored)', async () => {
-    const cookie = await authCookie(fx.userId);
-    const message = await postMessage(pool, {
-      workspaceId: fx.workspaceId,
-      channelId: fx.channelId,
-      actorId: fx.userId,
-      text: 'agent comment target',
+      text: 'historical comment target',
     });
     const handle = encodeEventHandle(message.id);
-
-    // The MCP write tool sends via:"agent".
-    const agentRes = await app.inject({
-      method: 'POST',
-      url: `/api/entries/${handle}/comments`,
-      headers: { cookie },
-      payload: { text: 'looks correct', via: 'agent' },
-    });
-    expect(agentRes.statusCode).toBe(201);
-    const agentEvent = agentRes.json().event as WireEvent;
-    expect(agentEvent.payload).toMatchObject({ via: 'agent' });
-    // actor stays the real principal; via is display-only attribution.
-    expect(agentEvent.actorId).toBe(fx.userId);
-
-    // A bogus via is ignored (not persisted).
-    const bogusRes = await app.inject({
-      method: 'POST',
-      url: `/api/entries/${handle}/comments`,
-      headers: { cookie },
-      payload: { text: 'human note', via: 'spoof' },
-    });
-    expect(bogusRes.statusCode).toBe(201);
-    expect((bogusRes.json().event as WireEvent).payload.via).toBeUndefined();
+    const comment = await pool.query<{ id: number }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'comment.posted', $3, $4)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ target: handle, text: 'legacy note' })],
+    );
+    await pool.query(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'comment.edited', $3, $4)`,
+      [
+        fx.workspaceId,
+        fx.channelId,
+        fx.userId,
+        JSON.stringify({ target: encodeEventHandle(comment.rows[0]!.id), text: 'edited legacy note' }),
+      ],
+    );
 
     const folded = await annotations(cookie, handle);
-    const agentComment = folded.comments.find((c) => c.payload.text === 'looks correct');
-    expect(agentComment?.payload.via).toBe('agent');
+    expect(folded.comments).toHaveLength(1);
+    expect(folded.comments[0]!.payload).toMatchObject({
+      target: handle,
+      text: 'edited legacy note',
+      edited: true,
+    });
+
+    const write = await app.inject({
+      method: 'POST',
+      url: `/api/entries/${handle}/comments`,
+      headers: { cookie },
+      payload: { text: 'new note' },
+    });
+    expect(write.statusCode).toBe(404);
   });
 
   it('sets entry reactions on evt_ and rec_ handles and keeps replays idempotent', async () => {
@@ -365,14 +286,6 @@ describe('entry annotations', () => {
     });
     expect(read.statusCode).toBe(404);
 
-    const comment = await app.inject({
-      method: 'POST',
-      url: `/api/entries/${handle}/comments`,
-      headers: { cookie: strangerCookie },
-      payload: { text: 'nope' },
-    });
-    expect(comment.statusCode).toBe(404);
-
     const reaction = await app.inject({
       method: 'POST',
       url: `/api/entries/${handle}/reactions`,
@@ -388,14 +301,6 @@ describe('entry annotations', () => {
       headers: { cookie: strangerCookie },
     });
     expect(artifactRead.statusCode).toBe(404);
-
-    const artifactComment = await app.inject({
-      method: 'POST',
-      url: `/api/entries/${artifactHandle}/comments`,
-      headers: { cookie: strangerCookie },
-      payload: { text: 'nope' },
-    });
-    expect(artifactComment.statusCode).toBe(404);
   });
 
   it('returns 400 for malformed handles and invalid entry reaction bodies', async () => {
@@ -403,7 +308,6 @@ describe('entry annotations', () => {
 
     for (const [method, url, payload] of [
       ['GET', '/api/entries/evt_nope/annotations', undefined],
-      ['POST', '/api/entries/evt_nope/comments', { text: 'x' }],
       ['POST', '/api/entries/evt_nope/reactions', { emoji: '👍', action: 'add' }],
     ] as const) {
       const res = await app.inject({

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent } from 'react';
-import type { FileOrigin, HubFile, HubFileListResult, HubFileVersionsResponse } from '@atrium/surface-client';
-import { EntryComments } from '../components/EntryComments';
+import { containsCriticMarkup, type FileOrigin, type HubFile, type HubFileListResult, type HubFileVersionsResponse } from '@atrium/surface-client';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import { showErrorToast } from '../components/Toasts';
 import { FileIcon, SearchIcon } from '../components/icons';
@@ -14,6 +13,7 @@ import {
 } from '../components/EntryReferencesChip';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
+import type { Session } from './types';
 
 type SortMode = 'recent' | 'name' | 'size';
 type OriginFilter = 'all' | FileOrigin;
@@ -110,6 +110,7 @@ export function hubFileToPreview(f: HubFile): PreviewFile {
   return {
     id: f.artifactId,
     name: f.name,
+    path: f.path,
     mime: f.mime ?? 'application/octet-stream',
     mediaKind: asMediaKind(f.mediaKind),
     sizeBytes: f.sizeBytes ?? undefined,
@@ -646,6 +647,11 @@ export function FilesHub({
   sessionScope,
   defaultScope,
   filesEventSeq = 0,
+  sessions,
+  initialOpenArtifactId,
+  onInitialOpenArtifactHandled,
+  onSeedChannelComposer,
+  onStartAgentWithTask,
 }: {
   workspaceId: string;
   channelId?: string | null;
@@ -653,6 +659,11 @@ export function FilesHub({
   sessionScope?: FilesHubSessionScope;
   defaultScope?: FilesHubDefaultScope;
   filesEventSeq?: number;
+  sessions?: Record<string, Session>;
+  initialOpenArtifactId?: string | null;
+  onInitialOpenArtifactHandled?: (artifactId: string) => void;
+  onSeedChannelComposer?: (draft: string) => void;
+  onStartAgentWithTask?: (task: string) => void;
 }): JSX.Element {
   const resolvedDefaultScope: FileHubScope =
     defaultScope === 'session' && sessionScope
@@ -683,10 +694,11 @@ export function FilesHub({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const [commentArtifactId, setCommentArtifactId] = useState<string | null>(null);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
+  const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{ artifactId: string; path: string; seq: number } | null>(null);
   const [markupNotice, setMarkupNotice] = useState<string | null>(null);
   const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>({});
   const artifactEntryReferencesFetchedAtRef = useRef(0);
@@ -742,6 +754,7 @@ export function FilesHub({
       if (append) setLoadingMore(true);
       else {
         setLoading(true);
+        setLoadedOnce(false);
         setError(null);
       }
       try {
@@ -762,7 +775,10 @@ export function FilesHub({
         showErrorToast(message);
       } finally {
         if (append) setLoadingMore(false);
-        else setLoading(false);
+        else {
+          setLoading(false);
+          setLoadedOnce(true);
+        }
       }
       return () => controller.abort();
     },
@@ -772,6 +788,7 @@ export function FilesHub({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
+    setLoadedOnce(false);
     setError(null);
     const query = queryFor(effectiveFilters, debouncedSearch);
     fetch(`${endpoint}?${query.toString()}`, { credentials: 'same-origin', signal: controller.signal })
@@ -793,7 +810,10 @@ export function FilesHub({
         showErrorToast(message);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setLoadedOnce(true);
+        }
       });
     return () => controller.abort();
   }, [debouncedSearch, endpoint, effectiveFilters, filesEventSeq]);
@@ -928,8 +948,18 @@ export function FilesHub({
           throw err;
         }
       },
-      onComment: (file) => {
-        setCommentArtifactId(file.id);
+      onDiscuss: async (_file, draft) => {
+        setLightboxIndex(null);
+        if (channelId && onSeedChannelComposer) {
+          onSeedChannelComposer(draft);
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(draft.trimEnd());
+          showMarkupNotice('Link copied — paste it in a channel to discuss');
+        } catch {
+          showErrorToast('Could not copy file link.');
+        }
       },
       onListVersions: async (file, signal) => {
         try {
@@ -1118,7 +1148,7 @@ export function FilesHub({
       },
       canManage: () => true,
     }),
-    [files, filters.includeDeleted, loadFiles, replaceFile, sessionId, workspaceId],
+    [channelId, files, filters.includeDeleted, loadFiles, onSeedChannelComposer, replaceFile, sessionId, showMarkupNotice, workspaceId],
   );
 
   const scopedFiles = useMemo(() => {
@@ -1128,6 +1158,10 @@ export function FilesHub({
   const { folders, filesHere } = useMemo(() => folderView(scopedFiles, currentDir), [currentDir, scopedFiles]);
   const visibleFiles = searchActive ? scopedFiles : filesHere;
   const visiblePreviews = useMemo(() => visibleFiles.map(hubFileToPreview), [visibleFiles]);
+  const currentLightboxFile =
+    lightboxIndex != null && visiblePreviews.length > 0
+      ? visiblePreviews[Math.min(lightboxIndex, visiblePreviews.length - 1)]!
+      : null;
   const visibleArtifactHandles = useMemo(() => {
     const seen = new Set<string>();
     for (const file of visibleFiles) seen.add(artifactEntryHandle(file.artifactId));
@@ -1162,6 +1196,66 @@ export function FilesHub({
       : currentDir
       ? 'Files added to this folder will appear here.'
       : 'Files matching the current filters will appear here.';
+
+  useEffect(() => {
+    if (!initialOpenArtifactId || !loadedOnce) return;
+    const file = scopedFiles.find((item) => item.artifactId === initialOpenArtifactId);
+    if (!file) {
+      onInitialOpenArtifactHandled?.(initialOpenArtifactId);
+      return;
+    }
+    if (!searchActive) {
+      const targetDir = dirname(file.path);
+      if (currentDir !== targetDir) {
+        setCurrentDir(targetDir);
+        return;
+      }
+    }
+    const index = visibleFiles.findIndex((item) => item.artifactId === initialOpenArtifactId);
+    if (index >= 0) {
+      setLightboxIndex(index);
+      onInitialOpenArtifactHandled?.(initialOpenArtifactId);
+    }
+  }, [currentDir, initialOpenArtifactId, loadedOnce, onInitialOpenArtifactHandled, scopedFiles, searchActive, visibleFiles]);
+
+  useEffect(() => {
+    setApplyMarkupCandidate(null);
+    if (!currentLightboxFile || !channelId) return;
+    if (currentLightboxFile.mediaKind !== 'text' && currentLightboxFile.mediaKind !== 'code') return;
+    const controller = new AbortController();
+    void Promise.all([
+      fetch(`/api/files/${currentLightboxFile.id}/versions`, {
+        credentials: 'same-origin',
+        signal: controller.signal,
+      }),
+      fetch(`/api/files/artifact/${currentLightboxFile.id}/content`, {
+        credentials: 'same-origin',
+        signal: controller.signal,
+      }),
+    ])
+      .then(async ([versionsResponse, contentResponse]) => {
+        if (!versionsResponse.ok || !contentResponse.ok) return null;
+        const versionsBody = (await versionsResponse.json()) as HubFileVersionsResponse;
+        const latest = versionsBody.versions[0];
+        if (!latest) return null;
+        const text = await contentResponse.text();
+        if (!containsCriticMarkup(text)) return null;
+        return {
+          artifactId: currentLightboxFile.id,
+          path: currentLightboxFile.path ?? currentLightboxFile.name,
+          seq: latest.seq,
+        };
+      })
+      .then((target) => {
+        if (!controller.signal.aborted) setApplyMarkupCandidate(target);
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+          console.warn('failed to inspect file markup', err);
+        }
+      });
+    return () => controller.abort();
+  }, [channelId, currentLightboxFile]);
 
   useEffect(() => {
     if (visibleArtifactHandles.length === 0) return;
@@ -1311,9 +1405,18 @@ export function FilesHub({
           onIndexChange={setLightboxIndex}
           sessionId={sessionId}
           entryReferencesByFileId={lightboxEntryReferencesByFileId}
+          applyMarkupTarget={
+            applyMarkupCandidate && channelId
+              ? {
+                  ...applyMarkupCandidate,
+                  channelId,
+                  ...(sessions ? { sessions } : {}),
+                  ...(onStartAgentWithTask ? { onSpawnNewAgent: onStartAgentWithTask } : {}),
+                }
+              : null
+          }
           onClose={() => {
             setLightboxIndex(null);
-            setCommentArtifactId(null);
           }}
           {...callbacks}
         />
@@ -1328,13 +1431,6 @@ export function FilesHub({
           source={markupSource}
           onClose={() => setMarkupSource(null)}
           onSent={() => showMarkupNotice('Markup sent to agent')}
-        />
-      )}
-      {commentArtifactId && (
-        <EntryComments
-          handle={`art_${commentArtifactId}`}
-          open
-          onClose={() => setCommentArtifactId(null)}
         />
       )}
     </div>

@@ -11,13 +11,13 @@ import {
   type Session,
 } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
-import { entryHandleForMessage } from '../lib/entryHandle';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
+import { MarkdownText } from './Markdown';
 import { MessageText } from './MessageText';
 import { VoiceMessage } from './VoiceMessage';
-import type { EntryResolver } from '../lib/entryResolve';
+import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
 
 const IMAGE_MAX_W = 240;
 
@@ -35,10 +35,10 @@ export interface MessageRowProps {
   api: Api;
   serverUrl: string;
   resolveEntry: EntryResolver;
+  resolveArtifactContent?: ArtifactContentResolver;
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
-  onOpenComments?: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
@@ -162,9 +162,7 @@ function Attachments({
               <Text style={{ color: colors.text, fontSize: font.sm }} numberOfLines={1}>
                 {a.filename}
               </Text>
-              <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                {formatBytes(a.size)}
-              </Text>
+              <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{formatBytes(a.size)}</Text>
             </View>
           </Pressable>
         );
@@ -186,10 +184,9 @@ function SessionCard({
   const { colors } = useTheme();
   const status = session?.status ?? 'spawning';
   const needsInput = session?.pendingQuestion != null;
-  const statusColor =
-    needsInput
-      ? colors.warning
-      : status === 'completed'
+  const statusColor = needsInput
+    ? colors.warning
+    : status === 'completed'
       ? colors.online
       : status === 'failed' || status === 'cancelled'
         ? colors.danger
@@ -212,35 +209,21 @@ function SessionCard({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
-        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>
-          AGENT SESSION
-        </Text>
+        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT SESSION</Text>
         <Text style={{ fontSize: font.xs, color: statusColor, fontWeight: '700' }}>
           {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
         </Text>
       </View>
-      <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-        {session?.title ?? message.text}
-      </Text>
+      <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{session?.title ?? message.text}</Text>
       {session?.resultText ? (
-        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>
-          {session.resultText}
-        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>{session.resultText}</Text>
       ) : null}
-      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
-        Open full transcript
-      </Text>
+      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Open full transcript</Text>
     </Pressable>
   );
 }
 
-function SessionEventLine({
-  message,
-  onOpen,
-}: {
-  message: ChatMessage;
-  onOpen?: (sessionId: string) => void;
-}) {
+function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: (sessionId: string) => void }) {
   const { colors } = useTheme();
   const payload = message.sessionEventPayload ?? {};
   const questions = questionPayloadPrompts(payload);
@@ -261,17 +244,11 @@ function SessionEventLine({
       }}
     >
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>
-          {label}
-        </Text>
-        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-          {formatTime(message.createdAt)}
-        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>{label}</Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{formatTime(message.createdAt)}</Text>
       </View>
       {message.sessionEventType === 'question_requested' ? (
-        <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-          {questionText}
-        </Text>
+        <MarkdownText text={questionText} variant="compact" />
       ) : null}
       {answers.map((answer) => (
         <View
@@ -285,16 +262,17 @@ function SessionEventLine({
             gap: 3,
           }}
         >
-          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>
-            {answer.header}
-          </Text>
-          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-            {answer.answers.length > 0
-              ? answer.answers.join('\n')
-              : answer.count === 1
-                ? '1 answer recorded'
-                : `${answer.count} answers recorded`}
-          </Text>
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>{answer.header}</Text>
+          <MarkdownText
+            text={
+              answer.answers.length > 0
+                ? answer.answers.join('\n')
+                : answer.count === 1
+                  ? '1 answer recorded'
+                  : `${answer.count} answers recorded`
+            }
+            variant="compact"
+          />
         </View>
       ))}
       {message.sessionId && onOpen ? (
@@ -305,9 +283,7 @@ function SessionEventLine({
           hitSlop={8}
           style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
         >
-          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
-            Open pane
-          </Text>
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Open pane</Text>
         </Pressable>
       ) : null}
     </View>
@@ -320,9 +296,7 @@ function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ quest
     .map((item): { question: string } | null => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
       const raw = item as Record<string, unknown>;
-      return typeof raw.question === 'string' && raw.question.trim()
-        ? { question: raw.question }
-        : null;
+      return typeof raw.question === 'string' && raw.question.trim() ? { question: raw.question } : null;
     })
     .filter((item): item is { question: string } => item !== null);
 }
@@ -349,10 +323,7 @@ function questionPayloadAnswers(
     .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
 }
 
-function sessionQuestionEventLabel(
-  type: ChatMessage['sessionEventType'],
-  reason: unknown,
-): string {
+function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
   if (type === 'question_requested') return 'Question asked';
   if (type === 'question_answered') return 'Question answered';
   if (reason === 'empty') return 'Question expired without an answer';
@@ -372,9 +343,9 @@ export const MessageRow = memo(function MessageRow({
   api,
   serverUrl,
   resolveEntry,
+  resolveArtifactContent,
   fileHeaders,
   onLongPress,
-  onOpenComments,
   onOpenThread,
   onToggleReaction,
   onRetry,
@@ -396,10 +367,8 @@ export const MessageRow = memo(function MessageRow({
       (m.sessionId ? 'Agent session' : 'Message');
   const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
-  const canComment = entryHandleForMessage(m) != null && onOpenComments != null;
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
-    ...(canComment ? [{ name: 'comments', label: 'Comments' }] : []),
     ...(!tombstone && m.sessionId == null && onOpenThread && !inThread
       ? [{ name: 'reply', label: 'Reply in thread' }]
       : []),
@@ -423,17 +392,11 @@ export const MessageRow = memo(function MessageRow({
       onOpenThread(m);
       return;
     }
-    if (name === 'comments' && onOpenComments) {
-      onOpenComments(m);
-      return;
-    }
     if (['react', 'copy', 'edit', 'delete'].includes(name)) onLongPress(m);
   };
 
   const body = tombstone ? (
-    <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>
-      Message deleted
-    </Text>
+    <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>Message deleted</Text>
   ) : m.sessionEventType != null ? (
     <SessionEventLine message={m} onOpen={onOpenSession} />
   ) : m.sessionId != null ? (
@@ -444,12 +407,7 @@ export const MessageRow = memo(function MessageRow({
       {m.voice ? (
         <VoiceMessage voice={m.voice} api={api} fileUrl={fileUrl} fileHeaders={fileHeaders} />
       ) : (
-        <Attachments
-          message={m}
-          fileUrl={fileUrl}
-          fileHeaders={fileHeaders}
-          onOpenAttachment={onOpenAttachment}
-        />
+        <Attachments message={m} fileUrl={fileUrl} fileHeaders={fileHeaders} onOpenAttachment={onOpenAttachment} />
       )}
     </>
   );
@@ -462,12 +420,8 @@ export const MessageRow = memo(function MessageRow({
 
   const header = !grouped ? (
     <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-      <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-        {m.author.displayName}
-      </Text>
-      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
-        {formatTime(m.createdAt)}
-      </Text>
+      <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>{m.author.displayName}</Text>
+      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{formatTime(m.createdAt)}</Text>
     </View>
   ) : null;
 
@@ -554,6 +508,7 @@ export const MessageRow = memo(function MessageRow({
             text={m.text}
             serverUrl={serverUrl}
             resolveEntry={resolveEntry}
+            resolveArtifactContent={resolveArtifactContent}
             onOpenChannel={onOpenChannel}
             onOpenSession={onOpenSession}
           />
@@ -566,9 +521,7 @@ export const MessageRow = memo(function MessageRow({
             hitSlop={10}
             style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
           >
-            <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: 2 }}>
-              Failed to send — tap to retry
-            </Text>
+            <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: 2 }}>Failed to send — tap to retry</Text>
           </Pressable>
         )}
         {m.reactions && m.reactions.length > 0 && (
@@ -592,28 +545,6 @@ export const MessageRow = memo(function MessageRow({
             <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
               {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
             </Text>
-          </Pressable>
-        )}
-        {canComment && (
-          // Explicit, tappable comment affordance — a first-class a11y button now that
-          // the row no longer swallows its children. Long-press still opens the full
-          // action sheet for power users.
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Comment"
-            onPress={() => onOpenComments?.(m)}
-            hitSlop={10}
-            style={{
-              marginTop: 2,
-              minHeight: 32,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              alignSelf: 'flex-start',
-            }}
-          >
-            <Ionicons name="chatbubble-outline" size={13} color={colors.textMuted} />
-            <Text style={{ color: colors.textMuted, fontSize: font.xs }}>Comment</Text>
           </Pressable>
         )}
       </View>

@@ -13,11 +13,7 @@ import type { ChatMessage, WireEvent } from '@atrium/surface-client';
 import { buildTimelineItems } from '@atrium/surface-client';
 import { SessionPane } from '../src/sessions/SessionPane';
 import { ThemeProvider } from '../src/theme';
-import {
-  isStalledSessionStatus,
-  STALLED_AFTER_MS,
-  type Session,
-} from '../src/sessions/types';
+import { isStalledSessionStatus, STALLED_AFTER_MS, type Session } from '../src/sessions/types';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 
@@ -30,21 +26,65 @@ function renderThemed(ui: ReactElement) {
 }
 
 describe('MessageText formatting', () => {
-  it('renders fenced code blocks, inline code, and links', () => {
+  it('renders markdown blocks, inline code, links, and mentions', () => {
     render(
       <div data-testid="root">
         <MessageText
-          text={'see `retry()` here:\n```ts\nconst x = 1;\n```\nhttps://example.com/a?b=1 done'}
+          meHandle="me"
+          text={[
+            '## Plan',
+            '',
+            '- Ship **markdown** for @me',
+            '',
+            'see `retry()` here:',
+            '```ts',
+            'const x = 1;',
+            '```',
+            'https://example.com/a?b=1 done',
+          ].join('\n')}
         />
       </div>,
     );
     const root = screen.getByTestId('root');
-    expect(root.querySelector('pre')?.textContent).toBe('const x = 1;');
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeTruthy();
+    expect(screen.getByText('markdown').closest('strong')).toBeTruthy();
+    expect(root.querySelector('li')?.textContent).toContain('Ship markdown for @me');
+    expect(root.querySelector('pre')?.textContent?.trim()).toBe('const x = 1;');
     expect(root.querySelector('code')?.textContent).toBe('retry()');
     const a = root.querySelector('a')!;
     expect(a.getAttribute('href')).toBe('https://example.com/a?b=1');
     expect(a.getAttribute('rel')).toContain('noopener');
     expect(root.textContent).toContain('done');
+  });
+
+  it('copies fenced code blocks from the inline code control', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<MessageText text={['```ts', 'const x = 1;', '```'].join('\n')} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('const x = 1;'));
+    expect(screen.getByRole('button', { name: 'Copied code' })).toBeTruthy();
+  });
+
+  it('skips unsafe inline html and collapses long markdown', () => {
+    render(
+      <div data-testid="root">
+        <MessageText
+          text={`${'<img src=x onerror=alert(1)> '}${Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')}`}
+        />
+      </div>,
+    );
+
+    expect(screen.getByTestId('root').querySelector('img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy();
   });
 
   it('renders plain text unchanged (no formatting tokens)', () => {
@@ -185,18 +225,12 @@ describe('message editing', () => {
     fireEvent.change(box, { target: { value: 'typo fixed' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    await waitFor(() =>
-      expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), 'typo fixed'),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole('textbox', { name: 'Edit message text' })).toBeNull(),
-    );
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), 'typo fixed'));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Edit message text' })).toBeNull());
   });
 
   it('offers no Edit button on other people’s messages', () => {
-    renderThemed(
-      <MessageRow message={msg('u-other')} grouped={false} meId={me.id} onEdit={async () => {}} />,
-    );
+    renderThemed(<MessageRow message={msg('u-other')} grouped={false} meId={me.id} onEdit={async () => {}} />);
     expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
   });
 });
@@ -424,9 +458,7 @@ describe('reactions', () => {
     expect(mine.className).toContain('accent');
     expect(screen.getByRole('button', { name: '🎉 1' })).toBeTruthy();
     fireEvent.click(mine);
-    await waitFor(() =>
-      expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), '👍'),
-    );
+    await waitFor(() => expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), '👍'));
   });
 
   it('the picker offers the allowlist and reacts on pick', async () => {
@@ -434,9 +466,7 @@ describe('reactions', () => {
     renderThemed(<MessageRow message={reactedMsg()} grouped={false} meId={me.id} onReact={onReact} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }));
     fireEvent.click(screen.getByRole('button', { name: 'React with 🚀' }));
-    await waitFor(() =>
-      expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), '🚀'),
-    );
+    await waitFor(() => expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), '🚀'));
   });
 
   it('reducer folds live reaction.added/removed events', () => {
@@ -470,9 +500,7 @@ describe('reactions', () => {
     });
     s = appReducer(s, { type: 'server-event', event: reaction(2, 'reaction.added', '👍', 'u-a') });
     s = appReducer(s, { type: 'server-event', event: reaction(3, 'reaction.added', '👍', 'u-b') });
-    expect(s.timelines['ch-1']!.main[0]!.reactions).toEqual([
-      { emoji: '👍', userIds: ['u-a', 'u-b'] },
-    ]);
+    expect(s.timelines['ch-1']!.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: ['u-a', 'u-b'] }]);
     // Duplicate event id is ignored (WS + catch-up overlap).
     s = appReducer(s, { type: 'server-event', event: reaction(3, 'reaction.added', '👍', 'u-b') });
     expect(s.timelines['ch-1']!.main[0]!.reactions![0]!.userIds).toHaveLength(2);
@@ -545,7 +573,9 @@ describe('terminal session pane', () => {
       lastEventId: 9,
       permalink: '/s/s-completed',
     };
-    render(<SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     // completed is idle/resumable — no read-only notice; a subtle status line
     // (not a card) reports the completed turn.
     expect(screen.queryByText(/Session ended/)).toBeNull();
@@ -603,13 +633,7 @@ describe('session transcript rendering', () => {
     FakeEventSource.reset();
     installFakeEventSource();
     render(
-      <SessionPane
-        session={running}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={async () => {}}
-      />,
+      <SessionPane session={running} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
     const src = FakeEventSource.last();
     src.open();
@@ -630,13 +654,7 @@ describe('session transcript rendering', () => {
     installFakeEventSource();
     const completed: Session = { ...running, status: 'completed', resultText: 'shipped the fix' };
     render(
-      <SessionPane
-        session={completed}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={async () => {}}
-      />,
+      <SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
     // A subtle status line reports the turn; the old bordered card is gone and
     // the read-only result block stays reserved for failed/cancelled sessions.
@@ -672,9 +690,7 @@ describe('session transcript rendering', () => {
 
     // The follow-up turn goes active (status_changed over WS) → sticky undim.
     rerender(<SessionPane session={{ ...completed, status: 'running', completedAt: null }} {...paneProps} />);
-    await waitFor(() =>
-      expect(screen.getByTestId('user-steer-pending').className).not.toContain('opacity-60'),
-    );
+    await waitFor(() => expect(screen.getByTestId('user-steer-pending').className).not.toContain('opacity-60'));
 
     // Codex echoes the steer → bubble is replaced by the real transcript row.
     src.emitAll([
@@ -695,21 +711,37 @@ describe('session transcript rendering', () => {
     FakeEventSource.reset();
     installFakeEventSource();
     render(
-      <SessionPane
-        session={running}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={async () => {}}
-      />,
+      <SessionPane session={running} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
     const src = FakeEventSource.last();
     src.open();
     src.emitAll([
-      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e' } },
-      { event: 'amp_raw_event', event_id: 2, data: { type: 'item.completed', item: { id: 's1', type: 'userMessage', content: [{ type: 'text', text: 'first turn ask' }] } } },
-      { event: 'amp_raw_event', event_id: 3, data: { type: 'item.completed', item: { id: 'a1', type: 'agentMessage', text: 'working' } } },
-      { event: 'amp_raw_event', event_id: 4, data: { type: 'item.completed', item: { id: 's2', type: 'userMessage', content: [{ type: 'text', text: 'second turn ask' }] } } },
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: { type: 'execution.state', status: 'running', thread_key: 't', execution_id: 'e' },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 2,
+        data: {
+          type: 'item.completed',
+          item: { id: 's1', type: 'userMessage', content: [{ type: 'text', text: 'first turn ask' }] },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 3,
+        data: { type: 'item.completed', item: { id: 'a1', type: 'agentMessage', text: 'working' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 4,
+        data: {
+          type: 'item.completed',
+          item: { id: 's2', type: 'userMessage', content: [{ type: 'text', text: 'second turn ask' }] },
+        },
+      },
     ] as CentaurEventFrame[]);
 
     await waitFor(() => {

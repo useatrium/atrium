@@ -1,35 +1,82 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type SVGProps,
-} from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type SVGProps } from 'react';
 import type { ChatMessage } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 
 /** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
 export const REACTION_EMOJI = [
-  '👍', '👎', '✅', '❌', '👀', '🎉', '❤️', '😂',
-  '😄', '😅', '😊', '😍', '🤔', '🤯', '😱', '😢',
-  '😭', '😡', '🙏', '👏', '🙌', '💪', '🤝', '👋',
-  '🫡', '🤷', '🤦', '💀', '🔥', '✨', '⭐', '💯',
-  '🚀', '🐛', '🔧', '🛠️', '⚙️', '💡', '📌', '📎',
-  '📝', '✏️', '🔍', '⏳', '⏰', '📅', '☕', '🍕',
-  '🎯', '🏁', '🚧', '⚠️', '🚨', '❓', '❗', '➕',
-  '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
+  '👍',
+  '👎',
+  '✅',
+  '❌',
+  '👀',
+  '🎉',
+  '❤️',
+  '😂',
+  '😄',
+  '😅',
+  '😊',
+  '😍',
+  '🤔',
+  '🤯',
+  '😱',
+  '😢',
+  '😭',
+  '😡',
+  '🙏',
+  '👏',
+  '🙌',
+  '💪',
+  '🤝',
+  '👋',
+  '🫡',
+  '🤷',
+  '🤦',
+  '💀',
+  '🔥',
+  '✨',
+  '⭐',
+  '💯',
+  '🚀',
+  '🐛',
+  '🔧',
+  '🛠️',
+  '⚙️',
+  '💡',
+  '📌',
+  '📎',
+  '📝',
+  '✏️',
+  '🔍',
+  '⏳',
+  '⏰',
+  '📅',
+  '☕',
+  '🍕',
+  '🎯',
+  '🏁',
+  '🚧',
+  '⚠️',
+  '🚨',
+  '❓',
+  '❗',
+  '➕',
+  '💬',
+  '🧵',
+  '🤖',
+  '🧠',
+  '💸',
+  '📈',
+  '📉',
+  '🎂',
 ];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
-import { EntryComments } from './EntryComments';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
-import { MessageText } from './MessageText';
+import { CompactMarkdownText, MessageText } from './MessageText';
 import { useDialog } from '../useDialog';
 import { VoiceMessage } from '../VoiceMessage';
 
@@ -52,7 +99,6 @@ export const MessageRow = memo(function MessageRow({
   onEdit,
   onDelete,
   onReact,
-  markupSessionId,
   onMarkupEntry,
 }: {
   message: ChatMessage;
@@ -78,9 +124,7 @@ export const MessageRow = memo(function MessageRow({
   onDelete?: (message: ChatMessage) => Promise<void>;
   /** Toggle an emoji reaction in the UI; caller sends explicit add/remove. */
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
-  /** Session id gates markup-as-response for extracted agent record rows. */
-  markupSessionId?: string;
-  onMarkupEntry?: (handle: string) => void;
+  onMarkupEntry?: (handle: string, message: ChatMessage) => void;
 }) {
   const m = message;
   const dim = m.status === 'pending';
@@ -90,8 +134,7 @@ export const MessageRow = memo(function MessageRow({
   const isSessionRow = m.sessionId != null && session != null;
   const isSessionEventRow = m.sessionEventType != null;
   const explicitHandle = (m as MessageWithHandle).handle ?? null;
-  const entryHandle =
-    explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
+  const entryHandle = explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
   const canEdit =
     !isSessionRow &&
     !isSessionEventRow &&
@@ -113,35 +156,27 @@ export const MessageRow = memo(function MessageRow({
     !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
   const canAnnotate =
     !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && entryHandle != null;
-  const isAgentAuthoredText =
-    m.author.id.startsWith('agent') ||
-    m.author.handle.startsWith('agent') ||
-    m.author.displayName.toLowerCase().includes('agent');
   const canMarkupReply =
     !isSessionRow &&
     !isSessionEventRow &&
     !deleted &&
     !m.voice &&
-    isAgentAuthoredText &&
     m.status === 'confirmed' &&
-    explicitHandle?.startsWith('rec_') === true &&
-    markupSessionId != null &&
+    entryHandle != null &&
+    isStructuredTextForMarkup(m.text) &&
     !!onMarkupEntry;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
-  const commentButtonRef = useRef<HTMLButtonElement | null>(null);
   const emojiRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mouseOpenedPickerRef = useRef(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState<Set<string>>(() => new Set());
   const copyResetRef = useRef<number | null>(null);
   const react = (emoji: string) => {
     setPickerOpen(false);
-    setCommentsOpen(false);
     onReact?.(m, emoji).catch(() => {});
   };
 
@@ -162,7 +197,6 @@ export const MessageRow = memo(function MessageRow({
     setPickerIndex(clamped);
     window.setTimeout(() => emojiRefs.current[clamped]?.focus());
   };
-  const closeComments = useCallback(() => setCommentsOpen(false), []);
   const copyEntryLink = useCallback(() => {
     if (!entryHandle || typeof navigator === 'undefined') return;
     const clipboard = navigator.clipboard;
@@ -182,9 +216,6 @@ export const MessageRow = memo(function MessageRow({
       if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
     };
   }, []);
-  useEffect(() => {
-    if (!canAnnotate) setCommentsOpen(false);
-  }, [canAnnotate]);
   const attachments = m.attachments ?? [];
   const previewFiles: PreviewFile[] = attachments.map((a) => ({
     id: a.id,
@@ -304,10 +335,7 @@ export const MessageRow = memo(function MessageRow({
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{m.author.displayName}</span>
-            <span
-              className="text-2xs tabular-nums text-fg-muted"
-              title={new Date(m.createdAt).toLocaleString()}
-            >
+            <span className="text-2xs tabular-nums text-fg-muted" title={new Date(m.createdAt).toLocaleString()}>
               {formatTime(m.createdAt)}
             </span>
           </div>
@@ -373,11 +401,7 @@ export const MessageRow = memo(function MessageRow({
                     loading="lazy"
                     onError={() => markAttachmentRemoved(a.id)}
                     className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
-                    style={
-                      a.width && a.height
-                        ? { aspectRatio: `${a.width} / ${a.height}` }
-                        : undefined
-                    }
+                    style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
                   />
                 </button>
               ) : (
@@ -429,10 +453,7 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
         {failed && (
-          <button
-            onClick={() => onRetry?.(m)}
-            className="mt-0.5 text-xs font-medium text-danger hover:underline"
-          >
+          <button onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
@@ -504,7 +525,6 @@ export const MessageRow = memo(function MessageRow({
                   mouseOpenedPickerRef.current = false;
                 }}
                 onClick={() => {
-                  setCommentsOpen(false);
                   setPickerIndex(0);
                   setPickerOpen((v) => !v);
                 }}
@@ -533,31 +553,14 @@ export const MessageRow = memo(function MessageRow({
                 <LinkIcon />
               </button>
             )}
-            {canAnnotate && entryHandle && (
-              <button
-                ref={commentButtonRef}
-                type="button"
-                onClick={() => {
-                  setPickerOpen(false);
-                  setCommentsOpen((v) => !v);
-                }}
-                title="Comment"
-                aria-label="Comment on entry"
-                aria-expanded={commentsOpen}
-                aria-haspopup="dialog"
-                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-              >
-                <MessageCircleIcon />
-              </button>
-            )}
-            {canMarkupReply && explicitHandle && (
+            {canMarkupReply && entryHandle && (
               <button
                 type="button"
                 onClick={() => {
                   setPickerOpen(false);
-                  setCommentsOpen(false);
-                  onMarkupEntry(explicitHandle);
+                  onMarkupEntry(entryHandle, m);
                 }}
+                data-testid="markup-reply"
                 title="Mark up & reply"
                 aria-label="Mark up & reply"
                 className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
@@ -601,18 +604,20 @@ export const MessageRow = memo(function MessageRow({
             )}
           </div>
         )}
-        {canAnnotate && entryHandle && (
-          <EntryComments
-            handle={entryHandle}
-            open={commentsOpen}
-            onClose={closeComments}
-            invokerRef={commentButtonRef}
-          />
-        )}
       </div>
     </div>
   );
 });
+
+const MARKDOWN_BLOCK_RE = /(^|\n)\s{0,3}(#{1,6}\s+\S|([-*+]|\d+[.)])\s+\S|>\s+\S|```)/;
+
+export function isStructuredTextForMarkup(text: string): boolean {
+  const nonEmptyLines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return nonEmptyLines.length >= 2 || MARKDOWN_BLOCK_RE.test(text);
+}
 
 function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] {
   if (contentType.startsWith('image/')) return 'image';
@@ -652,25 +657,6 @@ function LinkIcon(props: SVGProps<SVGSVGElement>) {
     >
       <path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
       <path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" />
-    </svg>
-  );
-}
-
-function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      width={16}
-      height={16}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
     </svg>
   );
 }
@@ -719,7 +705,7 @@ function SessionEventCard({
       </div>
       {message.sessionEventType === 'question_requested' && (
         <div className="mt-1 whitespace-pre-wrap break-words text-fg-body">
-          {questionText}
+          <CompactMarkdownText text={questionText} />
         </div>
       )}
       {answers.length > 0 && (
@@ -730,11 +716,15 @@ function SessionEventCard({
                 {answer.header}
               </div>
               <div className="mt-0.5 whitespace-pre-wrap break-words text-fg-body">
-                {answer.answers.length > 0
-                  ? answer.answers.join('\n')
-                  : answer.count === 1
-                    ? '1 answer recorded'
-                    : `${answer.count} answers recorded`}
+                <CompactMarkdownText
+                  text={
+                    answer.answers.length > 0
+                      ? answer.answers.join('\n')
+                      : answer.count === 1
+                        ? '1 answer recorded'
+                        : `${answer.count} answers recorded`
+                  }
+                />
               </div>
             </div>
           ))}
@@ -759,9 +749,7 @@ function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ quest
     .map((item): { question: string } | null => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
       const raw = item as Record<string, unknown>;
-      return typeof raw.question === 'string' && raw.question.trim()
-        ? { question: raw.question }
-        : null;
+      return typeof raw.question === 'string' && raw.question.trim() ? { question: raw.question } : null;
     })
     .filter((item): item is { question: string } => item !== null);
 }
@@ -788,10 +776,7 @@ function questionPayloadAnswers(
     .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
 }
 
-function sessionQuestionEventLabel(
-  type: ChatMessage['sessionEventType'],
-  reason: unknown,
-): string {
+function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
   if (type === 'question_requested') return 'Question asked';
   if (type === 'question_answered') return 'Question answered';
   if (reason === 'empty') return 'Question expired without an answer';

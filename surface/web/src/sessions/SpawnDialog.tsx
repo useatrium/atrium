@@ -49,6 +49,7 @@ export function SpawnDialog({
   profiles = [],
   onConnectGitHub,
   onConnectProvider,
+  initialTask = '',
 }: {
   channelName: string;
   onCancel: () => void;
@@ -59,8 +60,9 @@ export function SpawnDialog({
   profiles?: AgentProfile[];
   onConnectGitHub?: () => void;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
+  initialTask?: string;
 }) {
-  const [task, setTask] = useState('');
+  const [task, setTask] = useState(initialTask);
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('');

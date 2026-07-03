@@ -44,7 +44,7 @@ describe('ActivityView', () => {
             channelName: 'general',
             actorId: 'u-alice',
             actorName: 'Alice',
-            snippet: 'hello @me',
+            snippet: 'hello **@me** with `code` and [docs](https://example.com)',
             createdAt: new Date().toISOString(),
           },
         ],
@@ -85,18 +85,15 @@ describe('ActivityView', () => {
 
     expect(await screen.findByText('Agent needs your input')).toBeTruthy();
     expect(screen.getByText('Alice mentioned you')).toBeTruthy();
+    expect(screen.getByText('@me').closest('strong')).toBeTruthy();
+    expect(screen.getByText('code').closest('code')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'docs' })).toBeNull();
 
-    fireEvent(
-      screen.getByText('Alice mentioned you'),
-      new MouseEvent('click', { bubbles: true, cancelable: true }),
-    );
+    fireEvent(screen.getByText('Alice mentioned you'), new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(onSelectChannel).toHaveBeenCalledWith('ch-public');
     expect(apiMock.messages).not.toHaveBeenCalled();
 
-    fireEvent(
-      screen.getByText('Agent needs your input'),
-      new MouseEvent('click', { bubbles: true, cancelable: true }),
-    );
+    fireEvent(screen.getByText('Agent needs your input'), new MouseEvent('click', { bubbles: true, cancelable: true }));
     await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('s-1'));
     expect(onSelectChannel).toHaveBeenCalledWith('ch-agent');
 
