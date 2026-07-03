@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -29,6 +30,7 @@ import {
   type SessionQuestionEvent,
   type SessionStatus,
 } from '@atrium/surface-client';
+import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
 import type { QuestionItem, TextItem, ToolCallItem } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
@@ -41,7 +43,9 @@ import {
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
+  deriveTurnStatus,
   fileChangeFromToolCall,
+  turnStatusLabel,
   sideEffectCount,
   toolDisplay,
 } from '@atrium/centaur-client';
@@ -61,6 +65,7 @@ import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
+import { TurnStatusLine } from '../../../src/components/TurnStatusLine';
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -568,9 +573,12 @@ export default function SessionScreen() {
   const chat = useChat();
   const { colors, reduceMotion } = useTheme();
   const { api, me, state, upsertSession, setActiveSessionId } = chat;
-  const { stream, connected } = useSessionStream(id ?? null);
-  const headerHeight = useHeaderHeight();
   const cached = id ? (state.sessions[id] ?? null) : null;
+  const { stream, connected, lastFrameAt, clockSkewMs } = useSessionStream(
+    id ?? null,
+    cached ? !isTerminalSessionStatus(cached.status) : false,
+  );
+  const headerHeight = useHeaderHeight();
   const [snapshot, setSnapshot] = useState<Session | null>(cached);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -583,6 +591,8 @@ export default function SessionScreen() {
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
   const [workTab, setWorkTab] = useState<string | null>(null);
   const [turnsOpen, setTurnsOpen] = useState(false);
+  const [effortOpen, setEffortOpen] = useState(false);
+  const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
   const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
   const [suggestText, setSuggestText] = useState('');
@@ -624,6 +634,7 @@ export default function SessionScreen() {
   const streamStatus = stream.status !== 'idle' ? normalizeExecutionStatus(stream.status) : null;
   const displayStatus = (streamStatus ?? session?.status ?? 'spawning') as SessionStatus;
   const terminal = isTerminalSessionStatus(displayStatus);
+  const isEnded = displayStatus === 'failed' || displayStatus === 'cancelled';
   const now = useNow(!terminal);
   const stalled = session ? !terminal && isStalledSessionStatus(session, now) : false;
   const costUsd = Math.max(session?.costUsd ?? 0, stream.costUsd);
@@ -631,7 +642,53 @@ export default function SessionScreen() {
   const isDriver = !!session && sessionDriverId(session) === me.id;
   const isSpawner = !!session && session.spawnedBy === me.id;
   const canCancel = !!session && (isDriver || isSpawner) && !terminal;
-  const canSteer = !!session && isDriver && !terminal;
+  // A completed session is resumable (a steer regresses it to queued) — only
+  // failed/cancelled are read-only, matching web and the server.
+  const canSteer = !!session && isDriver && !isEnded;
+  const pendingQuestion =
+    session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
+  const activeTurn = !terminal && !stalled;
+  const starting = displayStatus === 'spawning' || displayStatus === 'queued';
+  const mountedAtRef = useRef(Date.now());
+  const disconnectedAtRef = useRef<number>(Date.now());
+  const prevConnectedRef = useRef<boolean>(connected);
+  if (prevConnectedRef.current !== connected) {
+    prevConnectedRef.current = connected;
+    if (!connected) disconnectedAtRef.current = Date.now();
+  }
+  const turnStatus = useMemo(
+    () =>
+      deriveTurnStatus({
+        stream,
+        now,
+        connected,
+        lastFrameAt,
+        clockSkewMs,
+        mountedAt: mountedAtRef.current,
+        disconnectedAt: disconnectedAtRef.current,
+        activeTurn,
+        starting,
+        completed: displayStatus === 'completed',
+        pendingQuestionId: pendingQuestion?.questionId ?? null,
+        suppressed: Boolean(session?.providerAuthRequired),
+      }),
+    [
+      activeTurn,
+      clockSkewMs,
+      connected,
+      displayStatus,
+      lastFrameAt,
+      now,
+      pendingQuestion?.questionId,
+      session?.providerAuthRequired,
+      starting,
+      stream,
+    ],
+  );
+  const modelEffort = session?.modelEffort ?? null;
+  const effortOptions = session ? HARNESS_EFFORT_PICKER_OPTIONS[session.harness] : undefined;
+  const effortSelection = effortChoice ?? modelEffort ?? '';
+  const canPickEffort = !!session && isDriver && !isEnded && effortOptions !== undefined;
 
   // Work surfaces (Phase 4 parity): derive from the shared stream exactly like
   // web — Changes · Side-effects · Artifacts. Each non-empty surface gets a strip
@@ -708,9 +765,12 @@ export default function SessionScreen() {
   }, []);
 
   const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
-  const elapsed = session ? formatElapsed(sessionElapsedMs(session, now)) : '';
-  const pendingQuestion =
-    session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
+  const elapsedMsForHeader = session
+    ? terminal
+      ? sessionElapsedMs(session, now)
+      : turnStatus.elapsedMs
+    : 0;
+  const elapsed = elapsedMsForHeader > 0 ? formatElapsed(elapsedMsForHeader) : '';
   const questionEvents = session?.questionEvents ?? [];
   const questionEventsByQuestion = useMemo(
     () => groupQuestionEventsByQuestion(questionEvents),
@@ -722,6 +782,16 @@ export default function SessionScreen() {
   // arrays). Core steering already works; this is the collaborative layer.
   const driverId = session ? sessionDriverId(session) : null;
   const driverName = session?.driverName ?? 'the driver';
+  const waitingDriverName = session?.driverName ?? session?.spawnerName ?? 'the driver';
+  const turnPhase = turnStatus.phase;
+  const statusLabel = turnStatusLabel({
+    phase: turnPhase,
+    starting,
+    headline: turnStatus.headline,
+    openTool: turnStatus.openTool,
+    waitingLabel:
+      driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+  });
   const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter(
     (r) => !ignoredSeatRequests.has(r.userId),
   );
@@ -746,6 +816,17 @@ export default function SessionScreen() {
   }, [pendingQuestion?.questionId]);
 
   useEffect(() => {
+    setEffortChoice(null);
+    setEffortOpen(false);
+  }, [session?.id]);
+
+  // Close the picker whenever it becomes unpickable — a stale open flag would
+  // pop the modal unprompted when pickability returns (e.g. a later revive).
+  useEffect(() => {
+    if (!canPickEffort) setEffortOpen(false);
+  }, [canPickEffort]);
+
+  useEffect(() => {
     if (cancelAsk !== 'confirm') return;
     const timer = setTimeout(() => setCancelAsk('idle'), 5000);
     return () => clearTimeout(timer);
@@ -761,6 +842,16 @@ export default function SessionScreen() {
       contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
   };
 
+  // The server re-attaches the recorded effort to effort-less steers; the
+  // client only sends an explicit change, guarded to the harness vocabulary.
+  const effortOverride = () =>
+    canPickEffort &&
+    effortSelection &&
+    effortSelection !== (modelEffort ?? '') &&
+    effortOptions?.includes(effortSelection)
+      ? effortSelection
+      : undefined;
+
   const sendSteer = () => {
     if (!id) return;
     const text = steerText.trim();
@@ -768,7 +859,7 @@ export default function SessionScreen() {
     setSteerText('');
     setSteerError(null);
     chat.clearFailedSessionSteer(id);
-    chat.steerSession(id, text).catch(() => setSteerError(text));
+    chat.steerSession(id, text, effortOverride()).catch(() => setSteerError(text));
   };
 
   const retrySteer = () => {
@@ -777,7 +868,7 @@ export default function SessionScreen() {
     const text = visibleSteerError;
     setSteerError(null);
     chat.clearFailedSessionSteer(id);
-    chat.steerSession(id, text).catch(() => setSteerError(text));
+    chat.steerSession(id, text, effortOverride()).catch(() => setSteerError(text));
   };
 
   const cancel = () => {
@@ -1071,6 +1162,23 @@ export default function SessionScreen() {
 
         <WorkStrips items={workStripItems} onOpen={setWorkTab} />
 
+        {!isEnded && turnPhase ? (
+          <TurnStatusLine
+            phase={turnPhase}
+            liveness={turnStatus.liveness}
+            label={statusLabel}
+            elapsedMs={turnStatus.elapsedMs}
+            quietMs={turnPhase === 'waiting' ? turnStatus.waitingMs : turnStatus.quietMs}
+            pulse={stream.frameSeq}
+            tokens={turnStatus.tokens}
+            costUsd={costUsd}
+            models={stream.models}
+            effort={modelEffort}
+            cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+            onCancel={isSpawner || isDriver ? cancel : undefined}
+          />
+        ) : null}
+
         {(steerError ?? chat.failedSessionSteers[id] ?? null) ? (
           <View
             style={{
@@ -1144,6 +1252,27 @@ export default function SessionScreen() {
               gap: space.sm,
             }}
           >
+            {canPickEffort ? (
+              <Pressable
+                testID="effort-picker"
+                accessibilityRole="button"
+                accessibilityLabel="Reasoning effort for the next turn"
+                onPress={() => setEffortOpen(true)}
+                style={({ pressed }) => ({
+                  minHeight: 38,
+                  justifyContent: 'center',
+                  borderRadius: radius.sm,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+                  paddingHorizontal: space.sm,
+                })}
+              >
+                <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>
+                  {effortSelection || 'effort'}
+                </Text>
+              </Pressable>
+            ) : null}
             <TextInput
               value={steerText}
               onChangeText={setSteerText}
@@ -1242,6 +1371,105 @@ export default function SessionScreen() {
           </>
         )}
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={effortOpen && canPickEffort}
+        transparent
+        animationType={reduceMotion ? 'none' : 'slide'}
+        onRequestClose={() => setEffortOpen(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.scrim }}>
+          <Pressable
+            accessible={false}
+            onPress={() => setEffortOpen(false)}
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+          />
+          <View
+            style={{
+              backgroundColor: colors.bg,
+              borderTopLeftRadius: radius.lg,
+              borderTopRightRadius: radius.lg,
+              borderWidth: 1,
+              borderColor: colors.border,
+              overflow: 'hidden',
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                borderBottomWidth: 1,
+                borderBottomColor: colors.border,
+                paddingHorizontal: space.md,
+                height: 48,
+              }}
+            >
+              <Text style={{ flex: 1, color: colors.text, fontSize: font.md, fontWeight: '800' }}>
+                Reasoning effort
+              </Text>
+              <Pressable
+                onPress={() => setEffortOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close effort picker"
+                style={{ paddingHorizontal: space.sm, paddingVertical: space.sm }}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: font.lg }}>✕</Text>
+              </Pressable>
+            </View>
+            {modelEffort == null ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Use default reasoning effort"
+                onPress={() => {
+                  setEffortChoice('');
+                  setEffortOpen(false);
+                }}
+                style={({ pressed }) => ({
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.md,
+                  backgroundColor: pressed ? colors.bgPressed : colors.bg,
+                })}
+              >
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
+                  default
+                </Text>
+              </Pressable>
+            ) : null}
+            {(effortOptions ?? []).map((level) => (
+              <Pressable
+                key={level}
+                accessibilityRole="button"
+                accessibilityLabel={`Set reasoning effort to ${level}`}
+                accessibilityState={{ selected: effortSelection === level }}
+                onPress={() => {
+                  setEffortChoice(level);
+                  setEffortOpen(false);
+                }}
+                style={({ pressed }) => ({
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.md,
+                  backgroundColor:
+                    effortSelection === level
+                      ? colors.accentBg
+                      : pressed
+                        ? colors.bgPressed
+                        : colors.bg,
+                })}
+              >
+                <Text
+                  style={{
+                    color: effortSelection === level ? colors.accent : colors.text,
+                    fontSize: font.sm,
+                    fontWeight: '800',
+                  }}
+                >
+                  {level}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
 
       <MobileWorkSheet
         visible={workTab != null}
