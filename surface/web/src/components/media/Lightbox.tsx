@@ -6,6 +6,7 @@ import {
   CloseIcon,
   DownloadIcon,
   EditIcon,
+  HighlighterIcon,
   InfoIcon,
   LinkIcon,
   MessageIcon,
@@ -23,6 +24,7 @@ interface LightboxProps extends LightboxCallbacks {
   index: number;
   onIndexChange: (index: number) => void;
   onClose: () => void;
+  sessionId?: string;
 }
 
 const iconButtonClass =
@@ -63,6 +65,8 @@ export function Lightbox({
   onSaveText,
   onLoadConflict,
   onResolveConflict,
+  onMarkup,
+  sessionId,
 }: LightboxProps) {
   const file = files[index];
   const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>('info');
@@ -89,6 +93,12 @@ export function Lightbox({
     manageable &&
     (mediaKind === 'text' || mediaKind === 'code') &&
     Boolean(onListVersions && onFetchVersionContent && onSaveText && onLoadConflict && onResolveConflict);
+  const markupAvailable =
+    file != null &&
+    !file.tombstoned &&
+    sessionId != null &&
+    (mediaKind === 'text' || mediaKind === 'code') &&
+    Boolean(onMarkup);
 
   useEffect(() => {
     setDraftName(file?.name ?? '');
@@ -369,6 +379,17 @@ export function Lightbox({
             title="Edit"
           >
             <EditIcon size={16} />
+          </button>
+        )}
+        {markupAvailable && (
+          <button
+            type="button"
+            className={iconButtonClass}
+            onClick={() => void onMarkup?.(file)}
+            aria-label="Mark up"
+            title="Mark up"
+          >
+            <HighlighterIcon size={16} />
           </button>
         )}
         <button

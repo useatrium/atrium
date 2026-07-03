@@ -225,7 +225,7 @@ export function WorkDrawer({
         ) : null
       ) : active === 'hubFiles' ? (
         workspaceId ? (
-          <FilesHub workspaceId={workspaceId} channelId={channelId} />
+          <FilesHub workspaceId={workspaceId} channelId={channelId} sessionId={sessionId} />
         ) : (
           <EmptyState title="Files unavailable" hint="This session is missing workspace metadata." />
         )

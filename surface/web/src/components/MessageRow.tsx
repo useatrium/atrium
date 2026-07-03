@@ -52,6 +52,8 @@ export const MessageRow = memo(function MessageRow({
   onEdit,
   onDelete,
   onReact,
+  markupSessionId,
+  onMarkupEntry,
 }: {
   message: ChatMessage;
   grouped: boolean;
@@ -76,6 +78,9 @@ export const MessageRow = memo(function MessageRow({
   onDelete?: (message: ChatMessage) => Promise<void>;
   /** Toggle an emoji reaction in the UI; caller sends explicit add/remove. */
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  /** Session id gates markup-as-response for extracted agent record rows. */
+  markupSessionId?: string;
+  onMarkupEntry?: (handle: string) => void;
 }) {
   const m = message;
   const dim = m.status === 'pending';
@@ -108,6 +113,20 @@ export const MessageRow = memo(function MessageRow({
     !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && m.id != null && !!onReact;
   const canAnnotate =
     !isSessionRow && !isSessionEventRow && !deleted && m.status === 'confirmed' && entryHandle != null;
+  const isAgentAuthoredText =
+    m.author.id.startsWith('agent') ||
+    m.author.handle.startsWith('agent') ||
+    m.author.displayName.toLowerCase().includes('agent');
+  const canMarkupReply =
+    !isSessionRow &&
+    !isSessionEventRow &&
+    !deleted &&
+    !m.voice &&
+    isAgentAuthoredText &&
+    m.status === 'confirmed' &&
+    explicitHandle?.startsWith('rec_') === true &&
+    markupSessionId != null &&
+    !!onMarkupEntry;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerRef = useRef<HTMLDivElement | null>(null);
@@ -472,7 +491,7 @@ export const MessageRow = memo(function MessageRow({
             </div>
           </div>
         )}
-        {(canThread || canEdit || canDelete || canReact || canAnnotate) && !editing && (
+        {(canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {canReact && (
               <button
@@ -528,6 +547,21 @@ export const MessageRow = memo(function MessageRow({
                 className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 <MessageCircleIcon />
+              </button>
+            )}
+            {canMarkupReply && explicitHandle && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPickerOpen(false);
+                  setCommentsOpen(false);
+                  onMarkupEntry(explicitHandle);
+                }}
+                title="Mark up & reply"
+                aria-label="Mark up & reply"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+              >
+                <PenLineIcon /> Mark up
               </button>
             )}
             {canEdit && (
@@ -636,6 +670,26 @@ function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
       {...props}
     >
       <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+    </svg>
+  );
+}
+
+function PenLineIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
     </svg>
   );
 }
