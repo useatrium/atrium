@@ -1,20 +1,56 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FILES_CHANGED_EVENT_TYPE, filesChangedWorkspaceId, useWs, type WireEvent } from '@atrium/surface-client';
+import { FILES_CHANGED_EVENT_TYPE, filesChangedWorkspaceId, useWs, type HubFile, type WireEvent } from '@atrium/surface-client';
+import { queryEntryReferencesForHandles } from '../src/components/EntryReferencesChip';
 import { FilesHub } from '../src/sessions/FilesHub';
 import { ThemeProvider } from '../src/theme';
 
-function filesResponse() {
-  return new Response(JSON.stringify({ files: [], nextCursor: null }), {
+vi.mock('../src/components/EntryReferencesChip', async () => {
+  const actual = await vi.importActual<typeof import('../src/components/EntryReferencesChip')>(
+    '../src/components/EntryReferencesChip',
+  );
+  return {
+    ...actual,
+    queryEntryReferencesForHandles: vi.fn(),
+  };
+});
+
+function filesResponse(files: HubFile[] = []) {
+  return new Response(JSON.stringify({ files, nextCursor: null }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
+const queryEntryReferencesMock = vi.mocked(queryEntryReferencesForHandles);
+
+function hubFile(overrides: Partial<HubFile>): HubFile {
+  return {
+    artifactId: 'art-1',
+    workspaceId: 'ws-1',
+    path: 'reports/result.md',
+    name: 'result.md',
+    mime: 'text/markdown',
+    mediaKind: 'text',
+    isText: true,
+    sizeBytes: 1200,
+    origin: 'agent',
+    channelId: null,
+    sessionId: null,
+    sourceMessageId: null,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    versionSeq: 1,
+    labels: [],
+    starred: false,
+    tombstoned: false,
+    ...overrides,
+  };
+}
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -88,6 +124,7 @@ function FilesHubWsHarness() {
 beforeEach(() => {
   fetchMock = vi.fn(async () => filesResponse());
   vi.stubGlobal('fetch', fetchMock);
+  queryEntryReferencesMock.mockResolvedValue({});
   MockWebSocket.instances = [];
 });
 
@@ -132,6 +169,104 @@ describe('FilesHub', () => {
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/api/workspaces/ws-1/files');
     expect(screen.queryByRole('group', { name: 'File scope' })).toBeNull();
     expect(screen.getByText('Workspace files')).toBeTruthy();
+  });
+
+  it('does not query entry references when the listing is empty', async () => {
+    render(
+      <ThemeProvider>
+        <FilesHub workspaceId="ws-1" />
+      </ThemeProvider>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(queryEntryReferencesMock).not.toHaveBeenCalled();
+  });
+
+  it('copies artifact entry links from the lightbox copy-link action', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    fetchMock.mockResolvedValue(filesResponse([hubFile({ artifactId: 'art-1', name: 'result.md', path: 'result.md' })]));
+
+    render(
+      <ThemeProvider>
+        <FilesHub workspaceId="ws-1" />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /result\.md/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy file link' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/e/art_art-1`));
+  });
+
+  it('shows entry reference chips only for visible files with references', async () => {
+    fetchMock.mockResolvedValue(
+      filesResponse([
+        hubFile({ artifactId: 'art-1', name: 'referenced.md', path: 'referenced.md' }),
+        hubFile({ artifactId: 'art-2', name: 'quiet.md', path: 'quiet.md' }),
+      ]),
+    );
+    queryEntryReferencesMock.mockResolvedValue({
+      'art_art-1': {
+        count: 2,
+        latest: [
+          {
+            eventId: 1,
+            handle: 'msg_1',
+            channelId: 'ch-1',
+            threadRootEventId: null,
+            actorLabel: 'Ada',
+            excerpt: 'Referenced artifact',
+            ts: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+
+    render(
+      <ThemeProvider>
+        <FilesHub workspaceId="ws-1" />
+      </ThemeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(queryEntryReferencesMock).toHaveBeenCalledWith(['art_art-1', 'art_art-2']),
+    );
+    expect(await screen.findByRole('button', { name: '2 discussions' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /discussion/ })).toHaveLength(1);
+  });
+
+  it('passes entry reference summaries into the open lightbox header', async () => {
+    fetchMock.mockResolvedValue(
+      filesResponse([hubFile({ artifactId: 'art-1', name: 'referenced.md', path: 'referenced.md' })]),
+    );
+    queryEntryReferencesMock.mockResolvedValue({
+      'art_art-1': {
+        count: 1,
+        latest: [
+          {
+            eventId: 1,
+            handle: 'msg_1',
+            channelId: 'ch-1',
+            threadRootEventId: null,
+            actorLabel: 'Ada',
+            excerpt: 'Referenced artifact',
+            ts: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+
+    render(
+      <ThemeProvider>
+        <FilesHub workspaceId="ws-1" />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /referenced\.md/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: '1 discussion' })).toBeTruthy();
   });
 
   it('reloads when a files.changed WebSocket event arrives for the workspace', async () => {

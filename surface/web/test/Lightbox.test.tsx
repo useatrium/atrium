@@ -45,4 +45,33 @@ describe('Lightbox markup action', () => {
 
     expect(screen.getByRole('button', { name: 'Mark up' })).toBeTruthy();
   });
+
+  it('shows entry reference chip in the header when the open file has references', () => {
+    render(
+      <Lightbox
+        files={[textFile]}
+        index={0}
+        onIndexChange={() => {}}
+        onClose={() => {}}
+        entryReferencesByFileId={{
+          'art-1': {
+            count: 3,
+            latest: [
+              {
+                eventId: 1,
+                handle: 'msg_1',
+                channelId: 'ch-1',
+                threadRootEventId: null,
+                actorLabel: 'Ada',
+                excerpt: 'Discussed this artifact',
+                ts: new Date().toISOString(),
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '3 discussions' })).toBeTruthy();
+  });
 });

@@ -18,6 +18,7 @@ import { VersionHistoryPanel } from './VersionHistoryPanel';
 import type { LightboxCallbacks, PreviewFile } from './types';
 import { effectiveMediaKind, formatBytes, formatDateTime, kindLabel } from './utils';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from '../../sessions/ConflictSurface';
+import { EntryReferencesChip, type EntryReferenceSummary } from '../EntryReferencesChip';
 
 interface LightboxProps extends LightboxCallbacks {
   files: PreviewFile[];
@@ -25,6 +26,7 @@ interface LightboxProps extends LightboxCallbacks {
   onIndexChange: (index: number) => void;
   onClose: () => void;
   sessionId?: string;
+  entryReferencesByFileId?: Record<string, EntryReferenceSummary | null>;
 }
 
 const iconButtonClass =
@@ -67,6 +69,7 @@ export function Lightbox({
   onResolveConflict,
   onMarkup,
   sessionId,
+  entryReferencesByFileId,
 }: LightboxProps) {
   const file = files[index];
   const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>('info');
@@ -199,6 +202,7 @@ export function Lightbox({
 
   if (!file) return null;
   const displayFile = cacheBustedFile(file, previewReloadKey);
+  const entryReferences = entryReferencesByFileId?.[file.id] ?? null;
 
   const submitRename = async () => {
     const nextName = draftName.trim();
@@ -334,6 +338,9 @@ export function Lightbox({
               </div>
             </>
           )}
+        </div>
+        <div className="shrink-0">
+          <EntryReferencesChip summary={entryReferences} />
         </div>
         <button
           type="button"
