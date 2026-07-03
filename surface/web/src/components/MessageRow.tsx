@@ -1,25 +1,73 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type SVGProps,
-} from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type SVGProps } from 'react';
 import type { ChatMessage } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 
 /** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
 export const REACTION_EMOJI = [
-  '👍', '👎', '✅', '❌', '👀', '🎉', '❤️', '😂',
-  '😄', '😅', '😊', '😍', '🤔', '🤯', '😱', '😢',
-  '😭', '😡', '🙏', '👏', '🙌', '💪', '🤝', '👋',
-  '🫡', '🤷', '🤦', '💀', '🔥', '✨', '⭐', '💯',
-  '🚀', '🐛', '🔧', '🛠️', '⚙️', '💡', '📌', '📎',
-  '📝', '✏️', '🔍', '⏳', '⏰', '📅', '☕', '🍕',
-  '🎯', '🏁', '🚧', '⚠️', '🚨', '❓', '❗', '➕',
-  '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
+  '👍',
+  '👎',
+  '✅',
+  '❌',
+  '👀',
+  '🎉',
+  '❤️',
+  '😂',
+  '😄',
+  '😅',
+  '😊',
+  '😍',
+  '🤔',
+  '🤯',
+  '😱',
+  '😢',
+  '😭',
+  '😡',
+  '🙏',
+  '👏',
+  '🙌',
+  '💪',
+  '🤝',
+  '👋',
+  '🫡',
+  '🤷',
+  '🤦',
+  '💀',
+  '🔥',
+  '✨',
+  '⭐',
+  '💯',
+  '🚀',
+  '🐛',
+  '🔧',
+  '🛠️',
+  '⚙️',
+  '💡',
+  '📌',
+  '📎',
+  '📝',
+  '✏️',
+  '🔍',
+  '⏳',
+  '⏰',
+  '📅',
+  '☕',
+  '🍕',
+  '🎯',
+  '🏁',
+  '🚧',
+  '⚠️',
+  '🚨',
+  '❓',
+  '❗',
+  '➕',
+  '💬',
+  '🧵',
+  '🤖',
+  '🧠',
+  '💸',
+  '📈',
+  '📉',
+  '🎂',
 ];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
@@ -28,7 +76,7 @@ import { Avatar } from './Avatar';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
-import { MessageText } from './MessageText';
+import { CompactMarkdownText, MessageText } from './MessageText';
 import { useDialog } from '../useDialog';
 import { VoiceMessage } from '../VoiceMessage';
 
@@ -86,8 +134,7 @@ export const MessageRow = memo(function MessageRow({
   const isSessionRow = m.sessionId != null && session != null;
   const isSessionEventRow = m.sessionEventType != null;
   const explicitHandle = (m as MessageWithHandle).handle ?? null;
-  const entryHandle =
-    explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
+  const entryHandle = explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
   const canEdit =
     !isSessionRow &&
     !isSessionEventRow &&
@@ -288,10 +335,7 @@ export const MessageRow = memo(function MessageRow({
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{m.author.displayName}</span>
-            <span
-              className="text-2xs tabular-nums text-fg-muted"
-              title={new Date(m.createdAt).toLocaleString()}
-            >
+            <span className="text-2xs tabular-nums text-fg-muted" title={new Date(m.createdAt).toLocaleString()}>
               {formatTime(m.createdAt)}
             </span>
           </div>
@@ -357,11 +401,7 @@ export const MessageRow = memo(function MessageRow({
                     loading="lazy"
                     onError={() => markAttachmentRemoved(a.id)}
                     className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
-                    style={
-                      a.width && a.height
-                        ? { aspectRatio: `${a.width} / ${a.height}` }
-                        : undefined
-                    }
+                    style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
                   />
                 </button>
               ) : (
@@ -413,10 +453,7 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
         {failed && (
-          <button
-            onClick={() => onRetry?.(m)}
-            className="mt-0.5 text-xs font-medium text-danger hover:underline"
-          >
+          <button onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
@@ -668,7 +705,7 @@ function SessionEventCard({
       </div>
       {message.sessionEventType === 'question_requested' && (
         <div className="mt-1 whitespace-pre-wrap break-words text-fg-body">
-          {questionText}
+          <CompactMarkdownText text={questionText} />
         </div>
       )}
       {answers.length > 0 && (
@@ -679,11 +716,15 @@ function SessionEventCard({
                 {answer.header}
               </div>
               <div className="mt-0.5 whitespace-pre-wrap break-words text-fg-body">
-                {answer.answers.length > 0
-                  ? answer.answers.join('\n')
-                  : answer.count === 1
-                    ? '1 answer recorded'
-                    : `${answer.count} answers recorded`}
+                <CompactMarkdownText
+                  text={
+                    answer.answers.length > 0
+                      ? answer.answers.join('\n')
+                      : answer.count === 1
+                        ? '1 answer recorded'
+                        : `${answer.count} answers recorded`
+                  }
+                />
               </div>
             </div>
           ))}
@@ -708,9 +749,7 @@ function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ quest
     .map((item): { question: string } | null => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
       const raw = item as Record<string, unknown>;
-      return typeof raw.question === 'string' && raw.question.trim()
-        ? { question: raw.question }
-        : null;
+      return typeof raw.question === 'string' && raw.question.trim() ? { question: raw.question } : null;
     })
     .filter((item): item is { question: string } => item !== null);
 }
@@ -737,10 +776,7 @@ function questionPayloadAnswers(
     .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
 }
 
-function sessionQuestionEventLabel(
-  type: ChatMessage['sessionEventType'],
-  reason: unknown,
-): string {
+function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
   if (type === 'question_requested') return 'Question asked';
   if (type === 'question_answered') return 'Question answered';
   if (reason === 'empty') return 'Question expired without an answer';

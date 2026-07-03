@@ -4,6 +4,7 @@ import type { WireEvent } from '@atrium/surface-client';
 import { channelLabel, formatTime } from '@atrium/surface-client';
 import { LockIcon } from './icons';
 import { useDialog } from '../useDialog';
+import { CompactMarkdownText } from './MessageText';
 
 interface MessageHit {
   event: WireEvent;
@@ -47,9 +48,7 @@ export function QuickSwitcher({
     const q = query.trim().toLowerCase();
     const label = (c: Channel) => channelLabel(c, meId).toLowerCase();
     const list = q ? channels.filter((c) => label(c).includes(q)) : channels;
-    return [...list].sort(
-      (a, b) => Number(label(b).startsWith(q)) - Number(label(a).startsWith(q)),
-    );
+    return [...list].sort((a, b) => Number(label(b).startsWith(q)) - Number(label(a).startsWith(q)));
   }, [channels, query, meId]);
 
   // Debounced message search once the query is meaningful.
@@ -193,9 +192,7 @@ export function QuickSwitcher({
                     {c.kind === 'dm' || c.kind === 'gdm' ? '@' : c.kind === 'private' ? <LockIcon size={14} /> : '#'}
                   </span>
                   <span className="truncate">{channelLabel(c, meId)}</span>
-                  {c.id === activeChannelId && (
-                    <span className="ml-auto text-3xs text-fg-muted">current</span>
-                  )}
+                  {c.id === activeChannelId && <span className="ml-auto text-3xs text-fg-muted">current</span>}
                 </li>
               ))}
             </ul>
@@ -204,9 +201,7 @@ export function QuickSwitcher({
           {query.trim().length >= 2 && (
             <>
               <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
-                  Messages
-                </span>
+                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Messages</span>
                 {searching && <span className="text-3xs text-fg-muted">searching…</span>}
               </div>
               {!searching && hits.length === 0 && (
@@ -225,9 +220,7 @@ export function QuickSwitcher({
                       tabIndex={-1}
                       onClick={() => onJumpToMessage(h.event)}
                       onMouseEnter={() => setIndex(i)}
-                      className={`cursor-pointer px-3 py-1.5 text-left ${
-                        i === selected ? 'bg-accent/20' : ''
-                      }`}
+                      className={`cursor-pointer px-3 py-1.5 text-left ${i === selected ? 'bg-accent/20' : ''}`}
                     >
                       <div className="flex items-baseline gap-1.5 text-2xs text-fg-muted">
                         <span className="text-fg-tertiary">#{h.channelName}</span>
@@ -236,16 +229,16 @@ export function QuickSwitcher({
                         <span>·</span>
                         <span className="tabular-nums">{formatTime(h.event.createdAt)}</span>
                       </div>
-                      <div className="truncate text-sm text-fg-body">{text}</div>
+                      <div className="truncate text-sm text-fg-body">
+                        <CompactMarkdownText text={text} />
+                      </div>
                     </li>
                   );
                 })}
               </ul>
 
               <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
-                  Sessions
-                </span>
+                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Sessions</span>
                 {searchingSessions && <span className="text-3xs text-fg-muted">searching…</span>}
               </div>
               {!searchingSessions && sessionHits.length === 0 && (
@@ -263,17 +256,13 @@ export function QuickSwitcher({
                       tabIndex={-1}
                       onClick={() => openSessionHit(hit)}
                       onMouseEnter={() => setIndex(i)}
-                      className={`cursor-pointer px-3 py-1.5 text-left ${
-                        i === selected ? 'bg-accent/20' : ''
-                      }`}
+                      className={`cursor-pointer px-3 py-1.5 text-left ${i === selected ? 'bg-accent/20' : ''}`}
                     >
                       <div className="flex min-w-0 items-baseline gap-1.5 text-2xs text-fg-muted">
                         <span className="inline-flex shrink-0 rounded-full bg-surface-overlay/80 px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-tertiary">
                           {sessionKindLabel(hit.kind)}
                         </span>
-                        <span className="truncate text-fg-tertiary">
-                          {hit.sessionTitle ?? hit.sessionId}
-                        </span>
+                        <span className="truncate text-fg-tertiary">{hit.sessionTitle ?? hit.sessionId}</span>
                         {hit.channelName && (
                           <>
                             <span>·</span>

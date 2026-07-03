@@ -12,14 +12,13 @@ import { useChat } from '../../../src/lib/chat';
 import { font, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
+import { MarkdownText } from '../../../src/components/Markdown';
 
 interface DisplaySession extends SessionListItem {
   live?: Session;
 }
 
-type ActivityRow =
-  | { rowType: 'session'; session: DisplaySession }
-  | { rowType: 'activity'; activity: ActivityItem };
+type ActivityRow = { rowType: 'session'; session: DisplaySession } | { rowType: 'activity'; activity: ActivityItem };
 
 function statusColor(status: SessionStatus, colors: Colors): string {
   if (status === 'completed') return colors.online;
@@ -126,9 +125,7 @@ export default function ActivityScreen() {
     try {
       const { events } = await api.messages(item.channelId, { afterId: eventId - 1, limit: 1 });
       const event = events.find((candidate) => candidate.id === eventId);
-      const sessionId = event && typeof event.payload?.sessionId === 'string'
-        ? event.payload.sessionId
-        : null;
+      const sessionId = event && typeof event.payload?.sessionId === 'string' ? event.payload.sessionId : null;
       router.push(sessionId ? `/session/${sessionId}` : `/channel/${item.channelId}`);
     } catch {
       router.push(`/channel/${item.channelId}`);
@@ -178,12 +175,14 @@ export default function ActivityScreen() {
           <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
             {title}
           </Text>
-          <Text style={{ color: colors.textSecondary, fontSize: font.sm }} numberOfLines={1}>
-            {item.snippet}
-          </Text>
+          <View style={{ maxHeight: 22, overflow: 'hidden' }}>
+            <MarkdownText text={item.snippet} variant="compact" />
+          </View>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {/* DM channel names are internal keys; the title already names the sender. */}
-            {item.kind === 'dm' ? relativeTime(item.createdAt) : `#${item.channelName} · ${relativeTime(item.createdAt)}`}
+            {item.kind === 'dm'
+              ? relativeTime(item.createdAt)
+              : `#${item.channelName} · ${relativeTime(item.createdAt)}`}
           </Text>
         </View>
       </Pressable>
@@ -211,9 +210,7 @@ export default function ActivityScreen() {
           backgroundColor: pressed ? colors.borderSoft : 'transparent',
         })}
       >
-        <View
-          style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor(status, colors) }}
-        />
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor(status, colors) }} />
         <View style={{ flex: 1 }}>
           <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
             {title}
@@ -257,8 +254,12 @@ export default function ActivityScreen() {
                 <Text style={{ color: colors.danger, fontSize: font.sm }}>Activity failed — tap to retry</Text>
               </Pressable>
             ) : (
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}>
-                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>You&rsquo;re all caught up</Text>
+              <View
+                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}
+              >
+                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
+                  You&rsquo;re all caught up
+                </Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
                   Agents you start show up here while they&rsquo;re working. Mentions and DMs land here too.
                 </Text>
