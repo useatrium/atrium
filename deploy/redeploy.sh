@@ -36,6 +36,30 @@ die(){ echo "[$(date +%H:%M:%S)] FAILED: $*" >&2; exit 1; }
 health_surface(){ curl -fsS --max-time 8 "$SURFACE_HEALTH_URL" >/dev/null 2>&1; }
 health_centaur(){ kubectl exec -n "$NS" deploy/centaur-centaur-api-rs -- curl -fsS --max-time 8 http://localhost:8080/healthz >/dev/null 2>&1; }
 
+SOURCE_CLEAN_DIRS=(
+  surface/web/src
+  surface/mobile/src
+  surface/server/src
+  surface/shared/src
+  surface/centaur-client/src
+  surface/e2e/tests
+  surface/desktop/src
+)
+
+clean_source_strays(){
+  # No -x: gitignored-by-design files remain untouched. The pathspec allowlist
+  # keeps deploy/, .claude/, surface/deploy/, and repo-root files out of scope.
+  local removed
+  removed="$(git -C "$REPO_DIR" clean -fdn -- "${SOURCE_CLEAN_DIRS[@]}" 2>/dev/null || true)"
+  if [ -n "$removed" ]; then
+    log "source clean: removing untracked strays:"
+    printf '%s\n' "$removed"
+    git -C "$REPO_DIR" clean -fd -- "${SOURCE_CLEAN_DIRS[@]}" >/dev/null || die "source clean"
+  else
+    log "source clean: no untracked strays in allowlisted source dirs"
+  fi
+}
+
 # ---- content-aware change detection (last-deployed SHA -> HEAD) ----
 LAST="$(cat "$STATE/last-deployed-sha" 2>/dev/null || true)"
 if [ -n "$LAST" ] && git -C "$REPO_DIR" cat-file -e "${LAST}^{commit}" 2>/dev/null; then
@@ -64,6 +88,7 @@ backup_db(){
 # ---------- surface ----------
 deploy_surface(){
   if [ "$need_surface" != 1 ]; then log "surface: no source change, skipping"; return; fi
+  clean_source_strays
   log "surface: building web SPA"
   sudo docker run --rm -v "$REPO_DIR/surface":/app -w /app -e CI=true node:24-alpine \
     sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm --filter @atrium/web build' || die "web build"

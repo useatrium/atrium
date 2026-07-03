@@ -49,6 +49,7 @@ import { convergeGitHubPublicReadFallback } from './github-iron-control.js';
 import type { IronControlAdminClient } from './iron-control.js';
 import { AgentProfiles } from './agent-profiles.js';
 import { agentTurnInputLine, agentTurnMessageParts, type AgentTurnAttachmentRef } from './session-attachments.js';
+import { appendReferencedEntriesAppendix } from './referenced-entries.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -1019,6 +1020,7 @@ export class SessionRuns {
     effort?: SessionEffortLevel,
     attachments: readonly AgentTurnAttachmentRef[] = [],
   ): Promise<void> {
+    text = await appendReferencedEntriesAppendix(client, { sessionId: row.id, userId, text });
     // Stickiness is enforced HERE, at the single authoritative send point:
     // harness effort is per-turn (an omitted field reverts codex to its config
     // default, and a restarted claude child forgets its flag), so every steer

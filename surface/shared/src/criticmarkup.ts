@@ -36,6 +36,7 @@ const FULL_DOCUMENT_RE =
   /^Full document: (.+) \(already synced into your workspace; my markup is v\d+, diff against v\d+\)\./;
 
 const OPENERS = ['{--', '{++', '{~~', '{==', '{>>'] as const;
+const REFERENCED_ENTRIES_APPENDIX_MARKER = '\n\n---\nReferenced entries:';
 
 export function parseCriticMarkup(source: string): CriticBlock[] {
   const blocks: CriticBlock[] = [];
@@ -109,6 +110,7 @@ export function containsCriticMarkup(text: string): boolean {
 // Coupled to surface/server/src/markup-feedback.ts composeFeedbackSteer.
 // Keep these preamble/fence/full-document strings in sync with that composer.
 export function parseMarkupSteer(text: string): ParsedMarkupSteer | null {
+  text = stripReferencedEntriesAppendix(text);
   const responseMatch = RESPONSE_PREAMBLE_RE.exec(text);
   const reviseMatch = responseMatch ? null : REVISE_PREAMBLE_RE.exec(text);
   if (!responseMatch && !reviseMatch) return null;
@@ -180,6 +182,11 @@ export function parseMarkupSteer(text: string): ParsedMarkupSteer | null {
     note,
     conflict,
   };
+}
+
+function stripReferencedEntriesAppendix(text: string): string {
+  const markerStart = text.lastIndexOf(REFERENCED_ENTRIES_APPENDIX_MARKER);
+  return markerStart >= 0 ? text.slice(0, markerStart) : text;
 }
 
 function parseProseSegments(source: string): CriticSegment[] {

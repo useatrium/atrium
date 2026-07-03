@@ -8,6 +8,33 @@ import {
 import { font, radius, space, useTheme, type Colors } from '../lib/theme';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
+const authorPrefixPattern = /^(@[A-Za-z0-9_-]+): ([\s\S]*)$/;
+
+function parseAuthorPrefix(text: string): { handle: string; body: string } | null {
+  const match = authorPrefixPattern.exec(text);
+  if (!match) return null;
+  const handle = match[1];
+  const body = match[2];
+  if (handle == null || body == null) return null;
+  return { handle, body };
+}
+
+function AuthorChipText({ handle }: { handle: string }) {
+  const { colors } = useTheme();
+  return (
+    <Text
+      style={{
+        color: colors.textMuted,
+        backgroundColor: colors.accentBg,
+        borderRadius: radius.sm,
+        fontSize: font.xs,
+        fontWeight: '800',
+      }}
+    >
+      {handle}
+    </Text>
+  );
+}
 
 function changeColors(colors: Colors) {
   return {
@@ -40,6 +67,7 @@ export function NoteRow({
   warning?: boolean;
 }) {
   const { colors } = useTheme();
+  const authorPrefix = parseAuthorPrefix(text);
   return (
     <View
       style={{
@@ -55,7 +83,14 @@ export function NoteRow({
       <Text style={{ color: warning ? colors.warning : colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
         {label}
       </Text>
-      <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 16 }}>{text}</Text>
+      {authorPrefix ? (
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 16 }}>
+          <AuthorChipText handle={authorPrefix.handle} />
+          <Text> {authorPrefix.body}</Text>
+        </Text>
+      ) : (
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 16 }}>{text}</Text>
+      )}
     </View>
   );
 }
@@ -63,6 +98,8 @@ export function NoteRow({
 function InlineCriticSegment({ segment }: { segment: Exclude<CriticSegment, { kind: 'comment' }> }) {
   const { colors } = useTheme();
   const change = changeColors(colors);
+  const highlightCommentAuthor =
+    segment.kind === 'highlight' ? parseAuthorPrefix(segment.comment) : null;
 
   switch (segment.kind) {
     case 'text':
@@ -94,7 +131,15 @@ function InlineCriticSegment({ segment }: { segment: Exclude<CriticSegment, { ki
       return (
         <Text>
           <Text style={{ color: change.highlightText, backgroundColor: change.highlightBg }}>{segment.text}</Text>
-          <Text style={{ color: colors.textMuted, fontSize: font.xs }}> Note: {segment.comment}</Text>
+          {highlightCommentAuthor ? (
+            <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+              {' Note: '}
+              <AuthorChipText handle={highlightCommentAuthor.handle} />
+              <Text> {highlightCommentAuthor.body}</Text>
+            </Text>
+          ) : (
+            <Text style={{ color: colors.textMuted, fontSize: font.xs }}> Note: {segment.comment}</Text>
+          )}
         </Text>
       );
   }
