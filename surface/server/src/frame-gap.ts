@@ -1,42 +1,37 @@
-// Frame-gap observability for the Centaur event mirror (addressable-entries H1).
+// Frame-order observability for the Centaur event mirror (addressable-entries H1).
 //
 // OBSERVABILITY ONLY — no behavior change to the live tail.
 //
-// A 2026-06-24 hand-compute established that the raw mirror (`session_events`) is
-// loss-free on the Atrium side by construction: `mirrorFrame` runs before both the
-// batched cursor flush and `foldFrame`'s GREATEST writes, so the resume cursor can
-// never advance past an un-mirrored frame. Therefore a gap in `centaur_event_id`
-// can only originate Centaur-side — eviction beyond the resume point, or sparse ids
-// by design — and reconnect-refill can't recover the eviction case.
+// Centaur's `event_id` is a global identity in its `session_events` table, then
+// filtered by `thread_key` for a session stream. Therefore per-session event ids
+// are replay watermarks, not contiguous sequence numbers: a healthy thread can
+// observe ids like 10, 14, 22 when other threads wrote 11-13 and 15-21.
 //
-// So before building any refill/alarm/hole-marker behavior (which the plan defers
-// until Centaur's id-contiguity semantics are confirmed), this instrument simply
-// DETECTS and COUNTS gaps and late frames. The counts tell us, from real data,
-// whether ids are actually contiguous and whether real loss ever occurs.
+// The raw mirror (`session_events`) is loss-free on the Atrium side by
+// construction: `mirrorFrame` runs before both the batched cursor flush and
+// `foldFrame`'s GREATEST writes, so the resume cursor can never advance past an
+// un-mirrored frame. A true per-session gap signal needs a separate Centaur wire
+// field such as `thread_event_seq`; do not infer it from `event_id`.
 
-export type FrameOrder = 'ok' | 'gap' | 'late';
+export type FrameOrder = 'ok' | 'late';
 
 /**
- * Classify a frame's `event_id` against the next expected id.
+ * Classify a frame's `event_id` against the next high watermark.
  * `expected === null` means no baseline yet (first frame of a fresh session),
- * which is always `ok`.
+ * which is always `ok`. Forward jumps are also `ok` because `event_id` is a
+ * global replay watermark, not a session-local sequence.
  */
 export function classifyFrameOrder(expected: number | null, eventId: number): FrameOrder {
   if (expected === null) return 'ok';
-  if (eventId > expected) return 'gap';
   if (eventId < expected) return 'late';
   return 'ok';
 }
 
 export interface FrameGapStats {
-  /** Forward jumps observed (a frame whose id skipped past the expected one). */
-  gapCount: number;
   /** Frames at or below an already-passed id (should be ~never given mirror dedup). */
   lateCount: number;
-  /** Sum of skipped ids across all gaps — the count of potentially-missing frames. */
-  missingTotal: number;
-  /** event_id at which the most recent gap was observed. */
-  lastGapAt: number | null;
+  /** event_id at which the most recent late frame was observed. */
+  lastLateAt: number | null;
 }
 
 const stats = new Map<string, FrameGapStats>();
@@ -44,7 +39,7 @@ const stats = new Map<string, FrameGapStats>();
 function ensure(sessionId: string): FrameGapStats {
   let s = stats.get(sessionId);
   if (!s) {
-    s = { gapCount: 0, lateCount: 0, missingTotal: 0, lastGapAt: null };
+    s = { lateCount: 0, lastLateAt: null };
     stats.set(sessionId, s);
   }
   return s;
@@ -52,9 +47,8 @@ function ensure(sessionId: string): FrameGapStats {
 
 /**
  * Record one frame observation against the expected id. Returns the classified
- * order plus `firstOfKind` — true the first time a gap (or late frame) is seen for
- * this session — so the caller can log once and avoid unbounded warn-spam if a
- * stream turns out to be persistently non-contiguous.
+ * order plus `firstOfKind` — true the first time a late frame is seen for this
+ * session — so the caller can log once and avoid unbounded warn-spam.
  */
 export function recordFrameObservation(
   sessionId: string,
@@ -65,16 +59,9 @@ export function recordFrameObservation(
   if (order === 'ok') return { order, firstOfKind: false };
 
   const s = ensure(sessionId);
-  if (order === 'gap') {
-    const firstOfKind = s.gapCount === 0;
-    s.gapCount += 1;
-    s.missingTotal += eventId - (expected as number);
-    s.lastGapAt = eventId;
-    return { order, firstOfKind };
-  }
-
   const firstOfKind = s.lateCount === 0;
   s.lateCount += 1;
+  s.lastLateAt = eventId;
   return { order, firstOfKind };
 }
 
