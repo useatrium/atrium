@@ -35,8 +35,15 @@ vi.mock('../src/s3.js', () => ({
     if (!object) throw new Error(`missing object: ${key}`);
     return Buffer.from(object.body);
   },
-  getObjectStream: async () => {
-    throw new Error('unused');
+  getObjectStream: async (key: string) => {
+    const { Readable } = await import('node:stream');
+    const object = mockedS3.storage.objects.get(key);
+    if (!object) throw new Error(`missing object: ${key}`);
+    return {
+      stream: Readable.from([object.body]),
+      contentType: object.contentType,
+      contentLength: object.body.byteLength,
+    };
   },
   headObject: async (key: string) => {
     const object = mockedS3.storage.objects.get(key);
@@ -120,7 +127,7 @@ describe('POST /api/entries/:handle/extract', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json()).toEqual({
       artifactId: expect.any(String),
-      path: `shared/markup/release-notes-${handle}.md`,
+      path: `shared/channels/${fx.channelId}/markup/release-notes-${handle}.md`,
       seq: 1,
       workspaceId: fx.workspaceId,
     });
@@ -150,7 +157,7 @@ describe('POST /api/entries/:handle/extract', () => {
       [res.json().artifactId],
     );
     expect(ledger.rows[0]).toMatchObject({
-      path: `shared/markup/release-notes-${handle}.md`,
+      path: `shared/channels/${fx.channelId}/markup/release-notes-${handle}.md`,
       merge_class: 'mergeable-doc',
       seq: 1,
       author: `human:${fx.userId}`,
@@ -166,6 +173,34 @@ describe('POST /api/entries/:handle/extract', () => {
     expect(stored?.body.toString('utf8')).toContain(`extracted_by: "${fx.userId}"`);
     expect(stored?.body.toString('utf8')).toMatch(/extracted_at: "\d{4}-\d{2}-\d{2}T/);
     expect(stored?.body.toString('utf8').endsWith('\n# Release Notes\n\nBody text stays verbatim.')).toBe(true);
+  });
+
+  it('makes the extracted markdown readable through the artifact content route', async () => {
+    const cookie = await authCookie(fx.userId);
+    const event = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: '# Readable Extract\n\nRoute body.',
+    });
+    const handle = encodeEventHandle(event.id);
+
+    const extract = await app.inject({
+      method: 'POST',
+      url: `/api/entries/${handle}/extract`,
+      headers: { cookie },
+      payload: {},
+    });
+    expect(extract.statusCode).toBe(201);
+
+    const content = await app.inject({
+      method: 'GET',
+      url: `/api/files/artifact/${extract.json().artifactId}/content?at=1`,
+      headers: { cookie },
+    });
+
+    expect(content.statusCode).toBe(200);
+    expect(content.body).toContain(`source_entry: "${handle}"`);
   });
 
   it('returns an existing extraction without writing another version', async () => {

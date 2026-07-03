@@ -6,6 +6,7 @@ delete process.env.NO_COLOR;
 
 const serverPort = Number(process.env.E2E_SERVER_PORT ?? 3101);
 const webPort = Number(process.env.E2E_WEB_PORT ?? 5273);
+const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100);
 const databaseUrl =
   process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const baseURL = `http://127.0.0.1:${webPort}`;
@@ -47,9 +48,20 @@ export default defineConfig({
         E2E_SERVER_PORT: String(serverPort),
         E2E_WEB_PORT: String(webPort),
         PORT: String(serverPort),
+        CENTAUR_BASE_URL: `http://127.0.0.1:${centaurPort}`,
+        CENTAUR_API_KEY: 'e2e-centaur-key',
         LOG_LEVEL: process.env.LOG_LEVEL ?? 'error',
         ATRIUM_RATE_LIMIT: '0',
         ARTIFACT_CAPTURE_API_KEY: 'e2e-capture-key',
+      },
+    },
+    {
+      command: `node centaur-stub.mjs`,
+      url: `http://127.0.0.1:${centaurPort}/healthz`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+      env: {
+        PORT: String(centaurPort),
       },
     },
     {
