@@ -91,6 +91,9 @@ export function Sidebar({
   onLogout,
   isOpen = false,
   onClose,
+  settingsRequestSeq,
+  createChannelRequestSeq,
+  startDmRequestSeq,
 }: {
   workspaceName: string;
   channels: Channel[];
@@ -116,6 +119,9 @@ export function Sidebar({
   onLogout: () => void;
   isOpen?: boolean;
   onClose?: () => void;
+  settingsRequestSeq?: number;
+  createChannelRequestSeq?: number;
+  startDmRequestSeq?: number;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -130,21 +136,27 @@ export function Sidebar({
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const settingsPopoverRef = useRef<HTMLDivElement | null>(null);
   const firstSettingsControlRef = useRef<HTMLButtonElement | null>(null);
+  const lastSettingsRequestSeq = useRef(settingsRequestSeq);
+  const lastCreateChannelRequestSeq = useRef(createChannelRequestSeq);
+  const lastStartDmRequestSeq = useRef(startDmRequestSeq);
 
   const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
   const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
 
-  const openDmPicker = () => {
-    setDmPicking((v) => !v);
+  const loadPeople = useCallback(() => {
+    if (people !== null) return;
+    api
+      .users()
+      .then(({ users }) => setPeople(users))
+      .catch(() => setPeople([]));
+  }, [people]);
+
+  const openDmPicker = useCallback((forceOpen = false) => {
+    setDmPicking((v) => (forceOpen ? true : !v));
     setDmQuery('');
     setSelectedDmIds(new Set());
-    if (people === null) {
-      api
-        .users()
-        .then(({ users }) => setPeople(users))
-        .catch(() => setPeople([]));
-    }
-  };
+    loadPeople();
+  }, [loadPeople]);
   const dmCandidates = (people ?? []).filter(
     (u) =>
       u.handle.toLowerCase().includes(dmQuery.trim().toLowerCase()) ||
@@ -198,6 +210,25 @@ export function Sidebar({
     closeOnOutsidePointer: true,
     onClose: closeSettings,
   });
+
+  useEffect(() => {
+    if (settingsRequestSeq == null || lastSettingsRequestSeq.current === settingsRequestSeq) return;
+    lastSettingsRequestSeq.current = settingsRequestSeq;
+    setSettingsOpen(true);
+  }, [settingsRequestSeq]);
+
+  useEffect(() => {
+    if (createChannelRequestSeq == null || lastCreateChannelRequestSeq.current === createChannelRequestSeq) return;
+    lastCreateChannelRequestSeq.current = createChannelRequestSeq;
+    setCreating(true);
+    setError(null);
+  }, [createChannelRequestSeq]);
+
+  useEffect(() => {
+    if (startDmRequestSeq == null || lastStartDmRequestSeq.current === startDmRequestSeq) return;
+    lastStartDmRequestSeq.current = startDmRequestSeq;
+    openDmPicker(true);
+  }, [openDmPicker, startDmRequestSeq]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -357,7 +388,7 @@ export function Sidebar({
             <div className={`${SIDEBAR_SUBHEAD_CLASS} mt-2 border-t border-edge pt-2`}>
               <span>Direct messages</span>
               <button
-                onClick={openDmPicker}
+                onClick={() => openDmPicker()}
                 title="Start a DM"
                 aria-label="Start a DM"
                 className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
