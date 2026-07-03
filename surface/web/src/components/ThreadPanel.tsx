@@ -75,7 +75,7 @@ export function ThreadPanel({
   const items = useMemo(() => buildTimelineItems(replies), [replies]);
 
   return (
-    <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+    <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
         <h2 className="text-sm font-semibold text-fg">
           Thread

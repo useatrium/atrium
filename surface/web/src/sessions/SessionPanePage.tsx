@@ -282,7 +282,7 @@ function SessionPanePagePlaceholder({
   sessionId: string;
 }) {
   return (
-    <aside className="flex min-w-0 flex-1 flex-col border-l border-edge bg-surface/60">
+    <aside className="flex min-w-0 flex-1 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
         <h2 className="text-sm font-semibold text-fg">Session</h2>
         <a

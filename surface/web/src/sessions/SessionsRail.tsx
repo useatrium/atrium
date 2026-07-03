@@ -48,7 +48,7 @@ export function SessionsRail({
   const total = groups.reduce((n, g) => n + g.sessions.length, 0);
 
   return (
-    <aside className="flex w-[min(340px,30vw)] shrink-0 flex-col border-l border-edge bg-surface/60">
+    <aside className="flex w-[min(340px,30vw)] shrink-0 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
         <h2 className="text-sm font-semibold text-fg">Sessions</h2>
         {total > 0 && <span className="text-2xs tabular-nums text-fg-muted">{total}</span>}
