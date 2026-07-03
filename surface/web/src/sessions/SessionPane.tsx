@@ -1611,12 +1611,30 @@ export function AnnotatedTranscriptRow({
   onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
   children: ReactNode;
 }) {
-  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const linkCopyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textCopyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [textCopied, setTextCopied] = useState(false);
+  const [hasCopyableText, setHasCopyableText] = useState(false);
+
+  const rowText = useCallback(() => {
+    const node = contentRef.current;
+    if (!node) return '';
+    const raw = typeof node.innerText === 'string' ? node.innerText : (node.textContent ?? '');
+    return raw.trim();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!handle) return;
+    const next = rowText().length > 0;
+    setHasCopyableText((current) => (current === next ? current : next));
+  }, [children, handle, rowText]);
 
   useEffect(() => {
     return () => {
-      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+      if (linkCopyResetRef.current) clearTimeout(linkCopyResetRef.current);
+      if (textCopyResetRef.current) clearTimeout(textCopyResetRef.current);
     };
   }, []);
 
@@ -1633,8 +1651,27 @@ export function AnnotatedTranscriptRow({
       .writeText(`${origin}/e/${handle}`)
       .then(() => {
         setLinkCopied(true);
-        if (copyResetRef.current) clearTimeout(copyResetRef.current);
-        copyResetRef.current = setTimeout(() => setLinkCopied(false), 1400);
+        if (linkCopyResetRef.current) clearTimeout(linkCopyResetRef.current);
+        linkCopyResetRef.current = setTimeout(() => setLinkCopied(false), 1400);
+      })
+      .catch(() => {});
+  };
+
+  const copyBlockText = () => {
+    if (typeof navigator === 'undefined') return;
+    const text = rowText();
+    if (!text) {
+      setHasCopyableText(false);
+      return;
+    }
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) return;
+    void clipboard
+      .writeText(text)
+      .then(() => {
+        setTextCopied(true);
+        if (textCopyResetRef.current) clearTimeout(textCopyResetRef.current);
+        textCopyResetRef.current = setTimeout(() => setTextCopied(false), 1400);
       })
       .catch(() => {});
   };
@@ -1644,21 +1681,38 @@ export function AnnotatedTranscriptRow({
       data-entry-handle={handle}
       className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
-      {children}
-      <div className="absolute -top-1 right-0 z-10 flex items-start gap-1">
-        <EntryReferencesChip summary={references} />
+      <div ref={contentRef} className="contents">
+        {children}
+      </div>
+      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex items-start gap-1">
+        <div className="pointer-events-auto">
+          <EntryReferencesChip summary={references} />
+        </div>
         <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
           <button
             type="button"
             onClick={copyEntryLink}
             title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
             aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-            className={`rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs shadow-sm hover:bg-edge-strong hover:text-fg ${
+            className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
               linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
             }`}
           >
-            <LinkIcon />
+            {linkCopied ? <CheckIcon /> : <LinkIcon />}
           </button>
+          {hasCopyableText && (
+            <button
+              type="button"
+              onClick={copyBlockText}
+              title={textCopied ? 'Copied block text' : 'Copy block text'}
+              aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+              className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+              }`}
+            >
+              {textCopied ? <CheckIcon /> : <CopyIcon />}
+            </button>
+          )}
           {canDiscuss && (
             <button
               type="button"
@@ -1695,6 +1749,45 @@ export function AnnotatedTranscriptRow({
         </div>
       </div>
     </div>
+  );
+}
+
+function CopyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect width="13" height="13" x="9" y="9" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 

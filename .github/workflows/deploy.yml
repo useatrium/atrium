@@ -31,9 +31,19 @@ jobs:
           set -euo pipefail
           cd "$HOME/atrium"
           git fetch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deploy
-          git reset FETCH_HEAD          # HEAD+index -> deploy; working tree untouched
-          git checkout -f -- .          # materialize tracked files (first-run conversion-safe)
-          git reset --hard FETCH_HEAD   # finalize; box-local untracked files (.env, overrides) preserved
+          git reset --hard FETCH_HEAD
+          clean_paths=(
+            surface/web/src
+            surface/web/test
+            surface/mobile/src
+            surface/mobile/app
+            surface/e2e/tests
+            surface/server/src
+            surface/shared/src
+            surface/centaur-client/src
+          )
+          git clean -ffd -n "${clean_paths[@]}"
+          git clean -ffd "${clean_paths[@]}"
           echo "deploying:"; git log --oneline -1
       - name: Redeploy (build-changed, health-gated, auto-rollback)
         run: |
