@@ -13,6 +13,7 @@ import {
 import { useTheme } from '../../src/lib/theme';
 import { NATIVE_CALL_UI } from '../../src/lib/nativeCallUi';
 import { GlobalCallUI } from '../../src/components/GlobalCallUI';
+import { useBadgeSync } from '../../src/lib/useBadgeSync';
 
 // The tap that cold-started the app fires before any listener exists; track
 // what we've already routed so remounts don't re-navigate.
@@ -78,12 +79,20 @@ function PushBridge() {
   return NATIVE_CALL_UI ? <NativeVoipPushBridge api={api} /> : null;
 }
 
+// === mobile-client additions ===
+function BadgeSyncBridge() {
+  const { state } = useChat();
+  useBadgeSync(state.unread);
+  return null;
+}
+
 export default function AppLayout() {
   const session = useRequiredSession();
   const { colors } = useTheme();
   return (
     <ChatProvider session={session}>
       <PushBridge />
+      <BadgeSyncBridge />
       <View style={{ flex: 1 }}>
         <GlobalCallUI />
         <Stack

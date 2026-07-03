@@ -17,8 +17,6 @@
         "NSMicrophoneUsageDescription": "Allow Atrium to record voice messages and calls.",
         "UIBackgroundModes": [
           "audio",
-          "voip",
-          "audio",
           "voip"
         ],
         "ITSAppUsesNonExemptEncryption": false
