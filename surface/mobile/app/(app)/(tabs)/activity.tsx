@@ -149,7 +149,7 @@ export default function ActivityScreen() {
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${title}, #${item.channelName}`}
+        accessibilityLabel={item.kind === 'dm' ? title : `${title}, #${item.channelName}`}
         onPress={() => void openActivity(item)}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -182,7 +182,8 @@ export default function ActivityScreen() {
             {item.snippet}
           </Text>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-            #{item.channelName} · {relativeTime(item.createdAt)}
+            {/* DM channel names are internal keys; the title already names the sender. */}
+            {item.kind === 'dm' ? relativeTime(item.createdAt) : `#${item.channelName} · ${relativeTime(item.createdAt)}`}
           </Text>
         </View>
       </Pressable>

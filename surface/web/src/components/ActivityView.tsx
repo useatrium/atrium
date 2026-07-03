@@ -128,7 +128,10 @@ export function ActivityView({
                       <span className="shrink-0 text-2xs text-fg-faint">{relativeTime(item.createdAt)}</span>
                     </span>
                     <span className="mt-0.5 block truncate text-sm text-fg-secondary">{item.snippet}</span>
-                    <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
+                    {/* DM channel names are internal keys; the title already names the sender. */}
+                    {item.kind !== 'dm' && (
+                      <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
+                    )}
                   </span>
                 </button>
               </li>
