@@ -37,7 +37,7 @@ export async function extractEntryToMarkdownArtifact(
 
   const scope = await resolveExtractScope(pool, params.handle);
   const title = deriveTitle(params.entry.text);
-  const path = `shared/markup/${slugForTitle(title)}-${params.handle}.md`;
+  const path = `shared/channels/${scope.channelId}/markup/${slugForTitle(title)}-${params.handle}.md`;
 
   const existing = await latestArtifactAtPath(pool, scope.workspaceId, path);
   if (existing) {

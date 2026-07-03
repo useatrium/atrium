@@ -83,6 +83,7 @@ export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(fu
       },
       attributes: {
         'aria-label': 'Rendered markdown editor with suggesting mode',
+        'data-testid': 'markup-editor',
         class: 'atrium-markup-prosemirror',
       },
     });
