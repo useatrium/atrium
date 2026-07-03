@@ -13,6 +13,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
@@ -75,6 +76,7 @@ import {
 } from '../../../src/lib/entryReferences';
 import { useRequiredSession } from '../../../src/lib/session';
 import { isEntryHandle } from '../../../src/lib/entryLinks';
+import { selectionHaptic } from '../../../src/lib/haptics';
 
 function transcriptEntryHandle(item: SessionItem): string | null {
   const handle = item.handle;
@@ -83,6 +85,10 @@ function transcriptEntryHandle(item: SessionItem): string | null {
 
 function entryUrl(serverUrl: string, handle: string): string {
   return `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(handle)} `;
+}
+
+function entryLink(serverUrl: string, handle: string): string {
+  return `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(handle)}`;
 }
 
 function referenceLabel(ref: EntryReference): string {
@@ -136,6 +142,124 @@ function TranscriptRowFrame({
       {children}
       <DiscussedChip count={reference.count} onPress={onOpenReference} />
     </View>
+  );
+}
+
+type TranscriptActionTarget = {
+  handle: string | null;
+  text: string;
+  link: string | null;
+};
+
+function TranscriptActionsSheet({
+  target,
+  onClose,
+  onDiscuss,
+}: {
+  target: TranscriptActionTarget | null;
+  onClose: () => void;
+  onDiscuss: (handle: string) => void;
+}) {
+  const { colors, reduceMotion } = useTheme();
+  const [copied, setCopied] = useState<'text' | 'link' | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setCopied(null);
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, [target]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    };
+  }, []);
+
+  const copy = (kind: 'text' | 'link', value: string) => {
+    selectionHaptic();
+    void Clipboard.setStringAsync(value)
+      .then(() => {
+        setCopied(kind);
+        if (closeTimer.current) clearTimeout(closeTimer.current);
+        closeTimer.current = setTimeout(() => {
+          closeTimer.current = null;
+          setCopied(null);
+          onClose();
+        }, 700);
+      })
+      .catch(() => onClose());
+  };
+
+  const Action = ({
+    label,
+    onPress,
+  }: {
+    label: string;
+    onPress: () => void;
+  }) => (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        minHeight: 44,
+        justifyContent: 'center',
+        paddingVertical: 13,
+        paddingHorizontal: space.lg,
+        backgroundColor: pressed ? colors.bgPressed : 'transparent',
+      })}
+    >
+      <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '500' }}>{label}</Text>
+    </Pressable>
+  );
+
+  return (
+    <Modal visible={target != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
+      <Pressable
+        accessible={false}
+        importantForAccessibility="no"
+        style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
+        onPress={onClose}
+      >
+        <Pressable
+          accessible={false}
+          onPress={() => {}}
+          style={{
+            backgroundColor: colors.bgElevated,
+            borderTopLeftRadius: radius.lg,
+            borderTopRightRadius: radius.lg,
+            paddingBottom: 24,
+            paddingTop: space.md,
+          }}
+        >
+          <View style={{ height: 1, backgroundColor: colors.border }} />
+          {target ? (
+            <>
+              <Action label={copied === 'text' ? 'Copied' : 'Copy text'} onPress={() => copy('text', target.text)} />
+              {target.link ? (
+                <Action
+                  label={copied === 'link' ? 'Copied link' : 'Copy link'}
+                  onPress={() => copy('link', target.link ?? '')}
+                />
+              ) : null}
+              {target.handle ? (
+                <Action
+                  label="Discuss in thread"
+                  onPress={() => {
+                    onClose();
+                    onDiscuss(target.handle ?? '');
+                  }}
+                />
+              ) : null}
+            </>
+          ) : null}
+          <Action label="Cancel" onPress={onClose} />
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -671,6 +795,7 @@ export default function SessionScreen() {
   const [suggestText, setSuggestText] = useState('');
   const [references, setReferences] = useState<EntryReferenceMap>({});
   const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
+  const [transcriptActionTarget, setTranscriptActionTarget] = useState<TranscriptActionTarget | null>(null);
   const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
   const referenceFetchKeys = useRef<Set<string>>(new Set());
   const focusedForReferences = useRef(false);
@@ -1140,14 +1265,17 @@ export default function SessionScreen() {
   );
 
   const openTranscriptActions = useCallback(
-    (handle: string | null) => {
-      if (!handle || sessionThreadRootEventId == null) return;
-      Alert.alert('Transcript entry', undefined, [
-        { text: 'Discuss in thread', onPress: () => discussInThread(handle) },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+    (handle: string | null, text: string) => {
+      const copyText = text.trim();
+      if (!copyText) return;
+      const canLinkEntry = handle != null && sessionThreadRootEventId != null;
+      setTranscriptActionTarget({
+        handle,
+        text: copyText,
+        link: canLinkEntry ? entryLink(chat.serverUrl, handle) : null,
+      });
     },
-    [discussInThread, sessionThreadRootEventId],
+    [chat.serverUrl, sessionThreadRootEventId],
   );
 
   // Answer proposals (driver-side resolution).
@@ -1365,9 +1493,9 @@ export default function SessionScreen() {
                   >
                     {item.type === 'text' ? (
                       <Pressable
-                        onLongPress={() => openTranscriptActions(handle)}
+                        onLongPress={() => openTranscriptActions(handle, item.text)}
                         delayLongPress={300}
-                        disabled={!handle || sessionThreadRootEventId == null}
+                        disabled={!item.text.trim()}
                       >
                         <TextBlock item={item} />
                       </Pressable>
@@ -1723,6 +1851,12 @@ export default function SessionScreen() {
         turns={turns}
         onJump={jumpToItem}
         onClose={() => setTurnsOpen(false)}
+      />
+
+      <TranscriptActionsSheet
+        target={transcriptActionTarget}
+        onClose={() => setTranscriptActionTarget(null)}
+        onDiscuss={discussInThread}
       />
     </View>
   );

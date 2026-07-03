@@ -24,6 +24,7 @@ vi.mock('react-native-safe-area-context', () => ({
 
 type ActionTarget = ChatMessage & {
   actionCopyText?: string;
+  actionCopyLink?: string;
 };
 
 function message(overrides: Partial<ActionTarget> = {}): ActionTarget {
@@ -113,5 +114,39 @@ describe('MessageActions', () => {
     expect(screen.queryByLabelText(/^React with /)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delete message' })).not.toBeInTheDocument();
+  });
+
+  it('copies block links and shows copied feedback before closing', async () => {
+    const onClose = vi.fn();
+    renderWithTheme(
+      <MessageActions
+        message={message({
+          sessionId: 's-1',
+          actionCopyText: 'Agent session',
+          actionCopyLink: 'http://127.0.0.1:3104/e/evt_42',
+        })}
+        mine
+        canReply
+        onClose={onClose}
+        onReact={vi.fn()}
+        onReply={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    await act(async () => {});
+
+    expect(setStringAsync).toHaveBeenCalledWith('http://127.0.0.1:3104/e/evt_42');
+    expect(selectionAsync).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Copied link' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

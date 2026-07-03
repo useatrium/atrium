@@ -10,6 +10,7 @@ import {
   type MessageReaction,
   type Session,
 } from '@atrium/surface-client';
+import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
@@ -23,6 +24,7 @@ const IMAGE_MAX_W = 240;
 
 type MessageActionTarget = ChatMessage & {
   actionCopyText?: string;
+  actionCopyLink?: string;
 };
 
 export interface MessageRowProps {
@@ -375,9 +377,20 @@ function actionCopyTextForMessage(message: ChatMessage, session: Session | undef
   return message.text.trim() ? message.text : null;
 }
 
-function actionTargetForMessage(message: ChatMessage, copyText: string | null): ChatMessage {
-  if (copyText == null || copyText === message.text) return message;
-  return { ...message, actionCopyText: copyText } as MessageActionTarget;
+type MessageWithHandle = ChatMessage & { handle?: string | null };
+
+function entryHandleForAction(message: ChatMessage): string | null {
+  if (message.deleted === true || message.status !== 'confirmed') return null;
+  const explicitHandle = (message as MessageWithHandle).handle;
+  if (typeof explicitHandle === 'string' && explicitHandle.length > 0) return explicitHandle;
+  return message.id != null ? encodeEventHandle(message.id) : null;
+}
+
+function actionTargetForMessage(message: ChatMessage, copyText: string | null, copyLink: string | null): ChatMessage {
+  const target =
+    copyText == null || copyText === message.text ? message : ({ ...message, actionCopyText: copyText } as MessageActionTarget);
+  if (copyLink == null) return target;
+  return { ...target, actionCopyLink: copyLink } as MessageActionTarget;
 }
 
 export const MessageRow = memo(function MessageRow({
@@ -421,7 +434,9 @@ export const MessageRow = memo(function MessageRow({
   const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
   const copyText = actionCopyTextForMessage(m, session, rowText);
-  const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null);
+  const entryHandle = entryHandleForAction(m);
+  const copyLink = entryHandle ? `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(entryHandle)}` : null;
+  const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null || copyLink != null);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
     ...(!tombstone && !sessionBlock && onOpenThread && !inThread
@@ -429,6 +444,7 @@ export const MessageRow = memo(function MessageRow({
       : []),
     ...(!tombstone && !sessionBlock ? [{ name: 'react', label: 'React' }] : []),
     ...(copyText != null ? [{ name: 'copy', label: 'Copy text' }] : []),
+    ...(copyLink != null ? [{ name: 'copy_link', label: 'Copy link' }] : []),
     ...(own && !tombstone && !sessionBlock
       ? [
           { name: 'edit', label: 'Edit message' },
@@ -447,8 +463,8 @@ export const MessageRow = memo(function MessageRow({
       onOpenThread(m);
       return;
     }
-    if (['react', 'copy', 'edit', 'delete'].includes(name) && canOpenActionMenu) {
-      onLongPress(actionTargetForMessage(m, copyText));
+    if (['react', 'copy', 'copy_link', 'edit', 'delete'].includes(name) && canOpenActionMenu) {
+      onLongPress(actionTargetForMessage(m, copyText, copyLink));
     }
   };
 
@@ -511,7 +527,7 @@ export const MessageRow = memo(function MessageRow({
         onLongPress={() => {
           if (!canOpenActionMenu) return;
           lightImpactHaptic();
-          onLongPress(actionTargetForMessage(m, copyText));
+          onLongPress(actionTargetForMessage(m, copyText, copyLink));
         }}
         delayLongPress={250}
         style={({ pressed }) => ({
@@ -549,7 +565,7 @@ export const MessageRow = memo(function MessageRow({
           onAccessibilityAction={onAccessibilityAction}
           onLongPress={() => {
             lightImpactHaptic();
-            onLongPress(actionTargetForMessage(m, copyText));
+            onLongPress(actionTargetForMessage(m, copyText, copyLink));
           }}
           delayLongPress={250}
           style={({ pressed }) => ({
