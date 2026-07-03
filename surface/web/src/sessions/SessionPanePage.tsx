@@ -51,6 +51,7 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
   const [watchers, setWatchers] = useState<UserRef[]>([]);
   const [failedSteer, setFailedSteer] = useState<string | null>(null);
   const [failedCancel, setFailedCancel] = useState(false);
+  const [hasUnseenOutputs, setHasUnseenOutputs] = useState(false);
   const lastSessionTypingSentRef = useRef(0);
   const { onSessionTyping, sessionTyping } = useTypingIndicators({
     activeChannelId: null,
@@ -107,6 +108,7 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
       }
       setSession(null);
       setWatchers([]);
+      setHasUnseenOutputs(false);
       setLoadState('loading');
       try {
         const { session: wire } = await sessionsApi.get(sessionId);
@@ -161,8 +163,8 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
   );
 
   useEffect(() => {
-    if (session) document.title = sessionPaneDocumentTitle(session);
-  }, [session]);
+    if (session) document.title = sessionPaneDocumentTitle(session, { unseen: hasUnseenOutputs });
+  }, [hasUnseenOutputs, session]);
 
   const notifySessionTyping = useCallback(() => {
     const now = Date.now();
@@ -233,6 +235,8 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
           agentProfiles={agentProfiles}
           layout="focus"
           popout
+          onUnseenOutputs={setHasUnseenOutputs}
+          filesDefaultScope="session"
         />
       ) : (
         <SessionPanePagePlaceholder notFound={loadState === 'not-found'} sessionId={sessionId} />
