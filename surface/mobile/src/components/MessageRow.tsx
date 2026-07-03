@@ -21,6 +21,10 @@ import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve
 
 const IMAGE_MAX_W = 240;
 
+type MessageActionTarget = ChatMessage & {
+  actionCopyText?: string;
+};
+
 export interface MessageRowProps {
   message: ChatMessage;
   grouped: boolean;
@@ -323,12 +327,57 @@ function questionPayloadAnswers(
     .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
 }
 
+function compactLines(lines: Array<string | null | undefined>): string {
+  return lines
+    .map((line) => line?.trim() ?? '')
+    .filter((line) => line.length > 0)
+    .join('\n');
+}
+
 function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
   if (type === 'question_requested') return 'Question asked';
   if (type === 'question_answered') return 'Question answered';
   if (reason === 'empty') return 'Question expired without an answer';
   if (reason === 'cancelled') return 'Question cancelled';
   return 'Question resolved';
+}
+
+function sessionEventVisibleText(message: ChatMessage): string {
+  const payload = message.sessionEventPayload ?? {};
+  const questions = questionPayloadPrompts(payload);
+  const answers = questionPayloadAnswers(payload);
+  const questionText = questions[0]?.question ?? 'Agent asked a question';
+  const lines = [sessionQuestionEventLabel(message.sessionEventType, payload.reason)];
+  if (message.sessionEventType === 'question_requested') lines.push(questionText);
+  for (const answer of answers) {
+    lines.push(answer.header);
+    lines.push(
+      answer.answers.length > 0
+        ? answer.answers.join('\n')
+        : answer.count === 1
+          ? '1 answer recorded'
+          : `${answer.count} answers recorded`,
+    );
+  }
+  return compactLines(lines);
+}
+
+function sessionCardVisibleText(message: ChatMessage, session?: Session): string {
+  const title = (typeof session?.title === 'string' ? session.title : message.text).trim() || 'Agent session';
+  const resultText = typeof session?.resultText === 'string' ? session.resultText : '';
+  return compactLines([title, resultText]);
+}
+
+function actionCopyTextForMessage(message: ChatMessage, session: Session | undefined, rowText: string): string | null {
+  if (message.deleted === true) return null;
+  if (message.sessionEventType != null) return sessionEventVisibleText(message) || rowText;
+  if (message.sessionId != null) return sessionCardVisibleText(message, session) || rowText;
+  return message.text.trim() ? message.text : null;
+}
+
+function actionTargetForMessage(message: ChatMessage, copyText: string | null): ChatMessage {
+  if (copyText == null || copyText === message.text) return message;
+  return { ...message, actionCopyText: copyText } as MessageActionTarget;
 }
 
 export const MessageRow = memo(function MessageRow({
@@ -357,24 +406,30 @@ export const MessageRow = memo(function MessageRow({
   const pending = m.status === 'pending';
   const failed = m.status === 'failed';
   const tombstone = m.deleted === true;
+  const sessionBlock = m.sessionId != null || m.sessionEventType != null;
   const attachmentDescription = m.attachments?.length
     ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
     : '';
+  const blockRowText =
+    m.sessionEventType != null ? sessionEventVisibleText(m) : m.sessionId != null ? sessionCardVisibleText(m, session) : '';
   const rowText = tombstone
     ? 'Message deleted'
-    : m.text.trim() ||
+    : (sessionBlock ? blockRowText : m.text.trim()) ||
+      m.text.trim() ||
       (m.voice ? 'Voice message' : attachmentDescription) ||
       (m.sessionId ? 'Agent session' : 'Message');
   const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
+  const copyText = actionCopyTextForMessage(m, session, rowText);
+  const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
-    ...(!tombstone && m.sessionId == null && onOpenThread && !inThread
+    ...(!tombstone && !sessionBlock && onOpenThread && !inThread
       ? [{ name: 'reply', label: 'Reply in thread' }]
       : []),
-    ...(!tombstone && m.sessionId == null ? [{ name: 'react', label: 'React' }] : []),
-    ...(m.text.trim() ? [{ name: 'copy', label: 'Copy text' }] : []),
-    ...(own && !tombstone && m.sessionId == null
+    ...(!tombstone && !sessionBlock ? [{ name: 'react', label: 'React' }] : []),
+    ...(copyText != null ? [{ name: 'copy', label: 'Copy text' }] : []),
+    ...(own && !tombstone && !sessionBlock
       ? [
           { name: 'edit', label: 'Edit message' },
           { name: 'delete', label: 'Delete message' },
@@ -392,7 +447,9 @@ export const MessageRow = memo(function MessageRow({
       onOpenThread(m);
       return;
     }
-    if (['react', 'copy', 'edit', 'delete'].includes(name)) onLongPress(m);
+    if (['react', 'copy', 'edit', 'delete'].includes(name) && canOpenActionMenu) {
+      onLongPress(actionTargetForMessage(m, copyText));
+    }
   };
 
   const body = tombstone ? (
@@ -452,9 +509,9 @@ export const MessageRow = memo(function MessageRow({
         accessibilityActions={accessibilityActions}
         onAccessibilityAction={onAccessibilityAction}
         onLongPress={() => {
-          if (tombstone || m.sessionId != null) return;
+          if (!canOpenActionMenu) return;
           lightImpactHaptic();
-          onLongPress(m);
+          onLongPress(actionTargetForMessage(m, copyText));
         }}
         delayLongPress={250}
         style={({ pressed }) => ({
@@ -492,7 +549,7 @@ export const MessageRow = memo(function MessageRow({
           onAccessibilityAction={onAccessibilityAction}
           onLongPress={() => {
             lightImpactHaptic();
-            onLongPress(m);
+            onLongPress(actionTargetForMessage(m, copyText));
           }}
           delayLongPress={250}
           style={({ pressed }) => ({

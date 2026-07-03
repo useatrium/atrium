@@ -172,9 +172,13 @@ export const MessageRow = memo(function MessageRow({
   const emojiRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mouseOpenedPickerRef = useRef(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [textCopied, setTextCopied] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState<Set<string>>(() => new Set());
-  const copyResetRef = useRef<number | null>(null);
+  const linkCopyResetRef = useRef<number | null>(null);
+  const textCopyResetRef = useRef<number | null>(null);
+  const copyableMessageText = m.text.trim();
+  const canCopyMessageText = !m.voice && copyableMessageText.length > 0;
   const react = (emoji: string) => {
     setPickerOpen(false);
     onReact?.(m, emoji).catch(() => {});
@@ -206,14 +210,28 @@ export const MessageRow = memo(function MessageRow({
       .writeText(`${origin}/e/${entryHandle}`)
       .then(() => {
         setLinkCopied(true);
-        if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
-        copyResetRef.current = window.setTimeout(() => setLinkCopied(false), 1400);
+        if (linkCopyResetRef.current) window.clearTimeout(linkCopyResetRef.current);
+        linkCopyResetRef.current = window.setTimeout(() => setLinkCopied(false), 1400);
       })
       .catch(() => {});
   }, [entryHandle]);
+  const copyBlockText = useCallback(() => {
+    if (!copyableMessageText || typeof navigator === 'undefined') return;
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) return;
+    void clipboard
+      .writeText(copyableMessageText)
+      .then(() => {
+        setTextCopied(true);
+        if (textCopyResetRef.current) window.clearTimeout(textCopyResetRef.current);
+        textCopyResetRef.current = window.setTimeout(() => setTextCopied(false), 1400);
+      })
+      .catch(() => {});
+  }, [copyableMessageText]);
   useEffect(() => {
     return () => {
-      if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+      if (linkCopyResetRef.current) window.clearTimeout(linkCopyResetRef.current);
+      if (textCopyResetRef.current) window.clearTimeout(textCopyResetRef.current);
     };
   }, []);
   const attachments = m.attachments ?? [];
@@ -546,11 +564,27 @@ export const MessageRow = memo(function MessageRow({
                 }}
                 title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
                 aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-                className={`rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs shadow-sm hover:bg-edge-strong hover:text-fg ${
+                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
                   linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
                 }`}
               >
-                <LinkIcon />
+                {linkCopied ? <CheckIcon /> : <LinkIcon />}
+              </button>
+            )}
+            {canAnnotate && canCopyMessageText && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPickerOpen(false);
+                  copyBlockText();
+                }}
+                title={textCopied ? 'Copied block text' : 'Copy block text'}
+                aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                  textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                }`}
+              >
+                {textCopied ? <CheckIcon /> : <CopyIcon />}
               </button>
             )}
             {canMarkupReply && entryHandle && (
@@ -638,6 +672,45 @@ function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {
       <FileIcon />
       <span className="max-w-56 truncate">File removed</span>
     </div>
+  );
+}
+
+function CopyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect width="13" height="13" x="9" y="9" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 

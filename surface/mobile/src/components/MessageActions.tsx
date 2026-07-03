@@ -1,5 +1,6 @@
 // Long-press action sheet for a message: quick reactions + reply/edit/delete.
 
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -8,6 +9,10 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { selectionHaptic } from '../lib/haptics';
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🔥', '😢', '🚀', '🙏', '💯', '🤔'];
+
+type MessageActionMetadata = {
+  actionCopyText?: unknown;
+};
 
 export interface MessageActionsProps {
   message: ChatMessage | null;
@@ -68,9 +73,46 @@ export function MessageActions({
 }: MessageActionsProps) {
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
+  const [copied, setCopied] = useState(false);
+  const closeAfterCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const m = message;
-  const confirmed = m?.status === 'confirmed' && m.id != null;
-  const canCopy = !!m?.text.trim();
+  const deleted = m?.deleted === true;
+  const confirmed = !deleted && m?.status === 'confirmed' && m.id != null;
+  const sessionBlock = m?.sessionId != null || m?.sessionEventType != null;
+  const rawCopyText =
+    m == null
+      ? ''
+      : typeof (m as MessageActionMetadata).actionCopyText === 'string'
+        ? ((m as MessageActionMetadata).actionCopyText as string)
+        : m.text;
+  const copyText = !deleted && rawCopyText.trim() ? rawCopyText : null;
+  const canReact = confirmed && !sessionBlock;
+  const canReplyAction = confirmed && canReply && !sessionBlock;
+  const canMutateMessage = confirmed && mine && !sessionBlock;
+
+  useEffect(() => {
+    setCopied(false);
+    if (closeAfterCopyTimer.current) {
+      clearTimeout(closeAfterCopyTimer.current);
+      closeAfterCopyTimer.current = null;
+    }
+  }, [m]);
+
+  useEffect(() => {
+    return () => {
+      if (closeAfterCopyTimer.current) clearTimeout(closeAfterCopyTimer.current);
+    };
+  }, []);
+
+  const closeAfterCopy = () => {
+    if (closeAfterCopyTimer.current) clearTimeout(closeAfterCopyTimer.current);
+    closeAfterCopyTimer.current = setTimeout(() => {
+      closeAfterCopyTimer.current = null;
+      setCopied(false);
+      onClose();
+    }, 700);
+  };
+
   return (
     <Modal visible={m != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <Pressable
@@ -98,7 +140,7 @@ export function MessageActions({
             paddingTop: space.md,
           }}
         >
-          {m && confirmed && (
+          {m && canReact && (
             <View
               style={{
                 flexDirection: 'row',
@@ -133,7 +175,7 @@ export function MessageActions({
             </View>
           )}
           <View style={{ height: 1, backgroundColor: colors.border }} />
-          {m && confirmed && canReply && (
+          {m && canReplyAction && (
             <Action
               label="Reply in thread"
               onPress={() => {
@@ -142,16 +184,21 @@ export function MessageActions({
               }}
             />
           )}
-          {m && canCopy && (
+          {m && copyText && (
             <Action
-              label="Copy text"
+              label={copied ? 'Copied' : 'Copy text'}
               onPress={() => {
-                void Clipboard.setStringAsync(m.text);
-                onClose();
+                selectionHaptic();
+                void Clipboard.setStringAsync(copyText)
+                  .then(() => {
+                    setCopied(true);
+                    closeAfterCopy();
+                  })
+                  .catch(() => onClose());
               }}
             />
           )}
-          {m && confirmed && mine && (
+          {m && canMutateMessage && (
             <Action
               label="Edit message"
               onPress={() => {
@@ -160,7 +207,7 @@ export function MessageActions({
               }}
             />
           )}
-          {m && confirmed && mine && (
+          {m && canMutateMessage && (
             <Action
               label="Delete message"
               destructive
