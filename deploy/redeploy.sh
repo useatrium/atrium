@@ -145,8 +145,8 @@ _rb_centaur(){ local last; last=$(cat "$STATE/last-good-centaur-sha" 2>/dev/null
 # deploy and is NON-FATAL — a prune failure must never fail a good deploy or trip the
 # rollback. It deliberately keeps every `:latest` (the retag loop depends on them),
 # a floor of recent build cache for fast incremental rebuilds, and the registry (the
-# rollback source) untouched — the registry is bounded separately by a clean recreate
-# (its garbage-collect is unsafe on this registry:2 version; see docs/self-host-ovh.md).
+# rollback source) untouched — the registry is bounded separately by a nightly
+# deploy/registry-gc.sh (safe on registry:3; see docs/self-host-ovh.md).
 # k3s image count is bounded here and by kubelet image GC (deploy/setup-k3s.sh).
 BUILD_CACHE_KEEP="${BUILD_CACHE_KEEP:-20g}"
 prune_images(){

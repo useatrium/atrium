@@ -388,15 +388,25 @@ calls the LLM directly. Then spawn an agent and watch it respond.
   accumulate SHA-tagged copies (docker build host, k3s containerd, the local registry)
   — a full sweep once reclaimed ~95 GB.
 - **Bound the local registry** (10 GB range; the *smallest* of the three stores).
-  ⚠️ Do **not** run `registry:2 garbage-collect` on this version — its mark phase does
-  not follow OCI image-index → blob references, so it deletes blobs for *in-use* images
-  and corrupts the tags (verified: a sweep took the registry to a broken 5 MB and had to
-  be rebuilt). Until we move to a GC-correct registry, bound it by **recreating on a
-  fresh volume and re-pushing** the current images from Docker `:latest`:
+  Uses **`registry:3`** (CNCF distribution v3) whose `garbage-collect` correctly follows
+  OCI image-index → blob references. ⚠️ **`registry:2`'s did not** — it deletes blobs for
+  *in-use* images and corrupts the tags (verified the hard way: a sweep took the live
+  registry to a broken 5 MB and it had to be rebuilt), which is why v3 is required. A
+  POC (`registry:3`, two OCI-index images, delete one tag, `garbage-collect
+  --delete-untagged`) confirmed the kept image still pulls. `deploy/setup-registry.sh`
+  provisions v3 + `REGISTRY_STORAGE_DELETE_ENABLED=true` (v3 reads the v2 on-disk layout,
+  so upgrading is just recreating the container on the same volume). Then run nightly:
+  ```sh
+  0 4 * * *  ~/atrium/deploy/registry-gc.sh >> /var/log/registry-gc.log 2>&1
+  ```
+  `registry-gc.sh` keeps in-use + Sandbox-CR-pinned + the last N deploy commits, sweeps
+  the rest, and re-verifies every in-use image still resolves afterward (failing loudly
+  if a wrong registry version ever regresses this). If the registry is somehow corrupted,
+  recover by recreating it on a fresh volume and re-pushing Docker `:latest`:
   ```sh
   sudo docker rm -f registry && sudo docker volume create atrium-registry
   sudo docker run -d --restart=always -p 127.0.0.1:5000:5000 --name registry \
-    -v atrium-registry:/var/lib/registry registry:2
+    -e REGISTRY_STORAGE_DELETE_ENABLED=true -v atrium-registry:/var/lib/registry registry:3
   SHA=$(cat ~/atrium-deploy/last-good-centaur-sha)
   for i in api-rs iron-proxy agent node-sync console; do
     sudo docker tag centaur-$i:latest localhost:5000/library/centaur-$i:$SHA
