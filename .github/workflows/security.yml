@@ -28,6 +28,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action's default gitleaks (8.24.x) predates root-level
+          # [[allowlists]] and silently ignores every entry in .gitleaks.toml.
+          GITLEAKS_VERSION: 8.30.1
 
   scorecard:
     name: OpenSSF Scorecard
