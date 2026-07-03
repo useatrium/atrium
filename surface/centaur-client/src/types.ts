@@ -21,6 +21,10 @@ export interface ExecutionState {
   result_text?: string;
   agent_thread_id?: string;
   terminal_reason?: string;
+  /** Why the turn ended, when the api-rs terminal event carries it. `stopped_by_user`
+   * = the user interrupted the turn (see the interrupt/stop-turn path); rendered as
+   * "stopped by you" rather than a generic completed/failed label. */
+  completion_reason?: string;
   [key: string]: unknown;
 }
 

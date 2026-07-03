@@ -589,7 +589,6 @@ export default function SessionScreen() {
   const [questionCleared, setQuestionCleared] = useState<string | null>(null);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
-  const [stopTurnState, setStopTurnState] = useState<'idle' | 'requested' | 'completed'>('idle');
   const [workTab, setWorkTab] = useState<string | null>(null);
   const [turnsOpen, setTurnsOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
@@ -767,20 +766,9 @@ export default function SessionScreen() {
   }, []);
 
   const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
-  useEffect(() => {
-    if (displayCancelAsk === 'failed' || displayStatus === 'failed' || displayStatus === 'cancelled') {
-      setStopTurnState('idle');
-      return;
-    }
-    if (stopTurnState === 'requested' && displayStatus === 'completed' && !activeTurn) {
-      setStopTurnState('completed');
-      return;
-    }
-    if (stopTurnState === 'completed' && activeTurn) {
-      setStopTurnState('idle');
-    }
-  }, [activeTurn, displayCancelAsk, displayStatus, stopTurnState]);
-  const stoppedByCurrentViewer = stopTurnState !== 'idle' && displayStatus === 'completed' && !activeTurn;
+  // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
+  // every viewer, survives replay/reload, clears when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
   const elapsedMsForHeader = session
     ? terminal
       ? sessionElapsedMs(session, now)
@@ -800,7 +788,7 @@ export default function SessionScreen() {
   const driverName = session?.driverName ?? 'the driver';
   const waitingDriverName = session?.driverName ?? session?.spawnerName ?? 'the driver';
   const turnPhase = turnStatus.phase;
-  const statusLabel = stoppedByCurrentViewer
+  const statusLabel = stoppedByUser
     ? 'stopped by you'
     : turnStatusLabel({
         phase: turnPhase,
@@ -894,13 +882,7 @@ export default function SessionScreen() {
     if (canStopTurn) {
       setCancelAsk('idle');
       chat.clearFailedSessionCancel(id);
-      chat
-        .stopTurn(id)
-        .then(() => setStopTurnState('requested'))
-        .catch(() => {
-          setStopTurnState('idle');
-          setCancelAsk('failed');
-        });
+      chat.stopTurn(id).catch(() => setCancelAsk('failed'));
       return;
     }
     if (displayCancelAsk === 'idle') {

@@ -178,6 +178,11 @@ export interface SessionState {
   /** Captured work-product files (Artifacts surface), from artifact.captured frames. */
   artifacts: Artifact[];
   resultText: string;
+  /** The last turn ended because the user interrupted it (terminal
+   * `execution_state` with `completion_reason: "stopped_by_user"`). Rendered as
+   * "stopped by you"; cleared when a new turn starts. Folded from the durable
+   * event, so it's the same for every viewer and survives replay/reload. */
+  stoppedByUser?: boolean;
   models: string[];
   costUsd: number;
   lastEventId: number;
@@ -253,12 +258,15 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     if (isTerminalExecutionStatus(frame.data.status)) {
       next.pendingQuestion = null;
       if (frame.ts && next.turnEndTs === undefined) next.turnEndTs = frame.ts;
+      if (frame.data.completion_reason === "stopped_by_user") next.stoppedByUser = true;
       resolveOpenQuestions(next, frame.event_id, "cancelled");
     } else if (!wasActive) {
       // A fresh execution began (first turn, or a steer after completion).
       // `turn/started` refines this anchor when the harness emits one.
       if (frame.ts) next.turnStartTs = frame.ts;
       delete next.turnEndTs;
+      // A new turn supersedes the prior user-stop.
+      next.stoppedByUser = false;
     }
     return next;
   }

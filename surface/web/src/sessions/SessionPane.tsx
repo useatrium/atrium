@@ -252,21 +252,10 @@ export function SessionPane({
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
   const canStopTurn = activeTurn && !starting;
-  const [stopTurnState, setStopTurnState] = useState<'idle' | 'requested' | 'completed'>('idle');
-  useEffect(() => {
-    if (failedCancel || displayStatus === 'failed' || displayStatus === 'cancelled') {
-      setStopTurnState('idle');
-      return;
-    }
-    if (stopTurnState === 'requested' && displayStatus === 'completed' && !activeTurn) {
-      setStopTurnState('completed');
-      return;
-    }
-    if (stopTurnState === 'completed' && activeTurn) {
-      setStopTurnState('idle');
-    }
-  }, [activeTurn, displayStatus, failedCancel, stopTurnState]);
-  const stoppedByCurrentViewer = stopTurnState !== 'idle' && displayStatus === 'completed' && !activeTurn;
+  // "stopped by you" is folded from the durable terminal event (reducer
+  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
+  // clears automatically when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
   // Silence counts from mount when no frame ever arrived; the reconnect grace
   // anchors to the actual disconnect moment (see deriveTurnStatus).
   const mountedAtRef = useRef(Date.now());
@@ -342,7 +331,7 @@ export function SessionPane({
   // box they don't have.
   const waitingOnMe = sessionDriverId(session) === me.id;
   const waitingDriverName = session.driverName ?? session.spawnerName ?? 'the driver';
-  const statusLabel = stoppedByCurrentViewer
+  const statusLabel = stoppedByUser
     ? 'stopped by you'
     : turnStatusLabel({
         phase: turnPhase,
@@ -597,12 +586,7 @@ export function SessionPane({
     if (canStopTurn) {
       setCancelAsk('idle');
       onClearFailedCancel();
-      onStopTurn(session.id)
-        .then(() => setStopTurnState('requested'))
-        .catch(() => {
-          setStopTurnState('idle');
-          setCancelAsk('failed');
-        });
+      onStopTurn(session.id).catch(() => setCancelAsk('failed'));
       return;
     }
     if (displayCancelAsk === 'idle') {
