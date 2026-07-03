@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   api,
   type Channel,
@@ -470,21 +471,23 @@ export function Sidebar({
         >
           <GearIcon />
         </button>
-        {settingsOpen && (
-          <SettingsPopover
-            refEl={settingsPopoverRef}
-            firstControlRef={firstSettingsControlRef}
-            notify={notify}
-            setNotify={setNotify}
-            githubConnection={githubConnection}
-            connectionsAvailable={connectionsAvailable}
-            claudeStatus={providerCredentials?.['claude-code']}
-            codexStatus={providerCredentials?.codex}
-            onConnectGitHub={onConnectGitHub}
-            onConnectClaude={() => onConnectProvider?.('claude-code')}
-            onConnectCodex={() => onConnectProvider?.('codex')}
-          />
-        )}
+        {settingsOpen &&
+          createPortal(
+            <SettingsPopover
+              refEl={settingsPopoverRef}
+              firstControlRef={firstSettingsControlRef}
+              notify={notify}
+              setNotify={setNotify}
+              githubConnection={githubConnection}
+              connectionsAvailable={connectionsAvailable}
+              claudeStatus={providerCredentials?.['claude-code']}
+              codexStatus={providerCredentials?.codex}
+              onConnectGitHub={onConnectGitHub}
+              onConnectClaude={() => onConnectProvider?.('claude-code')}
+              onConnectCodex={() => onConnectProvider?.('codex')}
+            />,
+            document.body,
+          )}
         <button
           onClick={onLogout}
           className="rounded-md px-2 py-1 text-2xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
@@ -585,7 +588,7 @@ function SettingsPopover({
       ref={refEl}
       role="dialog"
       aria-label="Settings"
-      className="absolute bottom-full left-2 z-40 mb-2 w-72 rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl"
+      className="fixed bottom-14 left-2 z-[70] max-h-[calc(100dvh-4rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl shadow-black/30"
     >
       <div className="space-y-3">
         <SettingRow label="Theme">
@@ -911,13 +914,15 @@ function SessionSidebarSection({
           </ul>
         </div>
       </section>
-      {modalOpen && (
-        <SessionBrowserModal
-          sessions={sessions}
-          onOpenSession={open}
-          onClose={() => setModalOpen(false)}
-        />
-      )}
+      {modalOpen &&
+        createPortal(
+          <SessionBrowserModal
+            sessions={sessions}
+            onOpenSession={open}
+            onClose={() => setModalOpen(false)}
+          />,
+          document.body,
+        )}
     </>
   );
 }
@@ -936,7 +941,7 @@ function SessionBrowserModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-surface/60"
+      className="fixed inset-0 z-[70] bg-surface/80 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
