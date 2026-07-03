@@ -22,6 +22,28 @@ afterEach(() => {
 });
 
 describe('createEntryResolver', () => {
+  it('accepts artifact entries whose actor is null (server returns null for artifacts)', async () => {
+    const entry = {
+      handle: 'art_c3a45ab0-db97-4757-8187-0d061b42e17d',
+      kind: 'artifact',
+      actor: null,
+      text: 'welcome.md',
+      targetType: 'artifact',
+      tombstoned: false,
+      location: {
+        workspaceId: 'ws-1',
+        channelId: 'ch-1',
+        channelName: 'general',
+        sessionId: null,
+        sessionTitle: null,
+      },
+    };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(entry))));
+    const resolve = createEntryResolver(session);
+    const resolved = await resolve(entry.handle);
+    expect(resolved?.handle).toBe(entry.handle);
+  });
+
   it('fetches the resolve endpoint with native bearer auth and caches hits', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

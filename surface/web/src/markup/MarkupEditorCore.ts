@@ -5,7 +5,8 @@ import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import type { Command, Plugin as ProseMirrorPlugin, Transaction } from 'prosemirror-state';
 import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
 
-import { markupSchema, parseMarkdownToMarkupDoc } from './schema';
+import { parseCriticMarkupToDoc } from './criticMarkupParse';
+import { markupSchema } from './schema';
 
 export interface MarkupEditorPluginOptions {
   onSelectionChange?: (state: EditorState) => void;
@@ -17,7 +18,7 @@ export function createMarkupEditorState(
 ): EditorState {
   return EditorState.create({
     schema: markupSchema,
-    doc: parseMarkdownToMarkupDoc(initialMarkdown),
+    doc: parseCriticMarkupToDoc(initialMarkdown),
     plugins: createMarkupPlugins(options),
   });
 }
@@ -221,6 +222,7 @@ export const applyComment: (text: string, id?: string) => Command = (text, id) =
         .setNodeMarkup(codeBlock.pos, undefined, {
           ...codeBlock.node.attrs,
           comment: trimmed,
+          commentAuthor: null,
         })
         .scrollIntoView(),
     );
@@ -244,6 +246,7 @@ export const applyComment: (text: string, id?: string) => Command = (text, id) =
         comment.create({
           id: id || `c-${Date.now()}`,
           text: trimmed,
+          author: null,
         }),
       )
       .scrollIntoView(),

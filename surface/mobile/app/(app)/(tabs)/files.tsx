@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import type { ComponentProps } from 'react';
 import { Image } from 'expo-image';
-import { useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
   channelLabel,
@@ -25,9 +25,16 @@ import {
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { mediaIconName, mediaKindLabel, MediaLightbox, thumbnailSource } from '../../../src/components/MediaLightbox';
+import {
+  artifactEntryHandle,
+  EntryReferencesChip,
+  openEntryReferenceSummary,
+} from '../../../src/components/EntryReferencesChip';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 import { font, radius, space, useTheme } from '../../../src/lib/theme';
+import { createEntryReferenceQuery, type EntryReferenceMap, type EntryReferenceSummary } from '../../../src/lib/entryReferences';
+import { useRequiredSession } from '../../../src/lib/session';
 
 const PAGE_SIZE = 40;
 const ORIGINS: Array<{ value: 'all' | FileOrigin; label: string }> = [
@@ -330,6 +337,8 @@ function FileTile({
   width,
   fileContentUrl,
   fileHeaders,
+  reference,
+  onOpenReference,
   onPress,
   onToggleStar,
 }: {
@@ -337,6 +346,8 @@ function FileTile({
   width: number;
   fileContentUrl: (artifactId: string) => string;
   fileHeaders?: Record<string, string>;
+  reference: EntryReferenceSummary | null;
+  onOpenReference: () => void;
   onPress: () => void;
   onToggleStar: () => void;
 }) {
@@ -416,6 +427,9 @@ function FileTile({
         <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
           {mediaKindLabel(file)} · {metaLine(file)}
         </Text>
+        {reference && reference.count > 0 ? (
+          <EntryReferencesChip count={reference.count} onPress={onOpenReference} />
+        ) : null}
       </View>
     </Pressable>
   );
@@ -423,6 +437,7 @@ function FileTile({
 
 export default function FilesTab() {
   const chat = useChat();
+  const authSession = useRequiredSession();
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ channelId?: string | string[] }>();
@@ -443,9 +458,15 @@ export default function FilesTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [references, setReferences] = useState<EntryReferenceMap>({});
+  const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
   const loadSeq = useRef(0);
+  const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
+  const referenceFetchKeys = useRef<Set<string>>(new Set());
+  const focusedForReferences = useRef(false);
   const tileGap = space.md;
   const tileWidth = Math.floor((width - space.lg * 2 - tileGap) / 2);
+  const queryEntryReferences = useMemo(() => createEntryReferenceQuery(authSession), [authSession]);
 
   const queryBase = useMemo<HubFileListQuery>(
     () => ({
@@ -515,6 +536,56 @@ export default function FilesTab() {
           ],
     [folders, searchActive, visibleFiles],
   );
+  const visibleEntryHandles = useMemo(() => {
+    const seen = new Set<string>();
+    for (const file of visibleFiles) {
+      if (file.artifactId) seen.add(artifactEntryHandle(file.artifactId));
+    }
+    return [...seen].sort();
+  }, [visibleFiles]);
+  const visibleEntryHandlesKey = visibleEntryHandles.join('\n');
+
+  useFocusEffect(
+    useCallback(() => {
+      focusedForReferences.current = true;
+      setReferenceFocusSeq((seq) => seq + 1);
+      return () => {
+        focusedForReferences.current = false;
+      };
+    }, []),
+  );
+
+  useEffect(() => {
+    if (!focusedForReferences.current) return;
+    if (visibleEntryHandles.length === 0) {
+      setReferences({});
+      return;
+    }
+
+    const cacheKey = `${channelId ?? workspaceId ?? 'files'}:${visibleEntryHandlesKey}`;
+    const cachedReferences = referenceCache.current[cacheKey];
+    if (cachedReferences) {
+      setReferences(cachedReferences);
+    }
+    const focusFetchKey = `${referenceFocusSeq}:${cacheKey}`;
+    if (referenceFetchKeys.current.has(focusFetchKey)) return;
+    referenceFetchKeys.current.add(focusFetchKey);
+
+    let disposed = false;
+    queryEntryReferences(visibleEntryHandles)
+      .then((next) => {
+        if (disposed || !focusedForReferences.current) return;
+        referenceCache.current[cacheKey] = next;
+        setReferences(next);
+      })
+      .catch((err: unknown) => {
+        if (!disposed) console.warn('failed to load file references', err);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [channelId, queryEntryReferences, referenceFocusSeq, visibleEntryHandles, visibleEntryHandlesKey, workspaceId]);
 
   const navigateToDir = useCallback((dir: string) => {
     setCurrentDir(dir);
@@ -665,6 +736,8 @@ export default function FilesTab() {
               width={tileWidth}
               fileContentUrl={chat.api.fileContentUrl}
               fileHeaders={chat.fileHeaders}
+              reference={references[artifactEntryHandle(item.file.artifactId)] ?? null}
+              onOpenReference={() => openEntryReferenceSummary(references[artifactEntryHandle(item.file.artifactId)] ?? null)}
               onPress={() => setLightboxIndex(item.fileIndex)}
               onToggleStar={() => void toggleStar(item.file)}
             />
@@ -696,6 +769,8 @@ export default function FilesTab() {
         initialIndex={Math.min(lightboxIndex ?? 0, Math.max(visibleFiles.length - 1, 0))}
         fileContentUrl={chat.api.fileContentUrl}
         fileHeaders={chat.fileHeaders}
+        references={references}
+        onOpenReferences={openEntryReferenceSummary}
         onClose={() => setLightboxIndex(null)}
         onOpenExternal={openExternal}
         api={chat.api}

@@ -77,6 +77,10 @@ import {
 import { useRequiredSession } from '../../../src/lib/session';
 import { isEntryHandle } from '../../../src/lib/entryLinks';
 import { selectionHaptic } from '../../../src/lib/haptics';
+import {
+  loadMarkupDraftFromEntry,
+  putPendingMarkupDraft,
+} from '../../../src/lib/markupAuthoring';
 
 function transcriptEntryHandle(item: SessionItem): string | null {
   const handle = item.handle;
@@ -155,10 +159,12 @@ function TranscriptActionsSheet({
   target,
   onClose,
   onDiscuss,
+  onMarkupSteer,
 }: {
   target: TranscriptActionTarget | null;
   onClose: () => void;
   onDiscuss: (handle: string) => void;
+  onMarkupSteer: (handle: string) => void;
 }) {
   const { colors, reduceMotion } = useTheme();
   const [copied, setCopied] = useState<'text' | 'link' | null>(null);
@@ -251,6 +257,15 @@ function TranscriptActionsSheet({
                   onPress={() => {
                     onClose();
                     onDiscuss(target.handle ?? '');
+                  }}
+                />
+              ) : null}
+              {target.handle ? (
+                <Action
+                  label="Mark up & send to agent"
+                  onPress={() => {
+                    onClose();
+                    onMarkupSteer(target.handle ?? '');
                   }}
                 />
               ) : null}
@@ -1264,6 +1279,26 @@ export default function SessionScreen() {
     [chat.serverUrl, sessionChannelId, sessionThreadRootEventId],
   );
 
+  const openMarkupSteer = useCallback(
+    async (handle: string) => {
+      if (!id) return;
+      try {
+        const draft = await loadMarkupDraftFromEntry({
+          api: chat.api,
+          serverUrl: chat.serverUrl,
+          fileHeaders: chat.fileHeaders,
+          handle,
+          mode: { kind: 'steer', sessionId: id },
+        });
+        const draftId = putPendingMarkupDraft(draft);
+        router.push({ pathname: '/markup-editor', params: { draftId } });
+      } catch (err) {
+        Alert.alert('Markup', err instanceof Error ? err.message : 'Could not open markup editor.');
+      }
+    },
+    [chat.api, chat.fileHeaders, chat.serverUrl, id],
+  );
+
   const openTranscriptActions = useCallback(
     (handle: string | null, text: string) => {
       const copyText = text.trim();
@@ -1857,6 +1892,7 @@ export default function SessionScreen() {
         target={transcriptActionTarget}
         onClose={() => setTranscriptActionTarget(null)}
         onDiscuss={discussInThread}
+        onMarkupSteer={(handle) => void openMarkupSteer(handle)}
       />
     </View>
   );

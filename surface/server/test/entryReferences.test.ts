@@ -4,7 +4,7 @@ import { buildApp } from '../src/app.js';
 import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
 import { encodeEventHandle } from '../src/entries.js';
-import { createChannel, deleteMessage, getOrCreateDm, postMessage } from '../src/events.js';
+import { createChannel, deleteMessage, editMessage, getOrCreateDm, postMessage } from '../src/events.js';
 import { seedMember } from './helpers.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -106,6 +106,29 @@ describe('entry reference recording', () => {
       text: 'dm ref /e/rec_dmRef',
     });
     expect(dmMessage.payload.entry_refs).toEqual(['rec_dmRef']);
+  });
+
+  it('records refs on edits and omits entry_refs when an edit has none', async () => {
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'initial text',
+    });
+
+    const added = await editMessage(pool, {
+      targetEventId: root.id,
+      actorId: fx.userId,
+      text: 'edited ref /e/evt_88',
+    });
+    expect(added.payload.entry_refs).toEqual(['evt_88']);
+
+    const removed = await editMessage(pool, {
+      targetEventId: root.id,
+      actorId: fx.userId,
+      text: 'edited text without refs',
+    });
+    expect(removed.payload).not.toHaveProperty('entry_refs');
   });
 });
 
@@ -217,6 +240,138 @@ describe('POST /api/entries/references/query', () => {
     });
     expect(after.statusCode).toBe(200);
     expect(after.json().references[handle]).toBeUndefined();
+  });
+
+  it('counts a link added by edit and uses the edited text as the excerpt', async () => {
+    const cookie = await authCookie(fx.userId);
+    const target = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'edit-added target',
+    });
+    const handle = encodeEventHandle(target.id);
+    const ref = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'plain text before edit',
+    });
+
+    await editMessage(pool, {
+      targetEventId: ref.id,
+      actorId: fx.userId,
+      text: `edited text now links /e/${handle}`,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/entries/references/query',
+      headers: { cookie },
+      payload: { handles: [handle] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().references[handle]).toMatchObject({
+      count: 1,
+      latest: [
+        {
+          eventId: ref.id,
+          excerpt: `edited text now links /e/${handle}`,
+        },
+      ],
+    });
+  });
+
+  it('removes a posted reference when the latest edit has no matching refs', async () => {
+    const cookie = await authCookie(fx.userId);
+    const target = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'edit-removed target',
+    });
+    const handle = encodeEventHandle(target.id);
+    const ref = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: `will be removed /e/${handle}`,
+    });
+
+    await editMessage(pool, {
+      targetEventId: ref.id,
+      actorId: fx.userId,
+      text: 'latest edit removed the link',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/entries/references/query',
+      headers: { cookie },
+      payload: { handles: [handle] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().references[handle]).toBeUndefined();
+  });
+
+  it('uses only the latest edit across add, remove, and re-add', async () => {
+    const cookie = await authCookie(fx.userId);
+    const target = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'multi-edit target',
+    });
+    const handle = encodeEventHandle(target.id);
+    const ref = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'multi-edit starts without refs',
+    });
+
+    await editMessage(pool, {
+      targetEventId: ref.id,
+      actorId: fx.userId,
+      text: `first edit adds /e/${handle}`,
+    });
+    await editMessage(pool, {
+      targetEventId: ref.id,
+      actorId: fx.userId,
+      text: 'second edit removes it',
+    });
+
+    const removed = await app.inject({
+      method: 'POST',
+      url: '/api/entries/references/query',
+      headers: { cookie },
+      payload: { handles: [handle] },
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json().references[handle]).toBeUndefined();
+
+    await editMessage(pool, {
+      targetEventId: ref.id,
+      actorId: fx.userId,
+      text: `third edit re-adds /e/${handle}`,
+    });
+
+    const readded = await app.inject({
+      method: 'POST',
+      url: '/api/entries/references/query',
+      headers: { cookie },
+      payload: { handles: [handle] },
+    });
+    expect(readded.statusCode).toBe(200);
+    expect(readded.json().references[handle]).toMatchObject({
+      count: 1,
+      latest: [
+        {
+          eventId: ref.id,
+          excerpt: `third edit re-adds /e/${handle}`,
+        },
+      ],
+    });
   });
 
   it('rejects more than 200 handles', async () => {
