@@ -51,7 +51,8 @@ the wire protocol between them can now land as **one PR** across both.
 ## Contributing (people and agents)
 
 - Branch off `master`; open a PR into `master`; **PR title must be a Conventional Commit**
-  (CI-enforced); **squash-merge**. Full flow: `CONTRIBUTING.md`.
+  (CI-enforced); queue with **Merge when ready** once approved/green; PRs squash-merge
+  through the queue. Full flow: `CONTRIBUTING.md`.
 - This checkout is often shared by multiple agent sessions with extra branches in `git
   worktree`s. **Before committing, confirm the checked-out branch** (`git branch
   --show-current`) — it may not be `master` and may belong to another session. For
