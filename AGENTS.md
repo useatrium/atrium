@@ -15,7 +15,7 @@ the wire protocol between them can now land as **one PR** across both.
 
 | Path | What's there | Toolchain |
 |---|---|---|
-| `surface/` | the product: `server/` (Fastify + Postgres), `web/` (Vite + React), `desktop/` (Electron), `mobile/` (Expo), `shared/`, `centaur-client/`, `mcp/`, `e2e/`. **This is the pnpm workspace root.** | Node 24+, pnpm 10+ |
+| `surface/` | the product: `server/` (Fastify + Postgres), `web/` (Vite + React), `desktop/` (Electron), `mobile/` (Expo), `shared/`, `centaur-client/`, `e2e/`. **This is the pnpm workspace root.** | Node 24+, pnpm 10+ |
 | `centaur/` | the agent runtime (our vendored fork — see `centaur/ATRIUM_FORK.md`) | `just`, cargo, Helm/k8s |
 | `infra/` | local cluster, stand-in model server, deploy config | — |
 | `docs/` | public docs | — |

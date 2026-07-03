@@ -17,6 +17,7 @@ export type {
   ConnectionIdentity,
   ConnectionProvider,
   ConnectionStatus,
+  NormalizedEntry,
   ProviderCredentialProvider,
   ProviderCredentialStatus,
 } from '@atrium/surface-client';

@@ -155,6 +155,26 @@ export interface EntryAnnotations {
   comments: WireEvent[];
   reactions: { emoji: string; userIds: string[] }[];
 }
+export type NormalizedEntryTargetType = 'event' | 'record' | 'artifact';
+export interface NormalizedEntry {
+  handle: string;
+  kind: string;
+  actor: string | null;
+  /** Human-readable actor (display name for user actors); null when unknown. */
+  actorLabel: string | null;
+  text: string;
+  meta: Record<string, unknown>;
+  targetType: NormalizedEntryTargetType;
+  sourceRefs: string[];
+  tombstoned: boolean;
+  location: {
+    workspaceId: string;
+    channelId: string | null;
+    channelName: string | null;
+    sessionId: string | null;
+    sessionTitle: string | null;
+  };
+}
 
 export interface WebPushSubscription {
   endpoint: string;
@@ -779,5 +799,8 @@ export function createApi(opts: ApiOptions = {}) {
         },
       ),
     // === end mk703-feedback additions ===
+    // === mk708-route additions ===
+    resolveEntry: (handle: string) => req<NormalizedEntry>(`/api/entries/${encodeURIComponent(handle)}`),
+    // === end mk708-route additions ===
   };
 }

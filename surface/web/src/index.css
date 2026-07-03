@@ -318,7 +318,25 @@ body {
   animation: heartbeat-blip 0.45s ease-out;
 }
 
+@keyframes entry-flash {
+  0%,
+  100% {
+    background-color: color-mix(in srgb, var(--color-accent-hover) 10%, transparent);
+  }
+  45% {
+    background-color: color-mix(in srgb, var(--color-accent-hover) 24%, transparent);
+  }
+}
+
+.entry-flash {
+  animation: entry-flash 2s ease-out;
+}
+
 :root[data-motion='reduced'] .heartbeat-blip {
+  animation: none;
+}
+
+:root[data-motion='reduced'] .entry-flash {
   animation: none;
 }
 
@@ -332,6 +350,10 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion='full']) .heartbeat-blip {
+    animation: none;
+  }
+
+  :root:not([data-motion='full']) .entry-flash {
     animation: none;
   }
 

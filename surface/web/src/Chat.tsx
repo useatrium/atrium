@@ -69,6 +69,7 @@ import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
+import { entryParamFromSearch, stripEntryParamFromLocation } from './EntryLinkRoute';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -128,12 +129,18 @@ export function Chat({
   me,
   workspace,
   initialSessionId,
+  initialChannelId,
+  initialEntryHandle,
   onLogout,
 }: {
   me: UserRef;
   workspace: Workspace;
   /** From the /s/:id permalink route — open this session's pane on load. */
   initialSessionId?: string | null;
+  /** From /e/:handle event/artifact links — select this channel on load. */
+  initialChannelId?: string | null;
+  /** Entry handle from ?entry=... for one-shot scroll/highlight handling. */
+  initialEntryHandle?: string | null;
   onLogout: () => void;
 }) {
   const { prefs } = useTheme();
@@ -435,6 +442,14 @@ export function Chat({
       })
       .catch(() => dispatch({ type: 'session-load-failed', sessionId: initialSessionId }));
   }, [initialSessionId, selectChannel]);
+
+  const initialChannelSelectedRef = useRef(false);
+  useEffect(() => {
+    if (!initialChannelId || initialChannelSelectedRef.current) return;
+    initialChannelSelectedRef.current = true;
+    selectChannel(initialChannelId);
+    setMainSurface('chat');
+  }, [initialChannelId, selectChannel]);
 
   // ---- heal stale session entities ----
   // Cards folded from history only move via live WS events; a session whose
@@ -749,11 +764,32 @@ export function Chat({
 
   // ---- jump to a message from search: page history back until it's loaded ----
   const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [pendingEntryHandle, setPendingEntryHandle] = useState<string | null>(() => {
+    if (initialEntryHandle) return initialEntryHandle;
+    return typeof window === 'undefined' ? null : entryParamFromSearch(window.location.search);
+  });
   useEffect(() => {
     if (highlightId == null) return;
     const t = setTimeout(() => setHighlightId(null), 2500);
     return () => clearTimeout(t);
   }, [highlightId]);
+
+  useEffect(() => {
+    if (!pendingEntryHandle || pendingEntryHandle.startsWith('rec_')) return;
+    const eventMatch = /^evt_(\d+)$/.exec(pendingEntryHandle);
+    if (!eventMatch) {
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+      return;
+    }
+    if (!active || !timeline.loaded) return;
+    const eventId = Number(eventMatch[1]);
+    if (Number.isSafeInteger(eventId) && timeline.main.some((m) => m.id === eventId)) {
+      setHighlightId(eventId);
+    }
+    stripEntryParamFromLocation();
+    setPendingEntryHandle(null);
+  }, [active, pendingEntryHandle, timeline.loaded, timeline.main]);
 
   const jumpToMessage = async (event: WireEvent) => {
     const channelId = event.channelId;
@@ -1215,6 +1251,7 @@ export function Chat({
           onConnectProvider={setProviderDialog}
           onConnectGitHub={() => setConnectionDialog('github')}
           agentProfiles={agentProfiles}
+          initialEntryHandle={pendingEntryHandle?.startsWith('rec_') ? pendingEntryHandle : null}
         />
       ) : state.openSessionId ? (
         <aside

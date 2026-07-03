@@ -66,18 +66,30 @@ export interface NormalizedEntry {
   handle: string;
   kind: string;
   actor: string | null;
+  /** Human-readable actor (display name for user actors); null when unknown. */
+  actorLabel: string | null;
   text: string;
   meta: Record<string, unknown>;
   targetType: NormalizedEntryTargetType;
   sourceRefs: string[];
   tombstoned: boolean;
+  location: {
+    workspaceId: string;
+    channelId: string | null;
+    channelName: string | null;
+    sessionId: string | null;
+    sessionTitle: string | null;
+  };
 }
 
 interface EventResolveRow {
   id: number;
+  workspace_id: string;
   channel_id: string | null;
+  channel_name: string | null;
   type: string;
   actor_id: string | null;
+  actor_display_name: string | null;
   payload: unknown;
   edited_text: string | null;
   is_deleted: boolean;
@@ -85,6 +97,11 @@ interface EventResolveRow {
 
 interface RecordResolveRow {
   entry_uid: string;
+  workspace_id: string;
+  channel_id: string;
+  channel_name: string | null;
+  session_id: string;
+  session_title: string | null;
   kind: string;
   actor: string;
   text: string;
@@ -95,6 +112,7 @@ interface ArtifactResolveRow {
   id: string;
   workspace_id: string;
   channel_id: string | null;
+  channel_name: string | null;
   path: string;
   tombstoned_at: Date | string | null;
 }
@@ -129,13 +147,18 @@ async function resolveEventEntry(
 ): Promise<NormalizedEntry | null> {
   const res = await db.query<EventResolveRow>(
     `SELECT e.id,
+            e.workspace_id::text,
             e.channel_id,
+            c.name AS channel_name,
             e.type,
             e.actor_id,
+            u.display_name AS actor_display_name,
             e.payload,
             edit.text AS edited_text,
             (del.id IS NOT NULL) AS is_deleted
        FROM events e
+       LEFT JOIN channels c ON c.id = e.channel_id
+       LEFT JOIN users u ON u.id = e.actor_id
        LEFT JOIN LATERAL (
          SELECT x.payload->>'text' AS text
           FROM events x
@@ -164,11 +187,19 @@ async function resolveEventEntry(
     handle: encodeEventHandle(row.id),
     kind: row.type,
     actor: row.actor_id,
+    actorLabel: row.actor_display_name ?? null,
     text: tombstoned ? '' : eventText(row, meta),
     meta,
     targetType: 'event',
     sourceRefs: [],
     tombstoned,
+    location: {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      channelName: row.channel_name,
+      sessionId: null,
+      sessionTitle: null,
+    },
   };
 }
 
@@ -179,6 +210,11 @@ async function resolveRecordEntry(
 ): Promise<NormalizedEntry | null> {
   const res = await db.query<RecordResolveRow>(
     `SELECT r.entry_uid,
+            s.workspace_id::text,
+            s.channel_id::text,
+            c.name AS channel_name,
+            s.id AS session_id,
+            s.title AS session_title,
             r.kind,
             r.actor,
             r.text,
@@ -200,11 +236,19 @@ async function resolveRecordEntry(
     handle: encodeRecordHandle(row.entry_uid),
     kind: row.kind,
     actor: row.actor,
+    actorLabel: row.actor,
     text: row.text,
     meta,
     targetType: 'record',
     sourceRefs: sourceRefsFromMeta(meta),
     tombstoned: meta.tombstoned === true || meta.deleted === true,
+    location: {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      channelName: row.channel_name,
+      sessionId: row.session_id,
+      sessionTitle: row.session_title,
+    },
   };
 }
 
@@ -214,13 +258,15 @@ async function resolveArtifactEntry(
   userId: string,
 ): Promise<NormalizedEntry | null> {
   const res = await db.query<ArtifactResolveRow>(
-    `SELECT id::text,
-            workspace_id::text,
-            channel_id::text,
-            path,
-            tombstoned_at
-       FROM artifacts
-      WHERE id = $1`,
+    `SELECT a.id::text,
+            a.workspace_id::text,
+            a.channel_id::text,
+            c.name AS channel_name,
+            a.path,
+            a.tombstoned_at
+       FROM artifacts a
+       LEFT JOIN channels c ON c.id = a.channel_id
+      WHERE a.id = $1`,
     [artifactId],
   );
   const row = res.rows[0];
@@ -241,11 +287,19 @@ async function resolveArtifactEntry(
     handle: encodeArtifactHandle(row.id),
     kind: 'artifact',
     actor: null,
+    actorLabel: null,
     text: artifactName(row.path),
     meta,
     targetType: 'artifact',
     sourceRefs: [],
     tombstoned,
+    location: {
+      workspaceId: row.workspace_id,
+      channelId: row.channel_id,
+      channelName: row.channel_name,
+      sessionId: null,
+      sessionTitle: null,
+    },
   };
 }
 

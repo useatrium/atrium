@@ -133,6 +133,8 @@ export default function ThreadScreen() {
             emptyLabel="No replies yet."
             fileUrl={chat.fileUrl}
             api={chat.api}
+            serverUrl={chat.serverUrl}
+            resolveEntry={chat.resolveEntry}
             fileHeaders={chat.fileHeaders}
             onLoadEarlier={() => Promise.resolve()}
             onLongPress={setActionsTarget}
@@ -140,6 +142,7 @@ export default function ThreadScreen() {
             onToggleReaction={(m, e) => void chat.react(m, e)}
             onRetry={chat.retry}
             onOpenAttachment={openAttachment}
+            onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
             onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           />
         )}

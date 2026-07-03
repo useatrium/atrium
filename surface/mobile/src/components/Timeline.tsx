@@ -14,6 +14,7 @@ import {
 import { font, space, useTheme } from '../lib/theme';
 import { DayDivider } from './bits';
 import { MessageRow } from './MessageRow';
+import type { EntryResolver } from '../lib/entryResolve';
 
 export interface TimelineProps {
   messages: ChatMessage[];
@@ -27,6 +28,8 @@ export interface TimelineProps {
   emptyLabel?: string;
   fileUrl: (id: string) => string;
   api: Api;
+  serverUrl: string;
+  resolveEntry: EntryResolver;
   fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
   onLongPress: (m: ChatMessage) => void;
@@ -35,6 +38,7 @@ export interface TimelineProps {
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
   onOpenAttachment: (message: ChatMessage, index: number) => void;
+  onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -50,6 +54,8 @@ export function Timeline({
   emptyLabel,
   fileUrl,
   api,
+  serverUrl,
+  resolveEntry,
   fileHeaders,
   onLoadEarlier,
   onLongPress,
@@ -58,6 +64,7 @@ export function Timeline({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
+  onOpenChannel,
   onOpenSession,
 }: TimelineProps) {
   const { colors, reduceMotion } = useTheme();
@@ -113,6 +120,8 @@ export function Timeline({
           inThread={inThread}
           fileUrl={fileUrl}
           api={api}
+          serverUrl={serverUrl}
+          resolveEntry={resolveEntry}
           fileHeaders={fileHeaders}
           onLongPress={onLongPress}
           onOpenComments={onOpenComments}
@@ -120,6 +129,7 @@ export function Timeline({
           onToggleReaction={onToggleReaction}
           onRetry={onRetry}
           onOpenAttachment={onOpenAttachment}
+          onOpenChannel={onOpenChannel}
           onOpenSession={onOpenSession}
         />
       );
@@ -132,6 +142,8 @@ export function Timeline({
       inThread,
       fileUrl,
       api,
+      serverUrl,
+      resolveEntry,
       fileHeaders,
       onLongPress,
       onOpenComments,
@@ -139,6 +151,7 @@ export function Timeline({
       onToggleReaction,
       onRetry,
       onOpenAttachment,
+      onOpenChannel,
       onOpenSession,
     ],
   );
