@@ -1086,7 +1086,7 @@ export function Chat({
               type="button"
               onClick={() => setIsSidebarOpen(true)}
               aria-label="Open navigation"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-edge bg-surface-raised/40 text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:hidden"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-edge bg-surface-raised text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:hidden"
             >
               <span className="flex flex-col gap-1" aria-hidden="true">
                 <span className="block h-px w-4 bg-current" />
@@ -1151,7 +1151,7 @@ export function Chat({
               <button
                 type="button"
                 onClick={() => setMainSurface('chat')}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:ml-auto"
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:ml-auto"
               >
                 Chat
               </button>
@@ -1200,8 +1200,8 @@ export function Chat({
                 aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
                 className={
                   callsAvailable
-                    ? 'rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
-                    : 'rounded-md border border-edge bg-surface-raised/20 px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
+                    ? 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
+                    : 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
                 }
               >
                 <PhoneIcon size={15} />
@@ -1209,7 +1209,7 @@ export function Chat({
             )}
             <button
               onClick={() => setSwitcherOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
             >
               <SearchIcon size={14} />
               <span className="hidden sm:inline">Search</span>
@@ -1377,7 +1377,7 @@ export function Chat({
         />
       ) : state.openSessionId ? (
         <aside
-          className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
+          className={`flex min-w-0 flex-col border-l border-edge bg-surface ${
             isMobileViewport || view === 'focus' ? 'flex-1' : `shrink-0 ${placeholderPaneSizing.className}`
           }`}
           style={isMobileViewport || view === 'focus' ? undefined : placeholderPaneSizing.style}

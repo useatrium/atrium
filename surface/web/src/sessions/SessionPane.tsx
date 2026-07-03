@@ -166,10 +166,10 @@ function outputStripClass({ danger = false, unseen = false }: { danger?: boolean
         : 'border-danger-edge bg-danger-surface'
     }`;
   }
-  return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs hover:bg-surface-overlay/60 ${
+  return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs hover:bg-surface-overlay ${
     unseen
-      ? 'border-accent-border-muted bg-accent-tint/25 text-fg-body ring-1 ring-inset ring-accent-border-muted/40'
-      : 'border-edge bg-surface-raised/40 text-fg-secondary'
+      ? 'border-accent-border-muted bg-accent-tint text-fg-body ring-1 ring-inset ring-accent-border-muted'
+      : 'border-edge bg-surface-raised text-fg-secondary'
   }`;
 }
 
@@ -947,7 +947,7 @@ export function SessionPane({
 
   return (
     <aside
-      className={`relative flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
+      className={`relative flex min-w-0 flex-col border-l border-edge bg-surface ${
         focused ? 'flex-1' : `shrink-0 ${paneSizing.className}`
       }`}
       style={focused ? undefined : paneSizing.style}
@@ -1165,7 +1165,7 @@ export function SessionPane({
       )}
 
       {isEnded && resultText && (
-        <div data-testid="session-result" className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2">
+        <div data-testid="session-result" className="shrink-0 border-b border-edge bg-surface-raised px-4 py-2">
           <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Result</div>
           <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
             {resultText}
@@ -1487,7 +1487,7 @@ export function SessionPane({
             </div>
           )}
           <SessionTypingLine typers={typers} />
-          <div className="shrink-0 border-t border-edge bg-surface-overlay/30 px-4 py-1.5 text-2xs font-medium text-fg-muted">
+          <div className="shrink-0 border-t border-edge bg-surface-overlay px-4 py-1.5 text-2xs font-medium text-fg-muted">
             {composerStatusText}
           </div>
           <Composer
@@ -1827,13 +1827,13 @@ const ToolCard = memo(
         style={ITEM_VIS}
         data-testid="tool-card"
         className={`my-1 rounded-md border text-xs ${
-          isError ? 'border-danger-border/60 bg-danger-tint/20' : 'border-edge bg-surface-raised/50'
+          isError ? 'border-danger-border bg-danger-tint' : 'border-edge bg-surface-raised'
         }`}
       >
         <button
           onClick={onToggle}
           aria-expanded={expanded}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay/40"
+          className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay"
         >
           <span className="text-fg-muted">
             {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
@@ -1874,8 +1874,8 @@ const ToolCard = memo(
               <pre
                 className={`mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-2xs leading-relaxed ${
                   isError
-                    ? 'border-danger-border/60 bg-danger-tint/30 text-danger-text-strong'
-                    : 'border-edge bg-surface/70 text-fg-secondary'
+                    ? 'border-danger-border bg-danger-tint text-danger-text-strong'
+                    : 'border-edge bg-surface text-fg-secondary'
                 }`}
               >
                 {item.result.content}

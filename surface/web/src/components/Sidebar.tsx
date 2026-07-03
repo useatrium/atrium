@@ -49,7 +49,7 @@ const BELL_TITLES: Record<NotifyState, string> = {
 const SOURCE_URL = 'https://github.com/gbasin/atrium';
 const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`;
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
-const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised/25 py-1';
+const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
 const SIDEBAR_ITEM_BASE_CLASS = 'group mx-1 flex min-h-7 items-center rounded-md';
 const SIDEBAR_ROW_BUTTON_CLASS = 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm';
@@ -219,7 +219,7 @@ export function Sidebar({
         }`}
       />
       <nav
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0 md:bg-surface-raised/50 md:shadow-none md:transition-none ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
