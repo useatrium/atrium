@@ -476,26 +476,6 @@ export interface ReactionResult {
   applied: boolean;
 }
 
-export interface CommentPostedPayload {
-  target: string;
-  text: string;
-  /** Set to 'agent' when an agent authored the comment via the MCP tool. The
-   * actor_id is still the real (human) principal whose credential the agent used;
-   * `via` only drives display attribution (rendered as `agent-<handle>`). It is a
-   * display tag, not a trust boundary — a future hardening could bind it to a
-   * dedicated agent credential. */
-  via?: 'agent';
-}
-
-export interface CommentEditedPayload {
-  target: string;
-  text: string;
-}
-
-export interface CommentDeletedPayload {
-  target: string;
-}
-
 export interface AnnotationReaction {
   emoji: string;
   userIds: string[];
@@ -584,93 +564,6 @@ async function resolveAnnotationScopeTx(
       };
     }
   }
-}
-
-export async function postCommentTx(
-  client: DbClient,
-  args: { handle: string; actorId: string; text: string; via?: 'agent' },
-): Promise<WireEvent> {
-  const scope = await resolveAnnotationScopeTx(client, args.handle);
-  const payload: CommentPostedPayload = { target: args.handle, text: args.text };
-  if (args.via === 'agent') payload.via = 'agent';
-  const ev = await insertEvent(client, {
-    workspaceId: scope.workspaceId,
-    channelId: scope.channelId,
-    threadRootEventId: scope.threadRootEventId,
-    type: 'comment.posted',
-    actorId: args.actorId,
-    payload: { ...payload },
-  });
-  return toWireEvent(await attachAuthor(client, ev));
-}
-
-export async function editCommentTx(
-  client: DbClient,
-  args: { commentEventId: number; actorId: string; text: string },
-): Promise<WireEvent> {
-  const target = await client.query<{
-    workspace_id: string;
-    channel_id: string | null;
-    thread_root_event_id: number | null;
-    type: string;
-    actor_id: string | null;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-    [args.commentEventId],
-  );
-  const t = target.rows[0];
-  if (!t || t.type !== 'comment.posted' || !t.channel_id) {
-    throw new DomainError(404, 'comment_not_found', 'comment not found');
-  }
-  if (t.actor_id !== args.actorId) {
-    throw new DomainError(403, 'forbidden', 'only the author may edit a comment');
-  }
-  const payload: CommentEditedPayload = {
-    target: encodeEventHandle(args.commentEventId),
-    text: args.text,
-  };
-  const ev = await insertEvent(client, {
-    workspaceId: t.workspace_id,
-    channelId: t.channel_id,
-    threadRootEventId: t.thread_root_event_id,
-    type: 'comment.edited',
-    actorId: args.actorId,
-    payload: { ...payload },
-  });
-  return toWireEvent(await attachAuthor(client, ev));
-}
-
-export async function deleteCommentTx(
-  client: DbClient,
-  args: { commentEventId: number; actorId: string },
-): Promise<WireEvent> {
-  const target = await client.query<{
-    workspace_id: string;
-    channel_id: string | null;
-    thread_root_event_id: number | null;
-    type: string;
-    actor_id: string | null;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-    [args.commentEventId],
-  );
-  const t = target.rows[0];
-  if (!t || t.type !== 'comment.posted' || !t.channel_id) {
-    throw new DomainError(404, 'comment_not_found', 'comment not found');
-  }
-  if (t.actor_id !== args.actorId) {
-    throw new DomainError(403, 'forbidden', 'only the author may delete a comment');
-  }
-  const payload: CommentDeletedPayload = { target: encodeEventHandle(args.commentEventId) };
-  const ev = await insertEvent(client, {
-    workspaceId: t.workspace_id,
-    channelId: t.channel_id,
-    threadRootEventId: t.thread_root_event_id,
-    type: 'comment.deleted',
-    actorId: args.actorId,
-    payload: { ...payload },
-  });
-  return toWireEvent(await attachAuthor(client, ev));
 }
 
 /**

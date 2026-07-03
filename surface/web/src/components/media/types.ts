@@ -1,5 +1,6 @@
 import type { HubFileVersion } from '@atrium/surface-client';
 import type { ArtifactConflict, ResolveChoice } from '../../sessions/ConflictSurface';
+import type { Session } from '../../sessions/types';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'code' | 'text' | 'data' | 'opaque';
 
@@ -15,9 +16,19 @@ export interface PreviewFile {
   contentUrl: string;
   thumbnailUrl?: string;
   textUrl?: string;
+  path?: string;
   uploader?: { id: string; name?: string };
   createdAt?: string;
   source?: { kind: 'message' | 'session' | 'channel'; id: string; label?: string };
+}
+
+export interface LightboxApplyMarkupTarget {
+  artifactId: string;
+  path: string;
+  seq: number;
+  channelId: string;
+  sessions?: Record<string, Session>;
+  onSpawnNewAgent?: (task: string) => void;
 }
 
 export interface LightboxCallbacks {
@@ -25,6 +36,8 @@ export interface LightboxCallbacks {
   onCopyLink?: (f: PreviewFile) => void;
   onRename?: (f: PreviewFile, name: string) => Promise<void> | void;
   onDelete?: (f: PreviewFile) => Promise<void> | void;
+  onDiscuss?: (f: PreviewFile, draft: string) => Promise<void> | void;
+  /** Retired file comments affordance. Kept only so older demos/tests can pass through unused props. */
   onComment?: (f: PreviewFile) => void;
   canManage?: (f: PreviewFile) => boolean;
   /** Files Hub version history: list newest-first versions for this artifact. */
@@ -46,6 +59,7 @@ export interface LightboxCallbacks {
     choice: ResolveChoice,
   ) => Promise<{ seq: number; status: string }>;
   onMarkup?: (f: PreviewFile) => Promise<void> | void;
+  applyMarkupTarget?: LightboxApplyMarkupTarget | null;
 }
 
 export type MediaPreviewVariant = 'tile' | 'full';

@@ -7,6 +7,7 @@ import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
 import {
   composeFeedbackSteer,
   deriveFeedbackIntent,
+  hasCriticMarkup,
   stripYamlFrontmatter,
 } from '../src/markup-feedback.js';
 import { createChannel } from '../src/events.js';
@@ -262,6 +263,8 @@ describe('composeFeedbackSteer', () => {
     expect(deriveFeedbackIntent('---\nsource_entry: abc\n---\nBody\n')).toBe('response');
     expect(deriveFeedbackIntent('No frontmatter\nsource_entry: abc\n')).toBe('revise');
     expect(stripYamlFrontmatter('---\na: b\n...\nBody\n')).toBe('Body\n');
+    expect(hasCriticMarkup('Clean text')).toBe(false);
+    expect(hasCriticMarkup('Please {~~swap~>replace~~} this')).toBe(true);
   });
 });
 
@@ -289,6 +292,55 @@ describe('POST /api/files/:artifactId/feedback', () => {
     expect(lastSteerText()).toContain('I marked up `shared/channels/');
     expect(lastSteerText()).toContain('{~~Original~>Revised~~}');
     expect(centaurRequests.some((request) => request.path.endsWith('/execute'))).toBe(true);
+  });
+
+  it('apply mode steers from the latest marked-up version without committing', async () => {
+    const { cookie, userId } = await loginCookie();
+    const sessionId = await seedRunningSession(userId);
+    const file = await seedArtifact({
+      userId,
+      bytes: '# Draft\n\nPlease {~~Original~>Revised~~} this.\n',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/files/${file.artifactId}/feedback`,
+      headers: { cookie },
+      payload: {
+        mode: 'apply',
+        sessionId,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ seq: 1, status: 'normal', steered: true, applied: true });
+    expect(await versionText(file.artifactId, 1)).toBe('# Draft\n\nPlease {~~Original~>Revised~~} this.\n');
+    expect(await ledger.resolveVersionByArtifactId(file.artifactId, { seq: 2 })).toBeNull();
+    expect(lastSteerText()).toContain('I marked up `shared/channels/');
+    expect(lastSteerText()).toContain('The file in your workspace already has my markup');
+    expect(lastSteerText()).toContain('{~~Original~>Revised~~}');
+    expect(centaurRequests.some((request) => request.path.endsWith('/execute'))).toBe(true);
+  });
+
+  it('apply mode rejects clean latest content without steering', async () => {
+    const { cookie, userId } = await loginCookie();
+    const sessionId = await seedRunningSession(userId);
+    const file = await seedArtifact({ userId, bytes: '# Draft\n\nNothing to apply.\n' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/files/${file.artifactId}/feedback`,
+      headers: { cookie },
+      payload: {
+        mode: 'apply',
+        sessionId,
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('no_markup');
+    expect(await ledger.resolveVersionByArtifactId(file.artifactId, { seq: 2 })).toBeNull();
+    expect(centaurRequests.some((request) => request.path.endsWith('/messages'))).toBe(false);
   });
 
   it('returns 409 on hard stale_base and does not steer', async () => {

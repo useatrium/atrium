@@ -9,6 +9,7 @@ export interface ResolvedEntryQuote {
   actor: string;
   actorLabel: string | null;
   text: string;
+  meta: Record<string, unknown>;
   targetType: EntryQuoteTargetType;
   tombstoned: boolean;
   location: {

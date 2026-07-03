@@ -7,6 +7,7 @@ import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import {
   composeFeedbackSteer,
   deriveFeedbackIntent,
+  hasCriticMarkup,
   sourceEntryHandleFromContent,
   titleFromContent,
   type FeedbackIntent,
@@ -31,6 +32,7 @@ export interface MarkupFeedbackRouteDeps {
 }
 
 interface FeedbackBody {
+  mode?: unknown;
   content?: unknown;
   baseSeq?: unknown;
   sessionId?: unknown;
@@ -69,25 +71,34 @@ export async function registerMarkupFeedbackRoutes(
     }
 
     const body = (req.body ?? {}) as FeedbackBody;
-    if (typeof body.content !== 'string') {
-      return reply.code(400).send({ error: 'bad_request', message: 'content is required' });
-    }
-    if (!Number.isInteger(body.baseSeq) || Number(body.baseSeq) < 1) {
-      return reply.code(400).send({ error: 'bad_request', message: 'baseSeq must be a positive integer' });
+    const applyMode = body.mode === 'apply';
+    if (body.mode != null && !applyMode) {
+      return reply.code(400).send({ error: 'bad_request', message: 'mode must be apply when provided' });
     }
     if (typeof body.sessionId !== 'string' || !isUuid(body.sessionId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'sessionId must be a uuid' });
     }
-    const explicitIntent = parseIntent(body.intent);
-    if (explicitIntent === null) {
-      return reply.code(400).send({ error: 'bad_request', message: 'intent must be response or revise' });
-    }
-    if (body.note != null && typeof body.note !== 'string') {
-      return reply.code(400).send({ error: 'bad_request', message: 'note must be a string' });
-    }
     const opId = optionalOpId(body);
-    const baseSeq = Number(body.baseSeq);
     const sessionId = body.sessionId;
+
+    let explicitIntent: FeedbackIntent | null | undefined;
+    let baseSeq = 0;
+    if (!applyMode) {
+      if (typeof body.content !== 'string') {
+        return reply.code(400).send({ error: 'bad_request', message: 'content is required' });
+      }
+      if (!Number.isInteger(body.baseSeq) || Number(body.baseSeq) < 1) {
+        return reply.code(400).send({ error: 'bad_request', message: 'baseSeq must be a positive integer' });
+      }
+      explicitIntent = parseIntent(body.intent);
+      if (explicitIntent === null) {
+        return reply.code(400).send({ error: 'bad_request', message: 'intent must be response or revise' });
+      }
+      if (body.note != null && typeof body.note !== 'string') {
+        return reply.code(400).send({ error: 'bad_request', message: 'note must be a string' });
+      }
+      baseSeq = Number(body.baseSeq);
+    }
 
     const readable = await ledger.artifactReadableByUser(artifactId, user.id);
     if (!readable) {
@@ -114,6 +125,57 @@ export async function registerMarkupFeedbackRoutes(
       return reply
         .code(415)
         .send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
+    }
+
+    if (applyMode) {
+      if (!current.s3Key) {
+        return reply.code(409).send({ error: 'base_not_found', baseSeq: current.seq });
+      }
+      const markedUpContent = (await getObjectBytes(current.s3Key)).toString('utf8');
+      if (!hasCriticMarkup(markedUpContent)) {
+        return reply.code(400).send({ error: 'no_markup', message: 'latest version has no markup to apply' });
+      }
+      const title = titleFromContent(markedUpContent, basename(current.path));
+      const sourceEntryHandle = sourceEntryHandleFromContent(markedUpContent);
+
+      try {
+        const result = await runMutation({
+          userId: user.id,
+          opId,
+          opType: 'artifact.feedback.apply',
+          body: {
+            artifactId,
+            sessionId,
+            mode: 'apply',
+          },
+          fn: async (client) => {
+            const text = composeFeedbackSteer({
+              markedUpContent,
+              baseContent: markedUpContent,
+              path: current.path,
+              seq: current.seq,
+              baseSeq: current.seq,
+              intent: 'revise',
+              title,
+              sourceEntryHandle,
+              status: 'normal',
+            });
+            const event = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
+            return { seq: current.seq, event };
+          },
+          onApplied: (result) => {
+            if (result.event) publishEvent(result.event);
+            sessionRuns.afterPostUserMessage(sessionId);
+          },
+        });
+
+        return reply.send({ seq: result.seq, status: 'normal', steered: true, applied: true });
+      } catch (err) {
+        if (err instanceof DomainError && err.code === 'provider_auth_required') {
+          await sessionRuns.markClaudeAuthMissing(sessionId).catch(() => {});
+        }
+        throw err;
+      }
     }
 
     const baseVersion = await ledger.resolveVersionByArtifactId(artifactId, { seq: baseSeq });

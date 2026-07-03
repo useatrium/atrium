@@ -28,6 +28,7 @@ export function ThreadPanel({
   onEdit,
   onDelete,
   onReact,
+  onMarkupEntry,
   draftKey,
   initialDraft,
   onDraftChange,
@@ -55,6 +56,7 @@ export function ThreadPanel({
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  onMarkupEntry?: (handle: string, message: ChatMessage) => void;
   draftKey?: string;
   initialDraft?: string;
   onDraftChange?: (key: string, text: string) => void | Promise<void>;
@@ -106,6 +108,7 @@ export function ThreadPanel({
           onEdit={onEdit}
           onDelete={onDelete}
           onReact={onReact}
+          onMarkupEntry={onMarkupEntry}
         />
         <div className="my-2 flex items-center gap-2 px-4">
           <div className="h-px flex-1 bg-surface-overlay" />
@@ -128,6 +131,7 @@ export function ThreadPanel({
               onEdit={onEdit}
               onDelete={onDelete}
               onReact={onReact}
+              onMarkupEntry={onMarkupEntry}
             />
           ),
         )}

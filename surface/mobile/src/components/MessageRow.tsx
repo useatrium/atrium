@@ -11,14 +11,13 @@ import {
   type Session,
 } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
-import { entryHandleForMessage } from '../lib/entryHandle';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
 import { MarkdownText } from './Markdown';
 import { MessageText } from './MessageText';
 import { VoiceMessage } from './VoiceMessage';
-import type { EntryResolver } from '../lib/entryResolve';
+import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
 
 const IMAGE_MAX_W = 240;
 
@@ -36,10 +35,10 @@ export interface MessageRowProps {
   api: Api;
   serverUrl: string;
   resolveEntry: EntryResolver;
+  resolveArtifactContent?: ArtifactContentResolver;
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
-  onOpenComments?: (m: ChatMessage) => void;
   onOpenThread?: (m: ChatMessage) => void;
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
@@ -344,9 +343,9 @@ export const MessageRow = memo(function MessageRow({
   api,
   serverUrl,
   resolveEntry,
+  resolveArtifactContent,
   fileHeaders,
   onLongPress,
-  onOpenComments,
   onOpenThread,
   onToggleReaction,
   onRetry,
@@ -368,10 +367,8 @@ export const MessageRow = memo(function MessageRow({
       (m.sessionId ? 'Agent session' : 'Message');
   const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
-  const canComment = entryHandleForMessage(m) != null && onOpenComments != null;
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
-    ...(canComment ? [{ name: 'comments', label: 'Comments' }] : []),
     ...(!tombstone && m.sessionId == null && onOpenThread && !inThread
       ? [{ name: 'reply', label: 'Reply in thread' }]
       : []),
@@ -393,10 +390,6 @@ export const MessageRow = memo(function MessageRow({
     }
     if (name === 'reply' && onOpenThread) {
       onOpenThread(m);
-      return;
-    }
-    if (name === 'comments' && onOpenComments) {
-      onOpenComments(m);
       return;
     }
     if (['react', 'copy', 'edit', 'delete'].includes(name)) onLongPress(m);
@@ -515,6 +508,7 @@ export const MessageRow = memo(function MessageRow({
             text={m.text}
             serverUrl={serverUrl}
             resolveEntry={resolveEntry}
+            resolveArtifactContent={resolveArtifactContent}
             onOpenChannel={onOpenChannel}
             onOpenSession={onOpenSession}
           />
@@ -551,28 +545,6 @@ export const MessageRow = memo(function MessageRow({
             <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
               {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
             </Text>
-          </Pressable>
-        )}
-        {canComment && (
-          // Explicit, tappable comment affordance — a first-class a11y button now that
-          // the row no longer swallows its children. Long-press still opens the full
-          // action sheet for power users.
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Comment"
-            onPress={() => onOpenComments?.(m)}
-            hitSlop={10}
-            style={{
-              marginTop: 2,
-              minHeight: 32,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              alignSelf: 'flex-start',
-            }}
-          >
-            <Ionicons name="chatbubble-outline" size={13} color={colors.textMuted} />
-            <Text style={{ color: colors.textMuted, fontSize: font.xs }}>Comment</Text>
           </Pressable>
         )}
       </View>

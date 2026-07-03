@@ -59,7 +59,12 @@ import {
 import type { Artifact } from '@atrium/centaur-client';
 import { useSession, type Session } from './session';
 import { eventCache } from './cacheSqlite';
-import { createEntryResolver, type EntryResolver } from './entryResolve';
+import {
+  createArtifactContentResolver,
+  createEntryResolver,
+  type ArtifactContentResolver,
+  type EntryResolver,
+} from './entryResolve';
 import { useTheme } from './theme';
 import { useCall } from './useCall';
 import type { VoiceSendMeta } from './voice';
@@ -79,6 +84,7 @@ interface ChatContextValue {
   serverUrl: string;
   api: Api;
   resolveEntry: EntryResolver;
+  resolveArtifactContent: ArtifactContentResolver;
   calls: ReturnType<typeof useCall>;
   channelsLoaded: boolean;
   channelsError: string | null;
@@ -209,6 +215,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     [serverUrl, token],
   );
   const resolveEntry = useMemo(() => createEntryResolver(session), [session]);
+  const resolveArtifactContent = useMemo(() => createArtifactContentResolver(session), [session]);
 
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const stateRef = useRef(state);
@@ -1606,6 +1613,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       serverUrl,
       api,
       resolveEntry,
+      resolveArtifactContent,
       calls,
       channelsLoaded,
       channelsError,
@@ -1663,6 +1671,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       serverUrl,
       api,
       resolveEntry,
+      resolveArtifactContent,
       calls,
       channelsLoaded,
       channelsError,

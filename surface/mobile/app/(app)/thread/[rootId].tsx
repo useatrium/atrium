@@ -6,9 +6,7 @@ import { emptyTimeline, type ChatMessage, type HubFile } from '@atrium/surface-c
 import { useChat } from '../../../src/lib/chat';
 import { font, space, useTheme } from '../../../src/lib/theme';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
-import { entryHandleForMessage } from '../../../src/lib/entryHandle';
 import { Composer } from '../../../src/components/Composer';
-import { EntryComments } from '../../../src/components/EntryComments';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
@@ -43,7 +41,6 @@ export default function ThreadScreen() {
   const messages = root ? [root, ...(replies ?? [])] : (replies ?? []);
 
   const [actionsTarget, setActionsTarget] = useState<ChatMessage | null>(null);
-  const [commentsHandle, setCommentsHandle] = useState<string | null>(null);
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
@@ -97,11 +94,6 @@ export default function ThreadScreen() {
     [chat.api],
   );
 
-  const openComments = useCallback((m: ChatMessage) => {
-    const handle = entryHandleForMessage(m);
-    if (handle) setCommentsHandle(handle);
-  }, []);
-
   if (!channelId || !Number.isFinite(rootId)) return null;
 
   return (
@@ -139,10 +131,10 @@ export default function ThreadScreen() {
             api={chat.api}
             serverUrl={chat.serverUrl}
             resolveEntry={chat.resolveEntry}
+            resolveArtifactContent={chat.resolveArtifactContent}
             fileHeaders={chat.fileHeaders}
             onLoadEarlier={() => Promise.resolve()}
             onLongPress={setActionsTarget}
-            onOpenComments={openComments}
             onToggleReaction={(m, e) => void chat.react(m, e)}
             onRetry={chat.retry}
             onOpenAttachment={openAttachment}
@@ -178,20 +170,11 @@ export default function ThreadScreen() {
         message={actionsTarget}
         mine={actionsTarget?.author.id === me.id}
         canReply={false}
-        canComment={entryHandleForMessage(actionsTarget) != null}
         onClose={() => setActionsTarget(null)}
         onReact={(m, e) => void chat.react(m, e)}
         onReply={() => {}}
-        onComments={openComments}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
-      />
-      <EntryComments
-        api={chat.api}
-        handle={commentsHandle}
-        visible={commentsHandle != null}
-        me={me}
-        onClose={() => setCommentsHandle(null)}
       />
       <MediaLightbox
         visible={attachmentLightbox != null}

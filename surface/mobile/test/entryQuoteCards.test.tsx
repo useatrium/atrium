@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EntryQuoteCards } from '../src/components/EntryQuoteCards';
+import { EntryQuoteCards, stripYamlFrontmatter } from '../src/components/EntryQuoteCards';
 import type { ResolvedEntry } from '../src/lib/entryResolve';
 import { renderWithTheme } from './rnTestUtils';
 
@@ -81,5 +81,47 @@ describe('EntryQuoteCards', () => {
 
     fireEvent.click(excerpt);
     expect(onOpenChannel).toHaveBeenCalledWith('ch-1');
+  });
+
+  it('renders artifact CriticMarkup content as a tracked-changes card with an expand footer', async () => {
+    const artifactEntry: ResolvedEntry = {
+      ...baseEntry,
+      handle: 'art_12345678-1234-1234-1234-123456789abc',
+      kind: 'artifact',
+      targetType: 'artifact',
+      text: 'Fallback excerpt',
+      location: { ...baseEntry.location, sessionId: null, sessionTitle: null },
+    };
+    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>()
+      .mockResolvedValue(artifactEntry);
+    const resolveArtifactContent = vi.fn<(artifactId: string) => Promise<string | null>>()
+      .mockResolvedValue('---\ntitle: Draft\n---\nKeep {--old--} {++new++} {~~rough~>clear~~} {==claim==}{>>Needs source.<<}.');
+
+    renderWithTheme(
+      <EntryQuoteCards
+        text="See /e/art_12345678-1234-1234-1234-123456789abc"
+        serverUrl="https://atrium.example.test"
+        resolveEntry={resolveEntry}
+        resolveArtifactContent={resolveArtifactContent}
+      />,
+    );
+
+    expect(await screen.findByTestId('entry-quote-markup-card')).toBeTruthy();
+    expect(resolveArtifactContent).toHaveBeenCalledWith('12345678-1234-1234-1234-123456789abc');
+    expect(screen.getByText('old')).toBeTruthy();
+    expect(screen.getByText('new')).toBeTruthy();
+    expect(screen.getByText('rough')).toBeTruthy();
+    expect(screen.getByText('clear')).toBeTruthy();
+    expect(screen.getByText('claim')).toBeTruthy();
+    expect(screen.getByText(/Needs source\./)).toBeTruthy();
+    expect(screen.getByText('Show all changes (4)')).toBeTruthy();
+    expect(screen.queryByText(/title: Draft/)).toBeNull();
+  });
+
+  it('strips YAML frontmatter without touching plain markdown bodies', () => {
+    expect(stripYamlFrontmatter('---\ntitle: Draft\n---\n# Body')).toBe('# Body');
+    expect(stripYamlFrontmatter('---\r\ntitle: Draft\r\n---\r\n# Body')).toBe('# Body');
+    expect(stripYamlFrontmatter('---\ntitle: Draft\n---')).toBe('');
+    expect(stripYamlFrontmatter('# Body')).toBe('# Body');
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Lightbox } from '../src/components/media';
 import type { PreviewFile } from '../src/components/media';
@@ -73,5 +73,23 @@ describe('Lightbox markup action', () => {
     );
 
     expect(screen.getByRole('button', { name: '3 discussions' })).toBeTruthy();
+  });
+
+  it('offers Discuss with a prefilled artifact link and no retired Comment button', () => {
+    const onDiscuss = vi.fn();
+    render(
+      <Lightbox
+        files={[textFile]}
+        index={0}
+        onIndexChange={() => {}}
+        onClose={() => {}}
+        onDiscuss={onDiscuss}
+        onComment={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Comment' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss in channel' }));
+    expect(onDiscuss).toHaveBeenCalledWith(textFile, `${window.location.origin}/e/art_art-1 `);
   });
 });

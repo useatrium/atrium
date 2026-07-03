@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
+import type { SVGProps } from 'react';
 import { MediaPreview } from './MediaPreview';
 import {
   ChevronLeftIcon,
@@ -9,12 +10,12 @@ import {
   HighlighterIcon,
   InfoIcon,
   LinkIcon,
-  MessageIcon,
   RotateIcon,
   TrashIcon,
 } from './Icon';
 import { TextEditorPane } from './TextEditorPane';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
+import { ApplyMarkupMenu } from '../ApplyMarkupMenu';
 import type { LightboxCallbacks, PreviewFile } from './types';
 import { effectiveMediaKind, formatBytes, formatDateTime, kindLabel } from './utils';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from '../../sessions/ConflictSurface';
@@ -31,6 +32,27 @@ interface LightboxProps extends LightboxCallbacks {
 
 const iconButtonClass =
   'grid size-8 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
+
+function MessagePlusIcon({ size = 16, ...props }: SVGProps<SVGSVGElement> & { size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v3" />
+      <path d="M16 8h5" />
+      <path d="M18.5 5.5v5" />
+    </svg>
+  );
+}
 
 function cacheBustedFile(file: PreviewFile, reloadKey: number): PreviewFile {
   if (reloadKey === 0) return file;
@@ -58,7 +80,7 @@ export function Lightbox({
   onCopyLink,
   onRename,
   onDelete,
-  onComment,
+  onDiscuss,
   canManage,
   onListVersions,
   onFetchVersionContent,
@@ -68,6 +90,7 @@ export function Lightbox({
   onLoadConflict,
   onResolveConflict,
   onMarkup,
+  applyMarkupTarget,
   sessionId,
   entryReferencesByFileId,
 }: LightboxProps) {
@@ -345,6 +368,25 @@ export function Lightbox({
         <button
           type="button"
           className={iconButtonClass}
+          onClick={() => void onDiscuss?.(file, `${window.location.origin}/e/art_${file.id} `)}
+          disabled={!onDiscuss}
+          aria-label="Discuss in channel"
+          title="Discuss"
+        >
+          <MessagePlusIcon size={16} />
+        </button>
+        {applyMarkupTarget && (
+          <ApplyMarkupMenu
+            artifactId={applyMarkupTarget.artifactId}
+            path={applyMarkupTarget.path}
+            channelId={applyMarkupTarget.channelId}
+            sessions={applyMarkupTarget.sessions}
+            onSpawnNewAgent={applyMarkupTarget.onSpawnNewAgent}
+          />
+        )}
+        <button
+          type="button"
+          className={iconButtonClass}
           onClick={() => onDownload?.(file)}
           disabled={!onDownload}
           aria-label="Download file"
@@ -508,16 +550,6 @@ export function Lightbox({
                       >
                         <EditIcon size={13} />
                         Rename
-                      </button>
-                    )}
-                    {onComment && (
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-md border border-edge-strong px-2 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-                        onClick={() => onComment(file)}
-                      >
-                        <MessageIcon size={13} />
-                        Comment
                       </button>
                     )}
                     {onDelete && (
