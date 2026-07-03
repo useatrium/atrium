@@ -19,9 +19,10 @@ interface AttachmentLightboxState {
 }
 
 export default function ThreadScreen() {
-  const { rootId: rootIdParam, channelId } = useLocalSearchParams<{
+  const { rootId: rootIdParam, channelId, prefill } = useLocalSearchParams<{
     rootId: string;
     channelId: string;
+    prefill?: string;
   }>();
   const rootId = Number(rootIdParam);
   const chat = useChat();
@@ -61,7 +62,10 @@ export default function ThreadScreen() {
     setInitialDraft('');
     void getDraft(draftKey)
       .then((draft) => {
-        if (!disposed) setInitialDraft(draft ?? '');
+        if (disposed) return;
+        const nextDraft = draft || prefill || '';
+        setInitialDraft(nextDraft);
+        if (!draft && prefill) void setDraft(draftKey, prefill);
       })
       .catch((err: unknown) => {
         console.warn('failed to load thread draft', err);
@@ -69,7 +73,7 @@ export default function ThreadScreen() {
     return () => {
       disposed = true;
     };
-  }, [draftKey, getDraft]);
+  }, [draftKey, getDraft, prefill, setDraft]);
 
   const saveDraft = useCallback((key: string, text: string) => setDraft(key, text), [setDraft]);
 

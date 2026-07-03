@@ -43,7 +43,11 @@ import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { PlanPanel } from './PlanPanel';
 import { Composer } from '../components/Composer';
-import { EntryComments } from '../components/EntryComments';
+import {
+  EntryReferencesChip,
+  queryEntryReferencesForHandles,
+  type EntryReferenceSummary,
+} from '../components/EntryReferencesChip';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import {
@@ -89,6 +93,7 @@ import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkR
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
+const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
   return typeof handle === 'string' && handle.startsWith('rec_');
@@ -144,6 +149,13 @@ export function notifyUnseenOutputsChange(
   if (lastReported === next) return lastReported;
   onUnseenOutputs(next);
   return next;
+}
+
+export interface TranscriptDiscussPayload {
+  handle: string;
+  channelId: string;
+  threadRootEventId: number;
+  draft: string;
 }
 
 function outputStripClass({ danger = false, unseen = false }: { danger?: boolean; unseen?: boolean }): string {
@@ -208,6 +220,7 @@ export function SessionPane({
   popout = false,
   onUnseenOutputs,
   filesDefaultScope,
+  onDiscussEntry,
 }: {
   session: Session;
   me: UserRef;
@@ -256,6 +269,8 @@ export function SessionPane({
   onUnseenOutputs?: (hasUnseen: boolean) => void;
   /** Initial Files tab scope. Popouts use session scope; in-app panes retain channel scope. */
   filesDefaultScope?: FilesHubDefaultScope;
+  /** Opens the owning channel thread with a prefilled composer draft. Hidden in popouts. */
+  onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
 }) {
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
@@ -376,6 +391,10 @@ export function SessionPane({
   const pendingQuestion = session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
   const questionEvents = session.questionEvents ?? [];
   const questionEventsByQuestion = useMemo(() => groupQuestionEventsByQuestion(questionEvents), [questionEvents]);
+  const discussContext =
+    !popout && session.threadRootEventId != null
+      ? { channelId: session.channelId, threadRootEventId: session.threadRootEventId }
+      : null;
 
   // ── Live activity cue ──────────────────────────────────────────────────────
   // The status line only claims what the stream proves (see TurnStatus.tsx).
@@ -787,6 +806,16 @@ export function SessionPane({
     return typeof window === 'undefined' ? null : entryParamFromSearch(window.location.search);
   });
   const [flashEntryHandle, setFlashEntryHandle] = useState<string | null>(null);
+  const transcriptEntryHandles = useMemo(() => {
+    const seen = new Set<string>();
+    for (const item of stream.items) {
+      if (isTranscriptEntryHandle(item.handle ?? null)) seen.add(item.handle!);
+    }
+    return [...seen];
+  }, [stream.items]);
+  const transcriptEntryHandleKey = transcriptEntryHandles.join('\n');
+  const [entryReferences, setEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>({});
+  const entryReferencesFetchedAtRef = useRef(0);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
@@ -796,6 +825,32 @@ export function SessionPane({
     const timer = setTimeout(() => setFlashEntryHandle(null), 2500);
     return () => clearTimeout(timer);
   }, [flashEntryHandle]);
+  useEffect(() => {
+    if (transcriptEntryHandles.length === 0) return;
+    const now = Date.now();
+    const stale = now - entryReferencesFetchedAtRef.current >= ENTRY_REFERENCES_REFETCH_MS;
+    const handles = stale
+      ? transcriptEntryHandles
+      : transcriptEntryHandles.filter((handle) => !(handle in entryReferences));
+    if (handles.length === 0) return;
+    entryReferencesFetchedAtRef.current = now;
+    let disposed = false;
+    void queryEntryReferencesForHandles(handles)
+      .then((references) => {
+        if (disposed) return;
+        setEntryReferences((prev) => {
+          const next = { ...prev };
+          for (const handle of handles) next[handle] = references[handle] ?? null;
+          return next;
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to query entry references', err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [entryReferences, transcriptEntryHandleKey, transcriptEntryHandles]);
   useLayoutEffect(() => {
     if (!pendingEntryHandle) return;
     if (!isTranscriptEntryHandle(pendingEntryHandle)) {
@@ -1225,6 +1280,9 @@ export function SessionPane({
                   onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
                   markupLoading={markupLoadingHandle === item.handle}
                   highlighted={item.handle != null && item.handle === flashEntryHandle}
+                  references={item.handle != null ? entryReferences[item.handle] : null}
+                  discussContext={discussContext}
+                  onDiscussEntry={onDiscussEntry}
                 >
                   {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
@@ -1534,22 +1592,26 @@ function TurnTimeLabel({ time }: { time: string | undefined }) {
   );
 }
 
-function AnnotatedTranscriptRow({
+export function AnnotatedTranscriptRow({
   handle,
   onMarkupEntry,
   markupLoading = false,
   highlighted = false,
+  references,
+  discussContext,
+  onDiscussEntry,
   children,
 }: {
   handle: string | null;
   onMarkupEntry?: (handle: string) => void;
   markupLoading?: boolean;
   highlighted?: boolean;
+  references?: EntryReferenceSummary | null;
+  discussContext?: { channelId: string; threadRootEventId: number } | null;
+  onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
   children: ReactNode;
 }) {
-  const commentButtonRef = useRef<HTMLButtonElement | null>(null);
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [commentsOpen, setCommentsOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
@@ -1560,6 +1622,7 @@ function AnnotatedTranscriptRow({
 
   if (!handle) return <>{children}</>;
   const canMarkup = handle.startsWith('rec_') && onMarkupEntry != null;
+  const canDiscuss = handle.startsWith('rec_') && discussContext != null && onDiscussEntry != null;
 
   const copyEntryLink = () => {
     if (typeof navigator === 'undefined') return;
@@ -1582,53 +1645,55 @@ function AnnotatedTranscriptRow({
       className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
       {children}
-      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-        <button
-          type="button"
-          onClick={copyEntryLink}
-          title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-          aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-          className={`rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs shadow-sm hover:bg-edge-strong hover:text-fg ${
-            linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
-          }`}
-        >
-          <LinkIcon />
-        </button>
-        <button
-          ref={commentButtonRef}
-          type="button"
-          onClick={() => setCommentsOpen((v) => !v)}
-          title="Comment"
-          aria-label="Comment on entry"
-          aria-expanded={commentsOpen}
-          aria-haspopup="dialog"
-          className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-        >
-          <MessageCircleIcon />
-        </button>
-        {canMarkup && (
+      <div className="absolute -top-1 right-0 z-10 flex items-start gap-1">
+        <EntryReferencesChip summary={references} />
+        <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
           <button
             type="button"
-            onClick={() => {
-              setCommentsOpen(false);
-              onMarkupEntry(handle);
-            }}
-            disabled={markupLoading}
-            title="Mark up & reply"
-            aria-label="Mark up & reply"
-            className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+            onClick={copyEntryLink}
+            title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+            aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+            className={`rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs shadow-sm hover:bg-edge-strong hover:text-fg ${
+              linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+            }`}
           >
-            <PenLineIcon />
-            {markupLoading ? 'Opening...' : 'Mark up'}
+            <LinkIcon />
           </button>
-        )}
+          {canDiscuss && (
+            <button
+              type="button"
+              onClick={() => {
+                const origin = typeof window === 'undefined' ? '' : window.location.origin;
+                onDiscussEntry({
+                  handle,
+                  channelId: discussContext.channelId,
+                  threadRootEventId: discussContext.threadRootEventId,
+                  draft: `${origin}/e/${handle} `,
+                });
+              }}
+              title="Discuss"
+              aria-label="Discuss in thread"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+            >
+              <MessageSquarePlusIcon />
+              Discuss
+            </button>
+          )}
+          {canMarkup && (
+            <button
+              type="button"
+              onClick={() => onMarkupEntry(handle)}
+              disabled={markupLoading}
+              title="Mark up & reply"
+              aria-label="Mark up & reply"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+            >
+              <PenLineIcon />
+              {markupLoading ? 'Opening...' : 'Mark up'}
+            </button>
+          )}
+        </div>
       </div>
-      <EntryComments
-        handle={handle}
-        open={commentsOpen}
-        onClose={() => setCommentsOpen(false)}
-        invokerRef={commentButtonRef}
-      />
     </div>
   );
 }
@@ -1653,7 +1718,7 @@ function LinkIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
+function MessageSquarePlusIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
       aria-hidden="true"
@@ -1667,7 +1732,9 @@ function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
       strokeLinejoin="round"
       {...props}
     >
-      <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h7" />
+      <path d="M19 3v6" />
+      <path d="M16 6h6" />
     </svg>
   );
 }

@@ -258,6 +258,7 @@ describe('GET /api/entries/:handle', () => {
       workspaceId: fx.workspaceId,
       channelId: fx.channelId,
       channelName: 'general',
+      threadRootEventId: null,
       sessionId: publicSession,
       sessionTitle: 'Public resolve target',
     });
@@ -270,6 +271,39 @@ describe('GET /api/entries/:handle', () => {
       });
       expect(denied.statusCode).toBe(404);
     }
+  });
+
+  it('includes threadRootEventId in event locations', async () => {
+    const cookie = await authCookie(fx.userId);
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'top-level location',
+    });
+    const reply = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'reply location',
+      threadRootEventId: root.id,
+    });
+
+    const topLevel = await app.inject({
+      method: 'GET',
+      url: `/api/entries/${encodeEventHandle(root.id)}`,
+      headers: { cookie },
+    });
+    expect(topLevel.statusCode).toBe(200);
+    expect(topLevel.json().location.threadRootEventId).toBeNull();
+
+    const threaded = await app.inject({
+      method: 'GET',
+      url: `/api/entries/${encodeEventHandle(reply.id)}`,
+      headers: { cookie },
+    });
+    expect(threaded.statusCode).toBe(200);
+    expect(threaded.json().location.threadRootEventId).toBe(root.id);
   });
 
   it('resolves file artifacts for artifact readers and hides them from non-readers', async () => {

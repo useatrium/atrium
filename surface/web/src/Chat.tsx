@@ -37,7 +37,7 @@ import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
 import { FilesHub } from './sessions/FilesHub';
-import { SessionPane } from './sessions/SessionPane';
+import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPane';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
@@ -69,7 +69,7 @@ import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
-import { entryParamFromSearch, stripEntryParamFromLocation } from './EntryLinkRoute';
+import { entryParamFromSearch, stripEntryParamFromLocation, threadRootParamFromSearch } from './EntryLinkRoute';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -125,12 +125,44 @@ function isMobileViewportNow(): boolean {
     : false;
 }
 
+function threadDraftKeyFor(channelId: string, rootEventId: number): string {
+  return `channel:${channelId}:thread:${rootEventId}`;
+}
+
+function flashEntryHandleInDocument(handle: string): void {
+  requestAnimationFrame(() => {
+    const target = Array.from(document.querySelectorAll<HTMLElement>('[data-entry-handle]')).find(
+      (el) => el.dataset.entryHandle === handle,
+    );
+    if (!target) return;
+    target.scrollIntoView({ block: 'center' });
+    target.classList.add('entry-flash', 'bg-accent-hover/10');
+    window.setTimeout(() => target.classList.remove('entry-flash', 'bg-accent-hover/10'), 2500);
+  });
+}
+
+function putTextInLastComposer(text: string): void {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const inputs = document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message input"]');
+      const el = inputs[inputs.length - 1];
+      if (!el) return;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(el, text);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.focus();
+      el.setSelectionRange(text.length, text.length);
+    });
+  });
+}
+
 export function Chat({
   me,
   workspace,
   initialSessionId,
   initialChannelId,
   initialEntryHandle,
+  initialThreadRootEventId,
   onLogout,
 }: {
   me: UserRef;
@@ -141,6 +173,8 @@ export function Chat({
   initialChannelId?: string | null;
   /** Entry handle from ?entry=... for one-shot scroll/highlight handling. */
   initialEntryHandle?: string | null;
+  /** Thread root from /e/:handle reply links. Usually read from the rewritten URL. */
+  initialThreadRootEventId?: number | null;
   onLogout: () => void;
 }) {
   const { prefs } = useTheme();
@@ -722,13 +756,66 @@ export function Chat({
       .catch(onApiError);
   };
 
+  const ensureTopLevelEventLoaded = useCallback(async (channelId: string, eventId: number): Promise<boolean> => {
+    for (let tries = 0; tries < 30; tries++) {
+      const t = stateRef.current.timelines[channelId];
+      if (t?.main.some((m) => m.id === eventId)) return true;
+      if (!t?.loaded) {
+        await new Promise((r) => setTimeout(r, 150));
+        continue;
+      }
+      if (!t.hasMoreBefore) return false;
+      const oldest = t.main.find((m) => m.status === 'confirmed');
+      if (!oldest?.id) return false;
+      const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
+      const { events, hasMore } = await api.messages(channelId, {
+        beforeId: oldest.id,
+        limit: PAGE_SIZE,
+      });
+      if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) continue;
+      dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
+      void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
+        console.warn('failed to cache thread root history', err);
+      });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    return stateRef.current.timelines[channelId]?.main.some((m) => m.id === eventId) === true;
+  }, []);
+
+  const openThreadInChannel = useCallback(
+    async (channelId: string, rootEventId: number): Promise<boolean> => {
+      const hasRoot = await ensureTopLevelEventLoaded(channelId, rootEventId);
+      if (!hasRoot) return false;
+      dispatch({ type: 'open-thread', rootEventId });
+      const { events } = await api.thread(rootEventId);
+      dispatch({ type: 'thread-loaded', channelId, rootEventId, events });
+      return true;
+    },
+    [ensureTopLevelEventLoaded],
+  );
+
   // ---- thread panel ----
   const openThread = (rootEventId: number) => {
     if (!active) return;
-    dispatch({ type: 'open-thread', rootEventId });
-    const channelId = active.id;
-    api.thread(rootEventId).then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }));
+    void openThreadInChannel(active.id, rootEventId).catch(onApiError);
   };
+
+  const openDiscussThread = useCallback(
+    (payload: TranscriptDiscussPayload) => {
+      setMainSurface('chat');
+      selectChannel(payload.channelId);
+      dispatch({ type: 'close-session' });
+      const draftKey = threadDraftKeyFor(payload.channelId, payload.threadRootEventId);
+      markDraftTouched(draftKey);
+      void saveDraft(draftKey, payload.draft);
+      void openThreadInChannel(payload.channelId, payload.threadRootEventId)
+        .then((opened) => {
+          if (opened) putTextInLastComposer(payload.draft);
+        })
+        .catch(onApiError);
+    },
+    [markDraftTouched, onApiError, openThreadInChannel, saveDraft, selectChannel],
+  );
 
   const {
     hasChannelSessions,
@@ -768,6 +855,10 @@ export function Chat({
     if (initialEntryHandle) return initialEntryHandle;
     return typeof window === 'undefined' ? null : entryParamFromSearch(window.location.search);
   });
+  const [pendingEntryThreadRootId, setPendingEntryThreadRootId] = useState<number | null>(() => {
+    if (initialThreadRootEventId != null) return initialThreadRootEventId;
+    return typeof window === 'undefined' ? null : threadRootParamFromSearch(window.location.search);
+  });
   useEffect(() => {
     if (highlightId == null) return;
     const t = setTimeout(() => setHighlightId(null), 2500);
@@ -775,7 +866,7 @@ export function Chat({
   }, [highlightId]);
 
   useEffect(() => {
-    if (!pendingEntryHandle || pendingEntryHandle.startsWith('rec_')) return;
+    if (!pendingEntryHandle || pendingEntryHandle.startsWith('rec_') || pendingEntryThreadRootId != null) return;
     const eventMatch = /^evt_(\d+)$/.exec(pendingEntryHandle);
     if (!eventMatch) {
       stripEntryParamFromLocation();
@@ -789,7 +880,37 @@ export function Chat({
     }
     stripEntryParamFromLocation();
     setPendingEntryHandle(null);
-  }, [active, pendingEntryHandle, timeline.loaded, timeline.main]);
+  }, [active, pendingEntryHandle, pendingEntryThreadRootId, timeline.loaded, timeline.main]);
+
+  useEffect(() => {
+    if (!pendingEntryHandle || pendingEntryThreadRootId == null) return;
+    const eventMatch = /^evt_(\d+)$/.exec(pendingEntryHandle);
+    if (!eventMatch) {
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+      setPendingEntryThreadRootId(null);
+      return;
+    }
+    if (!active) return;
+    let disposed = false;
+    void openThreadInChannel(active.id, pendingEntryThreadRootId)
+      .then((opened) => {
+        if (disposed) return;
+        if (opened) flashEntryHandleInDocument(pendingEntryHandle);
+        stripEntryParamFromLocation();
+        setPendingEntryHandle(null);
+        setPendingEntryThreadRootId(null);
+      })
+      .catch((err: unknown) => {
+        if (disposed) return;
+        setPendingEntryHandle(null);
+        setPendingEntryThreadRootId(null);
+        onApiError(err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [active, onApiError, openThreadInChannel, pendingEntryHandle, pendingEntryThreadRootId]);
 
   const jumpToMessage = async (event: WireEvent) => {
     const channelId = event.channelId;
@@ -1251,6 +1372,7 @@ export function Chat({
           onConnectProvider={setProviderDialog}
           onConnectGitHub={() => setConnectionDialog('github')}
           agentProfiles={agentProfiles}
+          onDiscussEntry={openDiscussThread}
           initialEntryHandle={pendingEntryHandle?.startsWith('rec_') ? pendingEntryHandle : null}
         />
       ) : state.openSessionId ? (

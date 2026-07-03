@@ -7,8 +7,11 @@ export interface EntryLinkDestination {
   initialChannelId: string | null;
   initialSessionId: string | null;
   initialEntryHandle: string;
+  initialThreadRootEventId: number | null;
   targetType: NormalizedEntry['targetType'];
 }
+
+type EntryLocationWithThread = NormalizedEntry['location'] & { threadRootEventId?: number | null };
 
 export function entryHandleFromPath(pathname: string): string | null {
   const match = /^\/e\/([^/]+)$/.exec(pathname);
@@ -21,16 +24,20 @@ export function entryHandleFromPath(pathname: string): string | null {
 }
 
 export function destinationForEntry(entry: NormalizedEntry): EntryLinkDestination | null {
-  const entrySearch = `entry=${encodeURIComponent(entry.handle)}`;
+  const threadRootEventId = threadRootEventIdForEntry(entry);
+  const entrySearch = new URLSearchParams({ entry: entry.handle });
+  if (threadRootEventId != null) entrySearch.set('threadRoot', String(threadRootEventId));
+  const search = entrySearch.toString();
   if (entry.targetType === 'record') {
     const sessionId = entry.location.sessionId;
     if (!sessionId) return null;
     return {
       pathname: `/s/${encodeURIComponent(sessionId)}`,
-      search: entrySearch,
+      search,
       initialChannelId: null,
       initialSessionId: sessionId,
       initialEntryHandle: entry.handle,
+      initialThreadRootEventId: null,
       targetType: entry.targetType,
     };
   }
@@ -39,23 +46,38 @@ export function destinationForEntry(entry: NormalizedEntry): EntryLinkDestinatio
   if (!channelId) return null;
   return {
     pathname: '/',
-    search: entrySearch,
+    search,
     initialChannelId: channelId,
     initialSessionId: null,
     initialEntryHandle: entry.handle,
+    initialThreadRootEventId: threadRootEventId,
     targetType: entry.targetType,
   };
+}
+
+function threadRootEventIdForEntry(entry: NormalizedEntry): number | null {
+  if (entry.targetType !== 'event') return null;
+  const value = (entry.location as EntryLocationWithThread).threadRootEventId;
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 }
 
 export function entryParamFromSearch(search: string): string | null {
   return new URLSearchParams(search).get('entry');
 }
 
+export function threadRootParamFromSearch(search: string): number | null {
+  const raw = new URLSearchParams(search).get('threadRoot');
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 export function stripEntryParamFromLocation(): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
-  if (!url.searchParams.has('entry')) return;
+  if (!url.searchParams.has('entry') && !url.searchParams.has('threadRoot')) return;
   url.searchParams.delete('entry');
+  url.searchParams.delete('threadRoot');
   const next = `${url.pathname}${url.search}${url.hash}`;
   window.history.replaceState(null, '', next);
 }

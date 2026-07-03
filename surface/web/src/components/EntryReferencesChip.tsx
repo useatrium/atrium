@@ -1,0 +1,109 @@
+import { useState } from 'react';
+import { api } from '../api';
+
+export interface EntryReferenceItem {
+  eventId: number;
+  handle: string;
+  channelId: string;
+  threadRootEventId: number | null;
+  actorLabel: string | null;
+  excerpt: string;
+  ts: string;
+}
+
+export interface EntryReferenceSummary {
+  count: number;
+  latest: EntryReferenceItem[];
+}
+
+export type EntryReferencesByHandle = Record<string, EntryReferenceSummary>;
+
+export const ENTRY_REFERENCES_CHUNK_SIZE = 200;
+
+export async function queryEntryReferencesForHandles(handles: string[]): Promise<EntryReferencesByHandle> {
+  if (handles.length === 0) return {};
+  const references: EntryReferencesByHandle = {};
+  for (let i = 0; i < handles.length; i += ENTRY_REFERENCES_CHUNK_SIZE) {
+    const chunk = handles.slice(i, i + ENTRY_REFERENCES_CHUNK_SIZE);
+    const response = await api.queryEntryReferences(chunk);
+    Object.assign(references, response.references as EntryReferencesByHandle);
+  }
+  return references;
+}
+
+export function EntryReferencesChip({
+  summary,
+  onNavigate = navigateToEntry,
+}: {
+  summary: EntryReferenceSummary | null | undefined;
+  onNavigate?: (handle: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!summary || summary.count <= 0) return null;
+  const refs = summary.latest;
+  const single = summary.count === 1 && refs.length === 1;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => {
+          if (single) onNavigate(refs[0]!.handle);
+          else setOpen((value) => !value);
+        }}
+        title={`${summary.count} ${summary.count === 1 ? 'discussion' : 'discussions'}`}
+        aria-label={`${summary.count} ${summary.count === 1 ? 'discussion' : 'discussions'}`}
+        aria-expanded={single ? undefined : open}
+        aria-haspopup={single ? undefined : 'dialog'}
+        className="inline-flex items-center gap-1 rounded-full border border-edge bg-surface-overlay/80 px-1.5 py-0.5 text-3xs font-medium tabular-nums text-fg-muted shadow-sm hover:border-edge-strong hover:text-fg-secondary"
+      >
+        <span aria-hidden="true">↗</span>
+        <span>{summary.count}</span>
+      </button>
+      {open && !single && (
+        <div
+          role="dialog"
+          aria-label="Entry discussions"
+          className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+        >
+          {refs.map((ref) => (
+            <button
+              key={`${ref.eventId}:${ref.handle}`}
+              type="button"
+              onClick={() => onNavigate(ref.handle)}
+              className="block w-full rounded px-2 py-1.5 text-left hover:bg-edge-strong"
+            >
+              <div className="flex min-w-0 items-center gap-2 text-2xs">
+                <span className="truncate font-medium text-fg-secondary">{ref.actorLabel ?? 'Someone'}</span>
+                <span className="shrink-0 text-fg-faint">{relativeTime(ref.ts)}</span>
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-fg-muted">{ref.excerpt}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function navigateToEntry(handle: string) {
+  window.location.assign(`/e/${encodeURIComponent(handle)}`);
+}
+
+function relativeTime(ts: string): string {
+  const then = new Date(ts).getTime();
+  if (!Number.isFinite(then)) return '';
+  const diffSeconds = Math.round((then - Date.now()) / 1000);
+  const abs = Math.abs(diffSeconds);
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['year', 31536000],
+    ['month', 2592000],
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+  ];
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  for (const [unit, seconds] of units) {
+    if (abs >= seconds) return rtf.format(Math.round(diffSeconds / seconds), unit);
+  }
+  return rtf.format(diffSeconds, 'second');
+}
