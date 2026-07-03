@@ -97,6 +97,17 @@ clean_legacy_pnpm_store(){
   fi
 }
 
+refresh_livekit_runtime(){
+  local cid
+  cid="$("${DC[@]}" --profile livekit ps -q livekit 2>/dev/null || true)"
+  if [ -z "$cid" ]; then
+    log "livekit: not running, skipping runtime config refresh"
+    return
+  fi
+  log "livekit: refreshing runtime config"
+  "${DC[@]}" --profile livekit up -d --no-build livekit || die "livekit refresh"
+}
+
 # ---- content-aware change detection (last-deployed SHA -> HEAD) ----
 LAST="$(cat "$STATE/last-deployed-sha" 2>/dev/null || true)"
 if [ -n "$LAST" ] && git -C "$REPO_DIR" cat-file -e "${LAST}^{commit}" 2>/dev/null; then
@@ -257,6 +268,7 @@ case "$TARGET" in
   all)     deploy_surface; deploy_centaur ;;
   *) die "unknown target '$TARGET' (surface|centaur|all)" ;;
 esac
+refresh_livekit_runtime
 echo "$SHA" > "$STATE/last-deployed-sha"
 prune_images
 log "redeploy DONE ($TARGET) @ $SHA"
