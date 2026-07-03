@@ -96,7 +96,7 @@ describe('QuickSwitcher accessibility', () => {
       />,
     );
 
-    const input = screen.getByRole('combobox', { name: 'Channel and message search' });
+    const input = screen.getByRole('combobox', { name: 'Commands and search' });
     expect(input.getAttribute('aria-expanded')).toBe('true');
     expect(input.getAttribute('aria-controls')).toBe('quick-switcher-results');
     expect(input.getAttribute('aria-activedescendant')).toBe('quick-switcher-option-0');

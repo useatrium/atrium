@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 import {
   apiAs,
@@ -209,6 +209,49 @@ function executionStateFrame(eventId: number, status: string): string {
   });
 }
 
+function commandShortcut(): string {
+  return process.platform === 'darwin' ? 'Meta+K' : 'Control+K';
+}
+
+function commandDialog(page: Page): Locator {
+  return page.getByRole('dialog', { name: /command|search/i });
+}
+
+function commandSearchInput(dialog: Locator): Locator {
+  return dialog
+    .getByRole('combobox')
+    .or(dialog.getByRole('searchbox'))
+    .or(dialog.getByRole('textbox'))
+    .first();
+}
+
+async function openCommandCenter(
+  page: Page,
+  options: { allowButtonFallback?: boolean } = {},
+): Promise<Locator> {
+  await page.keyboard.press(commandShortcut());
+  const dialog = commandDialog(page);
+  if (options.allowButtonFallback) {
+    try {
+      await expect(dialog).toBeVisible({ timeout: 1500 });
+    } catch {
+      await page.getByRole('button', { name: /command|search/i }).first().click();
+    }
+  }
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function runCommandQuery(
+  page: Page,
+  query: string,
+  options: { allowButtonFallback?: boolean } = {},
+) {
+  const dialog = await openCommandCenter(page, options);
+  await commandSearchInput(dialog).fill(query);
+  return dialog;
+}
+
 test('login lands in #general; sent message appears', async ({ page }) => {
   await login(page, unique('alice'), 'Alice');
 
@@ -377,12 +420,65 @@ test('search (⌘K): find an old message and jump to it', async ({ page }) => {
   await login(page, handle, 'Searcher');
   await openChannel(page, room);
   await expect(page.getByText(old, { exact: true })).toHaveCount(0);
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-  await page.getByLabel('Channel and message search').fill(old);
-  await expect(page.getByRole('listbox', { name: 'Search results' }).getByText(old)).toBeVisible();
+  const dialog = await runCommandQuery(page, old);
+  await expect(dialog.getByText(old, { exact: true })).toBeVisible();
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(page.getByText(old, { exact: true })).toBeVisible();
+});
+
+test('command center: empty query shows suggested commands', async ({ page }) => {
+  await login(page, unique('commander'), 'Commander');
+
+  const dialog = await openCommandCenter(page);
+  for (const label of ['New agent in #general', 'Open Files', 'Open Activity', 'Open settings']) {
+    await expect(dialog.getByText(label, { exact: true })).toBeVisible();
+  }
+});
+
+test('command center: opens Files from query', async ({ page }) => {
+  await login(page, unique('files-commander'), 'Files Commander');
+
+  const dialog = await runCommandQuery(page, 'file');
+  await expect(dialog.getByText('Open Files', { exact: true })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(commandDialog(page)).toBeHidden();
+  await expect(
+    page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first(),
+  ).toBeVisible();
+});
+
+test('command center: opens Activity from query', async ({ page }) => {
+  await login(page, unique('act-cmd'), 'Activity Commander');
+
+  const dialog = await runCommandQuery(page, 'activity');
+  await expect(dialog.getByText('Open Activity', { exact: true })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(commandDialog(page)).toBeHidden();
+  await expect(page.getByRole('heading', { name: /^Activity$/ }).first()).toBeVisible();
+});
+
+test('command center: opens New agent dialog from query', async ({ page }) => {
+  await login(page, unique('agent-commander'), 'Agent Commander');
+
+  const dialog = await runCommandQuery(page, 'agent');
+  await expect(dialog.getByText('New agent in #general', { exact: true })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(commandDialog(page)).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Start an agent session' })).toBeVisible();
+});
+
+test('command center: mobile opens Files from query', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, unique('mobile-commander'), 'Mobile Commander');
+
+  const dialog = await runCommandQuery(page, 'file', { allowButtonFallback: true });
+  await expect(dialog.getByText('Open Files', { exact: true })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(commandDialog(page)).toBeHidden();
+  await expect(
+    page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first(),
+  ).toBeVisible();
 });
 
 test('offline send survives reload and confirms once', async ({ page, context }) => {
