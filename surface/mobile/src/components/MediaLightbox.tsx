@@ -30,6 +30,8 @@ import { TextEditorPane } from './TextEditorPane';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { AppPreviewPane } from './AppPreviewPane';
 import { PptxPane } from './PptxPane';
+import { artifactEntryHandle, EntryReferencesChip } from './EntryReferencesChip';
+import type { EntryReferenceMap, EntryReferenceSummary } from '../lib/entryReferences';
 import { font, space, useTheme, type Colors } from '../lib/theme';
 
 type HubFileWithThumbnail = HubFile & { thumbnailUrl?: string };
@@ -40,6 +42,8 @@ export interface MediaLightboxProps {
   initialIndex: number;
   fileContentUrl: (artifactId: string, atSeq?: number) => string;
   fileHeaders?: Record<string, string>;
+  references?: EntryReferenceMap;
+  onOpenReferences?: (summary: EntryReferenceSummary) => void;
   onClose: () => void;
   onOpenExternal: (file: HubFile) => Promise<void>;
   /** When provided, unlocks the parity affordances: version history,
@@ -637,6 +641,8 @@ export function MediaLightbox({
   initialIndex,
   fileContentUrl,
   fileHeaders,
+  references,
+  onOpenReferences,
   onClose,
   onOpenExternal,
   api,
@@ -652,6 +658,7 @@ export function MediaLightbox({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const current = files[index];
+  const currentReference = current ? (references?.[artifactEntryHandle(current.artifactId)] ?? null) : null;
 
   useEffect(() => {
     if (!visible) return;
@@ -714,6 +721,9 @@ export function MediaLightbox({
                 {index + 1} of {files.length} · {normalizedKind(current)}
               </Text>
             </View>
+            {currentReference && currentReference.count > 0 && onOpenReferences ? (
+              <EntryReferencesChip count={currentReference.count} onPress={() => onOpenReferences(currentReference)} />
+            ) : null}
             <ChromeButton icon="chevron-back" label="Previous file" disabled={index === 0} onPress={() => jump(index - 1)} />
             <ChromeButton icon="chevron-forward" label="Next file" disabled={index >= files.length - 1} onPress={() => jump(index + 1)} />
             <ChromeButton

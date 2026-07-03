@@ -18,6 +18,7 @@ export const commentMarkSpec: MarkSpec = {
   attrs: {
     id: { default: '' },
     text: { default: '' },
+    author: { default: null },
   },
   inclusive: false,
   parseDOM: [
@@ -26,6 +27,7 @@ export const commentMarkSpec: MarkSpec = {
       getAttrs: (dom) => ({
         id: (dom as HTMLElement).getAttribute('data-comment-id') || '',
         text: (dom as HTMLElement).getAttribute('data-comment-text') || '',
+        author: (dom as HTMLElement).getAttribute('data-comment-author') || null,
       }),
     },
   ],
@@ -35,6 +37,7 @@ export const commentMarkSpec: MarkSpec = {
       class: 'comment-mark',
       'data-comment-id': mark.attrs.id,
       'data-comment-text': mark.attrs.text,
+      'data-comment-author': mark.attrs.author || null,
     },
     0,
   ],
@@ -48,11 +51,13 @@ const codeBlockWithCommentSpec: NodeSpec = {
     ...(baseCodeBlockSpec?.attrs || {}),
     params: { default: '' },
     comment: { default: '' },
+    commentAuthor: { default: null },
   },
   toDOM: (node: ProseMirrorNode) => [
     'pre',
     {
       'data-code-block-comment': node.attrs.comment || null,
+      'data-code-block-comment-author': node.attrs.commentAuthor || null,
       class: node.attrs.comment ? 'code-block has-block-comment' : 'code-block',
     },
     ['code', 0],
@@ -72,4 +77,3 @@ export function parseMarkdownToMarkupDoc(markdown: string): ProseMirrorNode {
   const parsed = defaultMarkdownParser.parse(markdown);
   return markupSchema.nodeFromJSON(parsed.toJSON());
 }
-

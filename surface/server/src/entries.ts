@@ -351,23 +351,64 @@ export async function queryEntryReferences(
     `WITH input AS (
        SELECT unnest($1::text[]) AS handle
      ),
-     visible_refs AS (
-       SELECT input.handle AS queried_handle,
-              e.id AS event_id,
-              e.channel_id::text AS channel_id,
-              e.thread_root_event_id,
-              u.display_name AS actor_label,
-              substring(COALESCE(e.payload->>'text', '') from 1 for 140) AS excerpt,
-              e.created_at,
-              count(*) OVER (PARTITION BY input.handle) AS ref_count,
-              row_number() OVER (PARTITION BY input.handle ORDER BY e.created_at DESC, e.id DESC) AS rn
+     candidates AS (
+       -- Start from both GIN-indexed ref columns, then re-check the root
+       -- against its latest edit below. That preserves latest-text-wins
+       -- semantics while avoiding a full scan for handles introduced by edits.
+       SELECT input.handle AS queried_handle, e.id AS event_id
          FROM input
          JOIN events e
            ON e.type = 'message.posted'
           AND e.payload->'entry_refs' @> to_jsonb(ARRAY[input.handle]::text[])
+       UNION
+       SELECT input.handle AS queried_handle, root.id AS event_id
+         FROM input
+         JOIN events edit_match
+           ON edit_match.type = 'message.edited'
+          AND edit_match.payload->'entry_refs' @> to_jsonb(ARRAY[input.handle]::text[])
+         JOIN events root
+           ON root.type = 'message.posted'
+          AND root.id = CASE
+                WHEN edit_match.payload->>'target' ~ '^evt_[0-9]+$'
+                THEN substring(edit_match.payload->>'target' FROM 5)::bigint
+              END
+     ),
+     visible_refs AS (
+       SELECT candidates.queried_handle,
+              e.id AS event_id,
+              e.channel_id::text AS channel_id,
+              e.thread_root_event_id,
+              u.display_name AS actor_label,
+              substring(
+                COALESCE(
+                  CASE WHEN latest_edit.id IS NOT NULL THEN latest_edit.payload->>'text' ELSE e.payload->>'text' END,
+                  ''
+                )
+                from 1 for 140
+              ) AS excerpt,
+              e.created_at,
+              count(*) OVER (PARTITION BY candidates.queried_handle) AS ref_count,
+              row_number() OVER (PARTITION BY candidates.queried_handle ORDER BY e.created_at DESC, e.id DESC) AS rn
+         FROM candidates
+         JOIN events e ON e.id = candidates.event_id
+         LEFT JOIN LATERAL (
+           SELECT x.id, x.payload
+             FROM events x
+            WHERE x.type = 'message.edited'
+              AND x.payload->>'target' = ('evt_' || e.id::text)
+            ORDER BY x.id DESC
+            LIMIT 1
+         ) latest_edit ON true
          JOIN channels c ON c.id = e.channel_id
          LEFT JOIN users u ON u.id = e.actor_id
-        WHERE NOT EXISTS (
+        WHERE COALESCE(
+                CASE
+                  WHEN latest_edit.id IS NOT NULL THEN latest_edit.payload->'entry_refs'
+                  ELSE e.payload->'entry_refs'
+                END,
+                '[]'::jsonb
+              ) @> to_jsonb(ARRAY[candidates.queried_handle]::text[])
+          AND NOT EXISTS (
                 SELECT 1 FROM events d
                  WHERE d.type = 'message.deleted'
                    AND d.payload->>'target' = ('evt_' || e.id::text)

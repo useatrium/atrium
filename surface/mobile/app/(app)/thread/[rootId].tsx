@@ -170,6 +170,7 @@ export default function ThreadScreen() {
         message={actionsTarget}
         mine={actionsTarget?.author.id === me.id}
         canReply={false}
+        canMarkupReply={false}
         onClose={() => setActionsTarget(null)}
         onReact={(m, e) => void chat.react(m, e)}
         onReply={() => {}}

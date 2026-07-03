@@ -264,6 +264,41 @@ body {
     sans-serif;
 }
 
+.markup-shell-page {
+  background: var(--color-surface);
+  color: var(--color-fg-body);
+  display: flex;
+  height: 100dvh;
+  min-height: 100dvh;
+  min-width: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  width: 100vw;
+}
+
+.markup-shell-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.markup-shell-editor .atrium-markup-editor-host,
+.markup-shell-editor .atrium-markup-prosemirror {
+  min-height: 100%;
+}
+
+.markup-shell-hint {
+  align-items: center;
+  color: var(--color-fg-muted);
+  display: flex;
+  flex: 1 1 auto;
+  font-size: 0.875rem;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
 /* Visible keyboard focus on command controls. Form fields use local border focus states. */
 :where(button, [role='button'], a):focus-visible {
   outline: 2px solid var(--color-accent-text);

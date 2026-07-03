@@ -3,6 +3,7 @@ import { ApiError, api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { EntryLinkRoute, entryHandleFromPath } from './EntryLinkRoute';
 import { Login } from './Login';
+import { isMarkupShellRoute, MarkupShellPage } from './MarkupShellPage';
 import { Toasts } from './components/Toasts';
 import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
@@ -35,6 +36,7 @@ export function paneRouteFromPath(pathname: string): { sessionId: string } | nul
 
 export function App() {
   const [paneRoute] = useState(() => paneRouteFromPath(location.pathname));
+  const [markupShellRoute] = useState(() => isMarkupShellRoute(location.pathname));
   const [workRoute] = useState(() => workRouteFromPath(location.pathname));
   const [entryRouteHandle] = useState(() => entryHandleFromPath(location.pathname));
   const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
@@ -43,6 +45,10 @@ export function App() {
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
+    if (markupShellRoute) {
+      setChecked(true);
+      return;
+    }
     let disposed = false;
     api
       .me()
@@ -85,7 +91,7 @@ export function App() {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [markupShellRoute]);
 
   useEffect(() => {
     if (!me || workspace) return;
@@ -104,7 +110,8 @@ export function App() {
 
   // Toasts mount at the root so even login-screen failures surface.
   let body: ReactNode;
-  if (!checked) body = <div className="h-dvh bg-surface" />;
+  if (markupShellRoute) body = <MarkupShellPage />;
+  else if (!checked) body = <div className="h-dvh bg-surface" />;
   else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)
     body = (

@@ -3,6 +3,7 @@ import { EditorState, TextSelection } from 'prosemirror-state';
 
 import { applyComment, applyStrike, applySuggestEdit, createMarkupEditorState } from './MarkupEditorCore';
 import { serializeToCriticMarkup } from './criticMarkup';
+import { parseMarkdownToMarkupDoc } from './schema';
 
 const pocSample = `# Release Review Memo
 
@@ -50,6 +51,14 @@ describe('serializeToCriticMarkup', () => {
     expect(serializeToCriticMarkup(state.doc)).toBe('{--Alpha--} {~~beta~>delta~~} {==gamma==}{>>Needs source.<<}.');
   });
 
+  it('stamps author-less comments with the current comment author', () => {
+    let state = createMarkupEditorState('Alpha beta.');
+    state = withSelection(state, 'beta');
+    state = applyCommand(state, applyComment('Needs source.', 'c-test'));
+
+    expect(serializeToCriticMarkup(state.doc, { commentAuthor: 'agent' })).toBe('Alpha {==beta==}{>>@agent: Needs source.<<}.');
+  });
+
   it('serializes multi-paragraph suggestions without dropping structure', () => {
     let state = createMarkupEditorState('First paragraph here.\n\nSecond paragraph here.');
     state = withRange(state, 7, 45);
@@ -74,9 +83,9 @@ describe('serializeToCriticMarkup', () => {
   });
 
   it('escapes literal CriticMarkup-looking tokens in prose', () => {
-    const state = createMarkupEditorState('Literal {++not a suggestion++} text.');
+    const doc = parseMarkdownToMarkupDoc('Literal {++not a suggestion++} text.');
 
-    expect(serializeToCriticMarkup(state.doc)).toBe('Literal \\{++not a suggestion++\\} text.');
+    expect(serializeToCriticMarkup(doc)).toBe('Literal \\{++not a suggestion++\\} text.');
   });
 
   it('omits text marked as both insertion and deletion', () => {

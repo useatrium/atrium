@@ -19,9 +19,11 @@ export interface MessageActionsProps {
   message: ChatMessage | null;
   mine: boolean;
   canReply: boolean;
+  canMarkupReply?: boolean;
   onClose: () => void;
   onReact: (m: ChatMessage, emoji: string) => void;
   onReply: (m: ChatMessage) => void;
+  onMarkupReply?: (m: ChatMessage) => void;
   onEdit: (m: ChatMessage) => void;
   onDelete: (m: ChatMessage) => void;
 }
@@ -66,9 +68,11 @@ export function MessageActions({
   message,
   mine,
   canReply,
+  canMarkupReply = false,
   onClose,
   onReact,
   onReply,
+  onMarkupReply,
   onEdit,
   onDelete,
 }: MessageActionsProps) {
@@ -95,6 +99,7 @@ export function MessageActions({
   const copyLink = !deleted && rawCopyLink.trim() ? rawCopyLink : null;
   const canReact = confirmed && !sessionBlock;
   const canReplyAction = confirmed && canReply && !sessionBlock;
+  const canMarkupReplyAction = confirmed && canMarkupReply && !sessionBlock && onMarkupReply != null;
   const canMutateMessage = confirmed && mine && !sessionBlock;
 
   useEffect(() => {
@@ -189,6 +194,15 @@ export function MessageActions({
               label="Reply in thread"
               onPress={() => {
                 onReply(m);
+                onClose();
+              }}
+            />
+          )}
+          {m && canMarkupReplyAction && (
+            <Action
+              label="Mark up & reply"
+              onPress={() => {
+                onMarkupReply(m);
                 onClose();
               }}
             />

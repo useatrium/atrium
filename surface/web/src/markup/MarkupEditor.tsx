@@ -10,6 +10,8 @@ import './MarkupEditor.css';
 export interface MarkupEditorProps {
   /** Document body to edit — markdown WITHOUT YAML frontmatter. */
   initialMarkdown: string;
+  /** Current author's handle for newly-created comment stamps during serialization. */
+  commentAuthor?: string | null;
   /** Fires whenever dirty state (any suggestion/comment/edit present) changes. */
   onDirtyChange?: (dirty: boolean) => void;
   className?: string;
@@ -23,7 +25,7 @@ export interface MarkupEditorHandle {
 }
 
 export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(function MarkupEditor(
-  { initialMarkdown, onDirtyChange, className },
+  { initialMarkdown, commentAuthor = null, onDirtyChange, className },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -41,14 +43,14 @@ export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(fu
     () => ({
       serialize() {
         const view = viewRef.current;
-        return view ? serializeToCriticMarkup(view.state.doc) : initialMarkdown;
+        return view ? serializeToCriticMarkup(view.state.doc, { commentAuthor }) : initialMarkdown;
       },
       hasMarkup() {
         const view = viewRef.current;
         return view ? documentHasMarkup(view.state.doc) : false;
       },
     }),
-    [initialMarkdown],
+    [commentAuthor, initialMarkdown],
   );
 
   useEffect(() => {

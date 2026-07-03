@@ -4,14 +4,19 @@ type InlineSegment = {
   kind: 'normal' | 'insertion' | 'deletion' | 'comment';
   text: string;
   comment?: string;
+  commentAuthor?: string | null;
 };
+
+export interface SerializeCriticMarkupOptions {
+  commentAuthor?: string | null;
+}
 
 const criticMarkNames = new Set(['insertion', 'deletion', 'comment']);
 
-export function serializeToCriticMarkup(doc: ProseMirrorNode): string {
+export function serializeToCriticMarkup(doc: ProseMirrorNode, options: SerializeCriticMarkupOptions = {}): string {
   const blocks: string[] = [];
   doc.forEach((child) => {
-    blocks.push(renderBlock(child));
+    blocks.push(renderBlock(child, options));
   });
   return blocks.join('\n\n');
 }
@@ -22,7 +27,7 @@ function escapeCriticText(value: string): string {
     .replace(/(\+\+|--|~~|==|>>|<<)\}/g, '$1\\}');
 }
 
-function renderInline(node: ProseMirrorNode): string {
+function renderInline(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
   const segments = flattenInline(node);
   let output = '';
 
@@ -47,7 +52,7 @@ function renderInline(node: ProseMirrorNode): string {
       continue;
     }
     if (segment.kind === 'comment') {
-      output += `{==${segment.text}==}{>>${escapeCriticText(segment.comment || '')}<<}`;
+      output += `{==${segment.text}==}{>>${escapeCriticText(renderCommentPayload(segment.comment || '', segment.commentAuthor, options))}<<}`;
       continue;
     }
     output += segment.text;
@@ -64,7 +69,11 @@ function flattenInline(node: ProseMirrorNode): InlineSegment[] {
       return;
     }
     if (child.type.name === 'hard_break') {
-      appendSegment(segments, { kind: 'normal', text: '\\\n' });
+      if (child.marks.some((mark) => criticMarkNames.has(mark.type.name))) {
+        appendSegment(segments, segmentForText('\n', child.marks));
+      } else {
+        appendSegment(segments, { kind: 'normal', text: '\\\n' });
+      }
       return;
     }
     if (child.type.name === 'image') {
@@ -79,7 +88,12 @@ function appendSegment(segments: InlineSegment[], next: InlineSegment): void {
     return;
   }
   const previous = segments[segments.length - 1];
-  if (previous && previous.kind === next.kind && previous.comment === next.comment) {
+  if (
+    previous &&
+    previous.kind === next.kind &&
+    previous.comment === next.comment &&
+    previous.commentAuthor === next.commentAuthor
+  ) {
     previous.text += next.text;
     return;
   }
@@ -98,7 +112,12 @@ function segmentForText(text: string, marks: readonly Mark[]): InlineSegment {
   const renderedText = renderMarkdownMarks(code ? text : escapeCriticText(text), marks);
 
   if (comment) {
-    return { kind: 'comment', text: renderedText, comment: String(comment.attrs.text || '') };
+    return {
+      kind: 'comment',
+      text: renderedText,
+      comment: String(comment.attrs.text || ''),
+      commentAuthor: normalizeAuthor(comment.attrs.author),
+    };
   }
   if (insertion) {
     return { kind: 'insertion', text: renderedText };
@@ -139,79 +158,81 @@ function renderImage(node: ProseMirrorNode): string {
   return `![${escapeCriticText(String(node.attrs.alt || ''))}](${String(node.attrs.src)}${title})`;
 }
 
-function renderBlock(node: ProseMirrorNode): string {
+function renderBlock(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
   switch (node.type.name) {
     case 'heading':
-      return `${'#'.repeat(node.attrs.level)} ${renderInline(node)}`;
+      return `${'#'.repeat(node.attrs.level)} ${renderInline(node, options)}`;
     case 'paragraph':
-      return renderInline(node);
+      return renderInline(node, options);
     case 'bullet_list':
-      return renderList(node, '-');
+      return renderList(node, '-', options);
     case 'ordered_list':
-      return renderOrderedList(node);
+      return renderOrderedList(node, options);
     case 'list_item':
-      return renderListItem(node, '-');
+      return renderListItem(node, '-', options);
     case 'code_block':
-      return renderCodeBlock(node);
+      return renderCodeBlock(node, options);
     case 'blockquote':
-      return renderBlockquote(node);
+      return renderBlockquote(node, options);
     case 'horizontal_rule':
       return '---';
     default:
-      return renderChildBlocks(node);
+      return renderChildBlocks(node, options);
   }
 }
 
-function renderList(node: ProseMirrorNode, marker: string): string {
+function renderList(node: ProseMirrorNode, marker: string, options: SerializeCriticMarkupOptions): string {
   const items: string[] = [];
   node.forEach((child) => {
-    items.push(renderListItem(child, marker));
+    items.push(renderListItem(child, marker, options));
   });
   return items.join('\n');
 }
 
-function renderOrderedList(node: ProseMirrorNode): string {
+function renderOrderedList(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
   const start = Number(node.attrs.order || 1);
   const items: string[] = [];
   node.forEach((child, _offset, index) => {
-    items.push(renderListItem(child, `${start + index}.`));
+    items.push(renderListItem(child, `${start + index}.`, options));
   });
   return items.join('\n');
 }
 
-function renderListItem(node: ProseMirrorNode, marker: string): string {
+function renderListItem(node: ProseMirrorNode, marker: string, options: SerializeCriticMarkupOptions): string {
   const blocks: string[] = [];
   node.forEach((child) => {
-    blocks.push(renderBlock(child));
+    blocks.push(renderBlock(child, options));
   });
   const rendered = blocks.join('\n\n');
   const continuation = ' '.repeat(marker.length + 1);
   return `${marker} ${indentMultiline(rendered, continuation).slice(continuation.length)}`;
 }
 
-function renderCodeBlock(node: ProseMirrorNode): string {
+function renderCodeBlock(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
   const params = node.attrs.params ? String(node.attrs.params) : '';
   const fence = `\`\`\`${params}\n${node.textContent}\n\`\`\``;
   if (node.attrs.comment) {
     // Keep code byte-identical; limitation: code containing "==}" can confuse
     // a future CriticMarkup importer of this block-comment wrapper.
-    return `{==${fence}==}{>>${escapeCriticText(String(node.attrs.comment))}<<}`;
+    return `{==${fence}==}{>>${escapeCriticText(
+      renderCommentPayload(String(node.attrs.comment), normalizeAuthor(node.attrs.commentAuthor), options),
+    )}<<}`;
   }
   return fence;
 }
 
-function renderBlockquote(node: ProseMirrorNode): string {
+function renderBlockquote(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
   const blocks: string[] = [];
   node.forEach((child) => {
-    blocks.push(renderBlock(child));
+    blocks.push(renderBlock(child, options));
   });
   return indentMultiline(blocks.join('\n\n'), '> ');
 }
 
-function renderChildBlocks(node: ProseMirrorNode): string {
+function renderChildBlocks(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
   const blocks: string[] = [];
   node.forEach((child) => {
-    blocks.push(renderBlock(child));
+    blocks.push(renderBlock(child, options));
   });
   return blocks.join('\n\n');
 }
@@ -221,4 +242,20 @@ function indentMultiline(value: string, prefix: string): string {
     .split('\n')
     .map((line) => `${prefix}${line}`)
     .join('\n');
+}
+
+function renderCommentPayload(comment: string, author: string | null | undefined, options: SerializeCriticMarkupOptions): string {
+  const resolvedAuthor = normalizeAuthor(author) ?? normalizeAuthor(options.commentAuthor);
+  return resolvedAuthor ? `@${resolvedAuthor}: ${comment}` : comment;
+}
+
+function normalizeAuthor(author: unknown): string | null {
+  if (typeof author !== 'string') {
+    return null;
+  }
+  const trimmed = author.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.startsWith('@') ? trimmed.slice(1) : trimmed;
 }

@@ -31,7 +31,7 @@ function isResolvedEntry(value: unknown): value is ResolvedEntry {
   return (
     typeof raw.handle === 'string' &&
     typeof raw.kind === 'string' &&
-    typeof raw.actor === 'string' &&
+    (typeof raw.actor === 'string' || raw.actor === null) &&
     typeof raw.text === 'string' &&
     (raw.targetType === 'event' || raw.targetType === 'record' || raw.targetType === 'artifact') &&
     typeof raw.tombstoned === 'boolean' &&

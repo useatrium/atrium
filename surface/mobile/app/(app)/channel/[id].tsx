@@ -17,6 +17,11 @@ import { Composer } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { Timeline } from '../../../src/components/Timeline';
+import {
+  loadMarkupDraftFromEntry,
+  messageEntryHandleForMarkup,
+  putPendingMarkupDraft,
+} from '../../../src/lib/markupAuthoring';
 
 interface AttachmentLightboxState {
   files: HubFile[];
@@ -121,6 +126,28 @@ export default function ChannelScreen() {
       await Linking.openURL(absoluteUrl);
     },
     [chat.api],
+  );
+
+  const openMarkupReply = useCallback(
+    async (message: ChatMessage) => {
+      const handle = messageEntryHandleForMarkup(message);
+      const threadRootEventId = message.threadRootEventId ?? message.id;
+      if (!handle || threadRootEventId == null) return;
+      try {
+        const draft = await loadMarkupDraftFromEntry({
+          api: chat.api,
+          serverUrl: chat.serverUrl,
+          fileHeaders: chat.fileHeaders,
+          handle,
+          mode: { kind: 'reply', channelId: message.channelId, threadRootEventId },
+        });
+        const draftId = putPendingMarkupDraft(draft);
+        router.push({ pathname: '/markup-editor', params: { draftId } });
+      } catch (err) {
+        Alert.alert('Markup', err instanceof Error ? err.message : 'Could not open markup editor.');
+      }
+    },
+    [chat.api, chat.fileHeaders, chat.serverUrl],
   );
 
   const showMembers = useCallback(async () => {
@@ -304,9 +331,11 @@ export default function ChannelScreen() {
         message={actionsTarget}
         mine={actionsTarget?.author.id === me.id}
         canReply={actionsTarget?.threadRootEventId == null}
+        canMarkupReply={actionsTarget != null && messageEntryHandleForMarkup(actionsTarget) != null}
         onClose={() => setActionsTarget(null)}
         onReact={(m, e) => void chat.react(m, e)}
         onReply={openThread}
+        onMarkupReply={(m) => void openMarkupReply(m)}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
       />

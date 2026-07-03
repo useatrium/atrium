@@ -317,8 +317,6 @@ export async function postMessage(
       }
       const payload: Record<string, unknown> = { text: args.text };
       const entryRefs = extractEntryRefs(args.text);
-      // v1 records refs at creation only; message.edited intentionally does
-      // not rewrite entry_refs so reverse lookup stays append-only.
       if (entryRefs.length > 0) payload.entry_refs = entryRefs;
       if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
       if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
@@ -401,13 +399,16 @@ export async function editMessageTx(
   if (t.actor_id !== args.actorId) {
     throw new DomainError(403, 'forbidden', 'only the author may edit a message');
   }
+  const payload: Record<string, unknown> = { target: encodeEventHandle(args.targetEventId), text: args.text };
+  const entryRefs = extractEntryRefs(args.text);
+  if (entryRefs.length > 0) payload.entry_refs = entryRefs;
   const ev = await insertEvent(client, {
     workspaceId: t.workspace_id,
     channelId: t.channel_id,
     threadRootEventId: t.thread_root_event_id,
     type: 'message.edited',
     actorId: args.actorId,
-    payload: { target: encodeEventHandle(args.targetEventId), text: args.text },
+    payload,
   });
   return toWireEvent(await attachAuthor(client, ev));
 }
