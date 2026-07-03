@@ -111,18 +111,21 @@ services:
       timeout: 3s
       retries: 30
 
-  # LiveKit media ports cannot be reverse-proxied by Caddy's HTTP server.
-  # Run the SFU on the host network and open these inbound firewall ports:
-  #   80/tcp and 443/tcp if LiveKit terminates TURN/TLS directly
-  #   7881/tcp for ICE TCP fallback
-  #   3478/udp for TURN/UDP
-  #   50000-60000/udp for SFU media
-  # If Caddy also binds 443 on this host, either put LiveKit TURN/TLS on a
-  # separate IP/L4 proxy or disable Caddy's 443 binding for this compose stack.
+  # OVH production topology:
+  # - Atrium app/files stay behind Cloudflare Tunnel and local Caddy.
+  # - Use docker-compose.tunnel.yml so Caddy binds 127.0.0.1:80 only.
+  # - LiveKit signaling can be exposed as HTTPS/WSS by Cloudflare Tunnel to
+  #   localhost:7880.
+  # - LiveKit TURN/TLS, TURN/UDP, ICE TCP fallback, and media stay direct on the
+  #   host network. Open these inbound firewall ports:
+  #     443/tcp for TURN/TLS
+  #     7881/tcp for ICE TCP fallback
+  #     3478/udp for TURN/UDP
+  #     50000-60000/udp for SFU media
   livekit:
-    # Opt-in: `docker compose --profile livekit up`. Off by default because host
-    # networking + embedded TURN/TLS wants 443, which collides with the caddy
-    # profile — run them on separate hosts/IPs, not both in this stack.
+    # Opt-in: `docker compose --profile livekit up`. In the OVH tunnel topology,
+    # run with docker-compose.tunnel.yml so public 443 is reserved for LiveKit
+    # TURN/TLS while Caddy only serves the Cloudflare Tunnel loopback listener.
     profiles: ["livekit"]
     image: livekit/livekit-server:v1.13
     network_mode: host
@@ -134,9 +137,10 @@ services:
     command: ["--config", "/etc/livekit.yaml"]
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
-      # Mount TLS material when LiveKit terminates embedded TURN/TLS itself:
-      # - /etc/letsencrypt/live/turn.example.com/fullchain.pem:/etc/livekit/turn.crt:ro
-      # - /etc/letsencrypt/live/turn.example.com/privkey.pem:/etc/livekit/turn.key:ro
+      # Set LIVEKIT_TURN_DOMAIN to the certificate directory and keep it in sync
+      # with turn.domain in livekit.yaml.
+      - /etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN:-turn.example.com}/fullchain.pem:/etc/livekit/turn.crt:ro
+      - /etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN:-turn.example.com}/privkey.pem:/etc/livekit/turn.key:ro
 
   caddy:
     image: caddy:2-alpine

@@ -4,11 +4,13 @@
 # OVH tunnel topology:
 # - Atrium app/file hosts stay behind Cloudflare Tunnel + local Caddy.
 # - LiveKit runs direct on the host network.
-# - livekit.example.com and turn.example.com are DNS-only records to the OVH IP.
-# - Do not send LiveKit media, ICE TCP, or TURN through the HTTP Caddy tunnel.
+# - LiveKit signaling may be exposed as HTTPS/WSS by Cloudflare Tunnel or another
+#   reverse proxy forwarding to localhost:7880.
+# - TURN/TLS on 443/tcp, TURN/UDP, ICE TCP fallback, and media are direct
+#   host-network traffic. Do not send them through the HTTP Caddy tunnel.
 
-# LiveKit API/WebSocket listener. Production clients should use a TLS signaling
-# endpoint in LIVEKIT_URL, for example wss://livekit.example.com.
+# LiveKit API/WebSocket listener. Production clients should still use a trusted
+# TLS signaling endpoint in LIVEKIT_URL, for example wss://livekit.example.com.
 port: 7880
 
 rtc:
@@ -28,10 +30,11 @@ turn:
   enabled: true
   # TURN/UDP. Open 3478/udp on the host.
   udp_port: 3478
-  # TURN/TLS for restrictive networks. In the OVH tunnel topology, LiveKit owns
-  # public 443/tcp and the app Caddy profile stays on loopback for cloudflared.
+  # TURN/TLS for restrictive networks. Signaling may be tunneled/reverse proxied,
+  # but TURN/TLS on public 443/tcp must reach LiveKit directly on the host.
   tls_port: 443
-  # DNS-only hostname pointing at the OVH IP; must match the mounted cert.
+  # Sample DNS-only hostname pointing at the host IP; must match the mounted cert
+  # and the LIVEKIT_TURN_DOMAIN compose env used for /etc/letsencrypt/live.
   domain: turn.example.com
   cert_file: /etc/livekit/turn.crt
   key_file: /etc/livekit/turn.key

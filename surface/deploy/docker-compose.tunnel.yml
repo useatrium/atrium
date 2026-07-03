@@ -1,0 +1,12 @@
+services:
+  # OVH production topology: cloudflared reaches the app through loopback Caddy,
+  # while LiveKit keeps host-network ports for TURN, ICE TCP, and media.
+  caddy:
+    ports: !override
+      - "127.0.0.1:80:80"
+
+  # Keep the API reachable from the Docker/k3s side of the host without opening
+  # it publicly. Cloudflare Tunnel and Caddy still use the Docker service name.
+  server:
+    ports: !override
+      - "10.42.0.1:3001:3001"

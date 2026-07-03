@@ -108,11 +108,11 @@ For file uploads on a VPS, expose MinIO through a separate TLS name such as `min
 
 ## Production Voice Calls
 
-Calls add a direct LiveKit path beside the app path:
+Calls use three routes. Keep them separate:
 
 - app and file hosts stay behind Cloudflare Tunnel and local Caddy
-- LiveKit runs on the OVH host with host networking
-- LiveKit/TURN hostnames are DNS-only records pointing at the OVH public IP
+- LiveKit signaling goes through Cloudflare Tunnel to `localhost:7880`
+- LiveKit media, ICE TCP fallback, and TURN run direct from the host network
 - public `443/tcp` belongs to LiveKit TURN/TLS, not the app Caddy tunnel
 
 Use separate names so the routing boundary stays obvious:
@@ -121,8 +121,12 @@ Use separate names so the routing boundary stays obvious:
 |---|---|---|
 | `atrium.example.com` | Cloudflare Tunnel route | App/API/WebSocket |
 | `atrium-files.example.com` | Cloudflare Tunnel route, no Access policy | MinIO presigned uploads/downloads |
-| `livekit.example.com` | DNS-only A/AAAA to the OVH IP | LiveKit signaling endpoint in `LIVEKIT_URL` |
+| `livekit.example.com` | Cloudflare Tunnel route to `http://localhost:7880` | LiveKit signaling endpoint in `LIVEKIT_URL` |
 | `turn.example.com` | DNS-only A/AAAA to the OVH IP | Embedded TURN/TLS domain in `livekit.yaml` |
+
+On the OVH tunnel box, use the local `docker-compose.tunnel.yml` override so
+Caddy binds only `127.0.0.1:80` for cloudflared. That leaves public `443/tcp`
+available for LiveKit TURN/TLS.
 
 Open these inbound ports on the OVH firewall/security group for LiveKit:
 
@@ -130,17 +134,26 @@ Open these inbound ports on the OVH firewall/security group for LiveKit:
 - `7881/tcp` for ICE TCP fallback
 - `3478/udp` for TURN/UDP and STUN
 - `50000-60000/udp` for LiveKit media
-- `80/tcp` only if the chosen certificate flow needs HTTP-01/standalone ACME for the LiveKit/TURN certificates
+- `80/tcp` only if the chosen certificate flow needs HTTP-01/standalone ACME for the TURN certificate
 
 Do not proxy LiveKit media or TURN through the HTTP Caddy tunnel. Caddy's app
-profile can proxy Atrium HTTP and WebSockets, but it cannot proxy LiveKit UDP
-media, ICE TCP, or TURN/TLS. In the tunnel topology, keep app Caddy bound to
-loopback and reserve public `443` for LiveKit TURN/TLS.
+profile can proxy Atrium HTTP and WebSockets, and cloudflared can carry the
+LiveKit signaling WebSocket, but neither path handles LiveKit UDP media, ICE TCP,
+or TURN/TLS. Keep app Caddy bound to loopback and reserve public `443` for
+LiveKit TURN/TLS.
+
+For TURN/TLS, `livekit.yaml` expects the certificate and key inside the container
+at `/etc/livekit/turn.crt` and `/etc/livekit/turn.key`. With certbot/Let's
+Encrypt, mount `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/fullchain.pem` to
+the cert path and `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/privkey.pem` to
+the key path. Use DNS-01, or open `80/tcp` only for HTTP-01 issuance/renewal, and
+restart LiveKit after renewal so it reloads the files.
 
 Required `.env` values:
 
 ```sh
 LIVEKIT_URL=wss://livekit.example.com
+LIVEKIT_TURN_DOMAIN=turn.example.com
 LIVEKIT_API_KEY=<generated-livekit-key>
 LIVEKIT_API_SECRET=<generated-livekit-secret>
 
@@ -155,6 +168,11 @@ FCM_PROJECT_ID=
 FCM_SERVICE_ACCOUNT_JSON=
 ```
 
+`LIVEKIT_TURN_DOMAIN` is an operator value: use the same hostname for the
+DNS-only TURN record, `turn.domain` in `livekit.yaml`, and the Let's Encrypt cert
+path. The server reads `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and
+`LIVEKIT_API_SECRET`.
+
 Use the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` for the server and the
 `livekit` compose profile. The compose file injects them into LiveKit as
 `LIVEKIT_KEYS`, so token signing and verification share one source of truth.
@@ -167,8 +185,13 @@ Smoke checklist:
 
 - `curl -s https://atrium.example.com/auth/methods | jq '.calls == true'`
 - a two-browser web call can start, ring, join, and pass audio
-- an iOS device with the app killed rings through APNs
 - a participant can reload and rejoin the active call
+- manual iOS smoke: an on-device build with the app killed rings through APNs
+
+Gary/OVH note: `atrium.garybasin.com` and `atrium-files.garybasin.com` route
+through the Cloudflare Tunnel, `livekit.garybasin.com` tunnels to
+`localhost:7880` for signaling, and `turn.garybasin.com` is DNS-only to the OVH
+IP for direct TURN/TLS and media fallback.
 
 ## Chat-Only Deployments
 
