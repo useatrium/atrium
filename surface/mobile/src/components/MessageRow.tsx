@@ -14,8 +14,10 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { entryHandleForMessage } from '../lib/entryHandle';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { Avatar } from './Avatar';
+import { EntryQuoteCards } from './EntryQuoteCards';
 import { MessageText } from './MessageText';
 import { VoiceMessage } from './VoiceMessage';
+import type { EntryResolver } from '../lib/entryResolve';
 
 const IMAGE_MAX_W = 240;
 
@@ -31,6 +33,8 @@ export interface MessageRowProps {
   inThread?: boolean;
   fileUrl: (id: string) => string;
   api: Api;
+  serverUrl: string;
+  resolveEntry: EntryResolver;
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
@@ -39,6 +43,7 @@ export interface MessageRowProps {
   onToggleReaction: (m: ChatMessage, emoji: string) => void;
   onRetry: (m: ChatMessage) => void;
   onOpenAttachment: (message: ChatMessage, index: number) => void;
+  onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -365,6 +370,8 @@ export const MessageRow = memo(function MessageRow({
   inThread,
   fileUrl,
   api,
+  serverUrl,
+  resolveEntry,
   fileHeaders,
   onLongPress,
   onOpenComments,
@@ -372,6 +379,7 @@ export const MessageRow = memo(function MessageRow({
   onToggleReaction,
   onRetry,
   onOpenAttachment,
+  onOpenChannel,
   onOpenSession,
 }: MessageRowProps) {
   const { colors } = useTheme();
@@ -541,6 +549,15 @@ export const MessageRow = memo(function MessageRow({
           {body}
           {editedNote}
         </Pressable>
+        {m.text ? (
+          <EntryQuoteCards
+            text={m.text}
+            serverUrl={serverUrl}
+            resolveEntry={resolveEntry}
+            onOpenChannel={onOpenChannel}
+            onOpenSession={onOpenSession}
+          />
+        ) : null}
         {failed && (
           <Pressable
             accessibilityRole="button"

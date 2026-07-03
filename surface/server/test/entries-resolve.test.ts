@@ -151,6 +151,13 @@ describe('GET /api/entries/:handle', () => {
       targetType: 'event',
       sourceRefs: [],
       tombstoned: false,
+      location: {
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        channelName: 'general',
+        sessionId: null,
+        sessionTitle: null,
+      },
     });
 
     const denied = await app.inject({
@@ -247,6 +254,13 @@ describe('GET /api/entries/:handle', () => {
       headers: { cookie: workspaceMemberCookie },
     });
     expect(withRefs.json().sourceRefs).toEqual(['11', 'evt_external']);
+    expect(withRefs.json().location).toEqual({
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      channelName: 'general',
+      sessionId: publicSession,
+      sessionTitle: 'Public resolve target',
+    });
 
     for (const uid of ['public_visible_record', 'private_member_record', 'spawned_visible_record']) {
       const denied = await app.inject({
@@ -286,6 +300,13 @@ describe('GET /api/entries/:handle', () => {
       targetType: 'artifact',
       sourceRefs: [],
       tombstoned: false,
+      location: {
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        channelName: 'general',
+        sessionId: null,
+        sessionTitle: null,
+      },
     });
 
     const denied = await app.inject({

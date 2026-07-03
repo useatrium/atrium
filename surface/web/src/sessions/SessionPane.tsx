@@ -84,9 +84,14 @@ import { ProfileChangesBanner, ProviderAuthBanner, QuestionBanner, profileProvid
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
+import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
+
+export function isTranscriptEntryHandle(handle: string | null): handle is string {
+  return typeof handle === 'string' && handle.startsWith('rec_');
+}
 
 export function SessionPane({
   session,
@@ -111,6 +116,7 @@ export function SessionPane({
   agentProfiles = [],
   layout = 'split',
   onToggleFocus,
+  initialEntryHandle = null,
 }: {
   session: Session;
   me: UserRef;
@@ -152,6 +158,7 @@ export function SessionPane({
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
   onToggleFocus?: () => void;
+  initialEntryHandle?: string | null;
 }) {
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
@@ -640,10 +647,46 @@ export function SessionPane({
   const lastEventId = stream.lastEventId;
   const seatEventCount = session.seatEvents.length;
   const questionEventCount = questionEvents.length;
+  const [pendingEntryHandle, setPendingEntryHandle] = useState<string | null>(() => {
+    if (initialEntryHandle) return initialEntryHandle;
+    return typeof window === 'undefined' ? null : entryParamFromSearch(window.location.search);
+  });
+  const [flashEntryHandle, setFlashEntryHandle] = useState<string | null>(null);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [lastEventId, seatEventCount, questionEventCount]);
+  useEffect(() => {
+    if (!flashEntryHandle) return;
+    const timer = setTimeout(() => setFlashEntryHandle(null), 2500);
+    return () => clearTimeout(timer);
+  }, [flashEntryHandle]);
+  useLayoutEffect(() => {
+    if (!pendingEntryHandle) return;
+    if (!isTranscriptEntryHandle(pendingEntryHandle)) {
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+      return;
+    }
+    const root = scrollRef.current;
+    const target = root
+      ? Array.from(root.querySelectorAll<HTMLElement>('[data-entry-handle]')).find(
+          (el) => el.dataset.entryHandle === pendingEntryHandle,
+        )
+      : null;
+    if (target) {
+      stickRef.current = false;
+      target.scrollIntoView({ block: 'center' });
+      setFlashEntryHandle(pendingEntryHandle);
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+      return;
+    }
+    if (isTerminalExecutionStatus(stream.status)) {
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+    }
+  }, [pendingEntryHandle, stream.items, stream.status]);
   const onScroll = () => {
     const el = scrollRef.current;
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -1032,6 +1075,7 @@ export function SessionPane({
                   handle={item.handle ?? null}
                   onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
                   markupLoading={markupLoadingHandle === item.handle}
+                  highlighted={item.handle != null && item.handle === flashEntryHandle}
                 >
                   {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
@@ -1343,11 +1387,13 @@ function AnnotatedTranscriptRow({
   handle,
   onMarkupEntry,
   markupLoading = false,
+  highlighted = false,
   children,
 }: {
   handle: string | null;
   onMarkupEntry?: (handle: string) => void;
   markupLoading?: boolean;
+  highlighted?: boolean;
   children: ReactNode;
 }) {
   const commentButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1380,7 +1426,10 @@ function AnnotatedTranscriptRow({
   };
 
   return (
-    <div className="group relative">
+    <div
+      data-entry-handle={handle}
+      className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
+    >
       {children}
       <div className="pointer-events-none absolute -top-1 right-0 z-10 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
         <button

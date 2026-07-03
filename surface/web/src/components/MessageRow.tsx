@@ -281,12 +281,13 @@ export const MessageRow = memo(function MessageRow({
   return (
     <div
       data-eid={m.id ?? undefined}
+      data-entry-handle={entryHandle ?? undefined}
       onMouseLeave={() => {
         if (mouseOpenedPickerRef.current) setPickerOpen(false);
       }}
       className={`group relative flex gap-3 px-4 hover:bg-surface-raised/60 ${
         grouped ? 'py-0.5' : 'mt-2 py-0.5'
-      } ${dim ? 'opacity-50' : ''} ${highlighted ? 'bg-accent-hover/10' : ''}`}
+      } ${dim ? 'opacity-50' : ''} ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
       <div className="w-8 shrink-0">
         {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} />}

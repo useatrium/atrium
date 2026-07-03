@@ -251,6 +251,8 @@ export default function ChannelScreen() {
           highlightId={chat.highlightId}
           fileUrl={chat.fileUrl}
           api={chat.api}
+          serverUrl={chat.serverUrl}
+          resolveEntry={chat.resolveEntry}
           fileHeaders={chat.fileHeaders}
           onLoadEarlier={() => chat.loadEarlier(id)}
           onLongPress={setActionsTarget}
@@ -259,6 +261,7 @@ export default function ChannelScreen() {
           onToggleReaction={(m, e) => void chat.react(m, e)}
           onRetry={chat.retry}
           onOpenAttachment={openAttachment}
+          onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
         />
         <TypingLine typing={chat.typing} />
