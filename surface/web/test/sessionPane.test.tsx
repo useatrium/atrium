@@ -395,7 +395,7 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(es.closed).toBe(true);
   });
 
-  it('renders the comment affordance for a transcript row with a record handle', async () => {
+  it('does not render the retired comment affordance for a transcript row with a record handle', async () => {
     const frame = {
       event: 'amp_raw_event',
       event_id: 71,
@@ -426,7 +426,8 @@ describe('session pane folds the B_tooltest stream', () => {
     });
 
     expect(screen.getByText('Annotatable agent row')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Comment on entry' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Comment on entry' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy entry link' })).toBeTruthy();
   });
 
   it('extracts a transcript record and opens the markup pane with frontmatter stripped', async () => {

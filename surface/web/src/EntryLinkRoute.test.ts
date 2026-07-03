@@ -3,6 +3,7 @@ import {
   destinationForEntry,
   entryHandleFromPath,
   entryParamFromSearch,
+  threadRootParamFromSearch,
   type EntryLinkDestination,
 } from './EntryLinkRoute';
 import type { NormalizedEntry } from './api';
@@ -22,6 +23,7 @@ function entry(overrides: Partial<NormalizedEntry>): NormalizedEntry {
       workspaceId: 'ws_1',
       channelId: 'ch_1',
       channelName: 'general',
+      threadRootEventId: null,
       sessionId: null,
       sessionTitle: null,
     },
@@ -44,12 +46,13 @@ describe('EntryLinkRoute helpers', () => {
           targetType: 'record',
           location: {
             workspaceId: 'ws_1',
-            channelId: 'ch_1',
-            channelName: 'general',
-            sessionId: 'sess_1',
-            sessionTitle: 'Run',
-          },
-        }),
+        channelId: 'ch_1',
+        channelName: 'general',
+        threadRootEventId: null,
+        sessionId: 'sess_1',
+        sessionTitle: 'Run',
+      },
+    }),
       ),
     ).toMatchObject<Partial<EntryLinkDestination>>({
       pathname: '/s/sess_1',
@@ -77,8 +80,34 @@ describe('EntryLinkRoute helpers', () => {
       });
   });
 
+  it('preserves event thread roots for reply destinations', () => {
+    expect(
+      destinationForEntry(
+        entry({
+          handle: 'evt_42',
+          location: {
+            workspaceId: 'ws_1',
+            channelId: 'ch_1',
+            channelName: 'general',
+            sessionId: null,
+            sessionTitle: null,
+            threadRootEventId: 7,
+          } as NormalizedEntry['location'],
+        }),
+      ),
+    ).toMatchObject({
+      pathname: '/',
+      search: 'entry=evt_42&threadRoot=7',
+      initialChannelId: 'ch_1',
+      initialThreadRootEventId: 7,
+      initialEntryHandle: 'evt_42',
+    });
+  });
+
   it('extracts entry query params', () => {
     expect(entryParamFromSearch('?entry=evt_7&x=1')).toBe('evt_7');
     expect(entryParamFromSearch('?x=1')).toBeNull();
+    expect(threadRootParamFromSearch('?entry=evt_7&threadRoot=9')).toBe(9);
+    expect(threadRootParamFromSearch('?entry=evt_7&threadRoot=nope')).toBeNull();
   });
 });

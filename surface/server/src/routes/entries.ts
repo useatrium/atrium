@@ -11,7 +11,7 @@ import {
   type UserRef,
 } from '../events.js';
 import { extractEntryToMarkdownArtifact } from '../entry-extract.js';
-import { resolveEntry, tryDecodeHandle } from '../entries.js';
+import { queryEntryReferences, resolveEntry, tryDecodeHandle } from '../entries.js';
 import type { WsHub } from '../hub.js';
 import { searchSessionRecords } from '../session-search.js';
 
@@ -81,6 +81,30 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     }
     return foldAnnotations(pool, handle);
   });
+
+  app.post(
+    '/api/entries/references/query',
+    { config: { rateLimit: entryAnnotationRateLimit } },
+    async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const body = (req.body ?? {}) as { handles?: unknown };
+      if (!Array.isArray(body.handles)) {
+        return reply.code(400).send({ error: 'bad_request', message: 'handles must be an array' });
+      }
+      if (body.handles.length > 200) {
+        return reply.code(400).send({ error: 'too_many_handles', message: 'handles is limited to 200' });
+      }
+      const handles: string[] = [];
+      for (const handle of body.handles) {
+        if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
+          return reply.code(400).send({ error: 'bad_handle' });
+        }
+        handles.push(handle);
+      }
+      return queryEntryReferences(pool, handles, user.id);
+    },
+  );
 
   app.post('/api/entries/:handle/extract', async (req, reply) => {
     const user = requireUser(req, reply);

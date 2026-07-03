@@ -171,9 +171,30 @@ export interface NormalizedEntry {
     workspaceId: string;
     channelId: string | null;
     channelName: string | null;
+    threadRootEventId: number | null;
     sessionId: string | null;
     sessionTitle: string | null;
   };
+}
+
+export interface EntryReferenceLatest {
+  eventId: number;
+  handle: string;
+  channelId: string;
+  threadRootEventId: number | null;
+  actorLabel: string | null;
+  excerpt: string;
+  ts: string;
+}
+
+export interface EntryReferencesResponse {
+  references: Record<
+    string,
+    {
+      count: number;
+      latest: EntryReferenceLatest[];
+    }
+  >;
 }
 
 export interface WebPushSubscription {
@@ -802,5 +823,12 @@ export function createApi(opts: ApiOptions = {}) {
     // === mk708-route additions ===
     resolveEntry: (handle: string) => req<NormalizedEntry>(`/api/entries/${encodeURIComponent(handle)}`),
     // === end mk708-route additions ===
+    // === mk709-refs additions ===
+    queryEntryReferences: (handles: string[]) =>
+      req<EntryReferencesResponse>('/api/entries/references/query', {
+        method: 'POST',
+        body: JSON.stringify({ handles }),
+      }),
+    // === end mk709-refs additions ===
   };
 }

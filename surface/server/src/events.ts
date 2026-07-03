@@ -1,6 +1,6 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import { encodeEventHandle, tryDecodeHandle } from './entries.js';
+import { encodeEventHandle, encodeHandle, tryDecodeHandle } from './entries.js';
 import { workspaceMemberExists } from './membership.js';
 
 export interface UserRef {
@@ -243,6 +243,25 @@ export interface VoicePostMeta {
   waveform?: number[];
 }
 
+const ENTRY_LINK_RE = /(?:https?:\/\/[^/\s?#]+)?\/e\/([A-Za-z0-9_-]+)/g;
+
+export function extractEntryRefs(text: string): string[] {
+  const refs: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(ENTRY_LINK_RE)) {
+    const raw = match[1];
+    if (!raw) continue;
+    const decoded = tryDecodeHandle(raw);
+    if (!decoded) continue;
+    const handle = encodeHandle(decoded);
+    if (seen.has(handle)) continue;
+    seen.add(handle);
+    refs.push(handle);
+    if (refs.length >= 10) break;
+  }
+  return refs;
+}
+
 export async function postMessage(
   pool: Db,
   args: {
@@ -297,6 +316,10 @@ export async function postMessage(
         }
       }
       const payload: Record<string, unknown> = { text: args.text };
+      const entryRefs = extractEntryRefs(args.text);
+      // v1 records refs at creation only; message.edited intentionally does
+      // not rewrite entry_refs so reverse lookup stays append-only.
+      if (entryRefs.length > 0) payload.entry_refs = entryRefs;
       if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
       if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
       if (args.voice) {

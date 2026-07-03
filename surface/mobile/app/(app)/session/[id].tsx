@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -31,7 +32,7 @@ import {
   type SessionStatus,
 } from '@atrium/surface-client';
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
-import type { QuestionItem, TextItem, ToolCallItem } from '@atrium/centaur-client';
+import type { QuestionItem, SessionItem, TextItem, ToolCallItem } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { normalizeExecutionStatus } from '../../../src/lib/sessionStreamCore';
@@ -66,6 +67,77 @@ import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
 import { TurnStatusLine } from '../../../src/components/TurnStatusLine';
+import {
+  createEntryReferenceQuery,
+  type EntryReference,
+  type EntryReferenceMap,
+  type EntryReferenceSummary,
+} from '../../../src/lib/entryReferences';
+import { useRequiredSession } from '../../../src/lib/session';
+import { isEntryHandle } from '../../../src/lib/entryLinks';
+
+function transcriptEntryHandle(item: SessionItem): string | null {
+  const handle = item.handle;
+  return typeof handle === 'string' && isEntryHandle(handle) ? handle : null;
+}
+
+function entryUrl(serverUrl: string, handle: string): string {
+  return `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(handle)} `;
+}
+
+function referenceLabel(ref: EntryReference): string {
+  const actor = ref.actorLabel?.trim() || 'Someone';
+  const excerpt = ref.excerpt.replace(/\s+/g, ' ').trim();
+  return excerpt ? `${actor}: ${excerpt}` : actor;
+}
+
+function DiscussedChip({
+  count,
+  onPress,
+}: {
+  count: number;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${count} discussion reference${count === 1 ? '' : 's'}`}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        alignSelf: 'flex-start',
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+      })}
+    >
+      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>
+        ↗ {count}
+      </Text>
+    </Pressable>
+  );
+}
+
+function TranscriptRowFrame({
+  reference,
+  onOpenReference,
+  children,
+}: {
+  reference: EntryReferenceSummary | null;
+  onOpenReference: () => void;
+  children: ReactNode;
+}) {
+  if (!reference || reference.count <= 0) return <>{children}</>;
+  return (
+    <View style={{ gap: 6 }}>
+      {children}
+      <DiscussedChip count={reference.count} onPress={onOpenReference} />
+    </View>
+  );
+}
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -571,6 +643,7 @@ function answerTextValue(value: QuestionDraftValue | undefined): string {
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
+  const authSession = useRequiredSession();
   const { colors, reduceMotion } = useTheme();
   const { api, me, state, upsertSession, setActiveSessionId } = chat;
   const cached = id ? (state.sessions[id] ?? null) : null;
@@ -596,6 +669,11 @@ export default function SessionScreen() {
   const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
   const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
   const [suggestText, setSuggestText] = useState('');
+  const [references, setReferences] = useState<EntryReferenceMap>({});
+  const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
+  const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
+  const referenceFetchKeys = useRef<Set<string>>(new Set());
+  const focusedForReferences = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const stickRef = useRef(true);
   // Transcript item y-offsets (captured via onLayout) so the Turns▾ sheet can
@@ -606,6 +684,8 @@ export default function SessionScreen() {
     useCallback(() => {
       if (!id) return;
       let disposed = false;
+      focusedForReferences.current = true;
+      setReferenceFocusSeq((seq) => seq + 1);
       setActiveSessionId(id); // subscribe the WS to this session's presence key
       setLoading(true);
       setLoadError(null);
@@ -625,6 +705,7 @@ export default function SessionScreen() {
         });
       return () => {
         disposed = true;
+        focusedForReferences.current = false;
         setActiveSessionId(null);
       };
     }, [api, id, upsertSession, setActiveSessionId]),
@@ -710,6 +791,16 @@ export default function SessionScreen() {
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
   const turns = useMemo(() => deriveTurns(stream.items), [stream.items]);
+  const entryHandles = useMemo(() => {
+    const seen = new Set<string>();
+    for (const item of stream.items) {
+      const handle = transcriptEntryHandle(item);
+      if (handle) seen.add(handle);
+    }
+    return [...seen].sort();
+  }, [stream.items]);
+  const entryHandlesKey = entryHandles.join('\n');
+  const queryEntryReferences = useMemo(() => createEntryReferenceQuery(authSession), [authSession]);
   const workTabs = useMemo<WorkSurfaceTab[]>(() => {
     const tabs: WorkSurfaceTab[] = [];
     if (changedFileCount > 0) {
@@ -839,6 +930,38 @@ export default function SessionScreen() {
   }, [cancelAsk]);
 
   useEffect(() => {
+    if (!id || !focusedForReferences.current) return;
+    if (entryHandles.length === 0) {
+      setReferences({});
+      return;
+    }
+
+    const cacheKey = `${id}:${entryHandlesKey}`;
+    const cachedReferences = referenceCache.current[cacheKey];
+    if (cachedReferences) {
+      setReferences(cachedReferences);
+    }
+    const focusFetchKey = `${referenceFocusSeq}:${cacheKey}`;
+    if (referenceFetchKeys.current.has(focusFetchKey)) return;
+    referenceFetchKeys.current.add(focusFetchKey);
+
+    let disposed = false;
+    queryEntryReferences(entryHandles)
+      .then((next) => {
+        if (disposed || !focusedForReferences.current) return;
+        referenceCache.current[cacheKey] = next;
+        setReferences(next);
+      })
+      .catch((err: unknown) => {
+        if (!disposed) console.warn('failed to load entry references', err);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [entryHandles, entryHandlesKey, id, queryEntryReferences, referenceFocusSeq]);
+
+  useEffect(() => {
     if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: !reduceMotion });
   }, [reduceMotion, stream.lastEventId, resultText]);
 
@@ -960,6 +1083,72 @@ export default function SessionScreen() {
     setSuggestText('');
     api.createSuggestion(id, text).catch(() => {});
   };
+
+  const openReference = useCallback((ref: EntryReference) => {
+    if (ref.threadRootEventId != null) {
+      router.push({
+        pathname: '/thread/[rootId]',
+        params: { rootId: String(ref.threadRootEventId), channelId: ref.channelId },
+      });
+      return;
+    }
+    router.push(`/channel/${ref.channelId}`);
+  }, []);
+
+  const openReferenceSummary = useCallback(
+    (summary: EntryReferenceSummary | null) => {
+      const latest = summary?.latest ?? [];
+      if (latest.length === 0) return;
+      if (latest.length === 1) {
+        openReference(latest[0]!);
+        return;
+      }
+      Alert.alert(
+        'Discussed in',
+        undefined,
+        [
+          ...latest.slice(0, 6).map((ref) => ({
+            text: referenceLabel(ref),
+            onPress: () => openReference(ref),
+          })),
+          { text: 'Cancel', style: 'cancel' as const },
+        ],
+      );
+    },
+    [openReference],
+  );
+
+  const sessionChannelId = session?.channelId ?? null;
+  const sessionThreadRootEventId = session?.threadRootEventId ?? null;
+
+  const discussInThread = useCallback(
+    (handle: string) => {
+      if (sessionChannelId == null || sessionThreadRootEventId == null) {
+        Alert.alert('Discuss in thread', 'This session does not have a channel thread.');
+        return;
+      }
+      router.push({
+        pathname: '/thread/[rootId]',
+        params: {
+          rootId: String(sessionThreadRootEventId),
+          channelId: sessionChannelId,
+          prefill: entryUrl(chat.serverUrl, handle),
+        },
+      });
+    },
+    [chat.serverUrl, sessionChannelId, sessionThreadRootEventId],
+  );
+
+  const openTranscriptActions = useCallback(
+    (handle: string | null) => {
+      if (!handle || sessionThreadRootEventId == null) return;
+      Alert.alert('Transcript entry', undefined, [
+        { text: 'Discuss in thread', onPress: () => discussInThread(handle) },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    },
+    [discussInThread, sessionThreadRootEventId],
+  );
 
   // Answer proposals (driver-side resolution).
   const submitProposal = (proposalId: string) => {
@@ -1157,33 +1346,48 @@ export default function SessionScreen() {
             </View>
           ) : null}
 
-          {stream.items.map((item, index) => (
-            <Fragment key={item.id}>
-              {codexChangesAt(index).map((anchored) => (
-                <InlineFileChange key={anchored.change.id} change={anchored.change} />
-              ))}
-              <View
-                onLayout={(e) => {
-                  itemOffsets.current[item.id] = e.nativeEvent.layout.y;
-                }}
-              >
-                {item.type === 'text' ? (
-                  <TextBlock item={item} />
-                ) : item.type === 'user_message' ? (
-                  <SteerRow text={item.text} ts={item.ts} />
-                ) : item.type === 'question' ? (
-                  <MobileQuestionTranscriptCard
-                    item={item}
-                    events={questionEventsByQuestion.get(item.questionId) ?? []}
-                  />
-                ) : item.type === 'reasoning' ? (
-                  <ReasoningBlock item={item} />
-                ) : item.type === 'tool_call' ? (
-                  <TranscriptTool item={item} />
-                ) : null}
-              </View>
-            </Fragment>
-          ))}
+          {stream.items.map((item, index) => {
+            const handle = transcriptEntryHandle(item);
+            const reference = handle ? (references[handle] ?? null) : null;
+            return (
+              <Fragment key={item.id}>
+                {codexChangesAt(index).map((anchored) => (
+                  <InlineFileChange key={anchored.change.id} change={anchored.change} />
+                ))}
+                <View
+                  onLayout={(e) => {
+                    itemOffsets.current[item.id] = e.nativeEvent.layout.y;
+                  }}
+                >
+                  <TranscriptRowFrame
+                    reference={reference}
+                    onOpenReference={() => openReferenceSummary(reference)}
+                  >
+                    {item.type === 'text' ? (
+                      <Pressable
+                        onLongPress={() => openTranscriptActions(handle)}
+                        delayLongPress={300}
+                        disabled={!handle || sessionThreadRootEventId == null}
+                      >
+                        <TextBlock item={item} />
+                      </Pressable>
+                    ) : item.type === 'user_message' ? (
+                      <SteerRow text={item.text} ts={item.ts} />
+                    ) : item.type === 'question' ? (
+                      <MobileQuestionTranscriptCard
+                        item={item}
+                        events={questionEventsByQuestion.get(item.questionId) ?? []}
+                      />
+                    ) : item.type === 'reasoning' ? (
+                      <ReasoningBlock item={item} />
+                    ) : item.type === 'tool_call' ? (
+                      <TranscriptTool item={item} />
+                    ) : null}
+                  </TranscriptRowFrame>
+                </View>
+              </Fragment>
+            );
+          })}
           {codexChangesAt(stream.items.length).map((anchored) => (
             <InlineFileChange key={anchored.change.id} change={anchored.change} />
           ))}

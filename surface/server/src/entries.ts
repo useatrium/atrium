@@ -77,6 +77,7 @@ export interface NormalizedEntry {
     workspaceId: string;
     channelId: string | null;
     channelName: string | null;
+    threadRootEventId: number | null;
     sessionId: string | null;
     sessionTitle: string | null;
   };
@@ -87,6 +88,7 @@ interface EventResolveRow {
   workspace_id: string;
   channel_id: string | null;
   channel_name: string | null;
+  thread_root_event_id: number | null;
   type: string;
   actor_id: string | null;
   actor_display_name: string | null;
@@ -115,6 +117,37 @@ interface ArtifactResolveRow {
   channel_name: string | null;
   path: string;
   tombstoned_at: Date | string | null;
+}
+
+export interface EntryReferenceLatest {
+  eventId: number;
+  handle: string;
+  channelId: string;
+  threadRootEventId: number | null;
+  actorLabel: string | null;
+  excerpt: string;
+  ts: string;
+}
+
+export interface EntryReferencesResponse {
+  references: Record<
+    string,
+    {
+      count: number;
+      latest: EntryReferenceLatest[];
+    }
+  >;
+}
+
+interface EntryReferenceQueryRow {
+  queried_handle: string;
+  event_id: number;
+  channel_id: string;
+  thread_root_event_id: number | null;
+  actor_label: string | null;
+  excerpt: string;
+  created_at: Date;
+  ref_count: string | number;
 }
 
 export function visibleSessionPredicate(userParam: string): string {
@@ -150,6 +183,7 @@ async function resolveEventEntry(
             e.workspace_id::text,
             e.channel_id,
             c.name AS channel_name,
+            e.thread_root_event_id,
             e.type,
             e.actor_id,
             u.display_name AS actor_display_name,
@@ -197,6 +231,7 @@ async function resolveEventEntry(
       workspaceId: row.workspace_id,
       channelId: row.channel_id,
       channelName: row.channel_name,
+      threadRootEventId: row.thread_root_event_id,
       sessionId: null,
       sessionTitle: null,
     },
@@ -246,6 +281,7 @@ async function resolveRecordEntry(
       workspaceId: row.workspace_id,
       channelId: row.channel_id,
       channelName: row.channel_name,
+      threadRootEventId: null,
       sessionId: row.session_id,
       sessionTitle: row.session_title,
     },
@@ -297,10 +333,82 @@ async function resolveArtifactEntry(
       workspaceId: row.workspace_id,
       channelId: row.channel_id,
       channelName: row.channel_name,
+      threadRootEventId: null,
       sessionId: null,
       sessionTitle: null,
     },
   };
+}
+
+export async function queryEntryReferences(
+  db: Db,
+  handles: string[],
+  userId: string,
+): Promise<EntryReferencesResponse> {
+  if (handles.length === 0) return { references: {} };
+  const uniqueHandles = Array.from(new Set(handles));
+  const res = await db.query<EntryReferenceQueryRow>(
+    `WITH input AS (
+       SELECT unnest($1::text[]) AS handle
+     ),
+     visible_refs AS (
+       SELECT input.handle AS queried_handle,
+              e.id AS event_id,
+              e.channel_id::text AS channel_id,
+              e.thread_root_event_id,
+              u.display_name AS actor_label,
+              substring(COALESCE(e.payload->>'text', '') from 1 for 140) AS excerpt,
+              e.created_at,
+              count(*) OVER (PARTITION BY input.handle) AS ref_count,
+              row_number() OVER (PARTITION BY input.handle ORDER BY e.created_at DESC, e.id DESC) AS rn
+         FROM input
+         JOIN events e
+           ON e.type = 'message.posted'
+          AND e.payload->'entry_refs' @> to_jsonb(ARRAY[input.handle]::text[])
+         JOIN channels c ON c.id = e.channel_id
+         LEFT JOIN users u ON u.id = e.actor_id
+        WHERE NOT EXISTS (
+                SELECT 1 FROM events d
+                 WHERE d.type = 'message.deleted'
+                   AND d.payload->>'target' = ('evt_' || e.id::text)
+              )
+          AND ((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$2')})
+            OR EXISTS (SELECT 1 FROM channel_members cm
+                        WHERE cm.channel_id = c.id AND cm.user_id = $2))
+     )
+     SELECT queried_handle,
+            event_id,
+            channel_id,
+            thread_root_event_id,
+            actor_label,
+            excerpt,
+            created_at,
+            ref_count
+       FROM visible_refs
+      WHERE rn <= 3
+      ORDER BY queried_handle ASC, created_at DESC, event_id DESC`,
+    [uniqueHandles, userId],
+  );
+
+  const references: EntryReferencesResponse['references'] = {};
+  for (const row of res.rows) {
+    const bucket =
+      references[row.queried_handle] ??
+      (references[row.queried_handle] = {
+        count: Number(row.ref_count),
+        latest: [],
+      });
+    bucket.latest.push({
+      eventId: Number(row.event_id),
+      handle: encodeEventHandle(Number(row.event_id)),
+      channelId: row.channel_id,
+      threadRootEventId: row.thread_root_event_id == null ? null : Number(row.thread_root_event_id),
+      actorLabel: row.actor_label,
+      excerpt: row.excerpt,
+      ts: new Date(row.created_at).toISOString(),
+    });
+  }
+  return { references };
 }
 
 function eventText(row: EventResolveRow, meta: Record<string, unknown>): string {
