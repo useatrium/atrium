@@ -68,7 +68,249 @@ async function login(handle: string, displayName = handle) {
   return { cookie: res.headers['set-cookie'] as string, user: res.json().user };
 }
 
+type ActiveCallJson = {
+  id: string;
+  channelId: string;
+  initiatorId: string;
+  status: string;
+  participants: Array<{ id: string; handle: string; displayName: string }>;
+};
+
+function activeCallsUrl(channelId?: string): string {
+  return `/api/calls/active${channelId ? `?channelId=${encodeURIComponent(channelId)}` : ''}`;
+}
+
+async function activeCalls(cookie: string, channelId?: string): Promise<ActiveCallJson[]> {
+  const current = app!;
+  const res = await current.inject({
+    method: 'GET',
+    url: activeCallsUrl(channelId),
+    headers: { cookie },
+  });
+  expect(res.statusCode).toBe(200);
+  return res.json().calls as ActiveCallJson[];
+}
+
+function expectParticipantIds(call: ActiveCallJson | undefined, userIds: string[]) {
+  expect(call?.participants.map((participant) => participant.id).sort()).toEqual([...userIds].sort());
+}
+
 describe('call routes', () => {
+  it('returns visible ringing and active snapshots with participants and channel filters', async () => {
+    const current = await startApp();
+    const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    const { cookie: aliceCookie, user: alice } = await login('alice', 'Alice');
+    const { cookie: benCookie, user: ben } = await login('ben', 'Ben');
+    expect(ben.id).toBe(benId);
+
+    const startGeneral = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: fx.channelId },
+    });
+    expect(startGeneral.statusCode).toBe(200);
+    const generalCall = startGeneral.json().call as ActiveCallJson;
+
+    const benRinging = await activeCalls(benCookie);
+    expect(benRinging).toHaveLength(1);
+    expect(benRinging[0]).toMatchObject({
+      id: generalCall.id,
+      channelId: fx.channelId,
+      initiatorId: alice.id,
+      status: 'ringing',
+    });
+    expectParticipantIds(benRinging[0], [alice.id]);
+
+    const accept = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${generalCall.id}/accept`,
+      headers: { cookie: benCookie },
+    });
+    expect(accept.statusCode).toBe(200);
+
+    const startRandom = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: fx.otherChannelId },
+    });
+    expect(startRandom.statusCode).toBe(200);
+    const randomCall = startRandom.json().call as ActiveCallJson;
+
+    const allVisible = await activeCalls(aliceCookie);
+    expect(allVisible.map((call) => call.id).sort()).toEqual([generalCall.id, randomCall.id].sort());
+
+    const generalOnly = await activeCalls(aliceCookie, fx.channelId);
+    expect(generalOnly.map((call) => call.id)).toEqual([generalCall.id]);
+    expect(generalOnly[0]).toMatchObject({
+      id: generalCall.id,
+      channelId: fx.channelId,
+      status: 'active',
+    });
+    expectParticipantIds(generalOnly[0], [alice.id, ben.id]);
+
+    const randomOnly = await activeCalls(aliceCookie, fx.otherChannelId);
+    expect(randomOnly.map((call) => call.id)).toEqual([randomCall.id]);
+    expect(randomOnly[0]).toMatchObject({
+      id: randomCall.id,
+      channelId: fx.otherChannelId,
+      status: 'ringing',
+    });
+    expectParticipantIds(randomOnly[0], [alice.id]);
+  });
+
+  it('does not leak private, DM, or group-DM snapshots to non-members', async () => {
+    const current = await startApp();
+    const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    const doraId = await seedMember(pool, fx.workspaceId, 'dora', 'Dora');
+    await seedMember(pool, fx.workspaceId, 'carol', 'Carol');
+    const { cookie: aliceCookie, user: alice } = await login('alice', 'Alice');
+    const { cookie: carolCookie } = await login('carol', 'Carol');
+
+    const privateRes = await current.inject({
+      method: 'POST',
+      url: '/api/channels',
+      headers: { cookie: aliceCookie },
+      payload: { name: 'secret-snapshots', private: true },
+    });
+    expect(privateRes.statusCode).toBe(201);
+    const privateChannelId = privateRes.json().channel.id as string;
+
+    const dmRes = await current.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: aliceCookie },
+      payload: { userId: benId },
+    });
+    expect(dmRes.statusCode).toBe(201);
+    const dmChannelId = dmRes.json().channel.id as string;
+
+    const gdmRes = await current.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: aliceCookie },
+      payload: { userIds: [benId, doraId] },
+    });
+    expect(gdmRes.statusCode).toBe(201);
+    const gdmChannelId = gdmRes.json().channel.id as string;
+
+    const privateStart = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: privateChannelId },
+    });
+    expect(privateStart.statusCode).toBe(200);
+    const dmStart = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: dmChannelId },
+    });
+    expect(dmStart.statusCode).toBe(200);
+    const gdmStart = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: gdmChannelId },
+    });
+    expect(gdmStart.statusCode).toBe(200);
+    const privateCallId = privateStart.json().call.id as string;
+    const dmCallId = dmStart.json().call.id as string;
+    const gdmCallId = gdmStart.json().call.id as string;
+
+    const aliceVisible = await activeCalls(aliceCookie);
+    expect(aliceVisible.map((call) => call.id).sort()).toEqual(
+      [privateCallId, dmCallId, gdmCallId].sort(),
+    );
+    for (const call of aliceVisible) {
+      expectParticipantIds(call, [alice.id]);
+    }
+
+    const carolVisible = await activeCalls(carolCookie);
+    expect(carolVisible.map((call) => call.id)).toEqual([]);
+
+    for (const channelId of [privateChannelId, dmChannelId, gdmChannelId]) {
+      const res = await current.inject({
+        method: 'GET',
+        url: activeCallsUrl(channelId),
+        headers: { cookie: carolCookie },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ error: 'channel_not_found' });
+    }
+  });
+
+  it('omits ended calls after the last participant leaves and after a DM decline', async () => {
+    const current = await startApp();
+    const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    const { cookie: aliceCookie } = await login('alice', 'Alice');
+    const { cookie: benCookie, user: ben } = await login('ben', 'Ben');
+    expect(ben.id).toBe(benId);
+
+    const dmRes = await current.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: aliceCookie },
+      payload: { userId: ben.id },
+    });
+    expect(dmRes.statusCode).toBe(201);
+    const channelId = dmRes.json().channel.id as string;
+
+    const start = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId },
+    });
+    expect(start.statusCode).toBe(200);
+    const activeCallId = start.json().call.id as string;
+    const accept = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${activeCallId}/accept`,
+      headers: { cookie: benCookie },
+    });
+    expect(accept.statusCode).toBe(200);
+    expect((await activeCalls(aliceCookie, channelId)).map((call) => call.id)).toEqual([activeCallId]);
+
+    const leaveAlice = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${activeCallId}/leave`,
+      headers: { cookie: aliceCookie },
+    });
+    expect(leaveAlice.statusCode).toBe(200);
+    expect((await activeCalls(aliceCookie, channelId)).map((call) => call.id)).toEqual([activeCallId]);
+
+    const leaveBen = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${activeCallId}/leave`,
+      headers: { cookie: benCookie },
+    });
+    expect(leaveBen.statusCode).toBe(200);
+    expect(await activeCalls(aliceCookie, channelId)).toEqual([]);
+    expect(await activeCalls(benCookie, channelId)).toEqual([]);
+
+    const ringing = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId },
+    });
+    expect(ringing.statusCode).toBe(200);
+    const ringingCallId = ringing.json().call.id as string;
+    expect((await activeCalls(benCookie, channelId)).map((call) => call.id)).toEqual([ringingCallId]);
+
+    const declined = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${ringingCallId}/decline`,
+      headers: { cookie: benCookie },
+    });
+    expect(declined.statusCode).toBe(200);
+    expect(await activeCalls(aliceCookie, channelId)).toEqual([]);
+    expect(await activeCalls(benCookie, channelId)).toEqual([]);
+  });
+
   it('runs start -> accept -> leave lifecycle and persists call state', async () => {
     const current = await startApp();
     const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
@@ -278,9 +520,29 @@ describe('call routes', () => {
     expect(state.rows[0]?.ended_at).toBeTruthy();
   });
 
-  it('returns calls_unconfigured when LiveKit settings are absent', async () => {
+  it('returns active snapshots when LiveKit settings are absent but rejects call mutations', async () => {
     const current = await startApp(false);
-    const { cookie } = await login('alice', 'Alice');
+    const { cookie, user } = await login('alice', 'Alice');
+    const callId = randomUUID();
+    await pool.query(
+      `INSERT INTO calls (id, workspace_id, channel_id, initiator_id, room, status)
+       VALUES ($1, $2, $3, $4, $5, 'active')`,
+      [callId, fx.workspaceId, fx.channelId, user.id, `call:${callId}`],
+    );
+    await pool.query(
+      'INSERT INTO call_participants (call_id, user_id, joined_at) VALUES ($1, $2, now())',
+      [callId, user.id],
+    );
+
+    const active = await activeCalls(cookie);
+    expect(active.map((call) => call.id)).toEqual([callId]);
+    expect(active[0]).toMatchObject({
+      id: callId,
+      channelId: fx.channelId,
+      initiatorId: user.id,
+      status: 'active',
+    });
+    expectParticipantIds(active[0], [user.id]);
 
     const res = await current.inject({
       method: 'POST',
