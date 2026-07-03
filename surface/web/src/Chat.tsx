@@ -23,7 +23,7 @@ import { ActivityView } from './components/ActivityView';
 import { labelForCallChannel, userForCall } from './callPresentation';
 import { notificationForWireEvent } from './chatNotifications';
 import { ChannelMembersMenu } from './components/ChannelMembersMenu';
-import { CallNotice, InCallPanel, IncomingCallBanner } from './components/CallUI';
+import { CallNotice, ChannelCallStrip, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
 import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
@@ -615,8 +615,11 @@ export function Chat({
   }, [syncFromCursor]);
 
   const syncThenFlushQueuedOps = useCallback(() => {
-    void runReconnectSync().then(flushQueuedOps).catch(onApiError);
-  }, [flushQueuedOps, onApiError, runReconnectSync]);
+    void runReconnectSync()
+      .then(() => calls.refreshActiveCalls())
+      .then(flushQueuedOps)
+      .catch(onApiError);
+  }, [calls.refreshActiveCalls, flushQueuedOps, onApiError, runReconnectSync]);
 
   useEffect(() => {
     if (hydrated) syncThenFlushQueuedOps();
@@ -1026,16 +1029,28 @@ export function Chat({
   }, [active, demoStarting, onApiError]);
 
   const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
+  const showFilesSurface = mainSurface === 'files';
+  // === mentions-activity additions ===
+  const showActivitySurface = mainSurface === 'activity';
+  const activeChannelLiveCall =
+    !showFilesSurface && !showActivitySurface && active ? calls.liveCallForChannel(active.id) : null;
+  const activeChannelLiveCaller = activeChannelLiveCall
+    ? userForCall(activeChannelLiveCall, state.channels, activeChannelLiveCall.initiatorId)
+    : null;
+  const activeChannelLiveCallName = activeChannelLiveCall
+    ? labelForCallChannel(activeChannelLiveCall, state.channels, me.id)
+    : '';
   const incomingCaller = calls.incomingCall
     ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
     : null;
   const incomingChannelName = calls.incomingCall ? labelForCallChannel(calls.incomingCall, state.channels, me.id) : '';
+  const showIncomingCallBanner =
+    calls.incomingCall != null &&
+    incomingCaller != null &&
+    calls.incomingCall.id !== activeChannelLiveCall?.id;
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
-  const showFilesSurface = mainSurface === 'files';
-  // === mentions-activity additions ===
-  const showActivitySurface = mainSurface === 'activity';
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -1232,7 +1247,7 @@ export function Chat({
           </header>
 
           {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
-          {calls.incomingCall && incomingCaller && (
+          {showIncomingCallBanner && calls.incomingCall && incomingCaller && (
             <IncomingCallBanner
               call={calls.incomingCall}
               caller={incomingCaller}
@@ -1240,6 +1255,17 @@ export function Chat({
               answering={calls.answering}
               onAccept={() => void calls.acceptIncomingCall()}
               onDecline={() => void calls.declineIncomingCall()}
+            />
+          )}
+          {activeChannelLiveCall && activeChannelLiveCaller && !calls.activeCall && (
+            <ChannelCallStrip
+              call={activeChannelLiveCall}
+              caller={activeChannelLiveCaller}
+              channelName={activeChannelLiveCallName}
+              meId={me.id}
+              joining={calls.answering}
+              onJoin={() => void calls.joinCall(activeChannelLiveCall.id)}
+              onDecline={() => void calls.declineCall(activeChannelLiveCall.id)}
             />
           )}
           {calls.activeCall && (

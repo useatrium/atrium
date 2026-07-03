@@ -134,6 +134,57 @@ function removeUser(users: UserRef[], userId: string): UserRef[] {
   return users.filter((u) => u.id !== userId);
 }
 
+function isLiveCall(call: CallWire): boolean {
+  return call.status !== 'ended';
+}
+
+function sortLiveCalls(calls: CallWire[]): CallWire[] {
+  return [...calls].sort(
+    (a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
+  );
+}
+
+function normalizeCall(call: CallWire, me: UserRef, channels: Channel[]): CallWire {
+  return {
+    ...call,
+    participants: enrichParticipants(call.participants, call, me, channels),
+  };
+}
+
+function normalizeLiveCalls(calls: CallWire[], me: UserRef, channels: Channel[]): CallWire[] {
+  return sortLiveCalls(calls.filter(isLiveCall).map((call) => normalizeCall(call, me, channels)));
+}
+
+function upsertLiveCall(
+  calls: CallWire[],
+  call: CallWire,
+  me: UserRef,
+  channels: Channel[],
+): CallWire[] {
+  if (!isLiveCall(call)) return calls.filter((current) => current.id !== call.id);
+  const next = normalizeCall(call, me, channels);
+  const index = calls.findIndex((current) => current.id === next.id);
+  if (index === -1) return sortLiveCalls([...calls, next]);
+  return sortLiveCalls(calls.map((current, i) => (i === index ? next : current)));
+}
+
+function updateLiveCall(
+  calls: CallWire[],
+  callId: string,
+  update: (call: CallWire) => CallWire,
+  me: UserRef,
+  channels: Channel[],
+): CallWire[] {
+  let found = false;
+  const next = calls.flatMap((call) => {
+    if (call.id !== callId) return [call];
+    found = true;
+    const updated = update(call);
+    return isLiveCall(updated) ? [normalizeCall(updated, me, channels)] : [];
+  });
+  return found ? sortLiveCalls(next) : calls;
+}
+
 function callUnavailable(err: unknown): boolean {
   return err instanceof ApiError && err.status === 503 && err.code === 'calls_unconfigured';
 }
@@ -148,17 +199,21 @@ export function useCall(me: UserRef, channels: Channel[]) {
   }
 
   const [incomingCall, setIncomingCall] = useState<CallWire | null>(null);
+  const [liveCalls, setLiveCalls] = useState<CallWire[]>([]);
+  const [dismissedCallIds, setDismissedCallIds] = useState<Set<string>>(() => new Set());
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [answering, setAnswering] = useState(false);
   const roomRef = useRef<Room | null>(null);
   const activeCallRef = useRef<ActiveCallState | null>(null);
+  const dismissedCallIdsRef = useRef(dismissedCallIds);
   const connectPromiseRef = useRef<Promise<void> | null>(null);
   const detachRoomHandlersRef = useRef<(() => void) | null>(null);
   const intentionalDisconnectRef = useRef(false);
 
   activeCallRef.current = activeCall;
+  dismissedCallIdsRef.current = dismissedCallIds;
 
   useEffect(() => {
     setActiveCall((current) =>
@@ -174,6 +229,8 @@ export function useCall(me: UserRef, channels: Channel[]) {
           }
         : current,
     );
+    setIncomingCall((current) => (current ? normalizeCall(current, me, channels) : current));
+    setLiveCalls((current) => normalizeLiveCalls(current, me, channels));
   }, [channels, me]);
 
   const updateActiveCall = useCallback((fn: (current: ActiveCallState) => ActiveCallState) => {
@@ -271,12 +328,8 @@ export function useCall(me: UserRef, channels: Channel[]) {
         roomRef.current = null;
         connectPromiseRef.current = null;
         if (intentionalDisconnectRef.current) return;
-        updateActiveCall((current) => ({
-          ...current,
-          phase: 'ended',
-          remoteAudioTracks: [],
-          error: 'Call disconnected.',
-        }));
+        setActiveCall(null);
+        setNotice('Call disconnected.');
       };
 
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
@@ -309,6 +362,13 @@ export function useCall(me: UserRef, channels: Channel[]) {
         return;
       }
 
+      setDismissedCallIds((ids) => {
+        if (!ids.has(join.call.id)) return ids;
+        const next = new Set(ids);
+        next.delete(join.call.id);
+        return next;
+      });
+      setLiveCalls((calls) => upsertLiveCall(calls, join.call, me, currentChannels()));
       const room = new Room();
       roomRef.current = room;
       setRoomHandlers(room);
@@ -368,18 +428,86 @@ export function useCall(me: UserRef, channels: Channel[]) {
     [addRemoteAudioTrack, clearRoom, me, setRoomHandlers, updateActiveCall],
   );
 
+  const refreshActiveCalls = useCallback(async () => {
+    try {
+      const snapshot = await api.activeCalls();
+      const refreshed = normalizeLiveCalls(snapshot.calls, me, currentChannels());
+      const refreshedIds = new Set(refreshed.map((call) => call.id));
+
+      setLiveCalls(refreshed);
+      setDismissedCallIds((ids) => {
+        const next = new Set([...ids].filter((id) => refreshedIds.has(id)));
+        return next.size === ids.size ? ids : next;
+      });
+      setIncomingCall((call) => {
+        if (!call) return call;
+        const next = refreshed.find((candidate) => candidate.id === call.id);
+        if (
+          !next ||
+          next.status !== 'ringing' ||
+          next.initiatorId === me.id ||
+          dismissedCallIdsRef.current.has(next.id)
+        ) {
+          return null;
+        }
+        return next;
+      });
+
+      const current = activeCallRef.current;
+      if (!current) return;
+      const next = refreshed.find((call) => call.id === current.call.id);
+      if (!next) {
+        clearRoom();
+        setActiveCall(null);
+        return;
+      }
+      setActiveCall((active) =>
+        active?.call.id === next.id
+          ? {
+              ...active,
+              call: next,
+              participants: participantsFor(next, me, currentChannels()),
+            }
+          : active,
+      );
+    } catch (err) {
+      if (callUnavailable(err)) {
+        setNotice("Calls aren't available.");
+      } else {
+        setNotice("Couldn't refresh active calls.");
+      }
+    }
+  }, [clearRoom, me]);
+
+  const liveCallForChannel = useCallback(
+    (channelId: string): CallWire | null =>
+      liveCalls.find(
+        (call) =>
+          call.channelId === channelId &&
+          isLiveCall(call) &&
+          !dismissedCallIds.has(call.id),
+      ) ?? null,
+    [dismissedCallIds, liveCalls],
+  );
+
   const handleCallEvent = useCallback(
     (event: CallEvent) => {
       if (event.type === 'call.ringing') {
-        if (event.call.initiatorId !== me.id && !activeCallRef.current) {
-          setIncomingCall(event.call);
+        const nextCall = normalizeCall(event.call, me, currentChannels());
+        setLiveCalls((calls) => upsertLiveCall(calls, nextCall, me, currentChannels()));
+        if (
+          nextCall.initiatorId !== me.id &&
+          !activeCallRef.current &&
+          !dismissedCallIdsRef.current.has(nextCall.id)
+        ) {
+          setIncomingCall(nextCall);
         }
         setActiveCall((current) =>
-          current?.call.id === event.call.id
+          current?.call.id === nextCall.id
             ? {
                 ...current,
-                call: event.call,
-                participants: participantsFor(event.call, me, currentChannels()),
+                call: nextCall,
+                participants: participantsFor(nextCall, me, currentChannels()),
               }
             : current,
         );
@@ -387,8 +515,27 @@ export function useCall(me: UserRef, channels: Channel[]) {
       }
 
       if (event.type === 'call.accepted' || event.type === 'call.participant_joined') {
-        setIncomingCall((call) =>
-          call?.id === event.callId && event.user.id === me.id ? null : call,
+        if (event.user.id === me.id) {
+          setDismissedCallIds((ids) => {
+            if (!ids.has(event.callId)) return ids;
+            const next = new Set(ids);
+            next.delete(event.callId);
+            return next;
+          });
+        }
+        setIncomingCall((call) => (call?.id === event.callId ? null : call));
+        setLiveCalls((calls) =>
+          updateLiveCall(
+            calls,
+            event.callId,
+            (call) => ({
+              ...call,
+              status: 'active',
+              participants: upsertUser(call.participants, event.user),
+            }),
+            me,
+            currentChannels(),
+          ),
         );
         setActiveCall((current) =>
           current?.call.id === event.callId
@@ -406,10 +553,25 @@ export function useCall(me: UserRef, channels: Channel[]) {
         setIncomingCall((call) =>
           call?.id === event.callId && event.userId === me.id ? null : call,
         );
+        if (event.userId === me.id) {
+          setDismissedCallIds((ids) => new Set(ids).add(event.callId));
+        }
         return;
       }
 
       if (event.type === 'call.participant_left') {
+        setLiveCalls((calls) =>
+          updateLiveCall(
+            calls,
+            event.callId,
+            (call) => ({
+              ...call,
+              participants: removeUser(call.participants, event.userId),
+            }),
+            me,
+            currentChannels(),
+          ),
+        );
         setActiveCall((current) =>
           current?.call.id === event.callId
             ? {
@@ -429,6 +591,13 @@ export function useCall(me: UserRef, channels: Channel[]) {
 
       if (event.type === 'call.ended') {
         setIncomingCall((call) => (call?.id === event.callId ? null : call));
+        setLiveCalls((calls) => calls.filter((call) => call.id !== event.callId));
+        setDismissedCallIds((ids) => {
+          if (!ids.has(event.callId)) return ids;
+          const next = new Set(ids);
+          next.delete(event.callId);
+          return next;
+        });
         if (activeCallRef.current?.call.id === event.callId) {
           clearRoom();
           setActiveCall(null);
@@ -459,13 +628,20 @@ export function useCall(me: UserRef, channels: Channel[]) {
     [connectToCall, starting],
   );
 
-  const acceptIncomingCall = useCallback(async () => {
-    const call = incomingCall;
-    if (!call || answering) return;
+  const joinCall = useCallback(async (callId: string) => {
+    if (answering) return;
+    const current = activeCallRef.current;
+    if (current?.call.id === callId && (roomRef.current || connectPromiseRef.current)) {
+      return connectPromiseRef.current ?? Promise.resolve();
+    }
+    if (current && current.call.id !== callId) {
+      setNotice('Leave the current call before joining another.');
+      return;
+    }
     setAnswering(true);
     setNotice(null);
     try {
-      const join = await api.acceptCall(call.id);
+      const join = await api.acceptCall(callId);
       await connectToCall(join);
     } catch (err) {
       if (callUnavailable(err)) {
@@ -476,18 +652,29 @@ export function useCall(me: UserRef, channels: Channel[]) {
     } finally {
       setAnswering(false);
     }
-  }, [answering, connectToCall, incomingCall]);
+  }, [answering, connectToCall]);
+
+  const acceptIncomingCall = useCallback(async () => {
+    const call = incomingCall;
+    if (!call) return;
+    await joinCall(call.id);
+  }, [incomingCall, joinCall]);
+
+  const declineCall = useCallback(async (callId: string) => {
+    setIncomingCall((call) => (call?.id === callId ? null : call));
+    setDismissedCallIds((ids) => new Set(ids).add(callId));
+    try {
+      await api.declineCall(callId);
+    } catch {
+      setNotice("Couldn't decline the call.");
+    }
+  }, []);
 
   const declineIncomingCall = useCallback(async () => {
     const call = incomingCall;
     if (!call) return;
-    setIncomingCall(null);
-    try {
-      await api.declineCall(call.id);
-    } catch {
-      setNotice("Couldn't decline the call.");
-    }
-  }, [incomingCall]);
+    await declineCall(call.id);
+  }, [declineCall, incomingCall]);
 
   const toggleMute = useCallback(async () => {
     const room = roomRef.current;
@@ -513,24 +700,38 @@ export function useCall(me: UserRef, channels: Channel[]) {
     const callId = current.call.id;
     clearRoom();
     setActiveCall(null);
+    setLiveCalls((calls) =>
+      updateLiveCall(
+        calls,
+        callId,
+        (call) => ({ ...call, participants: removeUser(call.participants, me.id) }),
+        me,
+        currentChannels(),
+      ),
+    );
     try {
       await api.leaveCall(callId);
     } catch {
       setNotice("Couldn't leave the call cleanly.");
     }
-  }, [clearRoom]);
+  }, [clearRoom, me]);
 
   useEffect(() => () => clearRoom(), [clearRoom]);
 
   return {
     incomingCall,
+    liveCalls,
     activeCall,
     notice,
     starting,
     answering,
     handleCallEvent,
+    liveCallForChannel,
+    refreshActiveCalls,
     startCall,
+    joinCall,
     acceptIncomingCall,
+    declineCall,
     declineIncomingCall,
     toggleMute,
     leaveActiveCall,
