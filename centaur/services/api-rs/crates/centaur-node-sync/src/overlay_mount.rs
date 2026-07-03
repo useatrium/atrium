@@ -23,6 +23,12 @@ pub const DEFAULT_REPO_CACHE_ROOT: &str = "/cache";
 /// deliverables/config, avoids repo-basename collisions with reserved dirs, and
 /// lets capture exclude all git-managed code by excluding this one prefix.
 pub const REPOS_DIR: &str = "repos";
+/// Host-root sibling dirs (peers of `overlays/`) the daemon creates per session
+/// when planning an overlay mount: the overlayfs work dir and the composed/fixture
+/// lower both live here, outside `overlays_root`. GC must remove these alongside
+/// the upper or they leak — see [`session_sibling_dirs`].
+pub const OVERLAY_WORK_DIRNAME: &str = "overlay-work";
+pub const OVERLAY_LOWER_DIRNAME: &str = "overlay-lower";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum LowerKind {
@@ -96,7 +102,7 @@ pub fn plan_overlay_mount(
         session: session.to_owned(),
         upper: overlays_root.join(session),
         merged: merged.to_path_buf(),
-        work: host_root.join("overlay-work").join(session),
+        work: host_root.join(OVERLAY_WORK_DIRNAME).join(session),
         lower,
         extra_lowers: Vec::new(),
         context_source: None,
@@ -114,7 +120,7 @@ pub fn select_lower_source(
 ) -> Result<LowerSource, String> {
     if !repos.is_empty() {
         let lower = host_root
-            .join("overlay-lower")
+            .join(OVERLAY_LOWER_DIRNAME)
             .join(format!("{session}.repos"));
         plan_repo_composition(&lower, Path::new(DEFAULT_REPO_CACHE_ROOT), repos)?;
         return Ok(LowerSource {
@@ -135,9 +141,28 @@ pub fn select_lower_source(
     Ok(LowerSource {
         path: lower_override
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| host_root.join("overlay-lower").join(session)),
+            .unwrap_or_else(|| host_root.join(OVERLAY_LOWER_DIRNAME).join(session)),
         kind: LowerKind::Fixture,
     })
+}
+
+/// Per-session host-root dirs created by [`plan_overlay_mount`] that live *outside*
+/// `overlays_root` and are therefore missed by an `overlays/<session>`-only GC. The
+/// composed-repos lower holds materialized repo checkouts (MB–GB), so leaking these
+/// is a real disk leak. Returns candidates for both lower layouts (fixture
+/// `<session>` and composed `<session>.repos`); unique session ids mean at most one
+/// lower exists on disk, so the extra path is a harmless NotFound no-op for callers.
+pub fn session_sibling_dirs(overlays_root: &Path, session: &str) -> Vec<PathBuf> {
+    let Some(host_root) = overlays_root.parent() else {
+        return Vec::new();
+    };
+    vec![
+        host_root.join(OVERLAY_WORK_DIRNAME).join(session),
+        host_root.join(OVERLAY_LOWER_DIRNAME).join(session),
+        host_root
+            .join(OVERLAY_LOWER_DIRNAME)
+            .join(format!("{session}.repos")),
+    ]
 }
 
 pub fn validate_repo_path_syntax(repo: &str) -> Result<(), String> {
@@ -1174,6 +1199,41 @@ mod tests {
                 kind: LowerKind::Fixture,
             }
         );
+    }
+
+    #[test]
+    fn sibling_dirs_cover_planned_work_and_lower() {
+        // Guards the leak's root cause: GC's cleanup set must always contain every
+        // host-root dir the mount planner creates, for both lower layouts.
+        let overlays_root = Path::new("/var/lib/centaur/overlays");
+        let siblings = session_sibling_dirs(overlays_root, "sess-1");
+
+        let fixture = plan_overlay_mount(
+            overlays_root,
+            "sess-1",
+            Path::new("/run/centaur/merged/sess-1"),
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+        assert!(
+            siblings.contains(&fixture.work),
+            "work dir would leak: {siblings:?}"
+        );
+        assert!(
+            siblings.contains(&fixture.lower.path),
+            "fixture lower would leak: {siblings:?}"
+        );
+        // Composed-repos lower (`<session>.repos`) — the MB–GB offender — is covered.
+        assert!(siblings.contains(&PathBuf::from(
+            "/var/lib/centaur/overlay-lower/sess-1.repos"
+        )));
+    }
+
+    #[test]
+    fn sibling_dirs_empty_when_overlays_root_has_no_parent() {
+        assert!(session_sibling_dirs(Path::new("/"), "sess-1").is_empty());
     }
 
     #[test]

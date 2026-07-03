@@ -345,7 +345,8 @@ mod linux_daemon {
     use centaur_node_sync::materializer::materialize_changed_sessions;
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
-        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount, unmount_overlay,
+        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
+        session_sibling_dirs, unmount_overlay,
     };
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
@@ -355,7 +356,7 @@ mod linux_daemon {
         profile_candidate_sweep, sha_hex,
     };
     use centaur_node_sync::session_manifest::{
-        DiscoveredSession, discover_sessions, manifest_path,
+        DiscoveredSession, discover_sessions, manifest_path, state_path,
     };
     use centaur_node_sync::sse::{ChangedEvent, DirtySet, SseOutput, SseParser};
     use centaur_node_sync::state::DaemonState;
@@ -1382,6 +1383,12 @@ mod linux_daemon {
         heartbeat_mtime_nanos: Option<u128>,
     }
 
+    #[derive(Clone, Copy)]
+    enum PathKind {
+        Dir,
+        File,
+    }
+
     fn maybe_gc_evicted_session(
         global: &GlobalConfig,
         overlays_root: &Path,
@@ -1406,34 +1413,36 @@ mod linux_daemon {
             eprintln!("session {}: gc unmount: {error}", discovered.session);
             return;
         }
-        let overlay_dir = overlays_root.join(&discovered.session);
-        let sidecar = manifest_path(overlays_root, &discovered.session);
-        match std::fs::remove_dir_all(&overlay_dir) {
-            Ok(()) => eprintln!(
-                "event=node_sync_gc session={} path={} reason=evicted_grace_elapsed",
-                discovered.session,
-                overlay_dir.display()
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => eprintln!(
-                "session {}: gc remove {}: {error}",
-                discovered.session,
-                overlay_dir.display()
-            ),
+        // Reclaim every path the session created. Removing only `overlays/<session>`
+        // + its manifest leaked the overlayfs work/lower siblings — which live under
+        // the host root, outside `overlays_root` — forever; the composed-repos lower
+        // holds MB–GB of materialized checkouts. `session_sibling_dirs` is the single
+        // source of truth shared with `plan_overlay_mount`, so cleanup can't drift
+        // from creation again. NotFound is expected (unused lower layout, already-gone
+        // state file) and silently ignored.
+        let session = &discovered.session;
+        let remove = |kind: PathKind, path: &Path| {
+            let result = match kind {
+                PathKind::Dir => std::fs::remove_dir_all(path),
+                PathKind::File => std::fs::remove_file(path),
+            };
+            match result {
+                Ok(()) => eprintln!(
+                    "event=node_sync_gc session={session} path={} reason=evicted_grace_elapsed",
+                    path.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    eprintln!("session {session}: gc remove {}: {error}", path.display())
+                }
+            }
+        };
+        remove(PathKind::Dir, &overlays_root.join(session));
+        for sibling in session_sibling_dirs(overlays_root, session) {
+            remove(PathKind::Dir, &sibling);
         }
-        match std::fs::remove_file(&sidecar) {
-            Ok(()) => eprintln!(
-                "event=node_sync_gc session={} path={} reason=evicted_grace_elapsed",
-                discovered.session,
-                sidecar.display()
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => eprintln!(
-                "session {}: gc remove {}: {error}",
-                discovered.session,
-                sidecar.display()
-            ),
-        }
+        remove(PathKind::File, &manifest_path(overlays_root, session));
+        remove(PathKind::File, &state_path(overlays_root, session));
     }
 
     fn unmount_evicted_overlay_if_needed(
