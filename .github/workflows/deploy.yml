@@ -32,13 +32,18 @@ jobs:
           cd "$HOME/atrium"
           git fetch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deploy
           git reset --hard FETCH_HEAD
-          clean_excludes=(
-            -e surface/deploy/docker-compose.tunnel.yml
-            -e surface/deploy/docker-compose.override.yml
-            -e 'surface/deploy/*.local.yml'
+          clean_paths=(
+            surface/web/src
+            surface/web/test
+            surface/mobile/src
+            surface/mobile/app
+            surface/e2e/tests
+            surface/server/src
+            surface/shared/src
+            surface/centaur-client/src
           )
-          git clean -ffd -n "${clean_excludes[@]}"
-          git clean -ffd "${clean_excludes[@]}"
+          git clean -ffd -n "${clean_paths[@]}"
+          git clean -ffd "${clean_paths[@]}"
           echo "deploying:"; git log --oneline -1
       - name: Redeploy (build-changed, health-gated, auto-rollback)
         run: |
