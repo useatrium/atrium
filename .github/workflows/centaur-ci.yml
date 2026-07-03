@@ -7,11 +7,14 @@ name: Centaur CI
 # See docs/centaur-vendoring.md.
 
 # Always runs (no top-level path filter) so the `Centaur CI success` check reports on
-# EVERY PR — required-check-safe. The heavy jobs gate on `ci_changes`, so a non-centaur PR
-# just runs the ~8s detector + the aggregator (heavy jobs skip) and reports green-fast.
+# EVERY PR and merge group — required-check-safe. The heavy jobs gate on `ci_changes`, so
+# a non-centaur change just runs the detector + the aggregator (heavy jobs skip) and
+# reports green-fast.
 on:
   pull_request:
     branches: [master]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
@@ -47,6 +50,9 @@ jobs:
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base="${{ github.event.pull_request.base.sha }}"
             changed_files="$(git diff --name-only "${base}...HEAD")"
+          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            git fetch --no-tags origin master:refs/remotes/origin/master
+            changed_files="$(git diff --name-only origin/master...HEAD)"
           else
             changed_files="$(git diff --name-only "${{ github.event.before }}...HEAD")"
           fi
