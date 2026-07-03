@@ -35,6 +35,8 @@ paths = [
   '''^surface/server/src/session-records\.test\.ts$''',
   '''^surface/server/src/webpush\.test\.ts$''',
   '''^surface/server/test/artifactGc\.test\.ts$''',
+  '''^surface/server/test/connections\.test\.ts$''',
   '''^surface/server/test/push\.test\.ts$''',
   '''^surface/server/test/routes\.test\.ts$''',
+  '''^surface/server/test/sessions\.test\.ts$''',
 ]
