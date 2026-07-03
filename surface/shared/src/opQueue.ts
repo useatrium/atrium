@@ -1,4 +1,4 @@
-import { ApiError, type Api, type ReactionAction } from './api';
+import { ApiError, type AgentAttachmentRef, type Api, type ReactionAction } from './api';
 import type { AppAction } from './appState';
 import type { UserPrefs } from './prefs';
 import { sessionFromWire, type SessionRepoSpec } from './sessions';
@@ -117,6 +117,11 @@ export interface SessionSpawnPayload {
   githubIdentityId?: string;
   agentProfileId?: string;
   agentProfileVersionId?: string;
+  attachments?: AttachmentMeta[];
+  /** Queued upload refs; resolved to uploaded file ids before the HTTP call. */
+  attachmentRefs?: AttachmentRef[];
+  /** Existing artifact refs; sent through once a picker can populate them. */
+  existingAttachmentRefs?: AgentAttachmentRef[];
   createdAt?: string;
 }
 
@@ -131,6 +136,11 @@ export interface SessionSteerPayload {
   text: string;
   /** Per-turn reasoning-effort override (codex only). */
   effort?: string;
+  attachments?: AttachmentMeta[];
+  /** Queued upload refs; resolved to uploaded file ids before the HTTP call. */
+  attachmentRefs?: AttachmentRef[];
+  /** Existing artifact refs; sent through once a picker can populate them. */
+  existingAttachmentRefs?: AgentAttachmentRef[];
 }
 
 export interface SessionCancelPayload {
@@ -198,12 +208,7 @@ export interface OpExecuteContext {
 }
 
 export interface OpHandler<T extends OpType> {
-  execute(
-    api: Api,
-    payload: OpPayloadByType[T],
-    op: QueuedOp,
-    context: OpExecuteContext,
-  ): Promise<OpResultByType[T]>;
+  execute(api: Api, payload: OpPayloadByType[T], op: QueuedOp, context: OpExecuteContext): Promise<OpResultByType[T]>;
   dependsOn?(payload: OpPayloadByType[T], op: QueuedOp): string[];
   completedOp?(op: QueuedOp, result: OpResultByType[T]): QueuedOp | null;
   removeDependenciesOnSettled?: boolean;
@@ -271,10 +276,34 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
   }
 }
 
-export function makeQueuedOp<T extends OpType>(
-  input: EnqueueOpInput<T>,
-  now = new Date().toISOString(),
-): QueuedOp {
+interface AttachmentPayload {
+  attachments?: AttachmentMeta[];
+  attachmentRefs?: AttachmentRef[];
+}
+
+function attachmentUploadDependencies(payload: AttachmentPayload): string[] {
+  return payload.attachmentRefs?.map((ref) => `upload:${ref.uploadKey}`) ?? [];
+}
+
+async function resolvedAttachmentIds(
+  payload: AttachmentPayload,
+  context: OpExecuteContext,
+): Promise<string[] | undefined> {
+  if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
+    const ops = await context.listOps();
+    return payload.attachmentRefs.map((ref) => {
+      const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
+      const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
+      if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
+        throw new TypeError(`upload ${ref.uploadKey} is not ready`);
+      }
+      return uploadPayload.fileId;
+    });
+  }
+  return payload.attachments?.map((attachment) => attachment.id);
+}
+
+export function makeQueuedOp<T extends OpType>(input: EnqueueOpInput<T>, now = new Date().toISOString()): QueuedOp {
   return {
     opId: input.opId,
     opType: input.opType,
@@ -359,9 +388,7 @@ function coalescedPayload(existing: QueuedOp, next: QueuedOp): unknown {
     return {
       ...nextPayload,
       previousMuted:
-        typeof prevPayload.previousMuted === 'boolean'
-          ? prevPayload.previousMuted
-          : nextPayload.previousMuted,
+        typeof prevPayload.previousMuted === 'boolean' ? prevPayload.previousMuted : nextPayload.previousMuted,
     };
   }
   if (existing.opType === 'prefs.set' && next.opType === 'prefs.set') {
@@ -383,14 +410,18 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     for (const current of pendingSameKey) {
       if (current.opType !== 'read.mark' || !isRecord(current.payload)) continue;
       const value = Number(current.payload.lastReadEventId);
-      const max = maxExisting && isRecord(maxExisting.payload) ? Number(maxExisting.payload.lastReadEventId) : -Infinity;
+      const max =
+        maxExisting && isRecord(maxExisting.payload) ? Number(maxExisting.payload.lastReadEventId) : -Infinity;
       if (Number.isFinite(value) && value > max) maxExisting = current;
     }
     const nextValue = Number((op.payload as ReadMarkPayload).lastReadEventId);
     if (maxExisting && isRecord(maxExisting.payload) && Number(maxExisting.payload.lastReadEventId) >= nextValue) {
       return { op: null, remove: [] };
     }
-    return { op, remove: pendingSameKey.filter((current) => current.opType === 'read.mark').map((current) => current.opId) };
+    return {
+      op,
+      remove: pendingSameKey.filter((current) => current.opType === 'read.mark').map((current) => current.opId),
+    };
   }
 
   if (op.opType === 'msg.delete') {
@@ -414,7 +445,9 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'channel.leave'
   ) {
     const remove = pendingSameKey
-      .filter((current) => current.opType === op.opType || op.opType === 'channel.join' || op.opType === 'channel.leave')
+      .filter(
+        (current) => current.opType === op.opType || op.opType === 'channel.join' || op.opType === 'channel.leave',
+      )
       .map((current) => current.opId);
     const replaced = pendingSameKey.find((current) => remove.includes(current.opId));
     return {
@@ -505,9 +538,7 @@ export class DurableOpQueue {
   async recoverInflight(): Promise<void> {
     const ops = await this.storage.listOps();
     await Promise.all(
-      ops
-        .filter((op) => op.status === 'inflight')
-        .map((op) => this.storage.putOp({ ...op, status: 'pending' })),
+      ops.filter((op) => op.status === 'inflight').map((op) => this.storage.putOp({ ...op, status: 'pending' })),
     );
     await this.rejectOrphanedPendingDependents();
   }
@@ -668,9 +699,7 @@ export class DurableOpQueue {
   private async removeDependencies(op: QueuedOp): Promise<void> {
     for (const queueKey of this.dependenciesFor(op)) {
       const ops = await this.storage.listOps();
-      const dependency = ops.find(
-        (candidate) => candidate.queueKey === queueKey && candidate.status === 'completed',
-      );
+      const dependency = ops.find((candidate) => candidate.queueKey === queueKey && candidate.status === 'completed');
       if (dependency) await this.storage.removeOp(dependency.opId);
     }
   }
@@ -690,17 +719,11 @@ export class DurableOpQueue {
     await this.storage.removeOp(op.opId);
   }
 
-  private async rejectDependents(
-    failedQueueKey: string,
-    error: unknown,
-    visited = new Set<string>(),
-  ): Promise<void> {
+  private async rejectDependents(failedQueueKey: string, error: unknown, visited = new Set<string>()): Promise<void> {
     if (visited.has(failedQueueKey)) return;
     visited.add(failedQueueKey);
     const ops = await this.storage.listOps();
-    const dependents = ops.filter((candidate) =>
-      this.dependenciesFor(candidate).includes(failedQueueKey),
-    );
+    const dependents = ops.filter((candidate) => this.dependenciesFor(candidate).includes(failedQueueKey));
     for (const dependent of dependents) {
       await this.rejectOpAndDependentsBeforeRemove(dependent, error, visited);
     }
@@ -728,18 +751,7 @@ export function createDefaultOpRegistry(): OpRegistry {
   return {
     'msg.send': {
       execute: async (api, payload, op, context) => {
-        let attachments = payload.attachments?.map((a) => a.id);
-        if (payload.attachmentRefs && payload.attachmentRefs.length > 0) {
-          const ops = await context.listOps();
-          attachments = payload.attachmentRefs.map((ref) => {
-            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
-            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
-            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
-              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
-            }
-            return uploadPayload.fileId;
-          });
-        }
+        const attachments = await resolvedAttachmentIds(payload, context);
         return api.postMessage({
           channelId: payload.channelId,
           text: payload.text,
@@ -749,8 +761,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           opId: op.opId,
         });
       },
-      dependsOn: (payload) =>
-        payload.attachmentRefs?.map((ref) => `upload:${ref.uploadKey}`) ?? [],
+      dependsOn: attachmentUploadDependencies,
       removeDependenciesOnSettled: true,
       onConfirmed: (dispatch, result) => dispatch({ type: 'server-event', event: result.event }),
       onRejected: (dispatch, payload) =>
@@ -825,8 +836,7 @@ export function createDefaultOpRegistry(): OpRegistry {
         dispatch({ type: 'overlay-rejected', channelId: payload.channelId, opId: op.opId }),
     },
     'reaction.set': {
-      execute: (api, payload, op) =>
-        api.setReaction(payload.eventId, payload.emoji, payload.action, { opId: op.opId }),
+      execute: (api, payload, op) => api.setReaction(payload.eventId, payload.emoji, payload.action, { opId: op.opId }),
       onConfirmed: (dispatch, result, payload, op) => {
         if (result.event) dispatch({ type: 'server-event', event: result.event });
         else dispatch({ type: 'overlay-confirmed', channelId: payload.channelId, opId: op.opId });
@@ -848,8 +858,9 @@ export function createDefaultOpRegistry(): OpRegistry {
         dispatch({ type: 'mute-changed', channelId: payload.channelId, muted: payload.previousMuted }),
     },
     'session.spawn': {
-      execute: (api, payload, op) =>
-        api.createAgentSession({
+      execute: async (api, payload, op, context) => {
+        const attachments = await resolvedAttachmentIds(payload, context);
+        return api.createAgentSession({
           channelId: payload.channelId,
           threadRootEventId: payload.threadRootEventId,
           task: payload.task,
@@ -862,8 +873,15 @@ export function createDefaultOpRegistry(): OpRegistry {
           agentProfileId: payload.agentProfileId,
           agentProfileVersionId: payload.agentProfileVersionId,
           clientSpawnId: payload.clientSpawnId,
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          ...(payload.existingAttachmentRefs && payload.existingAttachmentRefs.length > 0
+            ? { attachmentRefs: payload.existingAttachmentRefs }
+            : {}),
           opId: op.opId,
-        }),
+        });
+      },
+      dependsOn: attachmentUploadDependencies,
+      removeDependenciesOnSettled: true,
       onConfirmed: (dispatch, result, payload) =>
         dispatch({
           type: 'session-created',
@@ -885,8 +903,23 @@ export function createDefaultOpRegistry(): OpRegistry {
       onRejected: () => {},
     },
     'session.steer': {
-      execute: (api, payload, op) =>
-        api.steerSession(payload.sessionId, payload.text, { opId: op.opId }, payload.effort),
+      execute: async (api, payload, op, context) => {
+        const attachments = await resolvedAttachmentIds(payload, context);
+        return api.steerSession(
+          payload.sessionId,
+          payload.text,
+          { opId: op.opId },
+          {
+            ...(payload.effort ? { effort: payload.effort } : {}),
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
+            ...(payload.existingAttachmentRefs && payload.existingAttachmentRefs.length > 0
+              ? { attachmentRefs: payload.existingAttachmentRefs }
+              : {}),
+          },
+        );
+      },
+      dependsOn: attachmentUploadDependencies,
+      removeDependenciesOnSettled: true,
       onConfirmed: () => {},
       onRejected: () => {},
     },
@@ -912,8 +945,7 @@ export function createDefaultOpRegistry(): OpRegistry {
     },
     'channel.leave': {
       execute: (api, payload, op) => api.leaveChannelMembership(payload.channelId, { opId: op.opId }),
-      onConfirmed: (dispatch, _result, payload) =>
-        dispatch({ type: 'channel-removed', channelId: payload.channelId }),
+      onConfirmed: (dispatch, _result, payload) => dispatch({ type: 'channel-removed', channelId: payload.channelId }),
       onRejected: () => {},
     },
   };

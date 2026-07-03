@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import type { Db, DbClient } from '../db.js';
@@ -18,23 +17,11 @@ import {
   type ReactionAction,
   type UserRef,
 } from '../events.js';
-import { ArtifactLedger } from '../artifact-ledger.js';
-import { classifyMediaFromMime } from '../media-classifier.js';
 import type { WsHub } from '../hub.js';
 import { sendMessagePush } from '../push.js';
-import { sanitizeFilename } from '../safe-filename.js';
-import { enqueueThumbnailGeneration } from '../thumbnails.js';
+import { landUploadAttachmentAsArtifact, type UploadAttachmentFileRow } from '../upload-artifacts.js';
 
-interface MessageAttachmentFileRow {
-  id: string;
-  filename: string;
-  content_type: string;
-  size_bytes: number | string;
-  width: number | null;
-  height: number | null;
-  s3_key: string;
-  content_hash: string | null;
-}
+type MessageAttachmentFileRow = UploadAttachmentFileRow;
 
 export interface MessageRouteDeps {
   pool: Db;
@@ -86,121 +73,6 @@ function parseVoicePost(
   return { durationMs, ...(waveform && waveform.length > 0 ? { waveform } : {}) };
 }
 
-function uploadArtifactFilename(filename: string): string {
-  const base = basename(filename.replace(/\\/g, '/'));
-  if (!base || base === '.' || base === '..') return 'file';
-  const cleaned = sanitizeFilename(base);
-  return cleaned === '.' || cleaned === '..' ? 'file' : cleaned;
-}
-
-function uploadArtifactPath(channelId: string, filename: string, suffix: number): string {
-  if (suffix <= 1) return `shared/channels/${channelId}/uploads/${filename}`;
-  const dot = filename.lastIndexOf('.');
-  const stem = dot > 0 ? filename.slice(0, dot) : filename;
-  const ext = dot > 0 ? filename.slice(dot) : '';
-  return `shared/channels/${channelId}/uploads/${stem} (${suffix})${ext}`;
-}
-
-async function latestArtifactBlobByWorkspacePath(
-  pool: Db,
-  workspaceId: string,
-  path: string,
-): Promise<{ artifactId: string; blobSha: string | null } | null> {
-  const res = await pool.query<{ id: string; blob_sha: string | null }>(
-    `SELECT a.id, v.blob_sha
-       FROM artifacts a
-       LEFT JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
-       LEFT JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
-      WHERE a.workspace_id = $1 AND a.path = $2`,
-    [workspaceId, path],
-  );
-  const row = res.rows[0];
-  return row ? { artifactId: row.id, blobSha: row.blob_sha } : null;
-}
-
-async function landingPathForUpload(
-  pool: Db,
-  params: { workspaceId: string; channelId: string; filename: string; blobSha: string },
-): Promise<string> {
-  const filename = uploadArtifactFilename(params.filename);
-  for (let suffix = 1; suffix <= 1000; suffix += 1) {
-    const path = uploadArtifactPath(params.channelId, filename, suffix);
-    const existing = await latestArtifactBlobByWorkspacePath(pool, params.workspaceId, path);
-    if (!existing || existing.blobSha === params.blobSha) return path;
-  }
-  throw new Error(`could not allocate upload artifact path for ${filename}`);
-}
-
-async function landUploadAttachmentAsArtifact(
-  pool: Db,
-  params: {
-    channelId: string;
-    userId: string;
-    file: MessageAttachmentFileRow;
-    sourceMessageId?: string | null;
-    logger?: { warn(obj: unknown, msg?: string): void };
-  },
-): Promise<void> {
-  const channel = await pool.query<{ workspace_id: string }>(
-    'SELECT workspace_id FROM channels WHERE id = $1',
-    [params.channelId],
-  );
-  const channelRow = channel.rows[0];
-  if (!channelRow) throw new Error(`channel not found: ${params.channelId}`);
-
-  const blobSha = params.file.content_hash;
-  if (blobSha == null) throw new Error(`content_hash missing for file ${params.file.id}`);
-  const sizeBytes = Number(params.file.size_bytes);
-  const classification = classifyMediaFromMime(params.file.content_type);
-  await pool.query(
-    `INSERT INTO cas_blobs
-       (sha256, s3_key, size_bytes, mime, detected_mime, media_kind, is_text, text_encoding, classification_meta)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (sha256) DO UPDATE
-           SET s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key),
-               detected_mime = COALESCE(cas_blobs.detected_mime, EXCLUDED.detected_mime),
-               media_kind = COALESCE(cas_blobs.media_kind, EXCLUDED.media_kind),
-               is_text = COALESCE(cas_blobs.is_text, EXCLUDED.is_text),
-               text_encoding = COALESCE(cas_blobs.text_encoding, EXCLUDED.text_encoding)`,
-    [
-      blobSha,
-      params.file.s3_key,
-      sizeBytes,
-      params.file.content_type,
-      classification.detectedMime,
-      classification.mediaKind,
-      classification.isText,
-      classification.textEncoding,
-      JSON.stringify(classification.meta),
-    ],
-  );
-
-  const path = await landingPathForUpload(pool, {
-    workspaceId: channelRow.workspace_id,
-    channelId: params.channelId,
-    filename: params.file.filename,
-    blobSha,
-  });
-  await new ArtifactLedger(pool).commitUpload({
-    workspaceId: channelRow.workspace_id,
-    channelId: params.channelId,
-    path,
-    blobSha,
-    sizeBytes,
-    mime: params.file.content_type,
-    author: `human:${params.userId}`,
-    sourceMessageId: params.sourceMessageId ?? null,
-  });
-  enqueueThumbnailGeneration({
-    pool,
-    sourceSha: blobSha,
-    mime: params.file.content_type,
-    mediaKind: classification.mediaKind,
-    s3Key: params.file.s3_key,
-    logger: params.logger,
-  });
-}
-
 export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDeps): void {
   const { pool, hub, requireUser, optionalOpId, runMutation } = deps;
 
@@ -231,10 +103,9 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     if (!Number.isFinite(rootEventId)) {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric root event id expected' });
     }
-    const root = await pool.query<{ channel_id: string | null }>(
-      'SELECT channel_id FROM events WHERE id = $1',
-      [rootEventId],
-    );
+    const root = await pool.query<{ channel_id: string | null }>('SELECT channel_id FROM events WHERE id = $1', [
+      rootEventId,
+    ]);
     const channelId = root.rows[0]?.channel_id;
     if (!channelId || !(await canAccessChannel(pool, user.id, channelId))) {
       return reply.code(404).send({ error: 'thread_not_found', message: 'thread not found' });
@@ -275,9 +146,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         [attachmentIds, user.id],
       );
       if (rows.rows.length !== attachmentIds.length) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_attachment', message: 'unknown or foreign attachment id' });
+        return reply.code(400).send({ error: 'bad_attachment', message: 'unknown or foreign attachment id' });
       }
       const fileById = new Map(rows.rows.map((row) => [row.id, row]));
       uploadAttachmentFiles = attachmentIds.map((id) => fileById.get(id)!);
@@ -293,23 +162,17 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       });
     }
     const rawClientMsgId =
-      typeof body.clientMsgId === 'string' && body.clientMsgId.length <= 64
-        ? body.clientMsgId
-        : null;
+      typeof body.clientMsgId === 'string' && body.clientMsgId.length <= 64 ? body.clientMsgId : null;
     const clientMsgId =
-      uploadAttachmentFiles.length > 0
-        ? (optionalUuid(rawClientMsgId) ?? randomUUID())
-        : rawClientMsgId;
-    const threadRootEventId =
-      body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
+      uploadAttachmentFiles.length > 0 ? (optionalUuid(rawClientMsgId) ?? randomUUID()) : rawClientMsgId;
+    const threadRootEventId = body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
     const voice = parseVoicePost(body.voice, attachments);
-    const channel = await pool.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [body.channelId],
-    );
+    const channel = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      body.channelId,
+    ]);
     if (!channel.rows[0] || !(await canAccessChannel(pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
@@ -341,16 +204,11 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           logger: app.log,
         });
       } catch (err) {
-        app.log.warn(
-          { err, fileId: file.id, filename: file.filename },
-          'upload attachment artifact landing failed',
-        );
+        app.log.warn({ err, fileId: file.id, filename: file.filename }, 'upload attachment artifact landing failed');
       }
     }
     if (voice) deps.stt?.enqueue();
-    void sendMessagePush(pool, hub, event).catch((err) =>
-      app.log.warn({ err }, 'push fanout failed'),
-    );
+    void sendMessagePush(pool, hub, event).catch((err) => app.log.warn({ err }, 'push fanout failed'));
     return reply.code(201).send({ event });
   });
 
@@ -367,9 +225,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       return reply.code(404).send({ error: 'not_found', message: 'transcript not found' });
     }
     if (row.status !== 'failed') {
-      return reply
-        .code(409)
-        .send({ error: 'not_retryable', message: 'transcript is not in a failed state' });
+      return reply.code(409).send({ error: 'not_retryable', message: 'transcript is not in a failed state' });
     }
     const event = await withTx(pool, async (client) => {
       await client.query(
@@ -456,9 +312,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       return reply.code(400).send({ error: 'bad_request', message: 'emoji required' });
     }
     if (body.action !== 'add' && body.action !== 'remove') {
-      return reply
-        .code(400)
-        .send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
+      return reply.code(400).send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
     }
     return runMutation({
       userId: user.id,

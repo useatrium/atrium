@@ -1,8 +1,5 @@
 import { useCallback } from 'react';
-import {
-  randomId,
-  type EnqueueOpInput,
-} from '@atrium/surface-client';
+import { randomId, type AttachmentMeta, type AttachmentRef, type EnqueueOpInput } from '@atrium/surface-client';
 
 type SessionActionType = 'session.answer' | 'session.cancel' | 'session.steer';
 type SessionActionEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
@@ -19,12 +16,24 @@ export function useSessionActions({
   enqueueOp: SessionActionEnqueue;
 }) {
   const steerSession = useCallback(
-    async (sessionId: string, text: string, effort?: string): Promise<void> => {
+    async (
+      sessionId: string,
+      text: string,
+      effort?: string,
+      attachments?: AttachmentMeta[],
+      attachmentRefs?: AttachmentRef[],
+    ): Promise<void> => {
       clearFailedSteer(sessionId);
       await enqueueOp({
         opId: randomId(),
         opType: 'session.steer',
-        payload: { sessionId, text, ...(effort ? { effort } : {}) },
+        payload: {
+          sessionId,
+          text,
+          ...(effort ? { effort } : {}),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+        },
       });
     },
     [clearFailedSteer, enqueueOp],
@@ -43,11 +52,7 @@ export function useSessionActions({
   );
 
   const answerSessionQuestion = useCallback(
-    async (
-      sessionId: string,
-      questionId: string,
-      answers: SessionQuestionAnswers,
-    ): Promise<void> => {
+    async (sessionId: string, questionId: string, answers: SessionQuestionAnswers): Promise<void> => {
       await enqueueOp({
         opId: randomId(),
         opType: 'session.answer',

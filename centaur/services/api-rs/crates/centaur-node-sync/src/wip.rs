@@ -171,7 +171,15 @@ pub fn capture_wip_with_limits(repo: &Path, max_untracked_bytes: u64) -> Result<
         .to_string();
     let diff = String::from_utf8_lossy(&git(
         repo,
-        &["diff", "--binary", "--full-index", "HEAD", "--"],
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "--full-index",
+            "HEAD",
+            "--",
+        ],
     )?)
     .into_owned();
 

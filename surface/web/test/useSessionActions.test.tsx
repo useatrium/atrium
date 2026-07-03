@@ -41,8 +41,33 @@ describe('useSessionActions', () => {
         payload: { sessionId: 'session-1', text: 'try another approach' },
       }),
     );
-    expect(clearFailedSteer.mock.invocationCallOrder[0]).toBeLessThan(
-      enqueueOp.mock.invocationCallOrder[0]!,
+    expect(clearFailedSteer.mock.invocationCallOrder[0]).toBeLessThan(enqueueOp.mock.invocationCallOrder[0]!);
+  });
+
+  it('queues steer attachments and upload refs', async () => {
+    const { result, enqueueOp } = renderActions();
+    const attachment = { id: 'file-1', filename: 'a.txt', contentType: 'text/plain', size: 10 };
+
+    await act(async () => {
+      await result.current.steerSession(
+        'session-1',
+        'use this file',
+        undefined,
+        [attachment],
+        [{ uploadKey: 'upload-1' }],
+      );
+    });
+
+    expect(enqueueOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opType: 'session.steer',
+        payload: {
+          sessionId: 'session-1',
+          text: 'use this file',
+          attachments: [attachment],
+          attachmentRefs: [{ uploadKey: 'upload-1' }],
+        },
+      }),
     );
   });
 
@@ -60,9 +85,7 @@ describe('useSessionActions', () => {
         payload: { sessionId: 'session-2' },
       }),
     );
-    expect(clearFailedCancel.mock.invocationCallOrder[0]).toBeLessThan(
-      enqueueOp.mock.invocationCallOrder[0]!,
-    );
+    expect(clearFailedCancel.mock.invocationCallOrder[0]).toBeLessThan(enqueueOp.mock.invocationCallOrder[0]!);
   });
 
   it('queues session question answers without touching failure state', async () => {
