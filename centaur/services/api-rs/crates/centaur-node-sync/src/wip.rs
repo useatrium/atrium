@@ -75,6 +75,19 @@ pub fn repo_signature(entries: &[RawEntry], repo_upper_prefix: &Path) -> u64 {
         .iter()
         .filter_map(|entry| {
             let rel_path = entry.rel_path.strip_prefix(repo_upper_prefix).ok()?;
+            // capture_wip's own `git diff` opportunistically refreshes the stat
+            // cache, rewriting .git/index (and transient .git lock files) — with
+            // those in the signature, a dirty worktree makes every WIP run
+            // re-trigger the gate forever (observed live: two stale sessions
+            // re-capturing 19 paths every ~1.3s tick). `git diff HEAD` output is
+            // independent of staging state, so excluding the index loses no
+            // capturable change; commits still land via refs/objects/logs.
+            if rel_path == Path::new(".git/index")
+                || (rel_path.starts_with(".git")
+                    && rel_path.extension().is_some_and(|ext| ext == "lock"))
+            {
+                return None;
+            }
             Some((
                 rel_path.to_path_buf(),
                 entry.size,
@@ -518,7 +531,12 @@ mod tests {
     fn signature_entries() -> Vec<RawEntry> {
         vec![
             raw("repos/acme/app/src/main.rs", 10, 100, RawFileType::Regular),
-            raw("repos/acme/app/.git/index", 20, 200, RawFileType::Regular),
+            raw(
+                "repos/acme/app/.git/refs/heads/main",
+                20,
+                200,
+                RawFileType::Regular,
+            ),
             raw("repos/acme/app/src", 0, 300, RawFileType::Dir),
             raw(
                 "repos/acme/other/src/main.rs",
@@ -527,6 +545,47 @@ mod tests {
                 RawFileType::Regular,
             ),
         ]
+    }
+
+    #[test]
+    fn repo_signature_ignores_git_index_and_git_lock_files() {
+        let prefix = Path::new("repos/acme/app");
+        let base = signature_entries();
+        let with_index_churn = {
+            let mut entries = base.clone();
+            entries.push(raw(
+                "repos/acme/app/.git/index",
+                999,
+                12345,
+                RawFileType::Regular,
+            ));
+            entries.push(raw(
+                "repos/acme/app/.git/index.lock",
+                1,
+                1,
+                RawFileType::Regular,
+            ));
+            entries
+        };
+        // .git/index (rewritten by capture_wip's own git diff) and .git lock
+        // files must not perturb the signature — regression pin for the live
+        // WIP self-trigger loop.
+        assert_eq!(
+            repo_signature(&base, prefix),
+            repo_signature(&with_index_churn, prefix)
+        );
+        // But real .git content (refs/objects) still counts.
+        let mut with_new_ref = base.clone();
+        with_new_ref.push(raw(
+            "repos/acme/app/.git/refs/heads/feature",
+            5,
+            5,
+            RawFileType::Regular,
+        ));
+        assert_ne!(
+            repo_signature(&base, prefix),
+            repo_signature(&with_new_ref, prefix)
+        );
     }
 
     #[test]
