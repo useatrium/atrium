@@ -1,4 +1,9 @@
-import type { UserRef, WireEvent } from '@atrium/surface-client';
+import {
+  DEFAULT_PREFS,
+  type NotificationPrefs,
+  type UserRef,
+  type WireEvent,
+} from '@atrium/surface-client';
 import { mentionsHandle } from '@atrium/surface-client';
 import type { Channel } from './api';
 import type { Session } from './sessions/types';
@@ -24,13 +29,16 @@ export function notificationForWireEvent(
   me: UserRef,
   channels: Channel[],
   sessions: Record<string, Session>,
+  prefs: NotificationPrefs = DEFAULT_PREFS.notifications,
 ): ChatNotification | null {
   if (event.type === 'message.posted' && event.actorId && event.actorId !== me.id) {
+    if (prefs.messages === 'off') return null;
     const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
     const channel = channels.find((c) => c.id === event.channelId);
     if (channel?.muted) return null;
     const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
-    if (!isDm && !mentionsHandle(text, me.handle)) return null;
+    const mentioned = mentionsHandle(text, me.handle);
+    if (prefs.messages === 'dm_mention' && !isDm && !mentioned) return null;
     const author = event.author?.displayName ?? 'Someone';
     return {
       kind: 'message',
@@ -44,6 +52,7 @@ export function notificationForWireEvent(
   }
 
   if (event.type === 'session.completed') {
+    if (!prefs.sessions) return null;
     const sessionId =
       typeof event.payload?.sessionId === 'string' ? event.payload.sessionId : null;
     const session = sessionId ? sessions[sessionId] : undefined;

@@ -94,6 +94,28 @@ describe('notificationForWireEvent', () => {
     expect(notificationForWireEvent(event(), me, [channel({ muted: true })], {})).toBeNull();
   });
 
+  it('respects message notification preferences', () => {
+    expect(
+      notificationForWireEvent(
+        event({ payload: { text: 'hello everyone' } }),
+        me,
+        [channel()],
+        {},
+        { messages: 'all', sessions: true, calls: true },
+      ),
+    ).toMatchObject({
+      kind: 'message',
+      body: 'hello everyone',
+    });
+    expect(
+      notificationForWireEvent(event(), me, [channel()], {}, {
+        messages: 'off',
+        sessions: true,
+        calls: true,
+      }),
+    ).toBeNull();
+  });
+
   it('notifies for my completed agent sessions', () => {
     expect(
       notificationForWireEvent(
@@ -132,6 +154,23 @@ describe('notificationForWireEvent', () => {
         me,
         [channel()],
         { 's-1': session({ spawnedBy: ada.id }) },
+      ),
+    ).toBeNull();
+  });
+
+  it('respects agent session notification preferences', () => {
+    expect(
+      notificationForWireEvent(
+        event({
+          type: 'session.completed',
+          actorId: null,
+          payload: { sessionId: 's-1' },
+          author: null,
+        }),
+        me,
+        [channel()],
+        { 's-1': session() },
+        { messages: 'dm_mention', sessions: false, calls: true },
       ),
     ).toBeNull();
   });

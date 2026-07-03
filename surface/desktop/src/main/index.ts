@@ -182,12 +182,6 @@ function wireIpc(): void {
   ipcMain.handle('atrium:session:clear', () => {
     clearSession();
   });
-  ipcMain.handle('atrium:notify', (_event, opts: { title: string; body?: string }) => {
-    if (!Notification.isSupported()) return;
-    const notification = new Notification({ title: opts.title, body: opts.body });
-    notification.on('click', () => showWindow());
-    notification.show();
-  });
   ipcMain.handle('atrium:badge', (_event, count: number) => {
     const n = typeof count === 'number' && count > 0 ? Math.floor(count) : 0;
     if (process.platform === 'darwin') {

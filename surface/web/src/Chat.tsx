@@ -4,7 +4,7 @@ import {
   type Workspace,
   api,
 } from './api';
-import { isDesktop, desktopWsUrl } from './desktop';
+import { isDesktop, desktopWsUrl, setDesktopBadge } from './desktop';
 import {
   DurableOpQueue,
   FILES_CHANGED_EVENT_TYPE,
@@ -54,7 +54,7 @@ import {
   isTerminalSessionStatus,
   sessionFromWire,
 } from './sessions/types';
-import { adoptPrefs } from './theme';
+import { adoptPrefs, useTheme } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
@@ -89,6 +89,47 @@ const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
 type MainSurface = 'chat' | 'files';
 
+// === web-client additions ===
+type NotificationClickTarget = {
+  channelId?: string;
+  eventId?: string | number;
+  sessionId?: string;
+};
+
+function notificationClickTarget(input: unknown): NotificationClickTarget | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+  const channelId = typeof raw.channelId === 'string' ? raw.channelId : undefined;
+  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : undefined;
+  const eventId =
+    typeof raw.eventId === 'string' || typeof raw.eventId === 'number'
+      ? raw.eventId
+      : undefined;
+  if (!channelId && !sessionId && eventId === undefined) return null;
+  return {
+    ...(channelId ? { channelId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(eventId !== undefined ? { eventId } : {}),
+  };
+}
+
+export function applyUnreadBadges(unreadCount: number): void {
+  const nav =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & {
+          setAppBadge?: (contents?: number) => Promise<void>;
+          clearAppBadge?: () => Promise<void>;
+        })
+      : null;
+  if (nav && unreadCount > 0 && typeof nav.setAppBadge === 'function') {
+    void nav.setAppBadge(unreadCount).catch(() => {});
+  } else if (nav && unreadCount <= 0 && typeof nav.clearAppBadge === 'function') {
+    void nav.clearAppBadge().catch(() => {});
+  }
+  setDesktopBadge(unreadCount);
+}
+// === web-client additions ===
+
 type EnqueueOpOptions = {
   onStored?: () => void;
 };
@@ -111,6 +152,7 @@ export function Chat({
   initialSessionId?: string | null;
   onLogout: () => void;
 }) {
+  const { prefs } = useTheme();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const {
@@ -161,6 +203,38 @@ export function Chat({
     setQueueNudgeSeq((n) => n + 1);
   }, []);
   const [filesEventSeq, setFilesEventSeq] = useState(0);
+
+  // === web-client additions ===
+  const openNotificationTarget = useCallback(
+    (target: NotificationClickTarget) => {
+      if (target.channelId) selectChannel(target.channelId);
+      if (target.sessionId) dispatch({ type: 'open-session', sessionId: target.sessionId });
+    },
+    [selectChannel],
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const channelId = params.get('channel') ?? undefined;
+    const sessionId = params.get('session') ?? undefined;
+    if (!channelId && !sessionId) return;
+    openNotificationTarget({
+      ...(channelId ? { channelId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    });
+  }, [openNotificationTarget]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onNotificationClick = (event: Event) => {
+      const target = notificationClickTarget((event as CustomEvent<unknown>).detail);
+      if (target) openNotificationTarget(target);
+    };
+    window.addEventListener('atrium:notification-click', onNotificationClick);
+    return () => window.removeEventListener('atrium:notification-click', onNotificationClick);
+  }, [openNotificationTarget]);
+  // === web-client additions ===
 
   const handleFilesChangedEvent = useCallback(
     (event: WireEvent) => {
@@ -628,6 +702,7 @@ export function Chat({
       me,
       stateRef.current.channels,
       stateRef.current.sessions,
+      prefs.notifications,
     );
     if (!notification) return;
     if (notification.kind === 'message') {
@@ -843,8 +918,10 @@ export function Chat({
   const unreadCount = Object.values(state.unread).filter(Boolean).length;
   useEffect(() => {
     document.title = unreadCount > 0 ? `(${unreadCount}) Atrium` : 'Atrium';
+    applyUnreadBadges(unreadCount);
     return () => {
       document.title = 'Atrium';
+      applyUnreadBadges(0);
     };
   }, [unreadCount]);
 

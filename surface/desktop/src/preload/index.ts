@@ -28,8 +28,6 @@ contextBridge.exposeInMainWorld('atrium', {
   setSession: (value: DesktopSession): Promise<void> =>
     ipcRenderer.invoke('atrium:session:set', value),
   clearSession: (): Promise<void> => ipcRenderer.invoke('atrium:session:clear'),
-  notify: (opts: { title: string; body?: string }): Promise<void> =>
-    ipcRenderer.invoke('atrium:notify', opts),
   /** Set the dock/taskbar unread badge (0 clears it). */
   setBadge: (count: number): Promise<void> => ipcRenderer.invoke('atrium:badge', count),
 });
