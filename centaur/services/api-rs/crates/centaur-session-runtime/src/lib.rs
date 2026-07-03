@@ -80,6 +80,11 @@ type ExecutionSpanRegistry = Arc<Mutex<HashMap<String, Span>>>;
 type SessionPipeMap = Arc<DashMap<String, SessionPipe>>;
 type SessionPipeOpenLocks = Arc<DashMap<String, Arc<Mutex<()>>>>;
 type SessionOperationLocks = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+/// Execution ids whose active turn was interrupted by an explicit user request.
+/// A marked execution's resulting `interrupted` terminal is recorded as a clean
+/// user-stop (Completed) rather than a failure. Set on interrupt delivery,
+/// consumed by `record_terminal_output`.
+type UserInterruptSet = Arc<DashMap<String, ()>>;
 
 #[derive(Clone)]
 pub struct SessionRuntime {
@@ -88,6 +93,7 @@ pub struct SessionRuntime {
     sandbox_pipes: SessionPipeMap,
     sandbox_pipe_open_locks: SessionPipeOpenLocks,
     execution_spans: ExecutionSpanRegistry,
+    user_interrupts: UserInterruptSet,
     session_operation_locks: SessionOperationLocks,
     iron_control: Option<SessionRegistrar>,
     warm_pool: Option<Arc<WarmPoolManager>>,
@@ -264,6 +270,17 @@ pub struct CancelSessionOutcome {
     pub stop_error: Option<String>,
 }
 
+/// Result of interrupting the active turn of a session (stop-turn, no teardown).
+#[derive(Clone, Debug, Default)]
+pub struct InterruptTurnOutcome {
+    /// True when an interrupt frame was delivered to a live turn.
+    pub interrupted: bool,
+    /// The execution the interrupt targeted, if any turn was active.
+    pub execution_id: Option<String>,
+    /// Populated when there was no active turn to interrupt or delivery failed.
+    pub error: Option<String>,
+}
+
 /// Result of answering a pending user-input question for a running execution.
 #[derive(Clone, Debug)]
 pub struct AnswerQuestionOutcome {
@@ -320,6 +337,7 @@ struct RuntimeContext {
     manager: Arc<SandboxManager>,
     sandbox_pipes: SessionPipeMap,
     execution_spans: ExecutionSpanRegistry,
+    user_interrupts: UserInterruptSet,
 }
 
 struct EventStreamState {
@@ -385,6 +403,7 @@ impl SessionRuntime {
             sandbox_pipes: Arc::new(DashMap::new()),
             sandbox_pipe_open_locks: Arc::new(DashMap::new()),
             execution_spans: Arc::new(Mutex::new(HashMap::new())),
+            user_interrupts: Arc::new(DashMap::new()),
             session_operation_locks: Arc::new(Mutex::new(HashMap::new())),
             iron_control: None,
             warm_pool: None,
@@ -458,6 +477,7 @@ impl SessionRuntime {
             manager: self.sandbox_runtime.manager.clone(),
             sandbox_pipes: self.sandbox_pipes.clone(),
             execution_spans: self.execution_spans.clone(),
+            user_interrupts: self.user_interrupts.clone(),
         }
     }
 
@@ -1585,6 +1605,75 @@ impl SessionRuntime {
             }
             Err(error) => Err(SessionRuntimeError::Sandbox(error)),
         }
+    }
+
+    /// Interrupt the active turn of a session without tearing down the sandbox.
+    /// Delivers an `interrupt` frame down the live stdin pipe (the same channel
+    /// steering uses); the harness aborts the turn and the session stays warm
+    /// and steerable. The resulting `interrupted` terminal is recorded as a
+    /// clean user-stop rather than a failure (see `record_terminal_output`).
+    pub async fn interrupt_active_turn(
+        &self,
+        thread_key: &ThreadKey,
+    ) -> Result<InterruptTurnOutcome, SessionRuntimeError> {
+        let Some(execution) = self.store.active_execution_for_thread(thread_key).await? else {
+            // No active turn — nothing to interrupt.
+            return Ok(InterruptTurnOutcome::default());
+        };
+
+        // Mark BEFORE delivery so the terminal recorder maps the interrupted
+        // turn to a clean stop even if the harness aborts and finishes before
+        // this call returns.
+        self.user_interrupts
+            .insert(execution.execution_id.clone(), ());
+
+        let pipe = match self
+            .wait_for_active_steering_pipe(thread_key, &execution.execution_id)
+            .await
+        {
+            Ok(pipe) => pipe,
+            Err(error) => {
+                self.user_interrupts.remove(&execution.execution_id);
+                return Ok(InterruptTurnOutcome {
+                    interrupted: false,
+                    execution_id: Some(execution.execution_id),
+                    error: Some(error),
+                });
+            }
+        };
+
+        if let Err(error) =
+            write_interrupt_frame(&pipe, thread_key, &execution.execution_id).await
+        {
+            self.user_interrupts.remove(&execution.execution_id);
+            return Ok(InterruptTurnOutcome {
+                interrupted: false,
+                execution_id: Some(execution.execution_id),
+                error: Some(error.to_string()),
+            });
+        }
+
+        if let Err(error) = self
+            .store
+            .append_event(
+                thread_key,
+                Some(&execution.execution_id),
+                "session.turn_interrupt_delivered",
+                json!({
+                    "execution_id": execution.execution_id,
+                    "thread_key": thread_key.as_str(),
+                }),
+            )
+            .await
+        {
+            warn!(%thread_key, %error, "failed to record turn interrupt delivery");
+        }
+
+        Ok(InterruptTurnOutcome {
+            interrupted: true,
+            execution_id: Some(execution.execution_id),
+            error: None,
+        })
     }
 
     async fn forward_messages_to_active_execution(
@@ -4611,6 +4700,24 @@ async fn record_terminal_output(
     execution_id: &str,
     terminal: TerminalOutput,
 ) -> Result<(), SessionRuntimeError> {
+    // A user-initiated turn interrupt surfaces here as a `Failed` terminal
+    // ("interrupted before final answer"). Coerce it to a clean user-stop so
+    // the session stays steerable (completed) instead of failed. Any other
+    // terminal clears the marker so it can't leak onto a later turn.
+    let terminal = match terminal {
+        TerminalOutput::Failed { .. }
+            if ctx.user_interrupts.remove(execution_id).is_some() =>
+        {
+            TerminalOutput::Completed {
+                reason: "stopped_by_user",
+                result_text: None,
+            }
+        }
+        other => {
+            ctx.user_interrupts.remove(execution_id);
+            other
+        }
+    };
     let mut failure_class = None;
     let (terminal_execution, terminal_status) = match terminal {
         TerminalOutput::Completed {
@@ -5347,6 +5454,31 @@ async fn drain_stderr(mut stderr: SandboxRead) -> Result<(), SessionRuntimeError
         .map_err(|err| {
             SessionRuntimeError::Sandbox(SandboxError::io_source("drain stderr", err))
         })?;
+    Ok(())
+}
+
+/// Write a single `interrupt` control frame to the harness stdin. The
+/// harness-server parses this line into `BlocksCommand::Interrupt` and, while a
+/// turn is running, aborts it (codex `turn/interrupt`; claude SDK bridge
+/// `{"type":"interrupt"}` abort). Mirrors `write_input_lines` but sends one
+/// control line instead of user input.
+async fn write_interrupt_frame(
+    pipe: &SessionPipe,
+    thread_key: &ThreadKey,
+    execution_id: &str,
+) -> Result<(), SessionRuntimeError> {
+    let mut stdin = pipe.stdin.lock().await;
+    stdin
+        .send(&json!({ "type": "interrupt" }).to_string())
+        .await
+        .map_err(codec_error_to_runtime)?;
+    info!(
+        component = COMPONENT_SESSION_RUNTIME,
+        event = "sandbox_interrupt_delivered",
+        thread_key = %thread_key,
+        execution_id,
+        "turn interrupt frame written to sandbox stdin"
+    );
     Ok(())
 }
 
