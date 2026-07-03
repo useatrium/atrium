@@ -7,6 +7,7 @@
 
 import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
+import { isDesktop } from '../desktop';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
@@ -153,6 +154,7 @@ export function WorkDrawer({
   const active: ActiveWorkTab = available.some((t) => t.key === normalizedTab)
     ? normalizedTab
     : available[0]?.key ?? normalizedTab;
+  const showDetach = canDetach && !isDesktop;
 
   return (
     <div
@@ -194,7 +196,7 @@ export function WorkDrawer({
             {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
           </button>
         )}
-        {canDetach && (
+        {showDetach && (
           <a
             href={`/s/${sessionId}/work/${TAB_SLUG[active]}`}
             target="_blank"
