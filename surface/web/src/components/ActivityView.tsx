@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ActivityItem } from '@atrium/surface-client';
 import { api } from '../api';
+import { CompactMarkdownText } from './MessageText';
 
 const KIND_LABEL: Record<ActivityItem['kind'], string> = {
   mention: '@',
@@ -74,9 +75,7 @@ export function ActivityView({
         limit: 1,
       });
       const event = events.find((candidate) => candidate.id === eventId);
-      const sessionId = event && typeof event.payload?.sessionId === 'string'
-        ? event.payload.sessionId
-        : null;
+      const sessionId = event && typeof event.payload?.sessionId === 'string' ? event.payload.sessionId : null;
       if (sessionId) onOpenSession(sessionId);
     } catch (err) {
       console.warn('failed to resolve activity session', err);
@@ -84,11 +83,7 @@ export function ActivityView({
   };
 
   if (loading) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-        Loading activity...
-      </div>
-    );
+    return <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading activity...</div>;
   }
 
   return (
@@ -127,7 +122,9 @@ export function ActivityView({
                       <span className="truncate text-sm font-semibold text-fg">{titleFor(item)}</span>
                       <span className="shrink-0 text-2xs text-fg-faint">{relativeTime(item.createdAt)}</span>
                     </span>
-                    <span className="mt-0.5 block truncate text-sm text-fg-secondary">{item.snippet}</span>
+                    <span className="mt-0.5 block truncate text-sm text-fg-secondary">
+                      <CompactMarkdownText text={item.snippet} />
+                    </span>
                     {/* DM channel names are internal keys; the title already names the sender. */}
                     {item.kind !== 'dm' && (
                       <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>

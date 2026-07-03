@@ -15,14 +15,25 @@ const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 
 type SourceNode = ASTNode & { sourceInfo?: string };
 type MarkdownItToken = {
   type: string;
+  tag?: string;
+  nesting?: number;
   content: string;
   children: MarkdownItToken[] | null;
+  attrs?: [string, string][] | null;
   attrSet: (name: string, value: string) => void;
   attrJoin: (name: string, value: string) => void;
 };
+type MarkdownItState = {
+  tokens: MarkdownItToken[];
+  Token: new (type: string, tag: string, nesting: number) => MarkdownItToken;
+};
+
+const mentionHrefPrefix = 'atrium-mention:';
+const mentionRe = /@([a-z0-9][a-z0-9_-]{1,31})/gi;
 
 const taskListPlugin = (md: MarkdownIt) => {
-  md.core.ruler.after('inline', 'atrium_task_lists', (state: { tokens: MarkdownItToken[] }) => {
+  md.core.ruler.after('inline', 'atrium_task_lists', (rawState) => {
+    const state = rawState as unknown as MarkdownItState;
     let listItem: MarkdownItToken | null = null;
     for (const token of state.tokens) {
       if (token.type === 'list_item_open') {
@@ -54,7 +65,46 @@ const taskListPlugin = (md: MarkdownIt) => {
   });
 };
 
-const markdownIt = MarkdownIt({ typographer: true, linkify: true }).use(taskListPlugin);
+const mentionPlugin = (md: MarkdownIt) => {
+  md.core.ruler.after('inline', 'atrium_mentions', (rawState) => {
+    const state = rawState as unknown as MarkdownItState;
+    for (const token of state.tokens) {
+      if (token.type !== 'inline' || !Array.isArray(token.children)) continue;
+      const next: MarkdownItToken[] = [];
+      for (const child of token.children) {
+        if (child.type !== 'text' || !child.content) {
+          next.push(child);
+          continue;
+        }
+        let last = 0;
+        mentionRe.lastIndex = 0;
+        for (let match = mentionRe.exec(child.content); match; match = mentionRe.exec(child.content)) {
+          const handle = match[1] ?? '';
+          if (match.index > last) {
+            const text = new state.Token('text', '', 0);
+            text.content = child.content.slice(last, match.index);
+            next.push(text);
+          }
+          const open = new state.Token('link_open', 'a', 1);
+          open.attrs = [['href', `${mentionHrefPrefix}${handle}`]];
+          const text = new state.Token('text', '', 0);
+          text.content = `@${handle}`;
+          const close = new state.Token('link_close', 'a', -1);
+          next.push(open, text, close);
+          last = match.index + match[0].length;
+        }
+        if (last < child.content.length) {
+          const text = new state.Token('text', '', 0);
+          text.content = child.content.slice(last);
+          next.push(text);
+        }
+      }
+      token.children = next;
+    }
+  });
+};
+
+const markdownIt = MarkdownIt({ html: false, typographer: true, linkify: true }).use(taskListPlugin).use(mentionPlugin);
 
 function normalizeLanguage(info: string | undefined): string {
   const raw = info?.trim().split(/\s+/)[0]?.toLowerCase();
@@ -73,6 +123,7 @@ function trimTrailingNewline(value: string): string {
 }
 
 function openExternalLink(url: string): boolean {
+  if (url.startsWith(mentionHrefPrefix)) return false;
   if (!/^(https?:|mailto:|tel:)/i.test(url)) return false;
   void Linking.openURL(url).catch(() => {});
   return false;
@@ -104,7 +155,26 @@ function syntaxTheme(colors: Colors) {
   };
 }
 
-function markdownStyles(colors: Colors) {
+function compactMarkdownSource(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, (match) => {
+      const body = match
+        .replace(/^```[^\n]*\n?/, '')
+        .replace(/```$/, '')
+        .trim();
+      return body ? `\`${body.split(/\n/)[0]}\`` : '';
+    })
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function markdownStyles(colors: Colors, variant: 'session' | 'message' | 'compact' = 'session') {
+  const compact = variant === 'compact';
   const bodyText: TextStyle = {
     color: colors.text,
     fontSize: font.md,
@@ -133,15 +203,33 @@ function markdownStyles(colors: Colors) {
     strong: { color: colors.text, fontWeight: '800' },
     em: { color: colors.text, fontStyle: 'italic' },
     s: { textDecorationLine: 'line-through' },
-    heading1: { ...bodyText, color: colors.text, fontSize: font.xl, fontWeight: '900', marginVertical: space.sm },
-    heading2: { ...bodyText, color: colors.text, fontSize: font.lg, fontWeight: '800', marginVertical: space.sm },
+    heading1: {
+      ...bodyText,
+      color: colors.text,
+      fontSize: variant === 'session' ? font.xl : font.lg,
+      fontWeight: '900',
+      marginVertical: space.sm,
+    },
+    heading2: {
+      ...bodyText,
+      color: colors.text,
+      fontSize: variant === 'session' ? font.lg : font.md,
+      fontWeight: '800',
+      marginVertical: space.sm,
+    },
     heading3: { ...bodyText, color: colors.text, fontSize: font.md, fontWeight: '800', marginVertical: space.sm },
     heading4: { ...bodyText, color: colors.textSecondary, fontWeight: '800', marginVertical: space.xs },
-    heading5: { ...bodyText, color: colors.textSecondary, fontSize: font.sm, fontWeight: '800', marginVertical: space.xs },
+    heading5: {
+      ...bodyText,
+      color: colors.textSecondary,
+      fontSize: font.sm,
+      fontWeight: '800',
+      marginVertical: space.xs,
+    },
     heading6: { ...bodyText, color: colors.textMuted, fontSize: font.xs, fontWeight: '800', marginVertical: space.xs },
-    bullet_list: { marginVertical: space.xs },
-    ordered_list: { marginVertical: space.xs },
-    list_item: { marginVertical: 2 },
+    bullet_list: { marginVertical: compact ? 0 : space.xs },
+    ordered_list: { marginVertical: compact ? 0 : space.xs },
+    list_item: { marginVertical: compact ? 0 : 2 },
     bullet_list_icon: { color: colors.textMuted, fontSize: font.md, lineHeight: font.md * 1.4 },
     ordered_list_icon: { color: colors.textMuted, fontSize: font.md, lineHeight: font.md * 1.4 },
     bullet_list_content: { flex: 1 },
@@ -183,7 +271,7 @@ function markdownStyles(colors: Colors) {
   } as Record<string, TextStyle | ViewStyle>;
 }
 
-function makeRules(colors: Colors): RenderRules {
+function makeRules(colors: Colors, variant: 'session' | 'message' | 'compact', meHandle?: string): RenderRules {
   const highlightedCode = (node: ASTNode) => {
     const sourceNode = node as SourceNode;
     return (
@@ -214,6 +302,43 @@ function makeRules(colors: Colors): RenderRules {
   };
 
   return {
+    link: (node, children) => {
+      const href = typeof node.attributes.href === 'string' ? node.attributes.href : '';
+      if (!href.startsWith(mentionHrefPrefix)) {
+        if (variant === 'compact') {
+          return (
+            <Text key={node.key} style={{ color: colors.accent }}>
+              {children}
+            </Text>
+          );
+        }
+        return (
+          <Text
+            key={node.key}
+            onPress={() => {
+              openExternalLink(href);
+            }}
+            style={{ color: colors.accent, textDecorationLine: 'underline' }}
+          >
+            {children}
+          </Text>
+        );
+      }
+      const handle = href.slice(mentionHrefPrefix.length);
+      const isMe = meHandle != null && handle.toLowerCase() === meHandle.toLowerCase();
+      return (
+        <Text
+          key={node.key}
+          style={{
+            color: colors.accent,
+            fontWeight: '700',
+            ...(isMe ? { backgroundColor: colors.accentBg } : {}),
+          }}
+        >
+          {children}
+        </Text>
+      );
+    },
     fence: highlightedCode,
     code_block: highlightedCode,
     list_item: (node, children, parentNodes, styles, inheritedStyles = {}) => {
@@ -249,11 +374,7 @@ function makeRules(colors: Colors): RenderRules {
 }
 
 function plainTextFallback(text: string, colors: Colors) {
-  return (
-    <Text style={{ color: colors.text, fontSize: font.md, lineHeight: font.md * 1.4 }}>
-      {text}
-    </Text>
-  );
+  return <Text style={{ color: colors.text, fontSize: font.md, lineHeight: font.md * 1.4 }}>{text}</Text>;
 }
 
 class MarkdownBoundary extends Component<
@@ -266,10 +387,7 @@ class MarkdownBoundary extends Component<
     return { hasError: true };
   }
 
-  static getDerivedStateFromProps(
-    props: { resetKey: string },
-    state: { hasError: boolean; resetKey: string },
-  ) {
+  static getDerivedStateFromProps(props: { resetKey: string }, state: { hasError: boolean; resetKey: string }) {
     if (props.resetKey !== state.resetKey) return { hasError: false, resetKey: props.resetKey };
     return null;
   }
@@ -281,19 +399,27 @@ class MarkdownBoundary extends Component<
 }
 
 export const SessionMarkdown = memo(function SessionMarkdown({ text }: { text: string }) {
+  return <MarkdownText text={text} variant="session" />;
+});
+
+export const MarkdownText = memo(function MarkdownText({
+  text,
+  variant = 'message',
+  meHandle,
+}: {
+  text: string;
+  variant?: 'session' | 'message' | 'compact';
+  meHandle?: string | null;
+}) {
   const { colors } = useTheme();
-  const styles = useMemo(() => markdownStyles(colors), [colors]);
-  const rules = useMemo(() => makeRules(colors), [colors]);
+  const styles = useMemo(() => markdownStyles(colors, variant), [colors, variant]);
+  const rules = useMemo(() => makeRules(colors, variant, meHandle ?? undefined), [colors, variant, meHandle]);
+  const source = variant === 'compact' ? compactMarkdownSource(text) : text;
 
   return (
     <MarkdownBoundary fallback={plainTextFallback(text, colors)} resetKey={text}>
-      <MarkdownDisplay
-        markdownit={markdownIt}
-        style={styles}
-        rules={rules}
-        onLinkPress={openExternalLink}
-      >
-        {text}
+      <MarkdownDisplay markdownit={markdownIt} style={styles} rules={rules} onLinkPress={openExternalLink}>
+        {source}
       </MarkdownDisplay>
     </MarkdownBoundary>
   );
