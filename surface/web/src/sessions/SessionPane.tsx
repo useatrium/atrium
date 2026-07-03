@@ -111,6 +111,7 @@ export function SessionPane({
   agentProfiles = [],
   layout = 'split',
   onToggleFocus,
+  popout = false,
 }: {
   session: Session;
   me: UserRef;
@@ -152,6 +153,8 @@ export function SessionPane({
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
   onToggleFocus?: () => void;
+  /** Standalone `/s/:id/pane` context; retargets header controls back to the full app. */
+  popout?: boolean;
 }) {
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
@@ -653,6 +656,16 @@ export function SessionPane({
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const paneSizing = sessionPaneSizing(paneWidth);
   const canDetach = !isPendingSessionId(session.id);
+  const closePane = useCallback(() => {
+    if (!popout) {
+      onClose();
+      return;
+    }
+    window.close();
+    window.setTimeout(() => {
+      if (!window.closed) window.location.assign(`/s/${session.id}`);
+    }, 100);
+  }, [onClose, popout, session.id]);
   const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -829,11 +842,11 @@ export function SessionPane({
         </div>
         {canDetach && (
           <a
-            href={`/s/${session.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open in a new tab"
-            aria-label="Open session in a new tab"
+            href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
+            target={popout ? undefined : '_blank'}
+            rel={popout ? undefined : 'noopener noreferrer'}
+            title={popout ? 'Open in full app' : 'Open in a new tab'}
+            aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
           >
             <ExternalLinkIcon size={15} />
@@ -851,7 +864,7 @@ export function SessionPane({
           </button>
         )}
         <button
-          onClick={onClose}
+          onClick={closePane}
           title="Close session pane"
           aria-label="Close session pane"
           className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
