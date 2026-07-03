@@ -41,8 +41,8 @@ spec:
             - -c
             - >
               sysctl -w
-              fs.inotify.max_user_watches={{ .Values.nodeSync.inotify.maxUserWatches }}
-              fs.inotify.max_queued_events={{ .Values.nodeSync.inotify.maxQueuedEvents }}
+              fs.inotify.max_user_watches={{ int .Values.nodeSync.inotify.maxUserWatches }}
+              fs.inotify.max_queued_events={{ int .Values.nodeSync.inotify.maxQueuedEvents }}
           securityContext:
             privileged: true
       containers:
