@@ -80,6 +80,18 @@ services:
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PUSH_REDACT: ${PUSH_REDACT:-1}
+      # Web Push (browser notifications). Unset → webpush delivery is a noop.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # VoIP call-ring push (APNs PushKit / FCM data). Unset → noop sender.
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_AUTH_KEY_P8: ${APNS_AUTH_KEY_P8:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      APNS_SANDBOX: ${APNS_SANDBOX:-0}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
       # Voice message STT defaults to noop. To enable self-hosted whisper.cpp,
       # install ffmpeg + whisper.cpp + a model in the image and set:
       # STT_PROVIDER: whispercpp
