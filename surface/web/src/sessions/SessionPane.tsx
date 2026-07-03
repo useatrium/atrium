@@ -44,6 +44,7 @@ import { PlanPanel } from './PlanPanel';
 import { Composer } from '../components/Composer';
 import { EntryComments } from '../components/EntryComments';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
+import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -1046,7 +1047,7 @@ export function SessionPane({
                           {steerAuthor}
                           <TurnTimeLabel time={turnTimes.get(item.id)} />
                         </div>
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{item.text}</div>
+                        <MarkupSteerCard text={item.text} />
                       </div>
                     ) : item.type === 'question' ? (
                       <div className="pl-3.5">
