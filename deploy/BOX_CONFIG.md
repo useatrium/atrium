@@ -10,9 +10,9 @@ This is the source map for the Atrium + Centaur OVH box. It is meant to answer
 | Deploy orchestration | `deploy/redeploy.sh`, `.github/workflows/deploy.yml` | Yes | `deploy` branch pushes run on the self-hosted runner and call `redeploy.sh all`. |
 | Surface services | `surface/deploy/docker-compose.prod.yml` plus box-local overrides | Partly | Runtime env is box-local in `~/atrium/surface/deploy/.env`. |
 | Surface secrets | `~/atrium/surface/deploy/.env` | No | Do not commit values. Audit by key name only. |
-| Surface deploy state | `$HOME/atrium-deploy` | No | Generated/runtime state for deploys. This is where host-local deploy artifacts belong, not under `~/atrium`. |
+| Surface deploy state | `${ATRIUM_DEPLOY_STATE_DIR:-<repo-parent>/atrium-deploy}` | No | Generated/runtime state for deploys. This is where host-local deploy artifacts belong, not under `~/atrium`; systemd units pin this path explicitly. |
 | LiveKit TURN hostname | `LIVEKIT_TURN_DOMAIN` in `~/atrium/surface/deploy/.env` | No | Source of truth for the DNS-only TURN host, the certbot live directory, and the rendered runtime LiveKit config. |
-| LiveKit runtime config | `$HOME/atrium-deploy/surface` | No, generated | Deploy scripts materialize the host-local LiveKit config here from repo-managed inputs. Do not hand-edit `surface/deploy/livekit.yaml` on the box for production state. |
+| LiveKit runtime config | `${ATRIUM_DEPLOY_STATE_DIR}/surface` | No, generated | Deploy scripts materialize the host-local LiveKit config here from repo-managed inputs. Do not hand-edit `surface/deploy/livekit.yaml` on the box for production state. |
 | TURN certificate renewal | `surface/deploy/renew-turn-cert.sh`, `surface/deploy/install-turn-renewal.sh` | Yes | Installer writes `/usr/local/sbin/atrium-renew-turn-cert` plus `atrium-renew-turn-cert.{service,timer}`. |
 | Surface pnpm deploy store | Outside `~/atrium`, under host deploy state | No | `surface/.pnpm-store` should not exist in the checkout. |
 | Centaur chart defaults | `centaur/contrib/chart/values.yaml` and `values.dev.yaml` | Yes | Upstream/fork defaults. Do not treat them as box-specific intent. |

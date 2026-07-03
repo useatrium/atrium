@@ -2,7 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-STATE_DIR="${ATRIUM_DEPLOY_STATE_DIR:-$HOME/atrium-deploy}"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_PARENT="$(cd "$REPO_DIR/.." && pwd)"
+STATE_DIR="${ATRIUM_DEPLOY_STATE_DIR:-$REPO_PARENT/atrium-deploy}"
 OUT_DIR="${ATRIUM_SURFACE_STATE_DIR:-$STATE_DIR/surface}"
 OUT_FILE="${LIVEKIT_CONFIG_FILE:-$OUT_DIR/livekit.yaml}"
 

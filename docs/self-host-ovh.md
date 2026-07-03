@@ -147,7 +147,8 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/healthz   # 200
 > fresh test box just `docker compose down -v` and re-up.
 
 > ⚠️ **Gotcha — pnpm store drift.** Production deploy/build cache belongs outside
-> `~/atrium`, under the host deploy state area (`~/atrium-deploy`). A
+> `~/atrium`, under the explicit host deploy state area
+> (`${ATRIUM_DEPLOY_STATE_DIR:-<repo-parent>/atrium-deploy}`). A
 > `~/atrium/surface/.pnpm-store` directory is stale box-local state, not part of
 > the repo or runtime contract; remove it after confirming no host-local pnpm
 > process is using it.
@@ -275,7 +276,7 @@ Generate LiveKit keys and set the surface env. `LIVEKIT_TURN_DOMAIN` in
 `~/atrium/surface/deploy/.env` is the source of truth for the TURN hostname:
 it drives DNS intent, the certbot live directory, compose's certificate mounts,
 and the deploy-generated runtime LiveKit config under
-`$HOME/atrium-deploy/surface`. Do not edit the committed
+`${ATRIUM_DEPLOY_STATE_DIR}/surface`. Do not edit the committed
 `surface/deploy/livekit.yaml` on the box to set `turn.domain`; it is a repo
 template, not the box-local source of truth. The server reads `LIVEKIT_URL`,
 `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.

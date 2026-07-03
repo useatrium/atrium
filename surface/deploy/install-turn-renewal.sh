@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${ATRIUM_REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+REPO_PARENT="$(cd "$REPO_DIR/.." && pwd)"
+DEPLOY_STATE_DIR="${ATRIUM_DEPLOY_STATE_DIR:-$REPO_PARENT/atrium-deploy}"
 SERVICE_NAME="${ATRIUM_TURN_RENEW_SERVICE:-atrium-renew-turn-cert}"
 INSTALL_PATH="${ATRIUM_TURN_RENEW_PATH:-/usr/local/sbin/atrium-renew-turn-cert}"
 
@@ -16,6 +18,7 @@ cat > "$tmp" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export ATRIUM_REPO_DIR="\${ATRIUM_REPO_DIR:-$REPO_DIR}"
+export ATRIUM_DEPLOY_STATE_DIR="\${ATRIUM_DEPLOY_STATE_DIR:-$DEPLOY_STATE_DIR}"
 exec "\$ATRIUM_REPO_DIR/surface/deploy/renew-turn-cert.sh"
 EOF
 
@@ -30,6 +33,8 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+Environment=ATRIUM_REPO_DIR=$REPO_DIR
+Environment=ATRIUM_DEPLOY_STATE_DIR=$DEPLOY_STATE_DIR
 ExecStart=$INSTALL_PATH
 EOF
 

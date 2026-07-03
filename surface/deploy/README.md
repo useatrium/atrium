@@ -144,7 +144,8 @@ LiveKit TURN/TLS.
 
 For TURN/TLS, `LIVEKIT_TURN_DOMAIN` in `surface/deploy/.env` is the source of
 truth. The deploy lane materializes the host-local runtime LiveKit config under
-`$HOME/atrium-deploy/surface`; do not hand-edit the committed
+`${ATRIUM_DEPLOY_STATE_DIR:-<repo-parent>/atrium-deploy}/surface`; do not
+hand-edit the committed
 `surface/deploy/livekit.yaml` on the box for a production hostname. Treat that
 file as the repo template.
 
@@ -198,9 +199,11 @@ renewal script through `/usr/local/sbin/atrium-renew-turn-cert`.
 
 The server image uses `pnpm deploy --prod` during the Docker build. The pnpm
 store for deploy/build state belongs outside the checked-out repo, under the
-host deploy state area, not in `~/atrium`. `~/atrium/surface/.pnpm-store` should
-not exist on the box; if it appears, remove the stale directory after confirming
-no host-local pnpm process is using it.
+explicit host deploy state area, not in `~/atrium`. The renewal systemd unit
+pins the same state dir so it does not fall back to root's `$HOME`.
+`~/atrium/surface/.pnpm-store` should not exist on the box; if it appears,
+remove the stale directory after confirming no host-local pnpm process is using
+it.
 
 For APNs, production builds, TestFlight builds, App Store builds, and EAS
 internal/ad-hoc builds use production APNs tokens. Leave `APNS_SANDBOX=0` unless

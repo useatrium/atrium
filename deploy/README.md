@@ -56,9 +56,10 @@ running deploy. Status + logs live in the repo's **Actions** tab.
 ## Notes
 - Secrets stay box-local (`surface/deploy/.env`, the `centaur-infra-env` k8s secret,
   cloudflared config, compose overrides) — not in the repo; redeploy reuses them.
-- Surface deploy/build state belongs under `~/atrium-deploy`, not in the source
+- Surface deploy/build state belongs under the explicit shared state dir
+  `${ATRIUM_DEPLOY_STATE_DIR:-<repo-parent>/atrium-deploy}`, not in the source
   checkout. `redeploy.sh` renders LiveKit config there and forces the pnpm store
-  to `~/atrium-deploy/pnpm-store`; `~/atrium/surface/.pnpm-store` is stale drift.
+  to that directory's `pnpm-store`; `~/atrium/surface/.pnpm-store` is stale drift.
 - When `surface/deploy/docker-compose.tunnel.yml` exists, `redeploy.sh` health-gates
   Surface at `http://10.42.0.1:${SERVER_HOST_PORT:-3001}/healthz`, matching the
   host-only bind used by Centaur pods and Cloudflare Tunnel. Set `SURFACE_HEALTH_URL`

@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+REPO_DIR="${ATRIUM_REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+REPO_PARENT="$(cd "$REPO_DIR/.." && pwd)"
+export ATRIUM_DEPLOY_STATE_DIR="${ATRIUM_DEPLOY_STATE_DIR:-$REPO_PARENT/atrium-deploy}"
 
 if [[ -x "$SCRIPT_DIR/prepare-livekit-config.sh" ]]; then
   LIVEKIT_CONFIG_FILE="$("$SCRIPT_DIR/prepare-livekit-config.sh")"
