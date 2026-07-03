@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { JSX } from 'react';
+import type { JSX, KeyboardEvent } from 'react';
 import type { FileOrigin, HubFile, HubFileListResult, HubFileVersionsResponse } from '@atrium/surface-client';
 import { EntryComments } from '../components/EntryComments';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
@@ -7,6 +7,11 @@ import { showErrorToast } from '../components/Toasts';
 import { FileIcon, SearchIcon } from '../components/icons';
 import { Lightbox, MediaPreview } from '../components/media';
 import type { LightboxCallbacks, MediaKind, PreviewFile } from '../components/media';
+import {
+  EntryReferencesChip,
+  queryEntryReferencesForHandles,
+  type EntryReferenceSummary,
+} from '../components/EntryReferencesChip';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 
@@ -35,6 +40,7 @@ interface Filters {
 }
 
 const PAGE_SIZE = 48;
+const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const MEDIA_FILTERS: MediaFilter[] = ['all', 'image', 'video', 'audio', 'document', 'code', 'text', 'data', 'opaque'];
 const ORIGIN_FILTERS: OriginFilter[] = ['all', 'upload', 'agent', 'workspace'];
 
@@ -48,8 +54,12 @@ function contentUrl(artifactId: string): string {
   return `/api/files/artifact/${artifactId}/content`;
 }
 
-function absoluteContentUrl(artifactId: string): string {
-  return `${window.location.origin}${contentUrl(artifactId)}`;
+function artifactEntryHandle(artifactId: string): string {
+  return `art_${artifactId}`;
+}
+
+function absoluteArtifactEntryUrl(artifactId: string): string {
+  return `${window.location.origin}/e/${artifactEntryHandle(artifactId)}`;
 }
 
 async function responseError(response: Response, fallback: string): Promise<string> {
@@ -468,6 +478,7 @@ function FilterBar({
 function FileTile({
   file,
   preview,
+  references,
   onOpen,
   onToggleStar,
   onAddLabel,
@@ -476,16 +487,25 @@ function FileTile({
 }: {
   file: HubFile;
   preview: PreviewFile;
+  references?: EntryReferenceSummary | null;
   onOpen: () => void;
   onToggleStar: () => void;
   onAddLabel: () => void;
   onRemoveLabel: (label: string) => void;
   onRestore: () => void;
 }) {
+  const onOpenKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onOpen();
+  };
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={onOpenKeyDown}
       className={`group flex min-w-0 flex-col overflow-hidden rounded-md border text-left transition-colors ${
         file.tombstoned
           ? 'border-danger-border/60 bg-danger-tint/20 opacity-80'
@@ -502,8 +522,17 @@ function FileTile({
             <div className="truncate font-mono text-2xs font-semibold text-fg-body" title={file.path}>
               {file.name}
             </div>
-            <div className="mt-0.5 truncate text-3xs text-fg-muted" title={file.path}>
-              {fileLocation(file)} / {formatBytes(file.sizeBytes)}
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-3xs text-fg-muted">
+              <span className="min-w-0 truncate" title={file.path}>
+                {fileLocation(file)} / {formatBytes(file.sizeBytes)}
+              </span>
+              <span
+                className="shrink-0"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <EntryReferencesChip summary={references} />
+              </span>
             </div>
           </div>
           <span
@@ -606,7 +635,7 @@ function FileTile({
           )}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -659,6 +688,8 @@ export function FilesHub({
   const [commentArtifactId, setCommentArtifactId] = useState<string | null>(null);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
   const [markupNotice, setMarkupNotice] = useState<string | null>(null);
+  const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>({});
+  const artifactEntryReferencesFetchedAtRef = useRef(0);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [currentDir, setCurrentDir] = useState('');
 
@@ -850,7 +881,9 @@ export function FilesHub({
       },
       onCopyLink: async (file) => {
         try {
-          await navigator.clipboard.writeText(absoluteContentUrl(file.id));
+          // Entry links unfurl as quote cards in chat, record references, and navigate via /e/;
+          // the raw bytes URL remains reachable through Download.
+          await navigator.clipboard.writeText(absoluteArtifactEntryUrl(file.id));
         } catch {
           showErrorToast('Could not copy file link.');
         }
@@ -1095,6 +1128,22 @@ export function FilesHub({
   const { folders, filesHere } = useMemo(() => folderView(scopedFiles, currentDir), [currentDir, scopedFiles]);
   const visibleFiles = searchActive ? scopedFiles : filesHere;
   const visiblePreviews = useMemo(() => visibleFiles.map(hubFileToPreview), [visibleFiles]);
+  const visibleArtifactHandles = useMemo(() => {
+    const seen = new Set<string>();
+    for (const file of visibleFiles) seen.add(artifactEntryHandle(file.artifactId));
+    return [...seen];
+  }, [visibleFiles]);
+  const visibleArtifactHandleKey = visibleArtifactHandles.join('\n');
+  const lightboxEntryReferencesByFileId = useMemo(
+    () =>
+      Object.fromEntries(
+        visibleFiles.map((file) => [
+          file.artifactId,
+          artifactEntryReferences[artifactEntryHandle(file.artifactId)] ?? null,
+        ]),
+      ),
+    [artifactEntryReferences, visibleFiles],
+  );
   const visibleItemCount = searchActive ? visibleFiles.length : folders.length + visibleFiles.length;
   const showBreadcrumb = !searchActive && (currentDir !== '' || folders.length > 0);
   const empty = !loading && !error && visibleItemCount === 0;
@@ -1113,6 +1162,33 @@ export function FilesHub({
       : currentDir
       ? 'Files added to this folder will appear here.'
       : 'Files matching the current filters will appear here.';
+
+  useEffect(() => {
+    if (visibleArtifactHandles.length === 0) return;
+    const now = Date.now();
+    const stale = now - artifactEntryReferencesFetchedAtRef.current >= ENTRY_REFERENCES_REFETCH_MS;
+    const handles = stale
+      ? visibleArtifactHandles
+      : visibleArtifactHandles.filter((handle) => !(handle in artifactEntryReferences));
+    if (handles.length === 0) return;
+    artifactEntryReferencesFetchedAtRef.current = now;
+    let disposed = false;
+    void queryEntryReferencesForHandles(handles)
+      .then((references) => {
+        if (disposed) return;
+        setArtifactEntryReferences((prev) => {
+          const next = { ...prev };
+          for (const handle of handles) next[handle] = references[handle] ?? null;
+          return next;
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to query artifact entry references', err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [artifactEntryReferences, visibleArtifactHandleKey, visibleArtifactHandles]);
 
   return (
     <div data-testid="files-hub" className="relative flex min-h-0 flex-1 flex-col bg-surface">
@@ -1205,6 +1281,7 @@ export function FilesHub({
                 key={file.artifactId}
                 file={file}
                 preview={visiblePreviews[index]!}
+                references={artifactEntryReferences[artifactEntryHandle(file.artifactId)]}
                 onOpen={() => setLightboxIndex(index)}
                 onToggleStar={() => void toggleStar(file)}
                 onAddLabel={() => void addLabel(file)}
@@ -1233,6 +1310,7 @@ export function FilesHub({
           index={Math.min(lightboxIndex, visiblePreviews.length - 1)}
           onIndexChange={setLightboxIndex}
           sessionId={sessionId}
+          entryReferencesByFileId={lightboxEntryReferencesByFileId}
           onClose={() => {
             setLightboxIndex(null);
             setCommentArtifactId(null);
