@@ -534,6 +534,11 @@ nodeSync:
   # Interval (floor) scan of each upper; node-side fanotify adds sub-second
   # latency on top (the agent could never run it; the node is privileged).
   scanIntervalSeconds: 2
+  # Raised by a privileged initContainer before node-sync starts so recursive
+  # upperdir inotify watches have enough descriptors and queue depth per node.
+  inotify:
+    maxUserWatches: 1048576
+    maxQueuedEvents: 65536
   hydrateArtifacts: true
   # Atrium is reached egress-only; the node is trusted infra (not the sandbox),
   # so it bypasses the per-sandbox egress NetworkPolicy → big files go direct to S3.
