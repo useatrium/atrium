@@ -103,7 +103,7 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         return <SideEffectsSurface effects={effects} onClose={noop} embedded />;
       case 'hubFiles':
         return sessionMeta ? (
-          <FilesHub workspaceId={sessionMeta.workspaceId} channelId={sessionMeta.channelId} />
+          <FilesHub workspaceId={sessionMeta.workspaceId} channelId={sessionMeta.channelId} sessionId={sessionId} />
         ) : (
           <div className="px-3 py-2 text-2xs text-fg-muted">loading files...</div>
         );

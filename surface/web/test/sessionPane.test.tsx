@@ -3,15 +3,46 @@
 // result contains atrium-roundtrip-ok, with a completed status chip.
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { forwardRef, useImperativeHandle, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import rawB from '../../centaur-client/test/fixtures/B_tooltest.json';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
 import { SessionPane } from '../src/sessions/SessionPane';
+import { api } from '../src/api';
 import { sessionsApi } from '../src/sessions/api';
 import type { Session } from '../src/sessions/types';
 import type { UserRef, WireEvent } from '@atrium/surface-client';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+
+vi.mock('/src/markup/MarkupEditor', () => ({
+  MarkupEditor: forwardRef(function MockMarkupEditor(
+    {
+      initialMarkdown,
+      onDirtyChange,
+    }: {
+      initialMarkdown: string;
+      onDirtyChange?: (dirty: boolean) => void;
+    },
+    ref,
+  ) {
+    const [value, setValue] = useState(initialMarkdown);
+    useImperativeHandle(ref, () => ({
+      serialize: () => value,
+      hasMarkup: () => value.includes('{++') || value.includes('{--'),
+    }));
+    return (
+      <textarea
+        aria-label="Mock markup editor"
+        value={value}
+        onChange={(event) => {
+          setValue(event.target.value);
+          onDirtyChange?.(event.target.value !== initialMarkdown);
+        }}
+      />
+    );
+  }),
+}));
 
 const B = rawB as unknown as CentaurEventFrame[];
 
@@ -360,6 +391,60 @@ describe('session pane folds the B_tooltest stream', () => {
 
     expect(screen.getByText('Annotatable agent row')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Comment on entry' })).toBeTruthy();
+  });
+
+  it('extracts a transcript record and opens the markup pane with frontmatter stripped', async () => {
+    const frame = {
+      event: 'amp_raw_event',
+      event_id: 72,
+      data: {
+        type: 'item.completed',
+        item: {
+          id: 'agent-row-2',
+          type: 'agentMessage',
+          text: 'Markup-ready agent row',
+        },
+        recordHandles: [
+          {
+            handle: 'rec_item_markup123',
+            kind: 'message',
+            actor: 'agent',
+            meta: { itemId: 'agent-row-2' },
+          },
+        ],
+      },
+    } as CentaurEventFrame;
+    vi.spyOn(api, 'extractEntry').mockResolvedValue({
+      artifactId: 'art-markup-1',
+      path: 'sessions/s-b/markup-ready.md',
+      seq: 3,
+      workspaceId: 'ws-1',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response('---\ntitle: "Markup Ready"\n---\n\n# Body from artifact\n', {
+          status: 200,
+          headers: { 'content-type': 'text/markdown' },
+        }),
+      ),
+    );
+
+    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emit(frame);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark up & reply' }));
+
+    await waitFor(() => expect(api.extractEntry).toHaveBeenCalledWith('rec_item_markup123'));
+    expect(await screen.findByRole('dialog', { name: 'Markup Ready' })).toBeTruthy();
+    expect((await screen.findByLabelText('Mock markup editor') as HTMLTextAreaElement).value).toBe(
+      '# Body from artifact\n',
+    );
   });
 
 });

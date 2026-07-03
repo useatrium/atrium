@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import type { FileOrigin, HubFile, HubFileListResult, HubFileVersionsResponse } from '@atrium/surface-client';
 import { EntryComments } from '../components/EntryComments';
+import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import { showErrorToast } from '../components/Toasts';
 import { FileIcon, SearchIcon } from '../components/icons';
 import { Lightbox, MediaPreview } from '../components/media';
@@ -556,11 +557,13 @@ function FileTile({
 export function FilesHub({
   workspaceId,
   channelId,
+  sessionId,
   defaultScope,
   filesEventSeq = 0,
 }: {
   workspaceId: string;
   channelId?: string | null;
+  sessionId?: string;
   defaultScope?: FileHubScope;
   filesEventSeq?: number;
 }): JSX.Element {
@@ -586,7 +589,22 @@ export function FilesHub({
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [commentArtifactId, setCommentArtifactId] = useState<string | null>(null);
+  const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
+  const [markupNotice, setMarkupNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [currentDir, setCurrentDir] = useState('');
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
+  const showMarkupNotice = useCallback((message: string) => {
+    setMarkupNotice(message);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setMarkupNotice(null), 2600);
+  }, []);
 
   useEffect(() => {
     setScope(resolvedDefaultScope);
@@ -958,9 +976,40 @@ export function FilesHub({
         await loadFiles();
         return body;
       },
+      onMarkup: async (file) => {
+        if (!sessionId) return;
+        try {
+          const [versionsResponse, contentResponse] = await Promise.all([
+            fetch(`/api/files/${file.id}/versions`, { credentials: 'same-origin' }),
+            fetch(`/api/files/artifact/${file.id}/content`, { credentials: 'same-origin' }),
+          ]);
+          if (!versionsResponse.ok) {
+            throw new Error(await responseError(versionsResponse, 'Could not load version history'));
+          }
+          if (!contentResponse.ok) {
+            throw new Error(await responseError(contentResponse, 'Could not load version content'));
+          }
+          const versionsBody = (await versionsResponse.json()) as HubFileVersionsResponse;
+          const latest = versionsBody.versions[0];
+          if (!latest) throw new Error('Could not find the latest file version');
+          const { frontmatter, body } = splitMarkdownFrontmatter(await contentResponse.text());
+          setMarkupSource({
+            artifactId: file.id,
+            path: file.name,
+            seq: latest.seq,
+            workspaceId,
+            sessionId,
+            frontmatter,
+            body,
+          });
+        } catch (err) {
+          showErrorToast(err instanceof Error ? err.message : 'Could not open markup pane');
+          throw err;
+        }
+      },
       canManage: () => true,
     }),
-    [files, filters.includeDeleted, loadFiles, replaceFile],
+    [files, filters.includeDeleted, loadFiles, replaceFile, sessionId, workspaceId],
   );
 
   const { folders, filesHere } = useMemo(() => folderView(files, currentDir), [currentDir, files]);
@@ -1068,11 +1117,24 @@ export function FilesHub({
           files={visiblePreviews}
           index={Math.min(lightboxIndex, visiblePreviews.length - 1)}
           onIndexChange={setLightboxIndex}
+          sessionId={sessionId}
           onClose={() => {
             setLightboxIndex(null);
             setCommentArtifactId(null);
           }}
           {...callbacks}
+        />
+      )}
+      {markupNotice && (
+        <div className="pointer-events-none absolute bottom-4 left-1/2 z-[75] -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
+          {markupNotice}
+        </div>
+      )}
+      {markupSource && (
+        <MarkupPane
+          source={markupSource}
+          onClose={() => setMarkupSource(null)}
+          onSent={() => showMarkupNotice('Markup sent to agent')}
         />
       )}
       {commentArtifactId && (
