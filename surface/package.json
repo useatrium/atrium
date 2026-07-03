@@ -26,7 +26,14 @@
   },
   "pnpm": {
     "overrides": {
-      "fbjs>ua-parser-js": "2.0.10"
+      "fbjs>ua-parser-js": "2.0.10",
+      "react-native-markdown-display>markdown-it": "14.2.0",
+      "react-native-syntax-highlighter>react-syntax-highlighter": "16.1.1",
+      "undici@6": "6.27.0",
+      "undici@7": "7.28.0",
+      "esbuild": "0.28.1",
+      "shell-quote": "1.8.4",
+      "xcode>uuid": "11.1.1"
     }
   }
 }
