@@ -55,6 +55,8 @@ export function installAppAuth(app: FastifyInstance, deps: AppAuthDeps): AppAuth
   function rawSession(req: FastifyRequest): string | undefined {
     const auth = req.headers.authorization;
     if (auth?.startsWith('Bearer ')) return auth.slice('Bearer '.length);
+    const queryToken = (req.query as { token?: unknown } | null | undefined)?.token;
+    if (typeof queryToken === 'string') return queryToken;
     return req.cookies[sessionCookie];
   }
 
