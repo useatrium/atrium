@@ -1612,12 +1612,11 @@ impl BridgeProcess {
             if let Some(method) = value.get("method").and_then(Value::as_str) {
                 capture.consume_notification(method, &value);
                 if method == "turn/started" {
-                    if capture.turn_id.is_empty() {
-                        if let Some(turn_id) =
+                    if capture.turn_id.is_empty()
+                        && let Some(turn_id) =
                             value.pointer("/params/turn/id").and_then(Value::as_str)
-                        {
-                            capture.turn_id = turn_id.to_string();
-                        }
+                    {
+                        capture.turn_id = turn_id.to_string();
                     }
                     if !interrupt_sent {
                         self.send(json!({"type": "interrupt"}));
