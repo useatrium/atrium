@@ -107,6 +107,44 @@ fn fake_claude_app_server_streams_codex_v2_notifications() {
 }
 
 #[test]
+fn blocks_interrupt_mid_turn_aborts_the_turn() {
+    let fake_codex = temp_path("fake-codex-interrupt.sh");
+    let fake_codex_log = temp_path("fake-codex-interrupt-requests.jsonl");
+    let script = fake_codex_interrupt_app_server_script(&fake_codex_log);
+    std::fs::write(&fake_codex, script).expect("write fake codex interrupt script");
+    let mut permissions = std::fs::metadata(&fake_codex)
+        .expect("fake codex metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_codex, permissions).expect("chmod fake codex script");
+
+    let mut bridge = BridgeProcess::spawn_harness_blocks(
+        Harness::Codex,
+        None,
+        Some((
+            "CODEX_BIN",
+            fake_codex.to_str().expect("utf-8 fake codex path"),
+        )),
+    );
+    // The fake holds the turn open; the injected interrupt is the only thing
+    // that can end it. If the harness-server dropped a mid-turn interrupt, this
+    // would hang until the timeout instead of completing as interrupted.
+    let turn = bridge.run_blocks_user_turn_interrupting("work forever", Duration::from_secs(10));
+    bridge.finish_successfully();
+
+    assert_eq!(
+        turn.terminal_status.as_deref(),
+        Some("interrupted"),
+        "a mid-turn interrupt should abort the turn"
+    );
+    let log = std::fs::read_to_string(&fake_codex_log).expect("read fake codex log");
+    assert!(
+        log.contains("turn/interrupt"),
+        "harness-server should forward the interrupt to the codex child; log=\n{log}"
+    );
+}
+
+#[test]
 fn fake_codex_blocks_mode_uses_openrouter_provider_when_model_is_configured() {
     let fake_codex = temp_path("fake-openrouter-codex.sh");
     let fake_codex_log = temp_path("fake-openrouter-codex-requests.jsonl");
@@ -1548,6 +1586,53 @@ impl BridgeProcess {
         self.run_blocks_user_line(input, timeout)
     }
 
+    /// Start a blocks-mode turn, then inject an `{"type":"interrupt"}` frame once
+    /// the turn is running (right after `turn/started`), and capture the terminal
+    /// turn. Proves the harness-server reads a mid-turn interrupt off stdin and
+    /// forwards it to the harness so the turn aborts (rather than being ignored).
+    fn run_blocks_user_turn_interrupting(&mut self, prompt: &str, timeout: Duration) -> TurnCapture {
+        let input = json!({
+            "type": "user",
+            "thread_key": "slack:C123:123.456",
+            "trace_metadata": {"source": "slackbotv2", "action": "execute"},
+            "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
+        });
+        self.send(input);
+
+        let deadline = Instant::now() + timeout;
+        let mut capture = TurnCapture::default();
+        let mut interrupt_sent = false;
+
+        loop {
+            let value = self.read_json(deadline);
+            assert!(
+                response_id(&value).is_none(),
+                "blocks mode emitted JSON-RPC response: {value}"
+            );
+            if let Some(method) = value.get("method").and_then(Value::as_str) {
+                capture.consume_notification(method, &value);
+                if method == "turn/started" {
+                    if capture.turn_id.is_empty() {
+                        if let Some(turn_id) =
+                            value.pointer("/params/turn/id").and_then(Value::as_str)
+                        {
+                            capture.turn_id = turn_id.to_string();
+                        }
+                    }
+                    if !interrupt_sent {
+                        self.send(json!({"type": "interrupt"}));
+                        interrupt_sent = true;
+                    }
+                }
+                if method == "turn/completed" {
+                    break;
+                }
+            }
+        }
+
+        capture
+    }
+
     fn run_blocks_user_line(&mut self, user_line: Value, timeout: Duration) -> TurnCapture {
         self.send(user_line);
 
@@ -2102,6 +2187,66 @@ while IFS= read -r line; do
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"codex blocks"}}'
       printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"answer-1","text":"codex blocks","phase":null,"memoryCitation":null},"completedAtMs":2}}'
       printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[{"type":"agentMessage","id":"answer-1","text":"codex blocks","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":1}}}'
+      ;;
+    *)
+      printf '%s\n' "unexpected request: $line" >&2
+      exit 65
+      ;;
+  esac
+done
+"#,
+    );
+    script
+}
+
+/// A fake codex app-server that STARTS a turn and holds it open (no
+/// `turn/completed`), then — when it receives a `turn/interrupt` request
+/// (forwarded by the harness-server from a blocks `{"type":"interrupt"}`) —
+/// completes the turn with status `interrupted`. Lets a test prove interrupt
+/// delivery aborts a running turn without any cluster.
+fn fake_codex_interrupt_app_server_script(log_path: &Path) -> String {
+    let mut script = String::new();
+    script.push_str("#!/bin/sh\n");
+    script.push_str("log=");
+    script.push_str(&shell_quote(log_path));
+    script.push_str(
+        r#"
+touch "$log"
+if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "--help" ]; then
+  printf '%s\n' '--listen stdio://'
+  exit 0
+fi
+if [ "${1:-}" != "app-server" ]; then
+  printf '%s\n' 'expected app-server command' >&2
+  exit 64
+fi
+
+request_id() {
+  printf '%s' "$1" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p'
+}
+
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      id=$(request_id "$line")
+      printf '{"id":%s,"result":{"userAgent":"fake-codex"}}\n' "$id"
+      ;;
+    *'"method":"thread/start"'*)
+      id=$(request_id "$line")
+      printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+      ;;
+    *'"method":"turn/start"'*)
+      id=$(request_id "$line")
+      printf '{"id":%s,"result":{"turn":{"id":"turn-1"}}}\n' "$id"
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1,"completedAt":null,"durationMs":null}}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"working"}}'
+      # hold the turn open — wait for turn/interrupt below
+      ;;
+    *'"method":"turn/interrupt"'*)
+      id=$(request_id "$line")
+      if [ -n "$id" ]; then printf '{"id":%s,"result":{}}\n' "$id"; fi
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[{"type":"agentMessage","id":"answer-1","text":"working","phase":null,"memoryCitation":null}],"itemsView":"full","status":"interrupted","error":null,"startedAt":1,"completedAt":2,"durationMs":1}}}'
       ;;
     *)
       printf '%s\n' "unexpected request: $line" >&2
