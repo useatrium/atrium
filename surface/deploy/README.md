@@ -106,6 +106,70 @@ docker compose -f docker-compose.prod.yml --profile caddy up -d --build
 
 For file uploads on a VPS, expose MinIO through a separate TLS name such as `minio.example.com`, or add a deliberate Caddy proxy for a storage path and set `S3_ENDPOINT` to that public HTTPS URL. Do not leave `S3_ENDPOINT` pointing at Docker-only hostnames.
 
+## Production Voice Calls
+
+Calls add a direct LiveKit path beside the app path:
+
+- app and file hosts stay behind Cloudflare Tunnel and local Caddy
+- LiveKit runs on the OVH host with host networking
+- LiveKit/TURN hostnames are DNS-only records pointing at the OVH public IP
+- public `443/tcp` belongs to LiveKit TURN/TLS, not the app Caddy tunnel
+
+Use separate names so the routing boundary stays obvious:
+
+| Hostname | DNS / route | Purpose |
+|---|---|---|
+| `atrium.example.com` | Cloudflare Tunnel route | App/API/WebSocket |
+| `atrium-files.example.com` | Cloudflare Tunnel route, no Access policy | MinIO presigned uploads/downloads |
+| `livekit.example.com` | DNS-only A/AAAA to the OVH IP | LiveKit signaling endpoint in `LIVEKIT_URL` |
+| `turn.example.com` | DNS-only A/AAAA to the OVH IP | Embedded TURN/TLS domain in `livekit.yaml` |
+
+Open these inbound ports on the OVH firewall/security group for LiveKit:
+
+- `443/tcp` for TURN/TLS
+- `7881/tcp` for ICE TCP fallback
+- `3478/udp` for TURN/UDP and STUN
+- `50000-60000/udp` for LiveKit media
+- `80/tcp` only if the chosen certificate flow needs HTTP-01/standalone ACME for the LiveKit/TURN certificates
+
+Do not proxy LiveKit media or TURN through the HTTP Caddy tunnel. Caddy's app
+profile can proxy Atrium HTTP and WebSockets, but it cannot proxy LiveKit UDP
+media, ICE TCP, or TURN/TLS. In the tunnel topology, keep app Caddy bound to
+loopback and reserve public `443` for LiveKit TURN/TLS.
+
+Required `.env` values:
+
+```sh
+LIVEKIT_URL=wss://livekit.example.com
+LIVEKIT_API_KEY=<generated-livekit-key>
+LIVEKIT_API_SECRET=<generated-livekit-secret>
+
+APNS_TEAM_ID=<apple-team-id>
+APNS_KEY_ID=<apns-key-id>
+APNS_AUTH_KEY_P8=<contents-of-the-p8-key>
+APNS_BUNDLE_ID=chat.atrium.app
+APNS_SANDBOX=0
+
+# Deferred until Android is being tested.
+FCM_PROJECT_ID=
+FCM_SERVICE_ACCOUNT_JSON=
+```
+
+Use the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` for the server and the
+`livekit` compose profile. The compose file injects them into LiveKit as
+`LIVEKIT_KEYS`, so token signing and verification share one source of truth.
+
+For APNs, production builds, TestFlight builds, App Store builds, and EAS
+internal/ad-hoc builds use production APNs tokens. Leave `APNS_SANDBOX=0` unless
+the app was signed with a true development provisioning profile.
+
+Smoke checklist:
+
+- `curl -s https://atrium.example.com/auth/methods | jq '.calls == true'`
+- a two-browser web call can start, ring, join, and pass audio
+- an iOS device with the app killed rings through APNs
+- a participant can reload and rejoin the active call
+
 ## Chat-Only Deployments
 
 Centaur is optional at boot. Leave `CENTAUR_API_KEY` empty and keep `CENTAUR_BASE_URL` at its default if you only need chat. Agent session spawning will be unavailable until Centaur is reachable and configured.

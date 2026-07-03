@@ -24,7 +24,7 @@ Device/APNs setup: `notes/voice-device-runbook.md`. Last updated 2026-06-16.
 - [ ] **Live captions / recording** (Phase 4). Needs a GPU (LiveKit Egress/Agents → streaming STT).
 
 ### Deployment / ops
-- [ ] **Production deploy of calls + VoIP push.** Everything to date is dev/LAN. Prod needs LiveKit prod config (host networking, embedded TURN, ports) + APNs prod env (`APNS_TEAM_ID=GS83M3FS29`, `APNS_KEY_ID=C5NS4JB9Y4`, `APNS_AUTH_KEY_P8`, `APNS_BUNDLE_ID=chat.atrium.app`, production host). Steps in `notes/voice-device-runbook.md`.
+- [ ] **Production deploy of calls + VoIP push.** Everything to date is dev/LAN. The selected OVH plan is now documented in `docs/self-host-ovh.md` and `surface/deploy/README.md`: app/files stay behind the Cloudflare tunnel, LiveKit runs direct with embedded TURN on public `443/tcp`, and APNs uses the production env (`APNS_TEAM_ID=GS83M3FS29`, `APNS_KEY_ID=C5NS4JB9Y4`, `APNS_AUTH_KEY_P8`, `APNS_BUNDLE_ID=chat.atrium.app`, `APNS_SANDBOX=0`). Device details stay in `notes/voice-device-runbook.md`.
 - [ ] (Hygiene) Revoke the old defective APNs key `AJ4R2XQJCG` in the Apple Developer portal — replaced by `C5NS4JB9Y4`; unused but still exists Apple-side.
 
 ### Polish / minor — all cleared
@@ -36,7 +36,7 @@ _(#3 GlobalCallUI sim-QA'd 2026-06-16: the call strip persists correctly on the 
 
 ## Recommended priority if shipping to production
 1. **Real whisper STT in the deploy image** (otherwise transcription is empty).
-2. **Production deploy** (LiveKit + APNs prod env, per the runbook).
+2. **Production deploy** (LiveKit direct on OVH + APNs prod env, per the runbook).
 3. Group-call (3+) live verification, if groups matter.
 
 Everything else (E2EE, live captions, Android, polish nits) is optional / future.

@@ -13,10 +13,15 @@ actually hit.
    atrium.<domain> ───────┤
    atrium-files.<domain> ─┘
                           │
+   livekit.<domain> ──────┐   DNS-only → OVH public IP
+   turn.<domain> ─────────┘   direct LiveKit/TURN, not Cloudflare-proxied
+                          │
           ┌───────────────▼──────────────── OVH VPS (Ubuntu, 1 box) ───────────────┐
           │  cloudflared (systemd)                                                 │
           │     → Caddy 127.0.0.1:80  ──► server :3001 ──► Postgres / MinIO         │  Docker
           │     → MinIO  127.0.0.1:9000 (presigned files)                          │  compose
+          │                                                                        │
+          │  LiveKit (host network): public 443/TURN-TLS, 7881/TCP, UDP media      │  Docker
           │                                                                        │
           │  k3s ── api-rs :8080 (NodePort) ── agent-sandbox controller ── sandbox │  k3s
           │         └ Postgres (bundled)        pods (codex/claude)                │
@@ -29,6 +34,9 @@ actually hit.
 - All app ports bind **127.0.0.1**; the only public reach is the Cloudflare tunnel
   (and **Cloudflare Access** is the invite gate — Atrium's own login is self-service,
   not invite-only).
+- **LiveKit** is the exception: it runs direct on the OVH host, with DNS-only
+  `livekit.<domain>` / `turn.<domain>` records pointing at the OVH IP. Do not
+  proxy LiveKit media, ICE TCP, or TURN through the app's HTTP Caddy tunnel.
 
 ## Prerequisites
 
@@ -193,6 +201,87 @@ sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -
 - **No Access** on the files host — presigned-URL signatures are the auth; Access would
   break the browser PUT (cross-subdomain cookie).
 - ⚠️ Cloudflare's free plan caps proxied request bodies at **100 MB** (upload ceiling).
+
+## Phase 5b — Voice calls (LiveKit direct + VoIP push)
+
+Keep the app and files behind the Cloudflare tunnel. Put LiveKit directly on the
+OVH host because WebRTC media and TURN are not HTTP traffic.
+
+DNS:
+
+- `atrium.<domain>` routes through the Cloudflare tunnel to local Caddy
+- `atrium-files.<domain>` routes through the Cloudflare tunnel to MinIO, with no
+  Cloudflare Access policy
+- `livekit.<domain>` is DNS-only to the OVH public IP
+- `turn.<domain>` is DNS-only to the OVH public IP and matches
+  `surface/deploy/livekit.yaml`
+
+Public inbound ports for LiveKit:
+
+- `443/tcp` for TURN/TLS; public app Caddy must not bind this port in this topology
+- `7881/tcp` for ICE TCP fallback
+- `3478/udp` for TURN/UDP and STUN
+- `50000-60000/udp` for LiveKit media
+- `80/tcp` only if the LiveKit/TURN certificate flow needs HTTP-01/standalone ACME
+  issuance; DNS-01 issuance does not need it
+
+Do not route any of those LiveKit ports through cloudflared or the HTTP Caddyfile.
+Cloudflare Tunnel and local Caddy remain for Atrium app HTTP, app WebSockets, and
+files only. LiveKit's signaling endpoint still needs a trusted TLS URL, set in
+`LIVEKIT_URL`, while its media/TURN paths stay direct to the host.
+
+Generate LiveKit keys and set the surface env:
+
+```sh
+cd ~/atrium/surface/deploy
+docker run --rm livekit/livekit-server:v1.13 generate-keys
+
+sed -i 's|^LIVEKIT_URL=.*|LIVEKIT_URL=wss://livekit.<domain>|' .env
+sed -i 's|^LIVEKIT_API_KEY=.*|LIVEKIT_API_KEY=<generated-key>|' .env
+sed -i 's|^LIVEKIT_API_SECRET=.*|LIVEKIT_API_SECRET=<generated-secret>|' .env
+```
+
+Add the APNs production settings. EAS internal/ad-hoc, TestFlight, and App Store
+builds use production APNs tokens, so keep `APNS_SANDBOX=0` unless the device is
+running a true development-signed iOS build:
+
+```sh
+cat >> .env <<'EOF'
+APNS_TEAM_ID=GS83M3FS29
+APNS_KEY_ID=C5NS4JB9Y4
+APNS_AUTH_KEY_P8=<contents of the .p8 key, raw or base64>
+APNS_BUNDLE_ID=chat.atrium.app
+APNS_SANDBOX=0
+
+# Android ringing is deferred until there is an Android test device/build.
+FCM_PROJECT_ID=
+FCM_SERVICE_ACCOUNT_JSON=
+EOF
+```
+
+Mount the TURN certificate/key expected by `surface/deploy/livekit.yaml`. Use a
+certificate for `turn.<domain>`; open `80/tcp` only if the ACME method needs it.
+
+```sh
+cat > docker-compose.livekit-certs.yml <<'YAML'
+services:
+  livekit:
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - /etc/letsencrypt/live/turn.<domain>/fullchain.pem:/etc/livekit/turn.crt:ro
+      - /etc/letsencrypt/live/turn.<domain>/privkey.pem:/etc/livekit/turn.key:ro
+YAML
+
+sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml \
+  -f docker-compose.livekit-certs.yml --profile livekit up -d livekit server
+```
+
+Smoke checklist:
+
+- `curl -s https://atrium.<domain>/auth/methods | jq '.calls == true'`
+- web two-browser call starts, rings, joins, and passes audio
+- iOS device rings through APNs with the app killed
+- reload during an active call and confirm the participant can rejoin
 
 ## Phase 6 — Centaur agent runtime (k3s)
 
