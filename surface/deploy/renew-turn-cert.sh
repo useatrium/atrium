@@ -4,19 +4,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-compose_args=(
-  -f docker-compose.prod.yml
-  -f docker-compose.tunnel.yml
-)
-
-if [[ -f docker-compose.livekit-local.yml ]]; then
-  compose_args+=(-f docker-compose.livekit-local.yml)
-elif [[ -f docker-compose.livekit-certs.yml ]]; then
-  compose_args+=(-f docker-compose.livekit-certs.yml)
+if [[ -x "$SCRIPT_DIR/prepare-livekit-config.sh" ]]; then
+  LIVEKIT_CONFIG_FILE="$("$SCRIPT_DIR/prepare-livekit-config.sh")"
+  export LIVEKIT_CONFIG_FILE
 fi
 
+compose_args=()
+if [[ -f .env ]]; then
+  compose_args+=(--env-file .env)
+fi
+compose_args+=(-f docker-compose.prod.yml)
+
+if [[ -f docker-compose.tunnel.yml ]]; then
+  compose_args+=(-f docker-compose.tunnel.yml)
+fi
+
+docker_compose() {
+  ${DOCKER_BIN:-docker} compose "${compose_args[@]}" "$@"
+}
+
+docker_run() {
+  ${DOCKER_BIN:-docker} run "$@"
+}
+
 restart_caddy() {
-  docker compose "${compose_args[@]}" --profile caddy up -d caddy
+  docker_compose --profile caddy up -d caddy
 }
 
 trap restart_caddy EXIT
@@ -28,11 +40,11 @@ if [[ -f "$renewed_marker" ]]; then
 fi
 
 # Stop Caddy for renewal, then restore it on exit.
-docker compose "${compose_args[@]}" --profile caddy stop caddy
+docker_compose --profile caddy stop caddy
 
 # The deploy hook runs inside the Certbot container, so it writes a marker into
 # the mounted state dir. The host script restarts LiveKit if the marker changed.
-docker run --rm --network host \
+docker_run --rm --network host \
   -v /etc/letsencrypt:/etc/letsencrypt \
   -v /var/lib/letsencrypt:/var/lib/letsencrypt \
   certbot/certbot renew --quiet \
@@ -44,5 +56,5 @@ if [[ -f "$renewed_marker" ]]; then
 fi
 
 if [[ "$after_marker" != "$before_marker" ]]; then
-  docker compose "${compose_args[@]}" --profile livekit restart livekit
+  docker_compose --profile livekit restart livekit
 fi

@@ -15,13 +15,16 @@ NS="${CENTAUR_NAMESPACE:-centaur}"
 PORT="${REGISTRY_PORT:-5000}"
 REG="localhost:${PORT}/library"
 SURF="$REPO_DIR/surface/deploy"
-STATE="$HOME/atrium-deploy"; mkdir -p "$STATE"
+STATE="${ATRIUM_DEPLOY_STATE_DIR:-$HOME/atrium-deploy}"; mkdir -p "$STATE"
 BK="$HOME/atrium-backups"; mkdir -p "$BK"
 SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "manual-$(date +%s)")"
+PNPM_STORE_DIR="${ATRIUM_PNPM_STORE_DIR:-$STATE/pnpm-store}"
 
 DCF=(-f "$SURF/docker-compose.prod.yml")
 [ -f "$SURF/docker-compose.tunnel.yml" ] && DCF+=(-f "$SURF/docker-compose.tunnel.yml")
-DC=(sudo docker compose "${DCF[@]}")
+COMPOSE_ENV_ARGS=()
+[ -f "$SURF/.env" ] && COMPOSE_ENV_ARGS+=(--env-file "$SURF/.env")
+DC=(sudo docker compose "${COMPOSE_ENV_ARGS[@]}" "${DCF[@]}")
 
 if [ -z "${SURFACE_HEALTH_URL:-}" ]; then
   if [ -f "$SURF/docker-compose.tunnel.yml" ]; then
@@ -35,6 +38,31 @@ log(){ echo "[$(date +%H:%M:%S)] $*"; }
 die(){ echo "[$(date +%H:%M:%S)] FAILED: $*" >&2; exit 1; }
 health_surface(){ curl -fsS --max-time 8 "$SURFACE_HEALTH_URL" >/dev/null 2>&1; }
 health_centaur(){ kubectl exec -n "$NS" deploy/centaur-centaur-api-rs -- curl -fsS --max-time 8 http://localhost:8080/healthz >/dev/null 2>&1; }
+
+refresh_compose_cmd(){
+  local env_args=()
+  if [ -n "${LIVEKIT_CONFIG_FILE:-}" ]; then
+    env_args+=("LIVEKIT_CONFIG_FILE=$LIVEKIT_CONFIG_FILE")
+  fi
+  if [ -n "${LIVEKIT_TURN_DOMAIN:-}" ]; then
+    env_args+=("LIVEKIT_TURN_DOMAIN=$LIVEKIT_TURN_DOMAIN")
+  fi
+  if [ "${#env_args[@]}" -gt 0 ]; then
+    DC=(sudo env "${env_args[@]}" docker compose "${COMPOSE_ENV_ARGS[@]}" "${DCF[@]}")
+  else
+    DC=(sudo docker compose "${COMPOSE_ENV_ARGS[@]}" "${DCF[@]}")
+  fi
+}
+
+prepare_surface_runtime(){
+  if [ -x "$SURF/prepare-livekit-config.sh" ]; then
+    LIVEKIT_CONFIG_FILE="$("$SURF/prepare-livekit-config.sh")" || die "livekit config render"
+    export LIVEKIT_CONFIG_FILE
+    log "livekit: runtime config $LIVEKIT_CONFIG_FILE"
+  fi
+  refresh_compose_cmd
+  mkdir -p "$PNPM_STORE_DIR" || die "create pnpm store"
+}
 
 SOURCE_CLEAN_DIRS=(
   surface/web/src
@@ -57,6 +85,14 @@ clean_source_strays(){
     git -C "$REPO_DIR" clean -fd -- "${SOURCE_CLEAN_DIRS[@]}" >/dev/null || die "source clean"
   else
     log "source clean: no untracked strays in allowlisted source dirs"
+  fi
+}
+
+clean_legacy_pnpm_store(){
+  local legacy="$REPO_DIR/surface/.pnpm-store"
+  if [ -d "$legacy" ]; then
+    log "surface: removing stale repo-local pnpm store $legacy"
+    sudo rm -rf -- "$legacy" || die "remove stale pnpm store"
   fi
 }
 
@@ -89,9 +125,15 @@ backup_db(){
 deploy_surface(){
   if [ "$need_surface" != 1 ]; then log "surface: no source change, skipping"; return; fi
   clean_source_strays
+  clean_legacy_pnpm_store
   log "surface: building web SPA"
-  sudo docker run --rm -v "$REPO_DIR/surface":/app -w /app -e CI=true node:24-alpine \
-    sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm --filter @atrium/web build' || die "web build"
+  sudo docker run --rm \
+    -v "$REPO_DIR/surface":/app \
+    -v "$PNPM_STORE_DIR":/pnpm-store \
+    -w /app \
+    -e CI=true \
+    node:24-alpine \
+    sh -c 'corepack enable && pnpm config set store-dir /pnpm-store --global && pnpm install --frozen-lockfile && pnpm --filter @atrium/web build' || die "web build"
   local prev; prev=$(sudo docker image inspect deploy-server:latest -f '{{.Id}}' 2>/dev/null || true)
   [ -n "$prev" ] && sudo docker tag "$prev" deploy-server:rollback
   log "surface: build + recreate server"
@@ -206,6 +248,7 @@ prune_images(){
   "$REPO_DIR/deploy/registry-gc.sh" || log "prune: registry-gc reported issues (see above)"
 }
 
+prepare_surface_runtime
 backup_db
 case "$TARGET" in
   surface) deploy_surface ;;

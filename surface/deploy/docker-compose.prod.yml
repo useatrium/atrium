@@ -136,9 +136,9 @@ services:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-}: ${LIVEKIT_API_SECRET:-}"
     command: ["--config", "/etc/livekit.yaml"]
     volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - ${LIVEKIT_CONFIG_FILE:-./livekit.yaml}:/etc/livekit.yaml:ro
       # Set LIVEKIT_TURN_DOMAIN to the certificate directory and keep it in sync
-      # with turn.domain in livekit.yaml.
+      # with turn.domain in the generated runtime LiveKit config.
       - /etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN:-turn.example.com}/fullchain.pem:/etc/livekit/turn.crt:ro
       - /etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN:-turn.example.com}/privkey.pem:/etc/livekit/turn.key:ro
 

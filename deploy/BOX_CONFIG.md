@@ -10,6 +10,11 @@ This is the source map for the Atrium + Centaur OVH box. It is meant to answer
 | Deploy orchestration | `deploy/redeploy.sh`, `.github/workflows/deploy.yml` | Yes | `deploy` branch pushes run on the self-hosted runner and call `redeploy.sh all`. |
 | Surface services | `surface/deploy/docker-compose.prod.yml` plus box-local overrides | Partly | Runtime env is box-local in `~/atrium/surface/deploy/.env`. |
 | Surface secrets | `~/atrium/surface/deploy/.env` | No | Do not commit values. Audit by key name only. |
+| Surface deploy state | `$HOME/atrium-deploy` | No | Generated/runtime state for deploys. This is where host-local deploy artifacts belong, not under `~/atrium`. |
+| LiveKit TURN hostname | `LIVEKIT_TURN_DOMAIN` in `~/atrium/surface/deploy/.env` | No | Source of truth for the DNS-only TURN host, the certbot live directory, and the rendered runtime LiveKit config. |
+| LiveKit runtime config | `$HOME/atrium-deploy/surface` | No, generated | Deploy scripts materialize the host-local LiveKit config here from repo-managed inputs. Do not hand-edit `surface/deploy/livekit.yaml` on the box for production state. |
+| TURN certificate renewal | `surface/deploy/renew-turn-cert.sh`, `surface/deploy/install-turn-renewal.sh` | Yes | Installer writes `/usr/local/sbin/atrium-renew-turn-cert` plus `atrium-renew-turn-cert.{service,timer}`. |
+| Surface pnpm deploy store | Outside `~/atrium`, under host deploy state | No | `surface/.pnpm-store` should not exist in the checkout. |
 | Centaur chart defaults | `centaur/contrib/chart/values.yaml` and `values.dev.yaml` | Yes | Upstream/fork defaults. Do not treat them as box-specific intent. |
 | Atrium local Centaur overrides | `infra/values.local.yaml` | Yes | Shared simple/env-mode overrides. Some comments are local-dev oriented. |
 | Box Centaur overrides | `deploy/values.box.yaml` | Yes | Primary committed source for the OVH box's Centaur shape. |
@@ -112,6 +117,23 @@ cd ~/atrium/surface/deploy
 sed -n 's/^\([^#=][^=]*\)=.*/\1=<redacted>/p' .env | sort
 ```
 
+Surface deploy-state audit:
+
+```sh
+test ! -d ~/atrium/surface/.pnpm-store && echo 'OK: no repo-local pnpm store'
+ls -la ~/atrium-deploy
+ls -la ~/atrium-deploy/surface 2>/dev/null || echo 'no generated surface state yet'
+systemctl list-timers --all '*turn*' '*cert*'
+systemctl cat atrium-renew-turn-cert.service atrium-renew-turn-cert.timer
+```
+
+`LIVEKIT_TURN_DOMAIN` is not a secret, but keep it in `.env` with the other
+surface runtime values so compose, certbot paths, and the generated LiveKit
+runtime config agree. The committed compose already mounts
+`/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/fullchain.pem` and
+`/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/privkey.pem` into LiveKit; do not
+add a cert-specific compose override for the normal OVH topology.
+
 ## Drift Rules
 
 - If a live Helm value differs from this doc, either update the committed values
@@ -120,6 +142,13 @@ sed -n 's/^\([^#=][^=]*\)=.*/\1=<redacted>/p' .env | sort
   the relevant runbook without committing its value.
 - If `deploy/redeploy.sh` sets a value with `--set`, document it here because it
   will not appear in `deploy/values.box.yaml`.
+- If LiveKit/TURN state differs from this doc, update `.env` or the deploy
+  script path that generates `$HOME/atrium-deploy/surface`; do not fix it by
+  hand-editing `surface/deploy/livekit.yaml` or creating a one-off compose cert
+  override.
+- Install or refresh the TURN cert renewal timer with
+  `~/atrium/surface/deploy/install-turn-renewal.sh`; do not hand-maintain a
+  second timer with an inline compose command.
 - Do not fix production-only behavior by hand-editing live Kubernetes objects
   unless it is incident mitigation. Follow up with a committed values/script
   change.

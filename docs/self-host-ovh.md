@@ -121,6 +121,9 @@ cd ~/atrium/surface/deploy
 docker run --rm -v ~/atrium/surface:/app -w /app node:24-alpine \
   sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm --filter @atrium/web build'
 
+# deploy/build state belongs outside the checkout
+test ! -d ~/atrium/surface/.pnpm-store
+
 # bring up db + minio + server, then Caddy on loopback (tunnel override)
 cd ~/atrium/surface/deploy
 cat > docker-compose.tunnel.yml <<'YAML'
@@ -142,6 +145,12 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/healthz   # 200
 > ⚠️ **Gotcha — Postgres password.** Postgres only sets its password on first init.
 > If you change `DB_PASSWORD` after the volume exists, the server can't auth. On a
 > fresh test box just `docker compose down -v` and re-up.
+
+> ⚠️ **Gotcha — pnpm store drift.** Production deploy/build cache belongs outside
+> `~/atrium`, under the host deploy state area (`~/atrium-deploy`). A
+> `~/atrium/surface/.pnpm-store` directory is stale box-local state, not part of
+> the repo or runtime contract; remove it after confirming no host-local pnpm
+> process is using it.
 
 ## Phase 4 — Cloudflare tunnel + Access (no inbound ports)
 
@@ -228,7 +237,7 @@ DNS and Cloudflare records:
 - `livekit.<domain>` uses the Cloudflare Tunnel route to `http://localhost:7880`
   for LiveKit signaling only
 - `turn.<domain>` is DNS-only A/AAAA to the OVH public IP and matches
-  `turn.domain` in `surface/deploy/livekit.yaml`
+  `LIVEKIT_TURN_DOMAIN` in `~/atrium/surface/deploy/.env`
 
 Current Gary/OVH names: `atrium.garybasin.com` and
 `atrium-files.garybasin.com` are tunnel routes, `livekit.garybasin.com` is a
@@ -262,10 +271,14 @@ direct LiveKit ports through cloudflared or the HTTP Caddyfile. Cloudflare Tunne
 and local Caddy remain for Atrium app HTTP, app WebSockets, files, and LiveKit
 signaling only.
 
-Generate LiveKit keys and set the surface env. `LIVEKIT_TURN_DOMAIN` is an
-operator value for keeping `.env`, `livekit.yaml`, DNS, and certificate paths in
-sync; the server reads `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and
-`LIVEKIT_API_SECRET`.
+Generate LiveKit keys and set the surface env. `LIVEKIT_TURN_DOMAIN` in
+`~/atrium/surface/deploy/.env` is the source of truth for the TURN hostname:
+it drives DNS intent, the certbot live directory, compose's certificate mounts,
+and the deploy-generated runtime LiveKit config under
+`$HOME/atrium-deploy/surface`. Do not edit the committed
+`surface/deploy/livekit.yaml` on the box to set `turn.domain`; it is a repo
+template, not the box-local source of truth. The server reads `LIVEKIT_URL`,
+`LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
 
 ```sh
 cd ~/atrium/surface/deploy
@@ -279,8 +292,6 @@ if grep -q '^LIVEKIT_TURN_DOMAIN=' .env; then
 else
   echo 'LIVEKIT_TURN_DOMAIN=turn.<domain>' >> .env
 fi
-
-sed -i 's|^  domain: .*|  domain: turn.<domain>|' livekit.yaml
 ```
 
 Add the APNs production settings. EAS internal/ad-hoc, TestFlight, and App Store
@@ -306,34 +317,44 @@ Prefer DNS-01 with Cloudflare credentials because it avoids opening `80/tcp`.
 If you use standalone HTTP-01, open `80/tcp` for issuance and renewal and make
 sure the ACME server can bind the public interface.
 
-`surface/deploy/livekit.yaml` expects these paths inside the LiveKit container:
+The committed `docker-compose.prod.yml` already mounts certbot's live paths based
+on `LIVEKIT_TURN_DOMAIN`; do not create a cert-specific compose override for the
+normal OVH topology. Inside the LiveKit container the paths are:
 
 - `/etc/livekit/turn.crt`
 - `/etc/livekit/turn.key`
 
-Mount certbot's live paths into those container paths:
+On the host they come from:
+
+- `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/fullchain.pem`
+- `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/privkey.pem`
 
 ```sh
-cat > docker-compose.livekit-certs.yml <<'YAML'
-services:
-  livekit:
-    volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
-      - /etc/letsencrypt/live/turn.<domain>/fullchain.pem:/etc/livekit/turn.crt:ro
-      - /etc/letsencrypt/live/turn.<domain>/privkey.pem:/etc/livekit/turn.key:ro
-YAML
-
-sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml --profile caddy --profile livekit \
-  -f docker-compose.livekit-certs.yml up -d server caddy livekit
+export LIVEKIT_CONFIG_FILE="$(./prepare-livekit-config.sh)"
+sudo -E docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml --profile caddy --profile livekit \
+  up -d server caddy livekit
 ```
 
-After certbot renewal, restart LiveKit so it reloads the renewed symlink targets:
+The current repo provides the renewal script at
+`~/atrium/surface/deploy/renew-turn-cert.sh`. It runs `certbot renew`, restores
+Caddy on exit, and restarts LiveKit only when certbot's deploy hook records a
+renewed cert in `/var/lib/letsencrypt/atrium-turn-renewed-at`.
+
+Install or refresh the systemd timer from the repo:
 
 ```sh
-sudo docker compose -f ~/atrium/surface/deploy/docker-compose.prod.yml \
-  -f ~/atrium/surface/deploy/docker-compose.tunnel.yml --profile livekit \
-  -f ~/atrium/surface/deploy/docker-compose.livekit-certs.yml restart livekit
+~/atrium/surface/deploy/install-turn-renewal.sh
 ```
+
+Then audit that the timer points at the repo-managed wrapper:
+
+```sh
+systemctl list-timers --all '*turn*' '*cert*'
+systemctl cat atrium-renew-turn-cert.service atrium-renew-turn-cert.timer
+```
+
+Do not replace it with an inline compose restart command; the script preserves
+Caddy and only restarts LiveKit after an actual renewal.
 
 Smoke checklist:
 

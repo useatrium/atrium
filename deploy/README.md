@@ -32,6 +32,12 @@ the registry.
   + `infra/values.local.yaml`.
 - **`BOX_CONFIG.md`** — inventory of committed and box-local config sources, the
   expected live Centaur shape, and read-only drift audit commands.
+- **`surface/deploy/prepare-livekit-config.sh`** — renders the host-local
+  LiveKit runtime config under `$HOME/atrium-deploy/surface` from
+  `LIVEKIT_TURN_DOMAIN`.
+- **`surface/deploy/install-turn-renewal.sh`** — installs/refreshes the
+  `atrium-renew-turn-cert` systemd timer that calls the repo-managed renewal
+  script.
 
 ## CD flow
 `master` is the integration branch. **Promote to ship:** merge `master` → `deploy`.
@@ -50,6 +56,9 @@ running deploy. Status + logs live in the repo's **Actions** tab.
 ## Notes
 - Secrets stay box-local (`surface/deploy/.env`, the `centaur-infra-env` k8s secret,
   cloudflared config, compose overrides) — not in the repo; redeploy reuses them.
+- Surface deploy/build state belongs under `~/atrium-deploy`, not in the source
+  checkout. `redeploy.sh` renders LiveKit config there and forces the pnpm store
+  to `~/atrium-deploy/pnpm-store`; `~/atrium/surface/.pnpm-store` is stale drift.
 - When `surface/deploy/docker-compose.tunnel.yml` exists, `redeploy.sh` health-gates
   Surface at `http://10.42.0.1:${SERVER_HOST_PORT:-3001}/healthz`, matching the
   host-only bind used by Centaur pods and Cloudflare Tunnel. Set `SURFACE_HEALTH_URL`

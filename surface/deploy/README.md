@@ -122,7 +122,7 @@ Use separate names so the routing boundary stays obvious:
 | `atrium.example.com` | Cloudflare Tunnel route | App/API/WebSocket |
 | `atrium-files.example.com` | Cloudflare Tunnel route, no Access policy | MinIO presigned uploads/downloads |
 | `livekit.example.com` | Cloudflare Tunnel route to `http://localhost:7880` | LiveKit signaling endpoint in `LIVEKIT_URL` |
-| `turn.example.com` | DNS-only A/AAAA to the OVH IP | Embedded TURN/TLS domain in `livekit.yaml` |
+| `turn.example.com` | DNS-only A/AAAA to the OVH IP | TURN/TLS domain from `LIVEKIT_TURN_DOMAIN` |
 
 On the OVH tunnel box, use the local `docker-compose.tunnel.yml` override so
 Caddy binds only `127.0.0.1:80` for cloudflared. That leaves public `443/tcp`
@@ -142,12 +142,24 @@ LiveKit signaling WebSocket, but neither path handles LiveKit UDP media, ICE TCP
 or TURN/TLS. Keep app Caddy bound to loopback and reserve public `443` for
 LiveKit TURN/TLS.
 
-For TURN/TLS, `livekit.yaml` expects the certificate and key inside the container
-at `/etc/livekit/turn.crt` and `/etc/livekit/turn.key`. With certbot/Let's
-Encrypt, mount `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/fullchain.pem` to
-the cert path and `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/privkey.pem` to
-the key path. Use DNS-01, or open `80/tcp` only for HTTP-01 issuance/renewal, and
-restart LiveKit after renewal so it reloads the files.
+For TURN/TLS, `LIVEKIT_TURN_DOMAIN` in `surface/deploy/.env` is the source of
+truth. The deploy lane materializes the host-local runtime LiveKit config under
+`$HOME/atrium-deploy/surface`; do not hand-edit the committed
+`surface/deploy/livekit.yaml` on the box for a production hostname. Treat that
+file as the repo template.
+
+The committed compose file already mounts certbot's live paths based on
+`LIVEKIT_TURN_DOMAIN`:
+
+- `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/fullchain.pem` to `/etc/livekit/turn.crt`
+- `/etc/letsencrypt/live/${LIVEKIT_TURN_DOMAIN}/privkey.pem` to `/etc/livekit/turn.key`
+
+Do not create a cert-specific compose override for the normal OVH topology. Set
+`LIVEKIT_TURN_DOMAIN`, issue the certificate for that hostname, and let
+`redeploy.sh` render the runtime config before it runs the existing `livekit`
+compose profile. For manual compose runs, first export
+`LIVEKIT_CONFIG_FILE="$(./prepare-livekit-config.sh)"` and use `sudo -E docker
+compose ...`. Use DNS-01, or open `80/tcp` only for HTTP-01 issuance/renewal.
 
 Required `.env` values:
 
@@ -169,13 +181,26 @@ FCM_SERVICE_ACCOUNT_JSON=
 ```
 
 `LIVEKIT_TURN_DOMAIN` is an operator value: use the same hostname for the
-DNS-only TURN record, `turn.domain` in `livekit.yaml`, and the Let's Encrypt cert
-path. The server reads `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and
-`LIVEKIT_API_SECRET`.
+DNS-only TURN record, the rendered `turn.domain` in the host-local LiveKit
+runtime config, and the Let's Encrypt cert path. The server reads `LIVEKIT_URL`,
+`LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
 
 Use the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` for the server and the
 `livekit` compose profile. The compose file injects them into LiveKit as
 `LIVEKIT_KEYS`, so token signing and verification share one source of truth.
+
+The TURN renewal helper is `surface/deploy/renew-turn-cert.sh` on the box
+(`~/atrium/surface/deploy/renew-turn-cert.sh` in the standard checkout). It runs
+certbot renewal and restarts LiveKit when certbot's deploy hook records a
+renewed certificate. Install or refresh the systemd timer with
+`surface/deploy/install-turn-renewal.sh`; the timer calls the repo-managed
+renewal script through `/usr/local/sbin/atrium-renew-turn-cert`.
+
+The server image uses `pnpm deploy --prod` during the Docker build. The pnpm
+store for deploy/build state belongs outside the checked-out repo, under the
+host deploy state area, not in `~/atrium`. `~/atrium/surface/.pnpm-store` should
+not exist on the box; if it appears, remove the stale directory after confirming
+no host-local pnpm process is using it.
 
 For APNs, production builds, TestFlight builds, App Store builds, and EAS
 internal/ad-hoc builds use production APNs tokens. Leave `APNS_SANDBOX=0` unless
