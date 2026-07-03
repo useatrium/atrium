@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
-import { loadCallWire, type CallRow } from '../calls.js';
+import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
 import { canAccessChannel, DomainError, type UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
 import type { CallTokenService } from '../livekit.js';
@@ -83,6 +83,19 @@ async function activeCallById(
 
 export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): void {
   const { pool, hub, calls, voip, requireUser, optionalOpId, runMutation } = deps;
+
+  app.get('/api/calls/active', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { channelId } = req.query as { channelId?: unknown };
+    if (channelId !== undefined && typeof channelId !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'channelId must be a string' });
+    }
+    if (channelId && !(await canAccessChannel(pool, user.id, channelId))) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    return { calls: await loadActiveCallWiresForUser(pool, user.id, { channelId }) };
+  });
 
   app.post('/api/calls', async (req, reply) => {
     const user = requireUser(req, reply);

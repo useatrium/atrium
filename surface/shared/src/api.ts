@@ -2,7 +2,7 @@
 // the session cookie, while native clients pass an absolute server origin and
 // a bearer token (React Native cookie handling is unreliable).
 
-import type { CallJoin } from './calls';
+import type { ActiveCallSnapshot, CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './sessions';
@@ -641,6 +641,14 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ channelId, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
+    /** Snapshot of non-ended calls visible to this user. Used after reload/reconnect
+     * because call lifecycle WS frames are intentionally ephemeral. */
+    activeCalls: (opts: { channelId?: string } = {}) => {
+      const q = new URLSearchParams();
+      if (opts.channelId) q.set('channelId', opts.channelId);
+      const qs = q.toString();
+      return req<ActiveCallSnapshot>(`/api/calls/active${qs ? `?${qs}` : ''}`);
+    },
     /** Accept a ringing call: mints this user's token + marks them joined. */
     acceptCall: (callId: string) => req<CallJoin>(`/api/calls/${callId}/accept`, { method: 'POST', body: '{}' }),
     declineCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),

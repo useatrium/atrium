@@ -30,6 +30,11 @@ export interface CallJoin {
   url: string;
 }
 
+/** Recoverable snapshot of currently live calls visible to the viewer. */
+export interface ActiveCallSnapshot {
+  calls: CallWire[];
+}
+
 /** Server→client WS frames for call lifecycle, fanned out via the hub. */
 export type CallEvent =
   | { type: 'call.ringing'; call: CallWire }

@@ -1,4 +1,4 @@
-import type { DbClient } from './db.js';
+import type { Db, DbClient } from './db.js';
 import type { UserRef } from './events.js';
 
 export type CallStatus = 'ringing' | 'active' | 'ended';
@@ -34,7 +34,7 @@ export function callWireFromRows(call: CallRow, participants: UserRef[]): CallWi
   };
 }
 
-export async function loadCallWire(client: DbClient, call: CallRow): Promise<CallWire> {
+export async function loadCallWire(client: Pick<Db | DbClient, 'query'>, call: CallRow): Promise<CallWire> {
   const participants = await client.query<{ id: string; handle: string; display_name: string }>(
     `SELECT u.id, u.handle, u.display_name
      FROM call_participants cp
@@ -57,4 +57,33 @@ export async function loadCallWireById(client: DbClient, callId: string): Promis
   const call = await client.query<CallRow>('SELECT * FROM calls WHERE id = $1', [callId]);
   const row = call.rows[0];
   return row ? loadCallWire(client, row) : null;
+}
+
+export async function loadActiveCallWiresForUser(
+  client: Pick<Db | DbClient, 'query'>,
+  userId: string,
+  opts: { channelId?: string } = {},
+): Promise<CallWire[]> {
+  const params: unknown[] = [userId];
+  const channelFilter = opts.channelId ? 'AND c.id = $2' : '';
+  if (opts.channelId) params.push(opts.channelId);
+  const calls = await client.query<CallRow>(
+    `SELECT calls.*
+     FROM calls
+     JOIN channels c ON c.id = calls.channel_id
+     WHERE calls.status <> 'ended'
+       ${channelFilter}
+       AND CASE WHEN c.kind = 'public' THEN EXISTS (
+             SELECT 1 FROM workspace_members wm
+             WHERE wm.workspace_id = c.workspace_id AND wm.user_id = $1
+           )
+           ELSE EXISTS (
+             SELECT 1 FROM channel_members cm
+             WHERE cm.channel_id = c.id AND cm.user_id = $1
+           )
+       END
+     ORDER BY calls.started_at ASC, calls.id ASC`,
+    params,
+  );
+  return Promise.all(calls.rows.map((call) => loadCallWire(client, call)));
 }
