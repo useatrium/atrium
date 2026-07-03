@@ -10,6 +10,7 @@ import {
   type ReactionAction,
   type UserRef,
 } from '../events.js';
+import { extractEntryToMarkdownArtifact } from '../entry-extract.js';
 import { resolveEntry, tryDecodeHandle } from '../entries.js';
 import type { WsHub } from '../hub.js';
 import { searchSessionRecords } from '../session-search.js';
@@ -79,6 +80,35 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
       return reply.code(404).send({ error: 'entry_not_found' });
     }
     return foldAnnotations(pool, handle);
+  });
+
+  app.post('/api/entries/:handle/extract', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { handle } = req.params as { handle: string };
+    if (!tryDecodeHandle(handle)) {
+      return reply.code(400).send({ error: 'bad_handle' });
+    }
+    const entry = await resolveEntry(pool, handle, user.id);
+    if (!entry) {
+      return reply.code(404).send({ error: 'entry_not_found' });
+    }
+    try {
+      const result = await extractEntryToMarkdownArtifact(pool, { handle, entry, userId: user.id });
+      return reply
+        .code(result.created ? 201 : 200)
+        .send({
+          artifactId: result.artifactId,
+          path: result.path,
+          seq: result.seq,
+          workspaceId: result.workspaceId,
+        });
+    } catch (err) {
+      if ((err as { statusCode?: number; code?: string })?.statusCode === 422) {
+        return reply.code(422).send({ error: (err as { code?: string }).code ?? 'unprocessable_entry' });
+      }
+      throw err;
+    }
   });
 
   app.post('/api/entries/:handle/comments', { config: { rateLimit: entryAnnotationRateLimit } }, async (req, reply) => {
