@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type {
+  AgentAttachmentRef,
   AppAction,
   AttachmentRef,
   Channel,
@@ -11,18 +12,10 @@ import type {
   SessionSpawnPayload,
   UserRef,
 } from '@atrium/surface-client';
-import {
-  looksLikeAgentCommand,
-  parseAgentTask,
-  randomId,
-} from '@atrium/surface-client';
+import { looksLikeAgentCommand, parseAgentTask, randomId } from '@atrium/surface-client';
 import { PENDING_SESSION_PREFIX } from './sessions/types';
 import type { SpawnConfig } from './sessions/SpawnDialog';
-import {
-  pendingMessageFromSendPayload,
-  pendingSpawnFromPayload,
-  type VoiceMsgSendPayload,
-} from './chatQueuedOverlays';
+import { pendingMessageFromSendPayload, pendingSpawnFromPayload, type VoiceMsgSendPayload } from './chatQueuedOverlays';
 import { showErrorToast } from './components/Toasts';
 import type { AttachmentMeta } from '@atrium/surface-client';
 
@@ -35,10 +28,7 @@ type EnqueueOpOptions = {
   onStored?: () => void;
 };
 
-type EnqueueOp = <T extends OpType>(
-  input: EnqueueOpInput<T>,
-  options?: EnqueueOpOptions,
-) => Promise<unknown>;
+type EnqueueOp = <T extends OpType>(input: EnqueueOpInput<T>, options?: EnqueueOpOptions) => Promise<unknown>;
 
 type DispatchAppAction = (action: AppAction) => void;
 
@@ -83,17 +73,15 @@ export function useChatMessageActions({
         githubIdentityId?: string;
         agentProfileId?: string;
         agentProfileVersionId?: string;
+        attachments?: AttachmentMeta[];
+        attachmentRefs?: AttachmentRef[];
+        existingAttachmentRefs?: AgentAttachmentRef[];
       },
     ) => {
       const harness = opts?.harness?.trim() || 'codex';
       const repo = opts?.repo?.trim();
       const branch = opts?.branch?.trim();
-      const repos =
-        opts?.repos?.length
-          ? opts.repos
-          : repo
-            ? [{ repo, ...(branch ? { ref: branch } : {}) }]
-            : [];
+      const repos = opts?.repos?.length ? opts.repos : repo ? [{ repo, ...(branch ? { ref: branch } : {}) }] : [];
       const clientSpawnId = `${PENDING_SESSION_PREFIX}${randomId()}`;
       const payload: SessionSpawnPayload = {
         channelId,
@@ -108,6 +96,11 @@ export function useChatMessageActions({
         ...(opts?.githubIdentityId ? { githubIdentityId: opts.githubIdentityId } : {}),
         ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
         ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
+        ...(opts?.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
+        ...(opts?.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
+        ...(opts?.existingAttachmentRefs && opts.existingAttachmentRefs.length > 0
+          ? { existingAttachmentRefs: opts.existingAttachmentRefs }
+          : {}),
         createdAt: new Date().toISOString(),
       };
       const pending = pendingSpawnFromPayload(payload, me);
@@ -163,13 +156,13 @@ export function useChatMessageActions({
       attachmentRefs?: AttachmentRef[],
       voice?: VoiceSendMeta,
     ) => {
-      // Attachments cannot ride along on a spawn. Keep "@agent ..." with files
-      // as a plain message instead of silently dropping attachments.
-      const noAttachments = !attachments || attachments.length === 0;
-      if (text && noAttachments) {
+      if (text) {
         const task = parseAgentTask(text);
         if (task != null) {
-          spawnQueuedSession(channelId, task, threadRootEventId);
+          spawnQueuedSession(channelId, task, threadRootEventId, {
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
+            ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+          });
           return;
         }
         if (looksLikeAgentCommand(text.trim())) {
@@ -318,7 +311,9 @@ export function useChatMessageActions({
       if (!m.clientMsgId) return;
       dispatch({ type: 'retry-remove', channelId: m.channelId, clientMsgId: m.clientMsgId });
       if (m.sessionId != null) {
-        spawnQueuedSession(m.channelId, m.text, m.threadRootEventId ?? undefined);
+        spawnQueuedSession(m.channelId, m.text, m.threadRootEventId ?? undefined, {
+          ...(m.attachments && m.attachments.length > 0 ? { attachments: m.attachments } : {}),
+        });
         return;
       }
       send(
@@ -327,9 +322,7 @@ export function useChatMessageActions({
         m.threadRootEventId ?? undefined,
         m.attachments,
         undefined,
-        m.voice
-          ? { fileId: m.voice.fileId, durationMs: m.voice.durationMs, waveform: m.voice.waveform }
-          : undefined,
+        m.voice ? { fileId: m.voice.fileId, durationMs: m.voice.durationMs, waveform: m.voice.waveform } : undefined,
       );
     },
     [dispatch, send, spawnQueuedSession],

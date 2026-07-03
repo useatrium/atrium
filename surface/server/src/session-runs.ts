@@ -29,13 +29,7 @@ import { projectIncrementalAndEmit } from './session-record-changefeed.js';
 import { ArtifactLedger, type VersionRef } from './artifact-ledger.js';
 import { InvalidArtifactPathError } from './artifact-path.js';
 import { presignGet as s3PresignGet } from './s3.js';
-import {
-  appendEvent,
-  canAccessChannel,
-  DomainError,
-  type UserRef,
-  type WireEvent,
-} from './events.js';
+import { appendEvent, canAccessChannel, DomainError, type UserRef, type WireEvent } from './events.js';
 import type { WsHub } from './hub.js';
 import { sendQuestionPush, sendSessionCompletedPush } from './push.js';
 import {
@@ -54,6 +48,7 @@ import { Connections } from './connections.js';
 import { convergeGitHubPublicReadFallback } from './github-iron-control.js';
 import type { IronControlAdminClient } from './iron-control.js';
 import { AgentProfiles } from './agent-profiles.js';
+import { agentTurnInputLine, agentTurnMessageParts, type AgentTurnAttachmentRef } from './session-attachments.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -383,8 +378,7 @@ export class SessionRuns {
     this.artifactLedger = new ArtifactLedger(this.pool);
     this.harness = options.harness ?? config.centaurHarness;
     this.autoResume = options.autoResume ?? true;
-    this.questionRenotifyMinutes =
-      options.questionRenotifyMinutes ?? config.questionRenotifyMinutes;
+    this.questionRenotifyMinutes = options.questionRenotifyMinutes ?? config.questionRenotifyMinutes;
     this.questionPushFetchImpl = options.questionPushFetchImpl;
     this.providerCredentials =
       options.providerCredentials ?? new ProviderCredentials(this.pool, config.providerCredentialSecret);
@@ -409,10 +403,11 @@ export class SessionRuns {
     /** Client's optimistic id, echoed on session.spawned so a spawn whose
      * POST response was lost still reconciles instead of duplicating. */
     clientSpawnId?: string;
+    initialAttachments?: AgentTurnAttachmentRef[];
     user: UserRef;
   }): Promise<SessionJson> {
     const result = await withTx(this.pool, (client) => this.createSessionInTx(client, args));
-    this.afterCreateSession(result, args.task);
+    this.afterCreateSession(result, args.task, args.initialAttachments);
     return result.session;
   }
 
@@ -432,6 +427,7 @@ export class SessionRuns {
       agentProfileId?: string | null;
       agentProfileVersionId?: string | null;
       clientSpawnId?: string;
+      initialAttachments?: AgentTurnAttachmentRef[];
       user: UserRef;
     },
   ): Promise<SessionCreateResult> {
@@ -470,11 +466,9 @@ export class SessionRuns {
     // value (a typo, or a codex level in a claude profile) must not be seeded,
     // or steers carrying the sticky selection would all fail 400.
     const profileSettings = selectedProfileVersion?.manifest.settings;
-    const spawnEffortRaw =
-      profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
+    const spawnEffortRaw = profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
     const spawnEffort =
-      typeof spawnEffortRaw === 'string' &&
-      (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(spawnEffortRaw)
+      typeof spawnEffortRaw === 'string' && (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(spawnEffortRaw)
         ? spawnEffortRaw
         : null;
     const inserted = await client.query<SessionRow>(
@@ -544,11 +538,15 @@ export class SessionRuns {
     return { session: toJson(row), created: true, event, row };
   }
 
-  afterCreateSession(result: SessionCreateResult, task: string): void {
+  afterCreateSession(
+    result: SessionCreateResult,
+    task: string,
+    attachments: readonly AgentTurnAttachmentRef[] = [],
+  ): void {
     if (!result.created || !result.event || !result.row) return;
     this.hub.publishEvent(result.event);
     queueMicrotask(() => {
-      void this.startSession(result.row!.id, task).catch(() => {});
+      void this.startSession(result.row!.id, task, attachments).catch(() => {});
     });
   }
 
@@ -647,11 +645,7 @@ export class SessionRuns {
       throw new DomainError(410, 'artifact_deleted', 'artifact was deleted');
     }
     if (!v.blobSha || !v.s3Key) {
-      throw new DomainError(
-        503,
-        'blob_unavailable',
-        'artifact bytes are not durable in CAS',
-      );
+      throw new DomainError(503, 'blob_unavailable', 'artifact bytes are not durable in CAS');
     }
     const filename = basename(resolvedPath) || 'artifact';
     const inline = (v.mime || '').startsWith('image/');
@@ -855,18 +849,19 @@ export class SessionRuns {
     return byEventId;
   }
 
-  async postUserMessage(id: string, userId: string, text: string): Promise<void> {
+  async postUserMessage(
+    id: string,
+    userId: string,
+    text: string,
+    attachments: readonly AgentTurnAttachmentRef[] = [],
+  ): Promise<void> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriver(id, userId);
     try {
-      await this.postUserMessageOnce(row, userId, text, true);
+      await this.postUserMessageOnce(row, userId, text, true, this.pool, undefined, attachments);
     } catch (err) {
       if (err instanceof DomainError && err.code === 'provider_auth_required') {
-        await this.markProviderAuthRequired(
-          id,
-          'missing_token',
-          undefined,
-        ).catch(() => {});
+        await this.markProviderAuthRequired(id, 'missing_token', undefined).catch(() => {});
       }
       throw err;
     }
@@ -884,6 +879,7 @@ export class SessionRuns {
     userId: string,
     text: string,
     effort?: SessionEffortLevel,
+    attachments: readonly AgentTurnAttachmentRef[] = [],
   ): Promise<WireEvent | null> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
@@ -894,7 +890,7 @@ export class SessionRuns {
         `the ${row.harness} harness does not support effort "${effort}"`,
       );
     }
-    await this.postUserMessageOnce(row, userId, text, true, client, effort);
+    await this.postUserMessageOnce(row, userId, text, true, client, effort, attachments);
     if (!effort || effort === row.model_effort) return null;
     await client.query('UPDATE sessions SET model_effort = $1 WHERE id = $2', [effort, id]);
     return appendEvent(client, {
@@ -911,12 +907,7 @@ export class SessionRuns {
     this.startTailer(id);
   }
 
-  async answerQuestion(
-    id: string,
-    user: UserRef,
-    questionId: string,
-    answers: QuestionAnswerBody,
-  ): Promise<void> {
+  async answerQuestion(id: string, user: UserRef, questionId: string, answers: QuestionAnswerBody): Promise<void> {
     const row = await this.requireDriver(id, user.id);
     const pending = parsePendingQuestion(row.pending_question);
     if (!pending || pending.questionId !== questionId) {
@@ -1026,6 +1017,7 @@ export class SessionRuns {
     allowStaleRetry: boolean,
     client: Db | DbClient = this.pool,
     effort?: SessionEffortLevel,
+    attachments: readonly AgentTurnAttachmentRef[] = [],
   ): Promise<void> {
     // Stickiness is enforced HERE, at the single authoritative send point:
     // harness effort is per-turn (an omitted field reverts codex to its config
@@ -1051,14 +1043,14 @@ export class SessionRuns {
       await this.centaur.postMessage(
         row.centaur_thread_key,
         generation,
-        [{ type: 'text', text }],
+        agentTurnMessageParts(text, attachments),
         { user_id: userId },
         { messageId },
       );
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
         const refreshed = await this.clearAssignment(row.id, client);
-        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort);
+        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort, attachments);
         return;
       }
       if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
@@ -1072,7 +1064,7 @@ export class SessionRuns {
         await this.centaur.postMessage(
           row.centaur_thread_key,
           generation,
-          [{ type: 'text', text }],
+          agentTurnMessageParts(text, attachments),
           { user_id: userId },
           { messageId: freshId },
         );
@@ -1088,7 +1080,7 @@ export class SessionRuns {
     const executeId = await this.reserveExecuteId(row.id, client);
     const exec = await this.executeWithProviderEnvironment(row, generation, {
       executeId,
-      inputLines: [userInputLine(text, effort)],
+      inputLines: [agentTurnInputLine(text, attachments, effort)],
     });
     await client.query(
       `UPDATE sessions
@@ -1108,12 +1100,7 @@ export class SessionRuns {
     questionId: string,
     answers: QuestionAnswerBody,
   ): Promise<void> {
-    await this.centaur.answerQuestion(
-      row.centaur_thread_key,
-      row.current_execution_id ?? '',
-      questionId,
-      answers,
-    );
+    await this.centaur.answerQuestion(row.centaur_thread_key, row.current_execution_id ?? '', questionId, answers);
   }
 
   private async executeWithProviderEnvironment(
@@ -1128,9 +1115,7 @@ export class SessionRuns {
     });
   }
 
-  private async providerEnvironmentFor(
-    row: SessionRow,
-  ): Promise<Record<string, string> | undefined> {
+  private async providerEnvironmentFor(row: SessionRow): Promise<Record<string, string> | undefined> {
     const provider = providerForHarness(row.harness);
     if (!provider) return undefined;
     const profileEnvironment = await this.agentProfiles.environmentForSession(row.id, provider);
@@ -1138,9 +1123,8 @@ export class SessionRuns {
     if (!ownerId) return profileEnvironment;
     const secret = await this.providerCredentials.getProviderSecret(ownerId, provider);
     if (!secret) return profileEnvironment;
-    const credentialEnvironment = provider === CLAUDE_CODE_PROVIDER
-      ? claudeExecutionEnvironment(secret)
-      : codexExecutionEnvironment(secret);
+    const credentialEnvironment =
+      provider === CLAUDE_CODE_PROVIDER ? claudeExecutionEnvironment(secret) : codexExecutionEnvironment(secret);
     return { ...(profileEnvironment ?? {}), ...credentialEnvironment };
   }
 
@@ -1254,10 +1238,10 @@ export class SessionRuns {
         throw new DomainError(403, 'forbidden', 'only the current driver may grant the seat');
       }
       await this.assertUserExists(client, nextDriverId);
-      const updated = await client.query<SessionRow>(
-        'UPDATE sessions SET driver_id = $1 WHERE id = $2 RETURNING *',
-        [nextDriverId, id],
-      );
+      const updated = await client.query<SessionRow>('UPDATE sessions SET driver_id = $1 WHERE id = $2 RETURNING *', [
+        nextDriverId,
+        id,
+      ]);
       await client.query('DELETE FROM seat_requests WHERE session_id = $1 AND user_id = $2', [id, nextDriverId]);
       const next = updated.rows[0]!;
       return appendEvent(client, {
@@ -1305,12 +1289,7 @@ export class SessionRuns {
    * the caller's transaction (the route wraps it in runMutation for idempotency
    * + a single commit); the returned event is published in onApplied.
    */
-  async createSuggestionInTx(
-    client: DbClient,
-    id: string,
-    userId: string,
-    text: string,
-  ): Promise<WireEvent> {
+  async createSuggestionInTx(client: DbClient, id: string, userId: string, text: string): Promise<WireEvent> {
     const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
     const row = session.rows[0];
     if (!row) {
@@ -1490,13 +1469,7 @@ export class SessionRuns {
     if (action === 'submit') {
       // Answer the question as the driver (validates still-pending + running +
       // posts to Centaur), then record the disposition.
-      const answerEvent = await this.answerQuestionInTx(
-        client,
-        id,
-        driver,
-        proposal.question_id,
-        proposal.answers,
-      );
+      const answerEvent = await this.answerQuestionInTx(client, id, driver, proposal.question_id, proposal.answers);
       await client.query(
         `UPDATE session_answer_proposals
          SET status = 'submitted', resolved_by = $1, resolved_at = now()
@@ -1584,7 +1557,11 @@ export class SessionRuns {
     await Promise.allSettled(handles.map((handle) => handle.done));
   }
 
-  private async startSession(id: string, task: string | null): Promise<void> {
+  private async startSession(
+    id: string,
+    task: string | null,
+    attachments: readonly AgentTurnAttachmentRef[] = [],
+  ): Promise<void> {
     try {
       let row = await this.getStartableSessionRow(id);
       if (!row) return;
@@ -1602,7 +1579,7 @@ export class SessionRuns {
         await this.centaur.postMessage(
           row.centaur_thread_key,
           generation,
-          [{ type: 'text', text: task }],
+          agentTurnMessageParts(task, attachments),
           { user_id: row.spawned_by },
           { messageId: `msg-${id}-initial` },
         );
@@ -1613,7 +1590,7 @@ export class SessionRuns {
       const executeId = await this.reserveExecuteId(id);
       const exec = await this.executeWithProviderEnvironment(row, generation, {
         executeId,
-        inputLines: task == null ? [] : [userInputLine(task)],
+        inputLines: task == null ? [] : [agentTurnInputLine(task, attachments)],
       });
       const updated = await this.updateExecution(id, exec.execution_id, generation);
       if (!updated) {
@@ -1625,11 +1602,7 @@ export class SessionRuns {
       this.startTailer(id);
     } catch (err) {
       if (err instanceof DomainError && err.code === 'provider_auth_required') {
-        await this.markProviderAuthRequired(
-          id,
-          'missing_token',
-          undefined,
-        ).catch(() => {});
+        await this.markProviderAuthRequired(id, 'missing_token', undefined).catch(() => {});
         return;
       }
       if (githubAuthFailureTextForError(err)) {
@@ -1789,12 +1762,7 @@ export class SessionRuns {
         ? frame.event_id
         : providerAuthFailureEventId;
       if (status === 'failed' && terminalAuthFailureEventId != null) {
-        const marked = await this.markProviderAuthRequired(
-          id,
-          'invalid_token',
-          undefined,
-          frame.event_id,
-        );
+        const marked = await this.markProviderAuthRequired(id, 'invalid_token', undefined, frame.event_id);
         if (marked) return;
       }
       const terminalGitHubAuthFailureEventId = githubAuthFailureTextForFrame(frame)
@@ -1856,9 +1824,7 @@ export class SessionRuns {
         this.hub,
         event,
         this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
-      ).catch((err) =>
-        console.warn('question push fanout failed', { id, err }),
-      );
+      ).catch((err) => console.warn('question push fanout failed', { id, err }));
       this.scheduleQuestionRenotify(id, event);
     }
   }
@@ -1912,10 +1878,7 @@ export class SessionRuns {
     await this.providerCredentials.markConnectedIfProxy(ownerId, provider);
   }
 
-  async clearProviderAuthRequired(
-    userId: string,
-    provider: ProviderCredentialProvider,
-  ): Promise<void> {
+  async clearProviderAuthRequired(userId: string, provider: ProviderCredentialProvider): Promise<void> {
     const events = await withTx(this.pool, async (client) => {
       const res = await client.query<SessionRow>(
         `SELECT *
@@ -1953,11 +1916,7 @@ export class SessionRuns {
   }
 
   async markClaudeAuthMissing(id: string): Promise<void> {
-    await this.markProviderAuthRequired(
-      id,
-      'missing_token',
-      undefined,
-    );
+    await this.markProviderAuthRequired(id, 'missing_token', undefined);
   }
 
   private async markProviderAuthRequired(
@@ -2015,11 +1974,9 @@ export class SessionRuns {
     }
     const releaseRow = rowToRelease as SessionRow | null;
     if (releaseRow && releaseRow.assignment_generation != null) {
-      await this.centaur
-        .release(releaseRow.centaur_thread_key, `rel-${id}-auth-${Date.now()}`, true)
-        .catch((err) => {
-          console.warn('session release after provider auth failure failed', { id, err });
-        });
+      await this.centaur.release(releaseRow.centaur_thread_key, `rel-${id}-auth-${Date.now()}`, true).catch((err) => {
+        console.warn('session release after provider auth failure failed', { id, err });
+      });
     }
     return events.length > 0;
   }
@@ -2027,10 +1984,9 @@ export class SessionRuns {
   private async markGitHubNeedsAuth(id: string, message: string | undefined, lastEventId = 0): Promise<boolean> {
     const authMessage =
       message ?? 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.';
-    const before = await this.pool.query<Pick<SessionRow, 'workspace_id' | 'spawned_by' | 'provider_credential_user_id'>>(
-      'SELECT workspace_id, spawned_by, provider_credential_user_id FROM sessions WHERE id = $1',
-      [id],
-    );
+    const before = await this.pool.query<
+      Pick<SessionRow, 'workspace_id' | 'spawned_by' | 'provider_credential_user_id'>
+    >('SELECT workspace_id, spawned_by, provider_credential_user_id FROM sessions WHERE id = $1', [id]);
     const owner = before.rows[0]
       ? {
           workspaceId: before.rows[0].workspace_id,
@@ -2117,11 +2073,7 @@ export class SessionRuns {
     }
   }
 
-  private async clearPendingQuestion(
-    id: string,
-    questionId: string,
-    reason: 'cancelled' | 'empty',
-  ): Promise<void> {
+  private async clearPendingQuestion(id: string, questionId: string, reason: 'cancelled' | 'empty'): Promise<void> {
     let cleared = false;
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
@@ -2234,8 +2186,7 @@ export class SessionRuns {
   private scheduleQuestionRenotify(id: string, event: WireEvent): void {
     this.cancelScheduledQuestionRenotify(id);
     if (!(this.questionRenotifyMinutes > 0)) return;
-    const questionId =
-      typeof event.payload.questionId === 'string' ? event.payload.questionId : null;
+    const questionId = typeof event.payload.questionId === 'string' ? event.payload.questionId : null;
     if (!questionId) return;
     const timer = setTimeout(() => {
       this.questionRenotifyTimers.delete(id);
@@ -2253,11 +2204,7 @@ export class SessionRuns {
     }
   }
 
-  private async renotifyQuestionIfStillPending(
-    id: string,
-    questionId: string,
-    event: WireEvent,
-  ): Promise<void> {
+  private async renotifyQuestionIfStillPending(id: string, questionId: string, event: WireEvent): Promise<void> {
     try {
       const row = await this.getSessionRow(id);
       const pending = row ? parsePendingQuestion(row.pending_question) : null;
@@ -2320,7 +2267,9 @@ export class SessionRuns {
     // Forward the session's checkout target so Centaur hydrates it from the node
     // repo-cache (centaur_session_repos → AGENT_REPOS_JSON → entrypoint clone).
     const sessionRepos = parseSessionRepos(session.session_repos);
-    const repos = sessionRepos ?? (session.repo ? [{ repo: session.repo, ...(session.branch ? { ref: session.branch } : {}) }] : []);
+    const repos =
+      sessionRepos ??
+      (session.repo ? [{ repo: session.repo, ...(session.branch ? { ref: session.branch } : {}) }] : []);
     const credentialOwnerUserId = session.provider_credential_user_id ?? session.spawned_by;
     const spawned = await this.centaur.spawn(session.centaur_thread_key, session.harness, {
       spawnId,
@@ -2509,10 +2458,9 @@ export class SessionRuns {
   private async toJsonWithSeatInfo(row: SessionRow): Promise<SessionJson> {
     const [driver, requests, viewers, suggestions, proposals] = await Promise.all([
       row.driver_id
-        ? this.pool.query<SessionUserRow>(
-            'SELECT id AS user_id, display_name FROM users WHERE id = $1',
-            [row.driver_id],
-          )
+        ? this.pool.query<SessionUserRow>('SELECT id AS user_id, display_name FROM users WHERE id = $1', [
+            row.driver_id,
+          ])
         : Promise.resolve({ rows: [] as SessionUserRow[] }),
       this.pool.query<SessionUserRow>(
         `SELECT u.id AS user_id, u.display_name
@@ -2592,11 +2540,7 @@ async function getChannel(client: DbClient, channelId: string): Promise<ChannelR
   return res.rows[0] ?? null;
 }
 
-async function assertThreadRoot(
-  client: DbClient,
-  channelId: string,
-  threadRootEventId: number,
-): Promise<void> {
+async function assertThreadRoot(client: DbClient, channelId: string, threadRootEventId: number): Promise<void> {
   const root = await client.query<{
     channel_id: string | null;
     thread_root_event_id: number | null;
@@ -2619,19 +2563,6 @@ function normalizeStatus(status: string): SessionStatus {
   if (status === 'queued' || status === 'running') return status;
   if (status === 'failed' || status === 'failed_permanent') return 'failed';
   return 'running';
-}
-
-/** One harness stdin line. `effort` rides as the top-level `reasoning` field —
- * the harness-server's per-turn effort channel (codex `turn/start.effort`);
- * the claude/amp paths ignore it, so callers gate on harness first. */
-function userInputLine(text: string, effort?: string | null): string {
-  return JSON.stringify({
-    type: 'user',
-    message: {
-      content: [{ type: 'text', text }],
-    },
-    ...(effort ? { reasoning: effort } : {}),
-  });
 }
 
 export type SessionEffortLevel = string;
@@ -2704,12 +2635,7 @@ function isGitHubAuthFailureText(value: string | null | undefined): boolean {
 }
 
 function isRawHarnessErrorFrame(raw: Record<string, unknown>): boolean {
-  return (
-    raw.method === 'error' ||
-    raw.method === 'turn/failed' ||
-    raw.type === 'error' ||
-    raw.type === 'turn.failed'
-  );
+  return raw.method === 'error' || raw.method === 'turn/failed' || raw.type === 'error' || raw.type === 'turn.failed';
 }
 
 function frameAuthText(value: unknown): string | null {
@@ -2976,21 +2902,14 @@ function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | n
   const provider = typeof raw.provider === 'string' ? providerForHarness(raw.provider) : null;
   if (!provider) return null;
   if (typeof raw.userId !== 'string') return null;
-  if (
-    raw.reason !== 'missing_token' &&
-    raw.reason !== 'invalid_token' &&
-    raw.reason !== 'auth_error'
-  ) {
+  if (raw.reason !== 'missing_token' && raw.reason !== 'invalid_token' && raw.reason !== 'auth_error') {
     return null;
   }
   return {
     provider,
     userId: raw.userId,
     reason: raw.reason,
-    message:
-      typeof raw.message === 'string' && raw.message.trim()
-        ? raw.message
-        : reconnectMessage(provider),
+    message: typeof raw.message === 'string' && raw.message.trim() ? raw.message : reconnectMessage(provider),
     at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
   };
 }
@@ -2999,10 +2918,7 @@ function reconnectMessage(provider: ProviderCredentialProvider): string {
   return `Reconnect ${providerDisplayName(provider)} to continue this session.`;
 }
 
-function authRequiredMessage(
-  provider: ProviderCredentialProvider,
-  reason: ProviderAuthRequiredJson['reason'],
-): string {
+function authRequiredMessage(provider: ProviderCredentialProvider, reason: ProviderAuthRequiredJson['reason']): string {
   if (reason === 'invalid_token' || reason === 'auth_error') {
     return provider === CLAUDE_CODE_PROVIDER
       ? 'Claude Code authentication failed. Reconnect Claude to continue.'
@@ -3024,11 +2940,7 @@ function isQuestionPrompt(value: unknown): value is QuestionPrompt {
       const o = option as Record<string, unknown>;
       if (typeof o.label !== 'string' || typeof o.description !== 'string') return false;
       if (o.preview !== undefined && typeof o.preview !== 'string') return false;
-      if (
-        o.previewFormat !== undefined &&
-        o.previewFormat !== 'markdown' &&
-        o.previewFormat !== 'html'
-      ) {
+      if (o.previewFormat !== undefined && o.previewFormat !== 'markdown' && o.previewFormat !== 'html') {
         return false;
       }
     }
@@ -3054,10 +2966,7 @@ function eventQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] 
   }));
 }
 
-function summarizeAnswers(
-  pending: SessionPendingQuestionJson,
-  answers: QuestionAnswerBody,
-): Record<string, unknown>[] {
+function summarizeAnswers(pending: SessionPendingQuestionJson, answers: QuestionAnswerBody): Record<string, unknown>[] {
   return Object.entries(answers).map(([id, value]) => {
     const prompt = pending.questions.find((q) => q.id === id);
     const answerValues = Array.isArray(value.answers) ? value.answers : [];

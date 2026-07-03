@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { containsCriticMarkup } from '@atrium/surface-client';
+import { CriticMarkupView } from '../../CriticMarkupView';
 import { SessionMarkdown } from '../../../sessions/Markdown';
 import type { PreviewFile, MediaPreviewVariant } from '../types';
 import { fetchText } from '../utils';
@@ -39,7 +41,7 @@ export function MarkdownRenderer({ file, variant }: { file: PreviewFile; variant
         <div className="text-sm text-danger-text">{state.text}</div>
       ) : (
         <div className="mx-auto max-w-3xl">
-          <SessionMarkdown text={state.text} />
+          {containsCriticMarkup(state.text) ? <CriticMarkupView text={state.text} /> : <SessionMarkdown text={state.text} />}
         </div>
       )}
     </div>

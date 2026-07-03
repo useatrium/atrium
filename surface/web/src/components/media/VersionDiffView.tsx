@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { HubFileVersion } from '@atrium/surface-client';
+import { containsCriticMarkup, type HubFileVersion } from '@atrium/surface-client';
 import { DiffView } from '../../sessions/fileChangeView';
+import { CriticMarkupView } from '../CriticMarkupView';
 import type { PreviewFile } from './types';
 import { effectiveMediaKind, fileExtension, formatBytes, isNotebookFile } from './utils';
 
@@ -189,6 +190,67 @@ function TextVersionDiff({ oldText, newText }: { oldText: string; newText: strin
   );
 }
 
+function splitYamlFrontmatter(text: string): { frontmatter: string | null; body: string } {
+  const normalized = text.replace(/\r\n/g, '\n');
+  if (!normalized.startsWith('---\n')) return { frontmatter: null, body: text };
+  const lines = normalized.split('\n');
+  const closingIndex = lines.findIndex((line, index) => index > 0 && line === '---');
+  if (closingIndex < 0) return { frontmatter: null, body: text };
+  const frontmatter = lines.slice(0, closingIndex + 1).join('\n');
+  const body = lines.slice(closingIndex + 1).join('\n');
+  return {
+    frontmatter,
+    body,
+  };
+}
+
+function VersionDiffModeToggle({
+  mode,
+  onMode,
+}: {
+  mode: 'diff' | 'markup';
+  onMode: (mode: 'diff' | 'markup') => void;
+}) {
+  return (
+    <div className="mb-2 inline-flex rounded-md border border-edge bg-surface p-0.5 text-2xs">
+      {(['diff', 'markup'] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          className={
+            mode === option
+              ? 'rounded bg-surface-raised px-2.5 py-1 font-semibold text-fg shadow-sm'
+              : 'rounded px-2.5 py-1 text-fg-muted hover:text-fg'
+          }
+          onClick={() => onMode(option)}
+        >
+          {option === 'diff' ? 'Diff' : 'Markup'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MarkupVersionView({ text, seq }: { text: string; seq: number }) {
+  const { frontmatter, body } = useMemo(() => splitYamlFrontmatter(text), [text]);
+  return (
+    <div className="overflow-hidden rounded-md border border-edge bg-surface">
+      <div className="border-b border-edge bg-surface-raised/45 px-3 py-1.5 text-2xs font-semibold text-fg-secondary">
+        Markup view of latest version v{seq}
+      </div>
+      <div className="space-y-2 px-3 py-2.5">
+        {frontmatter && (
+          <details className="rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-2xs text-fg-muted">
+            <summary className="cursor-pointer font-semibold text-fg-secondary">frontmatter</summary>
+            <pre className="mt-2 whitespace-pre-wrap font-mono text-2xs">{frontmatter}</pre>
+          </details>
+        )}
+        <CriticMarkupView text={body} />
+      </div>
+    </div>
+  );
+}
+
 function useObjectUrl(blob: Blob | null): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -344,10 +406,14 @@ export function VersionDiffView({
 }) {
   const [texts, setTexts] = useState<{ oldText: string; newText: string } | null>(null);
   const [textError, setTextError] = useState<string | null>(null);
+  const [textMode, setTextMode] = useState<'diff' | 'markup'>('diff');
   const kind = effectiveMediaKind(file);
   const imageLike = kind === 'image' || (selectedVersion.mime ?? file.mime).toLowerCase().startsWith('image/');
   const notebookLike = isNotebookFile(file);
   const textLike = notebookLike || isTextLike(file, selectedVersion) || isTextLike(file, latestVersion);
+  const markupAvailable = Boolean(
+    texts && !notebookLike && (containsCriticMarkup(texts.oldText) || containsCriticMarkup(texts.newText)),
+  );
 
   useEffect(() => {
     if (!textLike) {
@@ -371,6 +437,10 @@ export function VersionDiffView({
     };
   }, [latestBlob, selectedBlob, textLike]);
 
+  useEffect(() => {
+    if (!markupAvailable && textMode === 'markup') setTextMode('diff');
+  }, [markupAvailable, textMode]);
+
   if (notebookLike) {
     if (textError)
       return (
@@ -390,7 +460,16 @@ export function VersionDiffView({
         </div>
       );
     if (!texts) return <div className="text-2xs text-fg-muted">Loading text diff...</div>;
-    return <TextVersionDiff oldText={texts.oldText} newText={texts.newText} />;
+    return (
+      <div>
+        {markupAvailable && <VersionDiffModeToggle mode={textMode} onMode={setTextMode} />}
+        {markupAvailable && textMode === 'markup' ? (
+          <MarkupVersionView text={texts.newText} seq={latestVersion.seq} />
+        ) : (
+          <TextVersionDiff oldText={texts.oldText} newText={texts.newText} />
+        )}
+      </div>
+    );
   }
 
   if (imageLike) return <ImageVersionDiff oldBlob={selectedBlob} newBlob={latestBlob} file={file} />;

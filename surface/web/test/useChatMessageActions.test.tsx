@@ -2,19 +2,8 @@
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-  AppAction,
-  Channel,
-  ChatMessage,
-  EnqueueOpInput,
-  OpType,
-  UserRef,
-} from '@atrium/surface-client';
-import {
-  queuedMessagePayload,
-  useChatMessageActions,
-  type VoiceSendMeta,
-} from '../src/useChatMessageActions';
+import type { AppAction, Channel, ChatMessage, EnqueueOpInput, OpType, UserRef } from '@atrium/surface-client';
+import { queuedMessagePayload, useChatMessageActions, type VoiceSendMeta } from '../src/useChatMessageActions';
 
 const me: UserRef = { id: 'user-1', handle: 'me', displayName: 'Me User' };
 const channel: Channel = {
@@ -145,17 +134,23 @@ describe('useChatMessageActions', () => {
     );
   });
 
-  it('keeps @agent text as a plain message when attachments are present', () => {
+  it('routes @agent sends with attachments to session spawn', () => {
     const { result, enqueueOp } = renderActions();
+    const attachment = { id: 'file-1', filename: 'a.txt', contentType: 'text/plain', size: 10 };
 
     act(() =>
-      result.current.send('ch-1', '@agent summarize this file', undefined, [
-        { id: 'file-1', filename: 'a.txt', contentType: 'text/plain', size: 10 },
-      ]),
+      result.current.send('ch-1', '@agent summarize this file', undefined, [attachment], [{ uploadKey: 'upload-1' }]),
     );
 
     expect(enqueueOp).toHaveBeenCalledWith(
-      expect.objectContaining({ opType: 'msg.send' }),
+      expect.objectContaining({
+        opType: 'session.spawn',
+        payload: expect.objectContaining({
+          task: 'summarize this file',
+          attachments: [attachment],
+          attachmentRefs: [{ uploadKey: 'upload-1' }],
+        }),
+      }),
       expect.anything(),
     );
   });
@@ -170,9 +165,7 @@ describe('useChatMessageActions', () => {
       await result.current.editMessage(confirmedMessage(), 'updated');
     });
 
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'overlay-rejected', channelId: 'ch-1' }),
-    );
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'overlay-rejected', channelId: 'ch-1' }));
   });
 
   it('uses the correct reaction action for existing user reactions', async () => {
@@ -214,10 +207,7 @@ describe('useChatMessageActions', () => {
       clientMsgId: 'failed-1',
     });
     await waitFor(() =>
-      expect(enqueueOp).toHaveBeenCalledWith(
-        expect.objectContaining({ opType: 'msg.send' }),
-        expect.anything(),
-      ),
+      expect(enqueueOp).toHaveBeenCalledWith(expect.objectContaining({ opType: 'msg.send' }), expect.anything()),
     );
   });
 

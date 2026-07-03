@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { containsCriticMarkup } from '@atrium/surface-client';
+import { CriticMarkupView } from '../../CriticMarkupView';
 import type { PreviewFile, MediaPreviewVariant } from '../types';
 import { fetchText, languageForFile } from '../utils';
 
@@ -99,6 +101,10 @@ export function CodeRenderer({ file, variant }: { file: PreviewFile; variant: Me
         <div className="p-4 text-sm text-fg-muted">Loading code...</div>
       ) : state.status === 'error' ? (
         <div className="p-4 text-sm text-danger-text">{state.text}</div>
+      ) : containsCriticMarkup(state.text) ? (
+        <div className="p-4">
+          <CriticMarkupView text={state.text} />
+        </div>
       ) : (
         <div
           className="media-code-view [&_.shiki]:m-0 [&_.shiki]:min-h-full [&_.shiki]:overflow-x-auto [&_.shiki]:bg-surface! [&_.shiki]:p-4 [&_.shiki]:font-mono [&_.shiki]:text-xs [&_.shiki]:leading-relaxed"

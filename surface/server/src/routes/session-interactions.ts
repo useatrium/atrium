@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { DbClient } from '../db.js';
+import type { Db, DbClient } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import {
   isSessionEffortLevel,
@@ -7,8 +7,10 @@ import {
   type SessionEffortLevel,
   type SessionRuns,
 } from '../session-runs.js';
+import { parseAgentTurnAttachmentInputPayloads, resolveAgentTurnAttachments } from '../session-attachments.js';
 
 export interface SessionInteractionRouteDeps {
+  pool: Db;
   sessionRuns: SessionRuns;
   maxMessageBytes: number;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
@@ -42,8 +44,16 @@ function isQuestionNotPendingError(err: unknown): boolean {
 }
 
 export function registerSessionInteractionRoutes(app: FastifyInstance, deps: SessionInteractionRouteDeps): void {
-  const { sessionRuns, maxMessageBytes, requireUser, requireSessionAccess, optionalOpId, runMutation, publishEvent } =
-    deps;
+  const {
+    pool,
+    sessionRuns,
+    maxMessageBytes,
+    requireUser,
+    requireSessionAccess,
+    optionalOpId,
+    runMutation,
+    publishEvent,
+  } = deps;
 
   app.get('/api/sessions/:id/stream', async (req, reply) => {
     const user = requireUser(req, reply);
@@ -69,10 +79,17 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { text?: string; effort?: unknown; opId?: unknown };
+    const body = (req.body ?? {}) as {
+      text?: string;
+      effort?: unknown;
+      attachments?: unknown;
+      attachmentRefs?: unknown;
+      opId?: unknown;
+    };
     const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
-    if (text.trim().length === 0) {
+    const attachmentInputs = parseAgentTurnAttachmentInputPayloads(body.attachments, body.attachmentRefs);
+    if (text.trim().length === 0 && attachmentInputs.length === 0) {
       return reply.code(400).send({ error: 'empty_message', message: 'message text is empty' });
     }
     if (Buffer.byteLength(text, 'utf8') > maxMessageBytes) {
@@ -87,9 +104,15 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
         userId: user.id,
         opId,
         opType: 'session.steer',
-        body: { sessionId: id, text, ...(effort ? { effort } : {}) },
+        body: { sessionId: id, text, ...(effort ? { effort } : {}), attachments: attachmentInputs },
         fn: async (client) => {
-          const event = await sessionRuns.postUserMessageInTx(client, id, user.id, text, effort);
+          const attachments = await resolveAgentTurnAttachments(pool, {
+            userId: user.id,
+            sessionId: id,
+            inputs: attachmentInputs,
+            logger: req.log,
+          });
+          const event = await sessionRuns.postUserMessageInTx(client, id, user.id, text, effort, attachments);
           return { ok: true as const, event };
         },
         onApplied: (result) => {

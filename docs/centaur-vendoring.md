@@ -34,11 +34,12 @@ only runs root `.github/workflows/`).
 heavy `node-sync-pod-e2e` (kind cluster). The `depot-*` runners upstream fall back to
 `ubuntu-latest` off `paradigmxyz`, and no secrets are needed.
 
-The workflow **always runs** (no top-level path filter) but the heavy jobs gate on a
-`ci_changes` detector — so a non-centaur PR just runs the detector + aggregator (heavy jobs
-skip, ~15s) and reports green. This makes **`Centaur CI success` a safe required check**
-(it reports on every PR). **`node-sync-pod-e2e` (kind) runs whenever node-sync paths
-change — PRs included — and is part of the required aggregator** (allowed-skips covers the
+The workflow **always runs** (no top-level path filter) on PRs and merge groups, but the
+heavy jobs gate on a `ci_changes` detector — so a non-centaur change just runs the detector
+and aggregator (heavy jobs skip, ~15s) and reports green. This makes **`Centaur CI success`
+a safe required check** (it reports on every PR and merge group). **`node-sync-pod-e2e`
+(kind) runs whenever node-sync paths change — PRs and merge groups included — and is part
+of the required aggregator** (allowed-skips covers the
 non-node-sync case). It was once excluded as "flaky", but its only real failures were real
 bugs, and the exclusion let a hydration regression (#220) merge and sit silently red on
 master for two days. A node-sync PR takes ~6–7 min (the kind e2e is the long pole).

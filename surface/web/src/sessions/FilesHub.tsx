@@ -13,7 +13,14 @@ import { EmptyState } from './EmptyState';
 type SortMode = 'recent' | 'name' | 'size';
 type OriginFilter = 'all' | FileOrigin;
 type MediaFilter = 'all' | MediaKind;
-type FileHubScope = 'channel' | 'workspace';
+type FileHubBrowseScope = 'channel' | 'workspace';
+type FileHubScope = FileHubBrowseScope | 'session';
+
+export type FilesHubDefaultScope = FileHubScope;
+export interface FilesHubSessionScope {
+  label: string;
+  paths: string[];
+}
 
 interface Filters {
   origin: OriginFilter;
@@ -155,6 +162,55 @@ function joinDir(segments: string[]): string {
 
 function hasPrefix(segments: string[], prefix: string[]): boolean {
   return prefix.every((segment, index) => segments[index] === segment);
+}
+
+function normalizeScopePath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/^file:\/\//, '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+}
+
+function pathCandidates(path: string): string[] {
+  const normalized = normalizeScopePath(path);
+  if (!normalized) return [];
+  const candidates = new Set<string>([normalized]);
+  const workspaceMarker = '/workspace/';
+  const workspaceIndex = `/${normalized}`.lastIndexOf(workspaceMarker);
+  if (workspaceIndex >= 0) candidates.add(`/${normalized}`.slice(workspaceIndex + workspaceMarker.length));
+  const channelMatch = normalized.match(/(?:^|\/)shared\/channels\/[^/]+\/(.+)$/);
+  if (channelMatch?.[1]) candidates.add(channelMatch[1]);
+  const scratchMatch = normalized.match(/(?:^|\/)scratch\/[^/]+\/(.+)$/);
+  if (scratchMatch?.[1]) candidates.add(scratchMatch[1]);
+  const globalMatch = normalized.match(/(?:^|\/)shared\/global\/(.+)$/);
+  if (globalMatch?.[1]) candidates.add(globalMatch[1]);
+  return [...candidates].filter(Boolean);
+}
+
+function candidateMatchesScope(filePath: string, scopePath: string): boolean {
+  if (filePath === scopePath || filePath.startsWith(`${scopePath}/`)) return true;
+  if (filePath.endsWith(`/${scopePath}`)) return true;
+  if (scopePath.endsWith(`/${filePath}`)) return true;
+  return false;
+}
+
+export function fileMatchesSessionScope(filePath: string, scopePaths: readonly string[]): boolean {
+  const fileCandidates = pathCandidates(filePath);
+  if (fileCandidates.length === 0) return false;
+  for (const scopePath of scopePaths) {
+    const scopeCandidates = pathCandidates(scopePath);
+    for (const fileCandidate of fileCandidates) {
+      for (const scopeCandidate of scopeCandidates) {
+        if (candidateMatchesScope(fileCandidate, scopeCandidate)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 interface FolderEntry {
@@ -558,17 +614,29 @@ export function FilesHub({
   workspaceId,
   channelId,
   sessionId,
+  sessionScope,
   defaultScope,
   filesEventSeq = 0,
 }: {
   workspaceId: string;
   channelId?: string | null;
   sessionId?: string;
-  defaultScope?: FileHubScope;
+  sessionScope?: FilesHubSessionScope;
+  defaultScope?: FilesHubDefaultScope;
   filesEventSeq?: number;
 }): JSX.Element {
-  const resolvedDefaultScope = channelId ? (defaultScope ?? 'channel') : 'workspace';
+  const resolvedDefaultScope: FileHubScope =
+    defaultScope === 'session' && sessionScope
+      ? 'session'
+      : defaultScope === 'workspace'
+        ? 'workspace'
+        : channelId
+          ? 'channel'
+          : 'workspace';
   const [scope, setScope] = useState<FileHubScope>(resolvedDefaultScope);
+  const [lastBrowseScope, setLastBrowseScope] = useState<FileHubBrowseScope>(
+    resolvedDefaultScope === 'workspace' || !channelId ? 'workspace' : 'channel',
+  );
   const [filters, setFilters] = useState<Filters>({
     origin: 'all',
     mediaKind: 'all',
@@ -608,9 +676,11 @@ export function FilesHub({
 
   useEffect(() => {
     setScope(resolvedDefaultScope);
+    if (resolvedDefaultScope !== 'session') setLastBrowseScope(resolvedDefaultScope);
   }, [resolvedDefaultScope]);
 
-  const scopedChannelId = channelId && scope === 'channel' ? channelId : null;
+  const browseScope: FileHubBrowseScope = scope === 'session' ? lastBrowseScope : scope;
+  const scopedChannelId = channelId && browseScope === 'channel' ? channelId : null;
   const scopedChannel = scopedChannelId != null;
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
   const effectiveFilters = useMemo(
@@ -628,6 +698,12 @@ export function FilesHub({
     if (!searchActive) setCurrentDir('');
     setLightboxIndex(null);
   }, [searchActive]);
+
+  useEffect(() => {
+    setCurrentDir('');
+    setLightboxIndex(null);
+    if (scope !== 'session') setLastBrowseScope(scope);
+  }, [scope]);
 
   const loadFiles = useCallback(
     async ({ cursor, append }: { cursor?: string | null; append?: boolean } = {}) => {
@@ -1012,16 +1088,29 @@ export function FilesHub({
     [files, filters.includeDeleted, loadFiles, replaceFile, sessionId, workspaceId],
   );
 
-  const { folders, filesHere } = useMemo(() => folderView(files, currentDir), [currentDir, files]);
-  const visibleFiles = searchActive ? files : filesHere;
+  const scopedFiles = useMemo(() => {
+    if (scope !== 'session' || !sessionScope) return files;
+    return files.filter((file) => fileMatchesSessionScope(file.path, sessionScope.paths));
+  }, [files, scope, sessionScope]);
+  const { folders, filesHere } = useMemo(() => folderView(scopedFiles, currentDir), [currentDir, scopedFiles]);
+  const visibleFiles = searchActive ? scopedFiles : filesHere;
   const visiblePreviews = useMemo(() => visibleFiles.map(hubFileToPreview), [visibleFiles]);
   const visibleItemCount = searchActive ? visibleFiles.length : folders.length + visibleFiles.length;
   const showBreadcrumb = !searchActive && (currentDir !== '' || folders.length > 0);
   const empty = !loading && !error && visibleItemCount === 0;
-  const emptyTitle = searchActive ? 'No matching files' : currentDir ? 'Empty folder' : 'No files';
+  const emptyTitle =
+    scope === 'session'
+      ? 'No session files'
+      : searchActive
+        ? 'No matching files'
+        : currentDir
+          ? 'Empty folder'
+          : 'No files';
   const emptyHint = searchActive
     ? 'Files matching the current search and filters will appear here.'
-    : currentDir
+    : scope === 'session'
+      ? 'Files touched by this session will appear here.'
+      : currentDir
       ? 'Files added to this folder will appear here.'
       : 'Files matching the current filters will appear here.';
 
@@ -1031,7 +1120,33 @@ export function FilesHub({
         <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-fg">
           Files <span className="tabular-nums text-fg-muted">/ {visibleItemCount}</span>
         </h3>
-        {channelId && (
+        {sessionScope && (
+          <div
+            role="group"
+            aria-label="Session file scope"
+            className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5"
+          >
+            {(['session', 'channel'] as const).map((nextScope) => {
+              const active = nextScope === 'session' ? scope === 'session' : scope !== 'session';
+              return (
+                <button
+                  key={nextScope}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setScope(nextScope === 'session' ? 'session' : lastBrowseScope)}
+                  className={`h-6 rounded px-2 text-3xs font-semibold ${
+                    active
+                      ? 'bg-surface-overlay text-fg'
+                      : 'text-fg-tertiary hover:bg-surface-overlay/60 hover:text-fg-body'
+                  }`}
+                >
+                  {nextScope === 'session' ? sessionScope.label : 'All files'}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {channelId && scope !== 'session' && (
           <div
             role="group"
             aria-label="File scope"
@@ -1058,7 +1173,7 @@ export function FilesHub({
           </div>
         )}
         <span className="shrink-0 text-2xs text-fg-muted">
-          {scopedChannel ? 'Channel files' : 'Workspace files'}
+          {scope === 'session' ? 'Session files' : scopedChannel ? 'Channel files' : 'Workspace files'}
         </span>
       </div>
       <FilterBar

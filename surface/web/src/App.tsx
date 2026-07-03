@@ -1,12 +1,14 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { ApiError, api, type Workspace } from './api';
 import { Chat } from './Chat';
+import { EntryLinkRoute, entryHandleFromPath } from './EntryLinkRoute';
 import { Login } from './Login';
 import { Toasts } from './components/Toasts';
 import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
 import { clearDesktopSession } from './desktop';
+import { SessionPanePage } from './sessions/SessionPanePage';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
 
@@ -25,8 +27,16 @@ export function workRouteFromPath(pathname: string): { sessionId: string; tab: A
   return tab ? { sessionId: m[1]!, tab } : null;
 }
 
+/** /s/:id/pane — standalone lean session pane, no channel shell. */
+export function paneRouteFromPath(pathname: string): { sessionId: string } | null {
+  const m = /^\/s\/([^/]+)\/pane$/.exec(pathname);
+  return m ? { sessionId: m[1]! } : null;
+}
+
 export function App() {
+  const [paneRoute] = useState(() => paneRouteFromPath(location.pathname));
   const [workRoute] = useState(() => workRouteFromPath(location.pathname));
+  const [entryRouteHandle] = useState(() => entryHandleFromPath(location.pathname));
   const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -102,16 +112,40 @@ export function App() {
         Loading workspace…
       </div>
     );
+  else if (paneRoute)
+    body = <SessionPanePage key={paneRoute.sessionId} sessionId={paneRoute.sessionId} me={me} />;
   else if (workRoute)
     // Detached work surface in its own tab — a focused, full-viewport view of one
     // surface, no channel shell (it folds the same live stream as the in-app pane).
     body = <SessionWorkPage sessionId={workRoute.sessionId} tab={workRoute.tab} />;
+  else if (entryRouteHandle)
+    body = (
+      <EntryLinkRoute handle={entryRouteHandle}>
+        {(destination) => (
+          <Chat
+            me={me}
+            workspace={workspace}
+            initialSessionId={destination.initialSessionId}
+            initialChannelId={destination.initialChannelId}
+            initialEntryHandle={destination.initialEntryHandle}
+            onLogout={() => {
+              api.logout().catch(() => {}).finally(() => {
+                void clearDesktopSession().finally(() => {
+                  clearCache().finally(() => location.reload());
+                });
+              });
+            }}
+          />
+        )}
+      </EntryLinkRoute>
+    );
   else
     body = (
       <Chat
         me={me}
         workspace={workspace}
         initialSessionId={initialSessionId}
+        initialEntryHandle={new URLSearchParams(location.search).get('entry')}
         onLogout={() => {
           // logout() first (still holds the token), then drop the keychain
           // session, then clear the cache and reload.

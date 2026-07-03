@@ -1,5 +1,7 @@
 import { Fragment, type ReactNode } from 'react';
 import { tokenizeMessage, type Segment } from '@atrium/surface-client';
+import { extractEntryHandles } from '../lib/entryLinks';
+import { EntryQuoteCards } from './EntryQuoteCard';
 
 // Minimal message formatting for an engineering team: fenced code blocks,
 // `inline code`, and clickable links. Everything else stays plain text —
@@ -58,7 +60,12 @@ function renderSegment(segment: Segment, key: string, meHandle?: string): ReactN
 }
 
 export function MessageText({ text, meHandle }: { text: string; meHandle?: string }) {
+  const entryHandles = extractEntryHandles(text).slice(0, 3);
+
   return (
-    <>{tokenizeMessage(text).map((segment, i) => renderSegment(segment, `s${i}`, meHandle))}</>
+    <>
+      {tokenizeMessage(text).map((segment, i) => renderSegment(segment, `s${i}`, meHandle))}
+      <EntryQuoteCards handles={entryHandles} />
+    </>
   );
 }

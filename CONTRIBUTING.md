@@ -45,9 +45,15 @@ list`). Before you commit:
 - Open PRs against `master`.
 - Make sure CI is green:
   - **Surface** — builds and tests the `surface/` workspace (server + web).
+  - **Centaur CI success** — runs the managed Centaur checks when runtime paths change.
+  - **Gitleaks** — scans for committed secrets.
   - **Validate PR title** — checks the title is a valid Conventional Commit.
 - PRs are **squash-merged**. The repo is configured so the squash commit's subject
   is the **PR title** (`squash_merge_commit_title=PR_TITLE`).
+- The required workflows are ready for GitHub merge queue (`merge_group`) events, but
+  the queue is not currently enforceable while `gbasin/atrium` is a private
+  user-owned repo. If the repo moves to an eligible organization/plan, enable **Require
+  merge queue** for `master` and use **Merge when ready** instead of direct squash merge.
 
 ## PR titles (Conventional Commits)
 

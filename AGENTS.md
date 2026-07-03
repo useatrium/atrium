@@ -15,7 +15,7 @@ the wire protocol between them can now land as **one PR** across both.
 
 | Path | What's there | Toolchain |
 |---|---|---|
-| `surface/` | the product: `server/` (Fastify + Postgres), `web/` (Vite + React), `desktop/` (Electron), `mobile/` (Expo), `shared/`, `centaur-client/`, `mcp/`, `e2e/`. **This is the pnpm workspace root.** | Node 24+, pnpm 10+ |
+| `surface/` | the product: `server/` (Fastify + Postgres), `web/` (Vite + React), `desktop/` (Electron), `mobile/` (Expo), `shared/`, `centaur-client/`, `e2e/`. **This is the pnpm workspace root.** | Node 24+, pnpm 10+ |
 | `centaur/` | the agent runtime (our vendored fork — see `centaur/ATRIUM_FORK.md`) | `just`, cargo, Helm/k8s |
 | `infra/` | local cluster, stand-in model server, deploy config | — |
 | `docs/` | public docs | — |
@@ -51,7 +51,9 @@ the wire protocol between them can now land as **one PR** across both.
 ## Contributing (people and agents)
 
 - Branch off `master`; open a PR into `master`; **PR title must be a Conventional Commit**
-  (CI-enforced); **squash-merge**. Full flow: `CONTRIBUTING.md`.
+  (CI-enforced); **squash-merge** once approved/green. The workflows are ready for
+  merge queue events, but the queue is not enforceable while this is a private
+  user-owned repo. Full flow: `CONTRIBUTING.md`.
 - This checkout is often shared by multiple agent sessions with extra branches in `git
   worktree`s. **Before committing, confirm the checked-out branch** (`git branch
   --show-current`) — it may not be `master` and may belong to another session. For

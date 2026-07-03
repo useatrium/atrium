@@ -38,12 +38,14 @@ import {
   type ProviderCredentialStatus,
 } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
+import type { FilesHubDefaultScope, FilesHubSessionScope } from './FilesHub';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { PlanPanel } from './PlanPanel';
 import { Composer } from '../components/Composer';
 import { EntryComments } from '../components/EntryComments';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
+import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -53,7 +55,7 @@ import {
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
-import type { UserRef } from '@atrium/surface-client';
+import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef } from '@atrium/surface-client';
 import { formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
@@ -79,19 +81,105 @@ import { SessionCapabilitiesPopover } from './SessionCapabilitiesPopover';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
 import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
-import {
-  ProfileChangesBanner,
-  ProviderAuthBanner,
-  QuestionBanner,
-  profileProviderLabel,
-} from './SessionBanners';
+import { ProfileChangesBanner, ProviderAuthBanner, QuestionBanner, profileProviderLabel } from './SessionBanners';
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
+import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 
+export function isTranscriptEntryHandle(handle: string | null): handle is string {
+  return typeof handle === 'string' && handle.startsWith('rec_');
+}
+
+type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
+type OutputCounts = Record<OutputSurface, number>;
+
+function outputsVisibleInTab(tab: WorkTab | null): OutputSurface[] {
+  if (tab === 'conflicts') return ['conflicts'];
+  if (tab === 'sideEffects') return ['sideEffects'];
+  if (tab === 'changes' || tab === 'artifacts') return ['changes', 'artifacts'];
+  return [];
+}
+
+export function seenOutputCountsAfterOpeningTab(
+  seen: OutputCounts,
+  counts: OutputCounts,
+  tab: WorkTab | null,
+): OutputCounts {
+  const visible = outputsVisibleInTab(tab);
+  if (visible.length === 0) return seen;
+  let changed = false;
+  const next = { ...seen };
+  for (const key of visible) {
+    if (next[key] !== counts[key]) {
+      next[key] = counts[key];
+      changed = true;
+    }
+  }
+  return changed ? next : seen;
+}
+
+export function unseenOutputsForCounts(
+  seen: OutputCounts,
+  counts: OutputCounts,
+  openTab: WorkTab | null,
+): Record<OutputSurface, boolean> {
+  const visible = new Set(outputsVisibleInTab(openTab));
+  return {
+    conflicts: !visible.has('conflicts') && counts.conflicts > seen.conflicts,
+    changes: !visible.has('changes') && counts.changes > seen.changes,
+    sideEffects: !visible.has('sideEffects') && counts.sideEffects > seen.sideEffects,
+    artifacts: !visible.has('artifacts') && counts.artifacts > seen.artifacts,
+  };
+}
+
+export function notifyUnseenOutputsChange(
+  lastReported: boolean | null,
+  next: boolean,
+  onUnseenOutputs: (hasUnseen: boolean) => void,
+): boolean {
+  if (lastReported === next) return lastReported;
+  onUnseenOutputs(next);
+  return next;
+}
+
+function outputStripClass({ danger = false, unseen = false }: { danger?: boolean; unseen?: boolean }): string {
+  if (danger) {
+    return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90 ${
+      unseen
+        ? 'border-danger-border-strong bg-danger-surface/90 ring-1 ring-inset ring-danger-border/70'
+        : 'border-danger-edge bg-danger-surface'
+    }`;
+  }
+  return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs hover:bg-surface-overlay/60 ${
+    unseen
+      ? 'border-accent-border-muted bg-accent-tint/25 text-fg-body ring-1 ring-inset ring-accent-border-muted/40'
+      : 'border-edge bg-surface-raised/40 text-fg-secondary'
+  }`;
+}
+
+function OutputLabel({ children, unseen, danger = false }: { children: ReactNode; unseen: boolean; danger?: boolean }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {unseen && (
+        <span
+          aria-hidden="true"
+          className={`size-1.5 shrink-0 rounded-full ${danger ? 'bg-danger-text-strong' : 'bg-accent-text-strong'}`}
+        />
+      )}
+      <span
+        className={`font-semibold uppercase tracking-wider ${
+          unseen ? (danger ? 'text-danger-text-strong' : 'text-accent-text-strong') : 'text-fg-muted'
+        }`}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
 
 export function SessionPane({
   session,
@@ -102,6 +190,7 @@ export function SessionPane({
   onClose,
   onAnswerQuestion,
   onSteer = async () => {},
+  queueUpload,
   failedSteer = null,
   onClearFailedSteer = () => {},
   onCancelSession = async () => {},
@@ -115,6 +204,10 @@ export function SessionPane({
   agentProfiles = [],
   layout = 'split',
   onToggleFocus,
+  initialEntryHandle = null,
+  popout = false,
+  onUnseenOutputs,
+  filesDefaultScope,
 }: {
   session: Session;
   me: UserRef;
@@ -130,7 +223,14 @@ export function SessionPane({
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  onSteer?: (sessionId: string, text: string, effort?: string) => Promise<void>;
+  onSteer?: (
+    sessionId: string,
+    text: string,
+    effort?: string,
+    attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
+  ) => Promise<void>;
+  queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
   onCancelSession?: (sessionId: string) => Promise<void>;
@@ -149,6 +249,13 @@ export function SessionPane({
   layout?: 'split' | 'focus';
   /** Toggle between split and focus; omit to hide the expand control. */
   onToggleFocus?: () => void;
+  initialEntryHandle?: string | null;
+  /** Standalone `/s/:id/pane` context; retargets header controls back to the full app. */
+  popout?: boolean;
+  /** Fired when any output strip has grown since it was last viewed. */
+  onUnseenOutputs?: (hasUnseen: boolean) => void;
+  /** Initial Files tab scope. Popouts use session scope; in-app panes retain channel scope. */
+  filesDefaultScope?: FilesHubDefaultScope;
 }) {
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
@@ -160,17 +267,12 @@ export function SessionPane({
 
   // Changes work-surface (Phase 4): Claude/amp edits from the transcript items +
   // codex fileChange edits the reducer captured.
-  const fileChanges = useMemo(
-    () => collectFileChanges(stream),
-    [stream.items, stream.fileChanges],
-  );
-  const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
+  const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
+  const changedFilePaths = useMemo(() => changedPaths(fileChanges), [fileChanges]);
+  const changedFileCount = changedFilePaths.length;
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
-  const sideEffectsDanger = useMemo(
-    () => sideEffects.some((effect) => effect.risk === 'danger'),
-    [sideEffects],
-  );
+  const sideEffectsDanger = useMemo(() => sideEffects.some((effect) => effect.risk === 'danger'), [sideEffects]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
   const artifactPresentations = useArtifactPresentations(session.id, stream);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
@@ -218,6 +320,43 @@ export function SessionPane({
     }
   };
 
+  const outputCounts = useMemo<OutputCounts>(
+    () => ({
+      conflicts: conflictsN,
+      changes: changedFileCount,
+      sideEffects: sideEffectsN,
+      artifacts: artifactsN,
+    }),
+    [artifactsN, changedFileCount, conflictsN, sideEffectsN],
+  );
+  const [seenOutputCounts, setSeenOutputCounts] = useState<OutputCounts>(outputCounts);
+  const unseenOutputs = useMemo(
+    () => unseenOutputsForCounts(seenOutputCounts, outputCounts, workTab),
+    [outputCounts, seenOutputCounts, workTab],
+  );
+  const hasUnseenOutputs = Object.values(unseenOutputs).some(Boolean);
+  const lastReportedUnseenRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    setSeenOutputCounts((seen) => seenOutputCountsAfterOpeningTab(seen, outputCounts, workTab));
+  }, [outputCounts, workTab]);
+
+  useEffect(() => {
+    if (!onUnseenOutputs || lastReportedUnseenRef.current === hasUnseenOutputs) return;
+    lastReportedUnseenRef.current = notifyUnseenOutputsChange(
+      lastReportedUnseenRef.current,
+      hasUnseenOutputs,
+      onUnseenOutputs,
+    );
+  }, [hasUnseenOutputs, onUnseenOutputs]);
+
+  const filesSessionScope = useMemo<FilesHubSessionScope>(() => {
+    const paths = new Set<string>();
+    for (const path of changedFilePaths) paths.add(path);
+    for (const artifact of artifacts) paths.add(artifact.path);
+    return { label: 'This session', paths: [...paths] };
+  }, [artifacts, changedFilePaths]);
+
   const terminal = isTerminalSessionStatus(session.status);
   const displayStatus: SessionStatus = terminal
     ? session.status
@@ -234,13 +373,9 @@ export function SessionPane({
   const resultText = stream.resultText || session.resultText || '';
   const isSpawner = session.spawnedBy === me.id;
   const spectators = watchers.length;
-  const pendingQuestion =
-    session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
+  const pendingQuestion = session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
   const questionEvents = session.questionEvents ?? [];
-  const questionEventsByQuestion = useMemo(
-    () => groupQuestionEventsByQuestion(questionEvents),
-    [questionEvents],
-  );
+  const questionEventsByQuestion = useMemo(() => groupQuestionEventsByQuestion(questionEvents), [questionEvents]);
 
   // ── Live activity cue ──────────────────────────────────────────────────────
   // The status line only claims what the stream proves (see TurnStatus.tsx).
@@ -324,8 +459,7 @@ export function SessionPane({
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const effortSelection = effortChoice ?? modelEffort ?? '';
   const effortOptions = HARNESS_EFFORT_PICKER_OPTIONS[session.harness];
-  const canPickEffort =
-    sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
+  const canPickEffort = sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
   // Seat-aware waiting copy: only the driver can actually answer — telling a
   // spectator "waiting for YOUR reply" would send them hunting for an answer
   // box they don't have.
@@ -348,9 +482,9 @@ export function SessionPane({
   // (consume-once by trimmed text). Only Codex echoes user messages — on other
   // harnesses the bubble persists as the steer's transcript row, so once the
   // turn goes active we mark it delivered (sticky) and stop dimming it.
-  const [pendingSteers, setPendingSteers] = useState<
-    { id: string; text: string; ts: string; delivered?: boolean }[]
-  >([]);
+  const [pendingSteers, setPendingSteers] = useState<{ id: string; text: string; ts: string; delivered?: boolean }[]>(
+    [],
+  );
   useEffect(() => {
     setPendingSteers([]);
   }, [session.id]);
@@ -358,9 +492,7 @@ export function SessionPane({
     if (!activeTurn) return;
     // Same-reference return when nothing is undelivered keeps this loop-free
     // with pendingSteers in the deps (covers steers sent mid-turn too).
-    setPendingSteers((prev) =>
-      prev.some((p) => !p.delivered) ? prev.map((p) => ({ ...p, delivered: true })) : prev,
-    );
+    setPendingSteers((prev) => (prev.some((p) => !p.delivered) ? prev.map((p) => ({ ...p, delivered: true })) : prev));
   }, [activeTurn, pendingSteers]);
   useEffect(() => {
     if (pendingSteers.length === 0) return;
@@ -408,9 +540,7 @@ export function SessionPane({
     : driverPresent
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
-  const composerPlaceholder = isDriver
-    ? 'Steer the agent...'
-    : `Suggest a message — ${driverName} decides`;
+  const composerPlaceholder = isDriver ? 'Steer the agent...' : `Suggest a message — ${driverName} decides`;
   const providerAuthOwnerName = nameFor(session.providerAuthRequired?.userId ?? null);
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
@@ -434,9 +564,7 @@ export function SessionPane({
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
   // to a request.
-  const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take' | 'requested' | 'seat-held'>(
-    'idle',
-  );
+  const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take' | 'requested' | 'seat-held'>('idle');
   useEffect(() => {
     if (isDriver) setSeatAsk('idle');
   }, [isDriver]);
@@ -447,9 +575,7 @@ export function SessionPane({
     return () => clearTimeout(t);
   }, [seatAsk]);
   const seatRequested =
-    seatAsk === 'requested' ||
-    seatAsk === 'seat-held' ||
-    session.pendingSeatRequests.some((r) => r.userId === me.id);
+    seatAsk === 'requested' || seatAsk === 'seat-held' || session.pendingSeatRequests.some((r) => r.userId === me.id);
 
   const requestSeat = () => {
     setSeatAsk('requested');
@@ -471,7 +597,7 @@ export function SessionPane({
   // surface a retry right where the action happened.
   const [localSteerError, setLocalSteerError] = useState<string | null>(null);
   const steerError = localSteerError ?? failedSteer;
-  const sendSteer = (text: string) => {
+  const sendSteer = (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => {
     setLocalSteerError(null);
     onClearFailedSteer();
     // Optimistic: show the steer immediately; reconciled away when the harness
@@ -489,7 +615,11 @@ export function SessionPane({
       effortOptions?.includes(effortSelection)
         ? effortSelection
         : undefined;
-    onSteer(session.id, text, effortOverride).catch(() => {
+    const hasAttachments = (attachments?.length ?? 0) > 0 || (attachmentRefs?.length ?? 0) > 0;
+    const steer = hasAttachments
+      ? onSteer(session.id, text, effortOverride, attachments, attachmentRefs)
+      : onSteer(session.id, text, effortOverride);
+    steer.catch(() => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
     });
@@ -530,7 +660,8 @@ export function SessionPane({
   useEffect(() => {
     if (!profileProposalsEnabled) return;
     let disposed = false;
-    api.sessionProfileProposals(session.id)
+    api
+      .sessionProfileProposals(session.id)
       .then(({ proposals }) => {
         if (!disposed) setProfileProposals(proposals);
       })
@@ -601,7 +732,7 @@ export function SessionPane({
   // Driver-side grant banner; Ignore is a local dismissal only.
   const [ignoredRequests, setIgnoredRequests] = useState<ReadonlySet<string>>(new Set());
   const seatRequest = isDriver
-    ? session.pendingSeatRequests.find((r) => !ignoredRequests.has(r.userId)) ?? null
+    ? (session.pendingSeatRequests.find((r) => !ignoredRequests.has(r.userId)) ?? null)
     : null;
 
   // Audit-line anchoring: a seat line renders right after the transcript items
@@ -611,9 +742,7 @@ export function SessionPane({
   // transcript content instead of interleaved at their original positions.
   const seatAnchorsRef = useRef<Map<number, number> | null>(null);
   if (seatAnchorsRef.current === null) {
-    seatAnchorsRef.current = new Map(
-      session.seatEvents.map((e) => [e.id, Number.MAX_SAFE_INTEGER]),
-    );
+    seatAnchorsRef.current = new Map(session.seatEvents.map((e) => [e.id, Number.MAX_SAFE_INTEGER]));
   }
   const seatAnchors = seatAnchorsRef.current;
   for (const e of session.seatEvents) {
@@ -629,10 +758,7 @@ export function SessionPane({
   // rather than stream.items, so anchor each to the point in the transcript where
   // it happened and splice it in at render time — same interleave-by-index shape
   // as the seat-audit lines above.
-  const inlineCodexChanges = useMemo(
-    () => codexInlineFileChanges(stream),
-    [stream.items, stream.fileChanges],
-  );
+  const inlineCodexChanges = useMemo(() => codexInlineFileChanges(stream), [stream.items, stream.fileChanges]);
   const codexChangesAt = (i: number) => inlineCodexChanges.filter((a) => a.index === i);
 
   // Manual expand/collapse overrides; default = open while running. When the
@@ -656,10 +782,46 @@ export function SessionPane({
   const lastEventId = stream.lastEventId;
   const seatEventCount = session.seatEvents.length;
   const questionEventCount = questionEvents.length;
+  const [pendingEntryHandle, setPendingEntryHandle] = useState<string | null>(() => {
+    if (initialEntryHandle) return initialEntryHandle;
+    return typeof window === 'undefined' ? null : entryParamFromSearch(window.location.search);
+  });
+  const [flashEntryHandle, setFlashEntryHandle] = useState<string | null>(null);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [lastEventId, seatEventCount, questionEventCount]);
+  useEffect(() => {
+    if (!flashEntryHandle) return;
+    const timer = setTimeout(() => setFlashEntryHandle(null), 2500);
+    return () => clearTimeout(timer);
+  }, [flashEntryHandle]);
+  useLayoutEffect(() => {
+    if (!pendingEntryHandle) return;
+    if (!isTranscriptEntryHandle(pendingEntryHandle)) {
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+      return;
+    }
+    const root = scrollRef.current;
+    const target = root
+      ? Array.from(root.querySelectorAll<HTMLElement>('[data-entry-handle]')).find(
+          (el) => el.dataset.entryHandle === pendingEntryHandle,
+        )
+      : null;
+    if (target) {
+      stickRef.current = false;
+      target.scrollIntoView({ block: 'center' });
+      setFlashEntryHandle(pendingEntryHandle);
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+      return;
+    }
+    if (isTerminalExecutionStatus(stream.status)) {
+      stripEntryParamFromLocation();
+      setPendingEntryHandle(null);
+    }
+  }, [pendingEntryHandle, stream.items, stream.status]);
   const onScroll = () => {
     const el = scrollRef.current;
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -669,9 +831,17 @@ export function SessionPane({
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const paneSizing = sessionPaneSizing(paneWidth);
   const canDetach = !isPendingSessionId(session.id);
-  const githubIdentityLabel = session.githubIdentityMode
-    ? githubIdentityModeLabel(session.githubIdentityMode)
-    : null;
+  const closePane = useCallback(() => {
+    if (!popout) {
+      onClose();
+      return;
+    }
+    window.close();
+    window.setTimeout(() => {
+      if (!window.closed) window.location.assign(`/s/${session.id}`);
+    }, 100);
+  }, [onClose, popout, session.id]);
+  const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
@@ -847,11 +1017,11 @@ export function SessionPane({
         </div>
         {canDetach && (
           <a
-            href={`/s/${session.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open in a new tab"
-            aria-label="Open session in a new tab"
+            href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
+            target={popout ? undefined : '_blank'}
+            rel={popout ? undefined : 'noopener noreferrer'}
+            title={popout ? 'Open in full app' : 'Open in a new tab'}
+            aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
           >
             <ExternalLinkIcon size={15} />
@@ -869,7 +1039,7 @@ export function SessionPane({
           </button>
         )}
         <button
-          onClick={onClose}
+          onClick={closePane}
           title="Close session pane"
           aria-label="Close session pane"
           className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -893,9 +1063,7 @@ export function SessionPane({
             Grant
           </button>
           <button
-            onClick={() =>
-              setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))
-            }
+            onClick={() => setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))}
             className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
           >
             Ignore
@@ -903,8 +1071,7 @@ export function SessionPane({
         </div>
       )}
 
-      {session.providerAuthRequired &&
-        (!displayTerminal || session.providerAuthRequired.provider === 'github') && (
+      {session.providerAuthRequired && (!displayTerminal || session.providerAuthRequired.provider === 'github') && (
         <ProviderAuthBanner
           required={session.providerAuthRequired}
           isOwner={session.providerAuthRequired.userId === me.id}
@@ -943,13 +1110,8 @@ export function SessionPane({
       )}
 
       {isEnded && resultText && (
-        <div
-          data-testid="session-result"
-          className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2"
-        >
-          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
-            Result
-          </div>
+        <div data-testid="session-result" className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2">
+          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Result</div>
           <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
             {resultText}
           </div>
@@ -961,9 +1123,11 @@ export function SessionPane({
           data-testid="conflicts-strip"
           onClick={() => onStrip('conflicts')}
           aria-expanded={workTab === 'conflicts'}
-          className="flex shrink-0 items-center gap-2 border-b border-danger-edge bg-danger-surface px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90"
+          className={outputStripClass({ danger: true, unseen: unseenOutputs.conflicts })}
         >
-          <span className="font-semibold uppercase tracking-wider">Conflicts</span>
+          <OutputLabel unseen={unseenOutputs.conflicts} danger>
+            Conflicts
+          </OutputLabel>
           <span className="tabular-nums">· {conflictsN}</span>
           <span className="ml-auto opacity-80">{workTab === 'conflicts' ? 'Hide' : 'Resolve'}</span>
         </button>
@@ -973,13 +1137,11 @@ export function SessionPane({
           data-testid="changes-strip"
           onClick={() => onStrip('changes')}
           aria-expanded={workTab === 'changes'}
-          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+          className={outputStripClass({ unseen: unseenOutputs.changes })}
         >
-          <span className="font-semibold uppercase tracking-wider text-fg-muted">Changes</span>
+          <OutputLabel unseen={unseenOutputs.changes}>Changes</OutputLabel>
           <span className="tabular-nums">· {changedFileCount}</span>
-          <span className="ml-auto text-fg-tertiary">
-            {workTab === 'changes' ? 'Hide' : 'View'}
-          </span>
+          <span className="ml-auto text-fg-tertiary">{workTab === 'changes' ? 'Hide' : 'View'}</span>
         </button>
       )}
       {sideEffectsN > 0 && (
@@ -987,15 +1149,11 @@ export function SessionPane({
           data-testid="sideeffects-strip"
           onClick={() => onStrip('sideEffects')}
           aria-expanded={workTab === 'sideEffects'}
-          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+          className={outputStripClass({ unseen: unseenOutputs.sideEffects })}
         >
-          <span className="font-semibold uppercase tracking-wider text-fg-muted">Side-effects</span>
-          <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>
-            · {sideEffectsN}
-          </span>
-          <span className="ml-auto text-fg-tertiary">
-            {workTab === 'sideEffects' ? 'Hide' : 'View'}
-          </span>
+          <OutputLabel unseen={unseenOutputs.sideEffects}>Side-effects</OutputLabel>
+          <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>· {sideEffectsN}</span>
+          <span className="ml-auto text-fg-tertiary">{workTab === 'sideEffects' ? 'Hide' : 'View'}</span>
         </button>
       )}
       {artifactsN > 0 && (
@@ -1003,154 +1161,153 @@ export function SessionPane({
           data-testid="artifacts-strip"
           onClick={() => onStrip('artifacts')}
           aria-expanded={workTab === 'artifacts'}
-          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+          className={outputStripClass({ unseen: unseenOutputs.artifacts })}
         >
-          <span className="font-semibold uppercase tracking-wider text-fg-muted">Artifacts</span>
+          <OutputLabel unseen={unseenOutputs.artifacts}>Artifacts</OutputLabel>
           <span className="tabular-nums">· {artifactsN}</span>
-          <span className="ml-auto text-fg-tertiary">
-            {workTab === 'artifacts' ? 'Hide' : 'View'}
-          </span>
+          <span className="ml-auto text-fg-tertiary">{workTab === 'artifacts' ? 'Hide' : 'View'}</span>
         </button>
       )}
 
       <div className={`flex min-h-0 flex-1 ${workTab && workPinned ? 'flex-row' : 'flex-col'}`}>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {workTab && !workPinned && (
-          <WorkDrawer
-            changes={fileChanges}
-            changedFileCount={changedFileCount}
-            effects={sideEffects}
-            sideEffectCount={sideEffectsN}
-            hasDanger={sideEffectsDanger}
-            artifacts={artifacts}
-            artifactPresentations={artifactPresentations}
-            artifactCount={artifactsN}
-            conflicts={conflicts}
-            conflictCount={conflictsN}
-            onResolveConflict={resolveConflict}
-            sessionId={session.id}
-            workspaceId={session.workspaceId}
-            channelId={session.channelId}
-            tab={workTab}
-            onTab={setWorkTab}
-            pinned={false}
-            onTogglePin={togglePin}
-            canDetach={canDetach}
-            onClose={closeWork}
-          />
-        )}
-        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
-        <PlanPanel todos={stream.todos} plan={stream.plan} />
-        {stream.items.length === 0 && !activeTurn && (
-          <div className="flex h-full items-center justify-center text-xs text-fg-muted">
-            {!displayTerminal ? (
-              <span className="animate-pulse">Waiting for agent output…</span>
-            ) : isTerminalExecutionStatus(stream.status) ? (
-              'No transcript.'
-            ) : (
-              'Loading transcript…'
+          {workTab && !workPinned && (
+            <WorkDrawer
+              changes={fileChanges}
+              changedFileCount={changedFileCount}
+              effects={sideEffects}
+              sideEffectCount={sideEffectsN}
+              hasDanger={sideEffectsDanger}
+              artifacts={artifacts}
+              artifactPresentations={artifactPresentations}
+              artifactCount={artifactsN}
+              conflicts={conflicts}
+              conflictCount={conflictsN}
+              onResolveConflict={resolveConflict}
+              sessionId={session.id}
+              workspaceId={session.workspaceId}
+              channelId={session.channelId}
+              filesSessionScope={filesSessionScope}
+              filesDefaultScope={filesDefaultScope}
+              tab={workTab}
+              onTab={setWorkTab}
+              pinned={false}
+              onTogglePin={togglePin}
+              canDetach={canDetach}
+              onClose={closeWork}
+            />
+          )}
+          <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
+            <PlanPanel todos={stream.todos} plan={stream.plan} />
+            {stream.items.length === 0 && !activeTurn && (
+              <div className="flex h-full items-center justify-center text-xs text-fg-muted">
+                {!displayTerminal ? (
+                  <span className="animate-pulse">Waiting for agent output…</span>
+                ) : isTerminalExecutionStatus(stream.status) ? (
+                  'No transcript.'
+                ) : (
+                  'Loading transcript…'
+                )}
+              </div>
             )}
-          </div>
-        )}
-        {stream.items.map((item, i) => (
-          <Fragment key={i}>
-            {seatLinesAt(i).map((e) => (
+            {stream.items.map((item, i) => (
+              <Fragment key={i}>
+                {seatLinesAt(i).map((e) => (
+                  <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
+                ))}
+                {codexChangesAt(i).map((a) => (
+                  <div key={a.change.id} className="pl-3.5">
+                    <InlineFileChange change={a.change} />
+                  </div>
+                ))}
+                <AnnotatedTranscriptRow
+                  handle={item.handle ?? null}
+                  onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
+                  markupLoading={markupLoadingHandle === item.handle}
+                  highlighted={item.handle != null && item.handle === flashEntryHandle}
+                >
+                  {/* `group` + title: every row gets a native mouseover timestamp;
+                  steer rows also reveal an inline one (their hover target is
+                  obvious and they anchor turn navigation). */}
+                  <div className="group" title={turnTimes.get(item.id)}>
+                    {item.type === 'text' ? (
+                      <div className="pl-3.5">
+                        <TextBlock item={item} />
+                      </div>
+                    ) : item.type === 'user_message' ? (
+                      <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
+                        <div className="text-sm font-semibold text-fg">
+                          {steerAuthor}
+                          <TurnTimeLabel time={turnTimes.get(item.id)} />
+                        </div>
+                        <MarkupSteerCard text={item.text} />
+                      </div>
+                    ) : item.type === 'question' ? (
+                      <div className="pl-3.5">
+                        <QuestionTranscriptCard
+                          item={item}
+                          events={questionEventsByQuestion.get(item.questionId) ?? []}
+                        />
+                      </div>
+                    ) : item.type === 'reasoning' ? (
+                      <div className="pl-3.5">
+                        <ReasoningBlock item={item} />
+                      </div>
+                    ) : item.type === 'tool_call' ? (
+                      <div className="pl-3.5">
+                        <TranscriptTool
+                          item={item}
+                          expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
+                          onToggle={() =>
+                            setToolOpen((prev) => ({
+                              ...prev,
+                              [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
+                            }))
+                          }
+                          clockSkewMs={clockSkewMs}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </AnnotatedTranscriptRow>
+              </Fragment>
+            ))}
+            {seatLinesAt(stream.items.length).map((e) => (
               <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
             ))}
-            {codexChangesAt(i).map((a) => (
+            {codexChangesAt(stream.items.length).map((a) => (
               <div key={a.change.id} className="pl-3.5">
                 <InlineFileChange change={a.change} />
               </div>
             ))}
-            <AnnotatedTranscriptRow
-              handle={item.handle ?? null}
-              onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
-              markupLoading={markupLoadingHandle === item.handle}
-            >
-              {/* `group` + title: every row gets a native mouseover timestamp;
-                  steer rows also reveal an inline one (their hover target is
-                  obvious and they anchor turn navigation). */}
-              <div className="group" title={turnTimes.get(item.id)}>
-              {item.type === 'text' ? (
-                <div className="pl-3.5">
-                  <TextBlock item={item} />
+            {pendingSteers.map((p) => (
+              <div
+                key={p.id}
+                data-testid="user-steer-pending"
+                title={formatTurnTime(p.ts)}
+                className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
+              >
+                <div className="text-sm font-semibold text-fg">
+                  {steerAuthor}
+                  <TurnTimeLabel time={formatTurnTime(p.ts)} />
                 </div>
-              ) : item.type === 'user_message' ? (
-                <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                  <div className="text-sm font-semibold text-fg">
-                    {steerAuthor}
-                    <TurnTimeLabel time={turnTimes.get(item.id)} />
-                  </div>
-                  <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
-                    {item.text}
-                  </div>
-                </div>
-              ) : item.type === 'question' ? (
-                <div className="pl-3.5">
-                  <QuestionTranscriptCard
-                    item={item}
-                    events={questionEventsByQuestion.get(item.questionId) ?? []}
-                  />
-                </div>
-              ) : item.type === 'reasoning' ? (
-                <div className="pl-3.5">
-                  <ReasoningBlock item={item} />
-                </div>
-              ) : item.type === 'tool_call' ? (
-                <div className="pl-3.5">
-                  <TranscriptTool
-                    item={item}
-                    expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                    onToggle={() =>
-                      setToolOpen((prev) => ({
-                        ...prev,
-                        [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                      }))
-                    }
-                    clockSkewMs={clockSkewMs}
-                  />
-                </div>
-              ) : null}
+                <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
               </div>
-            </AnnotatedTranscriptRow>
-          </Fragment>
-        ))}
-        {seatLinesAt(stream.items.length).map((e) => (
-          <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
-        ))}
-        {codexChangesAt(stream.items.length).map((a) => (
-          <div key={a.change.id} className="pl-3.5">
-            <InlineFileChange change={a.change} />
+            ))}
+            {artifactPresentations.length > 0 && (
+              <div className="pl-3.5">
+                <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />
+              </div>
+            )}
           </div>
-        ))}
-        {pendingSteers.map((p) => (
-          <div
-            key={p.id}
-            data-testid="user-steer-pending"
-            title={formatTurnTime(p.ts)}
-            className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
-          >
-            <div className="text-sm font-semibold text-fg">
-              {steerAuthor}
-              <TurnTimeLabel time={formatTurnTime(p.ts)} />
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
-          </div>
-        ))}
-        {artifactPresentations.length > 0 && (
-          <div className="pl-3.5">
-            <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />
-          </div>
-        )}
-        </div>
-        <TurnRail
-          turns={turns}
-          onJump={(id) =>
-            scrollRef.current
-              ?.querySelector(`[data-turn="${id}"]`)
-              ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-          }
-        />
+          <TurnRail
+            turns={turns}
+            onJump={(id) =>
+              scrollRef.current
+                ?.querySelector(`[data-turn="${id}"]`)
+                ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+            }
+          />
         </div>
         {workTab && workPinned && (
           <div className="flex min-h-0 w-[min(440px,46%)] shrink-0 flex-col border-l border-edge">
@@ -1169,6 +1326,8 @@ export function SessionPane({
               sessionId={session.id}
               workspaceId={session.workspaceId}
               channelId={session.channelId}
+              filesSessionScope={filesSessionScope}
+              filesDefaultScope={filesDefaultScope}
               tab={workTab}
               onTab={setWorkTab}
               pinned
@@ -1205,13 +1364,7 @@ export function SessionPane({
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
-          cancelLabel={
-            canStopTurn
-              ? 'Cancel turn'
-              : displayCancelAsk === 'confirm'
-                ? 'Confirm cancel'
-                : 'Cancel'
-          }
+          cancelLabel={canStopTurn ? 'Cancel turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
           onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}
@@ -1236,9 +1389,7 @@ export function SessionPane({
               data-testid="steer-error"
               className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
             >
-              <span className="min-w-0 flex-1 truncate text-danger-text">
-                Message didn't send: "{steerError}"
-              </span>
+              <span className="min-w-0 flex-1 truncate text-danger-text">Message didn't send: "{steerError}"</span>
               <button
                 onClick={() => sendSteer(steerError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
@@ -1262,9 +1413,7 @@ export function SessionPane({
               data-testid="suggestion-error"
               className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
             >
-              <span className="min-w-0 flex-1 truncate text-danger-text">
-                Suggestion didn't send: "{suggestError}"
-              </span>
+              <span className="min-w-0 flex-1 truncate text-danger-text">Suggestion didn't send: "{suggestError}"</span>
               <button
                 onClick={() => sendSuggestion(suggestError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
@@ -1285,8 +1434,11 @@ export function SessionPane({
           </div>
           <Composer
             placeholder={composerPlaceholder}
-            onSend={isDriver ? sendSteer : sendSuggestion}
+            onSend={isDriver ? sendSteer : (text) => sendSuggestion(text)}
+            queueUpload={isDriver ? queueUpload : undefined}
             onTyping={onComposerTyping}
+            allowAttachments={isDriver}
+            allowVoice={false}
             footer={
               isDriver ? (
                 canPickEffort ? (
@@ -1317,9 +1469,7 @@ export function SessionPane({
                 <span data-testid="seat-footer" className="flex items-center gap-2">
                   {seatRequested ? (
                     <span>
-                      {seatAsk === 'seat-held' && (
-                        <span className="text-warning/80">seat held · </span>
-                      )}
+                      {seatAsk === 'seat-held' && <span className="text-warning/80">seat held · </span>}
                       requested — waiting for {driverName}
                     </span>
                   ) : seatAsk === 'confirm-take' ? (
@@ -1388,11 +1538,13 @@ function AnnotatedTranscriptRow({
   handle,
   onMarkupEntry,
   markupLoading = false,
+  highlighted = false,
   children,
 }: {
   handle: string | null;
   onMarkupEntry?: (handle: string) => void;
   markupLoading?: boolean;
+  highlighted?: boolean;
   children: ReactNode;
 }) {
   const commentButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1425,7 +1577,10 @@ function AnnotatedTranscriptRow({
   };
 
   return (
-    <div className="group relative">
+    <div
+      data-entry-handle={handle}
+      className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
+    >
       {children}
       <div className="pointer-events-none absolute -top-1 right-0 z-10 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
         <button
@@ -1591,9 +1746,7 @@ const ToolCard = memo(
     const startedRef = useRef<number>(Date.now());
     const stampedStart = item.ts !== undefined ? Date.parse(item.ts) : NaN;
     const startedAt =
-      !Number.isNaN(stampedStart) && clockSkewMs !== null
-        ? stampedStart + clockSkewMs
-        : startedRef.current;
+      !Number.isNaN(stampedStart) && clockSkewMs !== null ? stampedStart + clockSkewMs : startedRef.current;
     const now = useNow(running);
     const elapsedMs = running ? Math.max(0, now - startedAt) : 0;
     const isError = item.result?.is_error === true;
@@ -1619,21 +1772,15 @@ const ToolCard = memo(
             {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
           </span>
           <span className="sr-only">{item.name}</span>
-          <span className="min-w-0 shrink truncate font-mono font-semibold text-fg-body">
-            {descriptor.title}
-          </span>
+          <span className="min-w-0 shrink truncate font-mono font-semibold text-fg-body">{descriptor.title}</span>
           {!expanded && descriptor.subtitle && (
-            <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">
-              {descriptor.subtitle}
-            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">{descriptor.subtitle}</span>
           )}
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {running ? (
               <>
                 {elapsedMs >= 1000 && (
-                  <span className="tabular-nums text-2xs text-fg-faint">
-                    {formatElapsed(elapsedMs)}
-                  </span>
+                  <span className="tabular-nums text-2xs text-fg-faint">{formatElapsed(elapsedMs)}</span>
                 )}
                 <Spinner className="text-accent-text-strong" />
               </>
