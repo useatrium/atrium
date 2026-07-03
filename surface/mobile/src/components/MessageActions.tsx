@@ -12,6 +12,7 @@ const QUICK_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🔥', '�
 
 type MessageActionMetadata = {
   actionCopyText?: unknown;
+  actionCopyLink?: unknown;
 };
 
 export interface MessageActionsProps {
@@ -74,6 +75,7 @@ export function MessageActions({
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const closeAfterCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const m = message;
   const deleted = m?.deleted === true;
@@ -86,12 +88,18 @@ export function MessageActions({
         ? ((m as MessageActionMetadata).actionCopyText as string)
         : m.text;
   const copyText = !deleted && rawCopyText.trim() ? rawCopyText : null;
+  const rawCopyLink =
+    m == null || typeof (m as MessageActionMetadata).actionCopyLink !== 'string'
+      ? ''
+      : ((m as MessageActionMetadata).actionCopyLink as string);
+  const copyLink = !deleted && rawCopyLink.trim() ? rawCopyLink : null;
   const canReact = confirmed && !sessionBlock;
   const canReplyAction = confirmed && canReply && !sessionBlock;
   const canMutateMessage = confirmed && mine && !sessionBlock;
 
   useEffect(() => {
     setCopied(false);
+    setCopiedLink(false);
     if (closeAfterCopyTimer.current) {
       clearTimeout(closeAfterCopyTimer.current);
       closeAfterCopyTimer.current = null;
@@ -109,6 +117,7 @@ export function MessageActions({
     closeAfterCopyTimer.current = setTimeout(() => {
       closeAfterCopyTimer.current = null;
       setCopied(false);
+      setCopiedLink(false);
       onClose();
     }, 700);
   };
@@ -192,6 +201,20 @@ export function MessageActions({
                 void Clipboard.setStringAsync(copyText)
                   .then(() => {
                     setCopied(true);
+                    closeAfterCopy();
+                  })
+                  .catch(() => onClose());
+              }}
+            />
+          )}
+          {m && copyLink && (
+            <Action
+              label={copiedLink ? 'Copied link' : 'Copy link'}
+              onPress={() => {
+                selectionHaptic();
+                void Clipboard.setStringAsync(copyLink)
+                  .then(() => {
+                    setCopiedLink(true);
                     closeAfterCopy();
                   })
                   .catch(() => onClose());
