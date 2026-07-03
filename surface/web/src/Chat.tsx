@@ -29,10 +29,10 @@ import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
-import { FileIcon, LockIcon, PhoneIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
+import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
-import { QuickSwitcher } from './components/QuickSwitcher';
+import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwitcher';
 import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
@@ -438,6 +438,9 @@ export function Chat({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
   const [mainSurface, setMainSurface] = useState<MainSurface>('chat');
+  const [settingsRequestSeq, setSettingsRequestSeq] = useState(0);
+  const [createChannelRequestSeq, setCreateChannelRequestSeq] = useState(0);
+  const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
@@ -1090,6 +1093,178 @@ export function Chat({
     }
   }, [active, demoStarting, onApiError]);
 
+  const startVoiceCallForActiveChannel = useCallback(() => {
+    if (!callsAvailable) {
+      showErrorToast(
+        'Voice calls aren’t set up. Configure LiveKit (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) to enable calls.',
+      );
+      return;
+    }
+    if (active) void calls.startCall(active.id);
+  }, [active, calls, callsAvailable]);
+
+  const quickSwitcherCommands = useMemo<QuickSwitcherCommand[]>(() => {
+    const list: QuickSwitcherCommand[] = [];
+    const activeLabel = active ? channelLabel(active, me.id) : '';
+    const activeChannelLabel = active
+      ? `${active.kind === 'dm' || active.kind === 'gdm' ? '@' : '#'}${activeLabel}`
+      : '';
+
+    if (active) {
+      list.push({
+        id: 'new-agent',
+        label: `New agent in ${activeChannelLabel}`,
+        subtitle: 'Open the configured agent dialog',
+        group: 'Create',
+        keywords: ['agent', 'spawn', 'session', 'new', 'task', activeLabel],
+        icon: <PlusIcon size={14} />,
+        run: () => {
+          setMainSurface('chat');
+          setSpawnInitialTask('');
+          setSpawnOpen(true);
+        },
+      });
+    }
+
+    if (mainSurface === 'chat' && active) {
+      list.push({
+        id: 'run-demo-agent',
+        label: 'Run demo agent',
+        subtitle: `Start the no-setup demo in ${activeChannelLabel}`,
+        group: 'Create',
+        keywords: ['demo', 'agent', 'session', 'no setup', activeLabel],
+        icon: <PlayIcon size={14} />,
+        run: () => void startDemoSession(),
+      });
+    }
+
+    list.push(
+      {
+        id: 'open-files',
+        label: 'Open Files',
+        subtitle: active ? `Browse files for ${activeChannelLabel}` : 'Browse workspace files',
+        group: 'Navigate',
+        keywords: ['files', 'artifacts', 'documents', 'workspace'],
+        icon: <FileIcon size={14} />,
+        run: () => setMainSurface('files'),
+      },
+      {
+        id: 'open-activity',
+        label: 'Open Activity',
+        subtitle: 'Review mentions and updates',
+        group: 'Navigate',
+        keywords: ['activity', 'mentions', 'notifications', 'updates'],
+        icon: <span className="text-xs font-bold leading-none">@</span>,
+        run: () => setMainSurface('activity'),
+      },
+    );
+
+    if (mainSurface === 'files' || mainSurface === 'activity') {
+      list.push({
+        id: 'back-to-chat',
+        label: 'Back to Chat',
+        subtitle: active ? `Return to ${activeChannelLabel}` : 'Return to the current conversation',
+        group: 'Navigate',
+        keywords: ['chat', 'conversation', 'channel', 'back'],
+        icon: <SearchIcon size={14} />,
+        run: () => setMainSurface('chat'),
+      });
+    }
+
+    if (active && (!callsAvailable || (!calls.starting && calls.activeCall == null))) {
+      list.push({
+        id: 'start-voice-call',
+        label: 'Start voice call',
+        subtitle: callsAvailable ? `Call ${activeChannelLabel}` : 'Requires LiveKit setup',
+        group: 'Communicate',
+        keywords: ['voice', 'call', 'phone', 'audio', activeLabel],
+        icon: <PhoneIcon size={14} />,
+        run: startVoiceCallForActiveChannel,
+      });
+    }
+
+    list.push(
+      {
+        id: 'open-settings',
+        label: 'Open settings',
+        subtitle: 'Theme, notifications, and connections',
+        group: 'Workspace',
+        keywords: ['settings', 'preferences', 'theme', 'notifications', 'connections'],
+        icon: <GearIcon size={14} />,
+        run: () => {
+          if (isMobileViewport) setIsSidebarOpen(true);
+          setSettingsRequestSeq((n) => n + 1);
+        },
+      },
+      {
+        id: 'create-channel',
+        label: 'Create channel',
+        subtitle: 'Open the channel creation form',
+        group: 'Workspace',
+        keywords: ['channel', 'create', 'new', 'conversation'],
+        icon: <PlusIcon size={14} />,
+        run: () => {
+          if (isMobileViewport) setIsSidebarOpen(true);
+          setCreateChannelRequestSeq((n) => n + 1);
+        },
+      },
+      {
+        id: 'start-dm',
+        label: 'Start DM',
+        subtitle: 'Find a person to message',
+        group: 'Workspace',
+        keywords: ['dm', 'direct', 'message', 'person', 'chat'],
+        icon: <PlusIcon size={14} />,
+        run: () => {
+          if (isMobileViewport) setIsSidebarOpen(true);
+          setStartDmRequestSeq((n) => n + 1);
+        },
+      },
+      {
+        id: 'connect-github',
+        label: githubConnection?.connected ? 'Manage GitHub' : 'Connect GitHub',
+        subtitle: connectionsAvailable ? 'Repository access for agent sessions' : 'Unavailable on this server',
+        group: 'Connections',
+        keywords: ['github', 'repository', 'repo', 'connection', 'provider'],
+        icon: <span className="text-xs font-bold leading-none">GH</span>,
+        run: () => setConnectionDialog('github'),
+      },
+      {
+        id: 'connect-claude-code',
+        label: providerCredentials['claude-code']?.connected ? 'Manage Claude Code' : 'Connect Claude Code',
+        subtitle: 'Configure Claude Code sessions',
+        group: 'Connections',
+        keywords: ['claude', 'claude code', 'provider', 'connection', 'anthropic'],
+        icon: <span className="text-xs font-bold leading-none">C</span>,
+        run: () => setProviderDialog('claude-code'),
+      },
+      {
+        id: 'connect-codex',
+        label: providerCredentials.codex?.connected ? 'Manage Codex' : 'Connect Codex',
+        subtitle: 'Configure Codex sessions',
+        group: 'Connections',
+        keywords: ['codex', 'openai', 'provider', 'connection'],
+        icon: <span className="text-xs font-bold leading-none">CX</span>,
+        run: () => setProviderDialog('codex'),
+      },
+    );
+
+    return list;
+  }, [
+    active,
+    calls.activeCall,
+    calls.starting,
+    callsAvailable,
+    connectionsAvailable,
+    githubConnection?.connected,
+    isMobileViewport,
+    mainSurface,
+    me.id,
+    providerCredentials,
+    startDemoSession,
+    startVoiceCallForActiveChannel,
+  ]);
+
   const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
   const incomingCaller = calls.incomingCall
     ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
@@ -1142,6 +1317,9 @@ export function Chat({
         onLogout={onLogout}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        settingsRequestSeq={settingsRequestSeq}
+        createChannelRequestSeq={createChannelRequestSeq}
+        startDmRequestSeq={startDmRequestSeq}
       />
 
       {view !== 'focus' && (
@@ -1245,15 +1423,7 @@ export function Chat({
               hidden — rather than a dead button that fails on click. */}
             {!showFilesSurface && !showActivitySurface && (
               <button
-                onClick={() => {
-                  if (!callsAvailable) {
-                    showErrorToast(
-                      'Voice calls aren’t set up. Configure LiveKit (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) to enable calls.',
-                    );
-                    return;
-                  }
-                  if (active) void calls.startCall(active.id);
-                }}
+                onClick={startVoiceCallForActiveChannel}
                 disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
                 aria-disabled={!callsAvailable || undefined}
                 title={
@@ -1277,10 +1447,11 @@ export function Chat({
             )}
             <button
               onClick={() => setSwitcherOpen(true)}
+              aria-label="Open command center"
               className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
             >
               <SearchIcon size={14} />
-              <span className="hidden sm:inline">Search</span>
+              <span className="hidden sm:inline">Command</span>
               <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
                 ⌘K
               </kbd>
@@ -1530,6 +1701,7 @@ export function Chat({
           channels={state.channels}
           activeChannelId={state.activeChannelId}
           meId={me.id}
+          commands={quickSwitcherCommands}
           onSelect={(channelId) => {
             selectChannel(channelId);
             setSwitcherOpen(false);
