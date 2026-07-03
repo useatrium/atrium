@@ -164,6 +164,12 @@ prune_images(){
   # 4. k3s runtime store — images no running pod references (resume re-pulls from
   #    the registry). Best-effort: crictl can time out mid-sweep on a busy node.
   sudo k3s crictl rmi --prune >/dev/null 2>&1 || log "prune: k3s image prune incomplete (ok)"
+  # 5. local registry — bound the third store the same way, right here rather than a
+  #    separate cron. Safe to run inline: deploys are serial (no push racing the GC),
+  #    the pods have already rolled to the new SHA (so it's in the keep-set), and it
+  #    self-verifies in-use images afterward. Non-fatal — its own safety net logs
+  #    loudly if anything regressed, but a GC hiccup must not fail a healthy deploy.
+  "$REPO_DIR/deploy/registry-gc.sh" || log "prune: registry-gc reported issues (see above)"
 }
 
 backup_db

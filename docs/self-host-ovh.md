@@ -395,13 +395,12 @@ calls the LLM directly. Then spawn an agent and watch it respond.
   POC (`registry:3`, two OCI-index images, delete one tag, `garbage-collect
   --delete-untagged`) confirmed the kept image still pulls. `deploy/setup-registry.sh`
   provisions v3 + `REGISTRY_STORAGE_DELETE_ENABLED=true` (v3 reads the v2 on-disk layout,
-  so upgrading is just recreating the container on the same volume). Then run nightly:
-  ```sh
-  0 4 * * *  ~/atrium/deploy/registry-gc.sh >> /var/log/registry-gc.log 2>&1
-  ```
-  `registry-gc.sh` keeps in-use + Sandbox-CR-pinned + the last N deploy commits, sweeps
-  the rest, and re-verifies every in-use image still resolves afterward (failing loudly
-  if a wrong registry version ever regresses this). If the registry is somehow corrupted,
+  so upgrading is just recreating the container on the same volume). `redeploy.sh` then
+  runs `registry-gc.sh` after every deploy (alongside the docker + k3s prune), so the
+  registry self-bounds with **no cron** — it keeps in-use + Sandbox-CR-pinned + the last
+  N deploy commits, sweeps the rest, and re-verifies every in-use image still resolves
+  afterward (failing loudly if a wrong registry version ever regresses this). If the
+  registry is somehow corrupted, recover by recreating it on a fresh volume and re-pushing Docker `:latest`:
   recover by recreating it on a fresh volume and re-pushing Docker `:latest`:
   ```sh
   sudo docker rm -f registry && sudo docker volume create atrium-registry
