@@ -102,6 +102,12 @@ export const config = {
   maxUploadBytes: 25 * 1024 * 1024,
   pushRedactContent: process.env.PUSH_REDACT === '1',
   questionRenotifyMinutes: Number(process.env.QUESTION_RENOTIFY_MINUTES ?? 10),
+  // === server-push additions ===
+  // Standard base64url P-256 VAPID keys, as emitted by `web-push generate-vapid-keys`.
+  // Leave any value unset to disable Web Push delivery while preserving registration.
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+  vapidSubject: process.env.VAPID_SUBJECT ?? '',
   // LiveKit calls are optional infra. Leave any of these unset to keep call
   // endpoints disabled while the rest of the server boots normally.
   livekitUrl: process.env.LIVEKIT_URL ?? '',

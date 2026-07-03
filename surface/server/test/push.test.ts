@@ -9,11 +9,18 @@ import { appendEvent, getOrCreateDm, getOrCreateGdm, postMessage, type WireEvent
 import { WsHub, type HubSocket } from '../src/hub.js';
 import {
   checkExpoPushReceipts,
-  mentionedHandles,
   pushRecipientsFor,
   sendQuestionPush,
   sendMessagePush,
+  sendSessionCompletedPush,
 } from '../src/push.js';
+import { mentionedHandles } from '../src/mentions.js';
+import type {
+  WebPushPayload,
+  WebPushSender,
+  WebPushSubscription,
+  WebPushUrgency,
+} from '../src/webpush.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -49,6 +56,30 @@ async function registerToken(userId: string, token: string) {
     `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`,
     [token, userId],
   );
+}
+
+async function registerWebPushToken(userId: string, endpoint: string, subscription: WebPushSubscription) {
+  await pool.query(
+    `INSERT INTO push_tokens (token, user_id, platform, kind, subscription)
+     VALUES ($1, $2, 'web', 'webpush', $3)`,
+    [endpoint, userId, subscription],
+  );
+}
+
+function fakeWebPushSender(
+  records: Array<{
+    subscription: WebPushSubscription;
+    payload: WebPushPayload;
+    urgency: WebPushUrgency;
+  }>,
+): WebPushSender {
+  return {
+    name: 'fake-webpush',
+    async send(subscription, payload, options = {}) {
+      records.push({ subscription, payload, urgency: options.urgency ?? 'normal' });
+      return { status: 'sent' };
+    },
+  };
 }
 
 function okFetch(tickets?: unknown[]) {
@@ -164,6 +195,107 @@ describe('sendMessagePush', () => {
     expect(sent[0].to).toBe('ExponentPushToken[ben-1]');
     expect(sent[0].title).toContain('mentioned you in #general');
     expect(sent[0].data.channelId).toBe(fx.channelId);
+  });
+
+  it('fans out mentioned messages to webpush tokens with badge counts', async () => {
+    await pool.query(
+      'INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [fx.workspaceId, benId],
+    );
+    await postInChannel(fx.otherChannelId, 'unread elsewhere');
+    const subscription = {
+      endpoint: 'https://push.example.test/subscriptions/ben',
+      keys: {
+        p256dh:
+          'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
+        auth: 'BTBZMqHH6r4Tts7J_aSIgg', // gitleaks:allow — public RFC 8291 Appendix A test vector
+      },
+    };
+    await registerWebPushToken(benId, subscription.endpoint, subscription);
+    const records: Array<{
+      subscription: WebPushSubscription;
+      payload: WebPushPayload;
+      urgency: WebPushUrgency;
+    }> = [];
+    const hub = new WsHub();
+    const ev = await postInChannel(fx.channelId, 'ping @ben');
+
+    await sendMessagePush(pool, hub, ev, {
+      fetchImpl: okFetch(),
+      webPushSender: fakeWebPushSender(records),
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      subscription,
+      urgency: 'high',
+      payload: {
+        title: 'Alice mentioned you in #general',
+        body: 'ping @ben',
+        tag: `channel:${fx.channelId}`,
+        badge: 2,
+        data: { channelId: fx.channelId, eventId: ev.id },
+      },
+    });
+  });
+
+  it('includes explicit all-message members and skips messages-off users', async () => {
+    await pool.query(
+      'INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2), ($1, $3) ON CONFLICT DO NOTHING',
+      [fx.workspaceId, benId, caraId],
+    );
+    await pool.query(
+      `INSERT INTO channel_members (channel_id, user_id)
+       VALUES ($1, $2), ($1, $3)
+       ON CONFLICT DO NOTHING`,
+      [fx.channelId, benId, caraId],
+    );
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [benId, JSON.stringify({ messages: 'all', sessions: true, calls: true })],
+    );
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [caraId, JSON.stringify({ messages: 'off', sessions: true, calls: true })],
+    );
+    await registerToken(benId, 'ExponentPushToken[ben-all]');
+    await registerToken(caraId, 'ExponentPushToken[cara-off]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await postInChannel(fx.channelId, 'plain channel message');
+
+    const recipients = await pushRecipientsFor(pool, ev);
+    expect(recipients.recipients).toEqual([{ userId: benId, reason: 'channel' }]);
+
+    await sendMessagePush(pool, hub, ev, fetchImpl);
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent.map((m: { to: string }) => m.to)).toEqual(['ExponentPushToken[ben-all]']);
+    expect(sent[0].title).toBe('Alice in #general');
+  });
+
+  it('adds unread-channel badge counts to Expo pushes', async () => {
+    await pool.query(
+      'INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [fx.workspaceId, benId],
+    );
+    await postInChannel(fx.otherChannelId, 'unread elsewhere');
+    await registerToken(benId, 'ExponentPushToken[ben-badge]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await postInChannel(fx.channelId, 'ping @ben');
+
+    await sendMessagePush(pool, hub, ev, fetchImpl);
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent[0]).toMatchObject({
+      to: 'ExponentPushToken[ben-badge]',
+      badge: 2,
+      data: { channelId: fx.channelId, eventId: ev.id },
+    });
   });
 
   it('skips users with a socket focused on the channel', async () => {
@@ -328,6 +460,81 @@ describe('sendQuestionPush', () => {
     const ev = await questionEvent();
 
     await sendQuestionPush(pool, hub, ev, fetchImpl);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('skips question pushes when session notifications are disabled', async () => {
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [fx.userId, JSON.stringify({ messages: 'dm_mention', sessions: false, calls: true })],
+    );
+    await registerToken(fx.userId, 'ExponentPushToken[creator-1]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await questionEvent();
+
+    await sendQuestionPush(pool, hub, ev, fetchImpl);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendSessionCompletedPush', () => {
+  async function completedEvent(): Promise<WireEvent> {
+    return withTx(pool, (client) =>
+      appendEvent(client, {
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        type: 'session.completed',
+        actorId: fx.userId,
+        payload: {
+          sessionId: 'session-1',
+          status: 'completed',
+          resultExcerpt: 'Done and ready to review.',
+          permalink: '/s/session-1',
+        },
+      }),
+    );
+  }
+
+  it('pushes session completion to the spawner', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-complete]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await completedEvent();
+
+    await sendSessionCompletedPush(pool, hub, ev, fetchImpl);
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent[0]).toMatchObject({
+      to: 'ExponentPushToken[creator-complete]',
+      title: 'Session finished: session',
+      body: 'Done and ready to review.',
+      data: {
+        channelId: fx.channelId,
+        eventId: ev.id,
+        permalink: '/s/session-1',
+        sessionId: 'session-1',
+      },
+    });
+  });
+
+  it('skips session completion when session notifications are disabled', async () => {
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [fx.userId, JSON.stringify({ messages: 'dm_mention', sessions: false, calls: true })],
+    );
+    await registerToken(fx.userId, 'ExponentPushToken[creator-complete]');
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+    const ev = await completedEvent();
+
+    await sendSessionCompletedPush(pool, hub, ev, fetchImpl);
 
     expect(fetchImpl).not.toHaveBeenCalled();
   });

@@ -37,7 +37,7 @@ import {
   type WireEvent,
 } from './events.js';
 import type { WsHub } from './hub.js';
-import { sendQuestionPush } from './push.js';
+import { sendQuestionPush, sendSessionCompletedPush } from './push.js';
 import {
   CLAUDE_CODE_PROVIDER,
   ProviderCredentials,
@@ -2189,6 +2189,17 @@ export class SessionRuns {
     for (const event of events) this.hub.publishEvent(event);
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
+    }
+    const completedEvent = events.find((event) => event.type === 'session.completed');
+    if (completedEvent) {
+      void sendSessionCompletedPush(
+        this.pool,
+        this.hub,
+        completedEvent,
+        this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+      ).catch((err) =>
+        console.warn('session completed push fanout failed', { id, err }),
+      );
     }
     if (events.length > 0) this.scheduleRelease(id);
   }

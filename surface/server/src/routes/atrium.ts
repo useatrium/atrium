@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../db.js';
 import { listChannelMessages, listThreadMessages, type UserRef, type WireEvent } from '../events.js';
+import { getObjectBytes } from '../s3.js';
+import { ensureSessionCapabilitySnapshots } from '../session-capabilities.js';
 
 type AtriumSessionProjectionModule = typeof import('../atrium-session-projection.js');
 type AtriumSessionRecords = Awaited<ReturnType<AtriumSessionProjectionModule['loadSessionRecords']>>;
@@ -120,6 +122,14 @@ export function registerAtriumRoutes(app: FastifyInstance, deps: AtriumRouteDeps
     const { id } = req.params as { id: string };
     const { buildSessionMeta } = await import('../atrium-session-projection.js');
     return reply.type('application/json').send(await buildSessionMeta(pool, id));
+  });
+
+  app.get('/api/sessions/:id/atrium/capabilities', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const snapshots = await ensureSessionCapabilitySnapshots(pool, { getObjectBytes }, id);
+    return reply.type('application/json').send({ sessionId: id, snapshots });
   });
 
   app.get('/api/sessions/:id/atrium/changes-doc', async (req, reply) =>

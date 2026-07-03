@@ -176,6 +176,29 @@ describe('/api/sync', () => {
     });
   });
 
+  it('ships mentionedSinceRead for unread channel mentions only', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const mention = await post(bob.cookie, fx.channelId, 'cold ping @alice');
+    await post(bob.cookie, fx.otherChannelId, 'plain unread');
+
+    let healed = await sync(alice.cookie, 0, 1000);
+    expect(healed.state.channels.find((channel: any) => channel.id === fx.channelId)).toMatchObject({
+      latestEventId: mention.id,
+      mentionedSinceRead: true,
+    });
+    expect(healed.state.channels.find((channel: any) => channel.id === fx.otherChannelId)).toMatchObject({
+      mentionedSinceRead: false,
+    });
+
+    await markRead(alice.cookie, fx.channelId, mention.id);
+    healed = await sync(alice.cookie, 0, 1000);
+    expect(healed.state.channels.find((channel: any) => channel.id === fx.channelId)).toMatchObject({
+      lastReadEventId: mention.id,
+      mentionedSinceRead: false,
+    });
+  });
+
   it('omits cursors and mutes for public channels outside the user workspaces', async () => {
     const alice = await login('alice', 'Alice');
     const message = await post(alice.cookie, fx.channelId, 'in-workspace');

@@ -24,6 +24,7 @@ import {
   type Accent,
   type FontScale,
   type MotionPref,
+  type NotificationMessagePref,
   type SessionListItem,
   type ThemeMode,
 } from '@atrium/surface-client';
@@ -38,8 +39,8 @@ import { BellIcon, BellOffIcon, FileIcon, GearIcon, LockIcon } from './icons';
 import { useDialog } from '../useDialog';
 
 const BELL_TITLES: Record<NotifyState, string> = {
-  on: 'Notifications on (mentions + your sessions) — click to turn off',
-  off: 'Notifications off — click to enable',
+  on: 'Device notifications on — click to turn off',
+  off: 'Device notifications off — click to enable',
   denied: 'Notifications blocked in browser settings',
   unsupported: 'Notifications not supported here',
 };
@@ -78,6 +79,8 @@ export function Sidebar({
   onOpenSession,
   activeSurface = 'chat',
   onOpenFiles,
+  // === mentions-activity additions ===
+  onOpenActivity,
   sessionEventSeq,
   githubConnection,
   connectionsAvailable = true,
@@ -99,8 +102,10 @@ export function Sidebar({
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
-  activeSurface?: 'chat' | 'files';
+  activeSurface?: 'chat' | 'files' | 'activity';
   onOpenFiles?: () => void;
+  // === mentions-activity additions ===
+  onOpenActivity?: () => void;
   sessionEventSeq: number;
   githubConnection?: ConnectionStatus;
   connectionsAvailable?: boolean;
@@ -252,6 +257,22 @@ export function Sidebar({
             >
               <FileIcon size={15} className="shrink-0 text-fg-muted" />
               <span className="truncate">Files</span>
+            </button>
+            {/* === mentions-activity additions === */}
+            <button
+              type="button"
+              aria-current={activeSurface === 'activity' ? 'page' : undefined}
+              onClick={onOpenActivity}
+              className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] ${
+                activeSurface === 'activity'
+                  ? 'bg-accent/20 font-medium text-fg'
+                  : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
+              }`}
+            >
+              <span className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">
+                @
+              </span>
+              <span className="truncate">Activity</span>
             </button>
           </div>
         </section>
@@ -487,6 +508,11 @@ const MOTION_OPTIONS: { value: MotionPref; label: string }[] = [
   { value: 'reduced', label: 'Reduced' },
   { value: 'full', label: 'Full' },
 ];
+const MESSAGE_NOTIFICATION_OPTIONS: { value: NotificationMessagePref; label: string }[] = [
+  { value: 'all', label: 'All messages' },
+  { value: 'dm_mention', label: 'DMs & mentions' },
+  { value: 'off', label: 'Off' },
+];
 
 const ACCENT_LABELS: Record<Accent, string> = {
   indigo: 'Indigo',
@@ -541,6 +567,18 @@ function SettingsPopover({
         ? 'bg-accent text-on-accent'
         : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
     }`;
+  const toggleButton = (active: boolean) =>
+    `flex h-8 w-16 items-center rounded-full border px-1 ${
+      active
+        ? 'justify-end border-accent bg-accent text-on-accent'
+        : 'justify-start border-edge-strong bg-surface text-fg-muted'
+    }`;
+  const setNotificationMessages = (messages: NotificationMessagePref) =>
+    setPrefs({ notifications: { ...prefs.notifications, messages } });
+  const setNotificationSessions = (sessions: boolean) =>
+    setPrefs({ notifications: { ...prefs.notifications, sessions } });
+  const setNotificationCalls = (calls: boolean) =>
+    setPrefs({ notifications: { ...prefs.notifications, calls } });
 
   return (
     <div
@@ -650,6 +688,50 @@ function SettingsPopover({
           >
             {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
             <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Messages">
+          <select
+            aria-label="Message notifications"
+            value={prefs.notifications.messages}
+            onChange={(event) =>
+              setNotificationMessages(event.target.value as NotificationMessagePref)
+            }
+            className="h-8 w-full rounded-md border border-edge bg-surface px-2 text-xs text-fg-secondary"
+          >
+            {MESSAGE_NOTIFICATION_OPTIONS.map((option) => (
+              <option
+                key={option.value}
+                value={option.value}
+              >
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
+
+        <SettingRow label="Agent sessions">
+          <button
+            type="button"
+            aria-label="Agent sessions notifications"
+            aria-pressed={prefs.notifications.sessions}
+            onClick={() => setNotificationSessions(!prefs.notifications.sessions)}
+            className={toggleButton(prefs.notifications.sessions)}
+          >
+            <span className="size-5 rounded-full bg-current" />
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Calls">
+          <button
+            type="button"
+            aria-label="Call notifications"
+            aria-pressed={prefs.notifications.calls}
+            onClick={() => setNotificationCalls(!prefs.notifications.calls)}
+            className={toggleButton(prefs.notifications.calls)}
+          >
+            <span className="size-5 rounded-full bg-current" />
           </button>
         </SettingRow>
 

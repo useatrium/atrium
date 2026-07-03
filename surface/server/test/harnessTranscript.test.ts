@@ -79,6 +79,16 @@ async function session(): Promise<string> {
   return r.rows[0]!.id;
 }
 
+async function login(): Promise<string> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { handle: 'alice', displayName: 'Alice' },
+  });
+  expect(res.statusCode).toBe(200);
+  return res.headers['set-cookie'] as string;
+}
+
 describe('harness-transcript internal endpoints', () => {
   it('requires the api key for PUT and GET', async () => {
     const sid = await session();
@@ -166,5 +176,57 @@ describe('harness-transcript internal endpoints', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(codex.statusCode).toBe(404);
+  });
+
+  it('stores a redacted capability snapshot and re-derives it for viewer access', async () => {
+    const sid = await session();
+    const body = `${JSON.stringify({
+      type: 'attachment',
+      timestamp: '2026-07-03T00:00:00.000Z',
+      attachment: {
+        type: 'deferred_tools_delta',
+        addedNames: ['Read', 'mcp__deepwiki__ask_question'],
+        removedNames: [],
+        readdedNames: [],
+        pendingMcpServers: ['RepoPrompt'],
+      },
+    })}\n`;
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+      headers: { 'x-api-key': KEY, 'content-type': 'application/x-ndjson' },
+      payload: body,
+    });
+    expect(put.statusCode).toBe(200);
+
+    const stored = await pool.query<{ source_sha256: string; snapshot_json: { counts: { tools: number } } }>(
+      `SELECT source_sha256, snapshot_json
+         FROM session_capability_snapshots
+        WHERE session_id = $1 AND harness = 'claude'`,
+      [sid],
+    );
+    expect(stored.rows).toHaveLength(1);
+    expect(stored.rows[0]!.source_sha256).toBe(put.json().sha256);
+    expect(stored.rows[0]!.snapshot_json.counts.tools).toBe(2);
+
+    await pool.query(`DELETE FROM session_capability_snapshots WHERE session_id = $1`, [sid]);
+    const cookie = await login();
+    const capabilities = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/atrium/capabilities`,
+      headers: { cookie },
+    });
+    expect(capabilities.statusCode).toBe(200);
+    const bodyJson = capabilities.json<{
+      snapshots: { harness: string; tools: { name: string }[]; pendingMcpServers: string[] }[];
+    }>();
+    expect(bodyJson.snapshots).toHaveLength(1);
+    expect(bodyJson.snapshots[0]!.harness).toBe('claude');
+    expect(bodyJson.snapshots[0]!.tools.map((tool) => tool.name)).toEqual(['mcp__deepwiki__ask_question', 'Read']);
+    expect(bodyJson.snapshots[0]!.pendingMcpServers).toEqual(['RepoPrompt']);
+
+    const regenerated = await pool.query(`SELECT 1 FROM session_capability_snapshots WHERE session_id = $1`, [sid]);
+    expect(regenerated.rowCount).toBe(1);
   });
 });

@@ -464,7 +464,7 @@ describe('catch-up fallback decision', () => {
 });
 
 describe('app unread read cursors', () => {
-  it('derives initial unread from channel counters without inventing mention badges', () => {
+  it('derives initial unread from channel counters and cold mention flags', () => {
     const state = appReducer(
       { ...initialAppState, unread: { 'ch-mention': 'mention' } },
       {
@@ -489,6 +489,26 @@ describe('app unread read cursors', () => {
             lastReadEventId: 3,
           },
           {
+            id: 'ch-cold-mention',
+            workspaceId: 'ws-1',
+            name: 'cold mention',
+            createdAt: new Date(0).toISOString(),
+            kind: 'public',
+            latestEventId: 11,
+            lastReadEventId: 9,
+            mentionedSinceRead: true,
+          },
+          {
+            id: 'ch-dm',
+            workspaceId: 'ws-1',
+            name: 'dm',
+            createdAt: new Date(0).toISOString(),
+            kind: 'dm',
+            latestEventId: 12,
+            lastReadEventId: 9,
+            members: [alice, bob],
+          },
+          {
             id: 'ch-mention',
             workspaceId: 'ws-1',
             name: 'mention',
@@ -503,6 +523,8 @@ describe('app unread read cursors', () => {
 
     expect(state.unread['ch-read']).toBe(false);
     expect(state.unread['ch-unread']).toBe(true);
+    expect(state.unread['ch-cold-mention']).toBe('mention');
+    expect(state.unread['ch-dm']).toBe('mention');
     expect(state.unread['ch-mention']).toBe('mention');
   });
 
@@ -587,6 +609,29 @@ describe('app unread read cursors', () => {
     );
     const unmutedAgain = appReducer(muted, { type: 'mute-changed', channelId: CH, muted: false });
     expect(unmutedAgain.unread[CH]).toBe(false);
+  });
+
+  it('unmuting re-derives cold mention badges from the channel snapshot', () => {
+    const loaded = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'was-muted',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+          latestEventId: 10,
+          lastReadEventId: 3,
+          mentionedSinceRead: true,
+          muted: true,
+        },
+      ],
+    });
+    expect(loaded.unread[CH]).toBe(false);
+
+    const unmuted = appReducer(loaded, { type: 'mute-changed', channelId: CH, muted: false });
+    expect(unmuted.unread[CH]).toBe('mention');
   });
 
   it('group DM messages badge as mentions', () => {
