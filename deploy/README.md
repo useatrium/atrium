@@ -18,8 +18,9 @@ GitHub CD that drives it. Full setup: [`docs/self-host-ovh.md`](../docs/self-hos
   ⚠️ restarts k3s only when the drop-in changes.
 - **`registry-gc.sh`** — bound the local registry: delete stale tags (keep in-use +
   Sandbox-CR-pinned + last N deploy commits), mark-and-sweep, then re-verify in-use
-  images resolve. Run from a nightly cron. **Requires `registry:3`** — v2's
-  `garbage-collect` deletes in-use OCI-index blobs (verified); v3 does not.
+  images resolve. **Run automatically by `redeploy.sh`** after each deploy (no cron);
+  can also be run standalone. **Requires `registry:3`** — v2's `garbage-collect`
+  deletes in-use OCI-index blobs (verified); v3 does not.
 
 Image sprawl across three stores (docker build host, k3s containerd, local registry)
 is the box's dominant disk consumer. `redeploy.sh` prunes the first two after each

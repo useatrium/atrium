@@ -18,8 +18,8 @@
 # As a safety net this script re-verifies every in-use image still resolves AFTER GC
 # and fails loudly if any regressed. Safe to re-run; a no-op when nothing is stale.
 #
-# Run from a host cron / systemd timer, e.g. daily:
-#   0 4 * * *  /home/ubuntu/atrium/deploy/registry-gc.sh >> /var/log/registry-gc.log 2>&1
+# Run automatically by redeploy.sh after each successful deploy (alongside the docker
+# + k3s prune), so the registry self-bounds with no cron. Can also be run standalone.
 set -uo pipefail
 
 REPO_DIR="${ATRIUM_REPO_DIR:-$HOME/atrium}"
@@ -53,6 +53,16 @@ manifest_digest(){  # repo tag -> Docker-Content-Digest (empty if unresolved)
   curl -fsSI -H "$ACCEPT" "${API}/v2/$1/manifests/$2" 2>/dev/null \
     | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}'
 }
+
+# --- snapshot which in-use images resolve BEFORE we touch anything ----------------
+# The safety net below alarms only on a REGRESSION (resolved before GC, broken after),
+# so a pre-existing gap (e.g. an old pod pinning a SHA that predates the registry) is
+# not blamed on this run.
+declare -A resolved_before=()
+while IFS= read -r ref; do
+  [ -z "$ref" ] && continue
+  [ -n "$(manifest_digest "library/${ref%%:*}" "${ref##*:}")" ] && resolved_before[$ref]=1
+done <<<"$in_use"
 
 # --- delete stale tags -----------------------------------------------------------
 mapfile -t repos < <(curl -fsS "${API}/v2/_catalog" 2>/dev/null | tr ',' '\n' \
@@ -97,17 +107,22 @@ if [ "$deleted" -gt 0 ]; then
     || log "garbage-collect failed"
 fi
 
-# --- SAFETY NET: every in-use image must still resolve after GC -------------------
+# --- SAFETY NET: no in-use image that resolved before may be broken by this GC -----
 # registry:2's GC silently deleted in-use blobs; if a bad registry version ever slips
-# back in, catch it here instead of at the next pod pull.
-broken=0
+# back in, catch the REGRESSION here instead of at the next pod pull. Images that were
+# already missing before this run (e.g. an old pod pinning a pre-registry SHA) are
+# reported at info level, not treated as a GC failure.
+broken=0 preexisting=0
 while IFS= read -r ref; do
   [ -z "$ref" ] && continue
-  repo="library/${ref%%:*}"; tag="${ref##*:}"
-  if [ -z "$(manifest_digest "$repo" "$tag")" ]; then
-    log "❌ IN-USE IMAGE BROKEN AFTER GC: ${ref} — re-push it and check the registry version!"
+  [ -n "$(manifest_digest "library/${ref%%:*}" "${ref##*:}")" ] && continue   # still resolves
+  if [ -n "${resolved_before[$ref]:-}" ]; then
+    log "❌ GC BROKE IN-USE IMAGE: ${ref} — re-push it and check the registry version!"
     broken=$((broken+1))
+  else
+    log "  note: in-use image ${ref} was already absent before GC (not caused by this run)"
+    preexisting=$((preexisting+1))
   fi
 done <<<"$in_use"
-[ "$broken" -gt 0 ] && { log "FAILED: ${broken} in-use image(s) unresolvable post-GC"; exit 1; }
-log "done (in-use images verified intact)"
+[ "$broken" -gt 0 ] && { log "FAILED: GC broke ${broken} in-use image(s)"; exit 1; }
+log "done (GC broke nothing; ${preexisting} in-use image(s) were pre-existingly absent)"
