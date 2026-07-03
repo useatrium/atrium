@@ -1164,6 +1164,11 @@ export class SessionRuns {
     await this.stopTailer(id);
   }
 
+  async interruptTurn(id: string, userId: string): Promise<void> {
+    const row = await this.requireSpawnerOrDriver(id, userId);
+    await this.centaur.interruptTurn(row.centaur_thread_key);
+  }
+
   async cancelSessionInTx(client: DbClient, id: string, userId: string): Promise<WireEvent[]> {
     const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
     const row = before.rows[0];

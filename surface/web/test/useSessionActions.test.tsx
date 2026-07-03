@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EnqueueOpInput } from '@atrium/surface-client';
 import { useSessionActions } from '../src/useSessionActions';
 
-type SessionActionType = 'session.answer' | 'session.cancel' | 'session.steer';
+type SessionActionType = 'session.answer' | 'session.cancel' | 'session.stop_turn' | 'session.steer';
 type TestEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
 
 function renderActions(enqueueOp = vi.fn(async () => ({ opId: 'op-1' }))) {
@@ -57,6 +57,25 @@ describe('useSessionActions', () => {
     expect(enqueueOp).toHaveBeenCalledWith(
       expect.objectContaining({
         opType: 'session.cancel',
+        payload: { sessionId: 'session-2' },
+      }),
+    );
+    expect(clearFailedCancel.mock.invocationCallOrder[0]).toBeLessThan(
+      enqueueOp.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('clears failed cancel state before queueing a stop-turn op', async () => {
+    const { result, clearFailedCancel, enqueueOp } = renderActions();
+
+    await act(async () => {
+      await result.current.stopTurn('session-2');
+    });
+
+    expect(clearFailedCancel).toHaveBeenCalledWith('session-2');
+    expect(enqueueOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opType: 'session.stop_turn',
         payload: { sessionId: 'session-2' },
       }),
     );

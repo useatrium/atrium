@@ -589,6 +589,7 @@ export default function SessionScreen() {
   const [questionCleared, setQuestionCleared] = useState<string | null>(null);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
+  const [stopTurnState, setStopTurnState] = useState<'idle' | 'requested' | 'completed'>('idle');
   const [workTab, setWorkTab] = useState<string | null>(null);
   const [turnsOpen, setTurnsOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
@@ -649,6 +650,7 @@ export default function SessionScreen() {
     session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
   const activeTurn = !terminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
+  const canStopTurn = activeTurn && !starting;
   const mountedAtRef = useRef(Date.now());
   const disconnectedAtRef = useRef<number>(Date.now());
   const prevConnectedRef = useRef<boolean>(connected);
@@ -765,6 +767,20 @@ export default function SessionScreen() {
   }, []);
 
   const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
+  useEffect(() => {
+    if (displayCancelAsk === 'failed' || displayStatus === 'failed' || displayStatus === 'cancelled') {
+      setStopTurnState('idle');
+      return;
+    }
+    if (stopTurnState === 'requested' && displayStatus === 'completed' && !activeTurn) {
+      setStopTurnState('completed');
+      return;
+    }
+    if (stopTurnState === 'completed' && activeTurn) {
+      setStopTurnState('idle');
+    }
+  }, [activeTurn, displayCancelAsk, displayStatus, stopTurnState]);
+  const stoppedByCurrentViewer = stopTurnState !== 'idle' && displayStatus === 'completed' && !activeTurn;
   const elapsedMsForHeader = session
     ? terminal
       ? sessionElapsedMs(session, now)
@@ -784,14 +800,16 @@ export default function SessionScreen() {
   const driverName = session?.driverName ?? 'the driver';
   const waitingDriverName = session?.driverName ?? session?.spawnerName ?? 'the driver';
   const turnPhase = turnStatus.phase;
-  const statusLabel = turnStatusLabel({
-    phase: turnPhase,
-    starting,
-    headline: turnStatus.headline,
-    openTool: turnStatus.openTool,
-    waitingLabel:
-      driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
-  });
+  const statusLabel = stoppedByCurrentViewer
+    ? 'stopped by you'
+    : turnStatusLabel({
+        phase: turnPhase,
+        starting,
+        headline: turnStatus.headline,
+        openTool: turnStatus.openTool,
+        waitingLabel:
+          driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+      });
   const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter(
     (r) => !ignoredSeatRequests.has(r.userId),
   );
@@ -873,6 +891,18 @@ export default function SessionScreen() {
 
   const cancel = () => {
     if (!id) return;
+    if (canStopTurn) {
+      setCancelAsk('idle');
+      chat.clearFailedSessionCancel(id);
+      chat
+        .stopTurn(id)
+        .then(() => setStopTurnState('requested'))
+        .catch(() => {
+          setStopTurnState('idle');
+          setCancelAsk('failed');
+        });
+      return;
+    }
     if (displayCancelAsk === 'idle') {
       setCancelAsk('confirm');
       return;
@@ -1022,7 +1052,15 @@ export default function SessionScreen() {
             ? () => (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel session' : 'Cancel session'}
+                  accessibilityLabel={
+                    canStopTurn
+                      ? displayCancelAsk === 'failed'
+                        ? 'Retry cancel turn'
+                        : 'Cancel current turn'
+                      : displayCancelAsk === 'confirm'
+                        ? 'Confirm cancel session'
+                        : 'Cancel session'
+                  }
                   accessibilityState={{ disabled: false }}
                   onPress={cancel}
                   hitSlop={8}
@@ -1030,16 +1068,25 @@ export default function SessionScreen() {
                 >
                   <Text
                     style={{
-                      color: displayCancelAsk === 'confirm' ? colors.danger : colors.textSecondary,
+                      color:
+                        displayCancelAsk === 'failed' || displayCancelAsk === 'confirm'
+                          ? colors.danger
+                          : canStopTurn
+                            ? colors.warning
+                            : colors.textSecondary,
                       fontSize: font.xs,
                       fontWeight: '800',
                     }}
                   >
-                    {displayCancelAsk === 'confirm'
-                      ? 'CONFIRM'
-                      : displayCancelAsk === 'failed'
-                        ? 'RETRY CANCEL'
-                        : 'CANCEL'}
+                    {canStopTurn
+                      ? displayCancelAsk === 'failed'
+                        ? 'RETRY TURN'
+                        : 'CANCEL TURN'
+                      : displayCancelAsk === 'confirm'
+                        ? 'CONFIRM'
+                        : displayCancelAsk === 'failed'
+                          ? 'RETRY CANCEL'
+                          : 'CANCEL'}
                   </Text>
                 </Pressable>
               )
@@ -1050,7 +1097,7 @@ export default function SessionScreen() {
       {displayCancelAsk === 'failed' && (
         <View style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}>
           <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
-            Cancel failed. Tap retry cancel.
+            {canStopTurn ? 'Cancel turn failed. Tap retry.' : 'Cancel failed. Tap retry cancel.'}
           </Text>
         </View>
       )}
@@ -1174,7 +1221,13 @@ export default function SessionScreen() {
             costUsd={costUsd}
             models={stream.models}
             effort={modelEffort}
-            cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+            cancelLabel={
+              canStopTurn
+                ? 'Cancel turn'
+                : displayCancelAsk === 'confirm'
+                  ? 'Confirm cancel'
+                  : 'Cancel'
+            }
             onCancel={isSpawner || isDriver ? cancel : undefined}
           />
         ) : null}
