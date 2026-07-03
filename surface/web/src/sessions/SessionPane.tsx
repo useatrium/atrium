@@ -47,6 +47,7 @@ import {
   ChevronRightIcon,
   ExpandIcon,
   ExternalLinkIcon,
+  SearchIcon,
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
@@ -72,6 +73,7 @@ import { sessionPaneSizing, useSessionPaneWidth } from './useSessionPaneWidth';
 import { Spinner, TurnStatusLine } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
+import { SessionCapabilitiesPopover } from './SessionCapabilitiesPopover';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
 import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
@@ -652,6 +654,8 @@ export function SessionPane({
   const githubIdentityLabel = session.githubIdentityMode
     ? githubIdentityModeLabel(session.githubIdentityMode)
     : null;
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
+  const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
 
   return (
     <aside
@@ -750,6 +754,26 @@ export function SessionPane({
                 : 'Cancel'}
           </button>
         )}
+        <div className="relative">
+          <button
+            ref={capabilitiesButtonRef}
+            type="button"
+            onClick={() => setCapabilitiesOpen((value) => !value)}
+            title="Inspect session capabilities"
+            aria-label="Inspect session capabilities"
+            aria-expanded={capabilitiesOpen}
+            aria-haspopup="dialog"
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+          >
+            <SearchIcon size={15} />
+          </button>
+          <SessionCapabilitiesPopover
+            sessionId={session.id}
+            open={capabilitiesOpen}
+            invokerRef={capabilitiesButtonRef}
+            onClose={() => setCapabilitiesOpen(false)}
+          />
+        </div>
         {canDetach && (
           <a
             href={`/s/${session.id}`}

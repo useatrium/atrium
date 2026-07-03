@@ -33,7 +33,12 @@
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import type { UserRef, WireEvent } from '@atrium/surface-client';
-import type { SessionStreamCallbacks, SessionStreamHandle, CreateSessionBody } from './api';
+import type {
+  CreateSessionBody,
+  SessionCapabilitiesResponse,
+  SessionStreamCallbacks,
+  SessionStreamHandle,
+} from './api';
 import { normalizeExecutionStatus, type SessionStatus, type SessionWire } from './types';
 import rawB from '../../../centaur-client/test/fixtures/B_tooltest.json';
 import rawC from '../../../centaur-client/test/fixtures/C_longstream.json';
@@ -505,11 +510,202 @@ function getRun(id: string): MockRun {
   return runs.get(id) ?? synthesizeCompletedRun(id);
 }
 
+function mockCapabilities(id: string): SessionCapabilitiesResponse {
+  const generatedAt = new Date().toISOString();
+  return {
+    sessionId: id,
+    snapshots: [
+      {
+        parserVersion: 1,
+        sessionId: id,
+        harness: 'codex',
+        sourceSha256: 'mock-codex-capabilities',
+        completeness: 'partial',
+        generatedAt,
+        runtime: {
+          model: 'gpt-5.5',
+          effort: 'high',
+          sandboxPolicy: 'workspace-write',
+          approvalPolicy: 'never',
+          cwd: '.../Code/atrium',
+        },
+        counts: {
+          tools: 5,
+          toolNamespaces: 1,
+          mcpServers: 0,
+          agents: 0,
+          skills: 4,
+          observedToolCalls: 3,
+          changes: 4,
+        },
+        tools: ['multi_agent_v1.spawn_agent', 'multi_agent_v1.wait_agent', 'multi_agent_v1.send_input', 'multi_agent_v1.close_agent', 'multi_agent_v1.resume_agent'].map((name) => ({
+          name,
+          namespace: 'multi_agent_v1',
+          sources: ['codex.tool_search_output'],
+        })),
+        toolNamespaces: [
+          {
+            name: 'multi_agent_v1',
+            sources: ['codex.tool_search_output'],
+            description: 'Tools for spawning and managing sub-agents.',
+            count: 5,
+          },
+        ],
+        mcpServers: [],
+        agents: [],
+        skills: ['stress-test', 'ui-ux-audit', 'hand-compute', 'workers-best-practices'].map((name) => ({
+          name,
+          sources: ['codex.developer_skills'],
+        })),
+        observedToolCalls: [
+          { name: 'exec_command', namespace: 'builtin', sources: ['codex.function_call'], status: 'observed', count: 22 },
+          { name: 'apply_patch', namespace: 'builtin', sources: ['codex.custom_tool_call'], status: 'observed', count: 5 },
+          { name: 'spawn_agent', namespace: 'builtin', sources: ['codex.function_call'], status: 'observed', count: 2 },
+        ],
+        pendingMcpServers: [],
+        changes: [
+          {
+            seq: 1,
+            line: 1,
+            source: 'codex.session_meta',
+            summary: 'Runtime context captured',
+            counts: { runtimeFields: 8 },
+          },
+          {
+            seq: 2,
+            line: 4,
+            source: 'codex.developer_context',
+            summary: 'Developer capability context captured',
+            counts: { tools: 0, skills: 4 },
+            redacted: true,
+          },
+          {
+            seq: 3,
+            line: 11,
+            source: 'codex.tool_search_output',
+            summary: 'Deferred tool metadata loaded',
+            counts: { tools: 5 },
+          },
+          {
+            seq: 4,
+            line: 20,
+            source: 'codex.function_call',
+            summary: 'Tool call observed',
+            counts: { observed: 1 },
+          },
+        ],
+        warnings: [],
+        redactions: ['Codex developer instructions are summarized to capability names and short descriptions.'],
+      },
+      {
+        parserVersion: 1,
+        sessionId: id,
+        harness: 'claude',
+        sourceSha256: 'mock-claude-capabilities',
+        completeness: 'complete',
+        generatedAt,
+        runtime: {
+          mode: 'normal',
+          permissionMode: 'bypassPermissions',
+          cwd: '.../Code/atrium',
+          cliVersion: '2.1.199',
+        },
+        counts: {
+          tools: 14,
+          toolNamespaces: 4,
+          mcpServers: 3,
+          agents: 3,
+          skills: 10,
+          observedToolCalls: 0,
+          changes: 3,
+        },
+        tools: [
+          'Read',
+          'WebFetch',
+          'WebSearch',
+          'TaskCreate',
+          'TaskList',
+          'TaskOutput',
+          'mcp__deepwiki__ask_question',
+          'mcp__deepwiki__read_wiki_contents',
+          'mcp__deepwiki__read_wiki_structure',
+          'mcp__nia__search',
+          'mcp__nia__nia_read',
+          'mcp__nia__nia_grep',
+          'mcp__claude_ai_Figma__get_screenshot',
+          'mcp__claude_ai_Figma__get_design_context',
+        ].map((name) => ({
+          name,
+          namespace: name.startsWith('mcp__') ? 'mcp' : 'builtin',
+          sources: ['claude.deferred_tools_delta'],
+          status: 'available',
+        })),
+        toolNamespaces: [
+          { name: 'builtin', sources: ['claude.deferred_tools_delta'], count: 6 },
+          { name: 'mcp:deepwiki', sources: ['claude.deferred_tools_delta'], count: 3 },
+          { name: 'mcp:nia', sources: ['claude.deferred_tools_delta'], count: 3 },
+          { name: 'mcp:claude.ai Figma', sources: ['claude.deferred_tools_delta'], count: 2 },
+        ],
+        mcpServers: ['deepwiki', 'nia', 'claude.ai Figma'].map((name) => ({
+          name,
+          sources: ['claude.mcp_instructions_delta'],
+          status: 'available',
+        })),
+        agents: ['Explore', 'Plan', 'test-engineer-typescript'].map((name) => ({
+          name,
+          sources: ['claude.agent_listing_delta'],
+        })),
+        skills: [
+          'agent-fanout',
+          'stress-test',
+          'ui-ux-audit',
+          'hand-compute',
+          'cloudflare',
+          'workers-best-practices',
+          'wrangler',
+          'dejank',
+          'deslop',
+          'sj-audit',
+        ].map((name) => ({ name, sources: ['claude.skill_listing'] })),
+        observedToolCalls: [],
+        pendingMcpServers: [],
+        changes: [
+          {
+            seq: 1,
+            line: 5,
+            source: 'claude.deferred_tools_delta',
+            summary: 'Tool availability delta',
+            counts: { added: 14, pendingMcpServers: 0 },
+          },
+          {
+            seq: 2,
+            line: 6,
+            source: 'claude.agent_listing_delta',
+            summary: 'Agent listing delta',
+            counts: { added: 3 },
+          },
+          {
+            seq: 3,
+            line: 8,
+            source: 'claude.skill_listing',
+            summary: 'Skill listing captured',
+            counts: { skills: 10 },
+            redacted: true,
+          },
+        ],
+        warnings: [],
+        redactions: ['Claude skill listing content is summarized to names and short descriptions.'],
+      },
+    ],
+  };
+}
+
 // ---- the mock API -----------------------------------------------------------
 
 export interface SessionsMockApi {
   createSession(body: CreateSessionBody): Promise<{ session: SessionWire }>;
   getSession(id: string): Promise<{ session: SessionWire }>;
+  getCapabilities(id: string): Promise<SessionCapabilitiesResponse>;
   sendMessage(id: string, text: string): Promise<void>;
   answerQuestion(id: string, questionId: string, answers: Record<string, { answers: string[] }>): Promise<void>;
   cancel(id: string): Promise<void>;
@@ -602,6 +798,10 @@ export const sessionsMock: SessionsMockApi | null = ENABLED
       async getSession(id) {
         await mockMe(); // synthesized sessions get attributed to the real user
         return { session: { ...getRun(id).wire } };
+      },
+
+      async getCapabilities(id) {
+        return mockCapabilities(id);
       },
 
       async sendMessage(id, text) {

@@ -50,6 +50,69 @@ export interface AppListRow {
   updatedAt: string;
 }
 
+export interface SessionCapabilityItem {
+  name: string;
+  sources: string[];
+  namespace?: string;
+  description?: string;
+  status?: 'available' | 'pending' | 'observed';
+  count?: number;
+}
+
+export interface SessionCapabilityNamespace {
+  name: string;
+  sources: string[];
+  description?: string;
+  count: number;
+}
+
+export interface SessionCapabilityChange {
+  seq: number;
+  line: number;
+  timestamp?: string;
+  source: string;
+  summary: string;
+  added?: string[];
+  removed?: string[];
+  readded?: string[];
+  counts?: Record<string, number>;
+  redacted?: boolean;
+}
+
+export interface SessionCapabilitySnapshot {
+  parserVersion: number;
+  sessionId: string;
+  harness: 'claude' | 'codex';
+  sourceSha256: string;
+  completeness: 'complete' | 'partial' | 'observed';
+  generatedAt: string;
+  runtime: Record<string, unknown>;
+  counts: {
+    tools: number;
+    toolNamespaces: number;
+    mcpServers: number;
+    agents: number;
+    skills: number;
+    observedToolCalls: number;
+    changes: number;
+  };
+  tools: SessionCapabilityItem[];
+  toolNamespaces: SessionCapabilityNamespace[];
+  mcpServers: SessionCapabilityItem[];
+  agents: SessionCapabilityItem[];
+  skills: SessionCapabilityItem[];
+  observedToolCalls: SessionCapabilityItem[];
+  pendingMcpServers: string[];
+  changes: SessionCapabilityChange[];
+  warnings: string[];
+  redactions: string[];
+}
+
+export interface SessionCapabilitiesResponse {
+  sessionId: string;
+  snapshots: SessionCapabilitySnapshot[];
+}
+
 /** Every event name the Centaur durable stream emits (docs/archive/notes/build-history/phase0/results/event-schema.md). */
 export const FRAME_EVENT_NAMES = [
   'execution_state',
@@ -183,6 +246,11 @@ export const sessionsApi = {
     return reqJson<{ presentations: ArtifactPresentation[] }>(
       `/api/sessions/${id}/artifacts/presentations`,
     );
+  },
+
+  getCapabilities(id: string): Promise<SessionCapabilitiesResponse> {
+    if (sessionsMock) return sessionsMock.getCapabilities(id);
+    return reqJson<SessionCapabilitiesResponse>(`/api/sessions/${id}/atrium/capabilities`);
   },
 
   listApps(): Promise<{ apps: AppListRow[] }> {

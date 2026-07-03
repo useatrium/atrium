@@ -70,6 +70,77 @@ async function renderPaneWithB() {
 }
 
 describe('session pane folds the B_tooltest stream', () => {
+  it('opens a session capabilities popover from the header', async () => {
+    vi.spyOn(sessionsApi, 'getCapabilities').mockResolvedValue({
+      sessionId: 's-b',
+      snapshots: [
+        {
+          parserVersion: 1,
+          sessionId: 's-b',
+          harness: 'codex',
+          sourceSha256: 'abc123456789',
+          completeness: 'partial',
+          generatedAt: '2026-07-03T00:00:00.000Z',
+          runtime: { model: 'gpt-5.5', sandboxPolicy: 'danger-full-access' },
+          counts: {
+            tools: 1,
+            toolNamespaces: 1,
+            mcpServers: 0,
+            agents: 0,
+            skills: 1,
+            observedToolCalls: 1,
+            changes: 1,
+          },
+          tools: [{ name: 'functions.exec_command', namespace: 'functions', sources: ['codex.developer_tools'] }],
+          toolNamespaces: [{ name: 'functions', sources: ['codex.developer_tools'], count: 1 }],
+          mcpServers: [],
+          agents: [],
+          skills: [{ name: 'stress-test', sources: ['codex.developer_skills'] }],
+          observedToolCalls: [
+            { name: 'exec_command', namespace: 'builtin', sources: ['codex.function_call'], status: 'observed', count: 1 },
+          ],
+          pendingMcpServers: [],
+          changes: [
+            {
+              seq: 1,
+              line: 3,
+              source: 'codex.developer_context',
+              summary: 'Developer capability context captured',
+              counts: { tools: 1 },
+            },
+          ],
+          warnings: [],
+          redactions: ['Codex developer instructions are summarized to capability names and short descriptions.'],
+        },
+      ],
+    });
+
+    render(
+      <SessionPane
+        session={bSession({ status: 'completed', completedAt: new Date().toISOString() })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect session capabilities' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Session capabilities' })).toBeTruthy();
+    expect(sessionsApi.getCapabilities).toHaveBeenCalledWith('s-b');
+    expect(screen.getByRole('button', { name: 'Refresh capabilities' })).toBeTruthy();
+    expect(screen.getByText('Codex partial snapshot: 1 tool, 0 MCP servers, 0 agents, 1 skill, 1 observed call.')).toBeTruthy();
+    expect(screen.getByText('functions.exec_command')).toBeTruthy();
+    expect(screen.getByText('stress-test')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Filter tools, MCP servers, agents, skills...'), {
+      target: { value: 'stress' },
+    });
+    expect(screen.queryByText('functions.exec_command')).toBeNull();
+    expect(screen.getByText('stress-test')).toBeTruthy();
+    expect(screen.getByText('Developer capability context captured')).toBeTruthy();
+  });
+
   it('renders generated app presentations in the transcript', async () => {
     vi.mocked(sessionsApi.listPresentations).mockResolvedValue({
       presentations: [

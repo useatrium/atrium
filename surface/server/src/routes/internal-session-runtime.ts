@@ -7,6 +7,10 @@ import {
   storeHarnessStateBundle,
   storeHarnessTranscript,
 } from '../harness-transcript.js';
+import {
+  deriveSessionCapabilitySnapshot,
+  storeSessionCapabilitySnapshot,
+} from '../session-capabilities.js';
 import type { AgentProfiles } from '../agent-profiles.js';
 import {
   listSessionProfileBundles,
@@ -74,6 +78,17 @@ export async function registerInternalSessionRuntimeRoutes(
         return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
       }
       const { size, sha256 } = await storeHarnessTranscript(pool, { uploadObject }, session.id, harness, bytes);
+      try {
+        const snapshot = deriveSessionCapabilitySnapshot({
+          sessionId: session.id,
+          harness,
+          sourceSha256: sha256,
+          bytes,
+        });
+        await storeSessionCapabilitySnapshot(pool, snapshot);
+      } catch (err) {
+        req.log.warn({ err, sessionId: session.id, harness }, 'failed to derive session capability snapshot');
+      }
       return reply.send({ size_bytes: size, sha256 });
     });
   });
