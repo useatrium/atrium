@@ -88,6 +88,14 @@ pub fn repo_signature(entries: &[RawEntry], repo_upper_prefix: &Path) -> u64 {
             {
                 return None;
             }
+            // Directory entries under .git carry only mtimes, and git bumps
+            // them via the index.lock create/rename/delete cycle on every
+            // `git diff` that refreshes the stat cache — the second half of
+            // the WIP self-trigger loop (child entries still carry every real
+            // change: new refs/objects appear as their own file entries).
+            if rel_path.starts_with(".git") && matches!(entry.file_type, RawFileType::Dir) {
+                return None;
+            }
             Some((
                 rel_path.to_path_buf(),
                 entry.size,
@@ -573,6 +581,18 @@ mod tests {
         assert_eq!(
             repo_signature(&base, prefix),
             repo_signature(&with_index_churn, prefix)
+        );
+        // .git DIRECTORY entries (mtime bumped by the lock cycle on every
+        // git diff) must not perturb it either.
+        let with_git_dir_mtime = {
+            let mut entries = base.clone();
+            entries.push(raw("repos/acme/app/.git", 0, 777, RawFileType::Dir));
+            entries.push(raw("repos/acme/app/.git/refs", 0, 888, RawFileType::Dir));
+            entries
+        };
+        assert_eq!(
+            repo_signature(&base, prefix),
+            repo_signature(&with_git_dir_mtime, prefix)
         );
         // But real .git content (refs/objects) still counts.
         let mut with_new_ref = base.clone();
