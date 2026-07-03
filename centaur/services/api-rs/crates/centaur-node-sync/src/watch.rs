@@ -100,6 +100,7 @@ mod imp {
         AddSessionResult, WatchMessage, WatcherSharedState, events_enabled_from_env_value,
         kernel_supports_upper_data_events,
     };
+    use crate::overlay_mount::{OVERLAY_SIGNATURE_FILE, READY_MARKER_FILE};
     use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask};
     use std::collections::HashMap;
     use std::fs;
@@ -153,6 +154,7 @@ mod imp {
         dirty_tx: mpsc::Sender<WatchMessage>,
         session_wds: HashMap<String, Vec<WatchDescriptor>>,
         wd_dirs: HashMap<WatchDescriptor, WatchedDir>,
+        session_roots: HashMap<String, PathBuf>,
     }
 
     impl UpperWatcher {
@@ -202,6 +204,7 @@ mod imp {
                         dirty_tx,
                         session_wds: HashMap::new(),
                         wd_dirs: HashMap::new(),
+                        session_roots: HashMap::new(),
                     },
                     command_rx,
                 );
@@ -343,6 +346,9 @@ mod imp {
                 reply,
             } => {
                 remove_session_watches(state, &session_id);
+                state
+                    .session_roots
+                    .insert(session_id.clone(), upper_root.clone());
                 let result = match add_session_watches(state, &session_id, &upper_root) {
                     Ok(()) => {
                         with_shared(state, |shared| shared.mark_attached(&session_id));
@@ -371,6 +377,7 @@ mod imp {
             }
             WatchCommand::Remove { session_id, reply } => {
                 remove_session_watches(state, &session_id);
+                state.session_roots.remove(&session_id);
                 with_shared(state, |shared| shared.remove_session(&session_id));
                 let _ = reply.send(());
                 false
@@ -421,6 +428,18 @@ mod imp {
                 );
                 with_shared(state, |shared| shared.mark_always_scan(&session_id));
             }
+        }
+        // The daemon itself rewrites the ready marker into merged root every
+        // tick (and the overlay signature on mounts); both land in the upper.
+        // Without this filter every tick re-dirties every session and the loop
+        // wakes itself at the pacer floor forever (observed live: 250ms-paced
+        // full scans, ~18% CPU). Only root-level entries with these exact
+        // names are daemon-authored; the same names deeper down are agent files.
+        if let Some(name) = name
+            && state.session_roots.get(&session_id).map(PathBuf::as_path) == Some(&parent_path)
+            && (name == Path::new(READY_MARKER_FILE) || name == Path::new(OVERLAY_SIGNATURE_FILE))
+        {
+            return;
         }
         let _ = state.dirty_tx.send(WatchMessage::Dirty(session_id));
     }
@@ -644,6 +663,35 @@ mod tests {
 
             fs::write(dir.join("later.txt"), b"later").unwrap();
             recv_dirty(&rx, "s1");
+        }
+
+        #[test]
+        fn daemon_authored_root_markers_do_not_dirty() {
+            let temp = tempfile::tempdir().unwrap();
+            let (tx, rx) = mpsc::channel();
+            let watcher = UpperWatcher::start(tx).unwrap();
+            watcher.add_session("sess-markers", temp.path());
+
+            // Daemon-authored marker files at the session ROOT must not dirty
+            // (the daemon rewrites the ready marker every tick — regression pin
+            // for the self-dirty wake loop observed live).
+            std::fs::write(temp.path().join(".centaur-workspace-ready"), b"ready").unwrap();
+            std::fs::write(temp.path().join(".centaur-overlay-signature"), b"sig").unwrap();
+            assert_no_dirty(&rx);
+
+            // The same names in a SUBDIR are agent files and must dirty.
+            std::fs::create_dir(temp.path().join("sub")).unwrap();
+            recv_dirty(&rx, "sess-markers");
+            std::fs::write(
+                temp.path().join("sub").join(".centaur-workspace-ready"),
+                b"agent-file",
+            )
+            .unwrap();
+            recv_dirty(&rx, "sess-markers");
+
+            // And a normal root file still dirties.
+            std::fs::write(temp.path().join("real.txt"), b"x").unwrap();
+            recv_dirty(&rx, "sess-markers");
         }
 
         #[test]
