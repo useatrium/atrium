@@ -12,6 +12,7 @@ function entry(overrides: Partial<NormalizedEntry>): NormalizedEntry {
     handle: 'evt_1',
     kind: 'message.posted',
     actor: null,
+    actorLabel: null,
     text: '',
     meta: {},
     targetType: 'event',

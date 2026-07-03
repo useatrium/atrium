@@ -92,6 +92,8 @@ const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSiz
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
   return typeof handle === 'string' && handle.startsWith('rec_');
+}
+
 type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
 type OutputCounts = Record<OutputSurface, number>;
 

@@ -160,6 +160,8 @@ export interface NormalizedEntry {
   handle: string;
   kind: string;
   actor: string | null;
+  /** Human-readable actor (display name for user actors); null when unknown. */
+  actorLabel: string | null;
   text: string;
   meta: Record<string, unknown>;
   targetType: NormalizedEntryTargetType;
