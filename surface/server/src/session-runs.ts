@@ -31,7 +31,7 @@ import { InvalidArtifactPathError } from './artifact-path.js';
 import { presignGet as s3PresignGet } from './s3.js';
 import { appendEvent, canAccessChannel, DomainError, type UserRef, type WireEvent } from './events.js';
 import type { WsHub } from './hub.js';
-import { sendQuestionPush } from './push.js';
+import { sendQuestionPush, sendSessionCompletedPush } from './push.js';
 import {
   CLAUDE_CODE_PROVIDER,
   ProviderCredentials,
@@ -1148,6 +1148,11 @@ export class SessionRuns {
     await this.stopTailer(id);
   }
 
+  async interruptTurn(id: string, userId: string): Promise<void> {
+    const row = await this.requireSpawnerOrDriver(id, userId);
+    await this.centaur.interruptTurn(row.centaur_thread_key);
+  }
+
   async cancelSessionInTx(client: DbClient, id: string, userId: string): Promise<WireEvent[]> {
     const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
     const row = before.rows[0];
@@ -2141,6 +2146,17 @@ export class SessionRuns {
     for (const event of events) this.hub.publishEvent(event);
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
+    }
+    const completedEvent = events.find((event) => event.type === 'session.completed');
+    if (completedEvent) {
+      void sendSessionCompletedPush(
+        this.pool,
+        this.hub,
+        completedEvent,
+        this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+      ).catch((err) =>
+        console.warn('session completed push fanout failed', { id, err }),
+      );
     }
     if (events.length > 0) this.scheduleRelease(id);
   }

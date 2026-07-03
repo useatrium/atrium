@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { randomId, type AttachmentMeta, type AttachmentRef, type EnqueueOpInput } from '@atrium/surface-client';
 
-type SessionActionType = 'session.answer' | 'session.cancel' | 'session.steer';
+type SessionActionType = 'session.answer' | 'session.cancel' | 'session.stop_turn' | 'session.steer';
 type SessionActionEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
 
 export type SessionQuestionAnswers = Record<string, { answers: string[] }>;
@@ -51,6 +51,18 @@ export function useSessionActions({
     [clearFailedCancel, enqueueOp],
   );
 
+  const stopTurn = useCallback(
+    async (sessionId: string): Promise<void> => {
+      clearFailedCancel(sessionId);
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.stop_turn',
+        payload: { sessionId },
+      });
+    },
+    [clearFailedCancel, enqueueOp],
+  );
+
   const answerSessionQuestion = useCallback(
     async (sessionId: string, questionId: string, answers: SessionQuestionAnswers): Promise<void> => {
       await enqueueOp({
@@ -62,5 +74,5 @@ export function useSessionActions({
     [enqueueOp],
   );
 
-  return { answerSessionQuestion, cancelSession, steerSession };
+  return { answerSessionQuestion, cancelSession, steerSession, stopTurn };
 }

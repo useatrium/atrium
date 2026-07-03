@@ -167,6 +167,41 @@ describe('VoIP push registration and call fanout', () => {
     });
   });
 
+  it('skips incoming-call VoIP pushes when call notifications are disabled', async () => {
+    const records: Array<{ token: VoipPushToken; payload: IncomingCallVoipPayload }> = [];
+    const current = await startApp(fakeVoipSender(records));
+    const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    const { cookie: aliceCookie } = await login('alice', 'Alice');
+    const { user: ben } = await login('ben', 'Ben');
+
+    const dmRes = await current.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: aliceCookie },
+      payload: { userId: ben.id },
+    });
+    expect(dmRes.statusCode).toBe(201);
+    const channelId = dmRes.json().channel.id as string;
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [benId, JSON.stringify({ messages: 'dm_mention', sessions: true, calls: false })],
+    );
+    await registerToken(benId, 'ben-voip-ios', 'ios', 'voip');
+
+    const start = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId, opId: randomUUID() },
+    });
+    expect(start.statusCode).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(records).toEqual([]);
+  });
+
   it('uses noop when VoIP push credentials are absent', async () => {
     const sender = getVoipSender({
       apnsTeamId: '',

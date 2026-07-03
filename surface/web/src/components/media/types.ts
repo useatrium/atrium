@@ -45,6 +45,7 @@ export interface LightboxCallbacks {
     conflict: ArtifactConflict,
     choice: ResolveChoice,
   ) => Promise<{ seq: number; status: string }>;
+  onMarkup?: (f: PreviewFile) => Promise<void> | void;
 }
 
 export type MediaPreviewVariant = 'tile' | 'full';

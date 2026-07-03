@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ApiError, type Workspace, api } from './api';
-import { isDesktop, desktopWsUrl } from './desktop';
+import { isDesktop, desktopWsUrl, setDesktopBadge } from './desktop';
 import {
   DurableOpQueue,
   FILES_CHANGED_EVENT_TYPE,
@@ -19,6 +19,7 @@ import { showNotification } from './notify';
 import { emptyTimeline, type UserRef, type WireEvent } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
+import { ActivityView } from './components/ActivityView';
 import { labelForCallChannel, userForCall } from './callPresentation';
 import { notificationForWireEvent } from './chatNotifications';
 import { ChannelMembersMenu } from './components/ChannelMembersMenu';
@@ -42,7 +43,7 @@ import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
-import { adoptPrefs } from './theme';
+import { adoptPrefs, useTheme } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
@@ -73,7 +74,45 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
-type MainSurface = 'chat' | 'files';
+type MainSurface = 'chat' | 'files' | 'activity';
+
+// === web-client additions ===
+type NotificationClickTarget = {
+  channelId?: string;
+  eventId?: string | number;
+  sessionId?: string;
+};
+
+function notificationClickTarget(input: unknown): NotificationClickTarget | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+  const channelId = typeof raw.channelId === 'string' ? raw.channelId : undefined;
+  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : undefined;
+  const eventId = typeof raw.eventId === 'string' || typeof raw.eventId === 'number' ? raw.eventId : undefined;
+  if (!channelId && !sessionId && eventId === undefined) return null;
+  return {
+    ...(channelId ? { channelId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(eventId !== undefined ? { eventId } : {}),
+  };
+}
+
+export function applyUnreadBadges(unreadCount: number): void {
+  const nav =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & {
+          setAppBadge?: (contents?: number) => Promise<void>;
+          clearAppBadge?: () => Promise<void>;
+        })
+      : null;
+  if (nav && unreadCount > 0 && typeof nav.setAppBadge === 'function') {
+    void nav.setAppBadge(unreadCount).catch(() => {});
+  } else if (nav && unreadCount <= 0 && typeof nav.clearAppBadge === 'function') {
+    void nav.clearAppBadge().catch(() => {});
+  }
+  setDesktopBadge(unreadCount);
+}
+// === web-client additions ===
 
 type EnqueueOpOptions = {
   onStored?: () => void;
@@ -97,6 +136,7 @@ export function Chat({
   initialSessionId?: string | null;
   onLogout: () => void;
 }) {
+  const { prefs } = useTheme();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const { clearFailedCancel, clearFailedSteer, failedCancels, failedSteers, rememberRejectedSessionOp } =
@@ -140,6 +180,38 @@ export function Chat({
     setQueueNudgeSeq((n) => n + 1);
   }, []);
   const [filesEventSeq, setFilesEventSeq] = useState(0);
+
+  // === web-client additions ===
+  const openNotificationTarget = useCallback(
+    (target: NotificationClickTarget) => {
+      if (target.channelId) selectChannel(target.channelId);
+      if (target.sessionId) dispatch({ type: 'open-session', sessionId: target.sessionId });
+    },
+    [selectChannel],
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const channelId = params.get('channel') ?? undefined;
+    const sessionId = params.get('session') ?? undefined;
+    if (!channelId && !sessionId) return;
+    openNotificationTarget({
+      ...(channelId ? { channelId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    });
+  }, [openNotificationTarget]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onNotificationClick = (event: Event) => {
+      const target = notificationClickTarget((event as CustomEvent<unknown>).detail);
+      if (target) openNotificationTarget(target);
+    };
+    window.addEventListener('atrium:notification-click', onNotificationClick);
+    return () => window.removeEventListener('atrium:notification-click', onNotificationClick);
+  }, [openNotificationTarget]);
+  // === web-client additions ===
 
   const handleFilesChangedEvent = useCallback(
     (event: WireEvent) => {
@@ -223,7 +295,7 @@ export function Chat({
 
   const { markRead, noteReadCursor } = useReadMarks({ dispatch, enqueueOp, onApiError });
 
-  const { answerSessionQuestion, cancelSession, steerSession } = useSessionActions({
+  const { answerSessionQuestion, cancelSession, steerSession, stopTurn } = useSessionActions({
     clearFailedCancel,
     clearFailedSteer,
     enqueueOp,
@@ -566,7 +638,13 @@ export function Chat({
   // Desktop notifications: mentions of me, and my agent sessions finishing.
   // Live WS events only (catch-up misses land in badges instead).
   function maybeNotify(event: WireEvent) {
-    const notification = notificationForWireEvent(event, me, stateRef.current.channels, stateRef.current.sessions);
+    const notification = notificationForWireEvent(
+      event,
+      me,
+      stateRef.current.channels,
+      stateRef.current.sessions,
+      prefs.notifications,
+    );
     if (!notification) return;
     if (notification.kind === 'message') {
       showNotification(notification.title, notification.body, notification.tag, () => {
@@ -742,7 +820,8 @@ export function Chat({
         setIsSidebarOpen(false);
         return;
       }
-      if (mainSurface === 'files') {
+      // === mentions-activity additions ===
+      if (mainSurface === 'files' || mainSurface === 'activity') {
         setMainSurface('chat');
         return;
       }
@@ -758,8 +837,10 @@ export function Chat({
   const unreadCount = Object.values(state.unread).filter(Boolean).length;
   useEffect(() => {
     document.title = unreadCount > 0 ? `(${unreadCount}) Atrium` : 'Atrium';
+    applyUnreadBadges(unreadCount);
     return () => {
       document.title = 'Atrium';
+      applyUnreadBadges(0);
     };
   }, [unreadCount]);
 
@@ -796,6 +877,8 @@ export function Chat({
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
   const showFilesSurface = mainSurface === 'files';
+  // === mentions-activity additions ===
+  const showActivitySurface = mainSurface === 'activity';
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -821,6 +904,11 @@ export function Chat({
         activeSurface={mainSurface}
         onOpenFiles={() => {
           setMainSurface('files');
+          setIsSidebarOpen(false);
+        }}
+        // === mentions-activity additions ===
+        onOpenActivity={() => {
+          setMainSurface('activity');
           setIsSidebarOpen(false);
         }}
         sessionEventSeq={sessionEventSeq}
@@ -852,10 +940,22 @@ export function Chat({
             <h1
               className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none"
               aria-label={
-                showFilesSurface ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}` : undefined
+                showActivitySurface
+                  ? 'Activity'
+                  : showFilesSurface
+                    ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
+                    : undefined
               }
             >
-              {showFilesSurface ? (
+              {showActivitySurface ? (
+                // === mentions-activity additions ===
+                <>
+                  <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
+                    @
+                  </span>
+                  <span className="truncate">Activity</span>
+                </>
+              ) : showFilesSurface ? (
                 <>
                   <FileIcon size={16} className="shrink-0 text-fg-muted" />
                   <span className="truncate">Files</span>
@@ -884,10 +984,13 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showFilesSurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
-              <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
-            )}
-            {showFilesSurface ? (
+            {!showFilesSurface &&
+              !showActivitySurface &&
+              active &&
+              (active.kind === 'private' || active.kind === 'gdm') && (
+                <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
+              )}
+            {showFilesSurface || showActivitySurface ? (
               <button
                 type="button"
                 onClick={() => setMainSurface('chat')}
@@ -907,7 +1010,7 @@ export function Chat({
                 <span className="hidden sm:inline">New agent</span>
               </button>
             )}
-            {!showFilesSurface && state.openSessionId && (
+            {!showFilesSurface && !showActivitySurface && state.openSessionId && (
               <div className="hidden md:flex">
                 <ViewToggle view={view} hasSession onSetView={setView} />
               </div>
@@ -915,7 +1018,7 @@ export function Chat({
             {/* Calls unconfigured: keep the phone visible but grayed with a setup
               hint (tooltip + click), so the feature is discoverable instead of
               hidden — rather than a dead button that fails on click. */}
-            {!showFilesSurface && (
+            {!showFilesSurface && !showActivitySurface && (
               <button
                 onClick={() => {
                   if (!callsAvailable) {
@@ -1006,7 +1109,19 @@ export function Chat({
             </div>
           )}
 
-          {showFilesSurface ? (
+          {showActivitySurface ? (
+            // === mentions-activity additions ===
+            <ActivityView
+              onSelectChannel={(channelId) => {
+                selectChannel(channelId);
+                setMainSurface('chat');
+              }}
+              onOpenSession={(sessionId) => {
+                openSession(sessionId);
+                setMainSurface('chat');
+              }}
+            />
+          ) : showFilesSurface ? (
             <FilesHub
               key={`main-files:${active?.id ?? 'workspace'}`}
               workspaceId={workspace.id}
@@ -1046,7 +1161,7 @@ export function Chat({
             views (this block is already inside `view !== 'focus'`). Gating it on
             `!openSessionId` used to blank the composer in split view, leaving the
             channel with no way to type. */}
-          {active && !showFilesSurface && (
+          {active && !showFilesSurface && !showActivitySurface && (
             <>
               <TypingLine typing={typing} />
               <Composer
@@ -1092,6 +1207,7 @@ export function Chat({
           failedSteer={failedSteers[paneSession.id] ?? null}
           onClearFailedSteer={() => clearFailedSteer(paneSession.id)}
           onCancelSession={cancelSession}
+          onStopTurn={stopTurn}
           failedCancel={failedCancels[paneSession.id] === true}
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
           providerCredentials={providerCredentials}

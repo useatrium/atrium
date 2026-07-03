@@ -1,5 +1,6 @@
 import * as http2 from 'node:http2';
 import { createPrivateKey, randomUUID, sign } from 'node:crypto';
+import { normalizeNotificationPrefs } from '@atrium/surface-client/prefs';
 import type { Db } from './db.js';
 import { pruneTokens } from './push.js';
 
@@ -419,8 +420,26 @@ export async function sendIncomingCallVoipPushes(
     channelId: string;
   },
 ): Promise<{ attempted: number; pruned: string[]; payload: IncomingCallVoipPayload }> {
-  const recipientIds = [...new Set(args.recipientIds)];
+  const requestedRecipientIds = [...new Set(args.recipientIds)];
   const room = `call:${args.callId}`;
+  const prefRows =
+    requestedRecipientIds.length > 0
+      ? await pool.query<{ id: string; prefs: unknown }>(
+          'SELECT id, prefs FROM users WHERE id = ANY($1::uuid[])',
+          [requestedRecipientIds],
+        )
+      : { rows: [] as Array<{ id: string; prefs: unknown }> };
+  const callsEnabled = new Set(
+    prefRows.rows
+      .filter((row) => {
+        const raw = (typeof row.prefs === 'object' && row.prefs !== null ? row.prefs : {}) as {
+          notifications?: unknown;
+        };
+        return normalizeNotificationPrefs(raw.notifications).calls;
+      })
+      .map((row) => row.id),
+  );
+  const recipientIds = requestedRecipientIds.filter((id) => callsEnabled.has(id));
   // Guard before the channel-name DB query: no recipients → nothing to resolve.
   if (recipientIds.length === 0) {
     return {

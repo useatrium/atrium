@@ -1,6 +1,7 @@
 import {
   Fragment,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -42,6 +43,7 @@ import { InlineFileChange } from './fileChangeView';
 import { PlanPanel } from './PlanPanel';
 import { Composer } from '../components/Composer';
 import { EntryComments } from '../components/EntryComments';
+import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -80,6 +82,7 @@ import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
 import { ProfileChangesBanner, ProviderAuthBanner, QuestionBanner, profileProviderLabel } from './SessionBanners';
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
 import { SuggestionStrip } from './SessionSuggestions';
+import { showErrorToast } from '../components/Toasts';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -97,6 +100,7 @@ export function SessionPane({
   failedSteer = null,
   onClearFailedSteer = () => {},
   onCancelSession = async () => {},
+  onStopTurn = async () => {},
   failedCancel = false,
   onClearFailedCancel = () => {},
   providerCredentials,
@@ -132,6 +136,7 @@ export function SessionPane({
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
   onCancelSession?: (sessionId: string) => Promise<void>;
+  onStopTurn?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
@@ -238,6 +243,11 @@ export function SessionPane({
   // only thinking-phase silence is meaningful. Harness-agnostic.
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
+  const canStopTurn = activeTurn && !starting;
+  // "stopped by you" is folded from the durable terminal event (reducer
+  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
+  // clears automatically when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
   // Silence counts from mount when no frame ever arrived; the reconnect grace
   // anchors to the actual disconnect moment (see deriveTurnStatus).
   const mountedAtRef = useRef(Date.now());
@@ -312,13 +322,15 @@ export function SessionPane({
   // box they don't have.
   const waitingOnMe = sessionDriverId(session) === me.id;
   const waitingDriverName = session.driverName ?? session.spawnerName ?? 'the driver';
-  const statusLabel = turnStatusLabel({
-    phase: turnPhase,
-    starting,
-    headline: turnStatus.headline,
-    openTool,
-    waitingLabel: waitingOnMe ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
-  });
+  const statusLabel = stoppedByUser
+    ? 'stopped by you'
+    : turnStatusLabel({
+        phase: turnPhase,
+        starting,
+        headline: turnStatus.headline,
+        openTool,
+        waitingLabel: waitingOnMe ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+      });
 
   // ── Optimistic steer ───────────────────────────────────────────────────────
   // The session steer op is not optimistic, so a sent steer would only appear
@@ -559,6 +571,12 @@ export function SessionPane({
     return () => clearTimeout(t);
   }, [cancelAsk]);
   const onCancel = () => {
+    if (canStopTurn) {
+      setCancelAsk('idle');
+      onClearFailedCancel();
+      onStopTurn(session.id).catch(() => setCancelAsk('failed'));
+      return;
+    }
     if (displayCancelAsk === 'idle') {
       setCancelAsk('confirm');
       return;
@@ -637,6 +655,51 @@ export function SessionPane({
   const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
+  const [markupLoadingHandle, setMarkupLoadingHandle] = useState<string | null>(null);
+  const [markupNotice, setMarkupNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
+  const showMarkupNotice = useCallback((message: string) => {
+    setMarkupNotice(message);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setMarkupNotice(null), 2600);
+  }, []);
+
+  const openMarkupFromEntry = useCallback(
+    async (handle: string) => {
+      setMarkupLoadingHandle(handle);
+      try {
+        const extracted = await api.extractEntry(handle);
+        const response = await fetch(`/api/files/artifact/${extracted.artifactId}/content`, {
+          credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Could not load markup source');
+        const content = await response.text();
+        const { frontmatter, body } = splitMarkdownFrontmatter(content);
+        setMarkupSource({
+          artifactId: extracted.artifactId,
+          path: extracted.path,
+          seq: extracted.seq,
+          workspaceId: extracted.workspaceId,
+          sessionId: session.id,
+          frontmatter,
+          body,
+        });
+      } catch (err) {
+        showErrorToast(err instanceof Error ? err.message : 'Could not open markup pane');
+      } finally {
+        setMarkupLoadingHandle(null);
+      }
+    },
+    [session.id],
+  );
 
   return (
     <aside
@@ -721,18 +784,26 @@ export function SessionPane({
         {(isSpawner || isDriver) && !displayTerminal && (
           <button
             onClick={onCancel}
-            title="Cancel this session"
+            title={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}
             className={`rounded-md border px-2 py-1 text-2xs font-medium ${
-              displayCancelAsk === 'confirm'
+              displayCancelAsk === 'failed'
                 ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
+                : canStopTurn
+                  ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
+                  : displayCancelAsk === 'confirm'
+                    ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                    : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
             }`}
           >
-            {displayCancelAsk === 'confirm'
-              ? 'Confirm cancel'
-              : displayCancelAsk === 'failed'
-                ? 'Cancel failed — retry'
-                : 'Cancel'}
+            {canStopTurn
+              ? displayCancelAsk === 'failed'
+                ? 'Cancel turn failed — retry'
+                : 'Cancel turn'
+              : displayCancelAsk === 'confirm'
+                ? 'Confirm cancel'
+                : displayCancelAsk === 'failed'
+                  ? 'Cancel failed — retry'
+                  : 'Cancel'}
           </button>
         )}
         <div className="relative">
@@ -956,7 +1027,11 @@ export function SessionPane({
                     <InlineFileChange change={a.change} />
                   </div>
                 ))}
-                <AnnotatedTranscriptRow handle={item.handle ?? null}>
+                <AnnotatedTranscriptRow
+                  handle={item.handle ?? null}
+                  onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
+                  markupLoading={markupLoadingHandle === item.handle}
+                >
                   {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
                   obvious and they anchor turn navigation). */}
@@ -1068,6 +1143,19 @@ export function SessionPane({
         )}
       </div>
 
+      {markupNotice && (
+        <div className="pointer-events-none absolute bottom-24 left-1/2 z-[75] -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
+          {markupNotice}
+        </div>
+      )}
+      {markupSource && (
+        <MarkupPane
+          source={markupSource}
+          onClose={() => setMarkupSource(null)}
+          onSent={() => showMarkupNotice('Markup sent to agent')}
+        />
+      )}
+
       {!isEnded && turnPhase && (
         <TurnStatusLine
           phase={turnPhase}
@@ -1080,7 +1168,7 @@ export function SessionPane({
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
-          cancelLabel={displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+          cancelLabel={canStopTurn ? 'Cancel turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
           onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}
@@ -1250,7 +1338,17 @@ function TurnTimeLabel({ time }: { time: string | undefined }) {
   );
 }
 
-function AnnotatedTranscriptRow({ handle, children }: { handle: string | null; children: ReactNode }) {
+function AnnotatedTranscriptRow({
+  handle,
+  onMarkupEntry,
+  markupLoading = false,
+  children,
+}: {
+  handle: string | null;
+  onMarkupEntry?: (handle: string) => void;
+  markupLoading?: boolean;
+  children: ReactNode;
+}) {
   const commentButtonRef = useRef<HTMLButtonElement | null>(null);
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -1263,6 +1361,7 @@ function AnnotatedTranscriptRow({ handle, children }: { handle: string | null; c
   }, []);
 
   if (!handle) return <>{children}</>;
+  const canMarkup = handle.startsWith('rec_') && onMarkupEntry != null;
 
   const copyEntryLink = () => {
     if (typeof navigator === 'undefined') return;
@@ -1306,6 +1405,22 @@ function AnnotatedTranscriptRow({ handle, children }: { handle: string | null; c
         >
           <MessageCircleIcon />
         </button>
+        {canMarkup && (
+          <button
+            type="button"
+            onClick={() => {
+              setCommentsOpen(false);
+              onMarkupEntry(handle);
+            }}
+            disabled={markupLoading}
+            title="Mark up & reply"
+            aria-label="Mark up & reply"
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+          >
+            <PenLineIcon />
+            {markupLoading ? 'Opening...' : 'Mark up'}
+          </button>
+        )}
       </div>
       <EntryComments
         handle={handle}
@@ -1352,6 +1467,26 @@ function MessageCircleIcon(props: SVGProps<SVGSVGElement>) {
       {...props}
     >
       <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
+    </svg>
+  );
+}
+
+function PenLineIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
     </svg>
   );
 }

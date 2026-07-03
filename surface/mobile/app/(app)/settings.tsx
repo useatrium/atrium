@@ -19,6 +19,8 @@ import {
   type Accent,
   type FontScale,
   type MotionPref,
+  type NotificationMessagePref,
+  type NotificationPrefs,
   type ProviderCredentialProvider,
   type ProviderCredentialStatus,
   type ThemeMode,
@@ -28,8 +30,13 @@ import { useSession } from '../../src/lib/session';
 import {
   getRegisteredPushToken,
   getRegisteredVoipPushToken,
+  getPushPermissionStatus,
+  loadDevicePushEnabled,
+  registerForPush,
+  setDevicePushEnabled,
   setRegisteredVoipPushToken,
   unregisterPush,
+  type PushPermissionStatus,
 } from '../../src/lib/notifications';
 import { buildColors, font, radius, space, useTheme } from '../../src/lib/theme';
 
@@ -43,6 +50,12 @@ const motionOptions: { value: MotionPref; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'reduced', label: 'Reduced' },
   { value: 'full', label: 'Full' },
+];
+
+const messageNotificationOptions: { value: NotificationMessagePref; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'dm_mention', label: 'DMs & @' },
+  { value: 'off', label: 'Off' },
 ];
 
 const fontLabels = ['S', 'M', 'L', 'XL'] as const;
@@ -601,6 +614,71 @@ export default function SettingsScreen() {
   const [credential, setCredential] = useState('');
   const [credentialError, setCredentialError] = useState<string | null>(null);
   const [pendingProvider, setPendingProvider] = useState<ProviderCredentialProvider | null>(null);
+  const [devicePushEnabled, setDevicePushEnabledState] = useState<boolean | null>(null);
+  const [pushPermission, setPushPermission] =
+    useState<PushPermissionStatus>('undetermined');
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void Promise.all([loadDevicePushEnabled(), getPushPermissionStatus()])
+      .then(([enabled, permission]) => {
+        if (!mounted) return;
+        setDevicePushEnabledState(enabled);
+        setPushPermission(permission);
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to load push notification setting', err);
+        if (mounted) setDevicePushEnabledState(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const updateNotificationPrefs = useCallback(
+    (patch: Partial<NotificationPrefs>) => {
+      setPrefs((prev) => ({
+        ...prev,
+        notifications: {
+          messages: patch.messages ?? prev.notifications.messages,
+          sessions: patch.sessions ?? prev.notifications.sessions,
+          calls: patch.calls ?? prev.notifications.calls,
+        },
+      }));
+    },
+    [setPrefs],
+  );
+
+  const updateDevicePush = useCallback(
+    (enabled: boolean) => {
+      if (pushBusy) return;
+      setPushBusy(true);
+      setDevicePushEnabledState(enabled);
+      void (async () => {
+        await setDevicePushEnabled(enabled);
+        if (enabled) {
+          await registerForPush(api);
+          const permission = await getPushPermissionStatus();
+          setPushPermission(permission);
+          if (permission === 'denied') {
+            await setDevicePushEnabled(false);
+            setDevicePushEnabledState(false);
+          }
+          return;
+        }
+        await unregisterPush(api, getRegisteredPushToken());
+        setPushPermission(await getPushPermissionStatus());
+      })()
+        .catch((err: unknown) => {
+          console.warn('failed to update push notification setting', err);
+        })
+        .finally(() => {
+          setPushBusy(false);
+        });
+    },
+    [api, pushBusy],
+  );
 
   const loadProviderCredentials = useCallback(async () => {
     setProvidersLoading(true);
@@ -845,24 +923,64 @@ export default function SettingsScreen() {
         ) : null}
 
         <SectionLabel>Notifications</SectionLabel>
-        <Row label="Notifications">
+        <Row label="Push notifications">
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
             <Switch
               accessibilityRole="switch"
-              accessibilityLabel="Notifications coming soon"
-              accessibilityState={{ checked: false, disabled: true }}
-              disabled
-              value={false}
+              accessibilityLabel="Push notifications"
+              accessibilityState={{
+                checked: devicePushEnabled === true && pushPermission !== 'denied',
+                disabled: devicePushEnabled == null || pushBusy || pushPermission === 'denied',
+              }}
+              disabled={devicePushEnabled == null || pushBusy || pushPermission === 'denied'}
+              value={devicePushEnabled === true && pushPermission !== 'denied'}
+              onValueChange={updateDevicePush}
               trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
-              thumbColor={colors.switchThumbOff}
+              thumbColor={
+                devicePushEnabled === true && pushPermission !== 'denied'
+                  ? colors.onAccent
+                  : colors.switchThumbOff
+              }
             />
-            <Text
-              maxFontSizeMultiplier={2}
-              style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '600' }}
-            >
-              Coming soon
-            </Text>
+            {pushPermission === 'denied' ? (
+              <Text
+                maxFontSizeMultiplier={2}
+                style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '600' }}
+              >
+                Enable in system settings
+              </Text>
+            ) : null}
           </View>
+        </Row>
+        <Row label="Messages">
+          <Segmented
+            value={prefs.notifications.messages}
+            options={messageNotificationOptions}
+            label="Message notifications"
+            onChange={(messages) => updateNotificationPrefs({ messages })}
+          />
+        </Row>
+        <Row label="Agent sessions">
+          <Switch
+            accessibilityRole="switch"
+            accessibilityLabel="Agent session notifications"
+            accessibilityState={{ checked: prefs.notifications.sessions }}
+            value={prefs.notifications.sessions}
+            onValueChange={(sessions) => updateNotificationPrefs({ sessions })}
+            trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
+            thumbColor={prefs.notifications.sessions ? colors.onAccent : colors.switchThumbOff}
+          />
+        </Row>
+        <Row label="Calls">
+          <Switch
+            accessibilityRole="switch"
+            accessibilityLabel="Call notifications"
+            accessibilityState={{ checked: prefs.notifications.calls }}
+            value={prefs.notifications.calls}
+            onValueChange={(calls) => updateNotificationPrefs({ calls })}
+            trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
+            thumbColor={prefs.notifications.calls ? colors.onAccent : colors.switchThumbOff}
+          />
         </Row>
 
         <SectionLabel>Account</SectionLabel>

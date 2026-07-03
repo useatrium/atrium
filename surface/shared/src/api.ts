@@ -43,6 +43,8 @@ export interface Channel {
   lastReadEventId?: number;
   latestEventId?: number;
   muted?: boolean;
+  /** True when at least one unread message explicitly mentioned this user. */
+  mentionedSinceRead?: boolean;
   /** Absent on older payloads — treat as 'public'. */
   kind?: 'public' | 'private' | 'dm' | 'gdm';
   /** DM/GDM channels only: members. */
@@ -153,6 +155,32 @@ export interface EntryAnnotations {
   comments: WireEvent[];
   reactions: { emoji: string; userIds: string[] }[];
 }
+
+export interface WebPushSubscription {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+export interface RegisterPushBody {
+  token: string;
+  platform: 'ios' | 'android' | 'web';
+  kind?: 'expo' | 'voip' | 'webpush';
+  subscription?: WebPushSubscription;
+}
+
+export type ActivityItem = {
+  eventId: string;
+  kind: 'mention' | 'dm' | 'agent_question' | 'session_completed';
+  channelId: string;
+  channelName: string;
+  actorId: string | null;
+  actorName: string | null;
+  snippet: string;
+  createdAt: string;
+};
 
 export function createApi(opts: ApiOptions = {}) {
   const base = (opts.baseUrl ?? '').replace(/\/+$/, '');
@@ -369,6 +397,12 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ muted, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
+    getActivity: (cursor?: string) => {
+      const q = new URLSearchParams();
+      if (cursor !== undefined) q.set('cursor', cursor);
+      const qs = q.toString();
+      return req<{ items: ActivityItem[]; nextCursor: string | null }>(`/api/activity${qs ? `?${qs}` : ''}`);
+    },
     thread: (rootEventId: number) => req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
     postMessage: (body: {
       channelId: string;
@@ -571,9 +605,9 @@ export function createApi(opts: ApiOptions = {}) {
     declineCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),
     /** Leave a call; the server ends it when the last participant leaves. */
     leaveCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
-    /** `kind` distinguishes the Expo notification token ('expo', default) from
-     * the VoIP/PushKit (iOS) or FCM-data (Android) call-ringing token ('voip'). */
-    registerPush: (body: { token: string; platform: 'ios' | 'android'; kind?: 'expo' | 'voip' }) =>
+    /** `kind` distinguishes Expo message pushes, VoIP call-ringing tokens,
+     * and browser PushSubscription rows. */
+    registerPush: (body: RegisterPushBody) =>
       req<{ ok: true }>('/api/push/register', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -623,6 +657,11 @@ export function createApi(opts: ApiOptions = {}) {
       }),
     cancelSession: (id: string, op: OpOptions = {}) =>
       req<{ ok: true }>(`/api/sessions/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
+      }),
+    stopTurn: (id: string, op: OpOptions = {}) =>
+      req<{ ok: true }>(`/api/sessions/${id}/stop-turn`, {
         method: 'POST',
         body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
       }),
@@ -713,5 +752,32 @@ export function createApi(opts: ApiOptions = {}) {
         }[];
       }>(`/api/search/sessions?${q.toString()}`);
     },
+    // === mk703-extract additions ===
+    extractEntry: (handle: string) =>
+      req<{ artifactId: string; path: string; seq: number; workspaceId: string }>(
+        `/api/entries/${encodeURIComponent(handle)}/extract`,
+        { method: 'POST', body: '{}' },
+      ),
+    // === end mk703-extract additions ===
+    // === mk703-feedback additions ===
+    sendArtifactFeedback: (
+      artifactId: string,
+      body: {
+        content: string;
+        baseSeq: number;
+        sessionId: string;
+        note?: string;
+        intent?: 'response' | 'revise';
+        opId?: string;
+      },
+    ) =>
+      req<{ seq: number; status: 'normal' | 'conflict'; steered: true }>(
+        `/api/files/${encodeURIComponent(artifactId)}/feedback`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      ),
+    // === end mk703-feedback additions ===
   };
 }

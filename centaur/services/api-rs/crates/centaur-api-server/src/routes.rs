@@ -58,8 +58,8 @@ use crate::{
         AnswerQuestionRequest, AnswerQuestionResponse, AppendMessagesRequest,
         AppendMessagesResponse, CancelSessionResponse, CreateSessionRequest, CreateSessionResponse,
         EmitWorkflowEventRequest, EventsQuery, ExecuteSessionRequest, ExecuteSessionResponse,
-        ListWorkflowRunsQuery, OnHarnessConflict, SessionContextResponse, SessionSseEvent,
-        SlackThreadContext, metadata_with_repos, stream_error_sse,
+        InterruptSessionResponse, ListWorkflowRunsQuery, OnHarnessConflict, SessionContextResponse,
+        SessionSseEvent, SlackThreadContext, metadata_with_repos, stream_error_sse,
     },
 };
 
@@ -203,6 +203,10 @@ pub fn build_router_with_app_state(state: AppState) -> Router {
             post(execute_session).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/session/{thread_key}/cancel", post(cancel_session))
+        .route(
+            "/api/session/{thread_key}/interrupt",
+            post(interrupt_session),
+        )
         .route(
             "/api/session/{thread_key}/executions/{execution_id}/answer",
             post(answer_execution_question),
@@ -540,6 +544,23 @@ async fn cancel_session(
         execution_id: outcome.execution_id,
         stopped_sandbox_id: outcome.stopped_sandbox_id,
         stop_error: outcome.stop_error,
+    }))
+}
+
+/// Interrupt the active turn of a session without tearing down the sandbox.
+/// Unlike `cancel_session`, the sandbox stays warm and steerable; the turn ends
+/// as a clean user-stop rather than a failure.
+async fn interrupt_session(
+    State(state): State<AppState>,
+    Path(raw_thread_key): Path<String>,
+) -> Result<Json<InterruptSessionResponse>, ApiError> {
+    let thread_key = ThreadKey::try_from(raw_thread_key)?;
+    let outcome = state.runtime()?.interrupt_active_turn(&thread_key).await?;
+    Ok(Json(InterruptSessionResponse {
+        ok: outcome.error.is_none(),
+        interrupted: outcome.interrupted,
+        execution_id: outcome.execution_id,
+        error: outcome.error,
     }))
 }
 

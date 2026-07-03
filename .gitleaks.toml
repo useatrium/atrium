@@ -33,5 +33,8 @@ paths = [
   '''^surface/mobile/src/lib/prefsStorage\.ts$''',
   '''^surface/server/scripts/check-migration-filenames\.mjs$''',
   '''^surface/server/src/session-records\.test\.ts$''',
+  '''^surface/server/src/webpush\.test\.ts$''',
   '''^surface/server/test/artifactGc\.test\.ts$''',
+  '''^surface/server/test/push\.test\.ts$''',
+  '''^surface/server/test/routes\.test\.ts$''',
 ]

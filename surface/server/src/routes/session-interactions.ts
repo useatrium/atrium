@@ -362,4 +362,27 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     }
     return reply.code(202).send({ ok: true });
   });
+
+  app.post('/api/sessions/:id/stop-turn', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { opId?: unknown };
+    const opId = optionalOpId(body);
+    if (opId) {
+      await runMutation({
+        userId: user.id,
+        opId,
+        opType: 'session.stop_turn',
+        body: { sessionId: id },
+        fn: async () => ({ ok: true as const }),
+        onApplied: () => {
+          sessionRuns.interruptTurn(id, user.id).catch(() => {});
+        },
+      });
+    } else {
+      await sessionRuns.interruptTurn(id, user.id);
+    }
+    return reply.code(202).send({ ok: true });
+  });
 }

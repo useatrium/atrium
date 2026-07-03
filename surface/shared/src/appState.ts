@@ -149,6 +149,15 @@ export function mentionsHandle(text: string, handle: string | null): boolean {
   return new RegExp(`@${handle}(?![a-z0-9_-])`, 'i').test(text);
 }
 
+// === mentions-activity additions ===
+function coldUnreadLevel(ch: Channel): UnreadLevel {
+  const latest = ch.latestEventId ?? 0;
+  const lastRead = ch.lastReadEventId ?? 0;
+  if (latest <= lastRead) return false;
+  const isDm = ch.kind === 'dm' || ch.kind === 'gdm';
+  return ch.mentionedSinceRead || isDm ? 'mention' : true;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'init-me':
@@ -168,12 +177,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           continue;
         }
         if (unread[ch.id] === 'mention') continue;
-        const latest = ch.latestEventId ?? 0;
-        const lastRead = ch.lastReadEventId ?? 0;
-        const level = latest > lastRead ? true : false;
+        // === mentions-activity additions ===
+        const level = coldUnreadLevel(ch);
         if (unread[ch.id] !== level) unread = { ...unread, [ch.id]: level };
-        // Cold channel counters cannot identify @mentions because they carry
-        // no message text; only live message events can promote to 'mention'.
       }
       return { ...state, channels, activeChannelId, unread };
     }
@@ -198,7 +204,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         // Unmuting re-derives unread from the cold counters — messages that
         // arrived while muted were suppressed by the server-event fold.
         const ch = channels.find((c) => c.id === action.channelId);
-        level = (ch?.latestEventId ?? 0) > (ch?.lastReadEventId ?? 0);
+        // === mentions-activity additions ===
+        level = ch ? coldUnreadLevel(ch) : false;
       }
       return { ...state, channels, unread: { ...state.unread, [action.channelId]: level } };
     }

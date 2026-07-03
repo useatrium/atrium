@@ -16,6 +16,7 @@ export const VALID_OP_TYPES = [
   'session.answer',
   'session.steer',
   'session.cancel',
+  'session.stop_turn',
   'prefs.set',
   'draft.set',
   'channel.join',
@@ -147,6 +148,10 @@ export interface SessionCancelPayload {
   sessionId: string;
 }
 
+export interface SessionStopTurnPayload {
+  sessionId: string;
+}
+
 export type PrefsSetPayload = Partial<UserPrefs>;
 
 export interface DraftSetPayload {
@@ -176,6 +181,7 @@ export type OpPayloadByType = {
   'session.answer': SessionAnswerPayload;
   'session.steer': SessionSteerPayload;
   'session.cancel': SessionCancelPayload;
+  'session.stop_turn': SessionStopTurnPayload;
   'prefs.set': PrefsSetPayload;
   'draft.set': DraftSetPayload;
   'channel.join': ChannelJoinPayload;
@@ -194,6 +200,7 @@ type OpResultByType = {
   'session.answer': { ok: true };
   'session.steer': { ok: true };
   'session.cancel': { ok: true };
+  'session.stop_turn': { ok: true };
   'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
   'draft.set': { ok: true };
   'channel.join': Awaited<ReturnType<Api['addChannelMember']>>;
@@ -263,6 +270,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `steer:${(payload as SessionSteerPayload).sessionId}`;
     case 'session.cancel':
       return `cancel:${(payload as SessionCancelPayload).sessionId}`;
+    case 'session.stop_turn':
+      return `stop_turn:${(payload as SessionStopTurnPayload).sessionId}`;
     case 'prefs.set':
       return 'prefs:me';
     case 'draft.set':
@@ -439,6 +448,7 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'mute.set' ||
     op.opType === 'session.answer' ||
     op.opType === 'session.cancel' ||
+    op.opType === 'session.stop_turn' ||
     op.opType === 'prefs.set' ||
     op.opType === 'draft.set' ||
     op.opType === 'channel.join' ||
@@ -925,6 +935,11 @@ export function createDefaultOpRegistry(): OpRegistry {
     },
     'session.cancel': {
       execute: (api, payload, op) => api.cancelSession(payload.sessionId, { opId: op.opId }),
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.stop_turn': {
+      execute: (api, payload, op) => api.stopTurn(payload.sessionId, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

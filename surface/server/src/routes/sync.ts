@@ -64,6 +64,7 @@ async function syncStateSnapshot(client: DbClient, userId: string) {
     prefs: normalizePrefs(prefs.rows[0]?.prefs),
     drafts,
     draftDeletions,
+    // === mentions-activity additions ===
     channels: await listChannelsFor(client, userId),
   };
 }

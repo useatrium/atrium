@@ -214,6 +214,10 @@ export class CentaurClient {
     });
   }
 
+  interruptTurn(threadKey: string): Promise<Record<string, JsonValue | undefined>> {
+    return this.request("POST", `/api/session/${encodeURIComponent(threadKey)}/interrupt`, {});
+  }
+
   getExecution(executionId: string): Promise<ExecutionResponse> {
     void executionId;
     return Promise.reject(new Error("api-rs does not expose execution lookup yet"));

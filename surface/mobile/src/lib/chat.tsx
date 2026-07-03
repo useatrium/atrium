@@ -111,6 +111,7 @@ interface ChatContextValue {
   failedSessionSteers: Record<string, string>;
   clearFailedSessionSteer: (sessionId: string) => void;
   cancelSession: (sessionId: string) => Promise<void>;
+  stopTurn: (sessionId: string) => Promise<void>;
   failedSessionCancels: Record<string, true>;
   clearFailedSessionCancel: (sessionId: string) => void;
   /** Track the open session so the WS subscribes to its presence key (so
@@ -274,6 +275,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         return "Couldn't send the session message.";
       case 'session.cancel':
         return "Couldn't cancel the session.";
+      case 'session.stop_turn':
+        return "Couldn't cancel the turn.";
       case 'prefs.set':
         return "Couldn't sync settings.";
       case 'draft.set':
@@ -392,7 +395,7 @@ export function ChatProvider({ session, children }: { session: Session; children
               setFailedSessionSteers((prev) => ({ ...prev, [sessionId]: text }));
             }
           }
-          if (op.opType === 'session.cancel') {
+          if (op.opType === 'session.cancel' || op.opType === 'session.stop_turn') {
             const payload = op.payload as { sessionId?: unknown };
             if (typeof payload.sessionId === 'string') {
               const sessionId = payload.sessionId;
@@ -463,6 +466,18 @@ export function ChatProvider({ session, children }: { session: Session; children
       await enqueueOp({
         opId: randomId(),
         opType: 'session.cancel',
+        payload: { sessionId },
+      });
+    },
+    [clearFailedSessionCancel, enqueueOp],
+  );
+
+  const stopTurn = useCallback(
+    async (sessionId: string): Promise<void> => {
+      clearFailedSessionCancel(sessionId);
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.stop_turn',
         payload: { sessionId },
       });
     },
@@ -1606,6 +1621,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       failedSessionSteers,
       clearFailedSessionSteer,
       cancelSession,
+      stopTurn,
       failedSessionCancels,
       clearFailedSessionCancel,
       setActiveSessionId,
@@ -1660,6 +1676,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       failedSessionSteers,
       clearFailedSessionSteer,
       cancelSession,
+      stopTurn,
       failedSessionCancels,
       clearFailedSessionCancel,
       setActiveSessionId,

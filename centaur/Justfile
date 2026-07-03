@@ -149,7 +149,7 @@ _ensure-registry:
     set -euo pipefail
     name=kind-registry
     if ! docker container inspect "$name" >/dev/null 2>&1; then
-      docker run -d --restart=always -p "127.0.0.1:5000:5000" --name "$name" registry:2 >/dev/null
+      docker run -d --restart=always -p "127.0.0.1:5000:5000" --name "$name" registry:3 >/dev/null
     elif [[ -z "$(docker ps --filter "name=^/${name}$" --filter status=running -q)" ]]; then
       docker start "$name" >/dev/null
     fi
