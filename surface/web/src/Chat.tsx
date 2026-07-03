@@ -27,6 +27,7 @@ import {
 } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
+import { ActivityView } from './components/ActivityView';
 import { labelForCallChannel, userForCall } from './callPresentation';
 import { notificationForWireEvent } from './chatNotifications';
 import { ChannelMembersMenu } from './components/ChannelMembersMenu';
@@ -87,7 +88,7 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
-type MainSurface = 'chat' | 'files';
+type MainSurface = 'chat' | 'files' | 'activity';
 
 // === web-client additions ===
 type NotificationClickTarget = {
@@ -902,7 +903,8 @@ export function Chat({
         setIsSidebarOpen(false);
         return;
       }
-      if (mainSurface === 'files') {
+      // === mentions-activity additions ===
+      if (mainSurface === 'files' || mainSurface === 'activity') {
         setMainSurface('chat');
         return;
       }
@@ -960,6 +962,8 @@ export function Chat({
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
   const showFilesSurface = mainSurface === 'files';
+  // === mentions-activity additions ===
+  const showActivitySurface = mainSurface === 'activity';
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -985,6 +989,11 @@ export function Chat({
         activeSurface={mainSurface}
         onOpenFiles={() => {
           setMainSurface('files');
+          setIsSidebarOpen(false);
+        }}
+        // === mentions-activity additions ===
+        onOpenActivity={() => {
+          setMainSurface('activity');
           setIsSidebarOpen(false);
         }}
         sessionEventSeq={sessionEventSeq}
@@ -1018,10 +1027,22 @@ export function Chat({
             <h1
               className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none"
               aria-label={
-                showFilesSurface ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}` : undefined
+                showActivitySurface
+                  ? 'Activity'
+                  : showFilesSurface
+                    ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
+                    : undefined
               }
             >
-              {showFilesSurface ? (
+              {showActivitySurface ? (
+                // === mentions-activity additions ===
+                <>
+                  <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
+                    @
+                  </span>
+                  <span className="truncate">Activity</span>
+                </>
+              ) : showFilesSurface ? (
                 <>
                   <FileIcon size={16} className="shrink-0 text-fg-muted" />
                   <span className="truncate">Files</span>
@@ -1050,10 +1071,10 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showFilesSurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
+            {!showFilesSurface && !showActivitySurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
               <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
             )}
-            {showFilesSurface ? (
+            {showFilesSurface || showActivitySurface ? (
               <button
                 type="button"
                 onClick={() => setMainSurface('chat')}
@@ -1073,7 +1094,7 @@ export function Chat({
                 <span className="hidden sm:inline">New agent</span>
               </button>
             )}
-            {!showFilesSurface && state.openSessionId && (
+            {!showFilesSurface && !showActivitySurface && state.openSessionId && (
               <div className="hidden md:flex">
                 <ViewToggle view={view} hasSession onSetView={setView} />
               </div>
@@ -1081,7 +1102,7 @@ export function Chat({
             {/* Calls unconfigured: keep the phone visible but grayed with a setup
               hint (tooltip + click), so the feature is discoverable instead of
               hidden — rather than a dead button that fails on click. */}
-            {!showFilesSurface && (
+            {!showFilesSurface && !showActivitySurface && (
               <button
                 onClick={() => {
                   if (!callsAvailable) {
@@ -1177,7 +1198,19 @@ export function Chat({
           </div>
         )}
 
-        {showFilesSurface ? (
+        {showActivitySurface ? (
+          // === mentions-activity additions ===
+          <ActivityView
+            onSelectChannel={(channelId) => {
+              selectChannel(channelId);
+              setMainSurface('chat');
+            }}
+            onOpenSession={(sessionId) => {
+              openSession(sessionId);
+              setMainSurface('chat');
+            }}
+          />
+        ) : showFilesSurface ? (
           <FilesHub
             key={`main-files:${active?.id ?? 'workspace'}`}
             workspaceId={workspace.id}
@@ -1217,7 +1250,7 @@ export function Chat({
             views (this block is already inside `view !== 'focus'`). Gating it on
             `!openSessionId` used to blank the composer in split view, leaving the
             channel with no way to type. */}
-        {active && !showFilesSurface && (
+        {active && !showFilesSurface && !showActivitySurface && (
           <>
             <TypingLine typing={typing} />
             <Composer

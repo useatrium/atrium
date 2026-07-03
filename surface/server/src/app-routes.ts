@@ -7,6 +7,7 @@ import type { AppServices } from './app-services.js';
 import { config } from './config.js';
 import type { Db } from './db.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerActivityRoutes } from './routes/activity.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerAtriumRoutes } from './routes/atrium.js';
 import { registerCallRoutes } from './routes/calls.js';
@@ -116,6 +117,8 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
 
   registerCallRoutes(app, { pool, hub, calls, voip, requireUser, optionalOpId, runMutation });
   registerMessageRoutes(app, { pool, hub, stt, requireUser, optionalOpId, runMutation });
+  // === mentions-activity additions ===
+  registerActivityRoutes(app, { pool, requireUser });
   registerEntryRoutes(app, {
     pool,
     hub,

@@ -43,6 +43,8 @@ export interface Channel {
   lastReadEventId?: number;
   latestEventId?: number;
   muted?: boolean;
+  /** True when at least one unread message explicitly mentioned this user. */
+  mentionedSinceRead?: boolean;
   /** Absent on older payloads — treat as 'public'. */
   kind?: 'public' | 'private' | 'dm' | 'gdm';
   /** DM/GDM channels only: members. */

@@ -174,6 +174,8 @@ export interface Channel {
   members?: UserRef[];
   /** Private channels only: count of members, without shipping the full list. */
   memberCount?: number;
+  /** True when at least one unread message explicitly mentioned this user. */
+  mentionedSinceRead?: boolean;
 }
 
 export async function createChannel(
@@ -1217,12 +1219,15 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     latest_event_id: string;
     muted: boolean;
     member_count: string;
+    mentioned_since_read: boolean;
   }>(
     `SELECT c.*,
             COALESCE(rc.last_read_event_id, 0) AS last_read_event_id,
             COALESCE(latest.latest_event_id, 0) AS latest_event_id,
             (cm.user_id IS NOT NULL) AS muted,
-            COALESCE(member_counts.member_count, 0) AS member_count
+            COALESCE(member_counts.member_count, 0) AS member_count,
+            -- === mentions-activity additions ===
+            COALESCE(mentions_since_read.mentioned_since_read, false) AS mentioned_since_read
      FROM channels c
      LEFT JOIN channel_read_cursors rc
        ON rc.channel_id = c.id AND rc.user_id = $1
@@ -1239,6 +1244,15 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        WHERE e.channel_id = c.id
          AND e.type IN ('message.posted', 'session.spawned')
      ) latest ON true
+     -- === mentions-activity additions ===
+     LEFT JOIN LATERAL (
+       SELECT true AS mentioned_since_read
+       FROM mentions mn
+       WHERE mn.channel_id = c.id
+         AND mn.user_id = $1
+         AND mn.event_id > COALESCE(rc.last_read_event_id, 0)
+       LIMIT 1
+     ) mentions_since_read ON true
      WHERE (c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$1')})
         OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id = c.id AND m.user_id = $1)
      ORDER BY c.name ASC`,
@@ -1274,6 +1288,8 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     lastReadEventId: Number(r.last_read_event_id),
     latestEventId: Number(r.latest_event_id),
     muted: r.muted,
+    // === mentions-activity additions ===
+    mentionedSinceRead: r.mentioned_since_read,
     ...(r.kind === 'dm' || r.kind === 'gdm' ? { members: membersByChannel.get(r.id) ?? [] } : {}),
     ...(r.kind === 'private' ? { memberCount: Number(r.member_count) } : {}),
   }));

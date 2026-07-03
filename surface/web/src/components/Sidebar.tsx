@@ -79,6 +79,8 @@ export function Sidebar({
   onOpenSession,
   activeSurface = 'chat',
   onOpenFiles,
+  // === mentions-activity additions ===
+  onOpenActivity,
   sessionEventSeq,
   githubConnection,
   connectionsAvailable = true,
@@ -100,8 +102,10 @@ export function Sidebar({
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
-  activeSurface?: 'chat' | 'files';
+  activeSurface?: 'chat' | 'files' | 'activity';
   onOpenFiles?: () => void;
+  // === mentions-activity additions ===
+  onOpenActivity?: () => void;
   sessionEventSeq: number;
   githubConnection?: ConnectionStatus;
   connectionsAvailable?: boolean;
@@ -253,6 +257,22 @@ export function Sidebar({
             >
               <FileIcon size={15} className="shrink-0 text-fg-muted" />
               <span className="truncate">Files</span>
+            </button>
+            {/* === mentions-activity additions === */}
+            <button
+              type="button"
+              aria-current={activeSurface === 'activity' ? 'page' : undefined}
+              onClick={onOpenActivity}
+              className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] ${
+                activeSurface === 'activity'
+                  ? 'bg-accent/20 font-medium text-fg'
+                  : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
+              }`}
+            >
+              <span className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">
+                @
+              </span>
+              <span className="truncate">Activity</span>
             </button>
           </div>
         </section>

@@ -1,10 +1,8 @@
-// Activity — the notifications hub. v1 surfaces agent events (sessions that are
-// running or need your attention) from the existing sessions feed; mentions &
-// reactions land here in a later increment once a server feed exists.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import {
+  type ActivityItem,
   isTerminalSessionStatus,
   type Session,
   type SessionListItem,
@@ -18,6 +16,10 @@ import { MobileHeader } from '../../../src/components/MobileHeader';
 interface DisplaySession extends SessionListItem {
   live?: Session;
 }
+
+type ActivityRow =
+  | { rowType: 'session'; session: DisplaySession }
+  | { rowType: 'activity'; activity: ActivityItem };
 
 function statusColor(status: SessionStatus, colors: Colors): string {
   if (status === 'completed') return colors.online;
@@ -44,7 +46,10 @@ export default function ActivityScreen() {
   const { api, state, queuedChangesCount } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
+  const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
+  const [nextActivityCursor, setNextActivityCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,8 +59,13 @@ export default function ActivityScreen() {
       else setRefreshing(true);
       setError(null);
       try {
-        const res = await api.listSessions({ status: 'all', limit: 100 });
-        setSessions(res.sessions);
+        const [sessionRes, activityRes] = await Promise.all([
+          api.listSessions({ status: 'all', limit: 100 }),
+          api.getActivity(),
+        ]);
+        setSessions(sessionRes.sessions);
+        setActivityItems(activityRes.items);
+        setNextActivityCursor(activityRes.nextCursor);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to load activity');
       } finally {
@@ -66,30 +76,129 @@ export default function ActivityScreen() {
     [api],
   );
 
+  const loadMoreActivity = useCallback(async () => {
+    if (!nextActivityCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const res = await api.getActivity(nextActivityCursor);
+      setActivityItems((prev) => [...prev, ...res.items]);
+      setNextActivityCursor(res.nextCursor);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load activity');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [api, loadingMore, nextActivityCursor]);
+
   useEffect(() => {
     void load('initial');
   }, [load]);
 
   // "Needs attention": non-terminal sessions (running / queued / awaiting input),
   // newest first. Live state overrides the fetched snapshot.
-  const rows = useMemo<DisplaySession[]>(() => {
+  const rows = useMemo<ActivityRow[]>(() => {
     const merged = sessions.map((s) => ({ ...s, live: state.sessions[s.id] }));
-    return merged
+    const attention = merged
       .filter((s) => {
         const status = s.live?.status ?? s.status;
         return !isTerminalSessionStatus(status);
       })
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  }, [sessions, state.sessions]);
+      .map((session): ActivityRow => ({ rowType: 'session', session }));
+    const feedRows = activityItems.map((activity): ActivityRow => ({ rowType: 'activity', activity }));
+    return [...attention, ...feedRows].sort((a, b) => {
+      const aDate = a.rowType === 'session' ? a.session.createdAt : a.activity.createdAt;
+      const bDate = b.rowType === 'session' ? b.session.createdAt : b.activity.createdAt;
+      return Date.parse(bDate) - Date.parse(aDate);
+    });
+  }, [activityItems, sessions, state.sessions]);
 
-  const renderItem = ({ item }: { item: DisplaySession }) => {
-    const status = item.live?.status ?? item.status;
-    const title = item.live?.title ?? item.title;
+  const openActivity = async (item: ActivityItem) => {
+    if (item.kind !== 'agent_question' && item.kind !== 'session_completed') {
+      router.push(`/channel/${item.channelId}`);
+      return;
+    }
+    const eventId = Number(item.eventId);
+    if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+      router.push(`/channel/${item.channelId}`);
+      return;
+    }
+    try {
+      const { events } = await api.messages(item.channelId, { afterId: eventId - 1, limit: 1 });
+      const event = events.find((candidate) => candidate.id === eventId);
+      const sessionId = event && typeof event.payload?.sessionId === 'string'
+        ? event.payload.sessionId
+        : null;
+      router.push(sessionId ? `/session/${sessionId}` : `/channel/${item.channelId}`);
+    } catch {
+      router.push(`/channel/${item.channelId}`);
+    }
+  };
+
+  const renderActivityItem = (item: ActivityItem) => {
+    const title =
+      item.kind === 'mention'
+        ? `${item.actorName ?? 'Someone'} mentioned you`
+        : item.kind === 'dm'
+          ? `${item.actorName ?? 'Someone'} sent a DM`
+          : item.kind === 'agent_question'
+            ? 'Agent needs your input'
+            : 'Agent session completed';
+    const marker =
+      item.kind === 'mention' ? '@' : item.kind === 'dm' ? 'DM' : item.kind === 'agent_question' ? '?' : 'OK';
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${title}, ${status}, #${item.channelName}`}
-        onPress={() => router.push(`/session/${item.id}`)}
+        accessibilityLabel={`${title}, #${item.channelName}`}
+        onPress={() => void openActivity(item)}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: space.sm,
+          paddingHorizontal: space.lg,
+          paddingVertical: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSoft,
+          backgroundColor: pressed ? colors.borderSoft : 'transparent',
+        })}
+      >
+        <View
+          style={{
+            minWidth: 28,
+            height: 24,
+            borderRadius: 6,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.bgElevated,
+          }}
+        >
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{marker}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: font.sm }} numberOfLines={1}>
+            {item.snippet}
+          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
+            #{item.channelName} · {relativeTime(item.createdAt)}
+          </Text>
+        </View>
+      </Pressable>
+    );
+  };
+
+  const renderItem = ({ item }: { item: ActivityRow }) => {
+    if (item.rowType === 'activity') return renderActivityItem(item.activity);
+    const session = item.session;
+    const status = session.live?.status ?? session.status;
+    const title = session.live?.title ?? session.title;
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${title}, ${status}, #${session.channelName}`}
+        onPress={() => router.push(`/session/${session.id}`)}
         style={({ pressed }) => ({
           flexDirection: 'row',
           alignItems: 'center',
@@ -109,7 +218,7 @@ export default function ActivityScreen() {
             {title}
           </Text>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-            {status} · #{item.channelName} · {relativeTime(item.createdAt)}
+            {status} · #{session.channelName} · {relativeTime(session.createdAt)}
           </Text>
         </View>
       </Pressable>
@@ -127,7 +236,11 @@ export default function ActivityScreen() {
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) =>
+            item.rowType === 'session'
+              ? `session:${item.session.id}`
+              : `activity:${item.activity.kind}:${item.activity.eventId}`
+          }
           renderItem={renderItem}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={colors.textMuted} />
@@ -146,13 +259,39 @@ export default function ActivityScreen() {
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}>
                 <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>You&rsquo;re all caught up</Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
-                  Agents you start show up here while they&rsquo;re working. Mentions &amp; reactions are coming soon.
+                  Agents you start show up here while they&rsquo;re working. Mentions and DMs land here too.
                 </Text>
               </View>
             )
           }
           contentContainerStyle={rows.length === 0 ? { flexGrow: 1 } : undefined}
-          ListFooterComponent={<View style={{ height: 96 }} />}
+          ListFooterComponent={
+            nextActivityCursor ? (
+              <View style={{ padding: space.lg, paddingBottom: 96 }}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Load more activity"
+                  onPress={() => void loadMoreActivity()}
+                  disabled={loadingMore}
+                  style={({ pressed }) => ({
+                    alignSelf: 'flex-start',
+                    minHeight: 36,
+                    justifyContent: 'center',
+                    borderRadius: 8,
+                    paddingHorizontal: space.md,
+                    backgroundColor: pressed ? colors.borderSoft : colors.bgElevated,
+                    opacity: loadingMore ? 0.6 : 1,
+                  })}
+                >
+                  <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '700' }}>
+                    {loadingMore ? 'Loading...' : 'Load more'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={{ height: 96 }} />
+            )
+          }
         />
       )}
     </View>
