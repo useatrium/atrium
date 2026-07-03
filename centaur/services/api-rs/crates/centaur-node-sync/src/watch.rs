@@ -435,10 +435,19 @@ mod imp {
         // wakes itself at the pacer floor forever (observed live: 250ms-paced
         // full scans, ~18% CPU). Only root-level entries with these exact
         // names are daemon-authored; the same names deeper down are agent files.
+        let at_session_root =
+            state.session_roots.get(&session_id).map(PathBuf::as_path) == Some(&parent_path);
         if let Some(name) = name
-            && state.session_roots.get(&session_id).map(PathBuf::as_path) == Some(&parent_path)
+            && at_session_root
             && (name == Path::new(READY_MARKER_FILE) || name == Path::new(OVERLAY_SIGNATURE_FILE))
         {
+            return;
+        }
+        // A name-less ATTRIB on the session root is the daemon's own per-tick
+        // chown/utimes of the merged root — the second self-dirty source
+        // observed live (the marker filter alone left the loop running). Root
+        // dir attributes are never captured content; child events still dirty.
+        if name.is_none() && at_session_root && mask.contains(EventMask::ATTRIB) {
             return;
         }
         let _ = state.dirty_tx.send(WatchMessage::Dirty(session_id));
@@ -688,6 +697,23 @@ mod tests {
             )
             .unwrap();
             recv_dirty(&rx, "sess-markers");
+
+            // Drain the extra dirty messages from the multi-event write above
+            // (CREATE + MODIFY + CLOSE_WRITE each send one) before asserting quiet.
+            while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
+
+            // A name-less ATTRIB on the root itself (the daemon's per-tick
+            // chown/utimes of merged root) must not dirty either.
+            let now = std::time::SystemTime::now();
+            let f = std::fs::File::open(temp.path()).unwrap();
+            f.set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(now)
+                    .set_modified(now),
+            )
+            .unwrap();
+            drop(f);
+            assert_no_dirty(&rx);
 
             // And a normal root file still dirties.
             std::fs::write(temp.path().join("real.txt"), b"x").unwrap();
