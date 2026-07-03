@@ -5,6 +5,7 @@
 
 import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
 import { ApiError } from '../api';
+import { desktopApiOptions } from '../desktop';
 import { sessionsMock } from './devMock';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './types';
 
@@ -128,6 +129,17 @@ export const FRAME_EVENT_NAMES = [
   'artifact.captured',
 ] as const;
 
+const apiOptions = desktopApiOptions();
+const base = (apiOptions?.baseUrl ?? '').replace(/\/+$/, '');
+
+function withDesktopToken(path: string): string {
+  const token = apiOptions?.getToken?.() ?? null;
+  if (!token) return base + path;
+  const url = new URL(base + path);
+  url.searchParams.set('token', token);
+  return url.toString();
+}
+
 async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await doFetch(path, init);
   return res.json() as Promise<T>;
@@ -139,10 +151,15 @@ async function reqAccepted(path: string, init?: RequestInit): Promise<void> {
 }
 
 async function doFetch(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(path, {
+  const token = apiOptions?.getToken?.() ?? null;
+  const res = await fetch(base + path, {
     credentials: 'same-origin',
-    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
     ...init,
+    headers: {
+      ...(init?.body ? { 'content-type': 'application/json' } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
   });
   if (!res.ok) {
     let code = 'http_error';
@@ -364,7 +381,7 @@ export const sessionsApi = {
   ): SessionStreamHandle {
     if (sessionsMock) return sessionsMock.openStream(sessionId, afterEventId, cb);
     const es = new EventSource(
-      `/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`,
+      withDesktopToken(`/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`),
     );
     es.onopen = () => cb.onOpen?.();
     es.onerror = () => cb.onError?.();
