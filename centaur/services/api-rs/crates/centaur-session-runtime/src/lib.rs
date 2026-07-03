@@ -1642,8 +1642,7 @@ impl SessionRuntime {
             }
         };
 
-        if let Err(error) =
-            write_interrupt_frame(&pipe, thread_key, &execution.execution_id).await
+        if let Err(error) = write_interrupt_frame(&pipe, thread_key, &execution.execution_id).await
         {
             self.user_interrupts.remove(&execution.execution_id);
             return Ok(InterruptTurnOutcome {
@@ -6405,7 +6404,12 @@ mod tests {
             },
             false,
         );
-        assert_eq!(out, TerminalOutput::Failed { error: "boom".to_owned() });
+        assert_eq!(
+            out,
+            TerminalOutput::Failed {
+                error: "boom".to_owned()
+            }
+        );
     }
 
     #[test]

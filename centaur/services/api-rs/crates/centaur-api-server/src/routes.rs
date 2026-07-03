@@ -58,9 +58,8 @@ use crate::{
         AnswerQuestionRequest, AnswerQuestionResponse, AppendMessagesRequest,
         AppendMessagesResponse, CancelSessionResponse, CreateSessionRequest, CreateSessionResponse,
         EmitWorkflowEventRequest, EventsQuery, ExecuteSessionRequest, ExecuteSessionResponse,
-        InterruptSessionResponse,
-        ListWorkflowRunsQuery, OnHarnessConflict, SessionContextResponse, SessionSseEvent,
-        SlackThreadContext, metadata_with_repos, stream_error_sse,
+        InterruptSessionResponse, ListWorkflowRunsQuery, OnHarnessConflict, SessionContextResponse,
+        SessionSseEvent, SlackThreadContext, metadata_with_repos, stream_error_sse,
     },
 };
 

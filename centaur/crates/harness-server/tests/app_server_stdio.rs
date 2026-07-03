@@ -1590,7 +1590,11 @@ impl BridgeProcess {
     /// the turn is running (right after `turn/started`), and capture the terminal
     /// turn. Proves the harness-server reads a mid-turn interrupt off stdin and
     /// forwards it to the harness so the turn aborts (rather than being ignored).
-    fn run_blocks_user_turn_interrupting(&mut self, prompt: &str, timeout: Duration) -> TurnCapture {
+    fn run_blocks_user_turn_interrupting(
+        &mut self,
+        prompt: &str,
+        timeout: Duration,
+    ) -> TurnCapture {
         let input = json!({
             "type": "user",
             "thread_key": "slack:C123:123.456",
