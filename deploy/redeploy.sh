@@ -80,14 +80,18 @@ deploy_centaur(){
   [ "$need_ironproxy" = 1 ] && to_build+=(iron-proxy)
   [ "$need_agent" = 1 ]     && to_build+=(sandbox)
   [ "$need_nodesync" = 1 ]  && to_build+=(node-sync)
-  # console (iron-control): rebuilt when its source changes, or when the local image
-  # is missing entirely (pruned box). The build MUST be decided here, before the
-  # retag loop — retagging :latest ahead of a pending rebuild would push the OLD
-  # console under the new SHA and silently deploy stale code with a fresh tag.
-  if [ "$FIRST" = 1 ] || changed '^centaur/services/console/' \
-     || ! sudo docker image inspect centaur-console:latest >/dev/null 2>&1; then
-    to_build+=(console)
-  fi
+  changed '^centaur/services/console/' && to_build+=(console)
+  # Prune-safety: rebuild any service whose local :latest image is gone — e.g. an
+  # image GC / prune (see prune_images) swept the box — even when its source is
+  # unchanged. The retag+push loop below reads each service's :latest, so a missing
+  # one would otherwise `die`. This MUST be decided here, before that loop:
+  # retagging :latest ahead of a pending rebuild would push stale code under the new
+  # SHA. (Console needed this first; it now applies to every image. The SHA copy in
+  # the registry is not a substitute — the retag reads the local :latest.)
+  for svc in api-rs iron-proxy sandbox node-sync console; do
+    sudo docker image inspect "${IMG[$svc]}:latest" >/dev/null 2>&1 && continue
+    case " ${to_build[*]:-} " in *" $svc "*) : ;; *) to_build+=("$svc") ;; esac
+  done
   log "centaur: rebuild=[${to_build[*]:-none}] sha=$SHA"
   for svc in "${to_build[@]:-}"; do [ -z "$svc" ] && continue
     ( cd "$REPO_DIR/centaur" && DOCKER_BUILDKIT=1 just build-one "$svc" ) || die "build $svc"; done
@@ -134,6 +138,34 @@ _rb_centaur(){ local last; last=$(cat "$STATE/last-good-centaur-sha" 2>/dev/null
   kubectl rollout status deploy/centaur-centaur-api-rs -n "$NS" --timeout=120s || true
   _console_rollout 120s || true; }
 
+# ---------- image GC ----------
+# Bound disk from per-deploy image churn. Every deploy adds SHA-tagged image copies
+# + build-cache layers; without this the box grew ~a few GB/deploy across three
+# stores (docker build host, k3s runtime, local registry). Runs only after a healthy
+# deploy and is NON-FATAL — a prune failure must never fail a good deploy or trip the
+# rollback. It deliberately keeps every `:latest` (the retag loop depends on them),
+# a floor of recent build cache for fast incremental rebuilds, and the registry (the
+# rollback source) untouched — the registry is bounded separately by a clean recreate
+# (its garbage-collect is unsafe on this registry:2 version; see docs/self-host-ovh.md).
+# k3s image count is bounded here and by kubelet image GC (deploy/setup-k3s.sh).
+BUILD_CACHE_KEEP="${BUILD_CACHE_KEEP:-20g}"
+prune_images(){
+  log "prune: bounding image stores (keep-cache=$BUILD_CACHE_KEEP)"
+  # 1. build cache — keep a recent floor, drop the rest
+  sudo docker builder prune -f --keep-storage="$BUILD_CACHE_KEEP" >/dev/null 2>&1 \
+    || log "prune: warn: builder prune failed"
+  # 2. old local SHA-tagged copies of our images (keep :latest; the registry retains
+  #    every SHA for rollback, so dropping the local copy is safe)
+  sudo docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+    | grep -E "^${REG}/centaur-" | grep -v ':latest$' \
+    | xargs -r sudo docker rmi >/dev/null 2>&1 || true
+  # 3. dangling images only — never `-a`, which would drop the :latest working tags
+  sudo docker image prune -f >/dev/null 2>&1 || true
+  # 4. k3s runtime store — images no running pod references (resume re-pulls from
+  #    the registry). Best-effort: crictl can time out mid-sweep on a busy node.
+  sudo k3s crictl rmi --prune >/dev/null 2>&1 || log "prune: k3s image prune incomplete (ok)"
+}
+
 backup_db
 case "$TARGET" in
   surface) deploy_surface ;;
@@ -142,4 +174,5 @@ case "$TARGET" in
   *) die "unknown target '$TARGET' (surface|centaur|all)" ;;
 esac
 echo "$SHA" > "$STATE/last-deployed-sha"
+prune_images
 log "redeploy DONE ($TARGET) @ $SHA"

@@ -9,8 +9,14 @@ PORT="${REGISTRY_PORT:-5000}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 echo "=== local registry container (127.0.0.1:${PORT}) ==="
+# Named volume so image data survives container recreates. NOTE: registry blob GC is
+# deliberately NOT automated here — `registry:2 garbage-collect` on this version does
+# not follow OCI image-index → blob references and will delete in-use blobs (verified
+# the hard way). Bound the registry instead by recreating it on a fresh volume and
+# re-pushing the current images; a GC-correct registry is tracked as follow-up.
 if ! sudo docker ps -a --format '{{.Names}}' | grep -qx registry; then
-  sudo docker run -d --restart=always -p "127.0.0.1:${PORT}:5000" --name registry registry:2
+  sudo docker run -d --restart=always -p "127.0.0.1:${PORT}:5000" --name registry \
+    -v atrium-registry:/var/lib/registry registry:2
 else
   sudo docker start registry >/dev/null 2>&1 || true
 fi
