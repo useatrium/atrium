@@ -826,6 +826,44 @@ function SettingRow({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+const SESSION_SIDEBAR_PREVIEW_LIMIT = 5;
+
+type SessionListItemAttentionFields = {
+  needsAttention?: unknown;
+};
+
+function sessionNeedsAttention(session: SessionListItem): boolean {
+  return (session as SessionListItem & SessionListItemAttentionFields).needsAttention === true;
+}
+
+function sessionSidebarBucket(session: SessionListItem): number {
+  if (sessionNeedsAttention(session)) return 0;
+  return isTerminalSessionStatus(session.status) ? 2 : 1;
+}
+
+function sessionSidebarFreshness(session: SessionListItem): number {
+  const timestamp = session.completedAt ?? session.createdAt;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function sessionSidebarPreview(
+  sessions: readonly SessionListItem[],
+  limit = SESSION_SIDEBAR_PREVIEW_LIMIT,
+): SessionListItem[] {
+  return sessions
+    .map((session, index) => ({ session, index }))
+    .sort((a, b) => {
+      const bucketDelta = sessionSidebarBucket(a.session) - sessionSidebarBucket(b.session);
+      if (bucketDelta !== 0) return bucketDelta;
+      const freshnessDelta = sessionSidebarFreshness(b.session) - sessionSidebarFreshness(a.session);
+      if (freshnessDelta !== 0) return freshnessDelta;
+      return a.index - b.index;
+    })
+    .slice(0, Math.max(0, limit))
+    .map(({ session }) => session);
+}
+
 function SessionSidebarSection({
   refreshKey,
   onOpenSession,
@@ -866,11 +904,7 @@ function SessionSidebarSection({
     return () => clearTimeout(t);
   }, [refreshKey]);
 
-  const running = useMemo(
-    () => sessions.filter((s) => !isTerminalSessionStatus(s.status)),
-    [sessions],
-  );
-  const preview = running.slice(0, 5);
+  const preview = useMemo(() => sessionSidebarPreview(sessions), [sessions]);
   const open = (id: string) => {
     onOpenSession(id);
     setModalOpen(false);
@@ -879,14 +913,12 @@ function SessionSidebarSection({
   return (
     <>
       <section className="mt-3">
-        <div className="flex items-center justify-between">
-          <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Agents</h2>
-          <span className="mb-1 rounded bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold tabular-nums text-fg-tertiary">
-            {running.length}
-          </span>
-        </div>
+        <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Agents</h2>
         <div className={SIDEBAR_PANEL_CLASS}>
           <ul>
+            {preview.length === 0 && (
+              <li className="px-3 py-2 text-xs text-fg-muted">No agent sessions yet</li>
+            )}
             {preview.map((session) => (
               <li key={session.id} className="mx-1">
                 <button
