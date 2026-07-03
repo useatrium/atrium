@@ -6,7 +6,7 @@ import { ArtifactLedger } from '../src/artifact-ledger.js';
 import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
 import { encodeArtifactHandle, encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
-import { postMessage, type WireEvent } from '../src/events.js';
+import { postMessage } from '../src/events.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -97,7 +97,7 @@ async function annotations(cookie: string, handle: string) {
     headers: { cookie },
   });
   expect(res.statusCode).toBe(200);
-  return res.json() as { comments: WireEvent[]; reactions: { emoji: string; userIds: string[] }[] };
+  return res.json() as { reactions: { emoji: string; userIds: string[] }[] };
 }
 
 async function reactionNet(handle: string, actorId: string, emoji: string): Promise<number> {
@@ -114,7 +114,7 @@ async function reactionNet(handle: string, actorId: string, emoji: string): Prom
 }
 
 describe('entry annotations', () => {
-  it('keeps historical comments readable while comment writes are retired', async () => {
+  it('returns reactions only while comment writes stay retired', async () => {
     const cookie = await authCookie(fx.userId);
     const message = await postMessage(pool, {
       workspaceId: fx.workspaceId,
@@ -141,12 +141,8 @@ describe('entry annotations', () => {
     );
 
     const folded = await annotations(cookie, handle);
-    expect(folded.comments).toHaveLength(1);
-    expect(folded.comments[0]!.payload).toMatchObject({
-      target: handle,
-      text: 'edited legacy note',
-      edited: true,
-    });
+    expect(folded).toEqual({ reactions: [] });
+    expect(folded).not.toHaveProperty('comments');
 
     const write = await app.inject({
       method: 'POST',

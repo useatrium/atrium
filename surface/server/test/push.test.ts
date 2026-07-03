@@ -180,6 +180,22 @@ describe('pushRecipientsFor', () => {
     expect(recipients.userIds).not.toContain(caraId);
     expect(recipients.recipients.every((r) => r.reason === 'thread')).toBe(true);
   });
+
+  it('self replies do not notify the thread root author', async () => {
+    const root = await postInChannelAs(fx.channelId, fx.userId, 'root');
+    const reply = await postInChannelAs(fx.channelId, fx.userId, 'self reply', root.id);
+
+    const recipients = await pushRecipientsFor(pool, reply);
+    expect(recipients.userIds).toEqual([]);
+  });
+
+  it('@mentions in thread replies do not double-notify the root author', async () => {
+    const root = await postInChannelAs(fx.channelId, fx.userId, 'root');
+    const reply = await postInChannelAs(fx.channelId, benId, 'replying with @alice', root.id);
+
+    const recipients = await pushRecipientsFor(pool, reply);
+    expect(recipients.recipients).toEqual([{ userId: fx.userId, reason: 'mention' }]);
+  });
 });
 
 describe('sendMessagePush', () => {

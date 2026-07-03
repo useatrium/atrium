@@ -13,6 +13,7 @@ import {
 import { createChannel } from '../src/events.js';
 import { classifyMedia } from '../src/media-classifier.js';
 import { addWorkspaceMember } from '../src/membership.js';
+import { parseMarkupSteer } from '../../shared/src/criticmarkup.js';
 import { createTestPool, seedFixture, seedMember, truncateAll, type Fixture } from './helpers.js';
 
 const mockedS3 = vi.hoisted(() => {
@@ -265,6 +266,80 @@ describe('composeFeedbackSteer', () => {
     expect(stripYamlFrontmatter('---\na: b\n...\nBody\n')).toBe('Body\n');
     expect(hasCriticMarkup('Clean text')).toBe(false);
     expect(hasCriticMarkup('Please {~~swap~>replace~~} this')).toBe(true);
+  });
+
+  it('round-trips composed steers through the shared parser', () => {
+    const smallResponse = composeFeedbackSteer({
+      markedUpContent: 'Hello {++there++}\n',
+      baseContent: '',
+      path: 'message.md',
+      seq: 2,
+      baseSeq: 1,
+      intent: 'response',
+      title: 'Draft answer',
+      sourceEntryHandle: 'rec_abc',
+    });
+    expect(parseMarkupSteer(smallResponse)).toMatchObject({
+      intent: 'response',
+      title: 'Draft answer',
+      sourceEntryHandle: 'rec_abc',
+      path: null,
+      doc: 'Hello {++there++}',
+      truncated: false,
+      note: null,
+      conflict: false,
+    });
+
+    const longLines = Array.from({ length: 900 }, (_, index) => `line ${index}`);
+    longLines[100] = 'replace {~~old~>new~~} here';
+    const hunkRevise = composeFeedbackSteer({
+      markedUpContent: longLines.join('\n'),
+      baseContent: '',
+      path: 'shared/report.md',
+      seq: 4,
+      baseSeq: 3,
+      intent: 'revise',
+      title: 'report.md',
+    });
+    const parsedHunk = parseMarkupSteer(hunkRevise);
+    expect(parsedHunk).toMatchObject({
+      intent: 'revise',
+      path: 'shared/report.md',
+      truncated: true,
+      note: null,
+      conflict: false,
+    });
+    expect(parsedHunk?.doc).toContain('{~~old~>new~~}');
+    expect(parsedHunk?.doc).not.toContain('line 400');
+
+    const notedConflict = composeFeedbackSteer({
+      markedUpContent: 'Needs {++work++}\n',
+      baseContent: '',
+      path: 'shared/conflict.md',
+      seq: 8,
+      baseSeq: 7,
+      intent: 'revise',
+      title: 'conflict.md',
+      note: 'Keep the heading.',
+      status: 'conflict',
+    });
+    expect(parseMarkupSteer(notedConflict)).toMatchObject({
+      intent: 'revise',
+      path: 'shared/conflict.md',
+      doc: 'Needs {++work++}',
+      note: 'Keep the heading.',
+      conflict: true,
+    });
+
+    const withAppendix =
+      smallResponse +
+      '\n\n---\nReferenced entries:\n- /e/evt_12 (Alice, message): "Context the agent cannot fetch by URL"';
+    expect(parseMarkupSteer(withAppendix)).toMatchObject({
+      intent: 'response',
+      title: 'Draft answer',
+      sourceEntryHandle: 'rec_abc',
+      doc: 'Hello {++there++}',
+    });
   });
 });
 

@@ -482,7 +482,6 @@ export interface AnnotationReaction {
 }
 
 export interface AnnotationFold {
-  comments: WireEvent[];
   reactions: AnnotationReaction[];
 }
 
@@ -710,51 +709,7 @@ export async function appendVoiceTranscribedEventTx(
 // Reads (straight off the events table)
 // ---------------------------------------------------------------------------
 
-interface CommentFoldRow extends EventDbRow {
-  edited_text?: string | null;
-  is_deleted?: boolean;
-}
-
-function foldComment(row: CommentFoldRow): EventDbRow {
-  if (row.is_deleted) {
-    row.payload = { ...row.payload, text: '', deleted: true };
-    return row;
-  }
-  if (row.edited_text != null) {
-    row.payload = { ...row.payload, text: row.edited_text, edited: true };
-  }
-  return row;
-}
-
 export async function foldAnnotations(db: Db | DbClient, handle: string): Promise<AnnotationFold> {
-  const comments = await db.query<CommentFoldRow>(
-    `SELECT e.*,
-            u.handle AS author_handle,
-            u.display_name AS author_display_name,
-            edit.text AS edited_text,
-            (del.id IS NOT NULL) AS is_deleted
-       FROM events e
-       LEFT JOIN users u ON u.id = e.actor_id
-       LEFT JOIN LATERAL (
-         SELECT x.payload->>'text' AS text
-           FROM events x
-          WHERE x.type = 'comment.edited'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          ORDER BY x.id DESC
-          LIMIT 1
-       ) edit ON true
-       LEFT JOIN LATERAL (
-         SELECT x.id
-           FROM events x
-          WHERE x.type = 'comment.deleted'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          LIMIT 1
-       ) del ON true
-      WHERE e.type = 'comment.posted'
-        AND e.payload->>'target' = $1
-      ORDER BY e.id ASC`,
-    [handle],
-  );
   const reactions = await db.query<{ emoji: string; user_ids: string[] }>(
     `SELECT emoji, array_agg(actor_id::text ORDER BY first_id) AS user_ids
        FROM (
@@ -773,7 +728,6 @@ export async function foldAnnotations(db: Db | DbClient, handle: string): Promis
     [handle],
   );
   return {
-    comments: comments.rows.map((row) => toWireEvent(foldComment(row))),
     reactions: reactions.rows.map((row) => ({
       emoji: row.emoji,
       userIds: row.user_ids,

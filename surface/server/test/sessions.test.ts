@@ -8,7 +8,8 @@ import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
 import { config } from '../src/config.js';
-import { createChannel, getOrCreateDm } from '../src/events.js';
+import { encodeEventHandle } from '../src/entries.js';
+import { createChannel, getOrCreateDm, postMessage } from '../src/events.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { ProviderCredentials } from '../src/provider-credentials.js';
@@ -3191,6 +3192,52 @@ describe('Phase 2 sessions', () => {
     });
     expect(wrongHarness.statusCode).toBe(400);
     expect(wrongHarness.json().error).toBe('effort_not_supported');
+    await app.close();
+  });
+
+  it('steer appends referenced entries appendix to Centaur message and execute input', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const referenced = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'root context for the agent',
+    });
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-entry-refs', 'codex', 'entry refs steer', 'running', $3, $3, 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-entry-refs', 1);
+    const link = `/e/${encodeEventHandle(referenced.id)}`;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: `please use ${link}` },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const message = fake.requests.filter((r) => r.path === '/agent/message').at(-1);
+    const deliveredText = message?.body.parts?.[0]?.text;
+    expect(deliveredText).toContain(`please use ${link}`);
+    expect(deliveredText).toContain('---\nReferenced entries:');
+    expect(deliveredText).toContain(`- ${link} (Alice, message): "root context for the agent"`);
+
+    const execute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
+    const input = JSON.parse(execute?.body.input_lines?.[0] ?? '{}');
+    expect(input.message.content[0].text).toBe(deliveredText);
     await app.close();
   });
 
