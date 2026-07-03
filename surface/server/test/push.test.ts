@@ -9,11 +9,11 @@ import { appendEvent, getOrCreateDm, getOrCreateGdm, postMessage, type WireEvent
 import { WsHub, type HubSocket } from '../src/hub.js';
 import {
   checkExpoPushReceipts,
-  mentionedHandles,
   pushRecipientsFor,
   sendQuestionPush,
   sendMessagePush,
 } from '../src/push.js';
+import { mentionedHandles } from '../src/mentions.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;

@@ -149,6 +149,32 @@ export interface EntryAnnotations {
   reactions: { emoji: string; userIds: string[] }[];
 }
 
+export interface WebPushSubscription {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+export interface RegisterPushBody {
+  token: string;
+  platform: 'ios' | 'android' | 'web';
+  kind?: 'expo' | 'voip' | 'webpush';
+  subscription?: WebPushSubscription;
+}
+
+export type ActivityItem = {
+  eventId: string;
+  kind: 'mention' | 'dm' | 'agent_question' | 'session_completed';
+  channelId: string;
+  channelName: string;
+  actorId: string | null;
+  actorName: string | null;
+  snippet: string;
+  createdAt: string;
+};
+
 export function createApi(opts: ApiOptions = {}) {
   const base = (opts.baseUrl ?? '').replace(/\/+$/, '');
 
@@ -380,6 +406,14 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ muted, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
+    getActivity: (cursor?: string) => {
+      const q = new URLSearchParams();
+      if (cursor !== undefined) q.set('cursor', cursor);
+      const qs = q.toString();
+      return req<{ items: ActivityItem[]; nextCursor: string | null }>(
+        `/api/activity${qs ? `?${qs}` : ''}`,
+      );
+    },
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
     postMessage: (body: {
@@ -601,9 +635,9 @@ export function createApi(opts: ApiOptions = {}) {
     /** Leave a call; the server ends it when the last participant leaves. */
     leaveCall: (callId: string) =>
       req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
-    /** `kind` distinguishes the Expo notification token ('expo', default) from
-     * the VoIP/PushKit (iOS) or FCM-data (Android) call-ringing token ('voip'). */
-    registerPush: (body: { token: string; platform: 'ios' | 'android'; kind?: 'expo' | 'voip' }) =>
+    /** `kind` distinguishes Expo message pushes, VoIP call-ringing tokens,
+     * and browser PushSubscription rows. */
+    registerPush: (body: RegisterPushBody) =>
       req<{ ok: true }>('/api/push/register', {
         method: 'POST',
         body: JSON.stringify(body),

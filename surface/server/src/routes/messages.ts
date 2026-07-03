@@ -22,6 +22,7 @@ import { ArtifactLedger } from '../artifact-ledger.js';
 import { classifyMediaFromMime } from '../media-classifier.js';
 import type { WsHub } from '../hub.js';
 import { sendMessagePush } from '../push.js';
+import { persistMentions } from '../mentions.js';
 import { sanitizeFilename } from '../safe-filename.js';
 import { enqueueThumbnailGeneration } from '../thumbnails.js';
 
@@ -348,6 +349,12 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       }
     }
     if (voice) deps.stt?.enqueue();
+    void persistMentions(pool, {
+      eventId: event.id,
+      channelId: event.channelId,
+      text,
+      actorId: event.actorId,
+    }).catch((err) => app.log.warn({ err }, 'mention persistence failed'));
     void sendMessagePush(pool, hub, event).catch((err) =>
       app.log.warn({ err }, 'push fanout failed'),
     );

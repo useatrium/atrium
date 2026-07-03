@@ -6,6 +6,7 @@ import type { Db } from './db.js';
 import type { WsHub } from './hub.js';
 import type { WireEvent } from './events.js';
 import { config } from './config.js';
+import { mentionedHandles } from './mentions.js';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
@@ -34,15 +35,6 @@ interface SendMessagePushOptions {
 export interface ExpoReceiptTicket {
   id: string;
   token: string;
-}
-
-/** Handles are [a-z0-9][a-z0-9_-]*, so a plain regex extraction is safe. */
-export function mentionedHandles(text: string): string[] {
-  const out = new Set<string>();
-  for (const m of text.matchAll(/@([a-z0-9][a-z0-9_-]{1,31})/gi)) {
-    out.add(m[1]!.toLowerCase());
-  }
-  return [...out];
 }
 
 function addRecipient(
