@@ -50,6 +50,10 @@ running deploy. Status + logs live in the repo's **Actions** tab.
 ## Notes
 - Secrets stay box-local (`surface/deploy/.env`, the `centaur-infra-env` k8s secret,
   cloudflared config, compose overrides) — not in the repo; redeploy reuses them.
+- When `surface/deploy/docker-compose.tunnel.yml` exists, `redeploy.sh` health-gates
+  Surface at `http://10.42.0.1:${SERVER_HOST_PORT:-3001}/healthz`, matching the
+  host-only bind used by Centaur pods and Cloudflare Tunnel. Set `SURFACE_HEALTH_URL`
+  only for a custom local topology.
 - An agent editing the platform runs in an isolated sandbox: its changes reach the
   CAS ledger, not `~/atrium`. To ship agent edits, open a PR → merge to `deploy`.
 - Interactive hot-loop (Tilt / surface dev-mode) is **not** run on this box (it would

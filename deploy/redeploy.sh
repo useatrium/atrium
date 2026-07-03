@@ -23,9 +23,17 @@ DCF=(-f "$SURF/docker-compose.prod.yml")
 [ -f "$SURF/docker-compose.tunnel.yml" ] && DCF+=(-f "$SURF/docker-compose.tunnel.yml")
 DC=(sudo docker compose "${DCF[@]}")
 
+if [ -z "${SURFACE_HEALTH_URL:-}" ]; then
+  if [ -f "$SURF/docker-compose.tunnel.yml" ]; then
+    SURFACE_HEALTH_URL="http://10.42.0.1:${SERVER_HOST_PORT:-3001}/healthz"
+  else
+    SURFACE_HEALTH_URL="http://127.0.0.1:${SERVER_HOST_PORT:-3001}/healthz"
+  fi
+fi
+
 log(){ echo "[$(date +%H:%M:%S)] $*"; }
 die(){ echo "[$(date +%H:%M:%S)] FAILED: $*" >&2; exit 1; }
-health_surface(){ curl -fsS --max-time 8 http://127.0.0.1:3001/healthz >/dev/null 2>&1; }
+health_surface(){ curl -fsS --max-time 8 "$SURFACE_HEALTH_URL" >/dev/null 2>&1; }
 health_centaur(){ kubectl exec -n "$NS" deploy/centaur-centaur-api-rs -- curl -fsS --max-time 8 http://localhost:8080/healthz >/dev/null 2>&1; }
 
 # ---- content-aware change detection (last-deployed SHA -> HEAD) ----
@@ -63,6 +71,7 @@ deploy_surface(){
   [ -n "$prev" ] && sudo docker tag "$prev" deploy-server:rollback
   log "surface: build + recreate server"
   "${DC[@]}" up -d --build server || { _rb_surface "$prev"; die "server build/up"; }
+  log "surface: health gate $SURFACE_HEALTH_URL"
   local ok=; for i in $(seq 1 25); do health_surface && { ok=1; break; }; sleep 3; done
   [ -n "$ok" ] || { _rb_surface "$prev"; die "surface unhealthy"; }
   log "surface: OK"
