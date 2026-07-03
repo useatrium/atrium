@@ -1,6 +1,7 @@
 import { Text, View } from 'react-native';
-import { formatTurnTime } from '@atrium/surface-client';
+import { containsCriticMarkup, formatTurnTime, parseMarkupSteer } from '@atrium/surface-client';
 import { font, space, useTheme } from '../../lib/theme';
+import { CriticMarkupText, MarkupSteerCard } from './MarkupSteerCard';
 
 /**
  * A user steer in the session transcript — a turn boundary. Mobile has no
@@ -11,6 +12,26 @@ import { font, space, useTheme } from '../../lib/theme';
 export function SteerRow({ text, ts }: { text: string; ts?: string }) {
   const { colors } = useTheme();
   const time = ts ? formatTurnTime(ts) : '';
+  const markupSteer = parseMarkupSteer(text);
+
+  if (markupSteer || containsCriticMarkup(text)) {
+    return (
+      <View
+        testID="steer-row"
+        style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
+      >
+        {time ? (
+          <Text
+            testID="steer-time"
+            style={{ color: colors.textMuted, fontSize: font.xs, fontVariant: ['tabular-nums'] }}
+          >
+            {time}
+          </Text>
+        ) : null}
+        {markupSteer ? <MarkupSteerCard steer={markupSteer} /> : <CriticMarkupText text={text} />}
+      </View>
+    );
+  }
 
   return (
     <View
