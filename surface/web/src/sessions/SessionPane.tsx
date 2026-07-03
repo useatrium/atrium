@@ -54,7 +54,7 @@ import {
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
-import type { UserRef } from '@atrium/surface-client';
+import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef } from '@atrium/surface-client';
 import { formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
@@ -80,19 +80,13 @@ import { SessionCapabilitiesPopover } from './SessionCapabilitiesPopover';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
 import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
-import {
-  ProfileChangesBanner,
-  ProviderAuthBanner,
-  QuestionBanner,
-  profileProviderLabel,
-} from './SessionBanners';
+import { ProfileChangesBanner, ProviderAuthBanner, QuestionBanner, profileProviderLabel } from './SessionBanners';
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
-
 
 export function SessionPane({
   session,
@@ -103,6 +97,7 @@ export function SessionPane({
   onClose,
   onAnswerQuestion,
   onSteer = async () => {},
+  queueUpload,
   failedSteer = null,
   onClearFailedSteer = () => {},
   onCancelSession = async () => {},
@@ -131,7 +126,14 @@ export function SessionPane({
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  onSteer?: (sessionId: string, text: string, effort?: string) => Promise<void>;
+  onSteer?: (
+    sessionId: string,
+    text: string,
+    effort?: string,
+    attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
+  ) => Promise<void>;
+  queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
   onCancelSession?: (sessionId: string) => Promise<void>;
@@ -161,17 +163,11 @@ export function SessionPane({
 
   // Changes work-surface (Phase 4): Claude/amp edits from the transcript items +
   // codex fileChange edits the reducer captured.
-  const fileChanges = useMemo(
-    () => collectFileChanges(stream),
-    [stream.items, stream.fileChanges],
-  );
+  const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
-  const sideEffectsDanger = useMemo(
-    () => sideEffects.some((effect) => effect.risk === 'danger'),
-    [sideEffects],
-  );
+  const sideEffectsDanger = useMemo(() => sideEffects.some((effect) => effect.risk === 'danger'), [sideEffects]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
   const artifactPresentations = useArtifactPresentations(session.id, stream);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
@@ -235,13 +231,9 @@ export function SessionPane({
   const resultText = stream.resultText || session.resultText || '';
   const isSpawner = session.spawnedBy === me.id;
   const spectators = watchers.length;
-  const pendingQuestion =
-    session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
+  const pendingQuestion = session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
   const questionEvents = session.questionEvents ?? [];
-  const questionEventsByQuestion = useMemo(
-    () => groupQuestionEventsByQuestion(questionEvents),
-    [questionEvents],
-  );
+  const questionEventsByQuestion = useMemo(() => groupQuestionEventsByQuestion(questionEvents), [questionEvents]);
 
   // ── Live activity cue ──────────────────────────────────────────────────────
   // The status line only claims what the stream proves (see TurnStatus.tsx).
@@ -325,8 +317,7 @@ export function SessionPane({
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const effortSelection = effortChoice ?? modelEffort ?? '';
   const effortOptions = HARNESS_EFFORT_PICKER_OPTIONS[session.harness];
-  const canPickEffort =
-    sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
+  const canPickEffort = sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
   // Seat-aware waiting copy: only the driver can actually answer — telling a
   // spectator "waiting for YOUR reply" would send them hunting for an answer
   // box they don't have.
@@ -349,9 +340,9 @@ export function SessionPane({
   // (consume-once by trimmed text). Only Codex echoes user messages — on other
   // harnesses the bubble persists as the steer's transcript row, so once the
   // turn goes active we mark it delivered (sticky) and stop dimming it.
-  const [pendingSteers, setPendingSteers] = useState<
-    { id: string; text: string; ts: string; delivered?: boolean }[]
-  >([]);
+  const [pendingSteers, setPendingSteers] = useState<{ id: string; text: string; ts: string; delivered?: boolean }[]>(
+    [],
+  );
   useEffect(() => {
     setPendingSteers([]);
   }, [session.id]);
@@ -359,9 +350,7 @@ export function SessionPane({
     if (!activeTurn) return;
     // Same-reference return when nothing is undelivered keeps this loop-free
     // with pendingSteers in the deps (covers steers sent mid-turn too).
-    setPendingSteers((prev) =>
-      prev.some((p) => !p.delivered) ? prev.map((p) => ({ ...p, delivered: true })) : prev,
-    );
+    setPendingSteers((prev) => (prev.some((p) => !p.delivered) ? prev.map((p) => ({ ...p, delivered: true })) : prev));
   }, [activeTurn, pendingSteers]);
   useEffect(() => {
     if (pendingSteers.length === 0) return;
@@ -409,9 +398,7 @@ export function SessionPane({
     : driverPresent
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
-  const composerPlaceholder = isDriver
-    ? 'Steer the agent...'
-    : `Suggest a message — ${driverName} decides`;
+  const composerPlaceholder = isDriver ? 'Steer the agent...' : `Suggest a message — ${driverName} decides`;
   const providerAuthOwnerName = nameFor(session.providerAuthRequired?.userId ?? null);
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
@@ -435,9 +422,7 @@ export function SessionPane({
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
   // to a request.
-  const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take' | 'requested' | 'seat-held'>(
-    'idle',
-  );
+  const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take' | 'requested' | 'seat-held'>('idle');
   useEffect(() => {
     if (isDriver) setSeatAsk('idle');
   }, [isDriver]);
@@ -448,9 +433,7 @@ export function SessionPane({
     return () => clearTimeout(t);
   }, [seatAsk]);
   const seatRequested =
-    seatAsk === 'requested' ||
-    seatAsk === 'seat-held' ||
-    session.pendingSeatRequests.some((r) => r.userId === me.id);
+    seatAsk === 'requested' || seatAsk === 'seat-held' || session.pendingSeatRequests.some((r) => r.userId === me.id);
 
   const requestSeat = () => {
     setSeatAsk('requested');
@@ -472,7 +455,7 @@ export function SessionPane({
   // surface a retry right where the action happened.
   const [localSteerError, setLocalSteerError] = useState<string | null>(null);
   const steerError = localSteerError ?? failedSteer;
-  const sendSteer = (text: string) => {
+  const sendSteer = (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => {
     setLocalSteerError(null);
     onClearFailedSteer();
     // Optimistic: show the steer immediately; reconciled away when the harness
@@ -490,7 +473,11 @@ export function SessionPane({
       effortOptions?.includes(effortSelection)
         ? effortSelection
         : undefined;
-    onSteer(session.id, text, effortOverride).catch(() => {
+    const hasAttachments = (attachments?.length ?? 0) > 0 || (attachmentRefs?.length ?? 0) > 0;
+    const steer = hasAttachments
+      ? onSteer(session.id, text, effortOverride, attachments, attachmentRefs)
+      : onSteer(session.id, text, effortOverride);
+    steer.catch(() => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
     });
@@ -531,7 +518,8 @@ export function SessionPane({
   useEffect(() => {
     if (!profileProposalsEnabled) return;
     let disposed = false;
-    api.sessionProfileProposals(session.id)
+    api
+      .sessionProfileProposals(session.id)
       .then(({ proposals }) => {
         if (!disposed) setProfileProposals(proposals);
       })
@@ -602,7 +590,7 @@ export function SessionPane({
   // Driver-side grant banner; Ignore is a local dismissal only.
   const [ignoredRequests, setIgnoredRequests] = useState<ReadonlySet<string>>(new Set());
   const seatRequest = isDriver
-    ? session.pendingSeatRequests.find((r) => !ignoredRequests.has(r.userId)) ?? null
+    ? (session.pendingSeatRequests.find((r) => !ignoredRequests.has(r.userId)) ?? null)
     : null;
 
   // Audit-line anchoring: a seat line renders right after the transcript items
@@ -612,9 +600,7 @@ export function SessionPane({
   // transcript content instead of interleaved at their original positions.
   const seatAnchorsRef = useRef<Map<number, number> | null>(null);
   if (seatAnchorsRef.current === null) {
-    seatAnchorsRef.current = new Map(
-      session.seatEvents.map((e) => [e.id, Number.MAX_SAFE_INTEGER]),
-    );
+    seatAnchorsRef.current = new Map(session.seatEvents.map((e) => [e.id, Number.MAX_SAFE_INTEGER]));
   }
   const seatAnchors = seatAnchorsRef.current;
   for (const e of session.seatEvents) {
@@ -630,10 +616,7 @@ export function SessionPane({
   // rather than stream.items, so anchor each to the point in the transcript where
   // it happened and splice it in at render time — same interleave-by-index shape
   // as the seat-audit lines above.
-  const inlineCodexChanges = useMemo(
-    () => codexInlineFileChanges(stream),
-    [stream.items, stream.fileChanges],
-  );
+  const inlineCodexChanges = useMemo(() => codexInlineFileChanges(stream), [stream.items, stream.fileChanges]);
   const codexChangesAt = (i: number) => inlineCodexChanges.filter((a) => a.index === i);
 
   // Manual expand/collapse overrides; default = open while running. When the
@@ -670,9 +653,7 @@ export function SessionPane({
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const paneSizing = sessionPaneSizing(paneWidth);
   const canDetach = !isPendingSessionId(session.id);
-  const githubIdentityLabel = session.githubIdentityMode
-    ? githubIdentityModeLabel(session.githubIdentityMode)
-    : null;
+  const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
@@ -894,9 +875,7 @@ export function SessionPane({
             Grant
           </button>
           <button
-            onClick={() =>
-              setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))
-            }
+            onClick={() => setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))}
             className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
           >
             Ignore
@@ -904,8 +883,7 @@ export function SessionPane({
         </div>
       )}
 
-      {session.providerAuthRequired &&
-        (!displayTerminal || session.providerAuthRequired.provider === 'github') && (
+      {session.providerAuthRequired && (!displayTerminal || session.providerAuthRequired.provider === 'github') && (
         <ProviderAuthBanner
           required={session.providerAuthRequired}
           isOwner={session.providerAuthRequired.userId === me.id}
@@ -944,13 +922,8 @@ export function SessionPane({
       )}
 
       {isEnded && resultText && (
-        <div
-          data-testid="session-result"
-          className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2"
-        >
-          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
-            Result
-          </div>
+        <div data-testid="session-result" className="shrink-0 border-b border-edge bg-surface-raised/60 px-4 py-2">
+          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Result</div>
           <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
             {resultText}
           </div>
@@ -978,9 +951,7 @@ export function SessionPane({
         >
           <span className="font-semibold uppercase tracking-wider text-fg-muted">Changes</span>
           <span className="tabular-nums">· {changedFileCount}</span>
-          <span className="ml-auto text-fg-tertiary">
-            {workTab === 'changes' ? 'Hide' : 'View'}
-          </span>
+          <span className="ml-auto text-fg-tertiary">{workTab === 'changes' ? 'Hide' : 'View'}</span>
         </button>
       )}
       {sideEffectsN > 0 && (
@@ -991,12 +962,8 @@ export function SessionPane({
           className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
         >
           <span className="font-semibold uppercase tracking-wider text-fg-muted">Side-effects</span>
-          <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>
-            · {sideEffectsN}
-          </span>
-          <span className="ml-auto text-fg-tertiary">
-            {workTab === 'sideEffects' ? 'Hide' : 'View'}
-          </span>
+          <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>· {sideEffectsN}</span>
+          <span className="ml-auto text-fg-tertiary">{workTab === 'sideEffects' ? 'Hide' : 'View'}</span>
         </button>
       )}
       {artifactsN > 0 && (
@@ -1008,148 +975,146 @@ export function SessionPane({
         >
           <span className="font-semibold uppercase tracking-wider text-fg-muted">Artifacts</span>
           <span className="tabular-nums">· {artifactsN}</span>
-          <span className="ml-auto text-fg-tertiary">
-            {workTab === 'artifacts' ? 'Hide' : 'View'}
-          </span>
+          <span className="ml-auto text-fg-tertiary">{workTab === 'artifacts' ? 'Hide' : 'View'}</span>
         </button>
       )}
 
       <div className={`flex min-h-0 flex-1 ${workTab && workPinned ? 'flex-row' : 'flex-col'}`}>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {workTab && !workPinned && (
-          <WorkDrawer
-            changes={fileChanges}
-            changedFileCount={changedFileCount}
-            effects={sideEffects}
-            sideEffectCount={sideEffectsN}
-            hasDanger={sideEffectsDanger}
-            artifacts={artifacts}
-            artifactPresentations={artifactPresentations}
-            artifactCount={artifactsN}
-            conflicts={conflicts}
-            conflictCount={conflictsN}
-            onResolveConflict={resolveConflict}
-            sessionId={session.id}
-            workspaceId={session.workspaceId}
-            channelId={session.channelId}
-            tab={workTab}
-            onTab={setWorkTab}
-            pinned={false}
-            onTogglePin={togglePin}
-            canDetach={canDetach}
-            onClose={closeWork}
-          />
-        )}
-        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
-        <PlanPanel todos={stream.todos} plan={stream.plan} />
-        {stream.items.length === 0 && !activeTurn && (
-          <div className="flex h-full items-center justify-center text-xs text-fg-muted">
-            {!displayTerminal ? (
-              <span className="animate-pulse">Waiting for agent output…</span>
-            ) : isTerminalExecutionStatus(stream.status) ? (
-              'No transcript.'
-            ) : (
-              'Loading transcript…'
+          {workTab && !workPinned && (
+            <WorkDrawer
+              changes={fileChanges}
+              changedFileCount={changedFileCount}
+              effects={sideEffects}
+              sideEffectCount={sideEffectsN}
+              hasDanger={sideEffectsDanger}
+              artifacts={artifacts}
+              artifactPresentations={artifactPresentations}
+              artifactCount={artifactsN}
+              conflicts={conflicts}
+              conflictCount={conflictsN}
+              onResolveConflict={resolveConflict}
+              sessionId={session.id}
+              workspaceId={session.workspaceId}
+              channelId={session.channelId}
+              tab={workTab}
+              onTab={setWorkTab}
+              pinned={false}
+              onTogglePin={togglePin}
+              canDetach={canDetach}
+              onClose={closeWork}
+            />
+          )}
+          <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
+            <PlanPanel todos={stream.todos} plan={stream.plan} />
+            {stream.items.length === 0 && !activeTurn && (
+              <div className="flex h-full items-center justify-center text-xs text-fg-muted">
+                {!displayTerminal ? (
+                  <span className="animate-pulse">Waiting for agent output…</span>
+                ) : isTerminalExecutionStatus(stream.status) ? (
+                  'No transcript.'
+                ) : (
+                  'Loading transcript…'
+                )}
+              </div>
             )}
-          </div>
-        )}
-        {stream.items.map((item, i) => (
-          <Fragment key={i}>
-            {seatLinesAt(i).map((e) => (
+            {stream.items.map((item, i) => (
+              <Fragment key={i}>
+                {seatLinesAt(i).map((e) => (
+                  <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
+                ))}
+                {codexChangesAt(i).map((a) => (
+                  <div key={a.change.id} className="pl-3.5">
+                    <InlineFileChange change={a.change} />
+                  </div>
+                ))}
+                <AnnotatedTranscriptRow
+                  handle={item.handle ?? null}
+                  onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
+                  markupLoading={markupLoadingHandle === item.handle}
+                >
+                  {/* `group` + title: every row gets a native mouseover timestamp;
+                  steer rows also reveal an inline one (their hover target is
+                  obvious and they anchor turn navigation). */}
+                  <div className="group" title={turnTimes.get(item.id)}>
+                    {item.type === 'text' ? (
+                      <div className="pl-3.5">
+                        <TextBlock item={item} />
+                      </div>
+                    ) : item.type === 'user_message' ? (
+                      <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
+                        <div className="text-sm font-semibold text-fg">
+                          {steerAuthor}
+                          <TurnTimeLabel time={turnTimes.get(item.id)} />
+                        </div>
+                        <MarkupSteerCard text={item.text} />
+                      </div>
+                    ) : item.type === 'question' ? (
+                      <div className="pl-3.5">
+                        <QuestionTranscriptCard
+                          item={item}
+                          events={questionEventsByQuestion.get(item.questionId) ?? []}
+                        />
+                      </div>
+                    ) : item.type === 'reasoning' ? (
+                      <div className="pl-3.5">
+                        <ReasoningBlock item={item} />
+                      </div>
+                    ) : item.type === 'tool_call' ? (
+                      <div className="pl-3.5">
+                        <TranscriptTool
+                          item={item}
+                          expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
+                          onToggle={() =>
+                            setToolOpen((prev) => ({
+                              ...prev,
+                              [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
+                            }))
+                          }
+                          clockSkewMs={clockSkewMs}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </AnnotatedTranscriptRow>
+              </Fragment>
+            ))}
+            {seatLinesAt(stream.items.length).map((e) => (
               <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
             ))}
-            {codexChangesAt(i).map((a) => (
+            {codexChangesAt(stream.items.length).map((a) => (
               <div key={a.change.id} className="pl-3.5">
                 <InlineFileChange change={a.change} />
               </div>
             ))}
-            <AnnotatedTranscriptRow
-              handle={item.handle ?? null}
-              onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
-              markupLoading={markupLoadingHandle === item.handle}
-            >
-              {/* `group` + title: every row gets a native mouseover timestamp;
-                  steer rows also reveal an inline one (their hover target is
-                  obvious and they anchor turn navigation). */}
-              <div className="group" title={turnTimes.get(item.id)}>
-              {item.type === 'text' ? (
-                <div className="pl-3.5">
-                  <TextBlock item={item} />
+            {pendingSteers.map((p) => (
+              <div
+                key={p.id}
+                data-testid="user-steer-pending"
+                title={formatTurnTime(p.ts)}
+                className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
+              >
+                <div className="text-sm font-semibold text-fg">
+                  {steerAuthor}
+                  <TurnTimeLabel time={formatTurnTime(p.ts)} />
                 </div>
-              ) : item.type === 'user_message' ? (
-                <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                  <div className="text-sm font-semibold text-fg">
-                    {steerAuthor}
-                    <TurnTimeLabel time={turnTimes.get(item.id)} />
-                  </div>
-                  <MarkupSteerCard text={item.text} />
-                </div>
-              ) : item.type === 'question' ? (
-                <div className="pl-3.5">
-                  <QuestionTranscriptCard
-                    item={item}
-                    events={questionEventsByQuestion.get(item.questionId) ?? []}
-                  />
-                </div>
-              ) : item.type === 'reasoning' ? (
-                <div className="pl-3.5">
-                  <ReasoningBlock item={item} />
-                </div>
-              ) : item.type === 'tool_call' ? (
-                <div className="pl-3.5">
-                  <TranscriptTool
-                    item={item}
-                    expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                    onToggle={() =>
-                      setToolOpen((prev) => ({
-                        ...prev,
-                        [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                      }))
-                    }
-                    clockSkewMs={clockSkewMs}
-                  />
-                </div>
-              ) : null}
+                <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
               </div>
-            </AnnotatedTranscriptRow>
-          </Fragment>
-        ))}
-        {seatLinesAt(stream.items.length).map((e) => (
-          <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
-        ))}
-        {codexChangesAt(stream.items.length).map((a) => (
-          <div key={a.change.id} className="pl-3.5">
-            <InlineFileChange change={a.change} />
+            ))}
+            {artifactPresentations.length > 0 && (
+              <div className="pl-3.5">
+                <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />
+              </div>
+            )}
           </div>
-        ))}
-        {pendingSteers.map((p) => (
-          <div
-            key={p.id}
-            data-testid="user-steer-pending"
-            title={formatTurnTime(p.ts)}
-            className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
-          >
-            <div className="text-sm font-semibold text-fg">
-              {steerAuthor}
-              <TurnTimeLabel time={formatTurnTime(p.ts)} />
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
-          </div>
-        ))}
-        {artifactPresentations.length > 0 && (
-          <div className="pl-3.5">
-            <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />
-          </div>
-        )}
-        </div>
-        <TurnRail
-          turns={turns}
-          onJump={(id) =>
-            scrollRef.current
-              ?.querySelector(`[data-turn="${id}"]`)
-              ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-          }
-        />
+          <TurnRail
+            turns={turns}
+            onJump={(id) =>
+              scrollRef.current
+                ?.querySelector(`[data-turn="${id}"]`)
+                ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+            }
+          />
         </div>
         {workTab && workPinned && (
           <div className="flex min-h-0 w-[min(440px,46%)] shrink-0 flex-col border-l border-edge">
@@ -1204,13 +1169,7 @@ export function SessionPane({
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
-          cancelLabel={
-            canStopTurn
-              ? 'Cancel turn'
-              : displayCancelAsk === 'confirm'
-                ? 'Confirm cancel'
-                : 'Cancel'
-          }
+          cancelLabel={canStopTurn ? 'Cancel turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
           onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}
@@ -1235,9 +1194,7 @@ export function SessionPane({
               data-testid="steer-error"
               className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
             >
-              <span className="min-w-0 flex-1 truncate text-danger-text">
-                Message didn't send: "{steerError}"
-              </span>
+              <span className="min-w-0 flex-1 truncate text-danger-text">Message didn't send: "{steerError}"</span>
               <button
                 onClick={() => sendSteer(steerError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
@@ -1261,9 +1218,7 @@ export function SessionPane({
               data-testid="suggestion-error"
               className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
             >
-              <span className="min-w-0 flex-1 truncate text-danger-text">
-                Suggestion didn't send: "{suggestError}"
-              </span>
+              <span className="min-w-0 flex-1 truncate text-danger-text">Suggestion didn't send: "{suggestError}"</span>
               <button
                 onClick={() => sendSuggestion(suggestError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
@@ -1284,8 +1239,11 @@ export function SessionPane({
           </div>
           <Composer
             placeholder={composerPlaceholder}
-            onSend={isDriver ? sendSteer : sendSuggestion}
+            onSend={isDriver ? sendSteer : (text) => sendSuggestion(text)}
+            queueUpload={isDriver ? queueUpload : undefined}
             onTyping={onComposerTyping}
+            allowAttachments={isDriver}
+            allowVoice={false}
             footer={
               isDriver ? (
                 canPickEffort ? (
@@ -1316,9 +1274,7 @@ export function SessionPane({
                 <span data-testid="seat-footer" className="flex items-center gap-2">
                   {seatRequested ? (
                     <span>
-                      {seatAsk === 'seat-held' && (
-                        <span className="text-warning/80">seat held · </span>
-                      )}
+                      {seatAsk === 'seat-held' && <span className="text-warning/80">seat held · </span>}
                       requested — waiting for {driverName}
                     </span>
                   ) : seatAsk === 'confirm-take' ? (
@@ -1590,9 +1546,7 @@ const ToolCard = memo(
     const startedRef = useRef<number>(Date.now());
     const stampedStart = item.ts !== undefined ? Date.parse(item.ts) : NaN;
     const startedAt =
-      !Number.isNaN(stampedStart) && clockSkewMs !== null
-        ? stampedStart + clockSkewMs
-        : startedRef.current;
+      !Number.isNaN(stampedStart) && clockSkewMs !== null ? stampedStart + clockSkewMs : startedRef.current;
     const now = useNow(running);
     const elapsedMs = running ? Math.max(0, now - startedAt) : 0;
     const isError = item.result?.is_error === true;
@@ -1618,21 +1572,15 @@ const ToolCard = memo(
             {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
           </span>
           <span className="sr-only">{item.name}</span>
-          <span className="min-w-0 shrink truncate font-mono font-semibold text-fg-body">
-            {descriptor.title}
-          </span>
+          <span className="min-w-0 shrink truncate font-mono font-semibold text-fg-body">{descriptor.title}</span>
           {!expanded && descriptor.subtitle && (
-            <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">
-              {descriptor.subtitle}
-            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">{descriptor.subtitle}</span>
           )}
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {running ? (
               <>
                 {elapsedMs >= 1000 && (
-                  <span className="tabular-nums text-2xs text-fg-faint">
-                    {formatElapsed(elapsedMs)}
-                  </span>
+                  <span className="tabular-nums text-2xs text-fg-faint">{formatElapsed(elapsedMs)}</span>
                 )}
                 <Spinner className="text-accent-text-strong" />
               </>

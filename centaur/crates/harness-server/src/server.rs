@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -33,6 +33,10 @@ use crate::turn::{BridgeConfig, CodexTurnNormalizer};
 use crate::util::{absolute_path, default_codex_home, write_value};
 use crate::wire::{is_known_untyped_server_notification, notification_to_wire_value};
 use crate::{HarnessServerError, Result};
+
+const LOCAL_ATTACHMENT_WAIT_ENV: &str = "CENTAUR_LOCAL_ATTACHMENT_WAIT_MS";
+const DEFAULT_LOCAL_ATTACHMENT_WAIT_MS: u64 = 30_000;
+const LOCAL_ATTACHMENT_POLL_MS: u64 = 100;
 
 pub fn server_for(kind: HarnessKind) -> Box<dyn AppServerRuntime> {
     match kind {
@@ -588,13 +592,22 @@ fn attachment_block_to_user_input(
         non_empty(block.local_path.as_deref()).or(non_empty(block.path.as_deref()))
     {
         let path = PathBuf::from(local_path);
-        if path.exists() {
-            return Ok(local_file_inputs(
-                &path,
-                mime_type,
-                is_image_attachment(attachment_type, mime_type),
-            ));
+        let exists = wait_for_local_attachment_path(&path, local_attachment_wait_duration())
+            .map_err(|source| HarnessServerError::InvalidBlocksInput {
+                message: format!(
+                    "localPath attachment {name:?} is not readable at {local_path}: {source}"
+                ),
+            })?;
+        if !exists {
+            return Err(HarnessServerError::InvalidBlocksInput {
+                message: format!("localPath attachment {name:?} is missing at {local_path}"),
+            });
         }
+        return Ok(local_file_inputs(
+            &path,
+            mime_type,
+            is_image_attachment(attachment_type, mime_type),
+        ));
     }
 
     if let Some(staged_attachment_id) = non_empty(block.staged_attachment_id.as_deref()) {
@@ -639,6 +652,36 @@ fn attachment_block_to_user_input(
         text: format!("[Slack attachment: {}]", fields.join(" ")),
         text_elements: Vec::new(),
     }])
+}
+
+fn local_attachment_wait_duration() -> Duration {
+    env::var(LOCAL_ATTACHMENT_WAIT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_LOCAL_ATTACHMENT_WAIT_MS))
+}
+
+fn wait_for_local_attachment_path(path: &Path, timeout: Duration) -> io::Result<bool> {
+    let start = Instant::now();
+    loop {
+        if path.try_exists()? {
+            let metadata = std::fs::metadata(path)?;
+            if !metadata.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "path is not a regular file",
+                ));
+            }
+            std::fs::File::open(path)?;
+            return Ok(true);
+        }
+        if start.elapsed() >= timeout {
+            return Ok(false);
+        }
+        let remaining = timeout.saturating_sub(start.elapsed());
+        thread::sleep(remaining.min(Duration::from_millis(LOCAL_ATTACHMENT_POLL_MS)));
+    }
 }
 
 fn handle_attachment_chunk(parsed: BlocksLine, state: &mut BlocksState) -> Result<()> {
@@ -1662,6 +1705,9 @@ pub(crate) fn write_blocks_error<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static LOCAL_ATTACHMENT_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_upload_dir() -> PathBuf {
         let path = env::temp_dir().join(format!("harness-server-test-{}", Uuid::new_v4().simple()));
@@ -1899,5 +1945,164 @@ mod tests {
         };
         assert!(text.starts_with("[Attached file saved to "));
         assert!(text.ends_with("notes.txt]"));
+    }
+
+    #[test]
+    fn local_path_attachment_block_becomes_local_file_text_input() {
+        let dir = temp_upload_dir();
+        let path = dir.join("committed-artifact.md");
+        std::fs::write(&path, b"hello").expect("write local artifact");
+        let user = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "attachment",
+                    "attachment_type": "document",
+                    "localPath": path,
+                    "name": "committed-artifact.md",
+                    "mimeType": "text/markdown"
+                }]
+            }
+        })
+        .to_string();
+        let BlocksCommand::User { input, .. } = parse_blocks_line(&user).expect("user parses")
+        else {
+            panic!("expected user command");
+        };
+
+        assert_eq!(input.len(), 1);
+        let UserInput::Text { text, .. } = &input[0] else {
+            panic!("expected local path attachment to become text");
+        };
+        assert_eq!(
+            text,
+            &format!("[Attached file saved to {}]", path.display())
+        );
+    }
+
+    #[test]
+    fn missing_local_path_attachment_block_errors_instead_of_degrading_to_text() {
+        let _env_guard = LOCAL_ATTACHMENT_ENV_LOCK.lock().expect("env lock");
+        let path = temp_upload_dir().join("missing-artifact.md");
+        let previous_wait = env::var_os(LOCAL_ATTACHMENT_WAIT_ENV);
+        unsafe {
+            env::set_var(LOCAL_ATTACHMENT_WAIT_ENV, "1");
+        }
+        let user = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "attachment",
+                    "attachment_type": "document",
+                    "localPath": path,
+                    "name": "missing-artifact.md",
+                    "mimeType": "text/markdown"
+                }]
+            }
+        })
+        .to_string();
+
+        let error = parse_blocks_line(&user).expect_err("missing localPath should fail");
+        restore_local_attachment_wait(previous_wait);
+
+        assert!(matches!(
+            error,
+            HarnessServerError::InvalidBlocksInput { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("localPath attachment \"missing-artifact.md\" is missing at "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn non_file_local_path_attachment_block_errors_instead_of_degrading_to_text() {
+        let path = temp_upload_dir();
+        let user = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "attachment",
+                    "attachment_type": "document",
+                    "localPath": path,
+                    "name": "artifact-dir",
+                    "mimeType": "text/markdown"
+                }]
+            }
+        })
+        .to_string();
+
+        let error = parse_blocks_line(&user).expect_err("directory localPath should fail");
+
+        assert!(matches!(
+            error,
+            HarnessServerError::InvalidBlocksInput { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("localPath attachment \"artifact-dir\" is not readable at "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn local_path_attachment_waits_for_delayed_artifact() {
+        let _env_guard = LOCAL_ATTACHMENT_ENV_LOCK.lock().expect("env lock");
+        let dir = temp_upload_dir();
+        let path = dir.join("delayed-artifact.md");
+        let previous_wait = env::var_os(LOCAL_ATTACHMENT_WAIT_ENV);
+        unsafe {
+            env::set_var(LOCAL_ATTACHMENT_WAIT_ENV, "500");
+        }
+        let writer_path = path.clone();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(25));
+            std::fs::write(writer_path, b"ready").expect("write delayed artifact");
+        });
+        let user = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "attachment",
+                    "attachment_type": "document",
+                    "localPath": path,
+                    "name": "delayed-artifact.md",
+                    "mimeType": "text/markdown"
+                }]
+            }
+        })
+        .to_string();
+        let BlocksCommand::User { input, .. } = parse_blocks_line(&user).expect("user parses")
+        else {
+            panic!("expected user command");
+        };
+        writer.join().expect("writer finished");
+        restore_local_attachment_wait(previous_wait);
+
+        assert_eq!(input.len(), 1);
+        let UserInput::Text { text, .. } = &input[0] else {
+            panic!("expected local path attachment to become text");
+        };
+        assert_eq!(
+            text,
+            &format!("[Attached file saved to {}]", path.display())
+        );
+    }
+
+    fn restore_local_attachment_wait(previous: Option<std::ffi::OsString>) {
+        unsafe {
+            if let Some(value) = previous {
+                env::set_var(LOCAL_ATTACHMENT_WAIT_ENV, value);
+            } else {
+                env::remove_var(LOCAL_ATTACHMENT_WAIT_ENV);
+            }
+        }
     }
 }

@@ -11,6 +11,7 @@ import {
   type MsgSendPayload,
   type OpRegistry,
   type QueuedOp,
+  type SessionSpawnPayload,
   type UploadPayload,
   type WireEvent,
 } from '../src/index';
@@ -108,6 +109,54 @@ function msgWithUpload(opId: string, uploadKey = 'up-1'): QueuedOp {
   );
 }
 
+function spawnWithUpload(opId: string, uploadKey = 'up-1'): QueuedOp {
+  return makeQueuedOp(
+    {
+      opId,
+      opType: 'session.spawn',
+      payload: {
+        channelId: 'ch-1',
+        task: 'summarize this file',
+        clientSpawnId: 'pending-session-1',
+        attachmentRefs: [{ uploadKey }],
+        attachments: [
+          {
+            id: uploadKey,
+            filename: 'shot.png',
+            contentType: 'image/png',
+            size: 123,
+          },
+        ],
+        createdAt: '2026-06-11T12:00:00.000Z',
+      },
+    },
+    '2026-06-11T12:00:00.000Z',
+  );
+}
+
+function steerWithUpload(opId: string, uploadKey = 'up-1'): QueuedOp {
+  return makeQueuedOp(
+    {
+      opId,
+      opType: 'session.steer',
+      payload: {
+        sessionId: 'sess-1',
+        text: 'use this file',
+        attachmentRefs: [{ uploadKey }],
+        attachments: [
+          {
+            id: uploadKey,
+            filename: 'shot.png',
+            contentType: 'image/png',
+            size: 123,
+          },
+        ],
+      },
+    },
+    '2026-06-11T12:00:00.000Z',
+  );
+}
+
 function deferred<T = void>(): {
   promise: Promise<T>;
   resolve(value: T | PromiseLike<T>): void;
@@ -137,9 +186,7 @@ describe('durable op queue coalescing', () => {
         }
         const ops = await storage.listOps();
         expect(ops).toHaveLength(1);
-        expect((ops[0]!.payload as { lastReadEventId: number }).lastReadEventId).toBe(
-          Math.max(...values),
-        );
+        expect((ops[0]!.payload as { lastReadEventId: number }).lastReadEventId).toBe(Math.max(...values));
       }),
     );
   });
@@ -333,10 +380,10 @@ describe('durable op queue flushing', () => {
       storage,
       api,
       dispatch: () => {},
-        registry: registryFor(async (payload) => {
-          if (payload.channelId === 'a') throw new TypeError('lost response');
-          return { event: eventFor(payload) };
-        }),
+      registry: registryFor(async (payload) => {
+        if (payload.channelId === 'a') throw new TypeError('lost response');
+        return { event: eventFor(payload) };
+      }),
       setTimer: () => undefined,
     });
     await queue.flush();
@@ -369,9 +416,7 @@ describe('durable op queue flushing', () => {
       await queue.flush();
 
       expect(attempts).toEqual({ 'op-net': 2, 'op-4xx': 1 });
-      expect(rejected).toEqual([
-        { type: 'send-failed', channelId: 'b', clientMsgId: 'op-4xx' },
-      ]);
+      expect(rejected).toEqual([{ type: 'send-failed', channelId: 'b', clientMsgId: 'op-4xx' }]);
       expect(await storage.listOps()).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -585,6 +630,65 @@ describe('upload op dependencies', () => {
     });
     await queue.flush();
     expect(posted).toEqual([['file-1']]);
+    expect(await storage.listOps()).toEqual([]);
+  });
+
+  it('resolves upload refs before spawning a session', async () => {
+    const registry = createDefaultOpRegistry();
+    const createAgentSession = vi.fn(async () => ({ session: {} }));
+    const op = spawnWithUpload('spawn-1');
+
+    await registry['session.spawn'].execute(
+      { createAgentSession } as unknown as Api,
+      op.payload as SessionSpawnPayload,
+      op,
+      {
+        listOps: async () => [
+          {
+            ...upload('upload-1', { fileId: 'file-1', uploaded: true }),
+            status: 'completed',
+          },
+        ],
+        putOp: async () => {},
+        uploadFetch: async () => new Response(),
+        readUploadBody: async () => new Blob(),
+      },
+    );
+
+    expect(createAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'ch-1',
+        task: 'summarize this file',
+        clientSpawnId: 'pending-session-1',
+        attachments: ['file-1'],
+        opId: 'spawn-1',
+      }),
+    );
+  });
+
+  it('does not flush a dependent steer until its upload marker is completed', async () => {
+    const storage = new MemoryOpStorage([steerWithUpload('steer-1')]);
+    const steered: string[][] = [];
+    const queue = new DurableOpQueue({
+      storage,
+      api: {
+        steerSession: async (_id: string, _text: string, _op: unknown, opts: { attachments?: string[] }) => {
+          steered.push(opts.attachments ?? []);
+          return { ok: true };
+        },
+      } as unknown as Api,
+      dispatch: () => {},
+    });
+
+    await queue.flush();
+    expect(steered).toEqual([]);
+
+    await storage.putOp({
+      ...upload('upload-1', { fileId: 'file-1', uploaded: true }),
+      status: 'completed',
+    });
+    await queue.flush();
+    expect(steered).toEqual([['file-1']]);
     expect(await storage.listOps()).toEqual([]);
   });
 

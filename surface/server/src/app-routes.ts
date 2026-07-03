@@ -222,6 +222,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
   });
 
   registerSessionInteractionRoutes(app, {
+    pool,
     sessionRuns,
     maxMessageBytes: config.maxMessageBytes,
     requireUser,

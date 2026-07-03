@@ -139,6 +139,11 @@ export type ReactionResponse = { event: WireEvent } | { event: null; applied: fa
 export interface OpOptions {
   opId?: string;
 }
+export interface AgentAttachmentRef {
+  artifactId?: string;
+  versionSeq?: number;
+  path?: string;
+}
 export interface EntryComment {
   id: number;
   author?: UserRef;
@@ -244,10 +249,8 @@ export function createApi(opts: ApiOptions = {}) {
       }),
     /** `prefs` is absent on servers that predate the user-prefs migration. */
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
-    providerCredentials: () =>
-      req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
-    connections: () =>
-      req<{ connections: ConnectionStatus[] }>('/api/me/connections'),
+    providerCredentials: () => req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
+    connections: () => req<{ connections: ConnectionStatus[] }>('/api/me/connections'),
     connectConnection: (provider: ConnectionProvider, body: Record<string, unknown> = {}) =>
       req<{ connection: ConnectionStatus; authorizeUrl?: string }>(
         `/api/me/connections/${encodeURIComponent(provider)}`,
@@ -278,8 +281,7 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'DELETE',
       });
     },
-    agentProfiles: () =>
-      req<{ profiles: AgentProfile[] }>('/api/me/agent-profiles'),
+    agentProfiles: () => req<{ profiles: AgentProfile[] }>('/api/me/agent-profiles'),
     createAgentProfile: (body: { provider: AgentProfileProvider; name: string }) =>
       req<{ profile: AgentProfile }>('/api/me/agent-profiles', {
         method: 'POST',
@@ -290,10 +292,7 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify(proposal),
       }),
-    importLocalAgentProfile: (body: {
-      provider: AgentProfileProvider;
-      proposal: AgentProfileProposalPayload;
-    }) =>
+    importLocalAgentProfile: (body: { provider: AgentProfileProvider; proposal: AgentProfileProposalPayload }) =>
       req<{ proposal: AgentProfileProposal }>('/api/me/agent-profiles/import-local', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -321,11 +320,7 @@ export function createApi(opts: ApiOptions = {}) {
         `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-current-profile`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
-    saveSessionProfileProposalAsNew: (
-      sessionId: string,
-      proposalId: string,
-      body: { name: string },
-    ) =>
+    saveSessionProfileProposalAsNew: (sessionId: string, proposalId: string, body: { name: string }) =>
       req<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-new-profile`,
         { method: 'POST', body: JSON.stringify(body) },
@@ -373,8 +368,7 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ name, private: opts.private === true }),
       }),
-    channelMembers: (channelId: string) =>
-      req<{ members: UserRef[] }>(`/api/channels/${channelId}/members`),
+    channelMembers: (channelId: string) => req<{ members: UserRef[] }>(`/api/channels/${channelId}/members`),
     addChannelMember: (channelId: string, userId: string, op: OpOptions = {}) =>
       req<{ member: UserRef }>(`/api/channels/${channelId}/members`, {
         method: 'POST',
@@ -385,18 +379,13 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'DELETE',
         body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
       }),
-    messages: (
-      channelId: string,
-      opts: { beforeId?: number; afterId?: number; limit?: number } = {},
-    ) => {
+    messages: (channelId: string, opts: { beforeId?: number; afterId?: number; limit?: number } = {}) => {
       const q = new URLSearchParams();
       if (opts.beforeId !== undefined) q.set('before_id', String(opts.beforeId));
       if (opts.afterId !== undefined) q.set('after_id', String(opts.afterId));
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
-      return req<{ events: WireEvent[]; hasMore: boolean }>(
-        `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`,
-      );
+      return req<{ events: WireEvent[]; hasMore: boolean }>(`/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`);
     },
     markRead: (channelId: string, lastReadEventId: number, op: OpOptions = {}) =>
       req<{ lastReadEventId: number }>(`/api/channels/${channelId}/read`, {
@@ -412,12 +401,9 @@ export function createApi(opts: ApiOptions = {}) {
       const q = new URLSearchParams();
       if (cursor !== undefined) q.set('cursor', cursor);
       const qs = q.toString();
-      return req<{ items: ActivityItem[]; nextCursor: string | null }>(
-        `/api/activity${qs ? `?${qs}` : ''}`,
-      );
+      return req<{ items: ActivityItem[]; nextCursor: string | null }>(`/api/activity${qs ? `?${qs}` : ''}`);
     },
-    thread: (rootEventId: number) =>
-      req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
+    thread: (rootEventId: number) => req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
     postMessage: (body: {
       channelId: string;
       text: string;
@@ -456,6 +442,10 @@ export function createApi(opts: ApiOptions = {}) {
       threadRootEventId?: number;
       /** Optimistic id echoed on session.spawned for lost-response reconcile. */
       clientSpawnId?: string;
+      /** Uploaded file ids to attach to the initial agent message. */
+      attachments?: string[];
+      /** Existing artifact refs to attach when the UI can pick them. */
+      attachmentRefs?: AgentAttachmentRef[];
       opId?: string;
     }) =>
       req<{ session: SessionWire }>('/api/sessions', {
@@ -486,17 +476,12 @@ export function createApi(opts: ApiOptions = {}) {
      * authenticated context (external browser / share sheet). The returned
      * url is server-relative; prefix with the server origin on native.
      */
-    fileSignedUrl: (fileId: string) =>
-      req<{ url: string; expiresAt: string }>(`/api/files/${fileId}/url`),
+    fileSignedUrl: (fileId: string) => req<{ url: string; expiresAt: string }>(`/api/files/${fileId}/url`),
     // === files-hub (P1) ===
     listWorkspaceFiles: (workspaceId: string, query?: HubFileListQuery) =>
-      req<HubFileListResult>(
-        `/api/workspaces/${encodeURIComponent(workspaceId)}/files${filesHubQuery(query)}`,
-      ),
+      req<HubFileListResult>(`/api/workspaces/${encodeURIComponent(workspaceId)}/files${filesHubQuery(query)}`),
     listChannelFiles: (channelId: string, query?: HubFileListQuery) =>
-      req<HubFileListResult>(
-        `/api/channels/${encodeURIComponent(channelId)}/files${filesHubQuery(query)}`,
-      ),
+      req<HubFileListResult>(`/api/channels/${encodeURIComponent(channelId)}/files${filesHubQuery(query)}`),
     starFile: (id: string) =>
       req<HubFileStarResponse>(`/api/files/${encodeURIComponent(id)}/star`, {
         method: 'POST',
@@ -512,10 +497,9 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify({ label }),
       }),
     removeFileLabel: (id: string, label: string) =>
-      req<HubFileLabelResponse>(
-        `/api/files/${encodeURIComponent(id)}/labels/${encodeURIComponent(label)}`,
-        { method: 'DELETE' },
-      ),
+      req<HubFileLabelResponse>(`/api/files/${encodeURIComponent(id)}/labels/${encodeURIComponent(label)}`, {
+        method: 'DELETE',
+      }),
     renameFile: (id: string, name: string) =>
       req<HubFileRenameResponse>(`/api/files/${encodeURIComponent(id)}`, {
         method: 'PATCH',
@@ -531,9 +515,7 @@ export function createApi(opts: ApiOptions = {}) {
         body: '{}',
       }),
     fileContentUrl: (artifactId: string, atSeq?: number) =>
-      `${base}/api/files/artifact/${encodeURIComponent(artifactId)}/content${
-        atSeq != null ? `?at=${atSeq}` : ''
-      }`,
+      `${base}/api/files/artifact/${encodeURIComponent(artifactId)}/content${atSeq != null ? `?at=${atSeq}` : ''}`,
     /** Embed-only HTML/app preview URL. Server returns 403 on a top-level document
      * navigation, so callers must fetch it with `sec-fetch-dest: iframe` (or embed
      * it in an iframe) rather than navigating a WebView straight to it. */
@@ -542,8 +524,7 @@ export function createApi(opts: ApiOptions = {}) {
         renderer ? `?renderer=${encodeURIComponent(renderer)}` : ''
       }`,
     // === files-hub version history + text edit + conflict (web + mobile parity) ===
-    listFileVersions: (id: string) =>
-      req<HubFileVersionsResponse>(`/api/files/${encodeURIComponent(id)}/versions`),
+    listFileVersions: (id: string) => req<HubFileVersionsResponse>(`/api/files/${encodeURIComponent(id)}/versions`),
     revertFileVersion: (id: string, seq: number) =>
       req<HubFileRevertResponse>(`/api/files/${encodeURIComponent(id)}/revert`, {
         method: 'POST',
@@ -555,22 +536,12 @@ export function createApi(opts: ApiOptions = {}) {
         headers: { 'content-type': mime, 'x-artifact-base-seq': String(baseSeq) },
         body: text,
       }),
-    loadFileConflict: (id: string) =>
-      req<HubFileConflict>(`/api/files/${encodeURIComponent(id)}/conflict`),
-    resolveFileConflict: (
-      id: string,
-      conflict: HubFileConflict,
-      choice: HubFileResolveChoice,
-      mime = 'text/plain',
-    ) => {
+    loadFileConflict: (id: string) => req<HubFileConflict>(`/api/files/${encodeURIComponent(id)}/conflict`),
+    resolveFileConflict: (id: string, conflict: HubFileConflict, choice: HubFileResolveChoice, mime = 'text/plain') => {
       // Resolved bytes = the chosen side's text (or the hand-merged text). A side
       // with a null sha is the "deleted" side of a delete-vs-edit conflict → stay deleted.
       const text =
-        choice.kind === 'left'
-          ? conflict.left.text
-          : choice.kind === 'right'
-            ? conflict.right.text
-            : choice.text;
+        choice.kind === 'left' ? conflict.left.text : choice.kind === 'right' ? conflict.right.text : choice.text;
       const stayDeleted =
         (choice.kind === 'left' && conflict.left.sha === null) ||
         (choice.kind === 'right' && conflict.right.sha === null);
@@ -630,13 +601,10 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify({ channelId, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     /** Accept a ringing call: mints this user's token + marks them joined. */
-    acceptCall: (callId: string) =>
-      req<CallJoin>(`/api/calls/${callId}/accept`, { method: 'POST', body: '{}' }),
-    declineCall: (callId: string) =>
-      req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),
+    acceptCall: (callId: string) => req<CallJoin>(`/api/calls/${callId}/accept`, { method: 'POST', body: '{}' }),
+    declineCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),
     /** Leave a call; the server ends it when the last participant leaves. */
-    leaveCall: (callId: string) =>
-      req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
+    leaveCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
     /** `kind` distinguishes Expo message pushes, VoIP call-ringing tokens,
      * and browser PushSubscription rows. */
     registerPush: (body: RegisterPushBody) =>
@@ -657,12 +625,23 @@ export function createApi(opts: ApiOptions = {}) {
       const qs = q.toString();
       return req<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
     },
-    steerSession: (id: string, text: string, op: OpOptions = {}, effort?: string) =>
+    steerSession: (
+      id: string,
+      text: string,
+      op: OpOptions = {},
+      opts: {
+        effort?: string;
+        attachments?: string[];
+        attachmentRefs?: AgentAttachmentRef[];
+      } = {},
+    ) =>
       req<{ ok: true }>(`/api/sessions/${id}/messages`, {
         method: 'POST',
         body: JSON.stringify({
           text,
-          ...(effort ? { effort } : {}),
+          ...(opts.effort ? { effort: opts.effort } : {}),
+          ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
+          ...(opts.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
           ...(op.opId ? { opId: op.opId } : {}),
         }),
       }),

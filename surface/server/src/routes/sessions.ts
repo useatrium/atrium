@@ -10,6 +10,11 @@ import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
 import { convergeExistingGitHubDirectGrant, convergeGitHubExistingIdentityGrant } from '../github-iron-control.js';
+import {
+  parseAgentTurnAttachmentInputPayloads,
+  resolveAgentTurnAttachments,
+  type AgentTurnAttachmentRef,
+} from '../session-attachments.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 
@@ -70,6 +75,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       githubIdentityId?: unknown;
       agentProfileId?: string;
       agentProfileVersionId?: string;
+      attachments?: unknown;
+      attachmentRefs?: unknown;
       clientSpawnId?: unknown;
       opId?: unknown;
     };
@@ -77,7 +84,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const task = typeof body.task === 'string' ? body.task : '';
     const repo =
       typeof body.repo === 'string' && body.repo.trim()
-        ? normalizeGitHubRepoInput(body.repo.trim()) ?? body.repo.trim()
+        ? (normalizeGitHubRepoInput(body.repo.trim()) ?? body.repo.trim())
         : undefined;
     const branch = typeof body.branch === 'string' && body.branch.trim() ? body.branch.trim() : undefined;
     const repos = normalizeSessionRepos(body.repos);
@@ -91,6 +98,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (Buffer.byteLength(task, 'utf8') > config.maxMessageBytes) {
       return reply.code(413).send({ error: 'task_too_large', message: 'task exceeds 8KB' });
     }
+    const attachmentInputs = parseAgentTurnAttachmentInputPayloads(body.attachments, body.attachmentRefs);
     const threadRootEventId = body.threadRootEventId != null ? Number(body.threadRootEventId) : null;
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
@@ -268,6 +276,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           ? body.agentProfileVersionId.trim()
           : undefined;
       let createdSession: Awaited<ReturnType<SessionRuns['createSessionInTx']>> | null = null;
+      let initialAttachments: AgentTurnAttachmentRef[] = [];
       const result = await runMutation({
         userId: user.id,
         opId,
@@ -287,8 +296,15 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           agentProfileId,
           agentProfileVersionId,
           clientSpawnId,
+          attachments: attachmentInputs,
         },
         fn: async (client) => {
+          initialAttachments = await resolveAgentTurnAttachments(deps.pool, {
+            userId: user.id,
+            channelId,
+            inputs: attachmentInputs,
+            logger: req.log,
+          });
           createdSession = await sessionRuns.createSessionInTx(client, {
             channelId,
             threadRootEventId,
@@ -303,12 +319,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
             agentProfileId,
             agentProfileVersionId,
             clientSpawnId,
+            initialAttachments,
             user,
           });
           return { session: createdSession.session, created: createdSession.created };
         },
         onApplied: () => {
-          if (createdSession) sessionRuns.afterCreateSession(createdSession, task);
+          if (createdSession) sessionRuns.afterCreateSession(createdSession, task, initialAttachments);
         },
       });
       return reply.code(result.created ? 201 : 200).send({ session: result.session });
@@ -456,7 +473,9 @@ function normalizeSessionRepos(
   });
 }
 
-function privateGitHubRepos(reposInput: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined): string[] {
+function privateGitHubRepos(
+  reposInput: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined,
+): string[] {
   if (!Array.isArray(reposInput)) return [];
   const repos = new Set<string>();
   for (const repo of reposInput) {

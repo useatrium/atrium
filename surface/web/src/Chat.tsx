@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import {
-  ApiError,
-  type Workspace,
-  api,
-} from './api';
+import { ApiError, type Workspace, api } from './api';
 import { isDesktop, desktopWsUrl, setDesktopBadge } from './desktop';
 import {
   DurableOpQueue,
@@ -20,11 +16,7 @@ import {
   useQueuedChangesCount,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
-import {
-  emptyTimeline,
-  type UserRef,
-  type WireEvent,
-} from '@atrium/surface-client';
+import { emptyTimeline, type UserRef, type WireEvent } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { ActivityView } from './components/ActivityView';
@@ -50,11 +42,7 @@ import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPa
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
-import {
-  isPendingSessionId,
-  isTerminalSessionStatus,
-  sessionFromWire,
-} from './sessions/types';
+import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { clearCache, eventCache } from './cacheIdb';
@@ -69,9 +57,7 @@ import {
   createQueueLockProvider,
   queuedFailureMessage,
 } from './chatQueue';
-import {
-  queuedOverlayAction,
-} from './chatQueuedOverlays';
+import { queuedOverlayAction } from './chatQueuedOverlays';
 import { useChannelActions } from './useChannelActions';
 import { useChatMessageActions } from './useChatMessageActions';
 import { useDraftState } from './useDraftState';
@@ -102,10 +88,7 @@ function notificationClickTarget(input: unknown): NotificationClickTarget | null
   const raw = input as Record<string, unknown>;
   const channelId = typeof raw.channelId === 'string' ? raw.channelId : undefined;
   const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : undefined;
-  const eventId =
-    typeof raw.eventId === 'string' || typeof raw.eventId === 'number'
-      ? raw.eventId
-      : undefined;
+  const eventId = typeof raw.eventId === 'string' || typeof raw.eventId === 'number' ? raw.eventId : undefined;
   if (!channelId && !sessionId && eventId === undefined) return null;
   return {
     ...(channelId ? { channelId } : {}),
@@ -156,13 +139,8 @@ export function Chat({
   const { prefs } = useTheme();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
-  const {
-    clearFailedCancel,
-    clearFailedSteer,
-    failedCancels,
-    failedSteers,
-    rememberRejectedSessionOp,
-  } = useSessionQueueFailures();
+  const { clearFailedCancel, clearFailedSteer, failedCancels, failedSteers, rememberRejectedSessionOp } =
+    useSessionQueueFailures();
   const calls = useCall(me, state.channels);
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
@@ -180,9 +158,7 @@ export function Chat({
   }, []);
 
   const cacheMute = useCallback((channelId: string, muted: boolean) => {
-    const channels = stateRef.current.channels.map((c) =>
-      c.id === channelId ? { ...c, muted } : c,
-    );
+    const channels = stateRef.current.channels.map((c) => (c.id === channelId ? { ...c, muted } : c));
     void eventCache.saveChannels(channels).catch((err: unknown) => {
       console.warn('failed to cache mute change', err);
     });
@@ -382,11 +358,9 @@ export function Chat({
           fetchLatest: (channelId) => api.messages(channelId, { limit: PAGE_SIZE }),
           isDisposed: () => disposed,
           onRepaired: (channelId, latest) => {
-            void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
-              (err: unknown) => {
-                console.warn('failed to cache repaired hydrate history', err);
-              },
-            );
+            void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch((err: unknown) => {
+              console.warn('failed to cache repaired hydrate history', err);
+            });
           },
           onRepairFailed: (_channelId, err) => {
             console.warn('failed to repair stale cached history', err);
@@ -474,42 +448,29 @@ export function Chat({
       reconciledRef.current.add(id);
       sessionsApi
         .get(id)
-        .then(({ session: wire }) =>
-          dispatch({ type: 'session-upsert', session: sessionFromWire(wire) }),
-        )
+        .then(({ session: wire }) => dispatch({ type: 'session-upsert', session: sessionFromWire(wire) }))
         .catch(() => {}); // unreachable server — the stalled display covers it
     }
   }, [state.sessions]);
 
   // Keep the URL in sync with the open pane so it is copyable as a permalink.
   useEffect(() => {
-    const path =
-      state.openSessionId && !isPendingSessionId(state.openSessionId)
-        ? `/s/${state.openSessionId}`
-        : '/';
+    const path = state.openSessionId && !isPendingSessionId(state.openSessionId) ? `/s/${state.openSessionId}` : '/';
     if (location.pathname !== path) history.replaceState(null, '', path);
   }, [state.openSessionId]);
 
   // ---- DEV MOCK (sessions): fold synthetic session.* events; no-op without
   // VITE_SESSIONS_MOCK=1. Delete with src/sessions/devMock.ts. ----
-  useEffect(
-    () => sessionsMockBus?.subscribe((event: WireEvent) => dispatch({ type: 'server-event', event })),
-    [],
-  );
+  useEffect(() => sessionsMockBus?.subscribe((event: WireEvent) => dispatch({ type: 'server-event', event })), []);
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
   const openThreadRoot =
-    state.openThreadRootId != null
-      ? timeline.main.find((m) => m.id === state.openThreadRootId) ?? null
-      : null;
-  const threadReplies =
-    state.openThreadRootId != null ? timeline.threads[state.openThreadRootId] ?? [] : [];
-  const threadLoaded =
-    state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
+    state.openThreadRootId != null ? (timeline.main.find((m) => m.id === state.openThreadRootId) ?? null) : null;
+  const threadReplies = state.openThreadRootId != null ? (timeline.threads[state.openThreadRootId] ?? []) : [];
+  const threadLoaded = state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
   const activeDraftKey = active ? `channel:${active.id}` : '';
-  const threadDraftKey =
-    active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
+  const threadDraftKey = active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
   const activeDraftKeysForSync = useMemo((): ReadonlySet<string> => {
     const keys = new Set<string>();
     if (state.activeChannelId) {
@@ -520,19 +481,13 @@ export function Chat({
     }
     return keys;
   }, [state.activeChannelId, state.openThreadRootId]);
-  const {
-    drafts,
-    enqueueDraft,
-    markDraftTouched,
-    putTextInComposer,
-    reconcileDraftsFromSnapshot,
-    saveDraft,
-  } = useDraftState({
-    activeDraftKeysForSync,
-    activeDraftKey,
-    enqueueOp,
-    threadDraftKey,
-  });
+  const { drafts, enqueueDraft, markDraftTouched, putTextInComposer, reconcileDraftsFromSnapshot, saveDraft } =
+    useDraftState({
+      activeDraftKeysForSync,
+      activeDraftKey,
+      enqueueOp,
+      threadDraftKey,
+    });
 
   // ---- websocket ----
   // Channels for fanout + a `session:<id>` presence key while spectating a pane.
@@ -559,11 +514,9 @@ export function Chat({
           events: latest.events,
           hasMore: latest.hasMore,
         });
-        void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
-          (err: unknown) => {
-            console.warn('failed to cache sync repair history', err);
-          },
-        );
+        void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch((err: unknown) => {
+          console.warn('failed to cache sync repair history', err);
+        });
       }),
     );
   }, []);
@@ -574,10 +527,7 @@ export function Chat({
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
-        reconcileDraftsFromSnapshot(
-          response.state.drafts ?? {},
-          response.state.draftDeletions ?? {},
-        );
+        reconcileDraftsFromSnapshot(response.state.drafts ?? {}, response.state.draftDeletions ?? {});
         void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
           console.warn('failed to cache sync channels', err);
         });
@@ -594,10 +544,7 @@ export function Chat({
           cacheSyncCursor(event.id);
         },
       });
-      reconcileDraftsFromSnapshot(
-        response.state.drafts ?? {},
-        response.state.draftDeletions ?? {},
-      );
+      reconcileDraftsFromSnapshot(response.state.drafts ?? {}, response.state.draftDeletions ?? {});
       void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
         console.warn('failed to cache sync channels', err);
       });
@@ -619,20 +566,17 @@ export function Chat({
   }, [syncFromCursor]);
 
   const syncThenFlushQueuedOps = useCallback(() => {
-    void runReconnectSync()
-      .then(flushQueuedOps)
-      .catch(onApiError);
+    void runReconnectSync().then(flushQueuedOps).catch(onApiError);
   }, [flushQueuedOps, onApiError, runReconnectSync]);
 
   useEffect(() => {
     if (hydrated) syncThenFlushQueuedOps();
   }, [hydrated, syncThenFlushQueuedOps]);
 
-  const { clearTypingUser, onSessionTyping, onTyping, sessionTyping, typing } =
-    useTypingIndicators({
-      activeChannelId: state.activeChannelId,
-      meId: me.id,
-    });
+  const { clearTypingUser, onSessionTyping, onTyping, sessionTyping, typing } = useTypingIndicators({
+    activeChannelId: state.activeChannelId,
+    meId: me.id,
+  });
 
   const ws = useWs(
     hydrated,
@@ -673,11 +617,7 @@ export function Chat({
     // Desktop shell: connect to the absolute server origin with a bearer token
     // in the query string. E2E may pass a direct browser WS URL to avoid the
     // Vite proxy; normal browsers keep same-origin /ws.
-    isDesktop
-      ? { url: () => desktopWsUrl() ?? '' }
-      : browserWsUrl
-        ? { url: browserWsUrl }
-        : undefined,
+    isDesktop ? { url: () => desktopWsUrl() ?? '' } : browserWsUrl ? { url: browserWsUrl } : undefined,
   );
 
   const lastTypingSentRef = useRef(0);
@@ -707,14 +647,9 @@ export function Chat({
     );
     if (!notification) return;
     if (notification.kind === 'message') {
-      showNotification(
-        notification.title,
-        notification.body,
-        notification.tag,
-        () => {
-          if (notification.channelId) selectChannel(notification.channelId);
-        },
-      );
+      showNotification(notification.title, notification.body, notification.tag, () => {
+        if (notification.channelId) selectChannel(notification.channelId);
+      });
       return;
     }
     showNotification(notification.title, notification.body, notification.tag, () => {
@@ -777,9 +712,7 @@ export function Chat({
     if (!active) return;
     dispatch({ type: 'open-thread', rootEventId });
     const channelId = active.id;
-    api
-      .thread(rootEventId)
-      .then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }));
+    api.thread(rootEventId).then(({ events }) => dispatch({ type: 'thread-loaded', channelId, rootEventId, events }));
   };
 
   const {
@@ -804,19 +737,9 @@ export function Chat({
   // Match SessionPane's persisted width so the pane doesn't jump when it
   // replaces the loading placeholder; read storage once per opened session,
   // not on every Chat render.
-  const placeholderPaneSizing = useMemo(
-    () => sessionPaneSizing(loadSessionPaneWidth()),
-    [state.openSessionId],
-  );
+  const placeholderPaneSizing = useMemo(() => sessionPaneSizing(loadSessionPaneWidth()), [state.openSessionId]);
 
-  const {
-    editMessage,
-    reactToMessage,
-    removeMessage,
-    retry,
-    send,
-    startConfiguredSession,
-  } = useChatMessageActions({
+  const { editMessage, reactToMessage, removeMessage, retry, send, startConfiguredSession } = useChatMessageActions({
     activeChannel: active,
     dispatch,
     enqueueOp,
@@ -867,13 +790,7 @@ export function Chat({
   const editLastOwn = () => {
     for (let i = timeline.main.length - 1; i >= 0; i--) {
       const m = timeline.main[i]!;
-      if (
-        m.status === 'confirmed' &&
-        m.id != null &&
-        m.author.id === me.id &&
-        m.sessionId == null &&
-        !m.deleted
-      ) {
+      if (m.status === 'confirmed' && m.id != null && m.author.id === me.id && m.sessionId == null && !m.deleted) {
         setEditRequestId(m.id);
         return;
       }
@@ -887,7 +804,7 @@ export function Chat({
     selectChannel,
   });
 
-  const presentUsers = active ? state.presence[active.id] ?? [] : [];
+  const presentUsers = active ? (state.presence[active.id] ?? []) : [];
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -955,9 +872,7 @@ export function Chat({
   const incomingCaller = calls.incomingCall
     ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
     : null;
-  const incomingChannelName = calls.incomingCall
-    ? labelForCallChannel(calls.incomingCall, state.channels, me.id)
-    : '';
+  const incomingChannelName = calls.incomingCall ? labelForCallChannel(calls.incomingCall, state.channels, me.id) : '';
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
@@ -1008,9 +923,7 @@ export function Chat({
       />
 
       {view !== 'focus' && (
-        <main
-          className={`${state.openSessionId ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}
-        >
+        <main className={`${state.openSessionId ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
           <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4">
             <button
               type="button"
@@ -1071,9 +984,12 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showFilesSurface && !showActivitySurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
-              <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
-            )}
+            {!showFilesSurface &&
+              !showActivitySurface &&
+              active &&
+              (active.kind === 'private' || active.kind === 'gdm') && (
+                <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
+              )}
             {showFilesSurface || showActivitySurface ? (
               <button
                 type="button"
@@ -1134,149 +1050,144 @@ export function Chat({
                 <PhoneIcon size={15} />
               </button>
             )}
-          <button
-            onClick={() => setSwitcherOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-          >
-            <SearchIcon size={14} />
-            <span className="hidden sm:inline">Search</span>
-            <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
-              ⌘K
-            </kbd>
-          </button>
-          {!showFilesSurface && presentUsers.length > 0 && (
-            <div
-              className="hidden items-center gap-2 md:flex"
-              title="Viewing this channel right now"
+            <button
+              onClick={() => setSwitcherOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/40 px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
             >
-              <div className="flex -space-x-1.5">
-                {presentUsers.slice(0, 8).map((u) => (
-                  <div key={u.id} className="rounded-md ring-2 ring-surface">
-                    <Avatar name={u.displayName} seed={u.id} size={20} />
-                  </div>
-                ))}
+              <SearchIcon size={14} />
+              <span className="hidden sm:inline">Search</span>
+              <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
+                ⌘K
+              </kbd>
+            </button>
+            {!showFilesSurface && presentUsers.length > 0 && (
+              <div className="hidden items-center gap-2 md:flex" title="Viewing this channel right now">
+                <div className="flex -space-x-1.5">
+                  {presentUsers.slice(0, 8).map((u) => (
+                    <div key={u.id} className="rounded-md ring-2 ring-surface">
+                      <Avatar name={u.displayName} seed={u.id} size={20} />
+                    </div>
+                  ))}
+                </div>
+                <span className="text-2xs tabular-nums text-fg-muted">{presentUsers.length} here</span>
               </div>
-              <span className="text-2xs tabular-nums text-fg-muted">
-                {presentUsers.length} here
-              </span>
+            )}
+          </header>
+
+          {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
+          {calls.incomingCall && incomingCaller && (
+            <IncomingCallBanner
+              call={calls.incomingCall}
+              caller={incomingCaller}
+              channelName={incomingChannelName}
+              answering={calls.answering}
+              onAccept={() => void calls.acceptIncomingCall()}
+              onDecline={() => void calls.declineIncomingCall()}
+            />
+          )}
+          {calls.activeCall && (
+            <InCallPanel
+              call={calls.activeCall}
+              meId={me.id}
+              channelName={activeCallChannelName}
+              onToggleMute={() => void calls.toggleMute()}
+              onLeave={() => void calls.leaveActiveCall()}
+            />
+          )}
+
+          {queueStatusText && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`flex shrink-0 items-center justify-center border-b px-4 py-1 text-2xs ${
+                state.wsStatus === 'open'
+                  ? 'border-info/20 bg-info/10 text-info-text'
+                  : 'border-warning-border/40 bg-warning-tint/30 text-warning-text'
+              }`}
+            >
+              {queueStatusText}
             </div>
           )}
-        </header>
 
-        {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
-        {calls.incomingCall && incomingCaller && (
-          <IncomingCallBanner
-            call={calls.incomingCall}
-            caller={incomingCaller}
-            channelName={incomingChannelName}
-            answering={calls.answering}
-            onAccept={() => void calls.acceptIncomingCall()}
-            onDecline={() => void calls.declineIncomingCall()}
-          />
-        )}
-        {calls.activeCall && (
-          <InCallPanel
-            call={calls.activeCall}
-            meId={me.id}
-            channelName={activeCallChannelName}
-            onToggleMute={() => void calls.toggleMute()}
-            onLeave={() => void calls.leaveActiveCall()}
-          />
-        )}
+          {showActivitySurface ? (
+            // === mentions-activity additions ===
+            <ActivityView
+              onSelectChannel={(channelId) => {
+                selectChannel(channelId);
+                setMainSurface('chat');
+              }}
+              onOpenSession={(sessionId) => {
+                openSession(sessionId);
+                setMainSurface('chat');
+              }}
+            />
+          ) : showFilesSurface ? (
+            <FilesHub
+              key={`main-files:${active?.id ?? 'workspace'}`}
+              workspaceId={workspace.id}
+              channelId={active?.id ?? null}
+              defaultScope={active ? 'channel' : 'workspace'}
+              filesEventSeq={filesEventSeq}
+            />
+          ) : (
+            <Timeline
+              messages={timeline.main}
+              loaded={timeline.loaded}
+              hasMoreBefore={timeline.hasMoreBefore}
+              sessions={state.sessions}
+              spectators={spectators}
+              meId={me.id}
+              meHandle={me.handle}
+              editRequestId={editRequestId}
+              highlightId={highlightId}
+              onEditRequestHandled={() => setEditRequestId(null)}
+              onLoadEarlier={loadEarlier}
+              onOpenThread={openThread}
+              onOpenSession={openSession}
+              onRunDemoAgent={active ? startDemoSession : undefined}
+              demoAgentBusy={demoStarting}
+              onInsertAgentCommand={() => putTextInComposer('@agent ')}
+              onSayHello={() => putTextInComposer('Hello!')}
+              onConnectProvider={openProviderConnect}
+              onRetry={retry}
+              onEdit={editMessage}
+              onDelete={removeMessage}
+              onReact={reactToMessage}
+              unreadDividerAfterId={unreadDividerAfterId}
+            />
+          )}
 
-        {queueStatusText && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={`flex shrink-0 items-center justify-center border-b px-4 py-1 text-2xs ${
-              state.wsStatus === 'open'
-                ? 'border-info/20 bg-info/10 text-info-text'
-                : 'border-warning-border/40 bg-warning-tint/30 text-warning-text'
-            }`}
-          >
-            {queueStatusText}
-          </div>
-        )}
-
-        {showActivitySurface ? (
-          // === mentions-activity additions ===
-          <ActivityView
-            onSelectChannel={(channelId) => {
-              selectChannel(channelId);
-              setMainSurface('chat');
-            }}
-            onOpenSession={(sessionId) => {
-              openSession(sessionId);
-              setMainSurface('chat');
-            }}
-          />
-        ) : showFilesSurface ? (
-          <FilesHub
-            key={`main-files:${active?.id ?? 'workspace'}`}
-            workspaceId={workspace.id}
-            channelId={active?.id ?? null}
-            defaultScope={active ? 'channel' : 'workspace'}
-            filesEventSeq={filesEventSeq}
-          />
-        ) : (
-          <Timeline
-            messages={timeline.main}
-            loaded={timeline.loaded}
-            hasMoreBefore={timeline.hasMoreBefore}
-            sessions={state.sessions}
-            spectators={spectators}
-            meId={me.id}
-            meHandle={me.handle}
-            editRequestId={editRequestId}
-            highlightId={highlightId}
-            onEditRequestHandled={() => setEditRequestId(null)}
-            onLoadEarlier={loadEarlier}
-            onOpenThread={openThread}
-            onOpenSession={openSession}
-            onRunDemoAgent={active ? startDemoSession : undefined}
-            demoAgentBusy={demoStarting}
-            onInsertAgentCommand={() => putTextInComposer('@agent ')}
-            onSayHello={() => putTextInComposer('Hello!')}
-            onConnectProvider={openProviderConnect}
-            onRetry={retry}
-            onEdit={editMessage}
-            onDelete={removeMessage}
-            onReact={reactToMessage}
-            unreadDividerAfterId={unreadDividerAfterId}
-          />
-        )}
-
-        {/* Composer follows the channel <main>: shown in both channel and split
+          {/* Composer follows the channel <main>: shown in both channel and split
             views (this block is already inside `view !== 'focus'`). Gating it on
             `!openSessionId` used to blank the composer in split view, leaving the
             channel with no way to type. */}
-        {active && !showFilesSurface && !showActivitySurface && (
-          <>
-            <TypingLine typing={typing} />
-            <Composer
-              placeholder={
-                active.kind === 'dm' || active.kind === 'gdm'
-                  ? `Message ${channelLabel(active, me.id)}`
-                  : `Message ${active.kind === 'private' ? '' : '#'}${active.name}`
-              }
-              onSend={(text, attachments, attachmentRefs, voice) =>
-                send(active.id, text, undefined, attachments, attachmentRefs, voice)
-              }
-              queueUpload={queueUpload}
-              onTyping={() => notifyTyping(active.id)}
-              onArrowUpOnEmpty={editLastOwn}
-              draftKey={activeDraftKey}
-              initialDraft={drafts[activeDraftKey] ?? ''}
-              onDraftChange={saveDraft}
-              onDraftPersisted={enqueueDraft}
-              onDraftTouched={markDraftTouched}
-              autoFocus={!state.openSessionId}
-              agentAware
-              allowAttachments
-            />
-          </>
-        )}
-      </main>
+          {active && !showFilesSurface && !showActivitySurface && (
+            <>
+              <TypingLine typing={typing} />
+              <Composer
+                placeholder={
+                  active.kind === 'dm' || active.kind === 'gdm'
+                    ? `Message ${channelLabel(active, me.id)}`
+                    : `Message ${active.kind === 'private' ? '' : '#'}${active.name}`
+                }
+                onSend={(text, attachments, attachmentRefs, voice) =>
+                  send(active.id, text, undefined, attachments, attachmentRefs, voice)
+                }
+                queueUpload={queueUpload}
+                onTyping={() => notifyTyping(active.id)}
+                onArrowUpOnEmpty={editLastOwn}
+                draftKey={activeDraftKey}
+                initialDraft={drafts[activeDraftKey] ?? ''}
+                onDraftChange={saveDraft}
+                onDraftPersisted={enqueueDraft}
+                onDraftTouched={markDraftTouched}
+                autoFocus={!state.openSessionId}
+                agentAware
+                allowAttachments
+              />
+            </>
+          )}
+        </main>
       )}
 
       {paneSession ? (
@@ -1292,6 +1203,7 @@ export function Chat({
           onClose={() => dispatch({ type: 'close-session' })}
           onAnswerQuestion={answerSessionQuestion}
           onSteer={steerSession}
+          queueUpload={queueUpload}
           failedSteer={failedSteers[paneSession.id] ?? null}
           onClearFailedSteer={() => clearFailedSteer(paneSession.id)}
           onCancelSession={cancelSession}
@@ -1307,9 +1219,7 @@ export function Chat({
       ) : state.openSessionId ? (
         <aside
           className={`flex min-w-0 flex-col border-l border-edge bg-surface/60 ${
-            isMobileViewport || view === 'focus'
-              ? 'flex-1'
-              : `shrink-0 ${placeholderPaneSizing.className}`
+            isMobileViewport || view === 'focus' ? 'flex-1' : `shrink-0 ${placeholderPaneSizing.className}`
           }`}
           style={isMobileViewport || view === 'focus' ? undefined : placeholderPaneSizing.style}
         >
@@ -1327,9 +1237,7 @@ export function Chat({
           {state.openSessionError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
               <div className="text-sm font-medium text-fg-secondary">Session not found</div>
-              <div className="text-xs text-fg-muted">
-                It may have been removed, or the link is wrong.
-              </div>
+              <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
               <button
                 onClick={() => dispatch({ type: 'close-session' })}
                 className="mt-2 rounded-md border border-edge-strong px-3 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
@@ -1338,9 +1246,7 @@ export function Chat({
               </button>
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-              Loading session…
-            </div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading session…</div>
           )}
         </aside>
       ) : openThreadRoot && active ? (
@@ -1374,11 +1280,7 @@ export function Chat({
         active &&
         hasChannelSessions && (
           <div className="hidden md:contents">
-            <SessionsRail
-              channelId={active.id}
-              sessions={state.sessions}
-              onOpenSession={openSession}
-            />
+            <SessionsRail channelId={active.id} sessions={state.sessions} onOpenSession={openSession} />
           </div>
         )
       )}

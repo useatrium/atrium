@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-  type KeyboardEvent,
-  type ReactNode,
-} from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
 import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
@@ -36,6 +28,7 @@ export function Composer({
   autoFocus,
   agentAware,
   allowAttachments,
+  allowVoice = allowAttachments,
   disabled,
   disabledHint,
   footer,
@@ -62,6 +55,8 @@ export function Composer({
   agentAware?: boolean;
   /** Enable paste / drag-drop / file uploads. */
   allowAttachments?: boolean;
+  /** Enable the voice recorder. Defaults to the attachment setting. */
+  allowVoice?: boolean;
   disabled?: boolean;
   disabledHint?: string;
   /** Replaces the default hint line (e.g. seat request controls in the pane). */
@@ -94,9 +89,7 @@ export function Composer({
   );
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
   const uploading = files.some((f) => f.status === 'uploading');
-  const readyFiles = files.filter(
-    (f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId,
-  );
+  const readyFiles = files.filter((f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId);
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
 
@@ -157,10 +150,7 @@ export function Composer({
         // not decodable as an image — upload without dimensions
       }
     }
-    setFiles((prev) => [
-      ...prev,
-      { key, uploadKey, file, status: 'uploading', localUri, width, height },
-    ]);
+    setFiles((prev) => [...prev, { key, uploadKey, file, status: 'uploading', localUri, width, height }]);
     try {
       if (!queueUpload) throw new Error('upload queue unavailable');
       const contentHash = await contentHashFor(file);
@@ -174,9 +164,7 @@ export function Composer({
         height,
         contentHash,
       });
-      setFiles((prev) =>
-        prev.map((p) => (p.key === key ? { ...p, fileId, status: 'ready' } : p)),
-      );
+      setFiles((prev) => prev.map((p) => (p.key === key ? { ...p, fileId, status: 'ready' } : p)));
     } catch {
       setFiles((prev) => prev.map((p) => (p.key === key ? { ...p, status: 'failed' } : p)));
     }
@@ -314,12 +302,7 @@ export function Composer({
                 }`}
               >
                 {p.file.type.startsWith('image/') ? (
-                  <img
-                    src={p.localUri}
-                    alt=""
-                    className="h-7 w-7 rounded object-cover"
-                    draggable={false}
-                  />
+                  <img src={p.localUri} alt="" className="h-7 w-7 rounded object-cover" draggable={false} />
                 ) : (
                   <span aria-hidden>
                     <FileIcon />
@@ -350,80 +333,78 @@ export function Composer({
             ))}
           </div>
         )}
-        {attachmentNotice && (
-          <div className="mb-2 px-1 text-xs font-medium text-danger-text">{attachmentNotice}</div>
-        )}
+        {attachmentNotice && <div className="mb-2 px-1 text-xs font-medium text-danger-text">{attachmentNotice}</div>}
         <div className="flex items-end gap-2">
-        {allowAttachments && !disabled && (
-          <>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach a file"
-              aria-label="Attach a file"
-              className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-            >
-              <PaperclipIcon />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                if (e.target.files) addFiles(e.target.files);
-                e.target.value = '';
-              }}
+          {allowAttachments && !disabled && (
+            <>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach a file"
+                aria-label="Attach a file"
+                className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+              >
+                <PaperclipIcon />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) addFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          )}
+          {allowAttachments && allowVoice && !disabled && (
+            <VoiceRecorder
+              disabled={disabled || uploading || files.length > 0 || text.trim().length > 0}
+              onSend={sendVoice}
+              onActiveChange={setVoiceActive}
             />
-          </>
-        )}
-        {allowAttachments && !disabled && (
-          <VoiceRecorder
-            disabled={disabled || uploading || files.length > 0 || text.trim().length > 0}
-            onSend={sendVoice}
-            onActiveChange={setVoiceActive}
-          />
-        )}
-        {!voiceActive && (
-          <>
-            <textarea
-              ref={ref}
-              rows={1}
-              value={text}
-              autoFocus={autoFocus}
-              disabled={disabled}
-              placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
-              aria-label="Message input"
-              onChange={(e) => {
-                setText(e.target.value);
-                if (draftKey) {
-                  onDraftTouched?.(draftKey);
-                  draftWriter.schedule(draftKey, e.target.value);
-                }
-                setAgentNeedsTask(false);
-                if (e.target.value.trim()) onTyping?.();
-                e.target.style.height = 'auto';
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-              }}
-              onKeyDown={onKeyDown}
-              onPaste={(e) => {
-                if (!allowAttachments || disabled) return;
-                if (e.clipboardData?.files?.length) {
-                  e.preventDefault();
-                  addFiles(e.clipboardData.files);
-                }
-              }}
-              className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
-            />
-            <button
-              onClick={send}
-              disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
-              title={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : undefined}
-              className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
-            >
-              Send
-            </button>
-          </>
-        )}
+          )}
+          {!voiceActive && (
+            <>
+              <textarea
+                ref={ref}
+                rows={1}
+                value={text}
+                autoFocus={autoFocus}
+                disabled={disabled}
+                placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
+                aria-label="Message input"
+                onChange={(e) => {
+                  setText(e.target.value);
+                  if (draftKey) {
+                    onDraftTouched?.(draftKey);
+                    draftWriter.schedule(draftKey, e.target.value);
+                  }
+                  setAgentNeedsTask(false);
+                  if (e.target.value.trim()) onTyping?.();
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                }}
+                onKeyDown={onKeyDown}
+                onPaste={(e) => {
+                  if (!allowAttachments || disabled) return;
+                  if (e.clipboardData?.files?.length) {
+                    e.preventDefault();
+                    addFiles(e.clipboardData.files);
+                  }
+                }}
+                className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
+              />
+              <button
+                onClick={send}
+                disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
+                title={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : undefined}
+                className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+              >
+                Send
+              </button>
+            </>
+          )}
         </div>
       </div>
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">

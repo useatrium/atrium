@@ -89,6 +89,7 @@ export function pendingSpawnFromPayload(
       lastReplyId: 0,
       status: 'pending',
       sessionId: payload.clientSpawnId,
+      ...(payload.attachments && payload.attachments.length > 0 ? { attachments: payload.attachments } : {}),
     },
   };
 }
