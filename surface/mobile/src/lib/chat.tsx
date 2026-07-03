@@ -231,6 +231,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
   const calls = useCall({ api, me, channels: state.channels });
+  const refreshActiveCalls = calls.refreshActiveCalls;
+  const refreshedCallsAfterChannelsLoadRef = useRef(false);
 
   const cacheMute = useCallback((channelId: string, muted: boolean) => {
     const channels = stateRef.current.channels.map((c) =>
@@ -789,6 +791,12 @@ export function ChatProvider({ session, children }: { session: Session; children
     if (hydrated) loadChannels();
   }, [hydrated, loadChannels]);
 
+  useEffect(() => {
+    if (!channelsLoaded || refreshedCallsAfterChannelsLoadRef.current) return;
+    refreshedCallsAfterChannelsLoadRef.current = true;
+    void refreshActiveCalls();
+  }, [channelsLoaded, refreshActiveCalls]);
+
   const flushQueuedOps = useCallback(() => {
     opQueue.nudge();
   }, [opQueue]);
@@ -864,9 +872,10 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const syncThenFlushQueuedOps = useCallback(() => {
     void runReconnectSync()
+      .then(() => refreshActiveCalls())
       .then(flushQueuedOps)
       .catch(onApiError);
-  }, [flushQueuedOps, onApiError, runReconnectSync]);
+  }, [flushQueuedOps, onApiError, refreshActiveCalls, runReconnectSync]);
 
   useEffect(() => {
     flushOnWakeRef.current = syncThenFlushQueuedOps;

@@ -74,6 +74,38 @@ function participantsFor(call: CallWire, me: UserRef): UserRef[] {
     : [me, ...call.participants];
 }
 
+function sortLiveCalls(calls: CallWire[]): CallWire[] {
+  return [...calls]
+    .filter((call) => call.status !== 'ended')
+    .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+}
+
+function upsertLiveCall(calls: CallWire[], call: CallWire): CallWire[] {
+  if (call.status === 'ended') return calls.filter((existing) => existing.id !== call.id);
+  const index = calls.findIndex((existing) => existing.id === call.id);
+  if (index === -1) return sortLiveCalls([call, ...calls]);
+  const next = calls.map((existing, i) => (i === index ? call : existing));
+  return sortLiveCalls(next);
+}
+
+function updateLiveCall(
+  calls: CallWire[],
+  callId: string,
+  update: (call: CallWire) => CallWire,
+): CallWire[] {
+  let changed = false;
+  const next = calls.map((call) => {
+    if (call.id !== callId) return call;
+    changed = true;
+    return update(call);
+  });
+  return changed ? sortLiveCalls(next) : calls;
+}
+
+function removeLiveCall(calls: CallWire[], callId: string): CallWire[] {
+  return calls.filter((call) => call.id !== callId);
+}
+
 function callUnavailable(err: unknown): boolean {
   return err instanceof ApiError && err.status === 503 && err.code === 'calls_unconfigured';
 }
@@ -125,6 +157,7 @@ export function useCall({
 }) {
   const [incomingCall, setIncomingCall] = useState<CallWire | null>(null);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
+  const [recoverableCalls, setRecoverableCalls] = useState<CallWire[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [answering, setAnsweringState] = useState(false);
@@ -139,6 +172,7 @@ export function useCall({
   const roomRef = useRef<Room | null>(null);
   const activeCallRef = useRef<ActiveCallState | null>(null);
   const incomingCallRef = useRef<CallWire | null>(null);
+  const recoverableCallsRef = useRef<CallWire[]>([]);
   const channelsRef = useRef(channels);
   const connectPromiseRef = useRef<Promise<void> | null>(null);
   const detachRoomHandlersRef = useRef<(() => void) | null>(null);
@@ -147,9 +181,12 @@ export function useCall({
   const callIdByNativeIdRef = useRef<Record<string, string>>({});
   const nativeEndRequestedRef = useRef<Set<string>>(new Set());
   const answeredNativeRequestsRef = useRef<Set<string>>(new Set());
+  const nativeIncomingReportPendingRef = useRef<Set<string>>(new Set());
+  const nativeIncomingReportedRef = useRef<Set<string>>(new Set());
 
   activeCallRef.current = activeCall;
   incomingCallRef.current = incomingCall;
+  recoverableCallsRef.current = recoverableCalls;
   channelsRef.current = channels;
 
   const rememberNativeSession = useCallback((session: CallSession | null | undefined) => {
@@ -167,6 +204,8 @@ export function useCall({
     const nativeId = nativeIdByCallIdRef.current[callId];
     if (nativeId) delete callIdByNativeIdRef.current[nativeId];
     delete nativeIdByCallIdRef.current[callId];
+    nativeIncomingReportPendingRef.current.delete(callId);
+    nativeIncomingReportedRef.current.delete(callId);
   }, []);
 
   const updateActiveCall = useCallback((fn: (current: ActiveCallState) => ActiveCallState) => {
@@ -201,7 +240,10 @@ export function useCall({
   const reportNativeEnded = useCallback(
     (callId: string, reason: 'remoteEnded' | 'failed' | 'declinedElsewhere' | 'unanswered') => {
       const nativeId = nativeIdForCall(callId);
-      if (!nativeId) return;
+      if (!nativeId) {
+        clearNativeMapping(callId);
+        return;
+      }
       if (!NATIVE_CALL_UI) {
         clearNativeMapping(callId);
         return;
@@ -309,6 +351,7 @@ export function useCall({
       setRoomHandlers(room);
       setIncomingCall((call) => (call?.id === join.call.id ? null : call));
       setNotice(null);
+      setRecoverableCalls((calls) => upsertLiveCall(calls, join.call));
       setActiveCall({
         call: join.call,
         phase: 'connecting',
@@ -376,19 +419,83 @@ export function useCall({
   const reportIncomingToNative = useCallback(
     (call: CallWire) => {
       if (!NATIVE_CALL_UI) return;
+      if (call.status !== 'ringing') return;
       if (call.initiatorId === me.id || nativeIdByCallIdRef.current[call.id]) return;
+      if (
+        nativeIncomingReportPendingRef.current.has(call.id) ||
+        nativeIncomingReportedRef.current.has(call.id)
+      ) {
+        return;
+      }
       const caller = userForCall(call, channelsRef.current, call.initiatorId);
       const channelName = labelForCallChannel(call, channelsRef.current, me.id);
-      void reportIncomingCall(incomingCallEventFor(call, caller, channelName))
-        .then(async () => {
-          const session = await getActiveCallSession().catch(() => null);
-          rememberNativeSession(session);
-        })
+      nativeIncomingReportPendingRef.current.add(call.id);
+      void (async () => {
+        const existingSession = await getActiveCallSession().catch(() => null);
+        rememberNativeSession(existingSession);
+        if (nativeIdByCallIdRef.current[call.id]) {
+          nativeIncomingReportedRef.current.add(call.id);
+          return;
+        }
+        await reportIncomingCall(incomingCallEventFor(call, caller, channelName));
+        nativeIncomingReportedRef.current.add(call.id);
+        const reportedSession = await getActiveCallSession().catch(() => null);
+        rememberNativeSession(reportedSession);
+      })()
         .catch((err: unknown) => {
+          nativeIncomingReportedRef.current.delete(call.id);
           console.warn('[calls] failed to report incoming call to native UI', err);
+        })
+        .finally(() => {
+          nativeIncomingReportPendingRef.current.delete(call.id);
         });
     },
     [me.id, rememberNativeSession],
+  );
+
+  const applyIncomingSnapshot = useCallback(
+    (calls: CallWire[], channelId?: string) => {
+      const current = incomingCallRef.current;
+      const active = activeCallRef.current;
+      if (active) {
+        if (!channelId || current?.channelId === channelId) setIncomingCall(null);
+        return;
+      }
+
+      const snapshotIncoming =
+        calls.find((call) => call.status === 'ringing' && call.initiatorId !== me.id) ?? null;
+      const updatedCurrent = current
+        ? calls.find((call) => call.id === current.id && call.status === 'ringing') ?? null
+        : null;
+      const nextIncoming =
+        updatedCurrent ??
+        (current && channelId && current.channelId !== channelId ? current : snapshotIncoming);
+
+      setIncomingCall(nextIncoming);
+      if (nextIncoming) reportIncomingToNative(nextIncoming);
+    },
+    [me.id, reportIncomingToNative],
+  );
+
+  const refreshActiveCalls = useCallback(
+    async (opts: { channelId?: string } = {}) => {
+      try {
+        const snapshot = await api.activeCalls(opts);
+        const liveCalls = sortLiveCalls(snapshot.calls);
+        setRecoverableCalls((current) =>
+          opts.channelId
+            ? sortLiveCalls([
+                ...current.filter((call) => call.channelId !== opts.channelId),
+                ...liveCalls,
+              ])
+            : liveCalls,
+        );
+        applyIncomingSnapshot(liveCalls, opts.channelId);
+      } catch {
+        setNotice("Couldn't refresh active calls.");
+      }
+    },
+    [api, applyIncomingSnapshot],
   );
 
   const acceptCallById = useCallback(
@@ -424,6 +531,7 @@ export function useCall({
   const handleCallEvent = useCallback(
     (event: CallEvent) => {
       if (event.type === 'call.ringing') {
+        setRecoverableCalls((calls) => upsertLiveCall(calls, event.call));
         if (event.call.initiatorId !== me.id && !activeCallRef.current) {
           setIncomingCall(event.call);
           reportIncomingToNative(event.call);
@@ -442,7 +550,18 @@ export function useCall({
 
       if (event.type === 'call.accepted' || event.type === 'call.participant_joined') {
         setIncomingCall((call) =>
-          call?.id === event.callId && event.user.id === me.id ? null : call,
+          call?.id === event.callId
+            ? event.user.id === me.id
+              ? null
+              : { ...call, status: 'active', participants: upsertUser(call.participants, event.user) }
+            : call,
+        );
+        setRecoverableCalls((calls) =>
+          updateLiveCall(calls, event.callId, (call) => ({
+            ...call,
+            status: 'active',
+            participants: upsertUser(call.participants, event.user),
+          })),
         );
         setActiveCall((current) =>
           current?.call.id === event.callId
@@ -460,11 +579,20 @@ export function useCall({
         setIncomingCall((call) =>
           call?.id === event.callId && event.userId === me.id ? null : call,
         );
+        if (event.userId === me.id) {
+          setRecoverableCalls((calls) => removeLiveCall(calls, event.callId));
+        }
         if (event.userId === me.id) reportNativeEnded(event.callId, 'declinedElsewhere');
         return;
       }
 
       if (event.type === 'call.participant_left') {
+        setRecoverableCalls((calls) =>
+          updateLiveCall(calls, event.callId, (call) => ({
+            ...call,
+            participants: removeUser(call.participants, event.userId),
+          })),
+        );
         let endedByLastLeave = false;
         setActiveCall((current) => {
           if (current?.call.id !== event.callId) return current;
@@ -486,6 +614,7 @@ export function useCall({
 
       if (event.type === 'call.ended') {
         setIncomingCall((call) => (call?.id === event.callId ? null : call));
+        setRecoverableCalls((calls) => removeLiveCall(calls, event.callId));
         reportNativeEnded(event.callId, 'remoteEnded');
         if (activeCallRef.current?.call.id === event.callId) {
           clearRoom();
@@ -558,6 +687,7 @@ export function useCall({
     const call = incomingCallRef.current;
     if (!call) return;
     setIncomingCall(null);
+    setRecoverableCalls((calls) => removeLiveCall(calls, call.id));
     const nativeId = nativeIdForCall(call.id);
     if (NATIVE_CALL_UI && nativeId) {
       nativeEndRequestedRef.current.add(nativeId);
@@ -598,12 +728,30 @@ export function useCall({
     }
     clearRoom();
     setActiveCall(null);
+    setRecoverableCalls((calls) =>
+      updateLiveCall(calls, callId, (call) => ({
+        ...call,
+        participants: removeUser(call.participants, me.id),
+      })),
+    );
     try {
       await api.leaveCall(callId);
     } catch {
       setNotice("Couldn't leave the call cleanly.");
     }
-  }, [api, clearNativeMapping, clearRoom]);
+  }, [api, clearNativeMapping, clearRoom, me.id]);
+
+  const joinRecoverableCall = useCallback(
+    async (callId?: string) => {
+      const incomingId = incomingCallRef.current?.id;
+      const call = callId
+        ? recoverableCallsRef.current.find((candidate) => candidate.id === callId)
+        : recoverableCallsRef.current.find((candidate) => candidate.id !== incomingId);
+      if (!call) return;
+      await acceptCallById(call.id);
+    },
+    [acceptCallById],
+  );
 
   useEffect(() => {
     if (!NATIVE_CALL_UI) return;
@@ -635,6 +783,7 @@ export function useCall({
         void api.leaveCall(callId).catch(() => {});
       } else {
         setIncomingCall((call) => (call?.id === callId ? null : call));
+        setRecoverableCalls((calls) => removeLiveCall(calls, callId));
         void api.declineCall(callId).catch(() => {});
       }
     });
@@ -655,14 +804,22 @@ export function useCall({
 
   useEffect(() => () => clearRoom(), [clearRoom]);
 
+  const recoverableCall = activeCall
+    ? null
+    : recoverableCalls.find((call) => call.id !== incomingCall?.id) ?? null;
+
   return {
     incomingCall,
     activeCall,
+    recoverableCall,
+    recoverableCalls,
     notice,
     starting,
     answering,
+    refreshActiveCalls,
     handleCallEvent,
     startCall,
+    joinRecoverableCall,
     acceptIncomingCall,
     declineIncomingCall,
     toggleMute,

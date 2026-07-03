@@ -63,6 +63,16 @@ export default function ChannelScreen() {
   const isDm = channel?.kind === 'dm';
   const isGroupLike = channel?.kind === 'private' || channel?.kind === 'gdm';
   const draftKey = id ? `channel:${id}` : '';
+  const channelRecoverableCall = id
+    ? calls.recoverableCalls.find((call) => call.channelId === id) ?? null
+    : null;
+  const channelCallAction = channelRecoverableCall
+    ? channelRecoverableCall.participants.some((participant) => participant.id === me.id)
+      ? 'Rejoin voice call'
+      : 'Join voice call'
+    : 'Start voice call';
+  const channelCallDisabled =
+    !channel || calls.starting || calls.answering || calls.activeCall != null;
 
   useEffect(() => {
     if (!draftKey) return;
@@ -202,10 +212,15 @@ export default function ChannelScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Start voice call"
-                disabled={!channel || calls.starting || calls.activeCall != null}
+                accessibilityLabel={channelCallAction}
+                disabled={channelCallDisabled}
                 onPress={() => {
-                  if (id) void calls.startCall(id);
+                  if (!id) return;
+                  if (channelRecoverableCall) {
+                    void calls.joinRecoverableCall(channelRecoverableCall.id);
+                  } else {
+                    void calls.startCall(id);
+                  }
                 }}
                 hitSlop={8}
                 style={{
@@ -213,10 +228,14 @@ export default function ChannelScreen() {
                   minHeight: 44,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  opacity: !channel || calls.starting || calls.activeCall != null ? 0.45 : 1,
+                  opacity: channelCallDisabled ? 0.45 : 1,
                 }}
               >
-                <Ionicons name="call-outline" size={21} color={colors.textSecondary} />
+                <Ionicons
+                  name={channelRecoverableCall ? 'call' : 'call-outline'}
+                  size={21}
+                  color={channelRecoverableCall ? colors.accent : colors.textSecondary}
+                />
               </Pressable>
               {isGroupLike ? (
                 <Pressable

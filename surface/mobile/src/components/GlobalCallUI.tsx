@@ -3,7 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CallWire, Channel, UserRef } from '@atrium/surface-client';
 import { useChat } from '../lib/chat';
 import { labelForCallChannel } from '../lib/useCall';
-import { CallNotice, InCallPanel, IncomingCallBanner } from './CallUI';
+import { CallNotice, InCallPanel, IncomingCallBanner, JoinCallStrip } from './CallUI';
 
 function fallbackUser(id: string): UserRef {
   return { id, handle: id, displayName: id };
@@ -26,7 +26,9 @@ export function GlobalCallUI() {
   const { state, me, calls } = useChat();
   const insets = useSafeAreaInsets();
 
-  if (!calls.notice && !calls.incomingCall && !calls.activeCall) return null;
+  if (!calls.notice && !calls.incomingCall && !calls.activeCall && !calls.recoverableCall) {
+    return null;
+  }
 
   const incomingCaller = calls.incomingCall
     ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
@@ -36,6 +38,9 @@ export function GlobalCallUI() {
     : '';
   const activeChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
+    : '';
+  const recoverableChannelName = calls.recoverableCall
+    ? labelForCallChannel(calls.recoverableCall, state.channels, me.id)
     : '';
 
   return (
@@ -49,6 +54,15 @@ export function GlobalCallUI() {
           answering={calls.answering}
           onAccept={() => void calls.acceptIncomingCall()}
           onDecline={() => void calls.declineIncomingCall()}
+        />
+      ) : null}
+      {!calls.activeCall && calls.recoverableCall ? (
+        <JoinCallStrip
+          call={calls.recoverableCall}
+          meId={me.id}
+          channelName={recoverableChannelName}
+          joining={calls.answering}
+          onJoin={() => void calls.joinRecoverableCall(calls.recoverableCall?.id)}
         />
       ) : null}
       {calls.activeCall ? (

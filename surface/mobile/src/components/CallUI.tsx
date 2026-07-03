@@ -118,6 +118,103 @@ export function CallNotice({ message, onDismiss }: { message: string; onDismiss:
   );
 }
 
+export function JoinCallStrip({
+  call,
+  meId,
+  channelName,
+  joining,
+  onJoin,
+}: {
+  call: CallWire;
+  meId: string;
+  channelName: string;
+  joining: boolean;
+  onJoin: () => void;
+}) {
+  const { colors } = useTheme();
+  const rejoin = call.participants.some((participant) => participant.id === meId);
+  const action = rejoin ? 'Rejoin' : 'Join';
+  const participantCount = call.participants.length;
+  const participantLabel =
+    participantCount === 1 ? '1 participant' : `${participantCount} participants`;
+  return (
+    <View
+      accessibilityLiveRegion="polite"
+      style={{
+        borderBottomColor: colors.borderSoft,
+        borderBottomWidth: 1,
+        backgroundColor: colors.bgElevated,
+        paddingHorizontal: space.lg,
+        paddingVertical: space.sm,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.sm,
+      }}
+    >
+      <View
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.accentBg,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Ionicons name="call" size={16} color={colors.accent} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+          <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
+            {call.status === 'ringing' ? 'Call ringing' : 'Live call'}
+          </Text>
+          <Text numberOfLines={1} style={{ flex: 1, color: colors.textMuted, fontSize: font.xs }}>
+            {channelName}
+          </Text>
+        </View>
+        <Text numberOfLines={1} style={{ color: colors.textMuted, fontSize: font.xs }}>
+          {participantLabel}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${action} call in ${channelName}`}
+        disabled={joining}
+        onPress={onJoin}
+        hitSlop={8}
+        style={{
+          minHeight: 36,
+          minWidth: 86,
+          borderRadius: radius.sm,
+          backgroundColor: joining ? colors.bgPressed : colors.accent,
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'row',
+          gap: 5,
+          paddingHorizontal: space.sm,
+          opacity: joining ? 0.65 : 1,
+        }}
+      >
+        <Ionicons
+          name="enter-outline"
+          size={15}
+          color={joining ? colors.textMuted : colors.onAccent}
+        />
+        <Text
+          numberOfLines={1}
+          style={{
+            color: joining ? colors.textMuted : colors.onAccent,
+            fontSize: font.xs,
+            fontWeight: '800',
+          }}
+        >
+          {action}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export function InCallPanel({
   call,
   meId,
