@@ -38,6 +38,7 @@ import {
   type ProviderCredentialStatus,
 } from '../api';
 import { WorkDrawer, type WorkTab } from './WorkDrawer';
+import type { FilesHubDefaultScope, FilesHubSessionScope } from './FilesHub';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { PlanPanel } from './PlanPanel';
@@ -91,6 +92,91 @@ const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSiz
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
   return typeof handle === 'string' && handle.startsWith('rec_');
+type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
+type OutputCounts = Record<OutputSurface, number>;
+
+function outputsVisibleInTab(tab: WorkTab | null): OutputSurface[] {
+  if (tab === 'conflicts') return ['conflicts'];
+  if (tab === 'sideEffects') return ['sideEffects'];
+  if (tab === 'changes' || tab === 'artifacts') return ['changes', 'artifacts'];
+  return [];
+}
+
+export function seenOutputCountsAfterOpeningTab(
+  seen: OutputCounts,
+  counts: OutputCounts,
+  tab: WorkTab | null,
+): OutputCounts {
+  const visible = outputsVisibleInTab(tab);
+  if (visible.length === 0) return seen;
+  let changed = false;
+  const next = { ...seen };
+  for (const key of visible) {
+    if (next[key] !== counts[key]) {
+      next[key] = counts[key];
+      changed = true;
+    }
+  }
+  return changed ? next : seen;
+}
+
+export function unseenOutputsForCounts(
+  seen: OutputCounts,
+  counts: OutputCounts,
+  openTab: WorkTab | null,
+): Record<OutputSurface, boolean> {
+  const visible = new Set(outputsVisibleInTab(openTab));
+  return {
+    conflicts: !visible.has('conflicts') && counts.conflicts > seen.conflicts,
+    changes: !visible.has('changes') && counts.changes > seen.changes,
+    sideEffects: !visible.has('sideEffects') && counts.sideEffects > seen.sideEffects,
+    artifacts: !visible.has('artifacts') && counts.artifacts > seen.artifacts,
+  };
+}
+
+export function notifyUnseenOutputsChange(
+  lastReported: boolean | null,
+  next: boolean,
+  onUnseenOutputs: (hasUnseen: boolean) => void,
+): boolean {
+  if (lastReported === next) return lastReported;
+  onUnseenOutputs(next);
+  return next;
+}
+
+function outputStripClass({ danger = false, unseen = false }: { danger?: boolean; unseen?: boolean }): string {
+  if (danger) {
+    return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90 ${
+      unseen
+        ? 'border-danger-border-strong bg-danger-surface/90 ring-1 ring-inset ring-danger-border/70'
+        : 'border-danger-edge bg-danger-surface'
+    }`;
+  }
+  return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs hover:bg-surface-overlay/60 ${
+    unseen
+      ? 'border-accent-border-muted bg-accent-tint/25 text-fg-body ring-1 ring-inset ring-accent-border-muted/40'
+      : 'border-edge bg-surface-raised/40 text-fg-secondary'
+  }`;
+}
+
+function OutputLabel({ children, unseen, danger = false }: { children: ReactNode; unseen: boolean; danger?: boolean }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {unseen && (
+        <span
+          aria-hidden="true"
+          className={`size-1.5 shrink-0 rounded-full ${danger ? 'bg-danger-text-strong' : 'bg-accent-text-strong'}`}
+        />
+      )}
+      <span
+        className={`font-semibold uppercase tracking-wider ${
+          unseen ? (danger ? 'text-danger-text-strong' : 'text-accent-text-strong') : 'text-fg-muted'
+        }`}
+      >
+        {children}
+      </span>
+    </span>
+  );
 }
 
 export function SessionPane({
@@ -117,6 +203,9 @@ export function SessionPane({
   layout = 'split',
   onToggleFocus,
   initialEntryHandle = null,
+  popout = false,
+  onUnseenOutputs,
+  filesDefaultScope,
 }: {
   session: Session;
   me: UserRef;
@@ -159,6 +248,12 @@ export function SessionPane({
   /** Toggle between split and focus; omit to hide the expand control. */
   onToggleFocus?: () => void;
   initialEntryHandle?: string | null;
+  /** Standalone `/s/:id/pane` context; retargets header controls back to the full app. */
+  popout?: boolean;
+  /** Fired when any output strip has grown since it was last viewed. */
+  onUnseenOutputs?: (hasUnseen: boolean) => void;
+  /** Initial Files tab scope. Popouts use session scope; in-app panes retain channel scope. */
+  filesDefaultScope?: FilesHubDefaultScope;
 }) {
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
@@ -171,7 +266,8 @@ export function SessionPane({
   // Changes work-surface (Phase 4): Claude/amp edits from the transcript items +
   // codex fileChange edits the reducer captured.
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
-  const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
+  const changedFilePaths = useMemo(() => changedPaths(fileChanges), [fileChanges]);
+  const changedFileCount = changedFilePaths.length;
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
   const sideEffectsDanger = useMemo(() => sideEffects.some((effect) => effect.risk === 'danger'), [sideEffects]);
@@ -221,6 +317,43 @@ export function SessionPane({
       }
     }
   };
+
+  const outputCounts = useMemo<OutputCounts>(
+    () => ({
+      conflicts: conflictsN,
+      changes: changedFileCount,
+      sideEffects: sideEffectsN,
+      artifacts: artifactsN,
+    }),
+    [artifactsN, changedFileCount, conflictsN, sideEffectsN],
+  );
+  const [seenOutputCounts, setSeenOutputCounts] = useState<OutputCounts>(outputCounts);
+  const unseenOutputs = useMemo(
+    () => unseenOutputsForCounts(seenOutputCounts, outputCounts, workTab),
+    [outputCounts, seenOutputCounts, workTab],
+  );
+  const hasUnseenOutputs = Object.values(unseenOutputs).some(Boolean);
+  const lastReportedUnseenRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    setSeenOutputCounts((seen) => seenOutputCountsAfterOpeningTab(seen, outputCounts, workTab));
+  }, [outputCounts, workTab]);
+
+  useEffect(() => {
+    if (!onUnseenOutputs || lastReportedUnseenRef.current === hasUnseenOutputs) return;
+    lastReportedUnseenRef.current = notifyUnseenOutputsChange(
+      lastReportedUnseenRef.current,
+      hasUnseenOutputs,
+      onUnseenOutputs,
+    );
+  }, [hasUnseenOutputs, onUnseenOutputs]);
+
+  const filesSessionScope = useMemo<FilesHubSessionScope>(() => {
+    const paths = new Set<string>();
+    for (const path of changedFilePaths) paths.add(path);
+    for (const artifact of artifacts) paths.add(artifact.path);
+    return { label: 'This session', paths: [...paths] };
+  }, [artifacts, changedFilePaths]);
 
   const terminal = isTerminalSessionStatus(session.status);
   const displayStatus: SessionStatus = terminal
@@ -696,6 +829,16 @@ export function SessionPane({
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const paneSizing = sessionPaneSizing(paneWidth);
   const canDetach = !isPendingSessionId(session.id);
+  const closePane = useCallback(() => {
+    if (!popout) {
+      onClose();
+      return;
+    }
+    window.close();
+    window.setTimeout(() => {
+      if (!window.closed) window.location.assign(`/s/${session.id}`);
+    }, 100);
+  }, [onClose, popout, session.id]);
   const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -872,11 +1015,11 @@ export function SessionPane({
         </div>
         {canDetach && (
           <a
-            href={`/s/${session.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open in a new tab"
-            aria-label="Open session in a new tab"
+            href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
+            target={popout ? undefined : '_blank'}
+            rel={popout ? undefined : 'noopener noreferrer'}
+            title={popout ? 'Open in full app' : 'Open in a new tab'}
+            aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
           >
             <ExternalLinkIcon size={15} />
@@ -894,7 +1037,7 @@ export function SessionPane({
           </button>
         )}
         <button
-          onClick={onClose}
+          onClick={closePane}
           title="Close session pane"
           aria-label="Close session pane"
           className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -978,9 +1121,11 @@ export function SessionPane({
           data-testid="conflicts-strip"
           onClick={() => onStrip('conflicts')}
           aria-expanded={workTab === 'conflicts'}
-          className="flex shrink-0 items-center gap-2 border-b border-danger-edge bg-danger-surface px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90"
+          className={outputStripClass({ danger: true, unseen: unseenOutputs.conflicts })}
         >
-          <span className="font-semibold uppercase tracking-wider">Conflicts</span>
+          <OutputLabel unseen={unseenOutputs.conflicts} danger>
+            Conflicts
+          </OutputLabel>
           <span className="tabular-nums">· {conflictsN}</span>
           <span className="ml-auto opacity-80">{workTab === 'conflicts' ? 'Hide' : 'Resolve'}</span>
         </button>
@@ -990,9 +1135,9 @@ export function SessionPane({
           data-testid="changes-strip"
           onClick={() => onStrip('changes')}
           aria-expanded={workTab === 'changes'}
-          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+          className={outputStripClass({ unseen: unseenOutputs.changes })}
         >
-          <span className="font-semibold uppercase tracking-wider text-fg-muted">Changes</span>
+          <OutputLabel unseen={unseenOutputs.changes}>Changes</OutputLabel>
           <span className="tabular-nums">· {changedFileCount}</span>
           <span className="ml-auto text-fg-tertiary">{workTab === 'changes' ? 'Hide' : 'View'}</span>
         </button>
@@ -1002,9 +1147,9 @@ export function SessionPane({
           data-testid="sideeffects-strip"
           onClick={() => onStrip('sideEffects')}
           aria-expanded={workTab === 'sideEffects'}
-          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+          className={outputStripClass({ unseen: unseenOutputs.sideEffects })}
         >
-          <span className="font-semibold uppercase tracking-wider text-fg-muted">Side-effects</span>
+          <OutputLabel unseen={unseenOutputs.sideEffects}>Side-effects</OutputLabel>
           <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>· {sideEffectsN}</span>
           <span className="ml-auto text-fg-tertiary">{workTab === 'sideEffects' ? 'Hide' : 'View'}</span>
         </button>
@@ -1014,9 +1159,9 @@ export function SessionPane({
           data-testid="artifacts-strip"
           onClick={() => onStrip('artifacts')}
           aria-expanded={workTab === 'artifacts'}
-          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/40 px-3 py-1.5 text-left text-2xs text-fg-secondary hover:bg-surface-overlay/60"
+          className={outputStripClass({ unseen: unseenOutputs.artifacts })}
         >
-          <span className="font-semibold uppercase tracking-wider text-fg-muted">Artifacts</span>
+          <OutputLabel unseen={unseenOutputs.artifacts}>Artifacts</OutputLabel>
           <span className="tabular-nums">· {artifactsN}</span>
           <span className="ml-auto text-fg-tertiary">{workTab === 'artifacts' ? 'Hide' : 'View'}</span>
         </button>
@@ -1040,6 +1185,8 @@ export function SessionPane({
               sessionId={session.id}
               workspaceId={session.workspaceId}
               channelId={session.channelId}
+              filesSessionScope={filesSessionScope}
+              filesDefaultScope={filesDefaultScope}
               tab={workTab}
               onTab={setWorkTab}
               pinned={false}
@@ -1177,6 +1324,8 @@ export function SessionPane({
               sessionId={session.id}
               workspaceId={session.workspaceId}
               channelId={session.channelId}
+              filesSessionScope={filesSessionScope}
+              filesDefaultScope={filesDefaultScope}
               tab={workTab}
               onTab={setWorkTab}
               pinned

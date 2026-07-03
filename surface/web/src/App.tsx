@@ -8,6 +8,7 @@ import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
 import { clearDesktopSession } from './desktop';
+import { SessionPanePage } from './sessions/SessionPanePage';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
 
@@ -26,7 +27,14 @@ export function workRouteFromPath(pathname: string): { sessionId: string; tab: A
   return tab ? { sessionId: m[1]!, tab } : null;
 }
 
+/** /s/:id/pane — standalone lean session pane, no channel shell. */
+export function paneRouteFromPath(pathname: string): { sessionId: string } | null {
+  const m = /^\/s\/([^/]+)\/pane$/.exec(pathname);
+  return m ? { sessionId: m[1]! } : null;
+}
+
 export function App() {
+  const [paneRoute] = useState(() => paneRouteFromPath(location.pathname));
   const [workRoute] = useState(() => workRouteFromPath(location.pathname));
   const [entryRouteHandle] = useState(() => entryHandleFromPath(location.pathname));
   const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
@@ -104,6 +112,8 @@ export function App() {
         Loading workspace…
       </div>
     );
+  else if (paneRoute)
+    body = <SessionPanePage key={paneRoute.sessionId} sessionId={paneRoute.sessionId} me={me} />;
   else if (workRoute)
     // Detached work surface in its own tab — a focused, full-viewport view of one
     // surface, no channel shell (it folds the same live stream as the in-app pane).

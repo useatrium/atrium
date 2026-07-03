@@ -101,6 +101,42 @@ async function renderPaneWithB() {
 }
 
 describe('session pane folds the B_tooltest stream', () => {
+  it('opens the lean pane route from the in-app header', () => {
+    render(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    const link = screen.getByRole('link', { name: 'Open session in a new tab' });
+    expect(link.getAttribute('href')).toBe('/s/s-b/pane');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('points the popout header link back to the full app in the same tab', () => {
+    render(
+      <SessionPane
+        session={bSession()}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        popout
+      />,
+    );
+
+    const link = screen.getByRole('link', { name: 'Open in full app' });
+    expect(link.getAttribute('href')).toBe('/s/s-b');
+    expect(link.getAttribute('target')).toBeNull();
+    expect(link.getAttribute('rel')).toBeNull();
+    expect(link.getAttribute('title')).toBe('Open in full app');
+  });
+
   it('opens a session capabilities popover from the header', async () => {
     vi.spyOn(sessionsApi, 'getCapabilities').mockResolvedValue({
       sessionId: 's-b',
@@ -902,9 +938,9 @@ describe('focus + detach controls', () => {
       />,
     );
 
-    // Detach is a new-tab link to /s/:id.
+    // Detach is a new-tab link to the lean standalone pane.
     const detach = screen.getByRole('link', { name: /open session in a new tab/i });
-    expect(detach.getAttribute('href')).toBe('/s/s-b');
+    expect(detach.getAttribute('href')).toBe('/s/s-b/pane');
     expect(detach.getAttribute('target')).toBe('_blank');
 
     // Split → the control offers Expand.

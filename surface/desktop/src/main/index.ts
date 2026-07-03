@@ -23,6 +23,7 @@ import {
 } from './config.js';
 import { clearSession, loadSession, saveSession, type DesktopSession } from './session.js';
 import { setupAutoUpdate } from './updater.js';
+import { resolveWindowOpen } from './windowOpenPolicy.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).
@@ -36,6 +37,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+const popoutWindows = new Set<BrowserWindow>();
 
 /** Serve the bundled web build over `app://`, with SPA fallback to index.html. */
 function registerAppProtocol(): void {
@@ -63,6 +65,7 @@ function registerAppProtocol(): void {
 }
 
 function createWindow(): void {
+  const preload = join(import.meta.dirname, '../preload/index.mjs');
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 832,
@@ -71,7 +74,7 @@ function createWindow(): void {
     backgroundColor: '#09090b',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
-      preload: join(import.meta.dirname, '../preload/index.mjs'),
+      preload,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -112,16 +115,56 @@ function createWindow(): void {
     console.error('[atrium] renderer failed:', code, desc, url);
   });
 
-  // External (http/https) links open in the OS browser, not inside the shell.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      void shell.openExternal(url);
-      return { action: 'deny' };
-    }
-    return { action: 'allow' };
-  });
+  const devOrigin = RENDERER_DEV_URL ? new URL(RENDERER_DEV_URL).origin : null;
+  attachWindowOpenPolicy(mainWindow.webContents, preload, devOrigin);
 
   void mainWindow.loadURL(target);
+}
+
+/** Popout windows are real BrowserWindows and can open links of their own, so
+ * the policy attaches recursively — otherwise a child falls back to Electron's
+ * default `allow` and external links open inside the shell. */
+function attachWindowOpenPolicy(
+  contents: Electron.WebContents,
+  preload: string,
+  devOrigin: string | null,
+): void {
+  contents.on('did-create-window', (childWindow) => {
+    popoutWindows.add(childWindow);
+    childWindow.on('closed', () => {
+      popoutWindows.delete(childWindow);
+    });
+    attachWindowOpenPolicy(childWindow.webContents, preload, devOrigin);
+  });
+
+  contents.setWindowOpenHandler(({ url }) => {
+    const decision = resolveWindowOpen(url, { appOrigin: APP_ORIGIN, devOrigin });
+    switch (decision.kind) {
+      case 'popout':
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 1100,
+            height: 800,
+            minWidth: 720,
+            minHeight: 520,
+            backgroundColor: '#09090b',
+            autoHideMenuBar: true,
+            webPreferences: {
+              preload,
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: false,
+            },
+          },
+        };
+      case 'external':
+        void shell.openExternal(url);
+        return { action: 'deny' };
+      case 'deny':
+        return { action: 'deny' };
+    }
+  });
 }
 
 function showWindow(): void {

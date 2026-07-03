@@ -213,11 +213,11 @@ export const sessionsApi = {
     return reqJson<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
   },
 
-  sendMessage(id: string, text: string): Promise<void> {
+  sendMessage(id: string, text: string, effort?: string): Promise<void> {
     if (sessionsMock) return sessionsMock.sendMessage(id, text);
     return reqAccepted(`/api/sessions/${id}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(effort ? { effort } : {}) }),
     });
   },
 
