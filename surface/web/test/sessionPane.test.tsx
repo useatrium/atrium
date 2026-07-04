@@ -627,6 +627,36 @@ describe('driver seat', () => {
     );
   });
 
+  it('request-seat failures call the shared API error hook and revert the optimistic footer', async () => {
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>) =>
+        new Response(JSON.stringify({ error: 'unauthorized', message: 'login expired' }), { status: 401 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const onApiError = vi.fn();
+    const session = bSession({
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      driverId: alice.id,
+      driverName: alice.displayName,
+    });
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[alice, me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onApiError={onApiError}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Request seat'));
+    await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/sessions/s-b/seat/request');
+    expect(screen.getByTestId('seat-footer').textContent).toContain('Request seat');
+  });
+
   it('(c) shows Take seat when the driver is absent; 409 falls back to a request', async () => {
     const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) =>
       String(args[0]).endsWith('/seat/take')
@@ -712,6 +742,112 @@ describe('driver seat', () => {
     // The grant also cleared Bob's pending request.
     expect(s.sessions['s-b']!.pendingSeatRequests).toEqual([]);
     expect(screen.queryByTestId('seat-request-banner')).toBeNull();
+  });
+
+  it('grant-seat failures call the shared API error hook', async () => {
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>) =>
+        new Response(JSON.stringify({ error: 'forbidden', message: 'only the driver may grant the seat' }), {
+          status: 403,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const onApiError = vi.fn();
+    const state = appReducer(spawnedState(), {
+      type: 'server-event',
+      event: seatWire(102, 'session.seat_requested', { sessionId: 's-b', by: bob.id }, bob),
+    });
+    const session = state.sessions['s-b']!;
+
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onApiError={onApiError}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grant' }));
+    await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/sessions/s-b/seat/grant');
+  });
+
+  it('steer failures call the shared API error hook and keep inline retry text', async () => {
+    const onApiError = vi.fn();
+    const onSteer = vi.fn(async () => {
+      throw new Error('login expired');
+    });
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onSteer={onSteer}
+        onApiError={onApiError}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Steer the agent/), { target: { value: 'check status' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
+    expect(onSteer).toHaveBeenCalledWith('s-b', 'check status', undefined);
+    expect(screen.getByTestId('steer-error').textContent).toContain('check status');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
+  it('stop-turn failures call the shared API error hook', async () => {
+    const onApiError = vi.fn();
+    const onStopTurn = vi.fn(async () => {
+      throw new Error('login expired');
+    });
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onStopTurn={onStopTurn}
+        onApiError={onApiError}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel turn' }));
+
+    await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
+    expect(onStopTurn).toHaveBeenCalledWith('s-b');
+    expect(screen.getByRole('button', { name: 'Cancel turn failed — retry' })).toBeTruthy();
+  });
+
+  it('cancel-session failures call the shared API error hook', async () => {
+    const onApiError = vi.fn();
+    const onCancelSession = vi.fn(async () => {
+      throw new Error('login expired');
+    });
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id, status: 'queued' })}
+        me={me}
+        watchers={[me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onCancelSession={onCancelSession}
+        onApiError={onApiError}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm cancel' }));
+
+    await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
+    expect(onCancelSession).toHaveBeenCalledWith('s-b');
+    expect(screen.getByRole('button', { name: 'Cancel failed — retry' })).toBeTruthy();
   });
 });
 
@@ -1074,6 +1210,31 @@ describe('suggestion queue', () => {
     expect(url).toBe('/api/sessions/s-b/suggestions/sug-1/resolve');
     expect(init?.method).toBe('POST');
     expect(JSON.parse(String(init?.body))).toMatchObject({ action: 'send' });
+  });
+
+  it('driver strip: failed resolve calls the shared API hook and keeps an inline error', async () => {
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>) =>
+        new Response(JSON.stringify({ error: 'suggestion_stale', message: 'suggestion already resolved' }), {
+          status: 409,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const onApiError = vi.fn();
+    render(
+      <SessionPane
+        session={withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob).sessions['s-b']!}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onApiError={onApiError}
+      />,
+    );
+
+    fireEvent.click(within(screen.getByTestId('suggestion-strip')).getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('suggestion already resolved')).toBeTruthy();
   });
 
   it('driver strip: Edit-then-send posts the edited text', async () => {

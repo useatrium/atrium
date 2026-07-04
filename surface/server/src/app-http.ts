@@ -1,6 +1,7 @@
 import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
+import { CentaurApiError } from '@atrium/centaur-client';
 import type { FastifyInstance } from 'fastify';
 import { config } from './config.js';
 import { DomainError } from './events.js';
@@ -54,6 +55,13 @@ export async function installAppHttp(app: FastifyInstance, rateLimit: AppRateLim
     if (err instanceof DomainError) {
       return reply.code(err.statusCode).send({ error: err.code, message: err.message });
     }
+    if (err instanceof CentaurApiError) {
+      const status = centaurHttpStatus(err.status);
+      return reply.code(status).send({
+        error: centaurErrorCode(err.code, err.status),
+        message: centaurErrorMessage(status, err.body),
+      });
+    }
     const error = err as { statusCode?: number; message?: unknown };
     if (error.statusCode === 429) {
       return reply.code(429).send({
@@ -65,4 +73,24 @@ export async function installAppHttp(app: FastifyInstance, rateLimit: AppRateLim
     const status = error.statusCode ?? 500;
     return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
+}
+
+function centaurHttpStatus(status: number): number {
+  if (status === 401 || status === 403) return 502;
+  return status >= 400 && status <= 599 ? status : 502;
+}
+
+function centaurErrorCode(code: string | undefined, upstreamStatus: number): string {
+  if (upstreamStatus === 401 || upstreamStatus === 403) return 'centaur_auth_failed';
+  if (code && /^[a-z][a-z0-9_:-]*$/i.test(code)) return code;
+  return 'centaur_error';
+}
+
+function centaurErrorMessage(status: number, body: unknown): string {
+  if (status >= 500) return 'upstream Centaur request failed';
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const message = (body as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  }
+  return 'upstream Centaur request failed';
 }

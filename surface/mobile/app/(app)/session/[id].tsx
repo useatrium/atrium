@@ -75,7 +75,7 @@ import {
   type EntryReferenceMap,
   type EntryReferenceSummary,
 } from '../../../src/lib/entryReferences';
-import { useRequiredSession } from '../../../src/lib/session';
+import { useRequiredSession, useSession } from '../../../src/lib/session';
 import { isEntryHandle } from '../../../src/lib/entryLinks';
 import { selectionHaptic } from '../../../src/lib/haptics';
 import {
@@ -783,6 +783,7 @@ function answerTextValue(value: QuestionDraftValue | undefined): string {
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
+  const { invalidate } = useSession();
   const authSession = useRequiredSession();
   const { colors, reduceMotion } = useTheme();
   const { api, me, state, upsertSession, setActiveSessionId } = chat;
@@ -1121,6 +1122,17 @@ export default function SessionScreen() {
     effortOptions?.includes(effortSelection)
       ? effortSelection
       : undefined;
+  const reportSessionActionError = useCallback(
+    (err: unknown, fallback: string, options: { alert?: boolean } = {}) => {
+      if (err instanceof ApiError && err.status === 401) {
+        void invalidate();
+        return;
+      }
+      if (options.alert === false) return;
+      Alert.alert('Action failed', err instanceof ApiError && err.message ? err.message : fallback);
+    },
+    [invalidate],
+  );
 
   const sendSteer = () => {
     if (!id) return;
@@ -1185,23 +1197,32 @@ export default function SessionScreen() {
     api
       .proposeAnswer(id, pendingQuestion.questionId, answers)
       .then(() => setQuestionCleared(pendingQuestion.questionId))
-      .catch(() => setQuestionError("Proposal didn't send. Try again."))
+      .catch((err: unknown) => {
+        reportSessionActionError(err, "Proposal didn't send. Try again.", { alert: false });
+        setQuestionError("Proposal didn't send. Try again.");
+      })
       .finally(() => setQuestionSubmitting(false));
   };
 
   // Seat hand-off. Take is two-step (confirm) and falls back to a request on 409.
   const requestSeatAction = () => {
-    if (id) api.requestSeat(id).catch(() => {});
+    if (id) api.requestSeat(id).catch((err: unknown) => reportSessionActionError(err, "Couldn't request the seat."));
   };
   const takeSeatAction = () => {
     if (!id) return;
     setSeatAsk('idle');
     api.takeSeat(id).catch((err) => {
-      if (err instanceof ApiError && err.status === 409) api.requestSeat(id).catch(() => {});
+      if (err instanceof ApiError && err.status === 409) {
+        api.requestSeat(id).catch((requestErr: unknown) =>
+          reportSessionActionError(requestErr, "Couldn't request the seat."),
+        );
+        return;
+      }
+      reportSessionActionError(err, "Couldn't take the seat.");
     });
   };
   const grantSeatAction = (userId: string) => {
-    if (id) api.grantSeat(id, userId).catch(() => {});
+    if (id) api.grantSeat(id, userId).catch((err: unknown) => reportSessionActionError(err, "Couldn't grant the seat."));
   };
   const ignoreSeatRequest = (userId: string) =>
     setIgnoredSeatRequests((prev) => {
@@ -1216,13 +1237,21 @@ export default function SessionScreen() {
     action: 'send' | 'dismiss',
     opts?: { text?: string; note?: string },
   ) => {
-    if (id) api.resolveSuggestion(id, suggestionId, action, opts ?? {}).catch(() => {});
+    if (id) {
+      api.resolveSuggestion(id, suggestionId, action, opts ?? {}).catch((err: unknown) => {
+        const message = action === 'send' ? "Couldn't send the suggestion." : "Couldn't dismiss the suggestion.";
+        reportSessionActionError(err, message);
+      });
+    }
   };
   const sendSuggestion = () => {
     const text = suggestText.trim();
     if (!id || !text) return;
     setSuggestText('');
-    api.createSuggestion(id, text).catch(() => {});
+    api.createSuggestion(id, text).catch((err: unknown) => {
+      setSuggestText((current) => (current === '' ? text : current));
+      reportSessionActionError(err, "Couldn't send the suggestion.");
+    });
   };
 
   const openReference = useCallback((ref: EntryReference) => {
@@ -1316,10 +1345,18 @@ export default function SessionScreen() {
 
   // Answer proposals (driver-side resolution).
   const submitProposal = (proposalId: string) => {
-    if (id) api.resolveAnswerProposal(id, proposalId, 'submit').catch(() => {});
+    if (id) {
+      api
+        .resolveAnswerProposal(id, proposalId, 'submit')
+        .catch((err: unknown) => reportSessionActionError(err, "Couldn't submit the proposal."));
+    }
   };
   const dismissProposal = (proposalId: string, note?: string) => {
-    if (id) api.resolveAnswerProposal(id, proposalId, 'dismiss', note ? { note } : {}).catch(() => {});
+    if (id) {
+      api
+        .resolveAnswerProposal(id, proposalId, 'dismiss', note ? { note } : {})
+        .catch((err: unknown) => reportSessionActionError(err, "Couldn't dismiss the proposal."));
+    }
   };
 
   const headerSubtitle = useMemo(() => {

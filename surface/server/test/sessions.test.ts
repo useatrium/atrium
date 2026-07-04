@@ -41,6 +41,8 @@ class FakeCentaur {
   streamWriteCommentBeforeSecondFrame = false;
   streamClosedCount = 0;
   spawnFailure: { status: number; body: object } | null = null;
+  interruptFailure: { status: number; body: object } | null = null;
+  interruptResponse: object | null = null;
   private answerNotPendingCount = 0;
   url = '';
 
@@ -101,7 +103,7 @@ class FakeCentaur {
       return sendJson(res, { ok: true, execution_id: executionId, thread_key: threadKey, status: 'answered' });
     }
 
-    const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(messages|execute|events|cancel))?$/.exec(url.pathname);
+    const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(messages|execute|events|cancel|interrupt))?$/.exec(url.pathname);
     if (sessionMatch) {
       const threadKey = decodeURIComponent(sessionMatch[1]!);
       const action = sessionMatch[2] ?? '';
@@ -195,6 +197,19 @@ class FakeCentaur {
       }
       if (req.method === 'POST' && action === 'cancel') {
         return sendJson(res, { ok: true, cancelled: true, execution_id: 'exe_fake' });
+      }
+      if (req.method === 'POST' && action === 'interrupt') {
+        if (this.interruptFailure) {
+          const failure = this.interruptFailure;
+          this.interruptFailure = null;
+          return sendJson(res, failure.body, failure.status);
+        }
+        if (this.interruptResponse) {
+          const response = this.interruptResponse;
+          this.interruptResponse = null;
+          return sendJson(res, response);
+        }
+        return sendJson(res, { ok: true, interrupted: true });
       }
       if (req.method === 'GET' && action === 'events') {
         this.recordLegacy('GET', `/agent/threads/${threadKey}/events`, {}, url.searchParams);
@@ -3700,6 +3715,86 @@ describe('Phase 2 sessions', () => {
       questionId: 'q-main',
       reason: 'cancelled',
     });
+    await app.close();
+  });
+
+  it('stop-turn with an opId surfaces Centaur failures without burning the op id', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+    const opId = randomUUID();
+    fake.interruptResponse = { ok: false, interrupted: false, error: 'interrupt unavailable' };
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/stop-turn`,
+      headers: { cookie },
+      payload: { opId },
+    });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json()).toMatchObject({
+      error: 'centaur_interrupt_failed',
+      message: 'upstream Centaur request failed',
+    });
+
+    const retried = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/stop-turn`,
+      headers: { cookie },
+      payload: { opId },
+    });
+    expect(retried.statusCode).toBe(202);
+    expect(fake.requests.filter((r) => r.path.endsWith('/interrupt'))).toHaveLength(2);
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/stop-turn`,
+      headers: { cookie },
+      payload: { opId },
+    });
+    expect(replay.statusCode).toBe(202);
+    expect(fake.requests.filter((r) => r.path.endsWith('/interrupt'))).toHaveLength(2);
+    await app.close();
+  });
+
+  it('stop-turn maps Centaur auth failures to upstream errors instead of user auth failures', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const id = await insertRunningSession();
+    const opId = randomUUID();
+    fake.interruptFailure = {
+      status: 401,
+      body: { error: 'unauthorized', message: 'bad Centaur API key' },
+    };
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/stop-turn`,
+      headers: { cookie },
+      payload: { opId },
+    });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json()).toMatchObject({
+      error: 'centaur_auth_failed',
+      message: 'upstream Centaur request failed',
+    });
+
+    const retried = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/stop-turn`,
+      headers: { cookie },
+      payload: { opId },
+    });
+    expect(retried.statusCode).toBe(202);
+    expect(fake.requests.filter((r) => r.path.endsWith('/interrupt'))).toHaveLength(2);
     await app.close();
   });
 

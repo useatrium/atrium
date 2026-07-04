@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { randomId, useWs, type UserRef, type WireEvent } from '@atrium/surface-client';
-import { api } from '../api';
+import { ApiError, api } from '../api';
+import { clearCache } from '../cacheIdb';
 import { ClaudeConnectDialog } from '../components/ClaudeConnectDialog';
 import { CodexConnectDialog } from '../components/CodexConnectDialog';
 import { GitHubConnectionDialog } from '../components/GitHubConnectionDialog';
-import { desktopWsUrl, isDesktop } from '../desktop';
+import { clearDesktopSession, desktopWsUrl, isDesktop } from '../desktop';
 import { useAgentProfiles } from '../useAgentProfiles';
 import { useConnections } from '../useConnections';
 import { useProviderCredentials } from '../useProviderCredentials';
@@ -76,6 +77,16 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
     setConnectionDialog,
   } = useConnections();
   const agentProfiles = useAgentProfiles();
+  const onApiError = useCallback((err: unknown) => {
+    if (!(err instanceof ApiError && err.status === 401)) return;
+    void clearCache()
+      .catch(() => {})
+      .finally(() => {
+        void clearDesktopSession().finally(() => {
+          window.location.assign('/');
+        });
+      });
+  }, []);
 
   const fetchSession = useCallback(
     async ({ showLoading }: { showLoading: boolean }) => {
@@ -91,11 +102,15 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
         setLoadState('ready');
       } catch (err) {
         console.warn('failed to load session pane', err);
+        if (err instanceof ApiError && err.status === 401) {
+          onApiError(err);
+          return;
+        }
         setSession(null);
         setLoadState('not-found');
       }
     },
-    [sessionId],
+    [onApiError, sessionId],
   );
 
   useEffect(() => {
@@ -118,6 +133,10 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
         }
       } catch (err) {
         console.warn('failed to load session pane', err);
+        if (err instanceof ApiError && err.status === 401) {
+          if (!disposed) onApiError(err);
+          return;
+        }
         if (!disposed) {
           setSession(null);
           setLoadState('not-found');
@@ -128,7 +147,7 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
     return () => {
       disposed = true;
     };
-  }, [sessionId]);
+  }, [onApiError, sessionId]);
 
   const wsKeys = useMemo(() => {
     if (!session) return [];
@@ -237,6 +256,7 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
           popout
           onUnseenOutputs={setHasUnseenOutputs}
           filesDefaultScope="session"
+          onApiError={onApiError}
         />
       ) : (
         <SessionPanePagePlaceholder notFound={loadState === 'not-found'} sessionId={sessionId} />

@@ -222,6 +222,7 @@ export function SessionPane({
   onUnseenOutputs,
   filesDefaultScope,
   onDiscussEntry,
+  onApiError = () => {},
 }: {
   session: Session;
   me: UserRef;
@@ -272,6 +273,8 @@ export function SessionPane({
   filesDefaultScope?: FilesHubDefaultScope;
   /** Opens the owning channel thread with a prefilled composer draft. Hidden in popouts. */
   onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
+  /** Shared API error hook; invalidates auth on 401 in the app shell. */
+  onApiError?: (err: unknown) => void;
 }) {
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
@@ -601,10 +604,22 @@ export function SessionPane({
   }, [seatAsk]);
   const seatRequested =
     seatAsk === 'requested' || seatAsk === 'seat-held' || session.pendingSeatRequests.some((r) => r.userId === me.id);
+  const reportSessionActionError = useCallback(
+    (err: unknown, fallback: string, options: { toast?: boolean } = {}) => {
+      onApiError(err);
+      if (err instanceof ApiError && err.status === 401) return;
+      if (options.toast === false) return;
+      showErrorToast(err instanceof ApiError && err.message ? err.message : fallback);
+    },
+    [onApiError],
+  );
 
   const requestSeat = () => {
     setSeatAsk('requested');
-    sessionsApi.requestSeat(session.id).catch(() => setSeatAsk('idle'));
+    sessionsApi.requestSeat(session.id).catch((err: unknown) => {
+      setSeatAsk('idle');
+      reportSessionActionError(err, "Couldn't request the seat.");
+    });
   };
   const takeSeat = () => {
     setSeatAsk('idle');
@@ -613,7 +628,12 @@ export function SessionPane({
         // Seat actually held (driver is watching after all) — note it and
         // fall back to a polite request.
         setSeatAsk('seat-held');
-        sessionsApi.requestSeat(session.id).catch(() => {});
+        sessionsApi.requestSeat(session.id).catch((requestErr: unknown) => {
+          setSeatAsk('idle');
+          reportSessionActionError(requestErr, "Couldn't request the seat.");
+        });
+      } else {
+        reportSessionActionError(err, "Couldn't take the seat.");
       }
     });
   };
@@ -644,9 +664,10 @@ export function SessionPane({
     const steer = hasAttachments
       ? onSteer(session.id, text, effortOverride, attachments, attachmentRefs)
       : onSteer(session.id, text, effortOverride);
-    steer.catch(() => {
+    steer.catch((err: unknown) => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
+      reportSessionActionError(err, "Couldn't send the message.", { toast: false });
     });
   };
 
@@ -661,7 +682,10 @@ export function SessionPane({
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const sendSuggestion = (text: string) => {
     setSuggestError(null);
-    sessionsApi.createSuggestion(session.id, text, randomId()).catch(() => setSuggestError(text));
+    sessionsApi.createSuggestion(session.id, text, randomId()).catch((err: unknown) => {
+      setSuggestError(text);
+      reportSessionActionError(err, "Couldn't send the suggestion.", { toast: false });
+    });
   };
 
   // Pending HITL answer proposals for the live question (driver decides).
@@ -742,7 +766,10 @@ export function SessionPane({
     if (canStopTurn) {
       setCancelAsk('idle');
       onClearFailedCancel();
-      onStopTurn(session.id).catch(() => setCancelAsk('failed'));
+      onStopTurn(session.id).catch((err: unknown) => {
+        setCancelAsk('failed');
+        reportSessionActionError(err, "Couldn't stop the turn.", { toast: false });
+      });
       return;
     }
     if (displayCancelAsk === 'idle') {
@@ -751,7 +778,10 @@ export function SessionPane({
     }
     setCancelAsk('idle');
     onClearFailedCancel();
-    onCancelSession(session.id).catch(() => setCancelAsk('failed'));
+    onCancelSession(session.id).catch((err: unknown) => {
+      setCancelAsk('failed');
+      reportSessionActionError(err, "Couldn't cancel the session.", { toast: false });
+    });
   };
 
   // Driver-side grant banner; Ignore is a local dismissal only.
@@ -1124,7 +1154,11 @@ export function SessionPane({
             <span className="font-semibold">{seatRequest.displayName}</span> requests the seat
           </span>
           <button
-            onClick={() => sessionsApi.grantSeat(session.id, seatRequest.userId).catch(() => {})}
+            onClick={() =>
+              sessionsApi
+                .grantSeat(session.id, seatRequest.userId)
+                .catch((err: unknown) => reportSessionActionError(err, "Couldn't grant the seat."))
+            }
             className="rounded-md bg-accent px-2 py-0.5 text-2xs font-medium text-on-accent hover:bg-accent-hover"
           >
             Grant
@@ -1451,6 +1485,7 @@ export function SessionPane({
               suggestions={pendingSuggestions}
               isDriver={isDriver}
               nameFor={nameFor}
+              onActionError={onApiError}
             />
           )}
           {isDriver && steerError && (
