@@ -1,17 +1,44 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import type { Db, DbClient } from '../db.js';
 import {
   foldAnnotations,
   REACTION_EMOJI,
   searchMessages,
   setEntryReactionTx,
-  type ReactionAction,
   type UserRef,
 } from '../events.js';
 import { extractEntryToMarkdownArtifact } from '../entry-extract.js';
 import { queryEntryReferences, resolveEntry, tryDecodeHandle } from '../entries.js';
 import type { WsHub } from '../hub.js';
+import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 import { searchSessionRecords } from '../session-search.js';
+
+const EntryHandleParamsSchema = Schema.Struct({
+  handle: Schema.optional(Schema.Unknown),
+});
+
+const EntryReferencesQueryBodySchema = Schema.Struct({
+  handles: Schema.optional(Schema.Unknown),
+});
+
+const EntryReactionBodySchema = Schema.Struct({
+  emoji: Schema.optional(Schema.Unknown),
+  action: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SearchQuerySchema = Schema.Struct({
+  q: Schema.optional(Schema.Unknown),
+  limit: Schema.optional(Schema.Unknown),
+});
+
+const SessionSearchQuerySchema = Schema.Struct({
+  q: Schema.optional(Schema.Unknown),
+  kinds: Schema.optional(Schema.String),
+  full: Schema.optional(Schema.Unknown),
+  limit: Schema.optional(Schema.Unknown),
+});
 
 export type EntryAnnotationRateLimit =
   | false
@@ -55,8 +82,8 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
   app.get('/api/entries/:handle', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = req.params as { handle: string };
-    if (!tryDecodeHandle(handle)) {
+    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
+    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
       return reply.code(400).send({ error: 'bad_handle' });
     }
     const entry = await resolveEntry(pool, handle, user.id);
@@ -69,8 +96,8 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
   app.get('/api/entries/:handle/annotations', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = req.params as { handle: string };
-    if (!tryDecodeHandle(handle)) {
+    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
+    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
       return reply.code(400).send({ error: 'bad_handle' });
     }
     const entry = await resolveEntry(pool, handle, user.id);
@@ -86,7 +113,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const body = (req.body ?? {}) as { handles?: unknown };
+      const body = decodeRouteBody(EntryReferencesQueryBodySchema, req.body);
       if (!Array.isArray(body.handles)) {
         return reply.code(400).send({ error: 'bad_request', message: 'handles must be an array' });
       }
@@ -107,8 +134,8 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
   app.post('/api/entries/:handle/extract', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = req.params as { handle: string };
-    if (!tryDecodeHandle(handle)) {
+    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
+    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
       return reply.code(400).send({ error: 'bad_handle' });
     }
     const entry = await resolveEntry(pool, handle, user.id);
@@ -139,19 +166,21 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { handle } = req.params as { handle: string };
-      if (!tryDecodeHandle(handle)) {
+      const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
+      if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
         return reply.code(400).send({ error: 'bad_handle' });
       }
-      const body = (req.body ?? {}) as { emoji?: string; action?: unknown; opId?: unknown };
+      const body = decodeRouteBody(EntryReactionBodySchema, req.body);
       const opId = optionalOpId(body);
-      if (typeof body.emoji !== 'string' || !body.emoji) {
+      const emoji = body.emoji;
+      if (typeof emoji !== 'string' || !emoji) {
         return reply.code(400).send({ error: 'bad_request', message: 'emoji required' });
       }
-      if (!(REACTION_EMOJI as readonly string[]).includes(body.emoji)) {
+      if (!(REACTION_EMOJI as readonly string[]).includes(emoji)) {
         return reply.code(400).send({ error: 'invalid_emoji', message: 'unsupported reaction emoji' });
       }
-      if (body.action !== 'add' && body.action !== 'remove') {
+      const action = body.action;
+      if (action !== 'add' && action !== 'remove') {
         return reply.code(400).send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
       }
       const entry = await resolveEntry(pool, handle, user.id);
@@ -162,13 +191,13 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
         userId: user.id,
         opId,
         opType: 'entry.reaction.set',
-        body: { handle, emoji: body.emoji, action: body.action },
+        body: { handle, emoji, action },
         fn: async (client) => {
           const result = await setEntryReactionTx(client, {
             handle,
             actorId: user.id,
-            emoji: body.emoji as string,
-            action: body.action as ReactionAction,
+            emoji,
+            action,
           });
           return result.applied ? { event: result.event } : { event: null, applied: false as const };
         },
@@ -182,7 +211,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
   app.get('/api/search', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const q = req.query as { q?: string; limit?: string };
+    const q = decodeRouteQuery(SearchQuerySchema, req.query);
     const query = String(q.q ?? '').trim();
     if (query.length < 2) {
       return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
@@ -197,7 +226,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
   app.get('/api/search/sessions', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const q = req.query as { q?: string; kinds?: string; full?: string; limit?: string };
+    const q = decodeRouteQuery(SessionSearchQuerySchema, req.query);
     const query = String(q.q ?? '').trim();
     if (query.length < 2) {
       return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });

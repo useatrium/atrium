@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import { config } from '../config.js';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
@@ -14,15 +15,61 @@ import {
   postMessage,
   setReactionTx,
   type AttachmentMeta,
-  type ReactionAction,
   type UserRef,
 } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { persistMentions } from '../mentions.js';
 import { sendMessagePush } from '../push.js';
+import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 import { landUploadAttachmentAsArtifact, type UploadAttachmentFileRow } from '../upload-artifacts.js';
 
 type MessageAttachmentFileRow = UploadAttachmentFileRow;
+
+const ChannelMessagesParamsSchema = Schema.Struct({
+  id: Schema.String,
+});
+
+const MessageIdParamsSchema = Schema.Struct({
+  id: Schema.optional(Schema.Unknown),
+});
+
+const ThreadMessagesParamsSchema = Schema.Struct({
+  rootEventId: Schema.optional(Schema.Unknown),
+});
+
+const VoiceRetranscribeParamsSchema = Schema.Struct({
+  fileId: Schema.String,
+});
+
+const ChannelMessagesQuerySchema = Schema.Struct({
+  before_id: Schema.optional(Schema.Unknown),
+  after_id: Schema.optional(Schema.Unknown),
+  limit: Schema.optional(Schema.Unknown),
+});
+
+const PostMessageBodySchema = Schema.Struct({
+  channelId: Schema.String,
+  text: Schema.optional(Schema.Unknown),
+  clientMsgId: Schema.optional(Schema.Unknown),
+  threadRootEventId: Schema.optional(Schema.Unknown),
+  attachments: Schema.optional(Schema.Unknown),
+  voice: Schema.optional(Schema.Unknown),
+});
+
+const EditMessageBodySchema = Schema.Struct({
+  text: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const OpIdBodySchema = Schema.Struct({
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const MessageReactionBodySchema = Schema.Struct({
+  emoji: Schema.optional(Schema.Unknown),
+  action: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
 
 export interface MessageRouteDeps {
   pool: Db;
@@ -80,11 +127,11 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.get('/api/channels/:id/messages', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(ChannelMessagesParamsSchema, req.params);
     if (!(await canAccessChannel(pool, user.id, id))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    const q = req.query as { before_id?: string; after_id?: string; limit?: string };
+    const q = decodeRouteQuery(ChannelMessagesQuerySchema, req.query);
     const limit = q.limit ? Number(q.limit) : undefined;
     const beforeId = q.before_id ? Number(q.before_id) : undefined;
     const afterId = q.after_id ? Number(q.after_id) : undefined;
@@ -100,7 +147,8 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.get('/api/threads/:rootEventId/messages', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const rootEventId = Number((req.params as { rootEventId: string }).rootEventId);
+    const params = decodeRouteParams(ThreadMessagesParamsSchema, req.params);
+    const rootEventId = Number(params.rootEventId);
     if (!Number.isFinite(rootEventId)) {
       return reply.code(400).send({ error: 'bad_query', message: 'numeric root event id expected' });
     }
@@ -117,14 +165,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.post('/api/messages', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as {
-      channelId?: string;
-      text?: string;
-      clientMsgId?: string;
-      threadRootEventId?: number;
-      attachments?: unknown;
-      voice?: unknown;
-    };
+    const body = decodeRouteBody(PostMessageBodySchema, req.body, { message: 'channelId required' });
     const text = typeof body.text === 'string' ? body.text : '';
     if (!body.channelId || typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
@@ -222,7 +263,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.post('/api/voice/:fileId/retranscribe', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { fileId } = req.params as { fileId: string };
+    const { fileId } = decodeRouteParams(VoiceRetranscribeParamsSchema, req.params);
     const tr = await pool.query<{ channel_id: string | null; event_id: number; status: string }>(
       'SELECT channel_id, event_id, status FROM transcripts WHERE file_id = $1',
       [fileId],
@@ -254,11 +295,12 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.patch('/api/messages/:id', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const targetEventId = Number((req.params as { id: string }).id);
+    const params = decodeRouteParams(MessageIdParamsSchema, req.params);
+    const targetEventId = Number(params.id);
     if (!Number.isFinite(targetEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
     }
-    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+    const body = decodeRouteBody(EditMessageBodySchema, req.body);
     const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
     if (text.trim().length === 0) {
@@ -285,11 +327,12 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.delete('/api/messages/:id', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const targetEventId = Number((req.params as { id: string }).id);
+    const params = decodeRouteParams(MessageIdParamsSchema, req.params);
+    const targetEventId = Number(params.id);
     if (!Number.isFinite(targetEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
     }
-    const body = (req.body ?? {}) as { opId?: unknown };
+    const body = decodeRouteBody(OpIdBodySchema, req.body);
     const opId = optionalOpId(body);
     return runMutation({
       userId: user.id,
@@ -309,29 +352,32 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
   app.post('/api/messages/:id/reactions', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const targetEventId = Number((req.params as { id: string }).id);
+    const params = decodeRouteParams(MessageIdParamsSchema, req.params);
+    const targetEventId = Number(params.id);
     if (!Number.isFinite(targetEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
     }
-    const body = (req.body ?? {}) as { emoji?: string; action?: unknown; opId?: unknown };
+    const body = decodeRouteBody(MessageReactionBodySchema, req.body);
     const opId = optionalOpId(body);
-    if (typeof body.emoji !== 'string' || !body.emoji) {
+    const emoji = body.emoji;
+    if (typeof emoji !== 'string' || !emoji) {
       return reply.code(400).send({ error: 'bad_request', message: 'emoji required' });
     }
-    if (body.action !== 'add' && body.action !== 'remove') {
+    const action = body.action;
+    if (action !== 'add' && action !== 'remove') {
       return reply.code(400).send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
     }
     return runMutation({
       userId: user.id,
       opId,
       opType: 'reaction.set',
-      body: { targetEventId, emoji: body.emoji, action: body.action },
+      body: { targetEventId, emoji, action },
       fn: async (client) => {
         const result = await setReactionTx(client, {
           targetEventId,
           actorId: user.id,
-          emoji: body.emoji as string,
-          action: body.action as ReactionAction,
+          emoji,
+          action,
         });
         return result.applied ? { event: result.event } : { event: null, applied: false as const };
       },

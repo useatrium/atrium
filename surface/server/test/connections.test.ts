@@ -88,6 +88,27 @@ describe('connections routes', () => {
     ]);
   });
 
+  it('rejects duplicate workspace query selectors', async () => {
+    const cookie = await loginCookie();
+    const query = `workspaceId=${fx.workspaceId}&workspaceId=other`;
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/api/me/connections?${query}`,
+      headers: { cookie },
+    });
+    expect(listed.statusCode).toBe(400);
+    expect(listed.json()).toMatchObject({ error: 'bad_request', message: 'invalid request query' });
+
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/me/connections/github?${query}`,
+      headers: { cookie },
+    });
+    expect(deleted.statusCode).toBe(400);
+    expect(deleted.json()).toMatchObject({ error: 'bad_request', message: 'invalid request query' });
+  });
+
   it('stores GitHub connection metadata without storing token material', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ login: 'octo-user' }), {

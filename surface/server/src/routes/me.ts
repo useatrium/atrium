@@ -1,6 +1,7 @@
 import { normalizePrefs, normalizePrefsPatch } from '@atrium/surface-client/prefs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import { githubConnectionAuditMetadata } from '../connection-audit.js';
 import { config } from '../config.js';
 import type { Connections, ConnectionStatusJson } from '../connections.js';
@@ -30,6 +31,7 @@ import { type AgentProfiles, providerFromProfileValue } from '../agent-profiles.
 import { CODEX_PROVIDER, type ProviderCredentials } from '../provider-credentials.js';
 import { PendingOAuthStore } from '../provider-oauth.js';
 import type { SessionRuns } from '../session-runs.js';
+import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 
 export interface MeRouteDeps {
   hub: WsHub;
@@ -61,6 +63,79 @@ function withoutOpId(body: Record<string, unknown>): Record<string, unknown> {
   return rest;
 }
 
+const WorkspaceQuerySchema = Schema.Struct({
+  workspaceId: Schema.optional(Schema.String),
+});
+
+const GitHubConnectionBodySchema = Schema.Struct({
+  workspaceId: Schema.optional(Schema.Unknown),
+  tokenKind: Schema.optional(Schema.Unknown),
+  accountLogin: Schema.optional(Schema.Unknown),
+  accountLabel: Schema.optional(Schema.Unknown),
+  scopes: Schema.optional(Schema.Unknown),
+  metadata: Schema.optional(Schema.Unknown),
+  capabilities: Schema.optional(Schema.Unknown),
+  token: Schema.optional(Schema.Unknown),
+  brokerCredentialId: Schema.optional(Schema.Unknown),
+  installationId: Schema.optional(Schema.Unknown),
+});
+
+const GitHubActiveBodySchema = Schema.Struct({
+  workspaceId: Schema.optional(Schema.Unknown),
+  identityId: Schema.optional(Schema.Unknown),
+});
+
+const GitHubCallbackQuerySchema = Schema.Struct({
+  code: Schema.optional(Schema.Unknown),
+  state: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.Unknown),
+  error_description: Schema.optional(Schema.Unknown),
+});
+
+const ByoWorkspaceBodySchema = Schema.Struct({
+  workspaceId: Schema.optional(Schema.Unknown),
+});
+
+const ClaudeOAuthExchangeBodySchema = Schema.Struct({
+  pendingId: Schema.optional(Schema.Unknown),
+  code: Schema.optional(Schema.Unknown),
+});
+
+const CodexDevicePollBodySchema = Schema.Struct({
+  pendingId: Schema.optional(Schema.Unknown),
+});
+
+const ClaudeTokenBodySchema = Schema.Struct({
+  token: Schema.optional(Schema.Unknown),
+});
+
+const CodexAuthJsonBodySchema = Schema.Struct({
+  authJson: Schema.optional(Schema.Unknown),
+});
+
+const CreateAgentProfileBodySchema = Schema.Struct({
+  provider: Schema.optional(Schema.Unknown),
+  name: Schema.optional(Schema.Unknown),
+});
+
+const AgentProfileParamsSchema = Schema.Struct({
+  id: Schema.String,
+});
+
+const RecordBodySchema = Schema.Record({
+  key: Schema.String,
+  value: Schema.Unknown,
+});
+
+const DraftParamsSchema = Schema.Struct({
+  draftKey: Schema.String,
+});
+
+const DraftBodySchema = Schema.Struct({
+  text: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
 export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void {
   const {
     hub,
@@ -84,7 +159,8 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.get('/api/me/connections', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { workspaceId } = req.query as { workspaceId?: string };
+    const query = decodeRouteQuery(WorkspaceQuerySchema, req.query);
+    const workspaceId = typeof query.workspaceId === 'string' ? query.workspaceId : undefined;
     const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, workspaceId);
     if (!resolvedWorkspaceId) {
       const error = workspaceId ? 'workspace_not_found' : 'no_workspace';
@@ -96,18 +172,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.post('/api/me/connections/github', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as {
-      workspaceId?: unknown;
-      tokenKind?: unknown;
-      accountLogin?: unknown;
-      accountLabel?: unknown;
-      scopes?: unknown;
-      metadata?: unknown;
-      capabilities?: unknown;
-      token?: unknown;
-      brokerCredentialId?: unknown;
-      installationId?: unknown;
-    };
+    const body = decodeRouteBody(GitHubConnectionBodySchema, req.body);
     const requestedWorkspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
     const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
     if (!resolvedWorkspaceId) {
@@ -247,7 +312,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.post('/api/me/connections/github/active', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { workspaceId?: unknown; identityId?: unknown };
+    const body = decodeRouteBody(GitHubActiveBodySchema, req.body);
     const requestedWorkspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
     const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
     if (!resolvedWorkspaceId) {
@@ -320,12 +385,15 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     const user = requireUser(req, reply);
     if (!user) return;
     if (!githubAppOAuthEnabled()) return reply.code(404).send({ error: 'not_found' });
-    const query = req.query as { code?: string; state?: string; error?: string; error_description?: string };
-    if (query.error) {
-      return reply.code(400).send({ error: 'github_oauth_failed', message: query.error_description ?? query.error });
+    const query = decodeRouteQuery(GitHubCallbackQuerySchema, req.query);
+    const error = typeof query.error === 'string' ? query.error : '';
+    if (error) {
+      const errorDescription = typeof query.error_description === 'string' ? query.error_description : undefined;
+      return reply.code(400).send({ error: 'github_oauth_failed', message: errorDescription ?? error });
     }
     const state = verifyGitHubConnectionState(query.state);
-    if (!query.code || !state || state.userId !== user.id) {
+    const code = typeof query.code === 'string' ? query.code : '';
+    if (!code || !state || state.userId !== user.id) {
       return reply.code(400).send({ error: 'invalid_oauth_state' });
     }
     const workspaceId = await connections.resolveWorkspaceId(user.id, state.workspaceId);
@@ -338,7 +406,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
 
     let connection: ConnectionStatusJson;
     try {
-      const token = await exchangeGitHubAppUserCode(query.code);
+      const token = await exchangeGitHubAppUserCode(code);
       if (!token.refreshToken) {
         return reply.code(400).send({
           error: 'github_refresh_token_missing',
@@ -417,7 +485,8 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.delete('/api/me/connections/github', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { workspaceId } = req.query as { workspaceId?: string };
+    const query = decodeRouteQuery(WorkspaceQuerySchema, req.query);
+    const workspaceId = typeof query.workspaceId === 'string' ? query.workspaceId : undefined;
     const resolvedWorkspaceId = await connections.resolveWorkspaceId(user.id, workspaceId);
     if (!resolvedWorkspaceId) {
       const error = workspaceId ? 'workspace_not_found' : 'no_workspace';
@@ -472,7 +541,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     req: FastifyRequest,
     reply: FastifyReply,
   ): Promise<string | null> => {
-    const body = (req.body ?? {}) as { workspaceId?: unknown };
+    const body = decodeRouteBody(ByoWorkspaceBodySchema, req.body);
     const requested = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
     const workspaceId = await connections.resolveWorkspaceId(userId, requested);
     if (!workspaceId) {
@@ -501,7 +570,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     if (!user) return;
     const workspaceId = await resolveByoWorkspace(user.id, req, reply);
     if (!workspaceId) return;
-    const body = (req.body ?? {}) as { pendingId?: unknown; code?: unknown };
+    const body = decodeRouteBody(ClaudeOAuthExchangeBodySchema, req.body);
     const pendingId = typeof body.pendingId === 'string' ? body.pendingId.trim() : '';
     const code = typeof body.code === 'string' ? body.code.trim() : '';
     if (!pendingId || !code) {
@@ -528,7 +597,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     if (!user) return;
     const workspaceId = await resolveByoWorkspace(user.id, req, reply);
     if (!workspaceId) return;
-    const body = (req.body ?? {}) as { pendingId?: unknown };
+    const body = decodeRouteBody(CodexDevicePollBodySchema, req.body);
     const pendingId = typeof body.pendingId === 'string' ? body.pendingId.trim() : '';
     if (!pendingId) return reply.code(400).send({ error: 'bad_request', message: 'pendingId required' });
     const result = await pollCodexDevice({ pendingOAuth, ironControl }, user.id, workspaceId, pendingId);
@@ -542,7 +611,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.put('/api/me/provider-credentials/claude-code', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { token?: unknown };
+    const body = decodeRouteBody(ClaudeTokenBodySchema, req.body);
     const token = typeof body.token === 'string' ? body.token.trim() : '';
     if (!token) {
       return reply.code(400).send({ error: 'bad_request', message: 'Claude token required' });
@@ -560,7 +629,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.put('/api/me/provider-credentials/codex', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { authJson?: unknown };
+    const body = decodeRouteBody(CodexAuthJsonBodySchema, req.body);
     const authJson = typeof body.authJson === 'string' ? body.authJson.trim() : '';
     if (!authJson) {
       return reply.code(400).send({ error: 'bad_request', message: 'Codex auth.json required' });
@@ -598,7 +667,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.post('/api/me/agent-profiles', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { provider?: unknown; name?: unknown };
+    const body = decodeRouteBody(CreateAgentProfileBodySchema, req.body);
     const provider = providerFromProfileValue(body.provider);
     if (!provider) {
       return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });
@@ -610,26 +679,27 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
   app.get('/api/me/agent-profiles/:id', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(AgentProfileParamsSchema, req.params);
     return { profile: await agentProfiles.getProfile(user.id, id) };
   });
 
   app.post('/api/me/agent-profiles/:id/versions', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
-    return { version: await agentProfiles.createVersion(user.id, id, req.body ?? {}) };
+    const { id } = decodeRouteParams(AgentProfileParamsSchema, req.params);
+    const body = decodeRouteBody(RecordBodySchema, req.body);
+    return { version: await agentProfiles.createVersion(user.id, id, body) };
   });
 
   app.post('/api/me/agent-profiles/import-local', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { provider?: unknown; proposal?: unknown };
+    const body = decodeRouteBody(RecordBodySchema, req.body);
     const provider = providerFromProfileValue(body.provider);
     if (!provider) {
       return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });
     }
-    return { proposal: await agentProfiles.createImportProposal(user.id, provider, body.proposal ?? req.body) };
+    return { proposal: await agentProfiles.createImportProposal(user.id, provider, body.proposal ?? body) };
   });
 
   app.patch('/api/me/prefs', async (req, reply) => {
@@ -638,7 +708,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     if (!isPlainObject(req.body)) {
       return reply.code(400).send({ error: 'bad_request', message: 'body must be object' });
     }
-    const prefsBody = req.body;
+    const prefsBody = decodeRouteBody(RecordBodySchema, req.body);
     const opId = optionalOpId(prefsBody);
     return runMutation({
       userId: user.id,
@@ -666,8 +736,8 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     if (!isPlainObject(req.body)) {
       return reply.code(400).send({ error: 'bad_request', message: 'body must be object' });
     }
-    const { draftKey } = req.params as { draftKey: string };
-    const body = req.body as { text?: unknown; opId?: unknown };
+    const { draftKey } = decodeRouteParams(DraftParamsSchema, req.params);
+    const body = decodeRouteBody(DraftBodySchema, req.body);
     const opId = optionalOpId(body);
     if (typeof body.text !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'text is required' });
