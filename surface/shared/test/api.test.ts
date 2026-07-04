@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
   createApi,
+  decodeActiveCallSnapshotResponse,
+  decodeCallJoinResponse,
   decodeSessionListResponse,
   decodeSessionResponse,
 } from '../src/api';
+import type { CallJoin, CallWire } from '../src/calls';
 import type { SessionListItem, SessionWire } from '../src/sessions';
 
 function sessionWire(overrides: Partial<SessionWire> = {}): SessionWire {
@@ -50,6 +53,27 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function callWire(overrides: Partial<CallWire> = {}): CallWire {
+  return {
+    id: 'call-1',
+    channelId: 'ch-1',
+    initiatorId: 'u-1',
+    status: 'ringing',
+    startedAt: '2026-07-04T12:00:00.000Z',
+    participants: [{ id: 'u-1', handle: 'ada', displayName: 'Ada' }],
+    ...overrides,
+  };
+}
+
+function callJoin(overrides: Partial<CallJoin> = {}): CallJoin {
+  return {
+    call: callWire(),
+    token: 'token',
+    url: 'ws://livekit.test',
+    ...overrides,
+  };
 }
 
 describe('session API response decoding', () => {
@@ -138,5 +162,37 @@ describe('session API response decoding', () => {
 
     await expect(createApi().getSession('sess-1')).resolves.toEqual({ session: sessionWire() });
     expect(fetchMock).toHaveBeenCalledWith('/api/sessions/sess-1', expect.any(Object));
+  });
+});
+
+describe('call API response decoding', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('decodes valid call join and active-call payloads', () => {
+    expect(decodeCallJoinResponse(callJoin())).toEqual(callJoin());
+    expect(decodeActiveCallSnapshotResponse({ calls: [callWire({ status: 'active' })] })).toEqual({
+      calls: [callWire({ status: 'active' })],
+    });
+  });
+
+  it('rejects malformed activeCalls responses from createApi', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ calls: [{ id: 'call-1' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().activeCalls()).rejects.toMatchObject({
+      status: 502,
+      code: 'bad_response',
+      message: 'invalid server response',
+    });
+  });
+
+  it('returns decoded call join responses from createApi', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(callJoin()));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().startCall('ch-1')).resolves.toEqual(callJoin());
+    expect(fetchMock).toHaveBeenCalledWith('/api/calls', expect.any(Object));
   });
 });
