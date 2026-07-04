@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { recordFrameObservation } from './frame-gap.js';
 import type { ServerResponse } from 'node:http';
 import { basename } from 'node:path';
+import { Effect } from 'effect';
 import { encodeRecordHandle } from '@atrium/surface-client/handle';
 import { HARNESS_EFFORT_LEVELS, isSessionEffortLevel } from '@atrium/surface-client/effort';
 import {
@@ -1626,10 +1627,25 @@ export class SessionRuns {
   private startTailer(id: string): void {
     void this.stopTailer(id);
     const controller = new AbortController();
-    const done = this.runTailer(id, controller).finally(() => {
-      const current = this.tailers.get(id);
-      if (current?.controller === controller) this.tailers.delete(id);
-    });
+    const done = Effect.runPromise(
+      Effect.tryPromise({
+        try: () => this.runTailer(id, controller),
+        catch: (err) => err,
+      }).pipe(
+        Effect.tapError((err) =>
+          Effect.sync(() => {
+            if (!controller.signal.aborted) console.error('session tailer crashed', { id, err });
+          }),
+        ),
+        Effect.catchAll(() => Effect.succeed(undefined)),
+        Effect.ensuring(
+          Effect.sync(() => {
+            const current = this.tailers.get(id);
+            if (current?.controller === controller) this.tailers.delete(id);
+          }),
+        ),
+      ),
+    );
     this.tailers.set(id, { controller, done });
   }
 
