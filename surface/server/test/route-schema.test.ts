@@ -26,7 +26,7 @@ describe('route schema decoding', () => {
       expect(err).toBeInstanceOf(DomainError);
       expect((err as DomainError).statusCode).toBe(400);
       expect((err as DomainError).code).toBe('invalid_push_registration');
-      expect((err as Error).message).toContain('{ readonly token: string }');
+      expect((err as Error).message).toBe('invalid request body');
     }
   });
 

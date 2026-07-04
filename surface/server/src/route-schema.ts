@@ -7,8 +7,8 @@ export interface DecodeRouteInputOptions {
   statusCode?: number;
 }
 
-export function decodeRouteInput<A>(
-  schema: Schema.Schema<A>,
+export function decodeRouteInput<A, I = A>(
+  schema: Schema.Schema<A, I, never>,
   input: unknown,
   options: DecodeRouteInputOptions = {},
 ): A {
@@ -21,17 +21,16 @@ export function decodeRouteInput<A>(
   );
 }
 
-export function decodeRouteBody<A>(
-  schema: Schema.Schema<A>,
+export function decodeRouteBody<A, I = A>(
+  schema: Schema.Schema<A, I, never>,
   body: unknown,
   options?: DecodeRouteInputOptions,
 ): A {
   return decodeRouteInput(schema, routeBodyRecord(body), options);
 }
 
-function validationMessage(error: { message?: string }): string {
-  const firstLine = typeof error.message === 'string' ? error.message.split('\n')[0]?.trim() : '';
-  return firstLine || 'invalid request body';
+function validationMessage(_error: { message?: string }): string {
+  return 'invalid request body';
 }
 
 function routeBodyRecord(body: unknown): unknown {
