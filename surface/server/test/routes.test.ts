@@ -111,6 +111,30 @@ describe('extracted routes', () => {
     });
   });
 
+  it('defaults push platform and kind for unrecognized lightweight clients', async () => {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { handle: 'alice', displayName: 'Alice' },
+    });
+    const token = `ExponentPushToken[route-defaults-${Date.now()}]`;
+
+    const registered = await app.inject({
+      method: 'POST',
+      url: '/api/push/register',
+      headers: { cookie: login.headers['set-cookie'] as string },
+      payload: { token, platform: 'desktop' },
+    });
+
+    expect(registered.statusCode).toBe(200);
+    expect(registered.json()).toEqual({ ok: true });
+    await expect(
+      pool.query('SELECT platform, kind FROM push_tokens WHERE token = $1', [token]),
+    ).resolves.toMatchObject({
+      rows: [{ platform: 'ios', kind: 'expo' }],
+    });
+  });
+
   it('rejects unauthenticated push registration', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -209,5 +233,23 @@ describe('extracted routes', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: 'bad_request', message: 'token required' });
+  });
+
+  it('accepts best-effort client error reports with non-object bodies', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/client-errors',
+      headers: { 'content-type': 'application/json', 'user-agent': 'route-test-agent' },
+      payload: JSON.stringify('not an object'),
+    });
+
+    expect(res.statusCode).toBe(202);
+    const body = res.json() as { ok: boolean; id: number };
+    expect(body).toMatchObject({ ok: true });
+    await expect(
+      pool.query('SELECT kind, user_agent FROM client_error_reports WHERE id = $1', [body.id]),
+    ).resolves.toMatchObject({
+      rows: [{ kind: 'unknown', user_agent: 'route-test-agent' }],
+    });
   });
 });
