@@ -166,6 +166,40 @@ describe("CentaurClient endpoint paths", () => {
     await expect(client.execute("thread:1", 1, "codex")).rejects.toBeInstanceOf(CentaurApiError);
   });
 
+  it("extracts nested Centaur error codes from error envelopes", async () => {
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ error: { code: "EXECUTION_NOT_FOUND", message: "missing" } }), {
+          status: 404,
+          statusText: "Not Found",
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+
+    await expect(client.execute("thread:1", 1, "codex")).rejects.toMatchObject({
+      status: 404,
+      code: "EXECUTION_NOT_FOUND",
+    });
+  });
+
+  it("rejects successful Centaur responses that are not JSON objects", async () => {
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify(["not", "an", "object"]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+
+    await expect(client.execute("thread:1", 1, "codex")).rejects.toMatchObject({
+      code: "invalid_json_object_response",
+    });
+  });
+
   it("maps cancelling release calls onto the api-rs session cancel endpoint", async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({

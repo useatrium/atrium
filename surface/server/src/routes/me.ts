@@ -1,4 +1,4 @@
-import { DEFAULT_PREFS, normalizePrefs, type UserPrefs } from '@atrium/surface-client/prefs';
+import { normalizePrefs, normalizePrefsPatch } from '@atrium/surface-client/prefs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { githubConnectionAuditMetadata } from '../connection-audit.js';
@@ -59,18 +59,6 @@ function withoutOpId(body: Record<string, unknown>): Record<string, unknown> {
   const rest = { ...body };
   delete rest.opId;
   return rest;
-}
-
-function prefsPatch(input: Record<string, unknown>): Partial<UserPrefs> {
-  const patch: Partial<UserPrefs> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (!(key in DEFAULT_PREFS)) continue;
-    const prefKey = key as keyof UserPrefs;
-    if (Object.is(normalizePrefs({ [key]: value })[prefKey], value)) {
-      (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[prefKey] = value as UserPrefs[keyof UserPrefs];
-    }
-  }
-  return patch;
 }
 
 export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void {
@@ -661,7 +649,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         const current = await client.query<{ prefs: unknown }>('SELECT prefs FROM users WHERE id = $1', [user.id]);
         const merged = normalizePrefs({
           ...normalizePrefs(current.rows[0]?.prefs),
-          ...prefsPatch(prefsBody),
+          ...normalizePrefsPatch(prefsBody),
         });
         await client.query('UPDATE users SET prefs = $1 WHERE id = $2', [JSON.stringify(merged), user.id]);
         return { prefs: merged };

@@ -212,6 +212,8 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
           ? 'question_resolved'
           : undefined;
   const voice = parseVoice(payload.voice);
+  const reactions = parseReactions(payload.reactions);
+  const attachments = parseAttachments(payload.attachments);
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
@@ -220,8 +222,8 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     text,
     edited: payload.edited === true,
     deleted: payload.deleted === true,
-    reactions: parseReactions(payload.reactions),
-    attachments: parseAttachments(payload.attachments),
+    ...(reactions !== undefined ? { reactions } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(voice !== undefined ? { voice } : {}),
     author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
     createdAt: ev.createdAt,

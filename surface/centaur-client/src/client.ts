@@ -1,4 +1,5 @@
 import { tailEvents, type TailEventsOptions } from "./stream.js";
+import { errorCodeFromBody, jsonObjectFrom, parseJsonValue } from "./schema.js";
 import type { CentaurEventFrame, JsonObject, JsonValue } from "./types.js";
 
 export type FetchLike = typeof fetch;
@@ -73,8 +74,8 @@ export interface ExecuteOptions {
 export class CentaurApiError extends Error {
   readonly status: number;
   readonly statusText: string;
-  readonly code?: string;
-  readonly body?: JsonValue;
+  readonly code: string | undefined;
+  readonly body: JsonValue | undefined;
 
   constructor(args: {
     method: string;
@@ -173,7 +174,6 @@ export class CentaurClient {
 
   execute(threadKey: string, generation: number, harness: string, opts: ExecuteOptions = {}): Promise<ExecuteResponse> {
     const body: JsonObject = {
-      idempotency_key: opts.executeId,
       metadata: {
         source: "atrium",
         harness,
@@ -181,6 +181,7 @@ export class CentaurClient {
       },
       input_lines: opts.inputLines ?? [],
     };
+    if (opts.executeId !== undefined) body.idempotency_key = opts.executeId;
     if (opts.environment !== undefined) body.environment = opts.environment;
     if (opts.idleTimeoutMs !== undefined) body.idle_timeout_ms = opts.idleTimeoutMs;
     if (opts.maxDurationMs !== undefined) body.max_duration_ms = opts.maxDurationMs;
@@ -248,29 +249,31 @@ export class CentaurClient {
     });
   }
 
-  private async request<T>(method: string, path: string, body?: JsonObject): Promise<T> {
+  private async request<T extends JsonObject = JsonObject>(method: string, path: string, body?: JsonObject): Promise<T> {
     const extraHeaders = cleanHeaders(this.headers());
-    const response = await this.fetchImpl(new URL(path, withTrailingSlash(this.baseUrl)), {
+    const init: RequestInit = {
       method,
       headers: {
         "content-type": "application/json",
         "x-api-key": this.apiKey,
         ...extraHeaders,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const response = await this.fetchImpl(new URL(path, withTrailingSlash(this.baseUrl)), init);
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       const parsed = parseJson(text);
+      const code = parseErrorCode(parsed);
       throw new CentaurApiError({
         method,
         path,
         status: response.status,
         statusText: response.statusText,
         text,
-        code: parseErrorCode(parsed),
-        body: parsed,
+        ...(code !== undefined ? { code } : {}),
+        ...(parsed !== undefined ? { body: parsed } : {}),
       });
     }
 
@@ -278,7 +281,19 @@ export class CentaurClient {
       return {} as T;
     }
 
-    return (await response.json()) as T;
+    const parsed = await response.json().catch(() => undefined) as unknown;
+    const decoded = jsonObjectFrom(parsed);
+    if (!decoded) {
+      throw new CentaurApiError({
+        method,
+        path,
+        status: response.status,
+        statusText: response.statusText,
+        text: "invalid JSON object response",
+        code: "invalid_json_object_response",
+      });
+    }
+    return decoded as T;
   }
 }
 
@@ -301,23 +316,9 @@ function withTrailingSlash(url: string): string {
 }
 
 function parseJson(text: string): JsonValue | undefined {
-  if (!text) return undefined;
-  try {
-    return JSON.parse(text) as JsonValue;
-  } catch {
-    return undefined;
-  }
+  return parseJsonValue(text);
 }
 
 function parseErrorCode(body: JsonValue | undefined): string | undefined {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
-  const direct = body.code;
-  if (typeof direct === "string") return direct;
-  const error = body.error;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object" && !Array.isArray(error)) {
-    const nested = (error as JsonObject).code;
-    if (typeof nested === "string") return nested;
-  }
-  return undefined;
+  return errorCodeFromBody(body);
 }

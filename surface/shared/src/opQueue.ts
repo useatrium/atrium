@@ -507,6 +507,10 @@ export interface OpQueueLockProvider {
   request<T>(name: string, callback: () => Promise<T>): Promise<T>;
 }
 
+function optionalProp<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return value === undefined ? {} : ({ [key]: value } as { [P in K]?: V });
+}
+
 export class DurableOpQueue {
   private readonly storage: OpStorage;
   private readonly api: Api;
@@ -514,11 +518,11 @@ export class DurableOpQueue {
   private readonly registry: OpRegistry;
   private readonly maxParallelKeys: number;
   private readonly maxServerRetries: number;
-  private readonly onRejected?: (op: QueuedOp, error: unknown) => void;
+  private readonly onRejected: ((op: QueuedOp, error: unknown) => void) | undefined;
   private readonly uploadFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   private readonly readUploadBody: (payload: UploadPayload) => Promise<BodyInit>;
   private readonly setTimer: (cb: () => void, ms: number) => unknown;
-  private readonly lockProvider?: OpQueueLockProvider;
+  private readonly lockProvider: OpQueueLockProvider | undefined;
   private readonly activeKeys = new Set<string>();
   private readonly retryAfter = new Map<string, number>();
   private storageChain: Promise<void> = Promise.resolve();
@@ -766,8 +770,8 @@ export function createDefaultOpRegistry(): OpRegistry {
           channelId: payload.channelId,
           text: payload.text,
           clientMsgId: payload.clientMsgId,
-          threadRootEventId: payload.threadRootEventId,
-          attachments,
+          ...optionalProp('threadRootEventId', payload.threadRootEventId),
+          ...optionalProp('attachments', attachments),
           opId: op.opId,
         });
       },
@@ -791,9 +795,9 @@ export function createDefaultOpRegistry(): OpRegistry {
             filename: payload.filename,
             contentType: payload.contentType,
             size: payload.size,
-            width: payload.width,
-            height: payload.height,
-            contentHash: payload.contentHash,
+            ...optionalProp('width', payload.width),
+            ...optionalProp('height', payload.height),
+            ...optionalProp('contentHash', payload.contentHash),
           });
           fileId = created.fileId;
           currentPayload = { ...payload, fileId };
@@ -872,16 +876,16 @@ export function createDefaultOpRegistry(): OpRegistry {
         const attachments = await resolvedAttachmentIds(payload, context);
         return api.createAgentSession({
           channelId: payload.channelId,
-          threadRootEventId: payload.threadRootEventId,
           task: payload.task,
-          harness: payload.harness,
-          repo: payload.repo,
-          branch: payload.branch,
-          repos: payload.repos,
-          githubIdentityMode: payload.githubIdentityMode,
-          githubIdentityId: payload.githubIdentityId,
-          agentProfileId: payload.agentProfileId,
-          agentProfileVersionId: payload.agentProfileVersionId,
+          ...optionalProp('threadRootEventId', payload.threadRootEventId),
+          ...optionalProp('harness', payload.harness),
+          ...optionalProp('repo', payload.repo),
+          ...optionalProp('branch', payload.branch),
+          ...optionalProp('repos', payload.repos),
+          ...optionalProp('githubIdentityMode', payload.githubIdentityMode),
+          ...optionalProp('githubIdentityId', payload.githubIdentityId),
+          ...optionalProp('agentProfileId', payload.agentProfileId),
+          ...optionalProp('agentProfileVersionId', payload.agentProfileVersionId),
           clientSpawnId: payload.clientSpawnId,
           ...(attachments && attachments.length > 0 ? { attachments } : {}),
           ...(payload.existingAttachmentRefs && payload.existingAttachmentRefs.length > 0
