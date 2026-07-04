@@ -6,9 +6,12 @@ import {
   decodeCallJoinResponse,
   decodeSessionListResponse,
   decodeSessionResponse,
+  decodeSyncResponse,
 } from '../src/api';
 import type { CallJoin, CallWire } from '../src/calls';
 import type { SessionListItem, SessionWire } from '../src/sessions';
+import type { SyncResponse } from '../src/sync';
+import type { WireEvent } from '../src/timeline';
 
 function sessionWire(overrides: Partial<SessionWire> = {}): SessionWire {
   return {
@@ -72,6 +75,62 @@ function callJoin(overrides: Partial<CallJoin> = {}): CallJoin {
     call: callWire(),
     token: 'token',
     url: 'ws://livekit.test',
+    ...overrides,
+  };
+}
+
+function wireEvent(overrides: Partial<WireEvent> = {}): WireEvent {
+  return {
+    id: 1,
+    workspaceId: 'ws-1',
+    channelId: 'ch-1',
+    threadRootEventId: null,
+    type: 'message.posted',
+    actorId: 'u-1',
+    payload: { text: 'Hello', clientMsgId: 'client-1' },
+    createdAt: '2026-07-04T12:00:00.000Z',
+    author: { id: 'u-1', handle: 'ada', displayName: 'Ada' },
+    ...overrides,
+  };
+}
+
+function syncResponse(overrides: Partial<SyncResponse> = {}): SyncResponse {
+  return {
+    events: [wireEvent()],
+    nextCursor: 2,
+    limited: false,
+    state: {
+      readCursors: { 'ch-1': 1 },
+      mutes: ['ch-2'],
+      prefs: {
+        theme: 'system',
+        accent: 'indigo',
+        motion: 'system',
+        fontScale: 1,
+        highContrast: false,
+        notifications: { messages: 'dm_mention', sessions: true, calls: true },
+      },
+      drafts: {
+        'ch-1': { text: 'Draft text', updatedAt: '2026-07-04T12:01:00.000Z' },
+      },
+      draftDeletions: {
+        'ch-2': '2026-07-04T12:02:00.000Z',
+      },
+      channels: [
+        {
+          id: 'ch-1',
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: '2026-07-04T12:00:00.000Z',
+          lastReadEventId: 1,
+          latestEventId: 2,
+          muted: false,
+          mentionedSinceRead: true,
+          kind: 'public',
+          memberCount: 3,
+        },
+      ],
+    },
     ...overrides,
   };
 }
@@ -194,5 +253,80 @@ describe('call API response decoding', () => {
 
     await expect(createApi().startCall('ch-1')).resolves.toEqual(callJoin());
     expect(fetchMock).toHaveBeenCalledWith('/api/calls', expect.any(Object));
+  });
+});
+
+describe('wire event response decoding', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('decodes valid sync response payloads', () => {
+    expect(decodeSyncResponse(syncResponse())).toEqual(syncResponse());
+  });
+
+  it('rejects malformed sync event envelopes from createApi', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        ...syncResponse(),
+        events: [{ ...wireEvent(), id: 'event-1' }],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().sync(1, { limit: 10 })).rejects.toMatchObject({
+      status: 502,
+      code: 'bad_response',
+      message: 'invalid server response',
+    });
+  });
+
+  it('returns decoded message history responses from createApi', async () => {
+    const history = { events: [wireEvent({ id: 3 })], hasMore: true };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(history));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().messages('ch-1', { beforeId: 10, limit: 5 })).resolves.toEqual(history);
+    expect(fetchMock).toHaveBeenCalledWith('/api/channels/ch-1/messages?before_id=10&limit=5', expect.any(Object));
+  });
+
+  it('rejects malformed message history responses from createApi', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        events: [{ ...wireEvent(), createdAt: null }],
+        hasMore: false,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().messages('ch-1')).rejects.toMatchObject({
+      status: 502,
+      code: 'bad_response',
+      message: 'invalid server response',
+    });
+  });
+
+  it('returns decoded thread history responses from createApi', async () => {
+    const history = { events: [wireEvent({ id: 4, threadRootEventId: 1 })] };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(history));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().thread(1)).resolves.toEqual(history);
+    expect(fetchMock).toHaveBeenCalledWith('/api/threads/1/messages', expect.any(Object));
+  });
+
+  it('rejects malformed thread history responses from createApi', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        events: [{ ...wireEvent({ threadRootEventId: 1 }), payload: null }],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().thread(1)).rejects.toMatchObject({
+      status: 502,
+      code: 'bad_response',
+      message: 'invalid server response',
+    });
   });
 });

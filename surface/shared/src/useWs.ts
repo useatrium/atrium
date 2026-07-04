@@ -1,7 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { isCallEvent, type CallEvent } from './calls';
+import { Option, Schema } from 'effect';
+import {
+  CallUserRefSchema,
+  CallWireSchema,
+  isCallEvent,
+  type CallEvent,
+} from './calls';
 import { normalizePrefs, type UserPrefs } from './prefs';
-import type { UserRef, WireEvent } from './timeline';
+import { UserRefSchema, WireEventSchema, type UserRef, type WireEvent } from './timeline';
 
 export type WsStatus = 'connecting' | 'open' | 'closed';
 
@@ -56,6 +62,134 @@ const MAX_BACKOFF_MS = 10_000;
 export interface WsSequenceTracker {
   expectedSeq: number;
   disabled: boolean;
+}
+
+const WsFrameSeqSchema = {
+  seq: Schema.optionalWith(Schema.Unknown, { exact: true }),
+};
+
+const WsEventFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('event'),
+  event: WireEventSchema,
+  ...WsFrameSeqSchema,
+}));
+
+const WsPresenceFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('presence'),
+  channelId: Schema.String,
+  users: Schema.mutable(Schema.Array(UserRefSchema)),
+  ...WsFrameSeqSchema,
+}));
+
+const WsChannelTypingFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('typing'),
+  channelId: Schema.String,
+  user: UserRefSchema,
+  ...WsFrameSeqSchema,
+}));
+
+const WsSessionTypingFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('typing'),
+  sessionId: Schema.String,
+  user: UserRefSchema,
+  ...WsFrameSeqSchema,
+}));
+
+const WsReadFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('read'),
+  channelId: Schema.String,
+  lastReadEventId: Schema.Number,
+  ...WsFrameSeqSchema,
+}));
+
+const WsMutedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('muted'),
+  channelId: Schema.String,
+  muted: Schema.Boolean,
+  ...WsFrameSeqSchema,
+}));
+
+const WsChannelLeftFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('channel-left'),
+  channelId: Schema.String,
+  ...WsFrameSeqSchema,
+}));
+
+const WsPrefsFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('prefs'),
+  prefs: Schema.Unknown,
+  ...WsFrameSeqSchema,
+}));
+
+const WsPongFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('pong'),
+  t: Schema.Number,
+  ...WsFrameSeqSchema,
+}));
+
+const WsCallRingingFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('call.ringing'),
+  call: CallWireSchema,
+  ...WsFrameSeqSchema,
+}));
+
+const WsCallAcceptedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('call.accepted'),
+  callId: Schema.String,
+  user: CallUserRefSchema,
+  ...WsFrameSeqSchema,
+}));
+
+const WsCallDeclinedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('call.declined'),
+  callId: Schema.String,
+  userId: Schema.String,
+  ...WsFrameSeqSchema,
+}));
+
+const WsCallParticipantJoinedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('call.participant_joined'),
+  callId: Schema.String,
+  user: CallUserRefSchema,
+  ...WsFrameSeqSchema,
+}));
+
+const WsCallParticipantLeftFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('call.participant_left'),
+  callId: Schema.String,
+  userId: Schema.String,
+  ...WsFrameSeqSchema,
+}));
+
+const WsCallEndedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('call.ended'),
+  callId: Schema.String,
+  ...WsFrameSeqSchema,
+}));
+
+const WsFrameSchema = Schema.Union(
+  WsEventFrameSchema,
+  WsPresenceFrameSchema,
+  WsChannelTypingFrameSchema,
+  WsSessionTypingFrameSchema,
+  WsReadFrameSchema,
+  WsMutedFrameSchema,
+  WsChannelLeftFrameSchema,
+  WsPrefsFrameSchema,
+  WsPongFrameSchema,
+  WsCallRingingFrameSchema,
+  WsCallAcceptedFrameSchema,
+  WsCallDeclinedFrameSchema,
+  WsCallParticipantJoinedFrameSchema,
+  WsCallParticipantLeftFrameSchema,
+  WsCallEndedFrameSchema,
+);
+
+export type DecodedWsFrame = Schema.Schema.Type<typeof WsFrameSchema>;
+
+export function decodeWsFrame(input: unknown): DecodedWsFrame | null {
+  const decoded = Schema.decodeUnknownOption(WsFrameSchema)(input);
+  return Option.isSome(decoded) ? decoded.value : null;
 }
 
 export function createWsSequenceTracker(): WsSequenceTracker {
@@ -181,31 +315,22 @@ export function useWs(
       current.onmessage = (e) => {
         if (socketRef.current !== current) return;
         resetIdle(current);
-        let msg: {
-          type?: string;
-          event?: WireEvent;
-          channelId?: string;
-          sessionId?: string;
-          lastReadEventId?: number;
-          muted?: boolean;
-          users?: UserRef[];
-          user?: UserRef;
-          prefs?: unknown;
-          seq?: unknown;
-        };
+        let raw: unknown;
         try {
-          msg = JSON.parse(e.data as string);
+          raw = JSON.parse(e.data as string);
         } catch {
           return;
         }
+        const msg = decodeWsFrame(raw);
+        if (!msg) return;
         handleWsFrameSequence(seqTracker, msg, () => cbRef.current.onOpen());
         if (isCallEvent(msg)) cbRef.current.onCall?.(msg);
         else if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
         else if (msg.type === 'presence' && msg.channelId)
           cbRef.current.onPresence(msg.channelId, msg.users ?? []);
-        else if (msg.type === 'typing' && msg.sessionId && msg.user)
+        else if (msg.type === 'typing' && 'sessionId' in msg)
           cbRef.current.onSessionTyping?.(msg.sessionId, msg.user);
-        else if (msg.type === 'typing' && msg.channelId && msg.user)
+        else if (msg.type === 'typing' && 'channelId' in msg)
           cbRef.current.onTyping?.(msg.channelId, msg.user);
         else if (
           msg.type === 'read' &&

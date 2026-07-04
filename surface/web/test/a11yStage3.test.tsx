@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useRef, useState } from 'react';
-import type { ChatMessage } from '@atrium/surface-client';
+import { DEFAULT_PREFS, type ChatMessage } from '@atrium/surface-client';
 import { Chat } from '../src/Chat';
 import { QuickSwitcher } from '../src/components/QuickSwitcher';
 import { Timeline } from '../src/components/Timeline';
@@ -189,7 +189,7 @@ describe('private channel leave confirmation', () => {
             state: {
               readCursors: { 'ch-private': 1 },
               mutes: [],
-              prefs: {},
+              prefs: DEFAULT_PREFS,
               drafts: {},
               draftDeletions: {},
               channels: [privateChannel],
