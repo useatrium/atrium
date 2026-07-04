@@ -491,6 +491,18 @@ function assignHandle(item: SessionItem, handle: string | undefined): void {
   if (handle) item.handle = handle;
 }
 
+function assignMessageId(item: TextItem, messageId: string | undefined): void {
+  if (messageId !== undefined) {
+    item.messageId = messageId;
+  } else {
+    delete item.messageId;
+  }
+}
+
+function optionalProp<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return value === undefined ? {} : ({ [key]: value } as { [P in K]?: V });
+}
+
 function upsertQuestionItem(
   state: SessionState,
   eventId: number,
@@ -656,7 +668,7 @@ function reconcileCompleteText(
   if (existing) {
     existing.text = text;
     existing.uuid = uuid;
-    existing.messageId = messageId;
+    assignMessageId(existing, messageId);
     assignHandle(existing, handle);
     existing.sourceEventIds.push(eventId);
     return;
@@ -667,7 +679,7 @@ function reconcileCompleteText(
     last.id = messageId ? `text:${messageId}` : `text:${uuid}`;
     last.text = text;
     last.uuid = uuid;
-    last.messageId = messageId;
+    assignMessageId(last, messageId);
     assignHandle(last, handle);
     last.sourceEventIds.push(eventId);
     return;
@@ -678,7 +690,7 @@ function reconcileCompleteText(
     id: messageId ? `text:${messageId}` : `text:${uuid}`,
     text,
     uuid,
-    messageId,
+    ...optionalProp("messageId", messageId),
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
@@ -1076,7 +1088,7 @@ function appendCodexStreamingText(
     type: "text",
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
-    messageId: itemId,
+    ...optionalProp("messageId", itemId),
     sourceEventIds: [eventId],
   });
 }
@@ -1103,7 +1115,7 @@ function reconcileCodexCompleteText(
     .find((item) => item.type === "text" && isOpenCodexTextItem(item)) as TextItem | undefined;
   if (lastCodexText) {
     lastCodexText.id = itemId ? `text:codex:${itemId}` : lastCodexText.id;
-    lastCodexText.messageId = itemId;
+    assignMessageId(lastCodexText, itemId);
     lastCodexText.text = text;
     assignHandle(lastCodexText, handle);
     lastCodexText.sourceEventIds.push(eventId);
@@ -1114,7 +1126,7 @@ function reconcileCodexCompleteText(
     type: "text",
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
-    messageId: itemId,
+    ...optionalProp("messageId", itemId),
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });

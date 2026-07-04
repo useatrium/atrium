@@ -1,3 +1,10 @@
+import {
+  eventIdFrom,
+  isJsonObject,
+  jsonObjectFrom,
+  parseJsonValueOrString,
+  stringField,
+} from "./schema.js";
 import type { CentaurEventFrame, JsonObject, JsonValue } from "./types.js";
 import { isTerminalExecutionStatus } from "./types.js";
 
@@ -76,13 +83,14 @@ async function* openEventStream(
   }
   url.searchParams.set("after_event_id", String(options.afterEventId ?? 0));
 
-  const response = await fetchImpl(url, {
+  const init: RequestInit = {
     headers: {
       "x-api-key": options.apiKey,
       ...cleanHeaders(options.headers?.() ?? {}),
     },
-    signal: options.signal,
-  });
+  };
+  if (options.signal !== undefined) init.signal = options.signal;
+  const response = await fetchImpl(url, init);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -169,21 +177,14 @@ function parseSseFrame(raw: string): ParsedSseFrame | null {
 
   return {
     event,
-    id,
     data: parseJsonOrString(dataLines.join("\n")),
+    ...(id !== undefined ? { id } : {}),
   };
 }
 
 function normalizeSseFrame(frame: ParsedSseFrame): CentaurEventFrame | null {
-  const data = isJsonObject(frame.data) ? frame.data : {};
-  const dataEventId = data.event_id;
-  const eventId = typeof dataEventId === "number"
-    ? dataEventId
-    : typeof dataEventId === "string" && /^\d+$/.test(dataEventId)
-      ? Number(dataEventId)
-      : frame.id && /^\d+$/.test(frame.id)
-        ? Number(frame.id)
-        : undefined;
+  const data = jsonObjectFrom(frame.data) ?? {};
+  const eventId = eventIdFrom(data.event_id) ?? eventIdFrom(frame.id);
 
   if (eventId === undefined) {
     // A malformed/id-less frame must not kill the stream: throwing here would
@@ -288,20 +289,7 @@ function terminalExecutionState(
 }
 
 function parseJsonOrString(raw: string): JsonValue {
-  try {
-    return JSON.parse(raw) as JsonValue;
-  } catch {
-    return raw;
-  }
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringField(data: JsonObject, key: string): string {
-  const value = data[key];
-  return typeof value === "string" ? value : "";
+  return parseJsonValueOrString(raw);
 }
 
 function isLegacyCentaurEvent(event: string): boolean {

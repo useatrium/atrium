@@ -29,6 +29,10 @@ importers:
         version: 8.21.0
 
   centaur-client:
+    dependencies:
+      effect:
+        specifier: ^3.21.4
+        version: 3.21.4
     devDependencies:
       '@types/node':
         specifier: 24.12.4
