@@ -1,6 +1,16 @@
 // Pure client-side timeline state. No React imports — unit tested directly.
 
+import { Schema } from 'effect';
 import { eventIdFromTarget } from './handle';
+
+const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
+const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
+
+export const UserRefSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  handle: Schema.String,
+  displayName: Schema.String,
+}));
 
 export interface UserRef {
   id: string;
@@ -26,6 +36,30 @@ export interface WireEvent {
    * advance the catch-up cursor. Never set on real server events. */
   mock?: boolean;
 }
+
+export const WireEventSchema = Schema.mutable(Schema.Struct({
+  id: Schema.Number,
+  workspaceId: Schema.String,
+  channelId: NullableStringSchema,
+  threadRootEventId: NullableNumberSchema,
+  type: Schema.String,
+  actorId: NullableStringSchema,
+  payload: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+  createdAt: Schema.String,
+  author: Schema.Union(UserRefSchema, Schema.Null),
+  replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
+  lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
+  mock: Schema.optionalWith(Schema.Boolean, { exact: true }),
+}));
+
+export const MessageHistoryResponseSchema = Schema.mutable(Schema.Struct({
+  events: Schema.mutable(Schema.Array(WireEventSchema)),
+  hasMore: Schema.Boolean,
+}));
+
+export const ThreadMessagesResponseSchema = Schema.mutable(Schema.Struct({
+  events: Schema.mutable(Schema.Array(WireEventSchema)),
+}));
 
 export function filesChangedWorkspaceId(ev: WireEvent): string | null {
   if (ev.type !== FILES_CHANGED_EVENT_TYPE) return null;

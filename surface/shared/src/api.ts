@@ -6,7 +6,7 @@ import { Option, Schema } from 'effect';
 import { ActiveCallSnapshotSchema, CallJoinSchema } from './calls';
 import type { ActiveCallSnapshot, CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
-import type { SyncResponse } from './sync';
+import { SyncResponseSchema, type SyncResponse } from './sync';
 import { SessionListResponseSchema, SessionResponseSchema } from './sessions';
 import type {
   SessionAnswerProposalResolveBody,
@@ -21,7 +21,12 @@ import type {
   SessionSuggestionResolveBody,
   SessionWire,
 } from './sessions';
-import type { UserRef, WireEvent } from './timeline';
+import {
+  MessageHistoryResponseSchema,
+  ThreadMessagesResponseSchema,
+  type UserRef,
+  type WireEvent,
+} from './timeline';
 import type { EntryReferencesResponse, NormalizedEntry } from './entry-contracts';
 import type {
   HubFileConflict,
@@ -105,6 +110,18 @@ export function decodeCallJoinResponse(input: unknown): CallJoin {
 
 export function decodeActiveCallSnapshotResponse(input: unknown): ActiveCallSnapshot {
   return decodeApiResponse(ActiveCallSnapshotSchema, input);
+}
+
+export function decodeSyncResponse(input: unknown): SyncResponse {
+  return decodeApiResponse(SyncResponseSchema, input);
+}
+
+export function decodeMessageHistoryResponse(input: unknown): { events: WireEvent[]; hasMore: boolean } {
+  return decodeApiResponse(MessageHistoryResponseSchema, input);
+}
+
+export function decodeThreadMessagesResponse(input: unknown): { events: WireEvent[] } {
+  return decodeApiResponse(ThreadMessagesResponseSchema, input);
 }
 
 export interface ApiOptions {
@@ -415,7 +432,7 @@ export function createApi(opts: ApiOptions = {}) {
     sync: (after: number, opts: { limit?: number } = {}) => {
       const q = new URLSearchParams({ after: String(after) });
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
-      return req<SyncResponse>(`/api/sync?${q.toString()}`);
+      return req<SyncResponse>(`/api/sync?${q.toString()}`, undefined, decodeSyncResponse);
     },
     createChannel: (name: string, opts: { private?: boolean } = {}) =>
       req<{ channel: Channel }>('/api/channels', {
@@ -439,7 +456,11 @@ export function createApi(opts: ApiOptions = {}) {
       if (opts.afterId !== undefined) q.set('after_id', String(opts.afterId));
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
-      return req<{ events: WireEvent[]; hasMore: boolean }>(`/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`);
+      return req<{ events: WireEvent[]; hasMore: boolean }>(
+        `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`,
+        undefined,
+        decodeMessageHistoryResponse,
+      );
     },
     markRead: (channelId: string, lastReadEventId: number, op: OpOptions = {}) =>
       req<{ lastReadEventId: number }>(`/api/channels/${channelId}/read`, {
@@ -457,7 +478,12 @@ export function createApi(opts: ApiOptions = {}) {
       const qs = q.toString();
       return req<{ items: ActivityItem[]; nextCursor: string | null }>(`/api/activity${qs ? `?${qs}` : ''}`);
     },
-    thread: (rootEventId: number) => req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`),
+    thread: (rootEventId: number) =>
+      req<{ events: WireEvent[] }>(
+        `/api/threads/${rootEventId}/messages`,
+        undefined,
+        decodeThreadMessagesResponse,
+      ),
     postMessage: (body: {
       channelId: string;
       text: string;
