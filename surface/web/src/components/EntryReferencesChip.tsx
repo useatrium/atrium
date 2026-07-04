@@ -1,23 +1,14 @@
 import { useState } from 'react';
-import { formatExactTimestamp, formatRelativeTimestamp } from '@atrium/surface-client';
+import {
+  formatExactTimestamp,
+  formatRelativeTimestamp,
+  type EntryReferenceMap,
+  type EntryReferenceSummary,
+} from '@atrium/surface-client';
 import { api } from '../api';
 
-export interface EntryReferenceItem {
-  eventId: number;
-  handle: string;
-  channelId: string;
-  threadRootEventId: number | null;
-  actorLabel: string | null;
-  excerpt: string;
-  ts: string;
-}
-
-export interface EntryReferenceSummary {
-  count: number;
-  latest: EntryReferenceItem[];
-}
-
-export type EntryReferencesByHandle = Record<string, EntryReferenceSummary>;
+export type EntryReferencesByHandle = EntryReferenceMap;
+export type { EntryReferenceSummary };
 
 export const ENTRY_REFERENCES_CHUNK_SIZE = 200;
 

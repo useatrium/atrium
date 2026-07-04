@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
+import {
+  SaveAgentProfileProposalAsNewBodySchema,
+  SaveAgentProfileProposalToCurrentBodySchema,
+} from '@atrium/surface-client/agentProfiles';
 import { config } from '../config.js';
 import type { Db, DbClient } from '../db.js';
 import { canAccessChannel, type UserRef } from '../events.js';
@@ -50,15 +54,6 @@ const SessionParamsSchema = Schema.Struct({
 const ProfileProposalParamsSchema = Schema.Struct({
   id: Schema.String,
   proposalId: Schema.String,
-});
-
-const SaveCurrentProfileBodySchema = Schema.Struct({
-  profileId: Schema.optional(Schema.Unknown),
-  name: Schema.optional(Schema.Unknown),
-});
-
-const SaveNewProfileBodySchema = Schema.Struct({
-  name: Schema.optional(Schema.Unknown),
 });
 
 const PublishAppBodySchema = Schema.Struct({
@@ -432,7 +427,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const { id, proposalId } = decodeRouteParams(ProfileProposalParamsSchema, req.params);
-    const body = decodeRouteBody(SaveCurrentProfileBodySchema, req.body);
+    const body = decodeRouteBody(SaveAgentProfileProposalToCurrentBodySchema, req.body);
     return await agentProfiles.saveProposalToCurrentProfile(user.id, id, proposalId, {
       ...(typeof body.profileId === 'string' ? { profileId: body.profileId } : {}),
       ...(typeof body.name === 'string' ? { name: body.name } : {}),
@@ -443,7 +438,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const { id, proposalId } = decodeRouteParams(ProfileProposalParamsSchema, req.params);
-    const body = decodeRouteBody(SaveNewProfileBodySchema, req.body);
+    const body = decodeRouteBody(SaveAgentProfileProposalAsNewBodySchema, req.body);
     const name = typeof body.name === 'string' ? body.name : '';
     return await agentProfiles.saveProposalToNewProfile(user.id, id, proposalId, name);
   });

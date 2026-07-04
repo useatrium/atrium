@@ -1,4 +1,47 @@
-export type AgentProfileProvider = 'codex' | 'claude-code';
+import { Schema } from 'effect';
+
+export const AgentProfileProviderSchema = Schema.Literal('codex', 'claude-code');
+export type AgentProfileProvider = Schema.Schema.Type<typeof AgentProfileProviderSchema>;
+
+export const CreateAgentProfileBodySchema = Schema.Struct({
+  provider: Schema.optional(Schema.Unknown),
+  name: Schema.optional(Schema.Unknown),
+});
+export type CreateAgentProfileBody = {
+  provider: AgentProfileProvider;
+  name: string;
+};
+
+export const AgentProfileProposalEnvelopeBodySchema = Schema.Record({
+  key: Schema.String,
+  value: Schema.Unknown,
+});
+export type AgentProfileProposalEnvelopeBody = Schema.Schema.Type<typeof AgentProfileProposalEnvelopeBodySchema>;
+
+export const CreateAgentProfileVersionBodySchema = AgentProfileProposalEnvelopeBodySchema;
+export type CreateAgentProfileVersionBody = AgentProfileProposalPayload;
+
+export const ImportLocalAgentProfileBodySchema = AgentProfileProposalEnvelopeBodySchema;
+export type ImportLocalAgentProfileBody = {
+  provider: AgentProfileProvider;
+  proposal: AgentProfileProposalPayload;
+};
+
+export const SaveAgentProfileProposalToCurrentBodySchema = Schema.Struct({
+  profileId: Schema.optional(Schema.Unknown),
+  name: Schema.optional(Schema.Unknown),
+});
+export type SaveAgentProfileProposalToCurrentBody = {
+  profileId?: string;
+  name?: string;
+};
+
+export const SaveAgentProfileProposalAsNewBodySchema = Schema.Struct({
+  name: Schema.optional(Schema.Unknown),
+});
+export type SaveAgentProfileProposalAsNewBody = {
+  name: string;
+};
 
 export type AgentProfileRiskLabel =
   | 'safe'

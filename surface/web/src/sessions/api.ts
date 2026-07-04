@@ -4,6 +4,16 @@
 // started with VITE_SESSIONS_MOCK=1; otherwise it talks to the real endpoints.
 
 import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
+import type {
+  SessionAnswerProposalResolveBody,
+  SessionAnswerQuestionBody,
+  SessionOpIdBody,
+  SessionQuestionAnswers,
+  SessionSeatGrantBody,
+  SessionSteerBody,
+  SessionSuggestionCreateBody,
+  SessionSuggestionResolveBody,
+} from '@atrium/surface-client';
 import { ApiError } from '../api';
 import { desktopApiOptions } from '../desktop';
 import { sessionsMock } from './devMock';
@@ -140,6 +150,10 @@ function withDesktopToken(path: string): string {
   return url.toString();
 }
 
+function sessionOpIdBody(opId?: string): SessionOpIdBody {
+  return opId ? { opId } : {};
+}
+
 async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await doFetch(path, init);
   return res.json() as Promise<T>;
@@ -232,30 +246,33 @@ export const sessionsApi = {
 
   sendMessage(id: string, text: string, effort?: string): Promise<void> {
     if (sessionsMock) return sessionsMock.sendMessage(id, text);
+    const body: SessionSteerBody = { text, ...(effort ? { effort } : {}) };
     return reqAccepted(`/api/sessions/${id}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ text, ...(effort ? { effort } : {}) }),
+      body: JSON.stringify(body),
     });
   },
 
   answerQuestion(
     id: string,
     questionId: string,
-    answers: Record<string, { answers: string[] }>,
+    answers: SessionQuestionAnswers,
     opId?: string,
   ): Promise<void> {
     if (sessionsMock) return sessionsMock.answerQuestion(id, questionId, answers);
+    const body: SessionAnswerQuestionBody = { questionId, answers, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/answer`, {
       method: 'POST',
-      body: JSON.stringify({ questionId, answers, ...(opId ? { opId } : {}) }),
+      body: JSON.stringify(body),
     });
   },
 
   cancel(id: string, opId?: string): Promise<void> {
     if (sessionsMock) return sessionsMock.cancel(id);
+    const body = sessionOpIdBody(opId);
     return reqAccepted(`/api/sessions/${id}/cancel`, {
       method: 'POST',
-      body: JSON.stringify(opId ? { opId } : {}),
+      body: JSON.stringify(body),
     });
   },
 
@@ -298,22 +315,25 @@ export const sessionsApi = {
 
   requestSeat(id: string): Promise<void> {
     if (sessionsMock) return sessionsMock.requestSeat(id);
-    return reqAccepted(`/api/sessions/${id}/seat/request`, { method: 'POST', body: '{}' });
+    const body: SessionOpIdBody = {};
+    return reqAccepted(`/api/sessions/${id}/seat/request`, { method: 'POST', body: JSON.stringify(body) });
   },
 
   /** Driver-only. */
   grantSeat(id: string, userId: string): Promise<void> {
     if (sessionsMock) return sessionsMock.grantSeat(id, userId);
+    const body: SessionSeatGrantBody = { userId };
     return reqAccepted(`/api/sessions/${id}/seat/grant`, {
       method: 'POST',
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify(body),
     });
   },
 
   /** Rejects with ApiError(409, 'seat_held') while the driver is watching. */
   takeSeat(id: string): Promise<void> {
     if (sessionsMock) return sessionsMock.takeSeat(id);
-    return reqAccepted(`/api/sessions/${id}/seat/take`, { method: 'POST', body: '{}' });
+    const body: SessionOpIdBody = {};
+    return reqAccepted(`/api/sessions/${id}/seat/take`, { method: 'POST', body: JSON.stringify(body) });
   },
 
   // ---- suggestion queue (Phase 2) ----
@@ -321,9 +341,10 @@ export const sessionsApi = {
   /** A watcher proposes a steer the driver later sends or dismisses. */
   createSuggestion(id: string, text: string, opId?: string): Promise<void> {
     if (sessionsMock) return sessionsMock.createSuggestion(id, text);
+    const body: SessionSuggestionCreateBody = { text, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/suggestions`, {
       method: 'POST',
-      body: JSON.stringify({ text, ...(opId ? { opId } : {}) }),
+      body: JSON.stringify(body),
     });
   },
 
@@ -336,9 +357,10 @@ export const sessionsApi = {
     opId?: string,
   ): Promise<void> {
     if (sessionsMock) return sessionsMock.resolveSuggestion(id, suggestionId, action, opts);
+    const body: SessionSuggestionResolveBody = { action, ...opts, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, ...opts, ...(opId ? { opId } : {}) }),
+      body: JSON.stringify(body),
     });
   },
 
@@ -348,13 +370,14 @@ export const sessionsApi = {
   proposeAnswer(
     id: string,
     questionId: string,
-    answers: Record<string, { answers: string[] }>,
+    answers: SessionQuestionAnswers,
     opId?: string,
   ): Promise<void> {
     if (sessionsMock) return sessionsMock.proposeAnswer(id, questionId, answers);
+    const body: SessionAnswerQuestionBody = { questionId, answers, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/question-proposals`, {
       method: 'POST',
-      body: JSON.stringify({ questionId, answers, ...(opId ? { opId } : {}) }),
+      body: JSON.stringify(body),
     });
   },
 
@@ -367,9 +390,10 @@ export const sessionsApi = {
     opId?: string,
   ): Promise<void> {
     if (sessionsMock) return sessionsMock.resolveAnswerProposal(id, proposalId, action, opts);
+    const body: SessionAnswerProposalResolveBody = { action, ...opts, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/question-proposals/${proposalId}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, ...opts, ...(opId ? { opId } : {}) }),
+      body: JSON.stringify(body),
     });
   },
 

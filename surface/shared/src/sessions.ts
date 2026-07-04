@@ -1,6 +1,6 @@
 // Session entities + pure fold helpers. No React imports — unit tested directly.
 
-import type { WireEvent } from './timeline';
+import { Schema } from 'effect';
 
 export type SessionStatus =
   | 'spawning'
@@ -126,7 +126,7 @@ export interface SessionAnswerProposal {
   authorId: string;
   authorName?: string;
   /** Same shape the answer route takes: { [questionId]: { answers } }. */
-  answers: Record<string, { answers: string[] }>;
+  answers: SessionQuestionAnswers;
   status: AnswerProposalStatus;
   /** Driver who resolved it (present once submitted/dismissed). */
   resolvedBy?: string;
@@ -239,6 +239,108 @@ export interface SessionRepoSpec {
   private?: boolean;
 }
 
+export interface SessionFoldEvent {
+  id: number;
+  workspaceId: string;
+  channelId: string | null;
+  threadRootEventId: number | null;
+  type: string;
+  actorId: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  author: {
+    id: string;
+    displayName: string;
+  } | null;
+}
+
+export interface SessionQuestionAnswers {
+  [questionId: string]: {
+    answers: string[];
+  };
+}
+
+export interface SessionAttachmentRef {
+  artifactId?: string;
+  versionSeq?: number;
+  path?: string;
+}
+
+// Loose on purpose: session interaction routes keep route-specific validation
+// messages after this boundary decode.
+export const SessionSteerBodySchema = Schema.Struct({
+  text: Schema.optional(Schema.Unknown),
+  effort: Schema.optional(Schema.Unknown),
+  attachments: Schema.optional(Schema.Unknown),
+  attachmentRefs: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+export interface SessionSteerBody {
+  text: string;
+  effort?: string;
+  attachments?: string[];
+  attachmentRefs?: SessionAttachmentRef[];
+  opId?: string;
+}
+
+export const SessionAnswerQuestionBodySchema = Schema.Struct({
+  questionId: Schema.String,
+  answers: Schema.Unknown,
+  opId: Schema.optional(Schema.Unknown),
+});
+export interface SessionAnswerQuestionBody {
+  questionId: string;
+  answers: SessionQuestionAnswers;
+  opId?: string;
+}
+
+export const SessionSeatGrantBodySchema = Schema.Struct({
+  userId: Schema.String,
+});
+export interface SessionSeatGrantBody {
+  userId: string;
+}
+
+export const SessionSuggestionCreateBodySchema = Schema.Struct({
+  text: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+export interface SessionSuggestionCreateBody {
+  text: string;
+  opId?: string;
+}
+
+export const SessionSuggestionResolveBodySchema = Schema.Struct({
+  action: Schema.Literal('send', 'dismiss'),
+  text: Schema.optional(Schema.Unknown),
+  note: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+export interface SessionSuggestionResolveBody {
+  action: 'send' | 'dismiss';
+  text?: string;
+  note?: string;
+  opId?: string;
+}
+
+export const SessionAnswerProposalResolveBodySchema = Schema.Struct({
+  action: Schema.Literal('submit', 'dismiss'),
+  note: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+export interface SessionAnswerProposalResolveBody {
+  action: 'submit' | 'dismiss';
+  note?: string;
+  opId?: string;
+}
+
+export const SessionOpIdBodySchema = Schema.Struct({
+  opId: Schema.optional(Schema.Unknown),
+});
+export interface SessionOpIdBody {
+  opId?: string;
+}
+
 /**
  * Effective driver: the server seeds driver_id with the spawner at insert, so
  * a null driverId (optimistic rows, pre-Phase-3 payloads) falls back to the
@@ -248,7 +350,7 @@ export {
   HARNESS_EFFORT_LEVELS,
   HARNESS_EFFORT_PICKER_OPTIONS,
   isSessionEffortLevel,
-} from './effort';
+} from './effort.js';
 
 export function sessionDriverId(s: Session): string {
   return s.driverId ?? s.spawnedBy;
@@ -407,7 +509,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
  */
 export function applySessionEvent(
   sessions: Record<string, Session>,
-  ev: WireEvent,
+  ev: SessionFoldEvent,
 ): Record<string, Session> {
   const p = ev.payload ?? {};
   const sessionId = typeof p.sessionId === 'string' ? p.sessionId : null;
@@ -743,9 +845,9 @@ export function applySessionEvent(
 }
 
 /** Validate a proposal's answer map: { [questionId]: { answers: string[] } }. */
-function parseProposalAnswers(value: unknown): Record<string, { answers: string[] }> | null {
+function parseProposalAnswers(value: unknown): SessionQuestionAnswers | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const out: Record<string, { answers: string[] }> = {};
+  const out: SessionQuestionAnswers = {};
   for (const [qid, entry] of Object.entries(value as Record<string, unknown>)) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
     const answers = (entry as Record<string, unknown>).answers;
@@ -756,7 +858,7 @@ function parseProposalAnswers(value: unknown): Record<string, { answers: string[
 }
 
 function questionEventFromPayload(
-  ev: WireEvent,
+  ev: SessionFoldEvent,
   questionId: string,
   kind: SessionQuestionEvent['kind'],
   details: Partial<Pick<SessionQuestionEvent, 'questions' | 'answers' | 'reason' | 'turnId'>>,

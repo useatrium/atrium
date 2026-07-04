@@ -1,10 +1,16 @@
 import { useCallback } from 'react';
-import { randomId, type AttachmentMeta, type AttachmentRef, type EnqueueOpInput } from '@atrium/surface-client';
+import {
+  randomId,
+  type AttachmentMeta,
+  type AttachmentRef,
+  type EnqueueOpInput,
+  type SessionQuestionAnswers,
+} from '@atrium/surface-client';
 
 type SessionActionType = 'session.answer' | 'session.cancel' | 'session.stop_turn' | 'session.steer';
 type SessionActionEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
 
-export type SessionQuestionAnswers = Record<string, { answers: string[] }>;
+export type { SessionQuestionAnswers } from '@atrium/surface-client';
 
 export function useSessionActions({
   clearFailedCancel,

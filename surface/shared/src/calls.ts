@@ -7,33 +7,59 @@
 //  - Media is LiveKit: clients join the room with the {token,url} the HTTP
 //    action returns; the server never proxies audio.
 
-import type { UserRef } from './timeline';
+import { Schema } from 'effect';
 
-export type CallStatus = 'ringing' | 'active' | 'ended';
+export const CallStatusSchema = Schema.Literal('ringing', 'active', 'ended');
+export type CallStatus = Schema.Schema.Type<typeof CallStatusSchema>;
 
-export interface CallWire {
-  id: string;
-  channelId: string;
-  initiatorId: string;
-  status: CallStatus;
-  startedAt: string;
+export const CallUserRefSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  handle: Schema.String,
+  displayName: Schema.String,
+}));
+type UserRef = Schema.Schema.Type<typeof CallUserRefSchema>;
+
+export const CallWireSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  channelId: Schema.String,
+  initiatorId: Schema.String,
+  status: CallStatusSchema,
+  startedAt: Schema.String,
   /** Users currently joined (joined and not yet left). */
-  participants: UserRef[];
-}
+  participants: Schema.mutable(Schema.Array(CallUserRefSchema)),
+}));
+export type CallWire = Schema.Schema.Type<typeof CallWireSchema>;
 
 /** Credentials returned from start/accept so the client can join the room. */
-export interface CallJoin {
-  call: CallWire;
+export const CallJoinSchema = Schema.mutable(Schema.Struct({
+  call: CallWireSchema,
   /** LiveKit access token (JWT) scoped to this room + the caller's identity. */
-  token: string;
+  token: Schema.String,
   /** LiveKit server ws(s):// URL the client connects to. */
-  url: string;
-}
+  url: Schema.String,
+}));
+export type CallJoin = Schema.Schema.Type<typeof CallJoinSchema>;
 
 /** Recoverable snapshot of currently live calls visible to the viewer. */
-export interface ActiveCallSnapshot {
-  calls: CallWire[];
-}
+export const ActiveCallSnapshotSchema = Schema.mutable(Schema.Struct({
+  calls: Schema.mutable(Schema.Array(CallWireSchema)),
+}));
+export type ActiveCallSnapshot = Schema.Schema.Type<typeof ActiveCallSnapshotSchema>;
+
+// Loose on purpose: the server preserves route-specific channelId/id
+// responses after this boundary decode.
+export const ActiveCallsQuerySchema = Schema.Struct({
+  channelId: Schema.optional(Schema.Unknown),
+});
+
+export const StartCallBodySchema = Schema.Struct({
+  channelId: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+export const CallIdParamsSchema = Schema.Struct({
+  id: Schema.optional(Schema.Unknown),
+});
 
 /** Server→client WS frames for call lifecycle, fanned out via the hub. */
 export type CallEvent =

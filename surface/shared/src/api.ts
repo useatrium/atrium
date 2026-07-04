@@ -5,8 +5,21 @@
 import type { ActiveCallSnapshot, CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
-import type { SessionListItem, SessionRepoSpec, SessionWire } from './sessions';
+import type {
+  SessionAnswerProposalResolveBody,
+  SessionAnswerQuestionBody,
+  SessionListItem,
+  SessionOpIdBody,
+  SessionQuestionAnswers,
+  SessionRepoSpec,
+  SessionSeatGrantBody,
+  SessionSteerBody,
+  SessionSuggestionCreateBody,
+  SessionSuggestionResolveBody,
+  SessionWire,
+} from './sessions';
 import type { UserRef, WireEvent } from './timeline';
+import type { EntryReferencesResponse, NormalizedEntry } from './entry-contracts';
 import type {
   HubFileConflict,
   HubFileDeleteResponse,
@@ -24,9 +37,12 @@ import type {
 import type {
   AgentProfile,
   AgentProfileProposal,
-  AgentProfileProposalPayload,
-  AgentProfileProvider,
   AgentProfileVersion,
+  CreateAgentProfileBody,
+  CreateAgentProfileVersionBody,
+  ImportLocalAgentProfileBody,
+  SaveAgentProfileProposalAsNewBody,
+  SaveAgentProfileProposalToCurrentBody,
 } from './agentProfiles';
 
 export interface Workspace {
@@ -148,47 +164,6 @@ export interface EntryAnnotations {
   comments: WireEvent[];
   reactions: { emoji: string; userIds: string[] }[];
 }
-export type NormalizedEntryTargetType = 'event' | 'record' | 'artifact';
-export interface NormalizedEntry {
-  handle: string;
-  kind: string;
-  actor: string | null;
-  /** Human-readable actor (display name for user actors); null when unknown. */
-  actorLabel: string | null;
-  text: string;
-  meta: Record<string, unknown>;
-  targetType: NormalizedEntryTargetType;
-  sourceRefs: string[];
-  tombstoned: boolean;
-  location: {
-    workspaceId: string;
-    channelId: string | null;
-    channelName: string | null;
-    threadRootEventId: number | null;
-    sessionId: string | null;
-    sessionTitle: string | null;
-  };
-}
-
-export interface EntryReferenceLatest {
-  eventId: number;
-  handle: string;
-  channelId: string;
-  threadRootEventId: number | null;
-  actorLabel: string | null;
-  excerpt: string;
-  ts: string;
-}
-
-export interface EntryReferencesResponse {
-  references: Record<
-    string,
-    {
-      count: number;
-      latest: EntryReferenceLatest[];
-    }
-  >;
-}
 
 export interface WebPushSubscription {
   endpoint: string;
@@ -236,6 +211,10 @@ export function createApi(opts: ApiOptions = {}) {
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
     return qs ? `?${qs}` : '';
+  }
+
+  function sessionOpIdBody(opId?: string): SessionOpIdBody {
+    return opId ? { opId } : {};
   }
 
   async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -316,17 +295,17 @@ export function createApi(opts: ApiOptions = {}) {
       });
     },
     agentProfiles: () => req<{ profiles: AgentProfile[] }>('/api/me/agent-profiles'),
-    createAgentProfile: (body: { provider: AgentProfileProvider; name: string }) =>
+    createAgentProfile: (body: CreateAgentProfileBody) =>
       req<{ profile: AgentProfile }>('/api/me/agent-profiles', {
         method: 'POST',
         body: JSON.stringify(body),
       }),
-    createAgentProfileVersion: (profileId: string, proposal: AgentProfileProposalPayload) =>
+    createAgentProfileVersion: (profileId: string, proposal: CreateAgentProfileVersionBody) =>
       req<{ version: AgentProfileVersion }>(`/api/me/agent-profiles/${profileId}/versions`, {
         method: 'POST',
         body: JSON.stringify(proposal),
       }),
-    importLocalAgentProfile: (body: { provider: AgentProfileProvider; proposal: AgentProfileProposalPayload }) =>
+    importLocalAgentProfile: (body: ImportLocalAgentProfileBody) =>
       req<{ proposal: AgentProfileProposal }>('/api/me/agent-profiles/import-local', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -348,13 +327,17 @@ export function createApi(opts: ApiOptions = {}) {
     saveSessionProfileProposalToCurrent: (
       sessionId: string,
       proposalId: string,
-      body: { profileId?: string; name?: string } = {},
+      body: SaveAgentProfileProposalToCurrentBody = {},
     ) =>
       req<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-current-profile`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
-    saveSessionProfileProposalAsNew: (sessionId: string, proposalId: string, body: { name: string }) =>
+    saveSessionProfileProposalAsNew: (
+      sessionId: string,
+      proposalId: string,
+      body: SaveAgentProfileProposalAsNewBody,
+    ) =>
       req<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-new-profile`,
         { method: 'POST', body: JSON.stringify(body) },
@@ -671,92 +654,118 @@ export function createApi(opts: ApiOptions = {}) {
         attachments?: string[];
         attachmentRefs?: AgentAttachmentRef[];
       } = {},
-    ) =>
-      req<{ ok: true }>(`/api/sessions/${id}/messages`, {
+    ) => {
+      const body: SessionSteerBody = {
+        text,
+        ...(opts.effort ? { effort: opts.effort } : {}),
+        ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
+        ...(opts.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
+        ...(op.opId ? { opId: op.opId } : {}),
+      };
+      return req<{ ok: true }>(`/api/sessions/${id}/messages`, {
         method: 'POST',
-        body: JSON.stringify({
-          text,
-          ...(opts.effort ? { effort: opts.effort } : {}),
-          ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
-          ...(opts.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
-          ...(op.opId ? { opId: op.opId } : {}),
-        }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     answerSessionQuestion: (
       id: string,
       questionId: string,
-      answers: Record<string, { answers: string[] }>,
+      answers: SessionQuestionAnswers,
       op: OpOptions = {},
-    ) =>
-      req<{ ok: true }>(`/api/sessions/${id}/answer`, {
+    ) => {
+      const body: SessionAnswerQuestionBody = { questionId, answers, ...(op.opId ? { opId: op.opId } : {}) };
+      return req<{ ok: true }>(`/api/sessions/${id}/answer`, {
         method: 'POST',
-        body: JSON.stringify({ questionId, answers, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
-    cancelSession: (id: string, op: OpOptions = {}) =>
-      req<{ ok: true }>(`/api/sessions/${id}/cancel`, {
+        body: JSON.stringify(body),
+      });
+    },
+    cancelSession: (id: string, op: OpOptions = {}) => {
+      const body = sessionOpIdBody(op.opId);
+      return req<{ ok: true }>(`/api/sessions/${id}/cancel`, {
         method: 'POST',
-        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
-      }),
-    stopTurn: (id: string, op: OpOptions = {}) =>
-      req<{ ok: true }>(`/api/sessions/${id}/stop-turn`, {
+        body: JSON.stringify(body),
+      });
+    },
+    stopTurn: (id: string, op: OpOptions = {}) => {
+      const body = sessionOpIdBody(op.opId);
+      return req<{ ok: true }>(`/api/sessions/${id}/stop-turn`, {
         method: 'POST',
-        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     // Control loop (collaborative steering): seat hand-off, the suggestion queue,
     // and answer proposals. Endpoints already exist server-side (web uses them);
     // these expose them on the shared client so mobile can reach them too.
-    requestSeat: (id: string, op: OpOptions = {}) =>
-      req<{ ok: true }>(`/api/sessions/${id}/seat/request`, {
+    requestSeat: (id: string, op: OpOptions = {}) => {
+      const body = sessionOpIdBody(op.opId);
+      return req<{ ok: true }>(`/api/sessions/${id}/seat/request`, {
         method: 'POST',
-        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
-      }),
-    grantSeat: (id: string, userId: string, op: OpOptions = {}) =>
-      req<{ ok: true }>(`/api/sessions/${id}/seat/grant`, {
+        body: JSON.stringify(body),
+      });
+    },
+    grantSeat: (id: string, userId: string, op: OpOptions = {}) => {
+      const body: SessionSeatGrantBody & SessionOpIdBody = { userId, ...(op.opId ? { opId: op.opId } : {}) };
+      return req<{ ok: true }>(`/api/sessions/${id}/seat/grant`, {
         method: 'POST',
-        body: JSON.stringify({ userId, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
-    takeSeat: (id: string, op: OpOptions = {}) =>
-      req<{ ok: true }>(`/api/sessions/${id}/seat/take`, {
+        body: JSON.stringify(body),
+      });
+    },
+    takeSeat: (id: string, op: OpOptions = {}) => {
+      const body = sessionOpIdBody(op.opId);
+      return req<{ ok: true }>(`/api/sessions/${id}/seat/take`, {
         method: 'POST',
-        body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
-      }),
-    createSuggestion: (id: string, text: string, op: OpOptions = {}) =>
-      req<{ ok: true }>(`/api/sessions/${id}/suggestions`, {
+        body: JSON.stringify(body),
+      });
+    },
+    createSuggestion: (id: string, text: string, op: OpOptions = {}) => {
+      const body: SessionSuggestionCreateBody = { text, ...(op.opId ? { opId: op.opId } : {}) };
+      return req<{ ok: true }>(`/api/sessions/${id}/suggestions`, {
         method: 'POST',
-        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     resolveSuggestion: (
       id: string,
       suggestionId: string,
       action: 'send' | 'dismiss',
       opts: { text?: string; note?: string } = {},
       op: OpOptions = {},
-    ) =>
-      req<{ ok: true }>(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
+    ) => {
+      const body: SessionSuggestionResolveBody = { action, ...opts, ...(op.opId ? { opId: op.opId } : {}) };
+      return req<{ ok: true }>(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
         method: 'POST',
-        body: JSON.stringify({ action, ...opts, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     proposeAnswer: (
       id: string,
       questionId: string,
-      answers: Record<string, { answers: string[] }>,
+      answers: SessionQuestionAnswers,
       op: OpOptions = {},
-    ) =>
-      req<{ ok: true }>(`/api/sessions/${id}/question-proposals`, {
+    ) => {
+      const body: SessionAnswerQuestionBody = { questionId, answers, ...(op.opId ? { opId: op.opId } : {}) };
+      return req<{ ok: true }>(`/api/sessions/${id}/question-proposals`, {
         method: 'POST',
-        body: JSON.stringify({ questionId, answers, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     resolveAnswerProposal: (
       id: string,
       proposalId: string,
       action: 'submit' | 'dismiss',
       opts: { note?: string } = {},
       op: OpOptions = {},
-    ) =>
-      req<{ ok: true }>(`/api/sessions/${id}/question-proposals/${proposalId}/resolve`, {
+    ) => {
+      const body: SessionAnswerProposalResolveBody = {
+        action,
+        ...opts,
+        ...(op.opId ? { opId: op.opId } : {}),
+      };
+      return req<{ ok: true }>(`/api/sessions/${id}/question-proposals/${proposalId}/resolve`, {
         method: 'POST',
-        body: JSON.stringify({ action, ...opts, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     // === session-search additions (#72) ===
     searchSessions: (opts: { q: string; kinds?: string[]; full?: boolean; limit?: number }) => {
       const q = new URLSearchParams({ q: opts.q, full: opts.full ? '1' : '0' });

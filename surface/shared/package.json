@@ -9,8 +9,11 @@
     ".": "./src/index.ts",
     "./handle": "./src/handle.ts",
     "./prefs": "./src/prefs.ts",
+    "./calls": "./src/calls.ts",
+    "./sessions": "./src/sessions.ts",
     "./agentProfiles": "./src/agentProfiles.ts",
-    "./effort": "./src/effort.ts"
+    "./effort": "./src/effort.ts",
+    "./entry-contracts": "./src/entry-contracts.ts"
   },
   "scripts": {
     "test": "vitest run",

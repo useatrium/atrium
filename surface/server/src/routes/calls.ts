@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { Schema } from 'effect';
+import {
+  ActiveCallsQuerySchema,
+  CallIdParamsSchema,
+  StartCallBodySchema,
+} from '@atrium/surface-client/calls';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
 import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
@@ -11,19 +15,6 @@ import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
 import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
-
-const ActiveCallsQuerySchema = Schema.Struct({
-  channelId: Schema.optional(Schema.Unknown),
-});
-
-const StartCallBodySchema = Schema.Struct({
-  channelId: Schema.optional(Schema.Unknown),
-  opId: Schema.optional(Schema.Unknown),
-});
-
-const CallIdParamsSchema = Schema.Struct({
-  id: Schema.optional(Schema.Unknown),
-});
 
 export interface CallRouteDeps {
   pool: Db;

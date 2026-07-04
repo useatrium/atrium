@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
+import { EntryReferencesQueryBodySchema } from '@atrium/surface-client/entry-contracts';
 import type { Db, DbClient } from '../db.js';
 import {
   foldAnnotations,
@@ -16,10 +17,6 @@ import { searchSessionRecords } from '../session-search.js';
 
 const EntryHandleParamsSchema = Schema.Struct({
   handle: Schema.optional(Schema.Unknown),
-});
-
-const EntryReferencesQueryBodySchema = Schema.Struct({
-  handles: Schema.optional(Schema.Unknown),
 });
 
 const EntryReactionBodySchema = Schema.Struct({
