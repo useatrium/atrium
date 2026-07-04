@@ -7,6 +7,7 @@ import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './sessions';
 import type { UserRef, WireEvent } from './timeline';
+import type { EntryReferencesResponse, NormalizedEntry } from './entry-contracts';
 import type {
   HubFileConflict,
   HubFileDeleteResponse,
@@ -147,47 +148,6 @@ export interface AgentAttachmentRef {
 export interface EntryAnnotations {
   comments: WireEvent[];
   reactions: { emoji: string; userIds: string[] }[];
-}
-export type NormalizedEntryTargetType = 'event' | 'record' | 'artifact';
-export interface NormalizedEntry {
-  handle: string;
-  kind: string;
-  actor: string | null;
-  /** Human-readable actor (display name for user actors); null when unknown. */
-  actorLabel: string | null;
-  text: string;
-  meta: Record<string, unknown>;
-  targetType: NormalizedEntryTargetType;
-  sourceRefs: string[];
-  tombstoned: boolean;
-  location: {
-    workspaceId: string;
-    channelId: string | null;
-    channelName: string | null;
-    threadRootEventId: number | null;
-    sessionId: string | null;
-    sessionTitle: string | null;
-  };
-}
-
-export interface EntryReferenceLatest {
-  eventId: number;
-  handle: string;
-  channelId: string;
-  threadRootEventId: number | null;
-  actorLabel: string | null;
-  excerpt: string;
-  ts: string;
-}
-
-export interface EntryReferencesResponse {
-  references: Record<
-    string,
-    {
-      count: number;
-      latest: EntryReferenceLatest[];
-    }
-  >;
 }
 
 export interface WebPushSubscription {

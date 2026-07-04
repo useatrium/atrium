@@ -7,6 +7,8 @@ import {
   tryDecodeHandle as tryDecodeBaseHandle,
   type EntryHandle as BaseEntryHandle,
 } from '@atrium/surface-client/handle';
+import type { EntryReferencesResponse, NormalizedEntry } from '@atrium/surface-client/entry-contracts';
+export type { EntryReferencesResponse, NormalizedEntry } from '@atrium/surface-client/entry-contracts';
 export {
   encodeEventHandle,
   encodeRecordHandle,
@@ -60,29 +62,6 @@ export function tryDecodeHandle(handle: string): EntryHandle | null {
   return tryDecodeBaseHandle(handle);
 }
 
-export type NormalizedEntryTargetType = 'event' | 'record' | 'artifact';
-
-export interface NormalizedEntry {
-  handle: string;
-  kind: string;
-  actor: string | null;
-  /** Human-readable actor (display name for user actors); null when unknown. */
-  actorLabel: string | null;
-  text: string;
-  meta: Record<string, unknown>;
-  targetType: NormalizedEntryTargetType;
-  sourceRefs: string[];
-  tombstoned: boolean;
-  location: {
-    workspaceId: string;
-    channelId: string | null;
-    channelName: string | null;
-    threadRootEventId: number | null;
-    sessionId: string | null;
-    sessionTitle: string | null;
-  };
-}
-
 interface EventResolveRow {
   id: number;
   workspace_id: string;
@@ -117,26 +96,6 @@ interface ArtifactResolveRow {
   channel_name: string | null;
   path: string;
   tombstoned_at: Date | string | null;
-}
-
-export interface EntryReferenceLatest {
-  eventId: number;
-  handle: string;
-  channelId: string;
-  threadRootEventId: number | null;
-  actorLabel: string | null;
-  excerpt: string;
-  ts: string;
-}
-
-export interface EntryReferencesResponse {
-  references: Record<
-    string,
-    {
-      count: number;
-      latest: EntryReferenceLatest[];
-    }
-  >;
 }
 
 interface EntryReferenceQueryRow {

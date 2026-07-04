@@ -18,6 +18,7 @@ export * from './drafts';
 export * from './catchup';
 export * from './prefs';
 export * from './handle';
+export * from './entry-contracts';
 export * from './useWs';
 export * from './util';
 export * from './agentProfiles';
