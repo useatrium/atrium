@@ -19,7 +19,7 @@ This is the source map for the Atrium + Centaur OVH box. It is meant to answer
 | Atrium local Centaur overrides | `infra/values.local.yaml` | Yes | Shared simple/env-mode overrides. Some comments are local-dev oriented. |
 | Box Centaur overrides | `deploy/values.box.yaml` | Yes | Primary committed source for the OVH box's Centaur shape. |
 | Centaur secrets | Kubernetes secret `centaur-infra-env` in namespace `centaur` | No | Env-mode secret manager. Audit key names only. |
-| Centaur image tags | Set by `deploy/redeploy.sh` during Helm upgrade | Yes, via script | Images are pushed to `localhost:5000/library/*:<sha>`. Console uses `latest`. |
+| Centaur image tags | Set by `deploy/redeploy.sh` during Helm upgrade | Yes, via script | Images are pushed to `localhost:5000/library/*:<sha>`, including console and console-worker. |
 | Local registry | `deploy/setup-registry.sh` | Yes | One-time k3s registry mirror setup. |
 | Tunnels/DNS | cloudflared/system config on the box | No | Keep operational notes in the runbook; do not commit credentials. |
 
@@ -33,10 +33,11 @@ helm upgrade --install centaur centaur/contrib/chart \
   -f centaur/contrib/chart/values.dev.yaml \
   -f infra/values.local.yaml \
   -f deploy/values.box.yaml \
-  --set 'apiRs.image.tag=<sha>' \
-  --set 'sandbox.image.tag=<sha>' \
-  --set 'ironProxy.image.tag=<sha>' \
-  --set 'nodeSync.image.tag=<sha>'
+  --set-string 'apiRs.image.tag=<sha>' \
+  --set-string 'sandbox.image.tag=<sha>' \
+  --set-string 'ironProxy.image.tag=<sha>' \
+  --set-string 'nodeSync.image.tag=<sha>' \
+  --set-string 'console.image.tag=<sha>'
 ```
 
 Later layers win. `deploy/values.box.yaml` should explain every intentional
