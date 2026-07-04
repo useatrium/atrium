@@ -1648,6 +1648,7 @@ export function Chat({
           onConnectGitHub={() => setConnectionDialog('github')}
           agentProfiles={agentProfiles}
           onDiscussEntry={openDiscussThread}
+          onApiError={onApiError}
           initialEntryHandle={pendingEntryHandle?.startsWith('rec_') ? pendingEntryHandle : null}
         />
       ) : state.openSessionId ? (

@@ -394,9 +394,9 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
         opId,
         opType: 'session.stop_turn',
         body: { sessionId: id },
-        fn: async () => ({ ok: true as const }),
-        onApplied: () => {
-          sessionRuns.interruptTurn(id, user.id).catch(() => {});
+        fn: async () => {
+          await sessionRuns.interruptTurn(id, user.id);
+          return { ok: true as const };
         },
       });
     } else {

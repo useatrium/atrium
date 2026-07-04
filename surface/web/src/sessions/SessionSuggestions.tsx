@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { randomId } from '@atrium/surface-client';
+import { ApiError } from '../api';
 import { sessionsApi } from './api';
 import type { SessionSuggestion } from './types';
 
@@ -13,11 +14,13 @@ export function SuggestionStrip({
   suggestions,
   isDriver,
   nameFor,
+  onActionError = () => {},
 }: {
   sessionId: string;
   suggestions: SessionSuggestion[];
   isDriver: boolean;
   nameFor: (id: string | null) => string;
+  onActionError?: (err: unknown) => void;
 }) {
   return (
     <div
@@ -35,6 +38,7 @@ export function SuggestionStrip({
             suggestion={suggestion}
             isDriver={isDriver}
             authorName={suggestion.authorName ?? nameFor(suggestion.authorId)}
+            onActionError={onActionError}
           />
         ))}
       </div>
@@ -47,11 +51,13 @@ function SuggestionRow({
   suggestion,
   isDriver,
   authorName,
+  onActionError,
 }: {
   sessionId: string;
   suggestion: SessionSuggestion;
   isDriver: boolean;
   authorName: string;
+  onActionError: (err: unknown) => void;
 }) {
   const [mode, setMode] = useState<'idle' | 'editing' | 'dismissing'>('idle');
   const [draft, setDraft] = useState(suggestion.text);
@@ -75,9 +81,11 @@ function SuggestionRow({
     setError(null);
     sessionsApi
       .resolveSuggestion(sessionId, suggestion.id, action, opts, randomId())
-      .catch(() =>
-        setError(action === 'send' ? "Couldn't send — try again." : "Couldn't dismiss — try again."),
-      )
+      .catch((err: unknown) => {
+        onActionError(err);
+        const fallback = action === 'send' ? "Couldn't send — try again." : "Couldn't dismiss — try again.";
+        setError(err instanceof ApiError && err.message ? err.message : fallback);
+      })
       .finally(() => setBusy(false));
   };
 

@@ -35,6 +35,14 @@ export interface ReleaseResponse {
   [key: string]: JsonValue | undefined;
 }
 
+export interface InterruptTurnResponse {
+  ok?: boolean;
+  interrupted?: boolean;
+  execution_id?: string | null;
+  error?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
 export interface ExecutionResponse {
   execution_id?: string;
   status?: string;
@@ -215,8 +223,25 @@ export class CentaurClient {
     });
   }
 
-  interruptTurn(threadKey: string): Promise<Record<string, JsonValue | undefined>> {
-    return this.request("POST", `/api/session/${encodeURIComponent(threadKey)}/interrupt`, {});
+  interruptTurn(threadKey: string): Promise<InterruptTurnResponse> {
+    const path = `/api/session/${encodeURIComponent(threadKey)}/interrupt`;
+    return this.request<InterruptTurnResponse>("POST", path, {}).then((response) => {
+      if (response.ok === false) {
+        const error = typeof response.error === "string" && response.error.length > 0
+          ? response.error
+          : "unknown interrupt failure";
+        throw new CentaurApiError({
+          method: "POST",
+          path,
+          status: 502,
+          statusText: "Bad Gateway",
+          text: `interrupt failed: ${error}`,
+          code: "centaur_interrupt_failed",
+          body: response,
+        });
+      }
+      return response;
+    });
   }
 
   getExecution(executionId: string): Promise<ExecutionResponse> {

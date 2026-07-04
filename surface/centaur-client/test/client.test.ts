@@ -237,6 +237,23 @@ describe("CentaurClient endpoint paths", () => {
     );
   });
 
+  it("rejects turn interrupts when api-rs reports an interrupt failure", async () => {
+    const client = new CentaurClient({
+      baseUrl: "http://centaur.test:8000",
+      apiKey: "k",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ ok: false, interrupted: false, error: "signal failed" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+
+    await expect(client.interruptTurn("thread:1")).rejects.toMatchObject({
+      status: 502,
+      code: "centaur_interrupt_failed",
+    });
+  });
+
   it("maps question answers onto the api-rs execution answer endpoint", async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
