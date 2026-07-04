@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import { config } from '../config.js';
 import type { Db, DbClient } from '../db.js';
 import { canAccessChannel, type UserRef } from '../events.js';
@@ -15,8 +16,64 @@ import {
   resolveAgentTurnAttachments,
   type AgentTurnAttachmentRef,
 } from '../session-attachments.js';
+import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 
 type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
+
+const SessionSpawnBodySchema = Schema.Struct({
+  channelId: Schema.optional(Schema.Unknown),
+  threadRootEventId: Schema.optional(Schema.Unknown),
+  task: Schema.optional(Schema.Unknown),
+  harness: Schema.optional(Schema.Unknown),
+  repo: Schema.optional(Schema.Unknown),
+  branch: Schema.optional(Schema.Unknown),
+  repos: Schema.optional(Schema.Unknown),
+  githubIdentityMode: Schema.optional(Schema.Unknown),
+  githubIdentityId: Schema.optional(Schema.Unknown),
+  agentProfileId: Schema.optional(Schema.Unknown),
+  agentProfileVersionId: Schema.optional(Schema.Unknown),
+  attachments: Schema.optional(Schema.Unknown),
+  attachmentRefs: Schema.optional(Schema.Unknown),
+  clientSpawnId: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SessionListQuerySchema = Schema.Struct({
+  status: Schema.optional(Schema.Unknown),
+  limit: Schema.optional(Schema.Unknown),
+});
+
+const SessionParamsSchema = Schema.Struct({
+  id: Schema.String,
+});
+
+const ProfileProposalParamsSchema = Schema.Struct({
+  id: Schema.String,
+  proposalId: Schema.String,
+});
+
+const SaveCurrentProfileBodySchema = Schema.Struct({
+  profileId: Schema.optional(Schema.Unknown),
+  name: Schema.optional(Schema.Unknown),
+});
+
+const SaveNewProfileBodySchema = Schema.Struct({
+  name: Schema.optional(Schema.Unknown),
+});
+
+const PublishAppBodySchema = Schema.Struct({
+  name: Schema.optional(Schema.Unknown),
+  entry: Schema.optional(Schema.Unknown),
+  scope: Schema.optional(Schema.Unknown),
+});
+
+const AppLaunchParamsSchema = Schema.Struct({
+  appId: Schema.String,
+});
+
+const AppLaunchBodySchema = Schema.Struct({
+  version: Schema.optional(Schema.Unknown),
+});
 
 export interface SessionRouteDeps {
   pool: Db;
@@ -63,23 +120,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/api/sessions', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as {
-      channelId?: string;
-      threadRootEventId?: number;
-      task?: string;
-      harness?: string;
-      repo?: string;
-      branch?: string;
-      repos?: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[];
-      githubIdentityMode?: unknown;
-      githubIdentityId?: unknown;
-      agentProfileId?: string;
-      agentProfileVersionId?: string;
-      attachments?: unknown;
-      attachmentRefs?: unknown;
-      clientSpawnId?: unknown;
-      opId?: unknown;
-    };
+    const body = decodeRouteBody(SessionSpawnBodySchema, req.body);
     const opId = optionalOpId(body);
     const task = typeof body.task === 'string' ? body.task : '';
     const repo =
@@ -341,7 +382,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.get('/api/sessions', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const q = req.query as { status?: string; limit?: string };
+    const q = decodeRouteQuery(SessionListQuerySchema, req.query);
     const status =
       q.status === 'running' || q.status === 'recent' || q.status === 'all'
         ? q.status
@@ -362,36 +403,36 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.get('/api/sessions/:id', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
     return { session: await sessionRuns.getSessionForUser(id, user.id) };
   });
 
   app.get('/api/sessions/:id/profile-change-proposals', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
     return { proposals: await agentProfiles.listSessionProposals(id, user.id) };
   });
 
   app.post('/api/sessions/:id/profile-change-proposals/:proposalId/discard', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    const { id, proposalId } = decodeRouteParams(ProfileProposalParamsSchema, req.params);
     return { proposal: await agentProfiles.discardProposal(user.id, id, proposalId) };
   });
 
   app.post('/api/sessions/:id/profile-change-proposals/:proposalId/apply-lineage', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
+    const { id, proposalId } = decodeRouteParams(ProfileProposalParamsSchema, req.params);
     return { proposal: await agentProfiles.applyProposalToLineage(user.id, id, proposalId) };
   });
 
   app.post('/api/sessions/:id/profile-change-proposals/:proposalId/save-current-profile', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    const body = (req.body ?? {}) as { profileId?: unknown; name?: unknown };
+    const { id, proposalId } = decodeRouteParams(ProfileProposalParamsSchema, req.params);
+    const body = decodeRouteBody(SaveCurrentProfileBodySchema, req.body);
     return await agentProfiles.saveProposalToCurrentProfile(user.id, id, proposalId, {
       ...(typeof body.profileId === 'string' ? { profileId: body.profileId } : {}),
       ...(typeof body.name === 'string' ? { name: body.name } : {}),
@@ -401,8 +442,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/api/sessions/:id/profile-change-proposals/:proposalId/save-new-profile', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id, proposalId } = req.params as { id: string; proposalId: string };
-    const body = (req.body ?? {}) as { name?: unknown };
+    const { id, proposalId } = decodeRouteParams(ProfileProposalParamsSchema, req.params);
+    const body = decodeRouteBody(SaveNewProfileBodySchema, req.body);
     const name = typeof body.name === 'string' ? body.name : '';
     return await agentProfiles.saveProposalToNewProfile(user.id, id, proposalId, name);
   });
@@ -410,7 +451,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.get('/api/sessions/:id/record', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
     const record = await sessionRuns.getSessionRecord(id);
     record.artifacts = record.artifacts.map((artifact) => ({
       ...artifact,
@@ -422,8 +463,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/api/sessions/:id/apps', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { name?: unknown; entry?: unknown; scope?: unknown };
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
+    const body = decodeRouteBody(PublishAppBodySchema, req.body);
     if (typeof body.name !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'name is required' });
     }
@@ -452,8 +493,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/api/apps/:appId/launch', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { appId } = req.params as { appId: string };
-    const body = (req.body ?? {}) as { version?: unknown };
+    const { appId } = decodeRouteParams(AppLaunchParamsSchema, req.params);
+    const body = decodeRouteBody(AppLaunchBodySchema, req.body);
     const version = body.version == null ? undefined : Number(body.version);
     if (version !== undefined && (!Number.isSafeInteger(version) || version <= 0)) {
       return reply.code(400).send({ error: 'bad_request', message: 'version must be a positive integer' });
@@ -462,25 +503,25 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   });
 }
 
-function normalizeSessionRepos(
-  repos: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined,
-): { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined {
+function normalizeSessionRepos(repos: unknown): unknown[] | undefined {
   if (!Array.isArray(repos)) return undefined;
   return repos.map((entry) => {
-    if (typeof entry?.repo !== 'string') return entry;
-    const repo = entry.repo.trim();
-    return { ...entry, repo: normalizeGitHubRepoInput(repo) ?? repo };
+    if (!entry || typeof entry !== 'object') return entry;
+    const record = entry as Record<string, unknown>;
+    if (typeof record.repo !== 'string') return entry;
+    const repo = record.repo.trim();
+    return { ...record, repo: normalizeGitHubRepoInput(repo) ?? repo };
   });
 }
 
-function privateGitHubRepos(
-  reposInput: { repo?: unknown; ref?: unknown; subdir?: unknown; private?: unknown }[] | undefined,
-): string[] {
+function privateGitHubRepos(reposInput: unknown): string[] {
   if (!Array.isArray(reposInput)) return [];
   const repos = new Set<string>();
   for (const repo of reposInput) {
-    if (repo?.private !== true || typeof repo.repo !== 'string') continue;
-    const normalized = repo.repo.trim();
+    if (!repo || typeof repo !== 'object') continue;
+    const record = repo as Record<string, unknown>;
+    if (record.private !== true || typeof record.repo !== 'string') continue;
+    const normalized = record.repo.trim();
     if (normalized) repos.add(normalized);
   }
   return [...repos];

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import { ArtifactLedger } from '../artifact-ledger.js';
 import { normalizeMime } from '../artifact-route-utils.js';
 import { writeBackArtifactById } from '../artifact-writeback.js';
@@ -13,6 +14,7 @@ import {
   type FeedbackIntent,
 } from '../markup-feedback.js';
 import { getObjectBytes, headObject, uploadObject } from '../s3.js';
+import { decodeRouteBody, decodeRouteParams } from '../route-schema.js';
 import type { SessionRuns } from '../session-runs.js';
 
 export interface MarkupFeedbackRouteDeps {
@@ -41,6 +43,20 @@ interface FeedbackBody {
   opId?: unknown;
 }
 
+const FeedbackParamsSchema = Schema.Struct({
+  artifactId: Schema.optional(Schema.Unknown),
+});
+
+const FeedbackBodySchema = Schema.Struct({
+  mode: Schema.optional(Schema.Unknown),
+  content: Schema.optional(Schema.Unknown),
+  baseSeq: Schema.optional(Schema.Unknown),
+  sessionId: Schema.optional(Schema.Unknown),
+  note: Schema.optional(Schema.Unknown),
+  intent: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f-]{36}$/i.test(value);
 }
@@ -65,12 +81,12 @@ export async function registerMarkupFeedbackRoutes(
   app.post('/api/files/:artifactId/feedback', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { artifactId } = req.params as { artifactId: string };
-    if (!isUuid(artifactId)) {
+    const { artifactId } = decodeRouteParams(FeedbackParamsSchema, req.params);
+    if (typeof artifactId !== 'string' || !isUuid(artifactId)) {
       return reply.code(404).send({ error: 'not_found' });
     }
 
-    const body = (req.body ?? {}) as FeedbackBody;
+    const body: FeedbackBody = decodeRouteBody(FeedbackBodySchema, req.body);
     const applyMode = body.mode === 'apply';
     if (body.mode != null && !applyMode) {
       return reply.code(400).send({ error: 'bad_request', message: 'mode must be apply when provided' });

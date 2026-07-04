@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
 import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
@@ -9,6 +10,20 @@ import type { CallTokenService } from '../livekit.js';
 import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
 import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
+import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
+
+const ActiveCallsQuerySchema = Schema.Struct({
+  channelId: Schema.optional(Schema.Unknown),
+});
+
+const StartCallBodySchema = Schema.Struct({
+  channelId: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const CallIdParamsSchema = Schema.Struct({
+  id: Schema.optional(Schema.Unknown),
+});
 
 export interface CallRouteDeps {
   pool: Db;
@@ -87,7 +102,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   app.get('/api/calls/active', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { channelId } = req.query as { channelId?: unknown };
+    const { channelId } = decodeRouteQuery(ActiveCallsQuerySchema, req.query);
     if (channelId !== undefined && typeof channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId must be a string' });
     }
@@ -100,7 +115,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   app.post('/api/calls', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { channelId?: unknown; opId?: unknown };
+    const body = decodeRouteBody(StartCallBodySchema, req.body);
     const opId = optionalOpId(body);
     if (typeof body.channelId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'channelId required' });
@@ -209,7 +224,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   app.post('/api/calls/:id/accept', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
     if (!calls) return callsUnconfigured(reply);
 
@@ -259,7 +274,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   app.post('/api/calls/:id/decline', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
     if (!calls) return callsUnconfigured(reply);
 
@@ -295,7 +310,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   app.post('/api/calls/:id/leave', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { id } = req.params as { id: string };
+    const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
     if (!calls) return callsUnconfigured(reply);
 
