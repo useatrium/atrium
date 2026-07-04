@@ -4,6 +4,7 @@
 // started with VITE_SESSIONS_MOCK=1; otherwise it talks to the real endpoints.
 
 import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
+import { decodeSessionListResponse, decodeSessionResponse } from '@atrium/surface-client';
 import type {
   SessionAnswerProposalResolveBody,
   SessionAnswerQuestionBody,
@@ -154,8 +155,19 @@ function sessionOpIdBody(opId?: string): SessionOpIdBody {
   return opId ? { opId } : {};
 }
 
-async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {
+type ResponseDecoder<T> = (input: unknown) => T;
+
+async function reqJson<T>(path: string, init?: RequestInit, decode?: ResponseDecoder<T>): Promise<T> {
   const res = await doFetch(path, init);
+  if (decode) {
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      throw new ApiError(502, 'bad_response', 'invalid server response');
+    }
+    return decode(body);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -226,12 +238,12 @@ export const sessionsApi = {
     return reqJson<{ session: SessionWire }>('/api/sessions', {
       method: 'POST',
       body: JSON.stringify(body),
-    });
+    }, decodeSessionResponse);
   },
 
   get(id: string): Promise<{ session: SessionWire }> {
     if (sessionsMock) return sessionsMock.getSession(id);
-    return reqJson<{ session: SessionWire }>(`/api/sessions/${id}`);
+    return reqJson<{ session: SessionWire }>(`/api/sessions/${id}`, undefined, decodeSessionResponse);
   },
 
   list(opts: { status?: 'running' | 'recent' | 'all'; limit?: number } = {}): Promise<{
@@ -241,7 +253,11 @@ export const sessionsApi = {
     if (opts.status) q.set('status', opts.status);
     if (opts.limit !== undefined) q.set('limit', String(opts.limit));
     const qs = q.toString();
-    return reqJson<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
+    return reqJson<{ sessions: SessionListItem[] }>(
+      `/api/sessions${qs ? `?${qs}` : ''}`,
+      undefined,
+      decodeSessionListResponse,
+    );
   },
 
   sendMessage(id: string, text: string, effort?: string): Promise<void> {
