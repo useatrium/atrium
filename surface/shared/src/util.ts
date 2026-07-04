@@ -94,6 +94,43 @@ export function initials(name: string): string {
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
 }
 
+function parseValidDate(iso: string): Date | null {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatExactTimestamp(iso: string): string {
+  const date = parseValidDate(iso);
+  if (!date) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  }).format(date);
+}
+
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+export function formatRelativeTimestamp(iso: string, now: Date = new Date()): string {
+  const date = parseValidDate(iso);
+  if (!date || Number.isNaN(now.getTime())) return '';
+  const elapsedMs = Math.max(0, now.getTime() - date.getTime());
+  if (elapsedMs < MINUTE_MS) return 'just now';
+  const minutes = Math.floor(elapsedMs / MINUTE_MS);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(elapsedMs / HOUR_MS);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(elapsedMs / DAY_MS);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }

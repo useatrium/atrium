@@ -2,6 +2,7 @@ import { Text, View } from 'react-native';
 import { containsCriticMarkup, formatTurnTime, parseMarkupSteer } from '@atrium/surface-client';
 import { font, space, useTheme } from '../../lib/theme';
 import { CriticMarkupText } from '../CriticMarkupText';
+import { TimestampText } from '../TimestampText';
 import { MarkupSteerCard } from './MarkupSteerCard';
 
 /**
@@ -22,12 +23,12 @@ export function SteerRow({ text, ts }: { text: string; ts?: string }) {
         style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
       >
         {time ? (
-          <Text
+          <TimestampText
+            iso={ts!}
+            text={time}
             testID="steer-time"
             style={{ color: colors.textMuted, fontSize: font.xs, fontVariant: ['tabular-nums'] }}
-          >
-            {time}
-          </Text>
+          />
         ) : null}
         {markupSteer ? <MarkupSteerCard steer={markupSteer} /> : <CriticMarkupText text={text} />}
       </View>
@@ -40,12 +41,12 @@ export function SteerRow({ text, ts }: { text: string; ts?: string }) {
       style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
     >
       {time ? (
-        <Text
+        <TimestampText
+          iso={ts!}
+          text={time}
           testID="steer-time"
           style={{ color: colors.textMuted, fontSize: font.xs, fontVariant: ['tabular-nums'] }}
-        >
-          {time}
-        </Text>
+        />
       ) : null}
       <Text style={{ color: colors.text, fontSize: font.sm }}>{text}</Text>
     </View>

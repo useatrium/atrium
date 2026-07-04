@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { channelAvatarName, channelLabel, initials } from '../src/util.js';
+import {
+  channelAvatarName,
+  channelLabel,
+  formatExactTimestamp,
+  formatRelativeTimestamp,
+  initials,
+} from '../src/util.js';
 
 describe('initials', () => {
   it('keeps existing plain-name behavior', () => {
@@ -74,5 +80,56 @@ describe('channelAvatarName', () => {
         'u1',
       ),
     ).toBe('Ben, Cara');
+  });
+});
+
+describe('formatExactTimestamp', () => {
+  it('formats a local date and time with a timezone name', () => {
+    const iso = '2026-01-02T15:04:05.000Z';
+    expect(formatExactTimestamp(iso)).toBe(
+      new Intl.DateTimeFormat(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short',
+      }).format(new Date(iso)),
+    );
+  });
+
+  it('returns an empty string for invalid timestamps', () => {
+    expect(formatExactTimestamp('not-a-date')).toBe('');
+  });
+});
+
+describe('formatRelativeTimestamp', () => {
+  const now = new Date('2026-07-03T12:00:00.000Z');
+
+  it('formats compact relative timestamps', () => {
+    expect(formatRelativeTimestamp('2026-07-03T11:59:31.000Z', now)).toBe('just now');
+    expect(formatRelativeTimestamp('2026-07-03T11:59:00.000Z', now)).toBe('1m ago');
+    expect(formatRelativeTimestamp('2026-07-03T11:01:00.000Z', now)).toBe('59m ago');
+    expect(formatRelativeTimestamp('2026-07-03T11:00:00.000Z', now)).toBe('1h ago');
+    expect(formatRelativeTimestamp('2026-07-02T13:00:00.000Z', now)).toBe('23h ago');
+    expect(formatRelativeTimestamp('2026-07-02T12:00:00.000Z', now)).toBe('1d ago');
+    expect(formatRelativeTimestamp('2026-06-27T12:00:00.000Z', now)).toBe('6d ago');
+  });
+
+  it('falls back to month and day for older timestamps', () => {
+    const iso = '2026-06-26T12:00:00.000Z';
+    expect(formatRelativeTimestamp(iso, now)).toBe(
+      new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    );
+  });
+
+  it('treats future timestamps as just now', () => {
+    expect(formatRelativeTimestamp('2026-07-03T12:00:30.000Z', now)).toBe('just now');
+  });
+
+  it('returns an empty string for invalid timestamps', () => {
+    expect(formatRelativeTimestamp('not-a-date', now)).toBe('');
+    expect(formatRelativeTimestamp('2026-07-03T12:00:00.000Z', new Date('not-a-date'))).toBe('');
   });
 });

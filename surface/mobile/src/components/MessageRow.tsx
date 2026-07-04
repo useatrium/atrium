@@ -3,6 +3,7 @@ import { Pressable, Text, View, type AccessibilityActionEvent } from 'react-nati
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  formatExactTimestamp,
   formatTime,
   formatBytes,
   type Api,
@@ -17,6 +18,7 @@ import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
 import { MarkdownText } from './Markdown';
 import { MessageText } from './MessageText';
+import { TimestampText } from './TimestampText';
 import { VoiceMessage } from './VoiceMessage';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
 
@@ -431,7 +433,8 @@ export const MessageRow = memo(function MessageRow({
       m.text.trim() ||
       (m.voice ? 'Voice message' : attachmentDescription) ||
       (m.sessionId ? 'Agent session' : 'Message');
-  const rowLabel = `${m.author.displayName}, ${formatTime(m.createdAt)}: ${rowText}`;
+  const exactCreatedAt = formatExactTimestamp(m.createdAt);
+  const rowLabel = `${m.author.displayName}, ${exactCreatedAt || formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
   const copyText = actionCopyTextForMessage(m, session, rowText);
   const entryHandle = entryHandleForAction(m);
@@ -492,9 +495,16 @@ export const MessageRow = memo(function MessageRow({
   );
 
   const header = !grouped ? (
-    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-      <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>{m.author.displayName}</Text>
-      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{formatTime(m.createdAt)}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+      <Text style={{ flexShrink: 1, color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
+        {m.author.displayName}
+      </Text>
+      <TimestampText
+        iso={m.createdAt}
+        text={formatTime(m.createdAt)}
+        style={{ flexShrink: 1, color: colors.textFaint, fontSize: font.xs }}
+        numberOfLines={1}
+      />
     </View>
   ) : null;
 

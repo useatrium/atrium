@@ -60,7 +60,7 @@ import {
   XIcon,
 } from '../components/icons';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef } from '@atrium/surface-client';
-import { formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
+import { formatExactTimestamp, formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
 import {
@@ -89,6 +89,7 @@ import { ProfileChangesBanner, ProviderAuthBanner, QuestionBanner, profileProvid
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
+import { TimestampDisclosure } from '../components/TimestampDisclosure';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
@@ -579,6 +580,11 @@ export function SessionPane({
     for (const it of stream.items) if (it.ts) m.set(it.id, formatTurnTime(it.ts));
     return m;
   }, [stream.items]);
+  const turnExactTimes = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of stream.items) if (it.ts) m.set(it.id, formatExactTimestamp(it.ts));
+    return m;
+  }, [stream.items]);
 
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
@@ -1014,7 +1020,13 @@ export function SessionPane({
             )}
             <span className="text-fg-faint">·</span>
             {stalled ? (
-              <span className="tabular-nums">started {formatTime(session.createdAt)}</span>
+              <TimestampDisclosure
+                iso={session.createdAt}
+                label={`started ${formatTime(session.createdAt)}`}
+                className="tabular-nums"
+              >
+                started {formatTime(session.createdAt)}
+              </TimestampDisclosure>
             ) : (
               <span className="tabular-nums">{formatElapsed(sessionElapsedMs(session, now))}</span>
             )}
@@ -1287,7 +1299,7 @@ export function SessionPane({
                   {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
                   obvious and they anchor turn navigation). */}
-                  <div className="group" title={turnTimes.get(item.id)}>
+                  <div className="group" title={turnExactTimes.get(item.id) || undefined}>
                     {item.type === 'text' ? (
                       <div className="pl-3.5">
                         <TextBlock item={item} />
@@ -1296,7 +1308,7 @@ export function SessionPane({
                       <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
                         <div className="text-sm font-semibold text-fg">
                           {steerAuthor}
-                          <TurnTimeLabel time={turnTimes.get(item.id)} />
+                          <TurnTimeLabel iso={item.ts} time={turnTimes.get(item.id)} />
                         </div>
                         <MarkupSteerCard text={item.text} />
                       </div>
@@ -1342,12 +1354,12 @@ export function SessionPane({
               <div
                 key={p.id}
                 data-testid="user-steer-pending"
-                title={formatTurnTime(p.ts)}
+                title={formatExactTimestamp(p.ts) || undefined}
                 className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
               >
                 <div className="text-sm font-semibold text-fg">
                   {steerAuthor}
-                  <TurnTimeLabel time={formatTurnTime(p.ts)} />
+                  <TurnTimeLabel iso={p.ts} time={formatTurnTime(p.ts)} />
                 </div>
                 <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
               </div>
@@ -1580,15 +1592,18 @@ function githubIdentityModeLabel(mode: string): string {
 }
 
 /** Hover-revealed wall-clock time beside a steer's author name. */
-function TurnTimeLabel({ time }: { time: string | undefined }) {
-  if (!time) return null;
+function TurnTimeLabel({ iso, time }: { iso: string | undefined; time: string | undefined }) {
+  if (!iso || !time) return null;
   return (
-    <span
-      data-testid="turn-time"
-      className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+    <TimestampDisclosure
+      iso={iso}
+      label={time}
+      align="right"
+      testId="turn-time"
+      className="ml-2 align-middle text-3xs font-normal tabular-nums text-fg-faint opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
     >
       {time}
-    </span>
+    </TimestampDisclosure>
   );
 }
 

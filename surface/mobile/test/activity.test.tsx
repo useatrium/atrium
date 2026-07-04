@@ -3,6 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatExactTimestamp } from '@atrium/surface-client';
 import ActivityScreen from '../app/(app)/(tabs)/activity';
 import { renderWithTheme } from './rnTestUtils';
 import { Text } from 'react-native';
@@ -120,6 +121,17 @@ describe('mobile Activity screen', () => {
     expect(screen.getByText('Alice mentioned you')).toBeInTheDocument();
     expect(screen.getByText(/hello @me with code and docs/)).toBeInTheDocument();
     expect(screen.getByText('Investigate failure')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(`Agent needs your input, #general, ${formatExactTimestamp('2026-01-01T00:02:00.000Z')}`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(`Alice mentioned you, #general, ${formatExactTimestamp('2026-01-01T00:01:00.000Z')}`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        `Investigate failure, running, #general, started ${formatExactTimestamp('2026-01-01T00:00:00.000Z')}`,
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Alice mentioned you'));
     expect(routerMock.push).toHaveBeenCalledWith('/channel/ch-general');

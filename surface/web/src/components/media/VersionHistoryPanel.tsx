@@ -1,29 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { HubFileVersion } from '@atrium/surface-client';
+import { formatRelativeTimestamp, type HubFileVersion } from '@atrium/surface-client';
+import { TimestampDisclosure } from '../TimestampDisclosure';
 import { VersionDiffView } from './VersionDiffView';
 import type { LightboxCallbacks, PreviewFile } from './types';
 import { formatBytes } from './utils';
-
-function relativeTime(value: string): string {
-  const date = new Date(value);
-  const time = date.getTime();
-  if (Number.isNaN(time)) return value;
-
-  const seconds = Math.round((time - Date.now()) / 1000);
-  const divisions: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 60 * 60 * 24 * 365],
-    ['month', 60 * 60 * 24 * 30],
-    ['week', 60 * 60 * 24 * 7],
-    ['day', 60 * 60 * 24],
-    ['hour', 60 * 60],
-    ['minute', 60],
-  ];
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  for (const [unit, amount] of divisions) {
-    if (Math.abs(seconds) >= amount) return formatter.format(Math.round(seconds / amount), unit);
-  }
-  return formatter.format(seconds, 'second');
-}
 
 function authorLabel(author: string): string {
   const stripped = author
@@ -63,6 +43,7 @@ function VersionRow({
   onRevert: (version: HubFileVersion) => void;
 }) {
   const revertable = canManage && !fileTombstoned && !version.isLatest && version.kind !== 'deleted';
+  const createdAtLabel = formatRelativeTimestamp(version.createdAt) || version.createdAt;
   return (
     <div
       className={`rounded-md border px-3 py-2 ${
@@ -84,8 +65,18 @@ function VersionRow({
               </span>
             )}
           </div>
-          <div className="mt-1 truncate text-2xs text-fg-muted" title={version.author}>
-            {authorLabel(version.author)} / {relativeTime(version.createdAt)}
+          <div className="mt-1 flex min-w-0 items-center gap-1 text-2xs text-fg-muted">
+            <span className="truncate" title={version.author}>
+              {authorLabel(version.author)}
+            </span>
+            <span className="shrink-0">/</span>
+            <TimestampDisclosure
+              iso={version.createdAt}
+              label={createdAtLabel}
+              className="shrink-0 text-fg-muted"
+            >
+              {createdAtLabel}
+            </TimestampDisclosure>
           </div>
           <div className="mt-0.5 truncate text-3xs text-fg-muted">
             {formatBytes(version.sizeBytes ?? undefined)} / {version.mime ?? 'unknown mime'}
