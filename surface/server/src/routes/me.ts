@@ -1,3 +1,8 @@
+import {
+  CreateAgentProfileBodySchema,
+  CreateAgentProfileVersionBodySchema,
+  ImportLocalAgentProfileBodySchema,
+} from '@atrium/surface-client/agentProfiles';
 import { normalizePrefs, normalizePrefsPatch } from '@atrium/surface-client/prefs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -111,11 +116,6 @@ const ClaudeTokenBodySchema = Schema.Struct({
 
 const CodexAuthJsonBodySchema = Schema.Struct({
   authJson: Schema.optional(Schema.Unknown),
-});
-
-const CreateAgentProfileBodySchema = Schema.Struct({
-  provider: Schema.optional(Schema.Unknown),
-  name: Schema.optional(Schema.Unknown),
 });
 
 const AgentProfileParamsSchema = Schema.Struct({
@@ -687,14 +687,14 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = decodeRouteParams(AgentProfileParamsSchema, req.params);
-    const body = decodeRouteBody(RecordBodySchema, req.body);
+    const body = decodeRouteBody(CreateAgentProfileVersionBodySchema, req.body);
     return { version: await agentProfiles.createVersion(user.id, id, body) };
   });
 
   app.post('/api/me/agent-profiles/import-local', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = decodeRouteBody(RecordBodySchema, req.body);
+    const body = decodeRouteBody(ImportLocalAgentProfileBodySchema, req.body);
     const provider = providerFromProfileValue(body.provider);
     if (!provider) {
       return reply.code(400).send({ error: 'bad_request', message: 'provider must be codex or claude-code' });

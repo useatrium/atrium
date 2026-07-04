@@ -46,6 +46,35 @@ describe('entry contract schemas', () => {
             ],
           },
           rec_bad: { count: '1', latest: [] },
+          rec_fractional_event: {
+            count: 1,
+            latest: [
+              {
+                eventId: 10.5,
+                handle: 'evt_10',
+                channelId: 'channel-1',
+                threadRootEventId: null,
+                actorLabel: null,
+                excerpt: 'See this',
+                ts: '2026-07-04T17:00:00.000Z',
+              },
+            ],
+          },
+          rec_negative_count: { count: -1, latest: [] },
+          rec_unsafe_thread: {
+            count: 1,
+            latest: [
+              {
+                eventId: 10,
+                handle: 'evt_10',
+                channelId: 'channel-1',
+                threadRootEventId: Number.MAX_SAFE_INTEGER + 1,
+                actorLabel: null,
+                excerpt: 'See this',
+                ts: '2026-07-04T17:00:00.000Z',
+              },
+            ],
+          },
         },
       }),
     ).toEqual({

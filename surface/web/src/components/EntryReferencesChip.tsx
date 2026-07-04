@@ -8,6 +8,7 @@ import {
 import { api } from '../api';
 
 export type EntryReferencesByHandle = EntryReferenceMap;
+export type { EntryReferenceSummary };
 
 export const ENTRY_REFERENCES_CHUNK_SIZE = 200;
 

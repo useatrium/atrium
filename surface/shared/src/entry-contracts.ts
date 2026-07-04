@@ -1,7 +1,8 @@
 import { Option, Schema } from 'effect';
 
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
-const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
+const NonNegativeIntegerSchema = Schema.Number.pipe(Schema.int(), Schema.nonNegative());
+const NullableNonNegativeIntegerSchema = Schema.Union(NonNegativeIntegerSchema, Schema.Null);
 
 export const NormalizedEntryTargetTypeSchema = Schema.Literal('event', 'record', 'artifact');
 export type NormalizedEntryTargetType = Schema.Schema.Type<typeof NormalizedEntryTargetTypeSchema>;
@@ -10,7 +11,7 @@ export const NormalizedEntryLocationSchema = Schema.mutable(Schema.Struct({
   workspaceId: Schema.String,
   channelId: NullableStringSchema,
   channelName: NullableStringSchema,
-  threadRootEventId: NullableNumberSchema,
+  threadRootEventId: NullableNonNegativeIntegerSchema,
   sessionId: NullableStringSchema,
   sessionTitle: NullableStringSchema,
 }));
@@ -30,10 +31,10 @@ export const NormalizedEntrySchema = Schema.mutable(Schema.Struct({
 export type NormalizedEntry = Schema.Schema.Type<typeof NormalizedEntrySchema>;
 
 export const EntryReferenceLatestSchema = Schema.mutable(Schema.Struct({
-  eventId: Schema.Number,
+  eventId: NonNegativeIntegerSchema,
   handle: Schema.String,
   channelId: Schema.String,
-  threadRootEventId: NullableNumberSchema,
+  threadRootEventId: NullableNonNegativeIntegerSchema,
   actorLabel: NullableStringSchema,
   excerpt: Schema.String,
   ts: Schema.String,
@@ -41,7 +42,7 @@ export const EntryReferenceLatestSchema = Schema.mutable(Schema.Struct({
 export type EntryReferenceLatest = Schema.Schema.Type<typeof EntryReferenceLatestSchema>;
 
 export const EntryReferenceSummarySchema = Schema.mutable(Schema.Struct({
-  count: Schema.Number,
+  count: NonNegativeIntegerSchema,
   latest: Schema.mutable(Schema.Array(EntryReferenceLatestSchema)),
 }));
 export type EntryReferenceSummary = Schema.Schema.Type<typeof EntryReferenceSummarySchema>;

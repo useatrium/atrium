@@ -553,4 +553,40 @@ describe('call routes', () => {
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ error: 'calls_unconfigured' });
   });
+
+  it('preserves route-specific call boundary errors', async () => {
+    const current = await startApp();
+    const { cookie } = await login('alice', 'Alice');
+
+    const badQuery = await current.inject({
+      method: 'GET',
+      url: '/api/calls/active?channelId=one&channelId=two',
+      headers: { cookie },
+    });
+    expect(badQuery.statusCode).toBe(400);
+    expect(badQuery.json()).toMatchObject({
+      error: 'bad_request',
+      message: 'channelId must be a string',
+    });
+
+    const badBody = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie },
+      payload: { channelId: 123 },
+    });
+    expect(badBody.statusCode).toBe(400);
+    expect(badBody.json()).toMatchObject({ error: 'bad_request', message: 'channelId required' });
+
+    const badParam = await current.inject({
+      method: 'POST',
+      url: '/api/calls/not-a-uuid/accept',
+      headers: { cookie },
+    });
+    expect(badParam.statusCode).toBe(404);
+    expect(badParam.json()).toMatchObject({
+      error: 'call_not_found',
+      message: 'call not found',
+    });
+  });
 });

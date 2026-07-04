@@ -60,6 +60,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   mockedS3.storage.reset();
+  await pool.query('TRUNCATE cas_blobs CASCADE');
   await truncateAll(pool);
   fx = await seedFixture(pool);
   app = await buildApp({
