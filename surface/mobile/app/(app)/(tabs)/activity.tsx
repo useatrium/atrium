@@ -3,6 +3,8 @@ import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } fr
 import { router } from 'expo-router';
 import {
   type ActivityItem,
+  formatExactTimestamp,
+  formatRelativeTimestamp,
   isTerminalSessionStatus,
   type Session,
   type SessionListItem,
@@ -25,20 +27,6 @@ function statusColor(status: SessionStatus, colors: Colors): string {
   if (status === 'failed' || status === 'cancelled') return colors.danger;
   if (status === 'running') return colors.accent;
   return colors.warning;
-}
-
-function relativeTime(iso: string): string {
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return '';
-  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 export default function ActivityScreen() {
@@ -133,6 +121,8 @@ export default function ActivityScreen() {
   };
 
   const renderActivityItem = (item: ActivityItem) => {
+    const time = formatRelativeTimestamp(item.createdAt) || item.createdAt;
+    const exactTime = formatExactTimestamp(item.createdAt) || item.createdAt;
     const title =
       item.kind === 'mention'
         ? `${item.actorName ?? 'Someone'} mentioned you`
@@ -146,7 +136,7 @@ export default function ActivityScreen() {
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={item.kind === 'dm' ? title : `${title}, #${item.channelName}`}
+        accessibilityLabel={item.kind === 'dm' ? `${title}, ${exactTime}` : `${title}, #${item.channelName}, ${exactTime}`}
         onPress={() => void openActivity(item)}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -181,8 +171,8 @@ export default function ActivityScreen() {
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {/* DM channel names are internal keys; the title already names the sender. */}
             {item.kind === 'dm'
-              ? relativeTime(item.createdAt)
-              : `#${item.channelName} · ${relativeTime(item.createdAt)}`}
+              ? time
+              : `#${item.channelName} · ${time}`}
           </Text>
         </View>
       </Pressable>
@@ -194,10 +184,12 @@ export default function ActivityScreen() {
     const session = item.session;
     const status = session.live?.status ?? session.status;
     const title = session.live?.title ?? session.title;
+    const time = formatRelativeTimestamp(session.createdAt) || session.createdAt;
+    const exactTime = formatExactTimestamp(session.createdAt) || session.createdAt;
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${title}, ${status}, #${session.channelName}`}
+        accessibilityLabel={`${title}, ${status}, #${session.channelName}, started ${exactTime}`}
         onPress={() => router.push(`/session/${session.id}`)}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -216,7 +208,7 @@ export default function ActivityScreen() {
             {title}
           </Text>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-            {status} · #{session.channelName} · {relativeTime(session.createdAt)}
+            {status} · #{session.channelName} · {time}
           </Text>
         </View>
       </Pressable>

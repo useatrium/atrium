@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ActivityItem } from '@atrium/surface-client';
+import { formatExactTimestamp, formatRelativeTimestamp, type ActivityItem } from '@atrium/surface-client';
 import { api } from '../api';
 import { CompactMarkdownText } from './MessageText';
 
@@ -10,25 +10,22 @@ const KIND_LABEL: Record<ActivityItem['kind'], string> = {
   session_completed: 'OK',
 };
 
-function relativeTime(iso: string): string {
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return '';
-  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
 function titleFor(item: ActivityItem): string {
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
   if (item.kind === 'dm') return `${item.actorName ?? 'Someone'} sent a DM`;
   if (item.kind === 'agent_question') return 'Agent needs your input';
   return 'Agent session completed';
+}
+
+function activityAriaLabel(item: ActivityItem, exactTimestamp: string): string {
+  return [
+    titleFor(item),
+    exactTimestamp ? `created ${exactTimestamp}` : null,
+    item.snippet,
+    item.kind !== 'dm' ? `channel ${item.channelName}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 export function ActivityView({
@@ -107,32 +104,45 @@ export function ActivityView({
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ul className="divide-y divide-edge">
-            {items.map((item) => (
-              <li key={`${item.kind}:${item.eventId}`}>
-                <button
-                  type="button"
-                  onClick={() => void activate(item)}
-                  className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-surface-overlay/70"
-                >
-                  <span className="mt-0.5 grid h-6 min-w-8 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
-                    {KIND_LABEL[item.kind]}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-semibold text-fg">{titleFor(item)}</span>
-                      <span className="shrink-0 text-2xs text-fg-faint">{relativeTime(item.createdAt)}</span>
+            {items.map((item) => {
+              const relativeTimestamp = formatRelativeTimestamp(item.createdAt);
+              const exactTimestamp = formatExactTimestamp(item.createdAt);
+              return (
+                <li key={`${item.kind}:${item.eventId}`}>
+                  <button
+                    type="button"
+                    onClick={() => void activate(item)}
+                    aria-label={activityAriaLabel(item, exactTimestamp)}
+                    className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-surface-overlay/70"
+                  >
+                    <span className="mt-0.5 grid h-6 min-w-8 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
+                      {KIND_LABEL[item.kind]}
                     </span>
-                    <span className="mt-0.5 block truncate text-sm text-fg-secondary">
-                      <CompactMarkdownText text={item.snippet} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-fg">{titleFor(item)}</span>
+                        {relativeTimestamp && (
+                          <span
+                            className="shrink-0 text-2xs text-fg-faint"
+                            title={exactTimestamp || undefined}
+                            aria-label={exactTimestamp ? `Exact timestamp: ${exactTimestamp}` : undefined}
+                          >
+                            {relativeTimestamp}
+                          </span>
+                        )}
+                      </span>
+                      <span className="mt-0.5 block truncate text-sm text-fg-secondary">
+                        <CompactMarkdownText text={item.snippet} />
+                      </span>
+                      {/* DM channel names are internal keys; the title already names the sender. */}
+                      {item.kind !== 'dm' && (
+                        <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
+                      )}
                     </span>
-                    {/* DM channel names are internal keys; the title already names the sender. */}
-                    {item.kind !== 'dm' && (
-                      <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
-                    )}
-                  </span>
-                </button>
-              </li>
-            ))}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
           {nextCursor && (
             <div className="border-t border-edge p-3">

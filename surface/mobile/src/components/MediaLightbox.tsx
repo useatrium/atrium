@@ -22,12 +22,13 @@ import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import Pdf from 'react-native-pdf';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatBytes, type Api, type HubFile } from '@atrium/surface-client';
+import { formatBytes, formatRelativeTimestamp, type Api, type HubFile } from '@atrium/surface-client';
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
 import { SessionMarkdown } from './Markdown';
 import { TextEditorPane } from './TextEditorPane';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
+import { TimestampText } from './TimestampText';
 import { AppPreviewPane } from './AppPreviewPane';
 import { PptxPane } from './PptxPane';
 import { artifactEntryHandle, EntryReferencesChip } from './EntryReferencesChip';
@@ -129,12 +130,6 @@ function languageFor(file: HubFile): string {
   if (ext === 'md') return 'markdown';
   if (ext === 'sh') return 'bash';
   return ext || 'text';
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 function sourceFor(file: HubFile, fileContentUrl: (artifactId: string) => string, fileHeaders?: Record<string, string>) {
@@ -543,13 +538,14 @@ function UnknownPane({ file, onOpenExternal }: { file: HubFile; onOpenExternal: 
 
 function InfoPanel({ file }: { file: HubFile }) {
   const { colors } = useTheme();
+  const createdAtText = formatRelativeTimestamp(file.createdAt) || file.createdAt;
   const rows = [
-    ['Kind', normalizedKind(file)],
-    ['Size', file.sizeBytes != null ? formatBytes(file.sizeBytes) : 'Unknown'],
-    ['Origin', file.origin],
-    ['Uploader', file.uploader?.name ?? 'Unknown'],
-    ['Created', formatDate(file.createdAt)],
-    ['Path', file.path],
+    { label: 'Kind', value: normalizedKind(file) },
+    { label: 'Size', value: file.sizeBytes != null ? formatBytes(file.sizeBytes) : 'Unknown' },
+    { label: 'Origin', value: file.origin },
+    { label: 'Uploader', value: file.uploader?.name ?? 'Unknown' },
+    { label: 'Created', value: createdAtText, iso: file.createdAt },
+    { label: 'Path', value: file.path },
   ];
   return (
     <View
@@ -561,12 +557,24 @@ function InfoPanel({ file }: { file: HubFile }) {
         gap: space.xs,
       }}
     >
-      {rows.map(([label, value]) => (
-        <View key={label} style={{ flexDirection: 'row', gap: space.md }}>
-          <Text style={{ width: 70, color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>{label}</Text>
-          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: font.xs }} numberOfLines={label === 'Path' ? 2 : 1}>
-            {value}
-          </Text>
+      {rows.map((row) => (
+        <View key={row.label} style={{ flexDirection: 'row', gap: space.md }}>
+          <Text style={{ width: 70, color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>{row.label}</Text>
+          {row.iso ? (
+            <TimestampText
+              iso={row.iso}
+              text={row.value}
+              style={{ flex: 1, color: colors.textSecondary, fontSize: font.xs }}
+              numberOfLines={1}
+            />
+          ) : (
+            <Text
+              style={{ flex: 1, color: colors.textSecondary, fontSize: font.xs }}
+              numberOfLines={row.label === 'Path' ? 2 : 1}
+            >
+              {row.value}
+            </Text>
+          )}
         </View>
       ))}
     </View>

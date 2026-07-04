@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { useDialog } from '../useDialog';
 import { RefreshCwIcon, SearchIcon, XIcon } from '../components/icons';
+import { TimestampDisclosure } from '../components/TimestampDisclosure';
 import {
   sessionsApi,
   type SessionCapabilityItem,
@@ -179,7 +180,16 @@ function SnapshotSection({
             )}
           </div>
           <div className="shrink-0 text-right text-3xs text-fg-muted">
-            <div>{formatDate(snapshot.generatedAt)}</div>
+            <div>
+              <TimestampDisclosure
+                iso={snapshot.generatedAt}
+                label={formatCompactTimestamp(snapshot.generatedAt)}
+                align="right"
+                className="tabular-nums"
+              >
+                {formatCompactTimestamp(snapshot.generatedAt)}
+              </TimestampDisclosure>
+            </div>
             {latestChange && <div>last change: line {latestChange.line}</div>}
           </div>
         </div>
@@ -265,7 +275,15 @@ function SnapshotSection({
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate font-medium text-fg-body">{change.summary}</span>
                   <span className="shrink-0 text-fg-muted">line {change.line}</span>
-                  {change.timestamp && <span className="shrink-0 text-fg-muted">{formatDate(change.timestamp)}</span>}
+                  {change.timestamp && (
+                    <TimestampDisclosure
+                      iso={change.timestamp}
+                      label={formatCompactTimestamp(change.timestamp)}
+                      className="shrink-0 text-fg-muted"
+                    >
+                      {formatCompactTimestamp(change.timestamp)}
+                    </TimestampDisclosure>
+                  )}
                 </div>
                 <div className="truncate text-fg-muted">
                   {change.source}
@@ -394,10 +412,17 @@ function shortSha(value: string): string {
   return value ? value.slice(0, 10) : '';
 }
 
-function formatDate(value: string): string {
+const compactTimestampFormatter = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+function formatCompactTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return compactTimestampFormatter.format(date);
 }
 
 function labelize(value: string): string {

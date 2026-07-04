@@ -5,7 +5,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { formatTurnTime } from '@atrium/surface-client';
+import { formatExactTimestamp, formatTurnTime } from '@atrium/surface-client';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import { SessionPane } from '../src/sessions/SessionPane';
 import { sessionsApi } from '../src/sessions/api';
@@ -84,9 +84,9 @@ describe('turn timestamps', () => {
 
     const time = await screen.findByTestId('turn-time');
     expect(time.textContent).toBe(formatTurnTime(STAMP));
-    // The row's wrapper carries a native tooltip with the same stamp.
+    // The row's wrapper carries a native tooltip with the exact stamp.
     expect(screen.getByTestId('user-steer').closest('[title]')?.getAttribute('title')).toBe(
-      formatTurnTime(STAMP),
+      formatExactTimestamp(STAMP),
     );
   });
 

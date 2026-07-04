@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatExactTimestamp } from '@atrium/surface-client';
 import { ActivityView } from '../src/components/ActivityView';
 
 const apiMock = vi.hoisted(() => ({
@@ -24,6 +25,9 @@ describe('ActivityView', () => {
   it('renders activity, paginates, and dispatches click destinations', async () => {
     const onSelectChannel = vi.fn();
     const onOpenSession = vi.fn();
+    const questionCreatedAt = '2026-07-02T10:15:00.000Z';
+    const mentionCreatedAt = '2026-07-02T10:10:00.000Z';
+    const dmCreatedAt = '2026-07-02T10:05:00.000Z';
     apiMock.getActivity
       .mockResolvedValueOnce({
         items: [
@@ -35,7 +39,7 @@ describe('ActivityView', () => {
             actorId: 'u-me',
             actorName: 'Me',
             snippet: 'Deploy now?',
-            createdAt: new Date().toISOString(),
+            createdAt: questionCreatedAt,
           },
           {
             eventId: '9',
@@ -45,7 +49,7 @@ describe('ActivityView', () => {
             actorId: 'u-alice',
             actorName: 'Alice',
             snippet: 'hello **@me** with `code` and [docs](https://example.com)',
-            createdAt: new Date().toISOString(),
+            createdAt: mentionCreatedAt,
           },
         ],
         nextCursor: '9',
@@ -60,7 +64,7 @@ describe('ActivityView', () => {
             actorId: 'u-alice',
             actorName: 'Alice',
             snippet: 'direct hello',
-            createdAt: new Date().toISOString(),
+            createdAt: dmCreatedAt,
           },
         ],
         nextCursor: null,
@@ -75,7 +79,7 @@ describe('ActivityView', () => {
           type: 'session.question_requested',
           actorId: 'u-me',
           payload: { sessionId: 's-1' },
-          createdAt: new Date().toISOString(),
+          createdAt: questionCreatedAt,
         },
       ],
       hasMore: false,
@@ -88,6 +92,10 @@ describe('ActivityView', () => {
     expect(screen.getByText('@me').closest('strong')).toBeTruthy();
     expect(screen.getByText('code').closest('code')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'docs' })).toBeNull();
+    expect(screen.getByTitle(formatExactTimestamp(questionCreatedAt))).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: (name) => name.includes(formatExactTimestamp(questionCreatedAt)) }),
+    ).toBeTruthy();
 
     fireEvent(screen.getByText('Alice mentioned you'), new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(onSelectChannel).toHaveBeenCalledWith('ch-public');

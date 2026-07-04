@@ -77,6 +77,7 @@ import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
 import { CompactMarkdownText, MessageText } from './MessageText';
+import { TimestampDisclosure } from './TimestampDisclosure';
 import { useDialog } from '../useDialog';
 import { VoiceMessage } from '../VoiceMessage';
 
@@ -341,21 +342,26 @@ export const MessageRow = memo(function MessageRow({
       <div className="w-8 shrink-0">
         {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} />}
         {grouped && (
-          <span
-            className="invisible whitespace-nowrap pt-0.5 text-3xs tabular-nums text-fg-muted group-hover:visible"
-            title={new Date(m.createdAt).toLocaleString()}
+          <TimestampDisclosure
+            iso={m.createdAt}
+            label={formatGutterTime(m.createdAt)}
+            className="invisible whitespace-nowrap pt-0.5 text-3xs tabular-nums text-fg-muted group-hover:visible focus-visible:visible"
           >
             {formatGutterTime(m.createdAt)}
-          </span>
+          </TimestampDisclosure>
         )}
       </div>
       <div className="relative min-w-0 max-w-3xl flex-1">
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{m.author.displayName}</span>
-            <span className="text-2xs tabular-nums text-fg-muted" title={new Date(m.createdAt).toLocaleString()}>
+            <TimestampDisclosure
+              iso={m.createdAt}
+              label={formatTime(m.createdAt)}
+              className="text-2xs tabular-nums text-fg-muted"
+            >
               {formatTime(m.createdAt)}
-            </span>
+            </TimestampDisclosure>
           </div>
         )}
         {isSessionEventRow ? (
@@ -774,7 +780,13 @@ function SessionEventCard({
     <div className="mt-1 rounded-md border border-edge bg-surface-raised/35 px-2 py-1.5 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold text-fg-secondary">{label}</span>
-        <span className="tabular-nums text-2xs text-fg-muted">{formatTime(message.createdAt)}</span>
+        <TimestampDisclosure
+          iso={message.createdAt}
+          label={formatTime(message.createdAt)}
+          className="tabular-nums text-2xs text-fg-muted"
+        >
+          {formatTime(message.createdAt)}
+        </TimestampDisclosure>
       </div>
       {message.sessionEventType === 'question_requested' && (
         <div className="mt-1 whitespace-pre-wrap break-words text-fg-body">

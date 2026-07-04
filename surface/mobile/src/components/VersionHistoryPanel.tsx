@@ -13,11 +13,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   formatBytes,
+  formatRelativeTimestamp,
   type Api,
   type HubFile,
   type HubFileVersion,
 } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
+import { TimestampText } from './TimestampText';
 
 type DiffLine = { kind: 'context' | 'add' | 'remove'; text: string };
 
@@ -27,36 +29,6 @@ function authorLabel(author: string): string {
     .replace(/^agent:/i, '')
     .trim();
   return stripped || author || 'Unknown';
-}
-
-// Dependency-free relative time — Hermes (React Native) does not ship
-// `Intl.RelativeTimeFormat`, so we format manually.
-function relativeTime(value: string): string {
-  const date = new Date(value);
-  const time = date.getTime();
-  if (Number.isNaN(time)) return value;
-
-  const seconds = Math.round((time - Date.now()) / 1000);
-  const past = seconds <= 0;
-  const abs = Math.abs(seconds);
-  const divisions: Array<[string, number]> = [
-    ['year', 60 * 60 * 24 * 365],
-    ['month', 60 * 60 * 24 * 30],
-    ['week', 60 * 60 * 24 * 7],
-    ['day', 60 * 60 * 24],
-    ['hour', 60 * 60],
-    ['minute', 60],
-    ['second', 1],
-  ];
-  if (abs < 5) return 'just now';
-  for (const [unit, amount] of divisions) {
-    if (abs >= amount) {
-      const n = Math.round(abs / amount);
-      const label = `${n} ${unit}${n === 1 ? '' : 's'}`;
-      return past ? `${label} ago` : `in ${label}`;
-    }
-  }
-  return 'just now';
 }
 
 function splitLines(text: string): string[] {
@@ -378,6 +350,7 @@ function VersionRow({
     !version.isLatest &&
     version.kind !== 'deleted' &&
     version.status === 'normal';
+  const createdAtText = formatRelativeTimestamp(version.createdAt) || version.createdAt;
 
   return (
     <View
@@ -398,9 +371,17 @@ function VersionRow({
             </Text>
             <VersionBadge version={version} />
           </View>
-          <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: space.xs }} numberOfLines={1}>
-            {authorLabel(version.author)} / {relativeTime(version.createdAt)}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.xs, minWidth: 0 }}>
+            <Text style={{ flexShrink: 1, color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
+              {authorLabel(version.author)} /{' '}
+            </Text>
+            <TimestampText
+              iso={version.createdAt}
+              text={createdAtText}
+              style={{ flexShrink: 1, color: colors.textMuted, fontSize: font.xs }}
+              numberOfLines={1}
+            />
+          </View>
           <Text style={{ color: colors.textFaint, fontSize: font.xs, marginTop: 2 }} numberOfLines={1}>
             {bytesLabel(version.sizeBytes)} / {version.mime ?? 'unknown mime'}
           </Text>

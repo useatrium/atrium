@@ -20,6 +20,7 @@ import {
   ApiError,
   formatCost,
   formatElapsed,
+  formatExactTimestamp,
   formatTime,
   isStalledSessionStatus,
   isTerminalSessionStatus,
@@ -1329,6 +1330,14 @@ export default function SessionScreen() {
     return pieces.filter(Boolean).join('  ');
   }, [connected, costUsd, elapsed, session, stalled, terminal]);
 
+  const headerSubtitleAccessibilityLabel = useMemo(() => {
+    if (!session) return '';
+    const pieces = [formatCost(costUsd), elapsed];
+    if (stalled) pieces.push(`started ${formatExactTimestamp(session.createdAt) || formatTime(session.createdAt)}`);
+    if (!connected && !terminal) pieces.push('reconnecting');
+    return pieces.filter(Boolean).join(', ');
+  }, [connected, costUsd, elapsed, session, stalled, terminal]);
+
   if (!id) return null;
 
   if (!session && (loading || !loadError)) {
@@ -1377,7 +1386,11 @@ export default function SessionScreen() {
               <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }} numberOfLines={1}>
                 {session.title}
               </Text>
-              <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
+              <Text
+                accessibilityLabel={headerSubtitleAccessibilityLabel || undefined}
+                style={{ color: colors.textMuted, fontSize: font.xs }}
+                numberOfLines={1}
+              >
                 {headerSubtitle}
               </Text>
             </View>

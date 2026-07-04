@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatExactTimestamp, formatRelativeTimestamp } from '@atrium/surface-client';
 import { api } from '../api';
 
 export interface EntryReferenceItem {
@@ -65,20 +66,37 @@ export function EntryReferencesChip({
           aria-label="Entry discussions"
           className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
         >
-          {refs.map((ref) => (
-            <button
-              key={`${ref.eventId}:${ref.handle}`}
-              type="button"
-              onClick={() => onNavigate(ref.handle)}
-              className="block w-full rounded px-2 py-1.5 text-left hover:bg-edge-strong"
-            >
-              <div className="flex min-w-0 items-center gap-2 text-2xs">
-                <span className="truncate font-medium text-fg-secondary">{ref.actorLabel ?? 'Someone'}</span>
-                <span className="shrink-0 text-fg-faint">{relativeTime(ref.ts)}</span>
-              </div>
-              <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-fg-muted">{ref.excerpt}</div>
-            </button>
-          ))}
+          {refs.map((ref) => {
+            const relativeTimestamp = formatRelativeTimestamp(ref.ts);
+            const exactTimestamp = formatExactTimestamp(ref.ts);
+            const actor = ref.actorLabel ?? 'Someone';
+            const rowLabel = [actor, exactTimestamp ? `created ${exactTimestamp}` : null, ref.excerpt]
+              .filter(Boolean)
+              .join(', ');
+            return (
+              <button
+                key={`${ref.eventId}:${ref.handle}`}
+                type="button"
+                onClick={() => onNavigate(ref.handle)}
+                aria-label={rowLabel}
+                className="block w-full rounded px-2 py-1.5 text-left hover:bg-edge-strong"
+              >
+                <div className="flex min-w-0 items-center gap-2 text-2xs">
+                  <span className="truncate font-medium text-fg-secondary">{actor}</span>
+                  {relativeTimestamp && (
+                    <span
+                      className="shrink-0 text-fg-faint"
+                      title={exactTimestamp || undefined}
+                      aria-label={exactTimestamp ? `Exact timestamp: ${exactTimestamp}` : undefined}
+                    >
+                      {relativeTimestamp}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-fg-muted">{ref.excerpt}</div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -87,23 +105,4 @@ export function EntryReferencesChip({
 
 function navigateToEntry(handle: string) {
   window.location.assign(`/e/${encodeURIComponent(handle)}`);
-}
-
-function relativeTime(ts: string): string {
-  const then = new Date(ts).getTime();
-  if (!Number.isFinite(then)) return '';
-  const diffSeconds = Math.round((then - Date.now()) / 1000);
-  const abs = Math.abs(diffSeconds);
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 31536000],
-    ['month', 2592000],
-    ['day', 86400],
-    ['hour', 3600],
-    ['minute', 60],
-  ];
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  for (const [unit, seconds] of units) {
-    if (abs >= seconds) return rtf.format(Math.round(diffSeconds / seconds), unit);
-  }
-  return rtf.format(diffSeconds, 'second');
 }

@@ -10,7 +10,9 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  formatExactTimestamp,
   formatCost,
+  formatRelativeTimestamp,
   isTerminalSessionStatus,
   type Session,
   type SessionListItem,
@@ -53,18 +55,6 @@ function StatusChip({ status }: { status: SessionStatus }) {
       <Text style={{ color, fontSize: font.xs, fontWeight: '800' }}>{label}</Text>
     </View>
   );
-}
-
-function relativeTime(iso: string): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function displayFields(item: DisplaySession) {
@@ -116,11 +106,13 @@ export default function SessionsScreen() {
   const renderItem = ({ item }: { item: DisplaySession }) => {
     const fields = displayFields(item);
     const terminal = isTerminalSessionStatus(fields.status);
-    const time = relativeTime(fields.completedAt ?? fields.createdAt);
+    const timestamp = fields.completedAt ?? fields.createdAt;
+    const time = formatRelativeTimestamp(timestamp) || timestamp;
+    const exactTime = formatExactTimestamp(timestamp) || timestamp;
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${fields.title}, ${fields.status}, #${item.channelName}, ${terminal ? time : `started ${time}`}${fields.costUsd > 0 ? `, ${formatCost(fields.costUsd)}` : ''}`}
+        accessibilityLabel={`${fields.title}, ${fields.status}, #${item.channelName}, ${terminal ? exactTime : `started ${exactTime}`}${fields.costUsd > 0 ? `, ${formatCost(fields.costUsd)}` : ''}`}
         onPress={() => router.push(`/session/${item.id}`)}
         style={({ pressed }) => ({
           paddingHorizontal: space.lg,
