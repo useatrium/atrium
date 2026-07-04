@@ -254,6 +254,10 @@ export function sessionDriverId(s: Session): string {
   return s.driverId ?? s.spawnedBy;
 }
 
+function optionalProp<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return value === undefined ? {} : ({ [key]: value } as { [P in K]?: V });
+}
+
 /** Optimistic sessions (pre-POST-response) use this id prefix. */
 export const PENDING_SESSION_PREFIX = 'pending:';
 
@@ -331,7 +335,7 @@ export function sessionFromWire(w: SessionWire): Session {
     repos: Array.isArray(w.repos) ? w.repos : null,
     spawnedBy: w.spawnedBy,
     driverId: w.driverId ?? w.driver?.userId ?? null,
-    driverName: w.driver?.displayName,
+    ...optionalProp('driverName', w.driver?.displayName),
     pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
     suggestions: [...(w.suggestions ?? [])],
     answerProposals: [...(w.answerProposals ?? [])],
@@ -359,6 +363,11 @@ export function sessionFromWire(w: SessionWire): Session {
  */
 export function mergeSpawnResponse(live: Session | undefined, resp: Session): Session {
   if (!live) return resp;
+  const spawnerName = live.spawnerName ?? resp.spawnerName;
+  const driverName = live.driverName ?? resp.driverName;
+  const pendingQuestion = live.pendingQuestion ?? resp.pendingQuestion ?? null;
+  const questionEvents =
+    live.questionEvents && live.questionEvents.length > 0 ? live.questionEvents : (resp.questionEvents ?? []);
   return {
     ...resp,
     // Immutable spawn metadata: keep whichever side has it (an old server may
@@ -372,22 +381,21 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
     completedAt: live.completedAt ?? resp.completedAt,
-    spawnerName: live.spawnerName ?? resp.spawnerName,
+    ...optionalProp('spawnerName', spawnerName),
     // Seat state that moved via WS while the POST was in flight wins over the
     // insert-time snapshot (which always says driver = spawner, no requests).
     driverId: live.driverId ?? resp.driverId,
-    driverName: live.driverName ?? resp.driverName,
+    ...optionalProp('driverName', driverName),
     pendingSeatRequests:
       live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
     suggestions: live.suggestions.length > 0 ? live.suggestions : resp.suggestions,
     answerProposals:
       live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
-    pendingQuestion: live.pendingQuestion ?? resp.pendingQuestion,
+    pendingQuestion,
     // A live effort change (WS event mid-flight) wins over the fetch snapshot.
     modelEffort: live.modelEffort ?? resp.modelEffort ?? null,
     providerAuthRequired: live.providerAuthRequired ?? resp.providerAuthRequired ?? null,
-    questionEvents:
-      (live.questionEvents?.length ?? 0) > 0 ? live.questionEvents : (resp.questionEvents ?? []),
+    questionEvents,
     seatEvents: live.seatEvents.length > 0 ? live.seatEvents : resp.seatEvents,
     lastEventId: Math.max(live.lastEventId, resp.lastEventId),
   };
@@ -450,7 +458,15 @@ export function applySessionEvent(
       base.providerConnectionId ?? (typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null);
     return {
       ...sessions,
-      [sessionId]: { ...base, spawnerName, repo, branch, repos, githubIdentityMode, providerConnectionId },
+      [sessionId]: {
+        ...base,
+        ...optionalProp('spawnerName', spawnerName),
+        repo,
+        branch,
+        repos,
+        githubIdentityMode,
+        providerConnectionId,
+      },
     };
   }
 
@@ -569,7 +585,7 @@ export function applySessionEvent(
       ...sessions,
       [sessionId]: {
         ...prev,
-        pendingQuestion: isMatchingPending ? null : prev.pendingQuestion,
+        ...(isMatchingPending ? { pendingQuestion: null } : {}),
         questionEvents: appendQuestionEvent(prev.questionEvents, entry),
       },
     };
@@ -611,17 +627,19 @@ export function applySessionEvent(
       from,
       to,
       reason,
-      fromName: nameOf(from),
-      toName: nameOf(to),
+      ...optionalProp('fromName', nameOf(from)),
+      ...optionalProp('toName', nameOf(to)),
       at: ev.createdAt,
     };
     const seatEvents = [...prev.seatEvents, entry].sort((a, b) => a.id - b.id);
+    const { driverName: _oldDriverName, ...prevWithoutDriverName } = prev;
+    const driverName = nameOf(to);
     return {
       ...sessions,
       [sessionId]: {
-        ...prev,
+        ...prevWithoutDriverName,
         driverId: to,
-        driverName: nameOf(to),
+        ...optionalProp('driverName', driverName),
         pendingSeatRequests: prev.pendingSeatRequests.filter((r) => r.userId !== to),
         seatEvents,
       },

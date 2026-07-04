@@ -223,7 +223,7 @@ function buildEvents(commands: Command[]): WireEvent[] {
           author: actor,
         });
       }
-      session.pendingQuestionId = undefined;
+      delete session.pendingQuestionId;
       continue;
     }
 

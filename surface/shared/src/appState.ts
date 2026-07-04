@@ -501,32 +501,37 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'session-upsert': {
       const existing = state.sessions[action.session.id];
+      const questionEvents =
+        action.session.questionEvents && action.session.questionEvents.length > 0
+          ? action.session.questionEvents
+          : existing?.questionEvents ?? [];
+      const seatEvents =
+        action.session.seatEvents.length > 0
+          ? action.session.seatEvents
+          : existing?.seatEvents ?? [];
+      const session: Session = {
+        ...action.session,
+        // A slow GET must never roll back a status WS already advanced.
+        status: existing
+          ? maxSessionStatus(existing.status, action.session.status)
+          : action.session.status,
+        pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
+        providerAuthRequired:
+          action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
+        questionEvents,
+        // GET /api/sessions/:id carries no audit history, so keep what
+        // live session.* folds already accumulated.
+        seatEvents,
+      };
+      const spawnerName = action.session.spawnerName ?? existing?.spawnerName;
+      const driverName = action.session.driverName ?? existing?.driverName;
+      if (spawnerName !== undefined) session.spawnerName = spawnerName;
+      if (driverName !== undefined) session.driverName = driverName;
       return {
         ...state,
         sessions: {
           ...state.sessions,
-          [action.session.id]: {
-            ...action.session,
-            // A slow GET must never roll back a status WS already advanced.
-            status: existing
-              ? maxSessionStatus(existing.status, action.session.status)
-              : action.session.status,
-            spawnerName: action.session.spawnerName ?? existing?.spawnerName,
-            driverName: action.session.driverName ?? existing?.driverName,
-            pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
-            providerAuthRequired:
-              action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
-            questionEvents:
-              (action.session.questionEvents?.length ?? 0) > 0
-                ? action.session.questionEvents
-                : existing?.questionEvents ?? [],
-            // GET /api/sessions/:id carries no audit history, so keep what
-            // live session.* folds already accumulated.
-            seatEvents:
-              action.session.seatEvents.length > 0
-                ? action.session.seatEvents
-                : existing?.seatEvents ?? [],
-          },
+          [action.session.id]: session,
         },
       };
     }
