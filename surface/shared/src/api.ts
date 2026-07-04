@@ -3,6 +3,7 @@
 // a bearer token (React Native cookie handling is unreliable).
 
 import { Option, Schema } from 'effect';
+import { ActiveCallSnapshotSchema, CallJoinSchema } from './calls';
 import type { ActiveCallSnapshot, CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
@@ -96,6 +97,14 @@ export function decodeSessionResponse(input: unknown): { session: SessionWire } 
 
 export function decodeSessionListResponse(input: unknown): { sessions: SessionListItem[] } {
   return decodeApiResponse(SessionListResponseSchema, input);
+}
+
+export function decodeCallJoinResponse(input: unknown): CallJoin {
+  return decodeApiResponse(CallJoinSchema, input);
+}
+
+export function decodeActiveCallSnapshotResponse(input: unknown): ActiveCallSnapshot {
+  return decodeApiResponse(ActiveCallSnapshotSchema, input);
 }
 
 export interface ApiOptions {
@@ -639,17 +648,26 @@ export function createApi(opts: ApiOptions = {}) {
       req<CallJoin>('/api/calls', {
         method: 'POST',
         body: JSON.stringify({ channelId, ...(op.opId ? { opId: op.opId } : {}) }),
-      }),
+      }, decodeCallJoinResponse),
     /** Snapshot of non-ended calls visible to this user. Used after reload/reconnect
      * because call lifecycle WS frames are intentionally ephemeral. */
     activeCalls: (opts: { channelId?: string } = {}) => {
       const q = new URLSearchParams();
       if (opts.channelId) q.set('channelId', opts.channelId);
       const qs = q.toString();
-      return req<ActiveCallSnapshot>(`/api/calls/active${qs ? `?${qs}` : ''}`);
+      return req<ActiveCallSnapshot>(
+        `/api/calls/active${qs ? `?${qs}` : ''}`,
+        undefined,
+        decodeActiveCallSnapshotResponse,
+      );
     },
     /** Accept a ringing call: mints this user's token + marks them joined. */
-    acceptCall: (callId: string) => req<CallJoin>(`/api/calls/${callId}/accept`, { method: 'POST', body: '{}' }),
+    acceptCall: (callId: string) =>
+      req<CallJoin>(
+        `/api/calls/${callId}/accept`,
+        { method: 'POST', body: '{}' },
+        decodeCallJoinResponse,
+      ),
     declineCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),
     /** Leave a call; the server ends it when the last participant leaves. */
     leaveCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
