@@ -26,10 +26,14 @@ export function decodeRouteBody<A>(
   body: unknown,
   options?: DecodeRouteInputOptions,
 ): A {
-  return decodeRouteInput(schema, body ?? {}, options);
+  return decodeRouteInput(schema, routeBodyRecord(body), options);
 }
 
 function validationMessage(error: { message?: string }): string {
   const firstLine = typeof error.message === 'string' ? error.message.split('\n')[0]?.trim() : '';
   return firstLine || 'invalid request body';
+}
+
+function routeBodyRecord(body: unknown): unknown {
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 }

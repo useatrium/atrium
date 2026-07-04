@@ -30,9 +30,24 @@ describe('route schema decoding', () => {
     }
   });
 
-  it('treats nullish bodies as empty objects', () => {
+  it('treats non-object bodies as empty objects', () => {
     const Body = Schema.Struct({});
     expect(decodeRouteBody(Body, null)).toEqual({});
     expect(decodeRouteBody(Body, undefined)).toEqual({});
+    expect(decodeRouteBody(Body, 'not an object')).toEqual({});
+    expect(decodeRouteBody(Body, [])).toEqual({});
+  });
+
+  it('preserves required-field failures after non-object normalization', () => {
+    expect.assertions(3);
+    const Body = Schema.Struct({ token: Schema.String });
+
+    try {
+      decodeRouteBody(Body, 'not an object', { message: 'token required' });
+    } catch (err) {
+      expect(err).toBeInstanceOf(DomainError);
+      expect((err as DomainError).code).toBe('bad_request');
+      expect((err as Error).message).toBe('token required');
+    }
   });
 });
