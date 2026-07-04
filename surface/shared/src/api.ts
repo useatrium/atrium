@@ -2,9 +2,11 @@
 // the session cookie, while native clients pass an absolute server origin and
 // a bearer token (React Native cookie handling is unreliable).
 
+import { Option, Schema } from 'effect';
 import type { ActiveCallSnapshot, CallJoin } from './calls';
 import type { UserPrefs } from './prefs';
 import type { SyncResponse } from './sync';
+import { SessionListResponseSchema, SessionResponseSchema } from './sessions';
 import type {
   SessionAnswerProposalResolveBody,
   SessionAnswerQuestionBody,
@@ -77,6 +79,23 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+type ApiResponseSchema<T> = Schema.Schema<T>;
+type ApiResponseDecoder<T> = (input: unknown) => T;
+
+export function decodeApiResponse<T>(schema: ApiResponseSchema<T>, input: unknown): T {
+  const decoded = Schema.decodeUnknownOption(schema)(input);
+  if (Option.isSome(decoded)) return decoded.value;
+  throw new ApiError(502, 'bad_response', 'invalid server response');
+}
+
+export function decodeSessionResponse(input: unknown): { session: SessionWire } {
+  return decodeApiResponse(SessionResponseSchema, input);
+}
+
+export function decodeSessionListResponse(input: unknown): { sessions: SessionListItem[] } {
+  return decodeApiResponse(SessionListResponseSchema, input);
 }
 
 export interface ApiOptions {
@@ -217,7 +236,7 @@ export function createApi(opts: ApiOptions = {}) {
     return opId ? { opId } : {};
   }
 
-  async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  async function req<T>(path: string, init?: RequestInit, decode?: ApiResponseDecoder<T>): Promise<T> {
     const token = opts.getToken ? await opts.getToken() : null;
     const res = await fetch(base + path, {
       credentials: 'same-origin',
@@ -239,6 +258,15 @@ export function createApi(opts: ApiOptions = {}) {
         /* non-JSON error body */
       }
       throw new ApiError(res.status, code, message);
+    }
+    if (decode) {
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        throw new ApiError(502, 'bad_response', 'invalid server response');
+      }
+      return decode(body);
     }
     return res.json() as Promise<T>;
   }
@@ -468,7 +496,7 @@ export function createApi(opts: ApiOptions = {}) {
       req<{ session: SessionWire }>('/api/sessions', {
         method: 'POST',
         body: JSON.stringify(body),
-      }),
+      }, decodeSessionResponse),
     createUpload: (body: {
       filename: string;
       contentType: string;
@@ -637,13 +665,17 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ token }),
       }),
-    getSession: (id: string) => req<{ session: SessionWire }>(`/api/sessions/${id}`),
+    getSession: (id: string) => req<{ session: SessionWire }>(`/api/sessions/${id}`, undefined, decodeSessionResponse),
     listSessions: (opts: ListSessionsOptions = {}) => {
       const q = new URLSearchParams();
       if (opts.status) q.set('status', opts.status);
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
-      return req<{ sessions: SessionListItem[] }>(`/api/sessions${qs ? `?${qs}` : ''}`);
+      return req<{ sessions: SessionListItem[] }>(
+        `/api/sessions${qs ? `?${qs}` : ''}`,
+        undefined,
+        decodeSessionListResponse,
+      );
     },
     steerSession: (
       id: string,

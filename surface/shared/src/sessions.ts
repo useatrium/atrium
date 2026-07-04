@@ -2,6 +2,9 @@
 
 import { Schema } from 'effect';
 
+const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
+const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
+
 export type SessionStatus =
   | 'spawning'
   | 'queued'
@@ -9,6 +12,15 @@ export type SessionStatus =
   | 'completed'
   | 'failed'
   | 'cancelled';
+
+export const SessionStatusSchema = Schema.Literal(
+  'spawning',
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+);
 
 /** Seat-related user reference as serialized by the server. */
 export interface SessionSeatUser {
@@ -100,15 +112,15 @@ export interface SessionSuggestion {
   authorName?: string;
   text: string;
   status: SuggestionStatus;
-  /** Driver who resolved it (present once sent/dismissed). */
-  resolvedBy?: string;
-  resolvedByName?: string;
+  /** Driver who resolved it (null/absent until sent/dismissed). */
+  resolvedBy?: string | null;
+  resolvedByName?: string | null;
   /** The actually-sent text when edited-then-sent (differs from `text`). */
-  sentText?: string;
+  sentText?: string | null;
   /** Optional "why" on dismiss — never required. */
-  note?: string;
+  note?: string | null;
   createdAt: string;
-  resolvedAt?: string;
+  resolvedAt?: string | null;
 }
 
 export type AnswerProposalStatus = 'pending' | 'submitted' | 'dismissed';
@@ -128,13 +140,13 @@ export interface SessionAnswerProposal {
   /** Same shape the answer route takes: { [questionId]: { answers } }. */
   answers: SessionQuestionAnswers;
   status: AnswerProposalStatus;
-  /** Driver who resolved it (present once submitted/dismissed). */
-  resolvedBy?: string;
-  resolvedByName?: string;
+  /** Driver who resolved it (null/absent until submitted/dismissed). */
+  resolvedBy?: string | null;
+  resolvedByName?: string | null;
   /** Optional "why" on dismiss — never required. */
-  note?: string;
+  note?: string | null;
   createdAt: string;
-  resolvedAt?: string;
+  resolvedAt?: string | null;
 }
 
 /** Session JSON as served by POST/GET /api/sessions. */
@@ -165,6 +177,7 @@ export interface SessionWire {
   providerConnectionId?: string | null;
   agentProfileVersionId?: string | null;
   modelEffort?: string | null;
+  viewerCount?: number;
   costUsd: number | string | null;
   resultText: string | null;
   createdAt: string;
@@ -259,6 +272,139 @@ export interface SessionQuestionAnswers {
     answers: string[];
   };
 }
+
+export const SessionRepoSpecSchema = Schema.mutable(Schema.Struct({
+  repo: Schema.String,
+  ref: Schema.optionalWith(Schema.String, { exact: true }),
+  subdir: Schema.optionalWith(Schema.String, { exact: true }),
+  private: Schema.optionalWith(Schema.Boolean, { exact: true }),
+}));
+
+export const SessionSeatUserSchema = Schema.mutable(Schema.Struct({
+  userId: Schema.String,
+  displayName: Schema.String,
+}));
+
+export const QuestionOptionSchema = Schema.mutable(Schema.Struct({
+  label: Schema.String,
+  description: Schema.String,
+  preview: Schema.optionalWith(Schema.String, { exact: true }),
+  previewFormat: Schema.optionalWith(Schema.Literal('markdown', 'html'), { exact: true }),
+}));
+
+export const QuestionPromptSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  header: Schema.String,
+  question: Schema.String,
+  multiSelect: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  isOther: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  isSecret: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  options: Schema.optionalWith(Schema.mutable(Schema.Array(QuestionOptionSchema)), { exact: true }),
+}));
+
+export const SessionPendingQuestionSchema = Schema.mutable(Schema.Struct({
+  questionId: Schema.String,
+  turnId: Schema.optionalWith(Schema.String, { exact: true }),
+  questions: Schema.mutable(Schema.Array(QuestionPromptSchema)),
+  eventId: Schema.optionalWith(Schema.Number, { exact: true }),
+}));
+
+export const SessionProviderAuthRequiredSchema = Schema.mutable(Schema.Struct({
+  provider: Schema.Literal('claude-code', 'codex', 'github'),
+  userId: Schema.String,
+  reason: Schema.Literal('missing_token', 'invalid_token', 'auth_error'),
+  message: Schema.String,
+  at: Schema.String,
+}));
+
+export const SessionQuestionAnswersSchema = Schema.mutable(Schema.Record({
+  key: Schema.String,
+  value: Schema.mutable(Schema.Struct({
+    answers: Schema.mutable(Schema.Array(Schema.String)),
+  })),
+}));
+
+export const SessionSuggestionSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  authorId: Schema.String,
+  authorName: Schema.optionalWith(Schema.String, { exact: true }),
+  text: Schema.String,
+  status: Schema.Literal('pending', 'sent', 'dismissed'),
+  resolvedBy: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  resolvedByName: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  sentText: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  note: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  createdAt: Schema.String,
+  resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
+}));
+
+export const SessionAnswerProposalSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  questionId: Schema.String,
+  authorId: Schema.String,
+  authorName: Schema.optionalWith(Schema.String, { exact: true }),
+  answers: SessionQuestionAnswersSchema,
+  status: Schema.Literal('pending', 'submitted', 'dismissed'),
+  resolvedBy: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  resolvedByName: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  note: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  createdAt: Schema.String,
+  resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
+}));
+
+export const SessionWireSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  workspaceId: Schema.String,
+  channelId: Schema.String,
+  threadRootEventId: NullableNumberSchema,
+  title: Schema.String,
+  status: SessionStatusSchema,
+  harness: Schema.String,
+  repo: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  branch: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  repos: Schema.optionalWith(Schema.Union(Schema.mutable(Schema.Array(SessionRepoSpecSchema)), Schema.Null), { exact: true }),
+  spawnedBy: Schema.String,
+  driverId: NullableStringSchema,
+  driver: Schema.optionalWith(Schema.Union(SessionSeatUserSchema, Schema.Null), { exact: true }),
+  pendingSeatRequests: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSeatUserSchema)), { exact: true }),
+  suggestions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSuggestionSchema)), { exact: true }),
+  answerProposals: Schema.optionalWith(Schema.mutable(Schema.Array(SessionAnswerProposalSchema)), { exact: true }),
+  pendingQuestion: Schema.optionalWith(Schema.Union(SessionPendingQuestionSchema, Schema.Null), { exact: true }),
+  providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), { exact: true }),
+  githubIdentityMode: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  providerConnectionId: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  agentProfileVersionId: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  modelEffort: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  viewerCount: Schema.optionalWith(Schema.Number, { exact: true }),
+  costUsd: Schema.Union(Schema.Number, Schema.String, Schema.Null),
+  resultText: NullableStringSchema,
+  createdAt: Schema.String,
+  completedAt: NullableStringSchema,
+  lastEventId: Schema.Number,
+  permalink: Schema.String,
+}));
+
+export const SessionListItemSchema = Schema.mutable(Schema.Struct({
+  id: Schema.String,
+  channelId: Schema.String,
+  channelName: Schema.String,
+  title: Schema.String,
+  status: SessionStatusSchema,
+  harness: Schema.String,
+  spawnedBy: Schema.String,
+  spawnerName: Schema.String,
+  costUsd: Schema.Number,
+  createdAt: Schema.String,
+  completedAt: NullableStringSchema,
+}));
+
+export const SessionResponseSchema = Schema.mutable(Schema.Struct({
+  session: SessionWireSchema,
+}));
+
+export const SessionListResponseSchema = Schema.mutable(Schema.Struct({
+  sessions: Schema.mutable(Schema.Array(SessionListItemSchema)),
+}));
 
 export interface SessionAttachmentRef {
   artifactId?: string;
