@@ -205,9 +205,9 @@ deploy_centaur(){
 }
 _helm(){ local tag="$1"; ( cd "$REPO_DIR/centaur" && helm upgrade centaur contrib/chart -n "$NS" \
     -f contrib/chart/values.dev.yaml -f ../infra/values.local.yaml -f ../deploy/values.box.yaml \
-    --set apiRs.image.tag="$tag" --set ironProxy.image.tag="$tag" \
-    --set sandbox.image.tag="$tag" --set nodeSync.image.tag="$tag" \
-    --set console.image.tag="$tag" ); }
+    --set-string apiRs.image.tag="$tag" --set-string ironProxy.image.tag="$tag" \
+    --set-string sandbox.image.tag="$tag" --set-string nodeSync.image.tag="$tag" \
+    --set-string console.image.tag="$tag" ); }
 # Wait for the console + console-worker rollouts (skipped only when the deployment
 # genuinely doesn't exist, i.e. console.enabled=false — any other kubectl failure is
 # a real error, not a skip, so a transient API blip can't silently bypass the gate).
