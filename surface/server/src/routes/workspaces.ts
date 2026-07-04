@@ -1,8 +1,18 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import type { Db } from '../db.js';
 import { createWorkspace, type UserRef, type Workspace } from '../events.js';
 import { addWorkspaceMember, isWorkspaceMember } from '../membership.js';
 import { isUuid } from '../idempotency.js';
+import { decodeRouteBody } from '../route-schema.js';
+
+const CreateWorkspaceBodySchema = Schema.Struct({
+  name: Schema.optional(Schema.Unknown),
+});
+
+const AddWorkspaceMemberBodySchema = Schema.Struct({
+  handle: Schema.optional(Schema.Unknown),
+});
 
 export interface WorkspaceRouteDeps {
   pool: Db;
@@ -41,7 +51,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
   app.post('/api/workspaces', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { name?: unknown };
+    const body = decodeRouteBody(CreateWorkspaceBodySchema, req.body);
     const name = String(body.name ?? '').trim();
     if (name.length < 1 || name.length > 64) {
       return reply
@@ -69,7 +79,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
     if (!isUuid(id) || !(await isWorkspaceMember(pool, user.id, id))) {
       return reply.code(404).send({ error: 'workspace_not_found', message: 'workspace not found' });
     }
-    const body = (req.body ?? {}) as { handle?: unknown };
+    const body = decodeRouteBody(AddWorkspaceMemberBodySchema, req.body);
     const handle = String(body.handle ?? '').trim().toLowerCase();
     const target = await pool.query<{ id: string; handle: string; display_name: string }>(
       'SELECT id, handle, display_name FROM users WHERE handle = $1',

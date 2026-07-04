@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import type { Db, DbClient } from '../db.js';
 import {
   addChannelMemberTx,
@@ -14,8 +15,38 @@ import {
 } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { workspaceMemberIds } from '../membership.js';
+import { decodeRouteBody } from '../route-schema.js';
 
 const CHANNEL_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+const DmBodySchema = Schema.Struct({
+  userId: Schema.optional(Schema.Unknown),
+  userIds: Schema.optional(Schema.Unknown),
+});
+
+const CreateChannelBodySchema = Schema.Struct({
+  name: Schema.optional(Schema.Unknown),
+  private: Schema.optional(Schema.Unknown),
+});
+
+const ReadChannelBodySchema = Schema.Struct({
+  lastReadEventId: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const MuteChannelBodySchema = Schema.Struct({
+  muted: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const AddChannelMemberBodySchema = Schema.Struct({
+  userId: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const ChannelOpBodySchema = Schema.Struct({
+  opId: Schema.optional(Schema.Unknown),
+});
 
 export interface ChannelRouteDeps {
   pool: Db;
@@ -53,7 +84,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   app.post('/api/dms', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { userId?: string; userIds?: unknown };
+    const body = decodeRouteBody(DmBodySchema, req.body);
     const userIds = Array.isArray(body.userIds)
       ? body.userIds.filter((id): id is string => typeof id === 'string')
       : body.userId && typeof body.userId === 'string'
@@ -106,7 +137,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   app.post('/api/channels', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = (req.body ?? {}) as { name?: string; private?: unknown };
+    const body = decodeRouteBody(CreateChannelBodySchema, req.body);
     const name = String(body.name ?? '').trim().toLowerCase().replace(/\s+/g, '-');
     if (!CHANNEL_RE.test(name)) {
       return reply.code(400).send({
@@ -135,7 +166,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { lastReadEventId?: number; opId?: unknown };
+    const body = decodeRouteBody(ReadChannelBodySchema, req.body);
     const opId = optionalOpId(body);
     const lastReadEventId = Number(body.lastReadEventId);
     if (!Number.isSafeInteger(lastReadEventId) || lastReadEventId < 0) {
@@ -200,7 +231,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { muted?: unknown; opId?: unknown };
+    const body = decodeRouteBody(MuteChannelBodySchema, req.body);
     const opId = optionalOpId(body);
     if (typeof body.muted !== 'boolean') {
       return reply.code(400).send({ error: 'bad_request', message: 'muted must be boolean' });
@@ -250,7 +281,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { userId?: unknown; opId?: unknown };
+    const body = decodeRouteBody(AddChannelMemberBodySchema, req.body);
     const opId = optionalOpId(body);
     if (typeof body.userId !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
@@ -295,7 +326,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { opId?: unknown };
+    const body = decodeRouteBody(ChannelOpBodySchema, req.body);
     const opId = optionalOpId(body);
     const response = await runMutation({
       userId: user.id,

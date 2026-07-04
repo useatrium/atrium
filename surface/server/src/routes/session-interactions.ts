@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Schema } from 'effect';
 import type { Db, DbClient } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
+import { decodeRouteBody } from '../route-schema.js';
 import {
   isSessionEffortLevel,
   type QuestionAnswerBody,
@@ -26,6 +28,46 @@ export interface SessionInteractionRouteDeps {
   }): Promise<T>;
   publishEvent(event: WireEvent): void;
 }
+
+const MessageBodySchema = Schema.Struct({
+  text: Schema.optional(Schema.Unknown),
+  effort: Schema.optional(Schema.Unknown),
+  attachments: Schema.optional(Schema.Unknown),
+  attachmentRefs: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const AnswerBodySchema = Schema.Struct({
+  questionId: Schema.String,
+  answers: Schema.Unknown,
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SeatGrantBodySchema = Schema.Struct({
+  userId: Schema.String,
+});
+
+const SuggestionBodySchema = Schema.Struct({
+  text: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SuggestionResolveBodySchema = Schema.Struct({
+  action: Schema.Literal('send', 'dismiss'),
+  text: Schema.optional(Schema.Unknown),
+  note: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const QuestionProposalResolveBodySchema = Schema.Struct({
+  action: Schema.Literal('submit', 'dismiss'),
+  note: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const OpIdBodySchema = Schema.Struct({
+  opId: Schema.optional(Schema.Unknown),
+});
 
 function isAnswerBody(value: unknown): value is QuestionAnswerBody {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -79,13 +121,10 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as {
-      text?: string;
-      effort?: unknown;
-      attachments?: unknown;
-      attachmentRefs?: unknown;
-      opId?: unknown;
-    };
+    const body = decodeRouteBody(MessageBodySchema, req.body, {
+      code: 'empty_message',
+      message: 'message text is empty',
+    });
     const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
     const attachmentInputs = parseAgentTurnAttachmentInputPayloads(body.attachments, body.attachmentRefs);
@@ -133,9 +172,12 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
+    const body = decodeRouteBody(AnswerBodySchema, req.body, {
+      code: 'bad_request',
+      message: 'questionId and answers are required',
+    });
     const opId = optionalOpId(body);
-    if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
+    if (!isAnswerBody(body.answers)) {
       return reply.code(400).send({ error: 'bad_request', message: 'questionId and answers are required' });
     }
     const questionId = body.questionId;
@@ -180,8 +222,11 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { userId?: string };
-    if (!body.userId || typeof body.userId !== 'string') {
+    const body = decodeRouteBody(SeatGrantBodySchema, req.body, {
+      code: 'bad_request',
+      message: 'userId required',
+    });
+    if (!body.userId) {
       return reply.code(400).send({ error: 'bad_request', message: 'userId required' });
     }
     await sessionRuns.grantSeat(id, user.id, body.userId);
@@ -200,7 +245,10 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { text?: string; opId?: unknown };
+    const body = decodeRouteBody(SuggestionBodySchema, req.body, {
+      code: 'empty_message',
+      message: 'suggestion text is empty',
+    });
     const opId = optionalOpId(body);
     const text = typeof body.text === 'string' ? body.text : '';
     if (text.trim().length === 0) {
@@ -233,11 +281,11 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (!/^[0-9a-f-]{36}$/i.test(suggestionId)) {
       return reply.code(404).send({ error: 'suggestion_not_found', message: 'suggestion not found' });
     }
-    const body = (req.body ?? {}) as { action?: unknown; text?: unknown; note?: unknown; opId?: unknown };
+    const body = decodeRouteBody(SuggestionResolveBodySchema, req.body, {
+      code: 'bad_request',
+      message: "action must be 'send' or 'dismiss'",
+    });
     const opId = optionalOpId(body);
-    if (body.action !== 'send' && body.action !== 'dismiss') {
-      return reply.code(400).send({ error: 'bad_request', message: "action must be 'send' or 'dismiss'" });
-    }
     const action = body.action;
     const text = action === 'send' && typeof body.text === 'string' ? body.text : undefined;
     const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
@@ -273,9 +321,12 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { questionId?: unknown; answers?: unknown; opId?: unknown };
+    const body = decodeRouteBody(AnswerBodySchema, req.body, {
+      code: 'bad_request',
+      message: 'questionId and answers are required',
+    });
     const opId = optionalOpId(body);
-    if (typeof body.questionId !== 'string' || !isAnswerBody(body.answers)) {
+    if (!isAnswerBody(body.answers)) {
       return reply.code(400).send({ error: 'bad_request', message: 'questionId and answers are required' });
     }
     const questionId = body.questionId;
@@ -304,11 +355,11 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (!/^[0-9a-f-]{36}$/i.test(proposalId)) {
       return reply.code(404).send({ error: 'proposal_not_found', message: 'proposal not found' });
     }
-    const body = (req.body ?? {}) as { action?: unknown; note?: unknown; opId?: unknown };
+    const body = decodeRouteBody(QuestionProposalResolveBodySchema, req.body, {
+      code: 'bad_request',
+      message: "action must be 'submit' or 'dismiss'",
+    });
     const opId = optionalOpId(body);
-    if (body.action !== 'submit' && body.action !== 'dismiss') {
-      return reply.code(400).send({ error: 'bad_request', message: "action must be 'submit' or 'dismiss'" });
-    }
     const action = body.action;
     const note = action === 'dismiss' && typeof body.note === 'string' ? body.note : undefined;
     let result: { events: WireEvent[]; postedAnswer: boolean } | null = null;
@@ -340,7 +391,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { opId?: unknown };
+    const body = decodeRouteBody(OpIdBodySchema, req.body);
     const opId = optionalOpId(body);
     if (opId) {
       let events: WireEvent[] = [];
@@ -367,7 +418,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { opId?: unknown };
+    const body = decodeRouteBody(OpIdBodySchema, req.body);
     const opId = optionalOpId(body);
     if (opId) {
       await runMutation({
