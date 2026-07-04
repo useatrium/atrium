@@ -7,17 +7,21 @@ export interface DecodeRouteInputOptions {
   statusCode?: number;
 }
 
+interface DecodeRouteInputInternalOptions extends DecodeRouteInputOptions {
+  defaultMessage?: string;
+}
+
 export function decodeRouteInput<A, I = A>(
   schema: Schema.Schema<A, I, never>,
   input: unknown,
-  options: DecodeRouteInputOptions = {},
+  options: DecodeRouteInputInternalOptions = {},
 ): A {
   const decoded = Schema.decodeUnknownEither(schema)(input);
   if (Either.isRight(decoded)) return decoded.right;
   throw new DomainError(
     options.statusCode ?? 400,
     options.code ?? 'bad_request',
-    options.message ?? validationMessage(decoded.left),
+    options.message ?? validationMessage(options.defaultMessage),
   );
 }
 
@@ -26,13 +30,38 @@ export function decodeRouteBody<A, I = A>(
   body: unknown,
   options?: DecodeRouteInputOptions,
 ): A {
-  return decodeRouteInput(schema, routeBodyRecord(body), options);
+  return decodeRouteInput(schema, routeRecord(body), {
+    ...options,
+    defaultMessage: 'invalid request body',
+  });
 }
 
-function validationMessage(_error: { message?: string }): string {
-  return 'invalid request body';
+export function decodeRouteQuery<A, I = A>(
+  schema: Schema.Schema<A, I, never>,
+  query: unknown,
+  options?: DecodeRouteInputOptions,
+): A {
+  return decodeRouteInput(schema, routeRecord(query), {
+    ...options,
+    defaultMessage: 'invalid request query',
+  });
 }
 
-function routeBodyRecord(body: unknown): unknown {
-  return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+export function decodeRouteParams<A, I = A>(
+  schema: Schema.Schema<A, I, never>,
+  params: unknown,
+  options?: DecodeRouteInputOptions,
+): A {
+  return decodeRouteInput(schema, routeRecord(params), {
+    ...options,
+    defaultMessage: 'invalid request params',
+  });
+}
+
+function validationMessage(defaultMessage = 'invalid request input'): string {
+  return defaultMessage;
+}
+
+function routeRecord(input: unknown): unknown {
+  return input && typeof input === 'object' && !Array.isArray(input) ? input : {};
 }

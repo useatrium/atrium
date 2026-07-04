@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Schema } from 'effect';
 import { DomainError } from '../src/events.js';
-import { decodeRouteBody, decodeRouteInput } from '../src/route-schema.js';
+import { decodeRouteBody, decodeRouteInput, decodeRouteParams, decodeRouteQuery } from '../src/route-schema.js';
 
 describe('route schema decoding', () => {
   it('returns typed decoded input', () => {
@@ -49,5 +49,13 @@ describe('route schema decoding', () => {
       expect((err as DomainError).code).toBe('bad_request');
       expect((err as Error).message).toBe('token required');
     }
+  });
+
+  it('uses stable query and params validation messages', () => {
+    const Query = Schema.Struct({ limit: Schema.Number });
+    const Params = Schema.Struct({ id: Schema.String });
+
+    expect(() => decodeRouteQuery(Query, { limit: '10' })).toThrow('invalid request query');
+    expect(() => decodeRouteParams(Params, {})).toThrow('invalid request params');
   });
 });
