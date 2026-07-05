@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '../api';
 import type { MarkupEditorHandle } from './markupPaneTypes';
+import { MarkupDivergenceBanner } from './MarkupDivergenceBanner';
 import { MarkupVersionHistory } from './MarkupVersionHistory';
 
 // Static specifier so Vite bundles the editor as a lazy chunk.
@@ -245,30 +246,12 @@ export function MarkupPane({
           </div>
         )}
         <div className="relative flex min-h-0 flex-1 flex-col gap-3 p-3">
-          {diverged && !showingSource && (
-            <div className="flex shrink-0 items-center justify-between gap-3 rounded-md border border-edge bg-surface-raised px-3 py-2 text-xs text-fg-secondary">
-              <span className="font-medium text-fg">This markup has changed since the original message.</span>
-              <button
-                type="button"
-                onClick={() => switchMarkdownSource(true)}
-                className="shrink-0 rounded-md border border-edge-strong px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-              >
-                Reset to message
-              </button>
-            </div>
-          )}
-          {showingSource && (
-            <div className="flex shrink-0 items-center justify-between gap-3 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-xs text-fg-muted">
-              <span className="font-medium text-fg-secondary">Showing the original message</span>
-              <button
-                type="button"
-                onClick={() => switchMarkdownSource(false)}
-                className="shrink-0 rounded-md border border-edge px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-              >
-                Back to latest
-              </button>
-            </div>
-          )}
+          <MarkupDivergenceBanner
+            diverged={diverged}
+            showingSource={showingSource}
+            onReset={() => switchMarkdownSource(true)}
+            onBackToLatest={() => switchMarkdownSource(false)}
+          />
           <Suspense
             fallback={
               <div className="flex flex-1 items-center justify-center text-xs text-fg-muted">Loading editor...</div>

@@ -1,14 +1,26 @@
-// Version history for a markup artifact, surfaced inside the MarkupPane so a reader can
-// see that a (persistent, shared) markup doc has evolved across suggestion rounds — and
-// view or revert prior versions — without having to hunt for the file in the Files hub.
+// Version history for a markup artifact, surfaced inside the MarkupPane (web) and the
+// MarkupShellPage (mobile webview) so a reader can see that a persistent, shared markup
+// doc has evolved across suggestion rounds — and view or revert prior versions — without
+// hunting for the file in the Files hub.
 //
-// STUB: fleshed out by the `hist` fan-out lane. The prop contract below is the seam the
-// MarkupPane (`pane` lane) codes against and must not change.
+// Transport-agnostic: on web it talks to /api/files directly (default fetch transport);
+// in the mobile webview it delegates to a bridge transport so the auth token stays native.
 
 import { useCallback, useMemo } from 'react';
-import type { HubFileVersionsResponse } from '@atrium/surface-client';
+import type { HubFileVersion, HubFileVersionsResponse } from '@atrium/surface-client';
 import { VersionHistoryPanel } from './media/VersionHistoryPanel';
 import type { PreviewFile } from './media/types';
+
+/** How MarkupVersionHistory reaches the server. Web uses fetch; mobile relays over the bridge. */
+export interface VersionTransport {
+  listVersions(signal?: AbortSignal): Promise<HubFileVersion[]>;
+  /** `undefined` seq = latest content. */
+  fetchVersionContent(seq: number | undefined, signal?: AbortSignal): Promise<Blob>;
+  /** Make `seq` the new head; resolves with the new head seq. */
+  revertVersion(seq: number): Promise<number>;
+  /** Un-delete a tombstoned file; resolves with the new head seq if one was produced. */
+  restoreFile(): Promise<number | undefined>;
+}
 
 export interface MarkupVersionHistoryProps {
   /** Artifact whose version history to show. */
@@ -23,6 +35,8 @@ export interface MarkupVersionHistoryProps {
   onReverted?: (seq: number) => void;
   /** Fired when the panel requests to close. */
   onClose?: () => void;
+  /** Override the server transport (mobile passes a bridge-backed one). Defaults to fetch. */
+  transport?: VersionTransport;
 }
 
 async function responseError(response: Response, fallback: string): Promise<string> {
@@ -39,36 +53,16 @@ async function responseError(response: Response, fallback: string): Promise<stri
   }
 }
 
-export function MarkupVersionHistory(props: MarkupVersionHistoryProps) {
-  const { artifactId, path, currentSeq, canManage, onClose, onReverted } = props;
-
-  const file = useMemo<PreviewFile>(
-    () => ({
-      id: artifactId,
-      name: path.split('/').pop() ?? path,
-      mime: 'text/markdown',
-      mediaKind: 'text',
-      contentUrl: `/api/files/artifact/${artifactId}/content`,
-      path,
-    }),
-    [artifactId, path],
-  );
-
-  const onListVersions = useCallback(
-    async (_file: PreviewFile, signal?: AbortSignal) => {
-      const response = await fetch(`/api/files/${artifactId}/versions`, {
-        credentials: 'same-origin',
-        signal,
-      });
+/** Default web transport: authenticated same-origin fetches to /api/files. */
+export function createFetchVersionTransport(artifactId: string): VersionTransport {
+  return {
+    async listVersions(signal) {
+      const response = await fetch(`/api/files/${artifactId}/versions`, { credentials: 'same-origin', signal });
       if (!response.ok) throw new Error(await responseError(response, 'Could not load version history'));
       const body = (await response.json()) as HubFileVersionsResponse;
       return body.versions;
     },
-    [artifactId],
-  );
-
-  const onFetchVersionContent = useCallback(
-    async (_file: PreviewFile, seq?: number, signal?: AbortSignal) => {
+    async fetchVersionContent(seq, signal) {
       const params = new URLSearchParams();
       if (seq != null) params.set('at', String(seq));
       const suffix = params.toString() ? `?${params.toString()}` : '';
@@ -79,11 +73,7 @@ export function MarkupVersionHistory(props: MarkupVersionHistoryProps) {
       if (!response.ok) throw new Error(await responseError(response, 'Could not load version content'));
       return await response.blob();
     },
-    [artifactId],
-  );
-
-  const onRevertVersion = useCallback(
-    async (_file: PreviewFile, seq: number) => {
+    async revertVersion(seq) {
       const response = await fetch(`/api/files/${artifactId}/revert`, {
         method: 'POST',
         credentials: 'same-origin',
@@ -98,22 +88,61 @@ export function MarkupVersionHistory(props: MarkupVersionHistoryProps) {
           ),
         );
       const body = (await response.json()) as { artifactId: string; seq: number };
-      onReverted?.(body.seq);
+      return body.seq;
     },
-    [artifactId, onReverted],
-  );
-
-  const onRestoreFile = useCallback(
-    async (_file: PreviewFile) => {
+    async restoreFile() {
       const response = await fetch(`/api/files/${artifactId}/restore`, {
         method: 'POST',
         credentials: 'same-origin',
       });
       if (!response.ok) throw new Error(await responseError(response, 'Could not restore file'));
       const body = (await response.json()) as { artifactId: string; seq?: number };
-      if (typeof body.seq === 'number') onReverted?.(body.seq);
+      return typeof body.seq === 'number' ? body.seq : undefined;
     },
-    [artifactId, onReverted],
+  };
+}
+
+export function MarkupVersionHistory(props: MarkupVersionHistoryProps) {
+  const { artifactId, path, currentSeq, canManage, onClose, onReverted, transport } = props;
+
+  const activeTransport = useMemo(() => transport ?? createFetchVersionTransport(artifactId), [transport, artifactId]);
+
+  const file = useMemo<PreviewFile>(
+    () => ({
+      id: artifactId,
+      name: path.split('/').pop() ?? path,
+      mime: 'text/markdown',
+      mediaKind: 'text',
+      contentUrl: `/api/files/artifact/${artifactId}/content`,
+      path,
+    }),
+    [artifactId, path],
+  );
+
+  const onListVersions = useCallback(
+    (_file: PreviewFile, signal?: AbortSignal) => activeTransport.listVersions(signal),
+    [activeTransport],
+  );
+
+  const onFetchVersionContent = useCallback(
+    (_file: PreviewFile, seq?: number, signal?: AbortSignal) => activeTransport.fetchVersionContent(seq, signal),
+    [activeTransport],
+  );
+
+  const onRevertVersion = useCallback(
+    async (_file: PreviewFile, seq: number) => {
+      const newSeq = await activeTransport.revertVersion(seq);
+      onReverted?.(newSeq);
+    },
+    [activeTransport, onReverted],
+  );
+
+  const onRestoreFile = useCallback(
+    async (_file: PreviewFile) => {
+      const newSeq = await activeTransport.restoreFile();
+      if (newSeq != null) onReverted?.(newSeq);
+    },
+    [activeTransport, onReverted],
   );
 
   return (

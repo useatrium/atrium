@@ -17,13 +17,19 @@ export interface MarkupAuthoringDraft {
   workspaceId: string;
   frontmatter: string;
   body: string;
+  /** Live source-message text, so the shell can flag when the markup body has diverged. */
+  sourceText: string | null;
   mode: MarkupAuthoringMode;
 }
+
+/** Version-history operation the webview asks native to run (native owns the auth token). */
+export type MarkupVersionOp = 'list' | 'content' | 'revert' | 'restore';
 
 export type MarkupWebViewMessage =
   | { type: 'markup-shell-ready' }
   | { type: 'markup-dirty'; dirty: boolean }
-  | { type: 'markup-serialized'; markdown: string };
+  | { type: 'markup-serialized'; markdown: string }
+  | { type: 'markup-vh-request'; reqId: string; op: MarkupVersionOp; seq?: number };
 
 const pendingDrafts = new Map<string, MarkupAuthoringDraft>();
 const MARKDOWN_BLOCK_RE = /(^|\n)\s{0,3}(#{1,6}\s+\S|([-*+]|\d+[.)])\s+\S|>\s+\S|```)/;
@@ -86,6 +92,18 @@ export function parseMarkupWebViewMessage(data: unknown): MarkupWebViewMessage |
   if (raw.type === 'markup-serialized' && typeof raw.markdown === 'string') {
     return { type: 'markup-serialized', markdown: raw.markdown };
   }
+  if (
+    raw.type === 'markup-vh-request' &&
+    typeof raw.reqId === 'string' &&
+    (raw.op === 'list' || raw.op === 'content' || raw.op === 'revert' || raw.op === 'restore')
+  ) {
+    return {
+      type: 'markup-vh-request',
+      reqId: raw.reqId,
+      op: raw.op,
+      ...(typeof raw.seq === 'number' ? { seq: raw.seq } : {}),
+    };
+  }
   return null;
 }
 
@@ -126,6 +144,7 @@ export async function loadMarkupDraftFromEntry(args: {
     workspaceId: extracted.workspaceId,
     frontmatter,
     body,
+    sourceText: extracted.sourceText ?? null,
     mode: args.mode,
   };
 }
