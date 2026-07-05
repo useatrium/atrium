@@ -4,6 +4,7 @@ import { ChevronDownIcon, PlusIcon } from './icons';
 import { showErrorToast } from './Toasts';
 import { StatusChip } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from './a11y';
 
 const SESSION_CAP = 8;
 
@@ -84,40 +85,30 @@ export function ApplyMarkupMenu({
 
   return (
     <div className="relative">
-      <button
-        type="button"
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-edge-strong bg-surface-overlay px-2.5 text-xs font-semibold text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-        onClick={() => setOpen((value) => !value)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        Apply with agent
-        <ChevronDownIcon size={13} />
-      </button>
-      {notice && (
-        <div role="status" className="absolute right-0 top-9 z-[80] w-56 rounded-md border border-success/30 bg-surface-overlay px-3 py-2 text-xs text-success-text shadow-lg">
-          {notice}
-        </div>
-      )}
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-9 z-[80] w-72 overflow-hidden rounded-md border border-edge-strong bg-surface-raised py-1 shadow-2xl"
-        >
-          <div className="px-3 py-2 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
-            Choose session
-          </div>
+      <Menu open={open} onOpenChange={setOpen}>
+        <MenuTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-edge-strong bg-surface-overlay px-2.5 text-xs font-semibold text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+          >
+            Apply with agent
+            <ChevronDownIcon size={13} />
+          </button>
+        </MenuTrigger>
+        <MenuContent align="end" className="w-72 bg-surface-raised">
+          <MenuLabel className="px-2 py-1.5 text-3xs">Choose session</MenuLabel>
           {sessionList.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-fg-muted">No running or completed sessions in this channel</div>
+            <div className="px-2 py-2 text-xs text-fg-muted">No running or completed sessions in this channel</div>
           ) : (
             sessionList.map((session) => (
-              <button
+              <MenuItem
                 key={session.id}
-                type="button"
-                role="menuitem"
                 disabled={busySessionId != null}
-                onClick={() => void applyToSession(session)}
-                className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-surface-overlay disabled:cursor-default disabled:opacity-60"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void applyToSession(session);
+                }}
+                className="items-start gap-2 py-2 text-left"
               >
                 <StatusChip status={session.status} />
                 <span className="min-w-0 flex-1">
@@ -126,20 +117,23 @@ export function ApplyMarkupMenu({
                     <span className="mt-0.5 block text-3xs text-fg-muted">Sending...</span>
                   )}
                 </span>
-              </button>
+              </MenuItem>
             ))
           )}
-          <div className="my-1 border-t border-edge" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={spawnNewAgent}
+          <MenuSeparator />
+          <MenuItem
+            onSelect={spawnNewAgent}
             disabled={!onSpawnNewAgent}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+            className="text-xs font-medium text-fg-secondary data-[highlighted]:text-fg data-[disabled]:text-fg-faint"
           >
             <PlusIcon size={14} />
             New agent...
-          </button>
+          </MenuItem>
+        </MenuContent>
+      </Menu>
+      {notice && (
+        <div role="status" className="absolute right-0 top-9 z-[80] w-56 rounded-md border border-success/30 bg-surface-overlay px-3 py-2 text-xs text-success-text shadow-lg">
+          {notice}
         </div>
       )}
     </div>

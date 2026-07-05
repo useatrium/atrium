@@ -53,6 +53,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function openApplyMenu() {
+  const trigger = screen.getByRole('button', { name: /Apply with agent/ });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+}
+
 describe('ApplyMarkupMenu', () => {
   it('applies markup to the selected channel session with an op id', async () => {
     mocks.applyArtifactMarkup.mockResolvedValue({ seq: 7, status: 'normal', steered: true, applied: true });
@@ -65,8 +71,8 @@ describe('ApplyMarkupMenu', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Apply with agent/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /Edit run/ }));
+    await openApplyMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Edit run/ }));
 
     await waitFor(() =>
       expect(mocks.applyArtifactMarkup).toHaveBeenCalledWith('art-1', {
@@ -88,13 +94,13 @@ describe('ApplyMarkupMenu', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Apply with agent/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /Edit run/ }));
+    await openApplyMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Edit run/ }));
 
     await waitFor(() => expect(mocks.showErrorToast).toHaveBeenCalledWith('No markup in this document'));
   });
 
-  it('emits the prefilled new-agent task', () => {
+  it('emits the prefilled new-agent task', async () => {
     const onSpawnNewAgent = vi.fn();
     render(
       <ApplyMarkupMenu
@@ -106,8 +112,8 @@ describe('ApplyMarkupMenu', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Apply with agent/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'New agent...' }));
+    await openApplyMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'New agent...' }));
 
     expect(onSpawnNewAgent).toHaveBeenCalledWith(
       'Apply the markup in docs/plan.md (my tracked changes + comments): read it, apply the edits, address the comments, and produce a clean revision of the file.',

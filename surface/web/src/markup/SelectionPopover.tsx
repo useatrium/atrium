@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export type SelectionPopoverMode = 'closed' | 'menu' | 'suggest' | 'comment';
 
@@ -33,6 +33,29 @@ export function SelectionPopover({
 }: SelectionPopoverProps) {
   const [replacement, setReplacement] = useState('');
   const [comment, setComment] = useState('');
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (state.mode === 'closed') return;
+    const close = () => onModeChange('closed');
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        close();
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      close();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [onModeChange, state.mode]);
 
   if (state.mode === 'closed') {
     return null;
@@ -40,6 +63,7 @@ export function SelectionPopover({
 
   return (
     <div
+      ref={popoverRef}
       className="atrium-markup-popover"
       style={{ top: state.top, left: state.left }}
       onMouseDown={(event) => {
@@ -113,4 +137,3 @@ export function SelectionPopover({
     </div>
   );
 }
-

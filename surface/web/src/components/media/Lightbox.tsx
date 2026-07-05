@@ -16,10 +16,12 @@ import {
 import { TextEditorPane } from './TextEditorPane';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { ApplyMarkupMenu } from '../ApplyMarkupMenu';
+import { Tooltip } from '../a11y';
 import type { LightboxCallbacks, PreviewFile } from './types';
 import { effectiveMediaKind, formatBytes, formatDateTime, kindLabel } from './utils';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from '../../sessions/ConflictSurface';
 import { EntryReferencesChip, type EntryReferenceSummary } from '../EntryReferencesChip';
+import { useDialog } from '../../useDialog';
 
 interface LightboxProps extends LightboxCallbacks {
   files: PreviewFile[];
@@ -108,6 +110,8 @@ export function Lightbox({
   const [conflict, setConflict] = useState<ArtifactConflict | null>(null);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const touchStartRef = useRef<number | null>(null);
   const canPrev = index > 0;
   const canNext = index < files.length - 1;
@@ -151,14 +155,15 @@ export function Lightbox({
       const target = event.target as HTMLElement | null;
       const targetAcceptsText =
         target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable === true;
-      if (event.key === 'Escape') onClose();
       if (targetAcceptsText) return;
       if (event.key === 'ArrowLeft' && canPrev) onIndexChange(index - 1);
       if (event.key === 'ArrowRight' && canNext) onIndexChange(index + 1);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [canNext, canPrev, index, onClose, onIndexChange]);
+  }, [canNext, canPrev, index, onIndexChange]);
+
+  useDialog({ open: true, containerRef: dialogRef, initialFocusRef: closeButtonRef, onClose });
 
   const refreshAfterWrite = useCallback(async () => {
     setPreviewReloadKey((value) => value + 1);
@@ -318,44 +323,57 @@ export function Lightbox({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex flex-col bg-surface text-fg shadow-2xl" role="dialog" aria-modal="true">
+    <div
+      ref={dialogRef}
+      className="fixed inset-0 z-[70] flex flex-col bg-surface text-fg shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lightbox-title"
+    >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3">
-        <button type="button" className={iconButtonClass} onClick={onClose} aria-label="Close lightbox" title="Close">
-          <CloseIcon size={16} />
-        </button>
+        <Tooltip content="Close">
+          <button ref={closeButtonRef} type="button" className={iconButtonClass} onClick={onClose} aria-label="Close lightbox">
+            <CloseIcon size={16} />
+          </button>
+        </Tooltip>
         <div className="min-w-0 flex-1">
           {renaming ? (
-            <form
-              className="flex max-w-xl items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitRename();
-              }}
-            >
-              <input
-                className="min-w-0 flex-1 rounded-md border border-edge-strong bg-surface px-2 py-1 text-sm text-fg outline-none focus:border-accent-hover"
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                disabled={busy}
-                autoFocus
-              />
-              <button className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent disabled:bg-surface-overlay disabled:text-fg-muted">
-                Save
-              </button>
-              <button
-                type="button"
-                className="rounded-md px-2.5 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-                onClick={() => {
-                  setRenaming(false);
-                  setDraftName(file.name);
+            <>
+              <h2 id="lightbox-title" className="sr-only">
+                {file.name}
+              </h2>
+              <form
+                className="flex max-w-xl items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitRename();
                 }}
               >
-                Cancel
-              </button>
-            </form>
+                <input
+                  className="min-w-0 flex-1 rounded-md border border-edge-strong bg-surface px-2 py-1 text-sm text-fg outline-none focus:border-accent-hover"
+                  value={draftName}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  disabled={busy}
+                  autoFocus
+                />
+                <button className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent disabled:bg-surface-overlay disabled:text-fg-muted">
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md px-2.5 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+                  onClick={() => {
+                    setRenaming(false);
+                    setDraftName(file.name);
+                  }}
+                >
+                  Cancel
+                </button>
+              </form>
+            </>
           ) : (
             <>
-              <div className="truncate text-sm font-semibold text-fg">{file.name}</div>
+              <h2 id="lightbox-title" className="truncate text-sm font-semibold text-fg">{file.name}</h2>
               <div className="truncate text-2xs text-fg-muted">
                 {index + 1} of {files.length} · {kindLabel(effectiveMediaKind(file))}
               </div>
@@ -365,16 +383,17 @@ export function Lightbox({
         <div className="shrink-0">
           <EntryReferencesChip summary={entryReferences} />
         </div>
-        <button
-          type="button"
-          className={iconButtonClass}
-          onClick={() => void onDiscuss?.(file, `/e/art_${file.id} `)}
-          disabled={!onDiscuss}
-          aria-label="Discuss in channel"
-          title="Discuss"
-        >
-          <MessagePlusIcon size={16} />
-        </button>
+        <Tooltip content="Discuss">
+          <button
+            type="button"
+            className={iconButtonClass}
+            onClick={() => void onDiscuss?.(file, `/e/art_${file.id} `)}
+            disabled={!onDiscuss}
+            aria-label="Discuss in channel"
+          >
+            <MessagePlusIcon size={16} />
+          </button>
+        </Tooltip>
         {applyMarkupTarget && (
           <ApplyMarkupMenu
             artifactId={applyMarkupTarget.artifactId}
@@ -384,72 +403,78 @@ export function Lightbox({
             onSpawnNewAgent={applyMarkupTarget.onSpawnNewAgent}
           />
         )}
-        <button
-          type="button"
-          className={iconButtonClass}
-          onClick={() => onDownload?.(file)}
-          disabled={!onDownload}
-          aria-label="Download file"
-          title="Download"
-        >
-          <DownloadIcon size={16} />
-        </button>
-        <button
-          type="button"
-          className={iconButtonClass}
-          onClick={() => onCopyLink?.(file)}
-          disabled={!onCopyLink}
-          aria-label="Copy file link"
-          title="Copy link"
-        >
-          <LinkIcon size={16} />
-        </button>
-        {onListVersions && (
-          <button
-            type="button"
-            className={`${iconButtonClass} ${openPanel === 'history' ? 'border-accent-border text-accent-text-strong' : ''}`}
-            onClick={() => setOpenPanel((panel) => (panel === 'history' ? null : 'history'))}
-            aria-label="Toggle version history"
-            title="History"
-          >
-            <RotateIcon size={16} />
-          </button>
-        )}
-        {editAvailable && (
-          <button
-            type="button"
-            className={`${iconButtonClass} ${editing ? 'border-accent-border text-accent-text-strong' : ''}`}
-            onClick={() => {
-              setEditing((value) => !value);
-              setEditError(null);
-              setConflict(null);
-            }}
-            aria-label="Edit file"
-            title="Edit"
-          >
-            <EditIcon size={16} />
-          </button>
-        )}
-        {markupAvailable && (
+        <Tooltip content="Download">
           <button
             type="button"
             className={iconButtonClass}
-            onClick={() => void onMarkup?.(file)}
-            aria-label="Mark up"
-            title="Mark up"
+            onClick={() => onDownload?.(file)}
+            disabled={!onDownload}
+            aria-label="Download file"
           >
-            <HighlighterIcon size={16} />
+            <DownloadIcon size={16} />
           </button>
+        </Tooltip>
+        <Tooltip content="Copy link">
+          <button
+            type="button"
+            className={iconButtonClass}
+            onClick={() => onCopyLink?.(file)}
+            disabled={!onCopyLink}
+            aria-label="Copy file link"
+          >
+            <LinkIcon size={16} />
+          </button>
+        </Tooltip>
+        {onListVersions && (
+          <Tooltip content="History">
+            <button
+              type="button"
+              className={`${iconButtonClass} ${openPanel === 'history' ? 'border-accent-border text-accent-text-strong' : ''}`}
+              onClick={() => setOpenPanel((panel) => (panel === 'history' ? null : 'history'))}
+              aria-label="Toggle version history"
+            >
+              <RotateIcon size={16} />
+            </button>
+          </Tooltip>
         )}
-        <button
-          type="button"
-          className={`${iconButtonClass} ${openPanel === 'info' ? 'border-accent-border text-accent-text-strong' : ''}`}
-          onClick={() => setOpenPanel((panel) => (panel === 'info' ? null : 'info'))}
-          aria-label="Toggle info panel"
-          title="Info"
-        >
-          <InfoIcon size={16} />
-        </button>
+        {editAvailable && (
+          <Tooltip content="Edit">
+            <button
+              type="button"
+              className={`${iconButtonClass} ${editing ? 'border-accent-border text-accent-text-strong' : ''}`}
+              onClick={() => {
+                setEditing((value) => !value);
+                setEditError(null);
+                setConflict(null);
+              }}
+              aria-label="Edit file"
+            >
+              <EditIcon size={16} />
+            </button>
+          </Tooltip>
+        )}
+        {markupAvailable && (
+          <Tooltip content="Mark up">
+            <button
+              type="button"
+              className={iconButtonClass}
+              onClick={() => void onMarkup?.(file)}
+              aria-label="Mark up"
+            >
+              <HighlighterIcon size={16} />
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip content="Info">
+          <button
+            type="button"
+            className={`${iconButtonClass} ${openPanel === 'info' ? 'border-accent-border text-accent-text-strong' : ''}`}
+            onClick={() => setOpenPanel((panel) => (panel === 'info' ? null : 'info'))}
+            aria-label="Toggle info panel"
+          >
+            <InfoIcon size={16} />
+          </button>
+        </Tooltip>
       </header>
 
       <main className="min-h-0 flex-1" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
