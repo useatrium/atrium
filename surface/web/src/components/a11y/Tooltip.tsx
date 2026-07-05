@@ -74,7 +74,9 @@ export function Tooltip({
             align={align}
             sideOffset={sideOffset}
             collisionPadding={8}
-            className="z-[80] flex max-w-[min(20rem,80vw)] select-none items-center gap-1.5 rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs font-medium text-fg-secondary shadow-lg"
+            // pointer-events-none: a hint tooltip is informational and must never
+            // intercept clicks meant for the trigger or a nearby control.
+            className="pointer-events-none z-[80] flex max-w-[min(20rem,80vw)] select-none items-center gap-1.5 rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs font-medium text-fg-secondary shadow-lg"
           >
             <span>{content}</span>
             {shortcut ? <Kbd keys={shortcut} decorative className="ml-0.5" /> : null}

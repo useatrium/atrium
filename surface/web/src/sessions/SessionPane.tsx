@@ -1815,6 +1815,7 @@ export function AnnotatedTranscriptRow({
                     draft: `/e/${handle} `,
                   });
                 }}
+                aria-label="Discuss in thread"
                 className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 <MessageSquarePlusIcon />
@@ -1828,6 +1829,7 @@ export function AnnotatedTranscriptRow({
                 type="button"
                 onClick={() => onMarkupEntry(handle)}
                 disabled={markupLoading}
+                aria-label="Mark up & reply"
                 className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
               >
                 <PenLineIcon />

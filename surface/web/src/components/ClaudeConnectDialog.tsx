@@ -118,7 +118,7 @@ export function ClaudeConnectDialog({
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-label="Connect Claude Code"
         aria-busy={busy || starting ? 'true' : undefined}
         className="mt-28 w-[min(440px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >

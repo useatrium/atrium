@@ -23,30 +23,28 @@ describe('matchesChord', () => {
   const ev = (init: Partial<KeyboardEvent>): KeyboardEvent =>
     ({ metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, key: '', ...init }) as KeyboardEvent;
 
-  it('matches Mod+K to Cmd on mac, Ctrl elsewhere', () => {
-    expect(matchesChord(ev({ metaKey: true, key: 'k' }), ['Mod', 'K'], true)).toBe(true);
-    expect(matchesChord(ev({ ctrlKey: true, key: 'k' }), ['Mod', 'K'], true)).toBe(false);
-    expect(matchesChord(ev({ ctrlKey: true, key: 'k' }), ['Mod', 'K'], false)).toBe(true);
+  it('matches Mod+K to EITHER Cmd or Ctrl (platform-agnostic)', () => {
+    expect(matchesChord(ev({ metaKey: true, key: 'k' }), ['Mod', 'K'])).toBe(true);
+    expect(matchesChord(ev({ ctrlKey: true, key: 'k' }), ['Mod', 'K'])).toBe(true);
+    // no modifier -> no match
+    expect(matchesChord(ev({ key: 'k' }), ['Mod', 'K'])).toBe(false);
   });
 
   it('requires exact modifier state', () => {
     // plain Enter must NOT match when a modifier is held
-    expect(matchesChord(ev({ key: 'Enter' }), ['Enter'], true)).toBe(true);
-    expect(matchesChord(ev({ shiftKey: true, key: 'Enter' }), ['Enter'], true)).toBe(false);
-    expect(matchesChord(ev({ shiftKey: true, key: 'Enter' }), ['Shift', 'Enter'], true)).toBe(true);
-  });
-
-  it('rejects when the other platform modifier is held', () => {
-    // On mac a ⌘K chord must not fire when Ctrl is also down
-    expect(matchesChord(ev({ metaKey: true, ctrlKey: true, key: 'k' }), ['Mod', 'K'], true)).toBe(false);
+    expect(matchesChord(ev({ key: 'Enter' }), ['Enter'])).toBe(true);
+    expect(matchesChord(ev({ shiftKey: true, key: 'Enter' }), ['Enter'])).toBe(false);
+    expect(matchesChord(ev({ shiftKey: true, key: 'Enter' }), ['Shift', 'Enter'])).toBe(true);
+    // a plain Enter chord must not fire when Cmd/Ctrl is held
+    expect(matchesChord(ev({ metaKey: true, key: 'Enter' }), ['Enter'])).toBe(false);
   });
 
   it('matches the ? help shortcut regardless of shift (? is Shift+/)', () => {
     // Real keyboards report shiftKey=true when producing '?'; both must match.
-    expect(matchesChord(ev({ key: '?', shiftKey: true }), SHORTCUTS.shortcutsHelp.keys, true)).toBe(true);
-    expect(matchesChord(ev({ key: '?' }), SHORTCUTS.shortcutsHelp.keys, true)).toBe(true);
+    expect(matchesChord(ev({ key: '?', shiftKey: true }), SHORTCUTS.shortcutsHelp.keys)).toBe(true);
+    expect(matchesChord(ev({ key: '?' }), SHORTCUTS.shortcutsHelp.keys)).toBe(true);
     // A modifier + ? should not trigger the bare help shortcut.
-    expect(matchesChord(ev({ key: '?', metaKey: true }), SHORTCUTS.shortcutsHelp.keys, true)).toBe(false);
+    expect(matchesChord(ev({ key: '?', metaKey: true }), SHORTCUTS.shortcutsHelp.keys)).toBe(false);
   });
 });
 

@@ -137,7 +137,7 @@ export function CodexConnectDialog({
         onSubmit={(e) => e.preventDefault()}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-label="Connect Codex"
         aria-describedby={descriptionIds || undefined}
         aria-busy={busy || phase === 'starting' || phase === 'waiting' ? 'true' : undefined}
         className="mt-28 w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"

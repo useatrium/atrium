@@ -74,16 +74,20 @@ export function formatChordString(keys: Chord, mac: boolean = isMacPlatform()): 
   return mac ? parts.join('') : parts.join('+');
 }
 
-/** True if a keydown event matches the chord (modifiers must match exactly). */
-export function matchesChord(event: KeyboardEvent, keys: Chord, mac: boolean = isMacPlatform()): boolean {
+/**
+ * True if a keydown event matches the chord.
+ *
+ * `Mod` matches EITHER Cmd or Ctrl, regardless of platform — so a shortcut
+ * fires whether the user reaches for ⌘K (mac habit) or Ctrl+K (cross-platform
+ * habit). This mirrors the app's long-standing `metaKey || ctrlKey` behavior;
+ * the visible hint still shows the platform-preferred key via `formatChord`.
+ */
+export function matchesChord(event: KeyboardEvent, keys: Chord): boolean {
   const wantMod = keys.includes('Mod');
   const wantShift = keys.includes('Shift');
   const wantAlt = keys.includes('Alt');
-  const modActive = mac ? event.metaKey : event.ctrlKey;
-  // The "other" mod key must NOT be pressed (avoid Ctrl matching a ⌘ chord on mac).
-  const otherModActive = mac ? event.ctrlKey : event.metaKey;
+  const modActive = event.metaKey || event.ctrlKey;
   if (modActive !== wantMod) return false;
-  if (otherModActive) return false;
   if (event.altKey !== wantAlt) return false;
   const main = keys.find((k) => k !== 'Mod' && k !== 'Shift' && k !== 'Alt');
   // Symbol keys (e.g. '?', which is Shift+'/') already encode shift in the

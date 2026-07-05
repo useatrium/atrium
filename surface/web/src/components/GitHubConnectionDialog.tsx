@@ -62,7 +62,7 @@ export function GitHubConnectionDialog({
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-label="GitHub connection"
         aria-busy={busy ? 'true' : undefined}
         className="mt-24 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
