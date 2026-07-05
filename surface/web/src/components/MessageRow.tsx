@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type SVGProps } from 'react';
-import type { ChatMessage } from '@atrium/surface-client';
+import { memo, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type SVGProps } from 'react';
+import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 
 /** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
@@ -83,6 +83,46 @@ import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
 
 type MessageWithHandle = ChatMessage & { handle?: string | null };
+type ReactionDisplayUser = {
+  id: string;
+  name: string;
+};
+
+function reactionUserName(user: UserRef | undefined): string {
+  const displayName = user?.displayName.trim();
+  if (displayName) return displayName;
+  const handle = user?.handle.trim();
+  if (handle) return handle;
+  return 'Unknown';
+}
+
+function ReactionUsersPopover({
+  id,
+  emoji,
+  users,
+}: {
+  id: string;
+  emoji: string;
+  users: ReactionDisplayUser[];
+}) {
+  return (
+    <div
+      id={id}
+      role="tooltip"
+      aria-label={`${users.length} ${users.length === 1 ? 'person' : 'people'} reacted with ${emoji}`}
+      className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+    >
+      <ul className="max-h-48 overflow-y-auto">
+        {users.map((user) => (
+          <li key={user.id} className="flex min-w-0 items-center gap-2 rounded px-2 py-1 text-xs text-fg-secondary">
+            <Avatar name={user.name} seed={user.id} size={20} />
+            <span className="truncate">{user.name}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export const MessageRow = memo(function MessageRow({
   message,
@@ -101,6 +141,7 @@ export const MessageRow = memo(function MessageRow({
   onEdit,
   onDelete,
   onReact,
+  resolveUser,
   onMarkupEntry,
 }: {
   message: ChatMessage;
@@ -126,6 +167,7 @@ export const MessageRow = memo(function MessageRow({
   onDelete?: (message: ChatMessage) => Promise<void>;
   /** Toggle an emoji reaction in the UI; caller sends explicit add/remove. */
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
 }) {
   const m = message;
@@ -169,6 +211,8 @@ export const MessageRow = memo(function MessageRow({
     !!onMarkupEntry;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
+  const [openReactionEmoji, setOpenReactionEmoji] = useState<string | null>(null);
+  const reactionPopoverBaseId = useId();
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
   const emojiRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -454,23 +498,57 @@ export const MessageRow = memo(function MessageRow({
         )}
         {!deleted && !isSessionRow && !isSessionEventRow && (m.reactions?.length ?? 0) > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
-            {m.reactions!.map((r) => {
+            {m.reactions!.map((r, reactionIndex) => {
               const mine = meId != null && r.userIds.includes(meId);
+              const users = resolveUser
+                ? r.userIds.map((id) => ({
+                    id,
+                    name: reactionUserName(resolveUser(id)),
+                  }))
+                : null;
+              const hasUserPopover = users != null && users.length > 0;
+              const popoverOpen = hasUserPopover && openReactionEmoji === r.emoji;
+              const popoverId = `${reactionPopoverBaseId}-reaction-${reactionIndex}`;
               return (
-                <button
+                <div
                   key={r.emoji}
-                  onClick={() => canReact && react(r.emoji)}
-                  title={`${r.userIds.length} reacted with ${r.emoji}`}
-                  aria-label={`${r.emoji} ${r.userIds.length}${mine ? ', including you' : ''}`}
-                  className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums ${
-                    mine
-                      ? 'border-accent-border/70 bg-accent-hover/15 text-accent-text-strong'
-                      : 'border-edge-strong bg-surface-raised text-fg-secondary hover:border-edge-hover'
-                  }`}
+                  onMouseEnter={() => {
+                    if (hasUserPopover) setOpenReactionEmoji(r.emoji);
+                  }}
+                  onMouseLeave={() => {
+                    if (openReactionEmoji === r.emoji) setOpenReactionEmoji(null);
+                  }}
+                  className="relative inline-flex"
                 >
-                  <span>{r.emoji}</span>
-                  <span>{r.userIds.length}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => canReact && react(r.emoji)}
+                    onFocus={() => {
+                      if (hasUserPopover) setOpenReactionEmoji(r.emoji);
+                    }}
+                    onBlur={() => {
+                      if (openReactionEmoji === r.emoji) setOpenReactionEmoji(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Escape' || !popoverOpen) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setOpenReactionEmoji(null);
+                    }}
+                    title={resolveUser ? undefined : `${r.userIds.length} reacted with ${r.emoji}`}
+                    aria-label={`${r.emoji} ${r.userIds.length}${mine ? ', including you' : ''}`}
+                    aria-describedby={popoverOpen ? popoverId : undefined}
+                    className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums ${
+                      mine
+                        ? 'border-accent-border/70 bg-accent-hover/15 text-accent-text-strong'
+                        : 'border-edge-strong bg-surface-raised text-fg-secondary hover:border-edge-hover'
+                    }`}
+                  >
+                    <span>{r.emoji}</span>
+                    <span>{r.userIds.length}</span>
+                  </button>
+                  {popoverOpen && users && <ReactionUsersPopover id={popoverId} emoji={r.emoji} users={users} />}
+                </div>
               );
             })}
           </div>

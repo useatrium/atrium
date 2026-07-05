@@ -1741,3 +1741,77 @@ export function useChat(): ChatContextValue {
   if (!ctx) throw new Error('useChat outside ChatProvider');
   return ctx;
 }
+
+function upsertUsersById(prev: Record<string, UserRef>, users: UserRef[]): Record<string, UserRef> {
+  let next: Record<string, UserRef> | null = null;
+  for (const user of users) {
+    if (!user.id) continue;
+    const existing = (next ?? prev)[user.id];
+    if (existing?.handle === user.handle && existing?.displayName === user.displayName) continue;
+    next = next ?? { ...prev };
+    next[user.id] = user;
+  }
+  return next ?? prev;
+}
+
+export function useReactionUserResolver(messages: ChatMessage[]): ((id: string) => UserRef | undefined) | undefined {
+  const ctx = useContext(ChatContext);
+  const channels = ctx?.state.channels;
+  const channelMembers = ctx?.channelMembers;
+  const me = ctx?.me;
+  const [usersById, setUsersById] = useState<Record<string, UserRef>>({});
+  const loadedChannelIdsRef = useRef<Set<string>>(new Set());
+  const loadingChannelIdsRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+  const hasChatContext = ctx != null;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const seedUsers = useCallback((users: UserRef[]) => {
+    if (users.length === 0) return;
+    setUsersById((prev) => upsertUsersById(prev, users));
+  }, []);
+
+  const seededUsersById = useMemo(() => {
+    const users: UserRef[] = [];
+    if (me) users.push(me);
+    for (const channel of channels ?? []) users.push(...(channel.members ?? []));
+    for (const message of messages) users.push(message.author);
+    return upsertUsersById({}, users);
+  }, [channels, me, messages]);
+
+  const channelIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of messages) ids.add(message.channelId);
+    return [...ids];
+  }, [messages]);
+
+  useEffect(() => {
+    if (!channelMembers) return;
+    for (const channelId of channelIds) {
+      if (loadedChannelIdsRef.current.has(channelId) || loadingChannelIdsRef.current.has(channelId)) continue;
+      loadingChannelIdsRef.current.add(channelId);
+      void channelMembers(channelId)
+        .then((members) => {
+          loadedChannelIdsRef.current.add(channelId);
+          if (mountedRef.current) seedUsers(members);
+        })
+        .catch((err: unknown) => {
+          console.warn('failed to load reaction members', err);
+        })
+        .finally(() => {
+          loadingChannelIdsRef.current.delete(channelId);
+        });
+    }
+  }, [channelIds, channelMembers, seedUsers]);
+
+  return useMemo(() => {
+    if (!hasChatContext) return undefined;
+    return (id: string) => usersById[id] ?? seededUsersById[id];
+  }, [hasChatContext, seededUsersById, usersById]);
+}
