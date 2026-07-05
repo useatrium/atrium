@@ -36,6 +36,7 @@ import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
 import { useTheme } from '../theme';
 import { Avatar } from './Avatar';
+import { Tooltip } from './a11y';
 import { BellIcon, BellOffIcon, FileIcon, GearIcon, LockIcon } from './icons';
 import { useDialog } from '../useDialog';
 
@@ -314,17 +315,18 @@ export function Sidebar({
           <div className={SIDEBAR_PANEL_CLASS}>
             <div className={SIDEBAR_SUBHEAD_CLASS}>
               <span>Channels</span>
-              <button
-                onClick={() => {
-                  setCreating((v) => !v);
-                  setError(null);
-                }}
-                title="Create channel"
-                aria-label="Create channel"
-                className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-              >
-                +
-              </button>
+              <Tooltip content="Create channel">
+                <button
+                  onClick={() => {
+                    setCreating((v) => !v);
+                    setError(null);
+                  }}
+                  aria-label="Create channel"
+                  className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                >
+                  +
+                </button>
+              </Tooltip>
             </div>
 
             {creating && (
@@ -368,18 +370,19 @@ export function Sidebar({
                       <span className="truncate">{c.name}</span>
                       {unreadBadge(c.id, active)}
                     </button>
-                    <button
-                      onClick={() => onSetMute(c.id, !c.muted)}
-                      title={c.muted ? 'Unmute channel' : 'Mute channel'}
-                      aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
-                      className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
-                        c.muted
-                          ? 'text-fg-muted'
-                          : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-                      }`}
-                    >
-                      {c.muted ? <BellOffIcon /> : <BellIcon />}
-                    </button>
+                    <Tooltip content={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}>
+                      <button
+                        onClick={() => onSetMute(c.id, !c.muted)}
+                        aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
+                        className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
+                          c.muted
+                            ? 'text-fg-muted'
+                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                        }`}
+                      >
+                        {c.muted ? <BellOffIcon /> : <BellIcon />}
+                      </button>
+                    </Tooltip>
                   </li>
                 );
               })}
@@ -387,14 +390,15 @@ export function Sidebar({
 
             <div className={`${SIDEBAR_SUBHEAD_CLASS} mt-2 border-t border-edge pt-2`}>
               <span>Direct messages</span>
-              <button
-                onClick={() => openDmPicker()}
-                title="Start a DM"
-                aria-label="Start a DM"
-                className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-              >
-                +
-              </button>
+              <Tooltip content="Start a DM">
+                <button
+                  onClick={() => openDmPicker()}
+                  aria-label="Start a DM"
+                  className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                >
+                  +
+                </button>
+              </Tooltip>
             </div>
 
             {dmPicking && (
@@ -464,18 +468,19 @@ export function Sidebar({
                       <span className="truncate">{label}</span>
                       {unreadBadge(c.id, active)}
                     </button>
-                    <button
-                      onClick={() => onSetMute(c.id, !c.muted)}
-                      title={c.muted ? 'Unmute DM' : 'Mute DM'}
-                      aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
-                      className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
-                        c.muted
-                          ? 'text-fg-muted'
-                          : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-                      }`}
-                    >
-                      {c.muted ? <BellOffIcon /> : <BellIcon />}
-                    </button>
+                    <Tooltip content={c.muted ? `Unmute ${label}` : `Mute ${label}`}>
+                      <button
+                        onClick={() => onSetMute(c.id, !c.muted)}
+                        aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
+                        className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
+                          c.muted
+                            ? 'text-fg-muted'
+                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                        }`}
+                      >
+                        {c.muted ? <BellOffIcon /> : <BellIcon />}
+                      </button>
+                    </Tooltip>
                   </li>
                 );
               })}
@@ -491,17 +496,18 @@ export function Sidebar({
           <div className="truncate text-xs font-medium text-fg-body">{me.displayName}</div>
           <div className="truncate text-2xs text-fg-muted">@{me.handle}</div>
         </div>
-        <button
-          ref={settingsButtonRef}
-          onClick={() => setSettingsOpen((v) => !v)}
-          title="Settings"
-          aria-label="Settings"
-          aria-expanded={settingsOpen}
-          aria-haspopup="dialog"
-          className="rounded-md px-1.5 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-        >
-          <GearIcon />
-        </button>
+        <Tooltip content="Settings">
+          <button
+            ref={settingsButtonRef}
+            onClick={() => setSettingsOpen((v) => !v)}
+            aria-label="Settings"
+            aria-expanded={settingsOpen}
+            aria-haspopup="dialog"
+            className="rounded-md px-1.5 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+          >
+            <GearIcon />
+          </button>
+        </Tooltip>
         {settingsOpen &&
           createPortal(
             <SettingsPopover
@@ -642,19 +648,19 @@ function SettingsPopover({
         <SettingRow label="Accent">
           <div className="flex items-center gap-2">
             {ACCENTS.map((accent) => (
-              <button
-                key={accent}
-                type="button"
-                aria-label={`${ACCENT_LABELS[accent]} accent`}
-                title={ACCENT_LABELS[accent]}
-                aria-pressed={prefs.accent === accent}
-                onClick={() => setPrefs({ accent })}
-                className={`flex size-8 items-center justify-center rounded-md border border-edge ${
-                  prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
-                }`}
-              >
-                <span className={`size-4 rounded-full ${SWATCH_CLASSES[accent]}`} />
-              </button>
+              <Tooltip key={accent} content={`${ACCENT_LABELS[accent]} accent`}>
+                <button
+                  type="button"
+                  aria-label={`${ACCENT_LABELS[accent]} accent`}
+                  aria-pressed={prefs.accent === accent}
+                  onClick={() => setPrefs({ accent })}
+                  className={`flex size-8 items-center justify-center rounded-md border border-edge ${
+                    prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
+                  }`}
+                >
+                  <span className={`size-4 rounded-full ${SWATCH_CLASSES[accent]}`} />
+                </button>
+              </Tooltip>
             ))}
           </div>
         </SettingRow>
@@ -709,20 +715,21 @@ function SettingsPopover({
         </SettingRow>
 
         <SettingRow label="Notifications">
-          <button
-            type="button"
-            onClick={() => {
-              void toggleNotifications().then(setNotify);
-            }}
-            disabled={notify === 'denied' || notify === 'unsupported'}
-            title={BELL_TITLES[notify]}
-            aria-label={BELL_TITLES[notify]}
-            aria-pressed={notify === 'on'}
-            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:opacity-40"
-          >
-            {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
-            <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
-          </button>
+          <Tooltip content={BELL_TITLES[notify]}>
+            <button
+              type="button"
+              onClick={() => {
+                void toggleNotifications().then(setNotify);
+              }}
+              disabled={notify === 'denied' || notify === 'unsupported'}
+              aria-label={BELL_TITLES[notify]}
+              aria-pressed={notify === 'on'}
+              className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:opacity-40"
+            >
+              {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
+              <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
+            </button>
+          </Tooltip>
         </SettingRow>
 
         <SettingRow label="Messages">
@@ -770,27 +777,28 @@ function SettingsPopover({
         </SettingRow>
 
         <SettingRow label="GitHub">
-          <button
-            type="button"
-            onClick={onConnectGitHub}
-            title={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
-            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
-          >
-            <span
-              className={`size-2 rounded-full ${
-                githubConnection?.connected ? 'bg-success' : connectionsAvailable ? 'bg-warning' : 'bg-fg-muted/60'
-              }`}
-            />
-            <span>
-              {githubConnection?.connected
-                ? `${githubConnection.accountLabel ?? 'Connected'} · ${githubConnectionLabel(githubConnection.tokenKind)}`
-                : connectionsAvailable
-                  ? githubConnection?.status === 'needs_auth'
-                    ? 'Needs auth'
-                    : 'Public read'
-                  : 'Unavailable'}
-            </span>
-          </button>
+          <Tooltip content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}>
+            <button
+              type="button"
+              onClick={onConnectGitHub}
+              className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+            >
+              <span
+                className={`size-2 rounded-full ${
+                  githubConnection?.connected ? 'bg-success' : connectionsAvailable ? 'bg-warning' : 'bg-fg-muted/60'
+                }`}
+              />
+              <span>
+                {githubConnection?.connected
+                  ? `${githubConnection.accountLabel ?? 'Connected'} · ${githubConnectionLabel(githubConnection.tokenKind)}`
+                  : connectionsAvailable
+                    ? githubConnection?.status === 'needs_auth'
+                      ? 'Needs auth'
+                      : 'Public read'
+                    : 'Unavailable'}
+              </span>
+            </button>
+          </Tooltip>
         </SettingRow>
 
         <SettingRow label="Claude Code">

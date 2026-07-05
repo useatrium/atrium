@@ -3,7 +3,9 @@ import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
 import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
+import { Tooltip } from './a11y';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
+import { SHORTCUTS } from '../lib/shortcuts';
 
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
@@ -337,14 +339,15 @@ export function Composer({
         <div className="flex items-end gap-2">
           {allowAttachments && !disabled && (
             <>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                title="Attach a file"
-                aria-label="Attach a file"
-                className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-              >
-                <PaperclipIcon />
-              </button>
+              <Tooltip content="Attach a file">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach a file"
+                  className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                >
+                  <PaperclipIcon />
+                </button>
+              </Tooltip>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -395,14 +398,18 @@ export function Composer({
                 }}
                 className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
               />
-              <button
-                onClick={send}
-                disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
-                title={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : undefined}
-                className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+              <Tooltip
+                content={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : 'Send message'}
+                shortcut={SHORTCUTS.sendMessage.keys}
               >
-                Send
-              </button>
+                <button
+                  onClick={send}
+                  disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
+                  className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+                >
+                  Send
+                </button>
+              </Tooltip>
             </>
           )}
         </div>
