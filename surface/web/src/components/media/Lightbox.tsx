@@ -368,7 +368,7 @@ export function Lightbox({
         <button
           type="button"
           className={iconButtonClass}
-          onClick={() => void onDiscuss?.(file, `${window.location.origin}/e/art_${file.id} `)}
+          onClick={() => void onDiscuss?.(file, `/e/art_${file.id} `)}
           disabled={!onDiscuss}
           aria-label="Discuss in channel"
           title="Discuss"

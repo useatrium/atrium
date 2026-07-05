@@ -113,7 +113,7 @@ describe('MarkupEditorScreen', () => {
       expect.objectContaining({
         channelId: 'ch-1',
         threadRootEventId: 42,
-        text: 'https://atrium.test/e/art_a-1',
+        text: '/e/art_a-1',
       }),
     );
     expect(routerReplace).toHaveBeenCalledWith({

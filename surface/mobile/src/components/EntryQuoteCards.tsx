@@ -8,15 +8,27 @@ import type { ArtifactContentResolver, EntryResolver, ResolvedEntry } from '../l
 import { CriticMarkupBlocks, countCriticMarkupChanges } from './CriticMarkupText';
 
 const EXCERPT_LIMIT = 200;
+const INLINE_LABEL_LIMIT = 40;
 const ARTIFACT_HANDLE_PREFIX = 'art_';
 const MARKUP_PREVIEW_MAX_LINES = 14;
 const MARKUP_PREVIEW_LINE_HEIGHT = 20;
+
+type EntryOpenHandlers = {
+  onOpenChannel?: (channelId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
+};
 
 function excerptFor(entry: ResolvedEntry): string {
   if (entry.tombstoned) return 'Entry deleted';
   const normalized = entry.text.replace(/\s+/g, ' ').trim();
   if (normalized.length <= EXCERPT_LIMIT) return normalized;
   return `${normalized.slice(0, EXCERPT_LIMIT - 3).trimEnd()}...`;
+}
+
+function shortText(text: string, limit: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
 }
 
 function iconFor(entry: ResolvedEntry): keyof typeof Ionicons.glyphMap {
@@ -39,8 +51,49 @@ function labelFor(entry: ResolvedEntry): string {
   return entry.kind.replace(/_/g, ' ').toUpperCase();
 }
 
+function basename(path: string): string {
+  return path.split('/').filter(Boolean).at(-1) ?? path;
+}
+
+function metaString(entry: ResolvedEntry, key: string): string | null {
+  const value = entry.meta[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function actorFor(entry: ResolvedEntry): string {
+  return entry.actorLabel || entry.actor || entry.kind;
+}
+
+function inlineLabelFor(entry: ResolvedEntry): string {
+  if (entry.tombstoned) return 'deleted entry';
+  if (entry.targetType === 'artifact') {
+    const path = metaString(entry, 'path');
+    const title = metaString(entry, 'title');
+    return (path ? basename(path) : null) || title || entry.text.trim() || 'Artifact';
+  }
+
+  const actor = actorFor(entry);
+  const quote = shortText(entry.text, INLINE_LABEL_LIMIT);
+  return `${actor}: "${quote}"`;
+}
+
 function artifactIdFromHandle(handle: string): string | null {
   return handle.startsWith(ARTIFACT_HANDLE_PREFIX) ? handle.slice(ARTIFACT_HANDLE_PREFIX.length) : null;
+}
+
+function canOpenEntry(entry: ResolvedEntry, { onOpenChannel, onOpenSession }: EntryOpenHandlers): boolean {
+  return (
+    (entry.targetType === 'record' && entry.location.sessionId != null && onOpenSession != null) ||
+    (entry.targetType !== 'record' && entry.location.channelId != null && onOpenChannel != null)
+  );
+}
+
+function openEntryReference(entry: ResolvedEntry, { onOpenChannel, onOpenSession }: EntryOpenHandlers): void {
+  if (entry.targetType === 'record' && entry.location.sessionId) {
+    onOpenSession?.(entry.location.sessionId);
+    return;
+  }
+  if (entry.location.channelId) onOpenChannel?.(entry.location.channelId);
 }
 
 export function stripYamlFrontmatter(content: string): string {
@@ -142,17 +195,9 @@ function EntryQuoteCard({
 }) {
   const { colors } = useTheme();
   const [artifactBody, setArtifactBody] = useState<string | null>(null);
-  const canOpen =
-    (entry.targetType === 'record' && entry.location.sessionId != null && onOpenSession != null) ||
-    (entry.targetType !== 'record' && entry.location.channelId != null && onOpenChannel != null);
-
-  const open = () => {
-    if (entry.targetType === 'record' && entry.location.sessionId) {
-      onOpenSession?.(entry.location.sessionId);
-      return;
-    }
-    if (entry.location.channelId) onOpenChannel?.(entry.location.channelId);
-  };
+  const openHandlers = { onOpenChannel, onOpenSession };
+  const canOpen = canOpenEntry(entry, openHandlers);
+  const open = () => openEntryReference(entry, openHandlers);
 
   const context = contextFor(entry);
   const excerpt = excerptFor(entry);
@@ -245,9 +290,95 @@ function EntryQuoteCard({
   );
 }
 
+export function EntryInlineChip({
+  handle,
+  resolveEntry,
+  onOpenChannel,
+  onOpenSession,
+}: {
+  handle: string;
+  resolveEntry?: EntryResolver;
+  onOpenChannel?: (channelId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
+}) {
+  const { colors } = useTheme();
+  const [entry, setEntry] = useState<ResolvedEntry | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEntry(null);
+    if (!resolveEntry) return undefined;
+
+    void resolveEntry(handle)
+      .then((resolved) => {
+        if (!cancelled) setEntry(resolved);
+      })
+      .catch(() => {
+        if (!cancelled) setEntry(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [handle, resolveEntry]);
+
+  const openHandlers = { onOpenChannel, onOpenSession };
+  const canOpen = entry != null && canOpenEntry(entry, openHandlers);
+  const label = entry ? inlineLabelFor(entry) : 'Atrium entry';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={entry ? `Open ${label}` : 'Atrium entry'}
+      accessibilityState={{ disabled: !canOpen }}
+      disabled={!canOpen}
+      onPress={() => {
+        if (entry) openEntryReference(entry, openHandlers);
+      }}
+      hitSlop={6}
+      style={({ pressed }) => ({
+        alignItems: 'center',
+        alignSelf: 'center',
+        backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+        borderColor: entry?.tombstoned ? colors.borderSoft : colors.border,
+        borderRadius: 999,
+        borderWidth: 1,
+        flexDirection: 'row',
+        flexShrink: 1,
+        gap: 4,
+        marginHorizontal: 2,
+        marginVertical: 1,
+        maxWidth: '100%',
+        minHeight: 24,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        opacity: entry?.tombstoned ? 0.72 : 1,
+      })}
+    >
+      <Ionicons
+        name={entry ? iconFor(entry) : 'link-outline'}
+        size={13}
+        color={entry?.tombstoned ? colors.textFaint : colors.textMuted}
+      />
+      <Text
+        style={{
+          color: entry?.tombstoned ? colors.textMuted : colors.textSecondary,
+          flexShrink: 1,
+          fontSize: font.xs,
+          fontWeight: '700',
+        }}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function EntryQuoteCards({
   text,
   serverUrl,
+  handles: providedHandles,
   resolveEntry,
   resolveArtifactContent,
   onOpenChannel,
@@ -255,17 +386,20 @@ export function EntryQuoteCards({
 }: {
   text: string;
   serverUrl: string;
+  handles?: string[];
   resolveEntry: EntryResolver;
   resolveArtifactContent?: ArtifactContentResolver;
   onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
 }) {
-  const handles = useMemo(() => extractEntryLinkHandles(text, serverUrl), [text, serverUrl]);
+  const extractedHandles = useMemo(() => extractEntryLinkHandles(text, serverUrl), [text, serverUrl]);
+  const handlesKey = (providedHandles ?? extractedHandles).join('\n');
   const [entries, setEntries] = useState<ResolvedEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     setEntries([]);
+    const handles = handlesKey ? handlesKey.split('\n') : [];
     if (handles.length === 0) return;
 
     void Promise.all(handles.map((handle) => resolveEntry(handle))).then((resolved) => {
@@ -276,7 +410,7 @@ export function EntryQuoteCards({
     return () => {
       cancelled = true;
     };
-  }, [handles, resolveEntry]);
+  }, [handlesKey, resolveEntry]);
 
   if (entries.length === 0) return null;
 

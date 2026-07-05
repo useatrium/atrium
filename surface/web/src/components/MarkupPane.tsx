@@ -141,8 +141,7 @@ export function MarkupPane({
       if (effectiveMode.kind === 'reply') {
         await writeArtifactContent(source.artifactId, content, source.seq);
         if (!onSendThreadReply) throw new Error('Reply target is not available');
-        const origin = typeof window === 'undefined' ? '' : window.location.origin;
-        const link = `${origin}/e/art_${source.artifactId}`;
+        const link = `/e/art_${source.artifactId}`;
         const trimmedNote = note.trim();
         onSendThreadReply({
           channelId: effectiveMode.channelId,

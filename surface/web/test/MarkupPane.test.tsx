@@ -160,7 +160,7 @@ describe('MarkupPane', () => {
     expect(onSendThreadReply).toHaveBeenCalledWith({
       channelId: 'ch-1',
       threadRootEventId: 101,
-      text: `please review this\n${window.location.origin}/e/art_art-1`,
+      text: `please review this\n/e/art_art-1`,
     });
     expect(onClose).toHaveBeenCalledTimes(1);
   });

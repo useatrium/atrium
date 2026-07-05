@@ -90,6 +90,6 @@ describe('Lightbox markup action', () => {
 
     expect(screen.queryByRole('button', { name: 'Comment' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Discuss in channel' }));
-    expect(onDiscuss).toHaveBeenCalledWith(textFile, `${window.location.origin}/e/art_art-1 `);
+    expect(onDiscuss).toHaveBeenCalledWith(textFile, `/e/art_art-1 `);
   });
 });

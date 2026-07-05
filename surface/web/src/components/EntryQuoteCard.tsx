@@ -228,6 +228,63 @@ function contextLine(entry: ResolvedEntryQuote): string | null {
   return parts.length > 0 ? parts.join(' - ') : null;
 }
 
+type EntryInlineChipState =
+  | { kind: 'loading' }
+  | { kind: 'resolved'; entry: ResolvedEntryQuote }
+  | { kind: 'failed' };
+
+function shortExcerpt(text: string): string {
+  const value = excerpt(text);
+  if (value.length <= 40) return value;
+  return `${value.slice(0, 37).trimEnd()}...`;
+}
+
+function inlineChipLabel(entry: ResolvedEntryQuote): string {
+  if (entry.tombstoned) return 'deleted entry';
+  if (entry.targetType === 'artifact') {
+    if (typeof entry.meta.path === 'string') return basename(entry.meta.path);
+    return frontmatterTitle(entry.text) ?? targetLabel('artifact');
+  }
+  const actor = entry.actorLabel || (entry.targetType === 'record' ? 'record' : 'Someone');
+  return `${actor}: “${shortExcerpt(entry.text)}”`;
+}
+
+export function EntryInlineChip({ handle }: { handle: string }) {
+  const [state, setState] = useState<EntryInlineChipState>({ kind: 'loading' });
+
+  useEffect(() => {
+    let active = true;
+    setState({ kind: 'loading' });
+    void resolveEntryQuote(handle).then((entry) => {
+      if (!active) return;
+      setState(entry ? { kind: 'resolved', entry } : { kind: 'failed' });
+    });
+    return () => {
+      active = false;
+    };
+  }, [handle]);
+
+  const targetType = state.kind === 'resolved' ? state.entry.targetType : 'event';
+  const label =
+    state.kind === 'loading' ? 'entry' : state.kind === 'resolved' ? inlineChipLabel(state.entry) : 'Atrium entry';
+  const muted = state.kind !== 'resolved' || state.entry.tombstoned;
+
+  return (
+    <a
+      href={`/e/${handle}`}
+      title={label}
+      className={`mx-0.5 inline-flex max-w-[18rem] items-center gap-1 rounded border border-accent-border-muted/50 bg-accent-hover/10 px-1.5 py-0.5 align-[-2px] text-[0.86em] font-medium no-underline hover:bg-accent-hover/15 ${
+        muted ? 'text-fg-muted hover:text-fg-secondary' : 'text-accent-text-strong hover:text-accent-text-strong'
+      }`}
+    >
+      <span className="shrink-0 [&>svg]:h-3.5 [&>svg]:w-3.5">
+        <TargetIcon targetType={targetType} />
+      </span>
+      <span className={`min-w-0 truncate ${state.kind === 'loading' ? 'min-w-[6ch]' : ''}`}>{label}</span>
+    </a>
+  );
+}
+
 export function EntryQuoteCard({
   entry,
   applyContext,

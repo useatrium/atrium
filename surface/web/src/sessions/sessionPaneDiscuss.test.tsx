@@ -99,7 +99,7 @@ describe('AnnotatedTranscriptRow Discuss affordance', () => {
       handle: 'rec_1',
       channelId: 'ch_1',
       threadRootEventId: 123,
-      draft: `${window.location.origin}/e/rec_1 `,
+      draft: '/e/rec_1 ',
     });
   });
 });

@@ -143,7 +143,7 @@ describe('markupAuthoring helpers', () => {
       expect.objectContaining({
         channelId: 'ch-1',
         threadRootEventId: 42,
-        text: 'Note\nhttps://atrium.test/e/art_a-1',
+        text: 'Note\n/e/art_a-1',
       }),
     );
   });

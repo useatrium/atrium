@@ -141,7 +141,7 @@ export async function submitMarkupDraft(args: {
   const note = args.note.trim();
   if (args.draft.mode.kind === 'reply') {
     await args.api.saveTextFile(args.draft.artifactId, content, args.draft.seq, 'text/markdown; charset=utf-8');
-    const link = `${args.serverUrl.replace(/\/+$/, '')}/e/art_${args.draft.artifactId}`;
+    const link = `/e/art_${args.draft.artifactId}`;
     await args.api.postMessage({
       channelId: args.draft.mode.channelId,
       threadRootEventId: args.draft.mode.threadRootEventId,
