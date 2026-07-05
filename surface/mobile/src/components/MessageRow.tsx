@@ -1,7 +1,16 @@
-import { memo } from 'react';
-import { Pressable, Text, View, type AccessibilityActionEvent } from 'react-native';
+import { memo, useMemo, useState } from 'react';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type AccessibilityActionEvent,
+  type GestureResponderEvent,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   formatExactTimestamp,
   formatTime,
@@ -10,13 +19,15 @@ import {
   type ChatMessage,
   type MessageReaction,
   type Session,
+  type UserRef,
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
+import { partitionEntryLinks } from '../lib/entryLinks';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
-import { MarkdownText } from './Markdown';
+import { EntryReferenceMarkdownProvider, MarkdownText } from './Markdown';
 import { MessageText } from './MessageText';
 import { TimestampText } from './TimestampText';
 import { VoiceMessage } from './VoiceMessage';
@@ -28,6 +39,8 @@ type MessageActionTarget = ChatMessage & {
   actionCopyText?: string;
   actionCopyLink?: string;
 };
+
+type UserResolver = (id: string) => UserRef | undefined;
 
 export interface MessageRowProps {
   message: ChatMessage;
@@ -44,6 +57,7 @@ export interface MessageRowProps {
   serverUrl: string;
   resolveEntry: EntryResolver;
   resolveArtifactContent?: ArtifactContentResolver;
+  resolveUser?: UserResolver;
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
   onLongPress: (m: ChatMessage) => void;
@@ -59,50 +73,195 @@ function ReactionChips({
   reactions,
   meId,
   onToggle,
+  resolveUser,
 }: {
   reactions: MessageReaction[];
   meId: string;
   onToggle: (emoji: string) => void;
+  resolveUser?: UserResolver;
 }) {
   const { colors } = useTheme();
+  const [selectedEmoji, setSelectedEmoji] = useState<string | null>(null);
+  const selectedReaction = selectedEmoji ? reactions.find((r) => r.emoji === selectedEmoji) : undefined;
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-      {reactions.map((r) => {
-        const mine = r.userIds.includes(meId);
-        return (
-          <Pressable
-            key={r.emoji}
-            accessibilityRole="button"
-            accessibilityLabel={`${r.emoji} ${r.userIds.length}${mine ? ', you reacted' : ''}`}
-            accessibilityState={{ selected: mine }}
-            onPress={() => onToggle(r.emoji)}
+    <>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+        {reactions.map((r) => {
+          const mine = r.userIds.includes(meId);
+          const countLabel = r.userIds.length === 1 ? '1 reaction' : `${r.userIds.length} reactions`;
+          return (
+            <Pressable
+              key={r.emoji}
+              accessibilityRole="button"
+              accessibilityLabel={`${r.emoji} ${countLabel}${mine ? ', you reacted' : ''}`}
+              accessibilityHint={resolveUser ? 'Long press to show who reacted' : undefined}
+              accessibilityState={{ selected: mine }}
+              onPress={(event: GestureResponderEvent) => {
+                event.stopPropagation();
+                onToggle(r.emoji);
+              }}
+              onLongPress={
+                resolveUser
+                  ? (event: GestureResponderEvent) => {
+                      event.stopPropagation();
+                      selectionHaptic();
+                      setSelectedEmoji(r.emoji);
+                    }
+                  : undefined
+              }
+              delayLongPress={250}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                minHeight: 44,
+                paddingHorizontal: 12,
+                paddingVertical: 3,
+                borderRadius: 999,
+                backgroundColor: mine ? colors.accentBg : colors.bgElevated,
+                borderWidth: 1,
+                borderColor: mine ? colors.accent : colors.border,
+              }}
+            >
+              <Text style={{ fontSize: 13 }}>{r.emoji}</Text>
+              <Text
+                style={{
+                  fontSize: font.xs,
+                  fontWeight: '600',
+                  color: mine ? colors.accent : colors.textSecondary,
+                }}
+              >
+                {r.userIds.length}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <ReactionUsersSheet
+        reaction={selectedReaction}
+        resolveUser={resolveUser}
+        onClose={() => setSelectedEmoji(null)}
+      />
+    </>
+  );
+}
+
+function reactorName(user: UserRef | undefined): string {
+  const displayName = user?.displayName.trim();
+  if (displayName) return displayName;
+  const handle = user?.handle.trim();
+  return handle || 'Unknown';
+}
+
+function ReactionUsersSheet({
+  reaction,
+  resolveUser,
+  onClose,
+}: {
+  reaction: MessageReaction | undefined;
+  resolveUser?: UserResolver;
+  onClose: () => void;
+}) {
+  const { colors, reduceMotion } = useTheme();
+  const insets = useSafeAreaInsets();
+  const reactors = useMemo(
+    () =>
+      reaction?.userIds.map((id, index) => {
+        const user = resolveUser?.(id);
+        return {
+          id,
+          key: `${id}:${index}`,
+          name: reactorName(user),
+        };
+      }) ?? [],
+    [reaction, resolveUser],
+  );
+  const count = reaction?.userIds.length ?? 0;
+  const countLabel = count === 1 ? '1 reaction' : `${count} reactions`;
+  const visible = reaction != null && resolveUser != null;
+
+  return (
+    <Modal visible={visible} transparent animationType={reduceMotion ? 'none' : 'slide'} onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.scrim }}>
+        <Pressable
+          accessible={false}
+          onPress={onClose}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+        />
+        <View
+          style={{
+            maxHeight: '70%',
+            backgroundColor: colors.bgElevated,
+            borderTopLeftRadius: radius.lg,
+            borderTopRightRadius: radius.lg,
+            borderWidth: 1,
+            borderColor: colors.border,
+            overflow: 'hidden',
+            paddingBottom: insets.bottom,
+          }}
+        >
+          <View
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 4,
-              minHeight: 44,
-              paddingHorizontal: 12,
-              paddingVertical: 3,
-              borderRadius: 999,
-              backgroundColor: mine ? colors.accentBg : colors.bgElevated,
-              borderWidth: 1,
-              borderColor: mine ? colors.accent : colors.border,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+              paddingHorizontal: space.md,
+              minHeight: 52,
+              gap: space.sm,
             }}
           >
-            <Text style={{ fontSize: 13 }}>{r.emoji}</Text>
-            <Text
+            <Text style={{ color: colors.text, fontSize: 24 }}>{reaction?.emoji ?? ''}</Text>
+            <Text style={{ flex: 1, color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
+              {countLabel}
+            </Text>
+            <Pressable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close reactions"
+              hitSlop={8}
               style={{
-                fontSize: font.xs,
-                fontWeight: '600',
-                color: mine ? colors.accent : colors.textSecondary,
+                minWidth: 44,
+                minHeight: 44,
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
-              {r.userIds.length}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </Pressable>
+          </View>
+          {reactors.length === 0 ? (
+            <View style={{ padding: space.lg, alignItems: 'center' }}>
+              <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No reactions</Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={{ paddingVertical: space.xs }}>
+              {reactors.map((reactor) => (
+                <View
+                  key={reactor.key}
+                  accessible
+                  accessibilityRole="text"
+                  accessibilityLabel={reactor.name}
+                  style={{
+                    minHeight: 48,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: space.sm,
+                    paddingHorizontal: space.md,
+                    paddingVertical: space.sm,
+                  }}
+                >
+                  <Avatar name={reactor.name} seed={reactor.id} size={28} />
+                  <Text style={{ flex: 1, color: colors.text, fontSize: font.md, fontWeight: '600' }} numberOfLines={1}>
+                    {reactor.name}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -408,6 +567,7 @@ export const MessageRow = memo(function MessageRow({
   serverUrl,
   resolveEntry,
   resolveArtifactContent,
+  resolveUser,
   fileHeaders,
   onLongPress,
   onOpenThread,
@@ -439,6 +599,11 @@ export const MessageRow = memo(function MessageRow({
   const copyText = actionCopyTextForMessage(m, session, rowText);
   const entryHandle = entryHandleForAction(m);
   const copyLink = entryHandle ? `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(entryHandle)}` : null;
+  const partitionedEntryLinks = useMemo(() => partitionEntryLinks(m.text, serverUrl), [m.text, serverUrl]);
+  const entryReferenceMarkdown = useMemo(
+    () => ({ resolveEntry, onOpenChannel, onOpenSession }),
+    [resolveEntry, onOpenChannel, onOpenSession],
+  );
   const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null || copyLink != null);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
@@ -479,7 +644,11 @@ export const MessageRow = memo(function MessageRow({
     <SessionCard message={m} session={session} onOpen={onOpenSession} />
   ) : (
     <>
-      {m.text ? <MessageText text={m.text} meHandle={meHandle} muted={pending} /> : null}
+      {partitionedEntryLinks.bodyText ? (
+        <EntryReferenceMarkdownProvider value={entryReferenceMarkdown}>
+          <MessageText text={partitionedEntryLinks.bodyText} meHandle={meHandle} muted={pending} />
+        </EntryReferenceMarkdownProvider>
+      ) : null}
       {m.voice ? (
         <VoiceMessage voice={m.voice} api={api} fileUrl={fileUrl} fileHeaders={fileHeaders} />
       ) : (
@@ -586,10 +755,11 @@ export const MessageRow = memo(function MessageRow({
           {body}
           {editedNote}
         </Pressable>
-        {m.text ? (
+        {partitionedEntryLinks.standaloneHandles.length > 0 ? (
           <EntryQuoteCards
             text={m.text}
             serverUrl={serverUrl}
+            handles={partitionedEntryLinks.standaloneHandles}
             resolveEntry={resolveEntry}
             resolveArtifactContent={resolveArtifactContent}
             onOpenChannel={onOpenChannel}
@@ -611,6 +781,7 @@ export const MessageRow = memo(function MessageRow({
           <ReactionChips
             reactions={m.reactions}
             meId={meId}
+            resolveUser={resolveUser}
             onToggle={(emoji) => {
               selectionHaptic();
               onToggleReaction(m, emoji);

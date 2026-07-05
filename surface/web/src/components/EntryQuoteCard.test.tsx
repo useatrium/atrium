@@ -2,11 +2,9 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EntryQuoteCard } from './EntryQuoteCard';
-import { MessageText } from './MessageText';
+import { EntryInlineChip, EntryQuoteCard } from './EntryQuoteCard';
 import {
   clearEntryResolveCacheForTests,
-  extractEntryHandles,
   type ResolvedEntryQuote,
 } from '../lib/entryLinks';
 
@@ -50,22 +48,6 @@ afterEach(() => {
 });
 
 describe('entry links', () => {
-  it('detects current-origin absolute links and relative links while ignoring invalid and cross-origin links', () => {
-    expect(
-      extractEntryHandles(
-        [
-          'https://app.example/e/evt_42',
-          '/e/rec_record-1',
-          '/e/art_artifact_1',
-          'https://elsewhere.example/e/evt_99',
-          '/e/evt_nope',
-          '/e/run_future',
-        ].join(' '),
-        'https://app.example',
-      ),
-    ).toEqual(['evt_42', 'rec_record-1', 'art_artifact_1']);
-  });
-
   it('renders an excerpt, context, and click-through target', () => {
     render(
       <EntryQuoteCard
@@ -96,6 +78,32 @@ describe('entry links', () => {
     expect(screen.getByText('deleted entry')).toBeTruthy();
     expect(screen.queryByText('Hidden text')).toBeNull();
     expect(screen.getByText('#general - Planning session')).toBeTruthy();
+  });
+
+  it('renders a resolved inline chip with an artifact basename', async () => {
+    resolveEntryMock.mockResolvedValue(
+      entry({
+        handle: 'art_00000000-0000-0000-0000-000000000001',
+        targetType: 'artifact',
+        text: 'artifact body',
+        meta: { path: 'docs/memo.md' },
+      }),
+    );
+
+    render(<EntryInlineChip handle="art_00000000-0000-0000-0000-000000000001" />);
+
+    expect(screen.getByRole('link').getAttribute('href')).toBe('/e/art_00000000-0000-0000-0000-000000000001');
+    expect(screen.getByText('entry')).toBeTruthy();
+    expect(await screen.findByText('memo.md')).toBeTruthy();
+  });
+
+  it('renders a generic inline chip when resolving fails', async () => {
+    resolveEntryMock.mockRejectedValue(new Error('not found'));
+
+    render(<EntryInlineChip handle="evt_404" />);
+
+    expect(await screen.findByText('Atrium entry')).toBeTruthy();
+    expect(screen.getByRole('link').getAttribute('href')).toBe('/e/evt_404');
   });
 
   it('upgrades small markup artifacts into a tracked-changes card with clamp and expand', async () => {
@@ -182,54 +190,4 @@ describe('entry links', () => {
     expect(screen.queryByRole('button', { name: /Show all changes/ })).toBeNull();
   });
 
-  it('caches resolved entries across renders', async () => {
-    resolveEntryMock.mockResolvedValue(entry());
-
-    render(<MessageText text="Raw link stays visible: /e/evt_1" />);
-    expect(screen.getByText(/Raw link stays visible: \/e\/evt_1/)).toBeTruthy();
-    expect(screen.queryByText('This is the quoted entry text with useful context.')).toBeNull();
-    expect(await screen.findByText('This is the quoted entry text with useful context.')).toBeTruthy();
-    expect(resolveEntryMock).toHaveBeenCalledTimes(1);
-
-    cleanup();
-    render(<MessageText text="Same entry again: /e/evt_1" />);
-    expect(await screen.findByText('This is the quoted entry text with useful context.')).toBeTruthy();
-    expect(resolveEntryMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('caches failed resolves as misses', async () => {
-    resolveEntryMock.mockRejectedValue(new Error('not found'));
-
-    render(<MessageText text="/e/evt_404" />);
-    await waitFor(() => expect(resolveEntryMock).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole('link')).toBeNull();
-
-    cleanup();
-    render(<MessageText text="/e/evt_404" />);
-    await waitFor(() => expect(screen.getByText('/e/evt_404')).toBeTruthy());
-    expect(resolveEntryMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('dedupes handles and renders at most three quote cards per message', async () => {
-    resolveEntryMock.mockImplementation((handle: string) =>
-      Promise.resolve(
-        entry({
-          handle,
-          text: `Quote for ${handle}`,
-        }),
-      ),
-    );
-
-    render(<MessageText text="/e/evt_1 /e/evt_1 /e/evt_2 /e/evt_3 /e/evt_4" />);
-
-    await waitFor(() => expect(screen.getByText('Quote for evt_3')).toBeTruthy());
-
-    expect(screen.getByText('Quote for evt_1')).toBeTruthy();
-    expect(screen.getByText('Quote for evt_2')).toBeTruthy();
-    expect(screen.queryByText('Quote for evt_4')).toBeNull();
-    expect(resolveEntryMock).toHaveBeenCalledTimes(3);
-    expect(resolveEntryMock).toHaveBeenNthCalledWith(1, 'evt_1');
-    expect(resolveEntryMock).toHaveBeenNthCalledWith(2, 'evt_2');
-    expect(resolveEntryMock).toHaveBeenNthCalledWith(3, 'evt_3');
-  });
 });

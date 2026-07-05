@@ -91,6 +91,7 @@ import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
+import { entryShareUrl } from '../lib/publicUrl';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -1697,9 +1698,8 @@ export function AnnotatedTranscriptRow({
     if (typeof navigator === 'undefined') return;
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) return;
-    const origin = typeof window === 'undefined' ? '' : window.location.origin;
     void clipboard
-      .writeText(`${origin}/e/${handle}`)
+      .writeText(entryShareUrl(handle))
       .then(() => {
         setLinkCopied(true);
         if (linkCopyResetRef.current) clearTimeout(linkCopyResetRef.current);
@@ -1768,12 +1768,11 @@ export function AnnotatedTranscriptRow({
             <button
               type="button"
               onClick={() => {
-                const origin = typeof window === 'undefined' ? '' : window.location.origin;
                 onDiscussEntry({
                   handle,
                   channelId: discussContext.channelId,
                   threadRootEventId: discussContext.threadRootEventId,
-                  draft: `${origin}/e/${handle} `,
+                  draft: `/e/${handle} `,
                 });
               }}
               title="Discuss"

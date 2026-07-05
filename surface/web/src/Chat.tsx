@@ -438,6 +438,8 @@ export function Chat({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
   const [mainSurface, setMainSurface] = useState<MainSurface>('chat');
+  const [channelMemberCache, setChannelMemberCache] = useState<Record<string, UserRef[]>>({});
+  const channelMemberRequestsRef = useRef<Set<string>>(new Set());
   const [settingsRequestSeq, setSettingsRequestSeq] = useState(0);
   const [createChannelRequestSeq, setCreateChannelRequestSeq] = useState(0);
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
@@ -533,6 +535,41 @@ export function Chat({
   const threadLoaded = state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
   const activeDraftKey = active ? `channel:${active.id}` : '';
   const threadDraftKey = active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
+  const activeChannelId = active?.id ?? null;
+  useEffect(() => {
+    if (!activeChannelId) return;
+    const channelId = activeChannelId;
+    if (channelMemberRequestsRef.current.has(channelId)) return;
+    channelMemberRequestsRef.current.add(channelId);
+    api
+      .channelMembers(channelId)
+      .then(({ members }) => {
+        setChannelMemberCache((current) => ({ ...current, [channelId]: members }));
+      })
+      .catch((err: unknown) => {
+        onApiError(err);
+        setChannelMemberCache((current) =>
+          current[channelId] ? current : { ...current, [channelId]: [] },
+        );
+      });
+  }, [activeChannelId, onApiError]);
+  const activeUserMap = useMemo(() => {
+    const users = new Map<string, UserRef>();
+    const remember = (user: UserRef | null | undefined) => {
+      if (user) users.set(user.id, user);
+    };
+    if (active) {
+      active.members?.forEach(remember);
+      channelMemberCache[active.id]?.forEach(remember);
+    }
+    for (const message of timeline.main) remember(message.author);
+    for (const replies of Object.values(timeline.threads)) {
+      for (const message of replies) remember(message.author);
+    }
+    remember(me);
+    return users;
+  }, [active, channelMemberCache, me, timeline.main, timeline.threads]);
+  const resolveActiveUser = useCallback((id: string) => activeUserMap.get(id), [activeUserMap]);
   const activeDraftKeysForSync = useMemo((): ReadonlySet<string> => {
     const keys = new Set<string>();
     if (state.activeChannelId) {
@@ -1584,6 +1621,7 @@ export function Chat({
                 onEdit={editMessage}
                 onDelete={removeMessage}
                 onReact={reactToMessage}
+                resolveUser={active ? resolveActiveUser : undefined}
                 onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
                 unreadDividerAfterId={unreadDividerAfterId}
               />
@@ -1706,6 +1744,7 @@ export function Chat({
               onEdit={editMessage}
               onDelete={removeMessage}
               onReact={reactToMessage}
+              resolveUser={resolveActiveUser}
               onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
               draftKey={threadDraftKey}
               initialDraft={drafts[threadDraftKey] ?? ''}

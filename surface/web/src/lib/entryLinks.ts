@@ -26,8 +26,21 @@ const ART_PREFIX = 'art_';
 const TRAILING_LINK_PUNCTUATION = /[),.;:!?]+$/;
 const resolveCache = new Map<string, Promise<ResolvedEntryQuote | null>>();
 
-function trimLinkCandidate(candidate: string): string {
-  return candidate.replace(TRAILING_LINK_PUNCTUATION, '');
+export interface EntryLinkCandidate {
+  original: string;
+  candidate: string;
+  trailing: string;
+  handle: string;
+  index: number;
+}
+
+function currentOrigin(): string {
+  return typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
+}
+
+function splitLinkCandidate(candidate: string): { candidate: string; trailing: string } {
+  const trimmed = candidate.replace(TRAILING_LINK_PUNCTUATION, '');
+  return { candidate: trimmed, trailing: candidate.slice(trimmed.length) };
 }
 
 function isValidEntryHandle(handle: string): boolean {
@@ -43,17 +56,15 @@ function isValidEntryHandle(handle: string): boolean {
   }
 }
 
-function handleFromEntryUrl(candidate: string, currentOrigin: string): string | null {
+export function handleFromEntryUrl(candidate: string, origin = currentOrigin()): string | null {
   let url: URL;
   try {
     url = candidate.startsWith('/e/')
-      ? new URL(candidate, currentOrigin)
+      ? new URL(candidate, origin)
       : new URL(candidate);
   } catch {
     return null;
   }
-
-  if (url.origin !== currentOrigin) return null;
 
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts.length !== 2 || parts[0] !== 'e') return null;
@@ -68,14 +79,33 @@ function handleFromEntryUrl(candidate: string, currentOrigin: string): string | 
   return isValidEntryHandle(handle) ? handle : null;
 }
 
-export function extractEntryHandles(text: string, currentOrigin = window.location.origin): string[] {
+export function findEntryLinkCandidates(text: string, origin = currentOrigin()): EntryLinkCandidate[] {
+  const candidates: EntryLinkCandidate[] = [];
+
+  for (const match of text.matchAll(ENTRY_LINK_CANDIDATE)) {
+    const original = match[0];
+    const index = match.index ?? 0;
+    const split = splitLinkCandidate(original);
+    const handle = handleFromEntryUrl(split.candidate, origin);
+    if (!handle) continue;
+    candidates.push({
+      original,
+      candidate: split.candidate,
+      trailing: split.trailing,
+      handle,
+      index,
+    });
+  }
+
+  return candidates;
+}
+
+export function extractEntryHandles(text: string, origin = currentOrigin()): string[] {
   const handles: string[] = [];
   const seen = new Set<string>();
 
-  for (const match of text.matchAll(ENTRY_LINK_CANDIDATE)) {
-    const candidate = trimLinkCandidate(match[0]);
-    const handle = handleFromEntryUrl(candidate, currentOrigin);
-    if (!handle || seen.has(handle)) continue;
+  for (const { handle } of findEntryLinkCandidates(text, origin)) {
+    if (seen.has(handle)) continue;
     seen.add(handle);
     handles.push(handle);
   }

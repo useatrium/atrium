@@ -7,6 +7,12 @@ import {
 } from './referenced-entries.js';
 
 describe('referenced entries appendix', () => {
+  it('extracts relative entry links without a host', () => {
+    expect(extractEntryLinks('Please inspect /e/evt_12 before continuing.')).toEqual([
+      { originalLink: '/e/evt_12', handle: 'evt_12' },
+    ]);
+  });
+
   it('extracts relative and absolute entry links as canonical handles without a count cap', () => {
     const links = extractEntryLinks('See /e/evt_12 and https://atrium.test/e/rec_abc plus /e/not-a-handle!');
     expect(links).toEqual([

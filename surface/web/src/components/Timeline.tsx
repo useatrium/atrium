@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ChatMessage } from '@atrium/surface-client';
+import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
 import { MessageRow } from './MessageRow';
@@ -27,6 +27,7 @@ export function Timeline({
   onEdit,
   onDelete,
   onReact,
+  resolveUser,
   onMarkupEntry,
   unreadDividerAfterId,
 }: {
@@ -55,6 +56,7 @@ export function Timeline({
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
   unreadDividerAfterId?: number | null;
 }) {
@@ -226,6 +228,7 @@ export function Timeline({
               onEdit={onEdit}
               onDelete={onDelete}
               onReact={onReact}
+              resolveUser={resolveUser}
               onMarkupEntry={onMarkupEntry}
             />
           </div>

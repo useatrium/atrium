@@ -2,13 +2,14 @@ import { isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
-import { extractEntryHandles } from '../lib/entryLinks';
-import { EntryQuoteCards } from './EntryQuoteCard';
+import { findEntryLinkCandidates } from '../lib/entryLinks';
+import { EntryInlineChip, EntryQuoteCards } from './EntryQuoteCard';
 import '../sessions/Markdown.css';
 
 type MarkdownMode = 'message' | 'compact';
 
 const MENTION_URL_PREFIX = 'atrium-mention:';
+const ENTRY_URL_PREFIX = 'atrium-entry:';
 const MENTION_RE = /@([a-z0-9][a-z0-9_-]{1,31})/gi;
 const COLLAPSE_LINE_THRESHOLD = 16;
 const COLLAPSE_CHAR_THRESHOLD = 1800;
@@ -19,6 +20,27 @@ function remarkMentions() {
       if (!node || node.type !== 'text' || typeof node.value !== 'string') return null;
       const pieces = splitMentionText(node.value);
       return pieces.length > 1 ? pieces : null;
+    });
+  };
+}
+
+function remarkEntryRefs() {
+  return (tree: unknown) => {
+    visitChildren(tree, (node) => {
+      if (!node) return null;
+      if (node.type === 'link') {
+        const handle = typeof node.url === 'string' ? findEntryLinkCandidates(node.url)[0]?.handle : null;
+        if (handle) {
+          node.url = `${ENTRY_URL_PREFIX}${handle}`;
+          node.title = null;
+        }
+        return [node];
+      }
+      if (node.type !== 'text' || typeof node.value !== 'string') return null;
+      const pieces = splitEntryRefText(node.value);
+      // Replace whenever a ref was found — including a node whose entire text is a
+      // single ref (e.g. a list item / heading / table cell), which yields one link piece.
+      return pieces.some((piece) => piece.type === 'link') ? pieces : null;
     });
   };
 }
@@ -65,9 +87,59 @@ function splitMentionText(text: string): MutableNode[] {
   return out;
 }
 
+function splitEntryRefText(text: string): MutableNode[] {
+  const out: MutableNode[] = [];
+  let last = 0;
+
+  for (const match of findEntryLinkCandidates(text)) {
+    if (match.index > last) out.push({ type: 'text', value: text.slice(last, match.index) });
+    out.push({
+      type: 'link',
+      url: `${ENTRY_URL_PREFIX}${match.handle}`,
+      title: null,
+      children: [{ type: 'text', value: match.candidate }],
+    });
+    if (match.trailing) out.push({ type: 'text', value: match.trailing });
+    last = match.index + match.original.length;
+  }
+  if (last < text.length) out.push({ type: 'text', value: text.slice(last) });
+  return out.length > 0 ? out : [{ type: 'text', value: text }];
+}
+
 function safeUrlTransform(url: string) {
   if (url.startsWith(MENTION_URL_PREFIX)) return url;
+  if (url.startsWith(ENTRY_URL_PREFIX)) return url;
   return defaultUrlTransform(url);
+}
+
+function standaloneEntryHandle(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const matches = findEntryLinkCandidates(trimmed);
+  if (matches.length !== 1) return null;
+  const [match] = matches;
+  if (!match || match.index !== 0 || match.original.length !== trimmed.length) return null;
+  return match.handle;
+}
+
+function partitionEntryLinks(text: string): { bodyText: string; standaloneHandles: string[] } {
+  const bodyLines: string[] = [];
+  const standaloneHandles: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    const handle = standaloneEntryHandle(line);
+    if (handle) {
+      if (!seen.has(handle)) {
+        seen.add(handle);
+        standaloneHandles.push(handle);
+      }
+      continue;
+    }
+    bodyLines.push(line);
+  }
+
+  return { bodyText: bodyLines.join('\n'), standaloneHandles };
 }
 
 function compactMarkdownSource(text: string): string {
@@ -218,6 +290,9 @@ function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
       if (href?.startsWith(MENTION_URL_PREFIX)) {
         return mentionSpan(href.slice(MENTION_URL_PREFIX.length), meHandle);
       }
+      if (href?.startsWith(ENTRY_URL_PREFIX)) {
+        return <EntryInlineChip handle={href.slice(ENTRY_URL_PREFIX.length)} />;
+      }
       if (compact) {
         return (
           <span className="text-accent-text" {...props}>
@@ -312,7 +387,7 @@ function MarkdownContent({ text, mode, meHandle }: { text: string; mode: Markdow
   const components = useMemo(() => componentsFor(mode, meHandle), [mode, meHandle]);
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMentions]}
+      remarkPlugins={[remarkGfm, remarkMentions, remarkEntryRefs]}
       rehypePlugins={mode === 'message' ? [rehypeHighlight] : []}
       components={components}
       skipHtml
@@ -338,11 +413,11 @@ export const CompactMarkdownText = memo(function CompactMarkdownText({
 });
 
 export function MessageText({ text, meHandle }: { text: string; meHandle?: string }) {
-  const entryHandles = extractEntryHandles(text).slice(0, 3);
+  const { bodyText, standaloneHandles } = partitionEntryLinks(text);
   const shouldCollapse =
-    text.length > COLLAPSE_CHAR_THRESHOLD || text.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
+    bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
   const [expanded, setExpanded] = useState(!shouldCollapse);
-  const content: ReactNode = <MarkdownContent text={text} mode="message" meHandle={meHandle} />;
+  const content: ReactNode = <MarkdownContent text={bodyText} mode="message" meHandle={meHandle} />;
 
   return (
     <>
@@ -364,7 +439,7 @@ export function MessageText({ text, meHandle }: { text: string; meHandle?: strin
           {expanded ? 'Show less' : 'Show more'}
         </button>
       )}
-      <EntryQuoteCards handles={entryHandles} />
+      <EntryQuoteCards handles={standaloneHandles.slice(0, 3)} />
     </>
   );
 }
