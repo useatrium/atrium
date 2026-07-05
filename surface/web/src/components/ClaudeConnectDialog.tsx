@@ -157,6 +157,7 @@ export function ClaudeConnectDialog({
             </span>
             <input
               ref={codeInputRef}
+              // biome-ignore lint/a11y/noAutofocus: dialog primary field is intentionally focused on open; useDialog manages focus containment and restore.
               autoFocus
               type="text"
               value={code}

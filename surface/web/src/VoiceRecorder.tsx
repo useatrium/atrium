@@ -238,6 +238,7 @@ export function VoiceRecorder({
     return (
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <button
+          type="button"
           onClick={stop}
           title="Stop recording"
           aria-label="Stop recording"
@@ -248,6 +249,7 @@ export function VoiceRecorder({
         <span className="w-12 text-xs tabular-nums text-fg-secondary">{formatDuration(elapsedMs)}</span>
         <MiniWaveform peaks={visiblePeaks} active />
         <button
+          type="button"
           onClick={cancel}
           title="Cancel recording"
           aria-label="Cancel recording"
@@ -269,8 +271,11 @@ export function VoiceRecorder({
           onPause={() => setPreviewPlaying(false)}
           onEnded={() => setPreviewPlaying(false)}
           className="hidden"
-        />
+        >
+          <track kind="captions" />
+        </audio>
         <button
+          type="button"
           onClick={togglePreview}
           title={previewPlaying ? 'Pause preview' : 'Play preview'}
           aria-label={previewPlaying ? 'Pause preview' : 'Play preview'}
@@ -283,6 +288,7 @@ export function VoiceRecorder({
         </span>
         <MiniWaveform peaks={visiblePeaks} />
         <button
+          type="button"
           onClick={cancel}
           disabled={sending}
           title="Re-record"
@@ -292,6 +298,7 @@ export function VoiceRecorder({
           <RefreshCwIcon />
         </button>
         <button
+          type="button"
           onClick={cancel}
           disabled={sending}
           title="Cancel voice message"
@@ -301,6 +308,7 @@ export function VoiceRecorder({
           <XIcon />
         </button>
         <button
+          type="button"
           onClick={() => void send()}
           disabled={sending}
           title="Send voice message"
@@ -317,6 +325,7 @@ export function VoiceRecorder({
   return (
     <div className="flex items-center gap-2">
       <button
+        type="button"
         onClick={() => void start()}
         disabled={disabled || sending}
         title="Record a voice message"

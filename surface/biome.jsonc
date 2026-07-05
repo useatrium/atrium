@@ -29,7 +29,7 @@
 		"enabled": true,
 		"rules": {
 			"preset": "recommended",
-			"a11y": "off",
+			"a11y": "on",
 			"complexity": {
 				"useOptionalChain": "off",
 				"useLiteralKeys": "off"
@@ -46,6 +46,16 @@
 			}
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["mobile/**"],
+			"linter": {
+				"rules": {
+					"a11y": "off"
+				}
+			}
+		}
+	],
 	"javascript": {
 		"formatter": {
 			"quoteStyle": "single",

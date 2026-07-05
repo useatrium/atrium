@@ -195,6 +195,7 @@ export function WorkDrawer({
         {canPin && (
           <Tooltip content={pinLabel}>
             <button
+              type="button"
               onClick={onTogglePin}
               aria-pressed={pinned}
               aria-label={pinAriaLabel}
@@ -222,6 +223,7 @@ export function WorkDrawer({
           </Tooltip>
         )}
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close work drawer"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"

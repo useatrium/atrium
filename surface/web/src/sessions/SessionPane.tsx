@@ -78,7 +78,13 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
-import { sessionPaneSizing, useSessionPaneWidth } from './useSessionPaneWidth';
+import {
+  SESSION_PANE_FALLBACK_WIDTH,
+  SESSION_PANE_MAX_VW,
+  SESSION_PANE_MIN_WIDTH,
+  sessionPaneSizing,
+  useSessionPaneWidth,
+} from './useSessionPaneWidth';
 import { Spinner, TurnStatusLine } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
@@ -923,6 +929,10 @@ export function SessionPane({
   const focused = layout === 'focus';
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const paneSizing = sessionPaneSizing(paneWidth);
+  const paneMaxWidth =
+    typeof window === 'undefined'
+      ? SESSION_PANE_FALLBACK_WIDTH
+      : Math.max(SESSION_PANE_MIN_WIDTH, Math.round((window.innerWidth * SESSION_PANE_MAX_VW) / 100));
   const canDetach = !isPendingSessionId(session.id);
   const closePane = useCallback(() => {
     if (!popout) {
@@ -991,10 +1001,15 @@ export function SessionPane({
       style={focused ? undefined : paneSizing.style}
     >
       {!focused && (
+        // biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing.
         <div
           role="separator"
+          tabIndex={0}
           aria-orientation="vertical"
           aria-label="Resize session panel"
+          aria-valuemin={SESSION_PANE_MIN_WIDTH}
+          aria-valuemax={paneMaxWidth}
+          aria-valuenow={paneWidth ?? SESSION_PANE_FALLBACK_WIDTH}
           title="Drag to resize · double-click to reset"
           data-testid="pane-resize-handle"
           onPointerDown={startResize}
@@ -1072,6 +1087,7 @@ export function SessionPane({
         {(isSpawner || isDriver) && !displayTerminal && (
           <Tooltip content={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}>
             <button
+              type="button"
               onClick={onCancel}
               className={`rounded-md border px-2 py-1 text-2xs font-medium ${
                 displayCancelAsk === 'failed'
@@ -1132,6 +1148,7 @@ export function SessionPane({
         {onToggleFocus && (
           <Tooltip content={focused ? 'Collapse to split view' : 'Expand to focus view'}>
             <button
+              type="button"
               onClick={onToggleFocus}
               aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
               aria-pressed={focused}
@@ -1143,6 +1160,7 @@ export function SessionPane({
         )}
         <Tooltip content="Close session pane">
           <button
+            type="button"
             onClick={closePane}
             aria-label="Close session pane"
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -1161,6 +1179,7 @@ export function SessionPane({
             <span className="font-semibold">{seatRequest.displayName}</span> requests the seat
           </span>
           <button
+            type="button"
             onClick={() =>
               sessionsApi
                 .grantSeat(session.id, seatRequest.userId)
@@ -1171,6 +1190,7 @@ export function SessionPane({
             Grant
           </button>
           <button
+            type="button"
             onClick={() => setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))}
             className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
           >
@@ -1228,6 +1248,7 @@ export function SessionPane({
 
       {conflictsN > 0 && (
         <button
+          type="button"
           data-testid="conflicts-strip"
           onClick={() => onStrip('conflicts')}
           aria-expanded={workTab === 'conflicts'}
@@ -1242,6 +1263,7 @@ export function SessionPane({
       )}
       {changedFileCount > 0 && (
         <button
+          type="button"
           data-testid="changes-strip"
           onClick={() => onStrip('changes')}
           aria-expanded={workTab === 'changes'}
@@ -1254,6 +1276,7 @@ export function SessionPane({
       )}
       {sideEffectsN > 0 && (
         <button
+          type="button"
           data-testid="sideeffects-strip"
           onClick={() => onStrip('sideEffects')}
           aria-expanded={workTab === 'sideEffects'}
@@ -1266,6 +1289,7 @@ export function SessionPane({
       )}
       {artifactsN > 0 && (
         <button
+          type="button"
           data-testid="artifacts-strip"
           onClick={() => onStrip('artifacts')}
           aria-expanded={workTab === 'artifacts'}
@@ -1503,12 +1527,14 @@ export function SessionPane({
             >
               <span className="min-w-0 flex-1 truncate text-danger-text">Message didn't send: "{steerError}"</span>
               <button
+                type="button"
                 onClick={() => sendSteer(steerError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
               >
                 Retry
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setLocalSteerError(null);
                   onClearFailedSteer();
@@ -1527,12 +1553,14 @@ export function SessionPane({
             >
               <span className="min-w-0 flex-1 truncate text-danger-text">Suggestion didn't send: "{suggestError}"</span>
               <button
+                type="button"
                 onClick={() => sendSuggestion(suggestError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
               >
                 Retry
               </button>
               <button
+                type="button"
                 onClick={() => setSuggestError(null)}
                 className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
               >
@@ -1588,12 +1616,14 @@ export function SessionPane({
                     <>
                       <span className="text-fg-tertiary">take the seat from {driverName}?</span>
                       <button
+                        type="button"
                         onClick={takeSeat}
                         className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                       >
                         Confirm
                       </button>
                       <button
+                        type="button"
                         onClick={() => setSeatAsk('idle')}
                         className="rounded px-2 py-0.5 font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
                       >
@@ -1602,6 +1632,7 @@ export function SessionPane({
                     </>
                   ) : (
                     <button
+                      type="button"
                       onClick={driverPresent ? requestSeat : () => setSeatAsk('confirm-take')}
                       className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                     >
@@ -1981,6 +2012,7 @@ const ToolCard = memo(
         }`}
       >
         <button
+          type="button"
           onClick={onToggle}
           aria-expanded={expanded}
           className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay"

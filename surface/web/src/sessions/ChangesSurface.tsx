@@ -29,6 +29,7 @@ export function ChangeFileRow({ path, changes }: { path: string; changes: FileCh
   return (
     <div className="border-b border-edge last:border-b-0">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-overlay/50"
       >
@@ -99,6 +100,7 @@ export function ChangesSurface({
           Changes <span className="tabular-nums text-fg-muted">· {groups.length}</span>
         </h3>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close changes"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"

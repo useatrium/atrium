@@ -123,6 +123,7 @@ export function Timeline({
       {hasMoreBefore && (
         <div className="flex justify-center py-2">
           <button
+            type="button"
             onClick={loadEarlier}
             disabled={loadingEarlier}
             className="rounded-full border border-edge-strong bg-surface-raised px-3 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:text-fg-faint"
@@ -201,10 +202,10 @@ export function Timeline({
         ) : (
           <div key={item.key}>
             {showUnreadDivider && (
-              <div className="my-2 flex items-center gap-3 px-4" aria-label="New messages">
+              <section className="my-2 flex items-center gap-3 px-4" aria-label="New messages">
                 <span className="text-3xs font-semibold uppercase tracking-wide text-accent-text">New</span>
                 <div className="h-px flex-1 bg-edge" />
-              </div>
+              </section>
             )}
             <MessageRow
               message={item.message!}

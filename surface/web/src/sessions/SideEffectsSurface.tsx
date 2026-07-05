@@ -93,6 +93,7 @@ export function SideEffectsSurface({
           What it ran <span className="tabular-nums text-fg-muted">· {effects.length}</span>
         </h3>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close what it ran"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"

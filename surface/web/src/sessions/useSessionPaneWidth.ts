@@ -8,13 +8,13 @@ import { useCallback, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 
 const STORAGE_KEY = 'atrium.sessionPaneWidth';
-const MIN_WIDTH = 320;
-const MAX_VW = 70;
+export const SESSION_PANE_MIN_WIDTH = 320;
+export const SESSION_PANE_MAX_VW = 70;
 /** Drag-start fallback when the pane can't be measured (jsdom). */
-const FALLBACK_WIDTH = 520;
+export const SESSION_PANE_FALLBACK_WIDTH = 520;
 
 function widthCss(width: number): string {
-  return `min(${width}px, ${MAX_VW}vw)`;
+  return `min(${width}px, ${SESSION_PANE_MAX_VW}vw)`;
 }
 
 /**
@@ -33,12 +33,12 @@ export function sessionPaneSizing(width: number | null): {
 }
 
 function maxWidth(): number {
-  if (typeof window === 'undefined') return FALLBACK_WIDTH;
-  return Math.max(MIN_WIDTH, Math.round((window.innerWidth * MAX_VW) / 100));
+  if (typeof window === 'undefined') return SESSION_PANE_FALLBACK_WIDTH;
+  return Math.max(SESSION_PANE_MIN_WIDTH, Math.round((window.innerWidth * SESSION_PANE_MAX_VW) / 100));
 }
 
 function clamp(width: number): number {
-  return Math.min(Math.max(Math.round(width), MIN_WIDTH), maxWidth());
+  return Math.min(Math.max(Math.round(width), SESSION_PANE_MIN_WIDTH), maxWidth());
 }
 
 /** The stored width, or null when the user has never resized. */
@@ -87,7 +87,7 @@ export function useSessionPaneWidth(): {
         /* jsdom / older browsers: drag still works while the pointer stays on the handle */
       }
       const measured = aside?.getBoundingClientRect().width ?? 0;
-      drag.current = { startX: e.clientX, startWidth: measured > 0 ? measured : (width ?? FALLBACK_WIDTH) };
+      drag.current = { startX: e.clientX, startWidth: measured > 0 ? measured : (width ?? SESSION_PANE_FALLBACK_WIDTH) };
       setResizing(true);
 
       const widthAt = (ev: globalThis.PointerEvent) =>

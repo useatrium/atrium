@@ -1433,6 +1433,7 @@ export function Chat({
             ) : (
               <Tooltip content="New agent">
                 <button
+                  type="button"
                   onClick={() => {
                     setSpawnInitialTask('');
                     setSpawnOpen(true);
@@ -1467,6 +1468,7 @@ export function Chat({
                 }
               >
                 <button
+                  type="button"
                   onClick={startVoiceCallForActiveChannel}
                   disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
                   aria-disabled={!callsAvailable || undefined}
@@ -1483,6 +1485,7 @@ export function Chat({
             )}
             <Tooltip content="Open command center" shortcut={SHORTCUTS.commandPalette.keys}>
               <button
+                type="button"
                 onClick={() => setSwitcherOpen(true)}
                 aria-label="Open command center"
                 className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
@@ -1685,6 +1688,7 @@ export function Chat({
             <h2 className="text-sm font-semibold text-fg">Session</h2>
             <Tooltip content="Close session pane">
               <button
+                type="button"
                 onClick={() => dispatch({ type: 'close-session' })}
                 aria-label="Close session pane"
                 className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -1698,6 +1702,7 @@ export function Chat({
               <div className="text-sm font-medium text-fg-secondary">Session not found</div>
               <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
               <button
+                type="button"
                 onClick={() => dispatch({ type: 'close-session' })}
                 className="mt-2 rounded-md border border-edge-strong px-3 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
               >

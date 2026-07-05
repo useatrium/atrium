@@ -274,6 +274,7 @@ export const MessageRow = memo(function MessageRow({
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [editFailed, setEditFailed] = useState(false);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startEdit = () => {
     setDraft(m.text);
@@ -304,6 +305,10 @@ export const MessageRow = memo(function MessageRow({
     }
   };
 
+  useEffect(() => {
+    if (editing) editTextareaRef.current?.focus();
+  }, [editing]);
+
   // Up-arrow in the composer targets this row for editing.
   useEffect(() => {
     if (!editRequested) return;
@@ -329,6 +334,7 @@ export const MessageRow = memo(function MessageRow({
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer hover cleanup only closes a mouse-opened reaction picker; keyboard focus is unaffected.
     <div
       data-eid={m.id ?? undefined}
       data-entry-handle={entryHandle ?? undefined}
@@ -376,7 +382,7 @@ export const MessageRow = memo(function MessageRow({
         ) : editing ? (
           <div className="py-0.5">
             <textarea
-              autoFocus
+              ref={editTextareaRef}
               value={draft}
               rows={Math.min(8, draft.split('\n').length)}
               disabled={saving}
@@ -463,6 +469,7 @@ export const MessageRow = memo(function MessageRow({
                   content={`${r.userIds.length} reacted with ${r.emoji}${mine ? ', including you' : ''}`}
                 >
                   <button
+                    type="button"
                     onClick={() => canReact && react(r.emoji)}
                     aria-label={`${r.emoji} ${r.userIds.length}${mine ? ', including you' : ''}`}
                     className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs tabular-nums ${
@@ -480,12 +487,13 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
         {failed && (
-          <button onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
+          <button type="button" onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
         {!inThread && m.replyCount > 0 && m.id != null && (
           <button
+            type="button"
             onClick={() => onOpenThread?.(m.id!)}
             className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
           >
@@ -521,9 +529,11 @@ export const MessageRow = memo(function MessageRow({
             }}
             className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
           >
+            {/* biome-ignore lint/a11y/useSemanticElements: emoji picker uses ARIA grid navigation over buttons; a table would misrepresent the control. */}
             <div role="grid" aria-label="Reaction choices" className="contents">
               {REACTION_EMOJI.map((e2, i) => (
                 <button
+                  type="button"
                   key={e2}
                   ref={(el) => {
                     emojiRefs.current[i] = el;
@@ -545,6 +555,7 @@ export const MessageRow = memo(function MessageRow({
             {canReact && (
               <Tooltip content="Add reaction">
                 <button
+                  type="button"
                   ref={reactionButtonRef}
                   onPointerDown={() => {
                     mouseOpenedPickerRef.current = true;
@@ -618,6 +629,7 @@ export const MessageRow = memo(function MessageRow({
             {canEdit && (
               <Tooltip content="Edit message">
                 <button
+                  type="button"
                   onClick={startEdit}
                   aria-label="Edit message"
                   className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
@@ -629,6 +641,7 @@ export const MessageRow = memo(function MessageRow({
             {canDelete && (
               <Tooltip content={deleteAsk ? 'Confirm delete message' : 'Delete message'}>
                 <button
+                  type="button"
                   onClick={onDeleteClick}
                   aria-label={deleteAsk ? 'Confirm delete message' : 'Delete message'}
                   className={`rounded-md border px-2 py-1 text-xs shadow-sm ${
@@ -644,6 +657,7 @@ export const MessageRow = memo(function MessageRow({
             {canThread && (
               <Tooltip content="Reply in thread">
                 <button
+                  type="button"
                   onClick={() => onOpenThread!(m.id!)}
                   aria-label="Reply in thread"
                   className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
@@ -827,6 +841,7 @@ function SessionEventCard({
       )}
       {message.sessionId && (
         <button
+          type="button"
           onClick={() => onOpenSession?.(message.sessionId!)}
           aria-label={openLabel}
           className="mt-1 font-medium text-fg-tertiary hover:text-fg-body hover:underline"

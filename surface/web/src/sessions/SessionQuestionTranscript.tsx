@@ -94,7 +94,6 @@ export function QuestionTranscriptCard({
   return (
     <article
       style={ITEM_VIS}
-      role="group"
       aria-labelledby={labelId}
       data-testid="question-transcript-card"
       className="my-2 rounded-md border border-warning-border/40 bg-warning-tint/10 px-3 py-2 text-xs text-fg-body"

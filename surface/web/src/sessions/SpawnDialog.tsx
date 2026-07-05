@@ -217,6 +217,7 @@ export function SpawnDialog({
             <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">Task</span>
             <textarea
               ref={taskInputRef}
+              // biome-ignore lint/a11y/noAutofocus: dialog primary task field is intentionally focused on open; useDialog manages focus containment and restore.
               autoFocus
               value={task}
               onChange={(e) => setTask(e.target.value)}

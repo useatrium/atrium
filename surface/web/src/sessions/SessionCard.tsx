@@ -107,6 +107,8 @@ export function SessionCard({
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: card click mirrors the nested title button; keyboard users use that button.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: card click mirrors the nested title button; keyboard users use that button.
     <div
       data-testid="session-card"
       onClick={onCardClick}

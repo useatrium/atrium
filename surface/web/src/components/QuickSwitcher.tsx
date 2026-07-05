@@ -181,6 +181,7 @@ export function QuickSwitcher({
   const sessionOffset = messageOffset + hits.length;
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click dismisses the dialog; Escape is handled by useDialog and the input handler.
     <div
       className="fixed inset-0 z-50 flex items-end bg-surface/70 md:items-start md:justify-center md:p-4"
       onClick={onClose}
@@ -188,15 +189,18 @@ export function QuickSwitcher({
       aria-modal="true"
       aria-label="Command center and search"
     >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: dialog surface absorbs backdrop clicks; keyboard dismissal is handled by useDialog. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: dialog surface click only stops propagation; Escape and Close controls handle keyboard dismissal. */}
       <div
         ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         className="flex max-h-[min(82dvh,38rem)] w-full flex-col overflow-hidden rounded-t-xl border border-edge-strong bg-surface-raised shadow-2xl md:mt-20 md:w-[min(560px,calc(100vw-2rem))] md:rounded-lg"
-      >
-        <input
-          ref={inputRef}
-          autoFocus
-          value={query}
+        >
+          <input
+            ref={inputRef}
+            // biome-ignore lint/a11y/noAutofocus: dialog primary search field is intentionally focused on open; useDialog manages focus containment and restore.
+            autoFocus
+            value={query}
           role="combobox"
           aria-expanded={total > 0}
           aria-controls={listboxId}
@@ -225,6 +229,7 @@ export function QuickSwitcher({
                         </span>
                       </div>
                     )}
+                    {/* biome-ignore lint/a11y/useKeyWithClickEvents: listbox option is keyboard-activated from the combobox input with Enter. */}
                     <div
                       id={`quick-switcher-option-${i}`}
                       role="option"
@@ -262,27 +267,29 @@ export function QuickSwitcher({
               {channelMatches.map((c, j) => {
                 const i = channelOffset + j;
                 return (
-                  <li
-                    key={c.id}
-                    id={`quick-switcher-option-${i}`}
-                    role="option"
-                    aria-selected={i === selected}
-                    tabIndex={-1}
-                    onClick={() => onSelect(c.id)}
-                    onMouseEnter={() => setIndex(i)}
-                    className={`flex min-h-10 cursor-pointer items-center gap-1.5 px-4 py-2 text-left text-sm md:min-h-8 md:px-3 md:py-1.5 ${
-                      i === selected ? 'bg-accent/20 text-fg' : 'text-fg-secondary'
-                    }`}
-                  >
-                    <span className="text-fg-muted">
-                      {c.kind === 'dm' || c.kind === 'gdm'
-                        ? '@'
-                        : c.kind === 'private'
-                          ? <LockIcon size={14} />
-                          : '#'}
-                    </span>
-                    <span className="truncate">{channelLabel(c, meId)}</span>
-                    {c.id === activeChannelId && <span className="ml-auto text-3xs text-fg-muted">current</span>}
+                  <li key={c.id} role="presentation">
+                    {/* biome-ignore lint/a11y/useKeyWithClickEvents: listbox option is keyboard-activated from the combobox input with Enter. */}
+                    <div
+                      id={`quick-switcher-option-${i}`}
+                      role="option"
+                      aria-selected={i === selected}
+                      tabIndex={-1}
+                      onClick={() => onSelect(c.id)}
+                      onMouseEnter={() => setIndex(i)}
+                      className={`flex min-h-10 cursor-pointer items-center gap-1.5 px-4 py-2 text-left text-sm md:min-h-8 md:px-3 md:py-1.5 ${
+                        i === selected ? 'bg-accent/20 text-fg' : 'text-fg-secondary'
+                      }`}
+                    >
+                      <span className="text-fg-muted">
+                        {c.kind === 'dm' || c.kind === 'gdm'
+                          ? '@'
+                          : c.kind === 'private'
+                            ? <LockIcon size={14} />
+                            : '#'}
+                      </span>
+                      <span className="truncate">{channelLabel(c, meId)}</span>
+                      {c.id === activeChannelId && <span className="ml-auto text-3xs text-fg-muted">current</span>}
+                    </div>
                   </li>
                 );
               })}
@@ -303,25 +310,27 @@ export function QuickSwitcher({
                   const i = messageOffset + j;
                   const text = typeof h.event.payload?.text === 'string' ? h.event.payload.text : '';
                   return (
-                    <li
-                      key={h.event.id}
-                      id={`quick-switcher-option-${i}`}
-                      role="option"
-                      aria-selected={i === selected}
-                      tabIndex={-1}
-                      onClick={() => onJumpToMessage(h.event)}
-                      onMouseEnter={() => setIndex(i)}
-                      className={`min-h-12 cursor-pointer px-4 py-2 text-left md:min-h-10 md:px-3 md:py-1.5 ${i === selected ? 'bg-accent/20' : ''}`}
-                    >
-                      <div className="flex items-baseline gap-1.5 text-2xs text-fg-muted">
-                        <span className="text-fg-tertiary">#{h.channelName}</span>
-                        <span>·</span>
-                        <span>{h.event.author?.displayName ?? 'Unknown'}</span>
-                        <span>·</span>
-                        <span className="tabular-nums">{formatTime(h.event.createdAt)}</span>
-                      </div>
-                      <div className="truncate text-sm text-fg-body">
-                        <CompactMarkdownText text={text} />
+                    <li key={h.event.id} role="presentation">
+                      {/* biome-ignore lint/a11y/useKeyWithClickEvents: listbox option is keyboard-activated from the combobox input with Enter. */}
+                      <div
+                        id={`quick-switcher-option-${i}`}
+                        role="option"
+                        aria-selected={i === selected}
+                        tabIndex={-1}
+                        onClick={() => onJumpToMessage(h.event)}
+                        onMouseEnter={() => setIndex(i)}
+                        className={`min-h-12 cursor-pointer px-4 py-2 text-left md:min-h-10 md:px-3 md:py-1.5 ${i === selected ? 'bg-accent/20' : ''}`}
+                      >
+                        <div className="flex items-baseline gap-1.5 text-2xs text-fg-muted">
+                          <span className="text-fg-tertiary">#{h.channelName}</span>
+                          <span>·</span>
+                          <span>{h.event.author?.displayName ?? 'Unknown'}</span>
+                          <span>·</span>
+                          <span className="tabular-nums">{formatTime(h.event.createdAt)}</span>
+                        </div>
+                        <div className="truncate text-sm text-fg-body">
+                          <CompactMarkdownText text={text} />
+                        </div>
                       </div>
                     </li>
                   );
@@ -339,31 +348,33 @@ export function QuickSwitcher({
                 {sessionHits.map((hit, j) => {
                   const i = sessionOffset + j;
                   return (
-                    <li
-                      key={`${hit.sessionId}-${hit.eventId}-${hit.seq}`}
-                      id={`quick-switcher-option-${i}`}
-                      role="option"
-                      aria-selected={i === selected}
-                      tabIndex={-1}
-                      onClick={() => openSessionHit(hit)}
-                      onMouseEnter={() => setIndex(i)}
-                      className={`min-h-12 cursor-pointer px-4 py-2 text-left md:min-h-10 md:px-3 md:py-1.5 ${i === selected ? 'bg-accent/20' : ''}`}
-                    >
-                      <div className="flex min-w-0 items-baseline gap-1.5 text-2xs text-fg-muted">
-                        <span className="inline-flex shrink-0 rounded-full bg-surface-overlay/80 px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-tertiary">
-                          {sessionKindLabel(hit.kind)}
-                        </span>
-                        <span className="truncate text-fg-tertiary">{hit.sessionTitle ?? hit.sessionId}</span>
-                        {hit.channelName && (
-                          <>
-                            <span>·</span>
-                            <span className="shrink-0">#{hit.channelName}</span>
-                          </>
-                        )}
-                        <span>·</span>
-                        <span className="shrink-0 tabular-nums">{formatTime(hit.ts)}</span>
+                    <li key={`${hit.sessionId}-${hit.eventId}-${hit.seq}`} role="presentation">
+                      {/* biome-ignore lint/a11y/useKeyWithClickEvents: listbox option is keyboard-activated from the combobox input with Enter. */}
+                      <div
+                        id={`quick-switcher-option-${i}`}
+                        role="option"
+                        aria-selected={i === selected}
+                        tabIndex={-1}
+                        onClick={() => openSessionHit(hit)}
+                        onMouseEnter={() => setIndex(i)}
+                        className={`min-h-12 cursor-pointer px-4 py-2 text-left md:min-h-10 md:px-3 md:py-1.5 ${i === selected ? 'bg-accent/20' : ''}`}
+                      >
+                        <div className="flex min-w-0 items-baseline gap-1.5 text-2xs text-fg-muted">
+                          <span className="inline-flex shrink-0 rounded-full bg-surface-overlay/80 px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-tertiary">
+                            {sessionKindLabel(hit.kind)}
+                          </span>
+                          <span className="truncate text-fg-tertiary">{hit.sessionTitle ?? hit.sessionId}</span>
+                          {hit.channelName && (
+                            <>
+                              <span>·</span>
+                              <span className="shrink-0">#{hit.channelName}</span>
+                            </>
+                          )}
+                          <span>·</span>
+                          <span className="shrink-0 tabular-nums">{formatTime(hit.ts)}</span>
+                        </div>
+                        <div className="truncate text-sm text-fg-body">{hit.excerpt}</div>
                       </div>
-                      <div className="truncate text-sm text-fg-body">{hit.excerpt}</div>
                     </li>
                   );
                 })}

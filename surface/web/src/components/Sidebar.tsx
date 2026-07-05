@@ -140,6 +140,8 @@ export function Sidebar({
   const lastSettingsRequestSeq = useRef(settingsRequestSeq);
   const lastCreateChannelRequestSeq = useRef(createChannelRequestSeq);
   const lastStartDmRequestSeq = useRef(startDmRequestSeq);
+  const createChannelInputRef = useRef<HTMLInputElement | null>(null);
+  const dmPickerInputRef = useRef<HTMLInputElement | null>(null);
 
   const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
   const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
@@ -232,6 +234,14 @@ export function Sidebar({
   }, [openDmPicker, startDmRequestSeq]);
 
   useEffect(() => {
+    if (creating) createChannelInputRef.current?.focus();
+  }, [creating]);
+
+  useEffect(() => {
+    if (dmPicking) dmPickerInputRef.current?.focus();
+  }, [dmPicking]);
+
+  useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') onClose?.();
@@ -317,6 +327,7 @@ export function Sidebar({
               <span>Channels</span>
               <Tooltip content="Create channel">
                 <button
+                  type="button"
                   onClick={() => {
                     setCreating((v) => !v);
                     setError(null);
@@ -332,7 +343,7 @@ export function Sidebar({
             {creating && (
               <form onSubmit={submit} className="px-2 pb-2">
                 <input
-                  autoFocus
+                  ref={createChannelInputRef}
                   value={name}
                   aria-label="Channel name"
                   onChange={(e) => setName(e.target.value)}
@@ -363,7 +374,7 @@ export function Sidebar({
                 const level = c.muted || active ? false : unread[c.id] ?? false;
                 return (
                   <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
-                    <button onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
+                    <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
                       <span className="grid w-4 shrink-0 place-items-center text-fg-muted">
                         {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
                       </span>
@@ -372,6 +383,7 @@ export function Sidebar({
                     </button>
                     <Tooltip content={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}>
                       <button
+                        type="button"
                         onClick={() => onSetMute(c.id, !c.muted)}
                         aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
                         className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
@@ -392,6 +404,7 @@ export function Sidebar({
               <span>Direct messages</span>
               <Tooltip content="Start a DM">
                 <button
+                  type="button"
                   onClick={() => openDmPicker()}
                   aria-label="Start a DM"
                   className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
@@ -404,7 +417,7 @@ export function Sidebar({
             {dmPicking && (
               <div className="px-2 pb-2">
                 <input
-                  autoFocus
+                  ref={dmPickerInputRef}
                   value={dmQuery}
                   onChange={(e) => setDmQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -421,6 +434,7 @@ export function Sidebar({
                   {dmCandidates.map((u) => (
                     <li key={u.id}>
                       <button
+                        type="button"
                         onClick={() => {
                           setSelectedDmIds((prev) => {
                             const next = new Set(prev);
@@ -442,6 +456,7 @@ export function Sidebar({
                 </ul>
                 {selectedDmIds.size > 0 && (
                   <button
+                    type="button"
                     onClick={() => {
                       setDmPicking(false);
                       onStartDm([...selectedDmIds]);
@@ -463,13 +478,14 @@ export function Sidebar({
                 const avatarName = channelAvatarName(c, me.id);
                 return (
                   <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
-                    <button onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
+                    <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
                       <Avatar name={avatarName} seed={partner?.id ?? c.id} size={16} />
                       <span className="truncate">{label}</span>
                       {unreadBadge(c.id, active)}
                     </button>
                     <Tooltip content={c.muted ? `Unmute ${label}` : `Mute ${label}`}>
                       <button
+                        type="button"
                         onClick={() => onSetMute(c.id, !c.muted)}
                         aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
                         className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
@@ -498,6 +514,7 @@ export function Sidebar({
         </div>
         <Tooltip content="Settings">
           <button
+            type="button"
             ref={settingsButtonRef}
             onClick={() => setSettingsOpen((v) => !v)}
             aria-label="Settings"
@@ -526,6 +543,7 @@ export function Sidebar({
             document.body,
           )}
         <button
+          type="button"
           onClick={onLogout}
           className="rounded-md px-2 py-1 text-2xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
         >
@@ -961,6 +979,7 @@ function SessionSidebarSection({
             {preview.map((session) => (
               <li key={session.id} className="mx-1">
                 <button
+                  type="button"
                   onClick={() => open(session.id)}
                   className="flex min-h-9 w-full min-w-0 flex-col gap-1 rounded-md px-2 py-1.5 text-left hover:bg-surface-overlay/70"
                 >
@@ -976,6 +995,7 @@ function SessionSidebarSection({
             ))}
             <li className="mx-1">
               <button
+                type="button"
                 onClick={() => setModalOpen(true)}
                 className="flex min-h-7 w-full items-center rounded-md px-2 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
               >
@@ -1011,6 +1031,7 @@ function SessionBrowserModal({
   useDialog({ open: true, containerRef: dialogRef, onClose });
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click dismisses the dialog; Escape is handled by useDialog.
     <div
       className="fixed inset-0 z-[70] bg-surface/80 backdrop-blur-sm"
       onClick={onClose}
@@ -1018,6 +1039,8 @@ function SessionBrowserModal({
       aria-modal="true"
       aria-label="Browse agent sessions"
     >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: dialog surface absorbs backdrop clicks; keyboard dismissal is handled by useDialog. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: dialog surface click only stops propagation; Escape and Close controls handle keyboard dismissal. */}
       <div
         ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
@@ -1029,6 +1052,7 @@ function SessionBrowserModal({
         <div className="max-h-[60vh] overflow-y-auto py-1">
           {sessions.map((session) => (
             <button
+              type="button"
               key={session.id}
               onClick={() => onOpenSession(session.id)}
               className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-accent/20"

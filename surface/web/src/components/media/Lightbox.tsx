@@ -354,9 +354,10 @@ export function Lightbox({
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
                   disabled={busy}
+                  // biome-ignore lint/a11y/noAutofocus: lightbox rename dialog intentionally focuses the editable filename; useDialog manages focus containment and restore.
                   autoFocus
                 />
-                <button className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent disabled:bg-surface-overlay disabled:text-fg-muted">
+                <button type="submit" className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent disabled:bg-surface-overlay disabled:text-fg-muted">
                   Save
                 </button>
                 <button

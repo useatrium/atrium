@@ -34,6 +34,8 @@ export function SelectionPopover({
   const [replacement, setReplacement] = useState('');
   const [comment, setComment] = useState('');
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const replacementInputRef = useRef<HTMLInputElement | null>(null);
+  const commentTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (state.mode === 'closed') return;
@@ -57,11 +59,17 @@ export function SelectionPopover({
     };
   }, [onModeChange, state.mode]);
 
+  useEffect(() => {
+    if (state.mode === 'suggest') replacementInputRef.current?.focus();
+    if (state.mode === 'comment') commentTextareaRef.current?.focus();
+  }, [state.mode]);
+
   if (state.mode === 'closed') {
     return null;
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: preserves text selection while focusable form controls handle keyboard input.
     <div
       ref={popoverRef}
       className="atrium-markup-popover"
@@ -99,7 +107,7 @@ export function SelectionPopover({
           <label>
             Replacement
             <input
-              autoFocus
+              ref={replacementInputRef}
               value={replacement}
               onChange={(event) => setReplacement(event.target.value)}
               data-testid="markup-replacement-input"
@@ -123,7 +131,7 @@ export function SelectionPopover({
           <label>
             Comment
             <textarea
-              autoFocus
+              ref={commentTextareaRef}
               value={comment}
               onChange={(event) => setComment(event.target.value)}
               data-testid="markup-comment-input"

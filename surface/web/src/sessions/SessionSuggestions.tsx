@@ -114,6 +114,7 @@ function SuggestionRow({
           />
           <div className="flex items-center gap-2">
             <button
+              type="button"
               disabled={busy || draft.trim().length === 0}
               onClick={() => resolve('send', { text: draft })}
               className={outlineBtn}
@@ -121,6 +122,7 @@ function SuggestionRow({
               Send edited
             </button>
             <button
+              type="button"
               onClick={() => {
                 switchMode('idle');
                 setDraft(suggestion.text);
@@ -142,6 +144,7 @@ function SuggestionRow({
           />
           <div className="flex items-center gap-2">
             <button
+              type="button"
               disabled={busy}
               onClick={() => resolve('dismiss', note.trim() ? { note: note.trim() } : {})}
               className={outlineBtn}
@@ -149,6 +152,7 @@ function SuggestionRow({
               Dismiss
             </button>
             <button
+              type="button"
               onClick={() => {
                 switchMode('idle');
                 setNote('');
@@ -161,13 +165,13 @@ function SuggestionRow({
         </div>
       ) : isDriver ? (
         <div className="mt-0.5 flex items-center gap-2">
-          <button disabled={busy} onClick={() => resolve('send')} className={outlineBtn}>
+          <button type="button" disabled={busy} onClick={() => resolve('send')} className={outlineBtn}>
             Send
           </button>
-          <button onClick={() => switchMode('editing')} className={quietBtn}>
+          <button type="button" onClick={() => switchMode('editing')} className={quietBtn}>
             Edit
           </button>
-          <button onClick={() => switchMode('dismissing')} className={quietBtn}>
+          <button type="button" onClick={() => switchMode('dismissing')} className={quietBtn}>
             Dismiss
           </button>
         </div>

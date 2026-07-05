@@ -126,6 +126,10 @@ export function Composer({
     setText((prev) => (prev === '' ? initialDraft : prev));
   }, [initialDraft]);
 
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus();
+  }, [autoFocus]);
+
   const contentHashFor = async (file: File): Promise<string | undefined> => {
     try {
       if (!globalThis.crypto?.subtle) return undefined;
@@ -275,6 +279,7 @@ export function Composer({
 
   return (
     <div className="border-t border-edge bg-surface p-3">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone handles drag/drop events; keyboard file attachment uses the adjacent Attach button. */}
       <div
         title={disabled ? disabledHint : undefined}
         onDragOver={(e) => {
@@ -315,6 +320,7 @@ export function Composer({
                 {p.status === 'uploading' && <span className="text-fg-muted">uploading…</span>}
                 {p.status === 'failed' && (
                   <button
+                    type="button"
                     onClick={() => {
                       removeFile(p.key);
                       void startUpload(p.file);
@@ -325,6 +331,7 @@ export function Composer({
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={() => removeFile(p.key)}
                   aria-label={`Remove ${p.file.name || 'pasted image'}`}
                   className="text-fg-muted hover:text-fg-body"
@@ -341,6 +348,7 @@ export function Composer({
             <>
               <Tooltip content="Attach a file">
                 <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
                   aria-label="Attach a file"
                   className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
@@ -373,7 +381,6 @@ export function Composer({
                 ref={ref}
                 rows={1}
                 value={text}
-                autoFocus={autoFocus}
                 disabled={disabled}
                 placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
                 aria-label="Message input"
@@ -403,6 +410,7 @@ export function Composer({
                 shortcut={SHORTCUTS.sendMessage.keys}
               >
                 <button
+                  type="button"
                   onClick={send}
                   disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
                   className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"

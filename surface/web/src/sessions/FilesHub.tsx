@@ -505,6 +505,7 @@ function FileTile({
   };
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: keyboard-activatable custom file card; converting to a button would break nested controls.
     <div
       role="button"
       tabIndex={0}
@@ -530,6 +531,7 @@ function FileTile({
               <span className="min-w-0 truncate" title={file.path}>
                 {fileLocation(file)} / {formatBytes(file.sizeBytes)}
               </span>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: nested references chip only stops propagation inside the keyboard-activatable file card. */}
               <span
                 className="shrink-0"
                 onClick={(event) => event.stopPropagation()}
@@ -540,6 +542,7 @@ function FileTile({
             </div>
           </div>
           <Tooltip content={file.starred ? 'Unstar file' : 'Star file'}>
+            {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable custom control nested inside a file card; a button would alter nested layout. */}
             <span
               role="button"
               tabIndex={0}
@@ -580,9 +583,10 @@ function FileTile({
               key={label}
               className="inline-flex max-w-full items-center gap-1 rounded bg-surface-overlay px-1.5 py-px text-3xs text-fg-secondary"
             >
-              <span className="truncate">{label}</span>
-              <span
-                role="button"
+                <span className="truncate">{label}</span>
+                {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
+                <span
+                  role="button"
                 tabIndex={0}
                 aria-label={`Remove ${label} label`}
                 className="text-fg-faint hover:text-danger-text"
@@ -602,6 +606,7 @@ function FileTile({
             </span>
           ))}
           {file.labels.length > 3 && <span className="text-3xs text-fg-muted">+{file.labels.length - 3}</span>}
+          {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
           <span
             role="button"
             tabIndex={0}
@@ -620,6 +625,7 @@ function FileTile({
             + label
           </span>
           {file.tombstoned && (
+            // biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline restore control; a button would alter compact card layout.
             <span
               role="button"
               tabIndex={0}
@@ -1295,6 +1301,7 @@ export function FilesHub({
           Files <span className="tabular-nums text-fg-muted">/ {visibleItemCount}</span>
         </h3>
         {sessionScope && (
+          // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
           <div
             role="group"
             aria-label="Session file scope"
@@ -1321,6 +1328,7 @@ export function FilesHub({
           </div>
         )}
         {channelId && scope !== 'session' && (
+          // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
           <div
             role="group"
             aria-label="File scope"

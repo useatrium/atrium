@@ -334,6 +334,7 @@ export function ArtifactsSurface({
           Artifacts <span className="tabular-nums text-fg-muted">· {tiles.length}</span>
         </h3>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close artifacts"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"

@@ -54,10 +54,10 @@ function DialogHarness() {
   });
   return (
     <>
-      <button onClick={() => setOpen(true)}>Open dialog</button>
+      <button type="button" onClick={() => setOpen(true)}>Open dialog</button>
       {open && (
         <div ref={dialogRef} role="dialog" aria-label="Test dialog">
-          <button ref={closeRef} onClick={() => setOpen(false)}>
+          <button type="button" ref={closeRef} onClick={() => setOpen(false)}>
             Close dialog
           </button>
         </div>

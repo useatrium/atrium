@@ -138,6 +138,7 @@ export function TurnStatusLine({
           </span>
           {onCancel && (
             <button
+              type="button"
               onClick={onCancel}
               className="font-medium text-accent-text hover:text-accent-text-strong"
             >

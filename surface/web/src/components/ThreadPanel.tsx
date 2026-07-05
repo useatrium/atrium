@@ -86,6 +86,7 @@ export function ThreadPanel({
           </span>
         </h2>
         <button
+          type="button"
           onClick={onClose}
           title="Close thread"
           aria-label="Close thread"

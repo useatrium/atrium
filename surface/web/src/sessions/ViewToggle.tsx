@@ -23,6 +23,7 @@ export function ViewToggle({
   onSetView: (view: SessionView) => void;
 }) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
     <div
       role="group"
       aria-label="Layout"

@@ -24,7 +24,11 @@ function RemoteAudio({ track }: { track: RemoteTrack }) {
     };
   }, [track]);
 
-  return <audio ref={ref} autoPlay playsInline className="hidden" />;
+  return (
+    <audio ref={ref} autoPlay playsInline className="hidden">
+      <track kind="captions" />
+    </audio>
+  );
 }
 
 export function IncomingCallBanner({
@@ -50,12 +54,14 @@ export function IncomingCallBanner({
         <div className="truncate text-2xs text-fg-muted">{channelName}</div>
       </div>
       <button
+        type="button"
         onClick={onDecline}
         className="rounded-md border border-edge-strong px-3 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
       >
         Decline
       </button>
       <button
+        type="button"
         onClick={onAccept}
         disabled={answering}
         className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:bg-surface-overlay disabled:text-fg-muted"
@@ -133,6 +139,7 @@ export function ChannelCallStrip({
       </div>
       {canDecline && (
         <button
+          type="button"
           onClick={onDecline}
           className="rounded-md border border-edge-strong px-3 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
         >
@@ -140,6 +147,7 @@ export function ChannelCallStrip({
         </button>
       )}
       <button
+        type="button"
         onClick={onJoin}
         disabled={joining}
         className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:bg-surface-overlay disabled:text-fg-muted"
@@ -159,6 +167,7 @@ export function CallNotice({ message, onDismiss }: { message: string; onDismiss:
     >
       <span>{message}</span>
       <button
+        type="button"
         onClick={onDismiss}
         className="rounded px-1.5 py-px font-medium text-warning-text-strong hover:bg-warning-tint/50"
       >
@@ -237,6 +246,7 @@ export function InCallPanel({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
+            type="button"
             onClick={onToggleMute}
             disabled={call.phase === 'ended'}
             title={call.muted ? 'Unmute microphone' : 'Mute microphone'}
@@ -250,6 +260,7 @@ export function InCallPanel({
             {call.muted ? <MicOffIcon size={15} /> : <MicIcon size={15} />}
           </button>
           <button
+            type="button"
             onClick={onLeave}
             className="inline-flex items-center gap-1.5 rounded-md border border-danger-border/70 px-3 py-1 text-xs font-medium text-danger-text hover:bg-danger-tint/40"
           >

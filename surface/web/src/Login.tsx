@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError } from './api';
 import { captureDesktopLogin } from './desktop';
 import type { AuthMethods, UserRef } from '@atrium/surface-client';
@@ -21,6 +21,9 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [errorField, setErrorField] = useState<'handle' | 'email' | 'code' | null>(null);
   const [busy, setBusy] = useState(false);
+  const handleInputRef = useRef<HTMLInputElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const codeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api
@@ -33,6 +36,12 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     if (path === 'handle' && !methods.open && methods.email) setPath('email');
     if ((path === 'email' || path === 'code') && !methods.email && methods.open) setPath('handle');
   }, [methods, path]);
+
+  useEffect(() => {
+    if (path === 'handle') handleInputRef.current?.focus();
+    if (path === 'email') emailInputRef.current?.focus();
+    if (path === 'code') codeInputRef.current?.focus();
+  }, [path]);
 
   const showHandle = methods.open && path === 'handle';
   const showEmail = methods.email && (path === 'email' || path === 'code' || !methods.open);
@@ -103,13 +112,13 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               Handle
             </label>
             <input
+              ref={handleInputRef}
               id="login-handle"
               value={handle}
               aria-invalid={errorField === 'handle' ? 'true' : undefined}
               aria-describedby={errorField === 'handle' ? 'login-error' : undefined}
               onChange={(e) => setHandle(e.target.value)}
               placeholder="gary"
-              autoFocus
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -157,9 +166,9 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               Email
             </label>
             <input
+              ref={emailInputRef}
               id="login-email"
               type="email"
-              autoFocus={path === 'email'}
               value={email}
               aria-invalid={errorField === 'email' ? 'true' : undefined}
               aria-describedby={errorField === 'email' ? 'login-error' : undefined}
@@ -178,6 +187,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
                   Code
                 </label>
                 <input
+                  ref={codeInputRef}
                   id="login-code"
                   value={code}
                   aria-invalid={errorField === 'code' ? 'true' : undefined}
@@ -186,7 +196,6 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
                   placeholder="123456"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  autoFocus
                   className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
                 />
               </>

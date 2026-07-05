@@ -110,6 +110,7 @@ export function InlineFileChange({
       }`}
     >
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay/40"

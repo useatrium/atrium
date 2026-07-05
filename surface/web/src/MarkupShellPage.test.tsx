@@ -14,7 +14,7 @@ vi.mock('./markup/MarkupEditor', () => ({
       serialize: () => `${props.initialMarkdown}\nserialized`,
       hasMarkup: () => true,
     }));
-    return <button onClick={() => props.onDirtyChange?.(true)}>editor:{props.initialMarkdown}</button>;
+    return <button type="button" onClick={() => props.onDirtyChange?.(true)}>editor:{props.initialMarkdown}</button>;
   }),
 }));
 

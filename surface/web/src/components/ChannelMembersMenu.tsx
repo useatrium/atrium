@@ -100,6 +100,7 @@ export function ChannelMembersMenu({
   return (
     <div className="relative">
       <button
+        type="button"
         ref={buttonRef}
         onClick={() => {
           setOpen((v) => !v);
@@ -123,6 +124,7 @@ export function ChannelMembersMenu({
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-xs font-semibold text-fg-secondary">Members</h2>
             <button
+              type="button"
               ref={addButtonRef}
               onClick={() => {
                 setPickerOpen((v) => !v);
@@ -139,6 +141,7 @@ export function ChannelMembersMenu({
                 .filter((u) => !members?.some((m) => m.id === u.id))
                 .map((u) => (
                   <button
+                    type="button"
                     key={u.id}
                     onClick={() => inviteMember(u.id)}
                     className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
@@ -158,6 +161,7 @@ export function ChannelMembersMenu({
             ))}
           </ul>
           <button
+            type="button"
             onClick={leaveChannel}
             aria-label={leaveAsk ? 'Confirm leave channel' : 'Leave channel'}
             className={`mt-2 w-full rounded border px-2 py-1 text-xs ${

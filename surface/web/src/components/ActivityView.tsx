@@ -125,7 +125,6 @@ export function ActivityView({
                           <span
                             className="shrink-0 text-2xs text-fg-faint"
                             title={exactTimestamp || undefined}
-                            aria-label={exactTimestamp ? `Exact timestamp: ${exactTimestamp}` : undefined}
                           >
                             {relativeTimestamp}
                           </span>

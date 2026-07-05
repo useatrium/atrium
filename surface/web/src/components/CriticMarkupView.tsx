@@ -64,9 +64,10 @@ function BlockView({ block, index }: { block: CriticBlock; index: number }) {
   }
 
   return (
-    <div className="atrium-critic-view-separator" aria-label="omitted content">
-      ⋯
-    </div>
+    <section className="atrium-critic-view-separator" aria-label="omitted content">
+      <span className="sr-only">omitted content</span>
+      <span aria-hidden="true">⋯</span>
+    </section>
   );
 }
 

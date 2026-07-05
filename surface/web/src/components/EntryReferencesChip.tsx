@@ -110,7 +110,6 @@ export function EntryReferencesChip({
                     <span
                       className="shrink-0 text-fg-faint"
                       title={exactTimestamp || undefined}
-                      aria-label={exactTimestamp ? `Exact timestamp: ${exactTimestamp}` : undefined}
                     >
                       {relativeTimestamp}
                     </span>
