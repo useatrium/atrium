@@ -13,6 +13,7 @@ import {
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { font, radius, space, useTheme } from '../lib/theme';
+import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { partitionEntryLinks } from '../lib/entryLinks';
 import { Avatar } from './Avatar';
@@ -421,6 +422,7 @@ export const MessageRow = memo(function MessageRow({
   const { colors } = useTheme();
   const pending = m.status === 'pending';
   const failed = m.status === 'failed';
+  useAccessibilityAnnouncement(failed ? 'Message failed to send. Tap to retry.' : null);
   const tombstone = m.deleted === true;
   const sessionBlock = m.sessionId != null || m.sessionEventType != null;
   const attachmentDescription = m.attachments?.length
@@ -611,6 +613,8 @@ export const MessageRow = memo(function MessageRow({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Failed to send. Tap to retry."
+            accessibilityHint="Attempts to send this message again"
+            accessibilityLiveRegion="polite"
             onPress={() => onRetry(m)}
             hitSlop={10}
             style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}

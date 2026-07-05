@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, Ref } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -33,6 +33,7 @@ import { AppPreviewPane } from './AppPreviewPane';
 import { PptxPane } from './PptxPane';
 import { artifactEntryHandle, EntryReferencesChip } from './EntryReferencesChip';
 import type { EntryReferenceMap, EntryReferenceSummary } from '../lib/entryReferences';
+import { useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, space, useTheme, type Colors } from '../lib/theme';
 
 type HubFileWithThumbnail = HubFile & { thumbnailUrl?: string };
@@ -283,6 +284,7 @@ function ImagePane({
       <Pressable
         accessibilityRole="imagebutton"
         accessibilityLabel={file.name}
+        accessibilityHint={zoomed ? 'Double tap to zoom out' : 'Double tap to zoom in'}
         onPress={() => {
           const now = Date.now();
           if (now - lastTapRef.current < 280) setZoomed((value) => !value);
@@ -525,6 +527,7 @@ function UnknownPane({ file, onOpenExternal }: { file: HubFile; onOpenExternal: 
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Open externally"
+        accessibilityHint="Opens this file in your browser"
         onPress={() => {
           void onOpenExternal(file);
         }}
@@ -613,19 +616,25 @@ function FilePane({
 function ChromeButton({
   icon,
   label,
+  hint,
   disabled,
+  focusRef,
   onPress,
 }: {
   icon: ComponentProps<typeof Ionicons>['name'];
   label: string;
+  hint?: string;
   disabled?: boolean;
+  focusRef?: Ref<View>;
   onPress: () => void;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
+      ref={focusRef}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={hint}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -660,6 +669,7 @@ export function MediaLightbox({
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const listRef = useRef<FlatList<HubFile>>(null);
+  const closeButtonRef = useRef<View>(null);
   const [index, setIndex] = useState(initialIndex);
   const [infoOpen, setInfoOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -667,6 +677,8 @@ export function MediaLightbox({
   const [reloadKey, setReloadKey] = useState(0);
   const current = files[index];
   const currentReference = current ? (references?.[artifactEntryHandle(current.artifactId)] ?? null) : null;
+
+  useModalAccessibilityFocus(closeButtonRef, visible && files.length > 0);
 
   useEffect(() => {
     if (!visible) return;
@@ -707,7 +719,7 @@ export function MediaLightbox({
 
   return (
     <Modal visible transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: colors.letterbox }}>
+      <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.letterbox }}>
         <View
           style={{
             paddingTop: insets.top + 4,
@@ -720,7 +732,12 @@ export function MediaLightbox({
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
-            <ChromeButton icon="close" label="Close lightbox" onPress={onClose} />
+            <ChromeButton
+              icon="close"
+              label="Close lightbox"
+              focusRef={closeButtonRef}
+              onPress={onClose}
+            />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }} numberOfLines={1}>
                 {current.name}
@@ -737,6 +754,7 @@ export function MediaLightbox({
             <ChromeButton
               icon="share-outline"
               label="Share or open file"
+              hint="Opens this file externally when possible, otherwise opens the share sheet"
               onPress={() => {
                 void onOpenExternal(current).catch(() => {
                   void Share.share({ message: current.name }).catch(() => {});
@@ -747,15 +765,22 @@ export function MediaLightbox({
               <ChromeButton
                 icon={editing ? 'create' : 'create-outline'}
                 label="Edit file"
+                hint="Opens the file editor"
                 onPress={() => setEditing(true)}
               />
             ) : null}
             {api ? (
-              <ChromeButton icon="git-branch-outline" label="Version history" onPress={() => setHistoryOpen(true)} />
+              <ChromeButton
+                icon="git-branch-outline"
+                label="Version history"
+                hint="Opens previous versions for this file"
+                onPress={() => setHistoryOpen(true)}
+              />
             ) : null}
             <ChromeButton
               icon={infoOpen ? 'information-circle' : 'information-circle-outline'}
               label={infoOpen ? 'Hide file info' : 'Show file info'}
+              hint="Toggles file details"
               onPress={() => setInfoOpen((value) => !value)}
             />
           </View>

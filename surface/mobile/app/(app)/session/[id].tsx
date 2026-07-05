@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -36,6 +36,7 @@ import {
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
 import type { QuestionItem, SessionItem, TextItem, ToolCallItem } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
+import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../../../src/lib/accessibility';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { normalizeExecutionStatus } from '../../../src/lib/sessionStreamCore';
 import { useSessionStream } from '../../../src/lib/useSessionStream';
@@ -169,7 +170,13 @@ function TranscriptActionsSheet({
 }) {
   const { colors, reduceMotion } = useTheme();
   const [copied, setCopied] = useState<'text' | 'link' | null>(null);
+  const firstActionRef = useRef<View>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useModalAccessibilityFocus(firstActionRef, target != null);
+  useAccessibilityAnnouncement(
+    copied === 'text' ? 'Transcript text copied.' : copied === 'link' ? 'Transcript link copied.' : null,
+  );
 
   useEffect(() => {
     setCopied(null);
@@ -202,14 +209,20 @@ function TranscriptActionsSheet({
 
   const Action = ({
     label,
+    hint,
+    focusRef,
     onPress,
   }: {
     label: string;
+    hint?: string;
+    focusRef?: Ref<View>;
     onPress: () => void;
   }) => (
     <Pressable
+      ref={focusRef}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={hint}
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: 44,
@@ -233,6 +246,7 @@ function TranscriptActionsSheet({
       >
         <Pressable
           accessible={false}
+          accessibilityViewIsModal
           onPress={() => {}}
           style={{
             backgroundColor: colors.bgElevated,
@@ -245,16 +259,23 @@ function TranscriptActionsSheet({
           <View style={{ height: 1, backgroundColor: colors.border }} />
           {target ? (
             <>
-              <Action label={copied === 'text' ? 'Copied' : 'Copy text'} onPress={() => copy('text', target.text)} />
+              <Action
+                label={copied === 'text' ? 'Copied' : 'Copy text'}
+                hint="Copies the transcript text to the clipboard"
+                focusRef={firstActionRef}
+                onPress={() => copy('text', target.text)}
+              />
               {target.link ? (
                 <Action
                   label={copied === 'link' ? 'Copied link' : 'Copy link'}
+                  hint="Copies a link to this transcript entry to the clipboard"
                   onPress={() => copy('link', target.link ?? '')}
                 />
               ) : null}
               {target.handle ? (
                 <Action
                   label="Discuss in thread"
+                  hint="Opens a thread anchored to this transcript entry"
                   onPress={() => {
                     onClose();
                     onDiscuss(target.handle ?? '');
@@ -264,6 +285,7 @@ function TranscriptActionsSheet({
               {target.handle ? (
                 <Action
                   label="Mark up & send to agent"
+                  hint="Opens markup for this transcript entry"
                   onPress={() => {
                     onClose();
                     onMarkupSteer(target.handle ?? '');
@@ -272,7 +294,7 @@ function TranscriptActionsSheet({
               ) : null}
             </>
           ) : null}
-          <Action label="Cancel" onPress={onClose} />
+          <Action label="Cancel" hint="Closes the action menu" onPress={onClose} />
         </Pressable>
       </Pressable>
     </Modal>
@@ -627,6 +649,7 @@ function MobileQuestionBanner({
 }) {
   const { colors } = useTheme();
   const complete = pending.questions.every((q) => answerValuesForPrompt(q, values[q.id]).length > 0);
+  useAccessibilityAnnouncement(error);
   const toggleOption = (q: QuestionPrompt, label: string) => {
     const current = answerArrayValue(values[q.id]);
     setValue(
@@ -730,7 +753,11 @@ function MobileQuestionBanner({
         </View>
       ))}
       {error ? (
-        <Text accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: font.xs }}>
+        <Text
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.danger, fontSize: font.xs }}
+        >
           {error}
         </Text>
       ) : null}
@@ -817,6 +844,7 @@ export default function SessionScreen() {
   const referenceFetchKeys = useRef<Set<string>>(new Set());
   const focusedForReferences = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
+  const effortTitleRef = useRef<Text>(null);
   const stickRef = useRef(true);
   // Transcript item y-offsets (captured via onLayout) so the Turns▾ sheet can
   // jump to a turn — ScrollView has no scrollToItem the way FlatList does.
@@ -999,6 +1027,16 @@ export default function SessionScreen() {
   }, []);
 
   const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
+  const visibleSteerError = id ? (steerError ?? chat.failedSessionSteers[id] ?? null) : steerError;
+  const cancelErrorMessage =
+    displayCancelAsk === 'failed'
+      ? canStopTurn
+        ? 'Cancel turn failed. Tap retry.'
+        : 'Cancel failed. Tap retry cancel.'
+      : null;
+  useModalAccessibilityFocus(effortTitleRef, effortOpen && canPickEffort);
+  useAccessibilityAnnouncement(cancelErrorMessage);
+  useAccessibilityAnnouncement(visibleSteerError ? `Message did not send: ${visibleSteerError}` : null);
   // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
   // every viewer, survives replay/reload, clears when a new turn starts.
   const stoppedByUser = stream.stoppedByUser === true;
@@ -1145,7 +1183,6 @@ export default function SessionScreen() {
   };
 
   const retrySteer = () => {
-    const visibleSteerError = id ? (steerError ?? chat.failedSessionSteers[id] ?? null) : steerError;
     if (!id || !visibleSteerError) return;
     const text = visibleSteerError;
     setSteerError(null);
@@ -1478,10 +1515,13 @@ export default function SessionScreen() {
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
-      {displayCancelAsk === 'failed' && (
-        <View style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}>
+      {cancelErrorMessage && (
+        <View
+          accessibilityLiveRegion="polite"
+          style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}
+        >
           <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
-            {canStopTurn ? 'Cancel turn failed. Tap retry.' : 'Cancel failed. Tap retry cancel.'}
+            {cancelErrorMessage}
           </Text>
         </View>
       )}
@@ -1631,8 +1671,9 @@ export default function SessionScreen() {
           />
         ) : null}
 
-        {(steerError ?? chat.failedSessionSteers[id] ?? null) ? (
+        {visibleSteerError ? (
           <View
+            accessibilityLiveRegion="polite"
             style={{
               borderTopWidth: 1,
               borderTopColor: colors.dangerBorder,
@@ -1642,12 +1683,13 @@ export default function SessionScreen() {
             }}
           >
             <Text style={{ color: colors.danger, fontSize: font.xs }} numberOfLines={2}>
-              Message did not send: "{steerError ?? chat.failedSessionSteers[id] ?? ''}"
+              Message did not send: "{visibleSteerError}"
             </Text>
             <View style={{ flexDirection: 'row', gap: space.sm }}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Retry sending session message"
+                accessibilityHint="Attempts to send this message again"
                 onPress={retrySteer}
                 hitSlop={10}
                 style={{ minHeight: 44, justifyContent: 'center' }}
@@ -1657,6 +1699,7 @@ export default function SessionScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Dismiss failed session message"
+                accessibilityHint="Removes this failed message notice"
                 onPress={() => {
                   setSteerError(null);
                   if (id) chat.clearFailedSessionSteer(id);
@@ -1694,6 +1737,7 @@ export default function SessionScreen() {
           </View>
         ) : canSteer ? (
           <View
+            accessibilityViewIsModal
             style={{
               borderTopWidth: 1,
               borderTopColor: colors.border,
@@ -1856,7 +1900,11 @@ export default function SessionScreen() {
                 height: 48,
               }}
             >
-              <Text style={{ flex: 1, color: colors.text, fontSize: font.md, fontWeight: '800' }}>
+              <Text
+                ref={effortTitleRef}
+                accessibilityRole="header"
+                style={{ flex: 1, color: colors.text, fontSize: font.md, fontWeight: '800' }}
+              >
                 Reasoning effort
               </Text>
               <Pressable
@@ -1872,6 +1920,7 @@ export default function SessionScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Use default reasoning effort"
+                accessibilityHint="Closes the picker and uses the model default"
                 onPress={() => {
                   setEffortChoice('');
                   setEffortOpen(false);
@@ -1892,6 +1941,7 @@ export default function SessionScreen() {
                 key={level}
                 accessibilityRole="button"
                 accessibilityLabel={`Set reasoning effort to ${level}`}
+                accessibilityHint="Closes the picker and uses this effort for the next turn"
                 accessibilityState={{ selected: effortSelection === level }}
                 onPress={() => {
                   setEffortChoice(level);

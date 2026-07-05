@@ -34,6 +34,7 @@ import {
   type UserRef,
 } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
+import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { lightImpactHaptic } from '../lib/haptics';
@@ -127,6 +128,7 @@ export function Composer({
   const inputRef = useRef<TextInput>(null);
   const meterSamplesRef = useRef<number[]>([]);
   const editing = editingText != null;
+  useAccessibilityAnnouncement(recordingError);
   const draftWriter = useMemo(
     () =>
       createDraftChangeDebouncer(
@@ -574,6 +576,7 @@ export function Composer({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Remove attachment"
+                accessibilityHint="Removes this attachment from the message"
                 onPress={() => setAttachments((prev) => prev.filter((x) => x.key !== a.key))}
                 hitSlop={13}
                 style={{
@@ -622,6 +625,7 @@ export function Composer({
             />
           )}
           <Text
+            accessibilityLiveRegion={recordingError ? 'polite' : undefined}
             style={{
               flex: 1,
               color: recording ? colors.text : colors.textMuted,
@@ -640,6 +644,7 @@ export function Composer({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Cancel voice recording"
+                accessibilityHint="Discards the recording"
                 onPress={() => void finishRecording(false)}
                 hitSlop={8}
                 style={{ minHeight: 36, justifyContent: 'center' }}
@@ -651,6 +656,7 @@ export function Composer({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Stop and send voice recording"
+                accessibilityHint="Sends the recording as a voice message"
                 onPress={() => void finishRecording(true)}
                 hitSlop={8}
                 style={{
@@ -674,6 +680,7 @@ export function Composer({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Attach file"
+            accessibilityHint="Opens attachment options"
             onPress={pickAttachment}
             hitSlop={8}
             style={{
@@ -693,6 +700,11 @@ export function Composer({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={recording ? 'Stop and send voice message' : 'Record voice message'}
+            accessibilityHint={
+              recording
+                ? 'Stops recording and sends the voice message'
+                : 'Starts recording a voice message'
+            }
             accessibilityState={{ disabled: recordingBusy || uploading }}
             onPress={() => {
               if (recording) void finishRecording(true);

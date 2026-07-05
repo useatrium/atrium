@@ -13,6 +13,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentMeta } from '@atrium/surface-client';
+import { useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, space, useTheme } from '../lib/theme';
 
 export interface ImageViewerProps {
@@ -36,7 +37,10 @@ export function ImageViewer({
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const [zoomed, setZoomed] = useState(false);
+  const closeButtonRef = useRef<View>(null);
   const lastTapRef = useRef(0);
+
+  useModalAccessibilityFocus(closeButtonRef, attachment != null);
 
   useEffect(() => {
     setZoomed(false);
@@ -76,7 +80,11 @@ export function ImageViewer({
 
   return (
     <Modal visible transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: colors.letterbox }} {...panResponder.panHandlers}>
+      <View
+        accessibilityViewIsModal
+        style={{ flex: 1, backgroundColor: colors.letterbox }}
+        {...panResponder.panHandlers}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close image viewer"
@@ -97,6 +105,7 @@ export function ImageViewer({
           }}
         >
           <Pressable
+            ref={closeButtonRef}
             accessibilityRole="button"
             accessibilityLabel="Close image viewer"
             onPress={onClose}
@@ -108,6 +117,7 @@ export function ImageViewer({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open image externally"
+            accessibilityHint="Opens the image in your browser"
             onPress={() => onOpenExternal(attachment.id)}
             hitSlop={12}
             style={{ padding: space.sm }}
@@ -134,6 +144,7 @@ export function ImageViewer({
           <Pressable
             accessibilityRole="imagebutton"
             accessibilityLabel={attachment.filename}
+            accessibilityHint={zoomed ? 'Double tap to zoom out' : 'Double tap to zoom in'}
             onPress={handleTap}
             style={{
               width: imageWidth * scale,
