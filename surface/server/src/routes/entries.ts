@@ -148,6 +148,10 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
           path: result.path,
           seq: result.seq,
           workspaceId: result.workspaceId,
+          // The current source text of the entry, so the markup UI can detect when the
+          // (persistent, shared) markup artifact has diverged from the live message and
+          // offer a reset. Null for artifact entries, whose "text" is just a filename.
+          sourceText: entry.targetType === 'artifact' ? null : entry.text,
         });
     } catch (err) {
       if ((err as { statusCode?: number; code?: string })?.statusCode === 422) {

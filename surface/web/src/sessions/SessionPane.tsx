@@ -972,6 +972,7 @@ export function SessionPane({
           sessionId: session.id,
           frontmatter,
           body,
+          sourceText: extracted.sourceText ?? null,
         });
       } catch (err) {
         showErrorToast(err instanceof Error ? err.message : 'Could not open markup pane');

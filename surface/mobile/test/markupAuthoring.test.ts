@@ -89,6 +89,7 @@ describe('markupAuthoring helpers', () => {
       path: 'entry.md',
       seq: 3,
       workspaceId: 'ws-1',
+      sourceText: null,
     }));
     const fetchMock = vi.fn(async () => ({
       ok: true,
