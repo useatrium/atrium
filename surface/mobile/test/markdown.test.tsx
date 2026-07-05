@@ -39,7 +39,10 @@ vi.mock('react-native-markdown-display', () => {
       sourceInfo: match[1],
     });
   };
-  const MarkdownIt = () => ({ use: () => ({ use: () => ({}) }) });
+  const MarkdownIt = () => {
+    const md = { use: () => md };
+    return md;
+  };
   return {
     default: MarkdownDisplay,
     MarkdownIt,

@@ -80,6 +80,7 @@ import { CompactMarkdownText, MessageText } from './MessageText';
 import { TimestampDisclosure } from './TimestampDisclosure';
 import { useDialog } from '../useDialog';
 import { VoiceMessage } from '../VoiceMessage';
+import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
 
 type MessageWithHandle = ChatMessage & { handle?: string | null };
 
@@ -206,9 +207,8 @@ export const MessageRow = memo(function MessageRow({
     if (!entryHandle || typeof navigator === 'undefined') return;
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) return;
-    const origin = typeof window === 'undefined' ? '' : window.location.origin;
     void clipboard
-      .writeText(`${origin}/e/${entryHandle}`)
+      .writeText(entryShareUrl(entryHandle))
       .then(() => {
         setLinkCopied(true);
         if (linkCopyResetRef.current) window.clearTimeout(linkCopyResetRef.current);
@@ -258,8 +258,7 @@ export const MessageRow = memo(function MessageRow({
     if (typeof navigator === 'undefined') return;
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) return;
-    const origin = typeof window === 'undefined' ? '' : window.location.origin;
-    void clipboard.writeText(`${origin}/api/files/${file.id}`).catch(() => {});
+    void clipboard.writeText(fileShareUrl(file.id)).catch(() => {});
   }, []);
   const markAttachmentRemoved = useCallback((id: string) => {
     setRemovedAttachmentIds((current) => {

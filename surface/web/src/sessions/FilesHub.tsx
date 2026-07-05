@@ -11,6 +11,7 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
+import { entryShareUrl } from '../lib/publicUrl';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import type { Session } from './types';
@@ -59,7 +60,7 @@ function artifactEntryHandle(artifactId: string): string {
 }
 
 function absoluteArtifactEntryUrl(artifactId: string): string {
-  return `${window.location.origin}/e/${artifactEntryHandle(artifactId)}`;
+  return entryShareUrl(artifactEntryHandle(artifactId));
 }
 
 async function responseError(response: Response, fallback: string): Promise<string> {

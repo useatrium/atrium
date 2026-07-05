@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, Text, View, type AccessibilityActionEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,9 +14,10 @@ import {
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
+import { partitionEntryLinks } from '../lib/entryLinks';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
-import { MarkdownText } from './Markdown';
+import { EntryReferenceMarkdownProvider, MarkdownText } from './Markdown';
 import { MessageText } from './MessageText';
 import { TimestampText } from './TimestampText';
 import { VoiceMessage } from './VoiceMessage';
@@ -439,6 +440,11 @@ export const MessageRow = memo(function MessageRow({
   const copyText = actionCopyTextForMessage(m, session, rowText);
   const entryHandle = entryHandleForAction(m);
   const copyLink = entryHandle ? `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(entryHandle)}` : null;
+  const partitionedEntryLinks = useMemo(() => partitionEntryLinks(m.text, serverUrl), [m.text, serverUrl]);
+  const entryReferenceMarkdown = useMemo(
+    () => ({ resolveEntry, onOpenChannel, onOpenSession }),
+    [resolveEntry, onOpenChannel, onOpenSession],
+  );
   const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null || copyLink != null);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
@@ -479,7 +485,11 @@ export const MessageRow = memo(function MessageRow({
     <SessionCard message={m} session={session} onOpen={onOpenSession} />
   ) : (
     <>
-      {m.text ? <MessageText text={m.text} meHandle={meHandle} muted={pending} /> : null}
+      {partitionedEntryLinks.bodyText ? (
+        <EntryReferenceMarkdownProvider value={entryReferenceMarkdown}>
+          <MessageText text={partitionedEntryLinks.bodyText} meHandle={meHandle} muted={pending} />
+        </EntryReferenceMarkdownProvider>
+      ) : null}
       {m.voice ? (
         <VoiceMessage voice={m.voice} api={api} fileUrl={fileUrl} fileHeaders={fileHeaders} />
       ) : (
@@ -586,10 +596,11 @@ export const MessageRow = memo(function MessageRow({
           {body}
           {editedNote}
         </Pressable>
-        {m.text ? (
+        {partitionedEntryLinks.standaloneHandles.length > 0 ? (
           <EntryQuoteCards
             text={m.text}
             serverUrl={serverUrl}
+            handles={partitionedEntryLinks.standaloneHandles}
             resolveEntry={resolveEntry}
             resolveArtifactContent={resolveArtifactContent}
             onOpenChannel={onOpenChannel}

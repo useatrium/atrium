@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { Component, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import MarkdownDisplay, {
   MarkdownIt,
@@ -11,7 +11,10 @@ import MarkdownDisplay, {
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
 import { selectionHaptic } from '../lib/haptics';
+import { entryHandleFromLinkCandidate, findEntryLinkMatches, isEntryHandle } from '../lib/entryLinks';
+import type { EntryResolver } from '../lib/entryResolve';
 import { font, radius, space, useTheme, type Colors } from '../lib/theme';
+import { EntryInlineChip } from './EntryQuoteCards';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
@@ -32,7 +35,28 @@ type MarkdownItState = {
 };
 
 const mentionHrefPrefix = 'atrium-mention:';
+const entryHrefPrefix = 'atrium-entry:';
 const mentionRe = /@([a-z0-9][a-z0-9_-]{1,31})/gi;
+
+export interface EntryReferenceMarkdownContextValue {
+  resolveEntry?: EntryResolver;
+  onOpenChannel?: (channelId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
+}
+
+const emptyEntryReferenceContext: EntryReferenceMarkdownContextValue = {};
+const EntryReferenceMarkdownContext =
+  createContext<EntryReferenceMarkdownContextValue>(emptyEntryReferenceContext);
+
+export function EntryReferenceMarkdownProvider({
+  value,
+  children,
+}: {
+  value: EntryReferenceMarkdownContextValue;
+  children: ReactNode;
+}) {
+  return <EntryReferenceMarkdownContext.Provider value={value}>{children}</EntryReferenceMarkdownContext.Provider>;
+}
 
 const taskListPlugin = (md: MarkdownIt) => {
   md.core.ruler.after('inline', 'atrium_task_lists', (rawState) => {
@@ -107,7 +131,76 @@ const mentionPlugin = (md: MarkdownIt) => {
   });
 };
 
-const markdownIt = MarkdownIt({ html: false, typographer: true, linkify: true }).use(taskListPlugin).use(mentionPlugin);
+function tokenAttr(token: MarkdownItToken, name: string): string | null {
+  return token.attrs?.find(([key]) => key === name)?.[1] ?? null;
+}
+
+function handleForEntryHref(href: string): string | null {
+  const handle = entryHandleFromLinkCandidate(href);
+  return handle && isEntryHandle(handle) ? handle : null;
+}
+
+const entryPlugin = (md: MarkdownIt) => {
+  md.core.ruler.after('atrium_mentions', 'atrium_entries', (rawState) => {
+    const state = rawState as unknown as MarkdownItState;
+    for (const token of state.tokens) {
+      if (token.type !== 'inline' || !Array.isArray(token.children)) continue;
+      const next: MarkdownItToken[] = [];
+      let linkDepth = 0;
+
+      for (const child of token.children) {
+        if (child.type === 'link_open') {
+          const href = tokenAttr(child, 'href');
+          const handle = href ? handleForEntryHref(href) : null;
+          if (handle) child.attrSet('href', `${entryHrefPrefix}${handle}`);
+          linkDepth += 1;
+          next.push(child);
+          continue;
+        }
+
+        if (child.type === 'link_close') {
+          linkDepth = Math.max(0, linkDepth - 1);
+          next.push(child);
+          continue;
+        }
+
+        if (child.type !== 'text' || !child.content || linkDepth > 0) {
+          next.push(child);
+          continue;
+        }
+
+        let last = 0;
+        const matches = findEntryLinkMatches(child.content);
+        for (const match of matches) {
+          const candidateEnd = match.index + match.candidate.length;
+          if (match.index > last) {
+            const text = new state.Token('text', '', 0);
+            text.content = child.content.slice(last, match.index);
+            next.push(text);
+          }
+          const open = new state.Token('link_open', 'a', 1);
+          open.attrs = [['href', `${entryHrefPrefix}${match.handle}`]];
+          const text = new state.Token('text', '', 0);
+          text.content = match.candidate;
+          const close = new state.Token('link_close', 'a', -1);
+          next.push(open, text, close);
+          last = candidateEnd;
+        }
+        if (last < child.content.length) {
+          const text = new state.Token('text', '', 0);
+          text.content = child.content.slice(last);
+          next.push(text);
+        }
+      }
+      token.children = next;
+    }
+  });
+};
+
+const markdownIt = MarkdownIt({ html: false, typographer: true, linkify: true })
+  .use(taskListPlugin)
+  .use(mentionPlugin)
+  .use(entryPlugin);
 
 function normalizeLanguage(info: string | undefined): string {
   const raw = info?.trim().split(/\s+/)[0]?.toLowerCase();
@@ -127,6 +220,7 @@ function trimTrailingNewline(value: string): string {
 
 function openExternalLink(url: string): boolean {
   if (url.startsWith(mentionHrefPrefix)) return false;
+  if (url.startsWith(entryHrefPrefix)) return false;
   if (!/^(https?:|mailto:|tel:)/i.test(url)) return false;
   void Linking.openURL(url).catch(() => {});
   return false;
@@ -374,7 +468,12 @@ function markdownStyles(colors: Colors, variant: 'session' | 'message' | 'compac
   } as Record<string, TextStyle | ViewStyle>;
 }
 
-function makeRules(colors: Colors, variant: 'session' | 'message' | 'compact', meHandle?: string): RenderRules {
+function makeRules(
+  colors: Colors,
+  variant: 'session' | 'message' | 'compact',
+  meHandle: string | undefined,
+  entryReferences: EntryReferenceMarkdownContextValue,
+): RenderRules {
   const highlightedCode = (node: ASTNode) => {
     const sourceNode = node as SourceNode;
     return (
@@ -391,6 +490,21 @@ function makeRules(colors: Colors, variant: 'session' | 'message' | 'compact', m
   return {
     link: (node, children) => {
       const href = typeof node.attributes.href === 'string' ? node.attributes.href : '';
+      if (href.startsWith(entryHrefPrefix)) {
+        const handle = href.slice(entryHrefPrefix.length);
+        if (isEntryHandle(handle)) {
+          return (
+            <EntryInlineChip
+              key={node.key}
+              handle={handle}
+              resolveEntry={entryReferences.resolveEntry}
+              onOpenChannel={entryReferences.onOpenChannel}
+              onOpenSession={entryReferences.onOpenSession}
+            />
+          );
+        }
+      }
+
       if (!href.startsWith(mentionHrefPrefix)) {
         if (variant === 'compact') {
           return (
@@ -499,8 +613,12 @@ export const MarkdownText = memo(function MarkdownText({
   meHandle?: string | null;
 }) {
   const { colors } = useTheme();
+  const entryReferences = useContext(EntryReferenceMarkdownContext);
   const styles = useMemo(() => markdownStyles(colors, variant), [colors, variant]);
-  const rules = useMemo(() => makeRules(colors, variant, meHandle ?? undefined), [colors, variant, meHandle]);
+  const rules = useMemo(
+    () => makeRules(colors, variant, meHandle ?? undefined, entryReferences),
+    [colors, variant, meHandle, entryReferences],
+  );
   const source = variant === 'compact' ? compactMarkdownSource(text) : text;
 
   return (
