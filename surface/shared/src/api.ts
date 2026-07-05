@@ -876,7 +876,7 @@ export function createApi(opts: ApiOptions = {}) {
     },
     // === mk703-extract additions ===
     extractEntry: (handle: string) =>
-      req<{ artifactId: string; path: string; seq: number; workspaceId: string }>(
+      req<{ artifactId: string; path: string; seq: number; workspaceId: string; sourceText: string | null }>(
         `/api/entries/${encodeURIComponent(handle)}/extract`,
         { method: 'POST', body: '{}' },
       ),
