@@ -6,7 +6,16 @@ export type MarkupVersionOp = 'list' | 'content' | 'revert' | 'restore';
 export type MarkupShellInbound =
   // native -> webview: seed the editor. `sourceText` is the live source-message text (null
   // when there is no source message, e.g. an artifact file) so the shell can detect divergence.
-  | { type: 'markup-init'; markdown: string; commentAuthor?: string; sourceText?: string | null }
+  // artifactId/path/artifactSeq identify the underlying doc so the shell can show version history.
+  | {
+      type: 'markup-init';
+      markdown: string;
+      commentAuthor?: string;
+      sourceText?: string | null;
+      artifactId?: string;
+      path?: string;
+      artifactSeq?: number;
+    }
   | { type: 'markup-request-serialize' }
   // native -> webview: result of a markup-vh-request, correlated by reqId.
   | {
@@ -40,6 +49,9 @@ export function parseMarkupShellMessage(data: unknown): MarkupShellInbound | nul
       markdown: raw.markdown,
       ...(typeof raw.commentAuthor === 'string' ? { commentAuthor: raw.commentAuthor } : {}),
       ...(typeof raw.sourceText === 'string' || raw.sourceText === null ? { sourceText: raw.sourceText } : {}),
+      ...(typeof raw.artifactId === 'string' ? { artifactId: raw.artifactId } : {}),
+      ...(typeof raw.path === 'string' ? { path: raw.path } : {}),
+      ...(typeof raw.artifactSeq === 'number' ? { artifactSeq: raw.artifactSeq } : {}),
     };
   }
   if (raw.type === 'markup-request-serialize') {
