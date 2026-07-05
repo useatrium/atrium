@@ -10,8 +10,10 @@ import {
   type ChatMessage,
   type Session,
   type TimelineItem,
+  type UserRef,
 } from '@atrium/surface-client';
 import { font, space, useTheme } from '../lib/theme';
+import { useReactionUserResolver } from '../lib/chat';
 import { DayDivider } from './bits';
 import { MessageRow } from './MessageRow';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
@@ -31,6 +33,7 @@ export interface TimelineProps {
   serverUrl: string;
   resolveEntry: EntryResolver;
   resolveArtifactContent?: ArtifactContentResolver;
+  resolveUser?: (id: string) => UserRef | undefined;
   fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
   onLongPress: (m: ChatMessage) => void;
@@ -57,6 +60,7 @@ export function Timeline({
   serverUrl,
   resolveEntry,
   resolveArtifactContent,
+  resolveUser,
   fileHeaders,
   onLoadEarlier,
   onLongPress,
@@ -69,6 +73,8 @@ export function Timeline({
 }: TimelineProps) {
   const { colors, reduceMotion } = useTheme();
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
+  const resolvedReactionUser = useReactionUserResolver(messages);
+  const reactionUserResolver = resolveUser ?? resolvedReactionUser;
 
   // Chronological (oldest-first); FlashList v2 anchors rendering at the bottom.
   const items = useMemo(() => buildTimelineItems(messages), [messages]);
@@ -123,6 +129,7 @@ export function Timeline({
           serverUrl={serverUrl}
           resolveEntry={resolveEntry}
           resolveArtifactContent={resolveArtifactContent}
+          resolveUser={reactionUserResolver}
           fileHeaders={fileHeaders}
           onLongPress={onLongPress}
           onOpenThread={onOpenThread}
@@ -145,6 +152,7 @@ export function Timeline({
       serverUrl,
       resolveEntry,
       resolveArtifactContent,
+      reactionUserResolver,
       fileHeaders,
       onLongPress,
       onOpenThread,

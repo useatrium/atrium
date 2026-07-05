@@ -456,6 +456,7 @@ describe('session pane folds the B_tooltest stream', () => {
       path: 'sessions/s-b/markup-ready.md',
       seq: 3,
       workspaceId: 'ws-1',
+      sourceText: null,
     });
     vi.stubGlobal(
       'fetch',

@@ -4,6 +4,7 @@ import type {
   AttachmentRef,
   ChatMessage,
   UploadPayload,
+  UserRef,
   VoiceMeta,
 } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
@@ -28,6 +29,7 @@ export function ThreadPanel({
   onEdit,
   onDelete,
   onReact,
+  resolveUser,
   onMarkupEntry,
   draftKey,
   initialDraft,
@@ -56,6 +58,7 @@ export function ThreadPanel({
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
   draftKey?: string;
   initialDraft?: string;
@@ -109,6 +112,7 @@ export function ThreadPanel({
           onEdit={onEdit}
           onDelete={onDelete}
           onReact={onReact}
+          resolveUser={resolveUser}
           onMarkupEntry={onMarkupEntry}
         />
         <div className="my-2 flex items-center gap-2 px-4">
@@ -132,6 +136,7 @@ export function ThreadPanel({
               onEdit={onEdit}
               onDelete={onDelete}
               onReact={onReact}
+              resolveUser={resolveUser}
               onMarkupEntry={onMarkupEntry}
             />
           ),

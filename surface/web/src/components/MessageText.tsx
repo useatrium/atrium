@@ -291,7 +291,7 @@ function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
         return mentionSpan(href.slice(MENTION_URL_PREFIX.length), meHandle);
       }
       if (href?.startsWith(ENTRY_URL_PREFIX)) {
-        return <EntryInlineChip handle={href.slice(ENTRY_URL_PREFIX.length)} />;
+        return <EntryInlineChip handle={href.slice(ENTRY_URL_PREFIX.length)} compact={compact} />;
       }
       if (compact) {
         return (
