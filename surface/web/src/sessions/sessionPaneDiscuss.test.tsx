@@ -80,7 +80,7 @@ describe('AnnotatedTranscriptRow Discuss affordance', () => {
         <div>Transcript text</div>
       </AnnotatedTranscriptRow>,
     );
-    expect(screen.queryByRole('button', { name: 'Discuss in thread' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Discuss' })).toBeNull();
   });
 
   it('emits a prefilled thread draft payload', () => {
@@ -94,7 +94,7 @@ describe('AnnotatedTranscriptRow Discuss affordance', () => {
         <div>Transcript text</div>
       </AnnotatedTranscriptRow>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Discuss in thread' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss' }));
     expect(onDiscussEntry).toHaveBeenCalledWith({
       handle: 'rec_1',
       channelId: 'ch_1',

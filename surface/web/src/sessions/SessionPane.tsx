@@ -50,6 +50,7 @@ import {
 } from '../components/EntryReferencesChip';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
+import { Tooltip } from '../components/a11y';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -1069,43 +1070,45 @@ export function SessionPane({
           </div>
         </div>
         {(isSpawner || isDriver) && !displayTerminal && (
-          <button
-            onClick={onCancel}
-            title={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}
-            className={`rounded-md border px-2 py-1 text-2xs font-medium ${
-              displayCancelAsk === 'failed'
-                ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                : canStopTurn
-                  ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
-                  : displayCancelAsk === 'confirm'
-                    ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                    : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
-            }`}
-          >
-            {canStopTurn
-              ? displayCancelAsk === 'failed'
-                ? 'Cancel turn failed — retry'
-                : 'Cancel turn'
-              : displayCancelAsk === 'confirm'
-                ? 'Confirm cancel'
-                : displayCancelAsk === 'failed'
-                  ? 'Cancel failed — retry'
-                  : 'Cancel'}
-          </button>
+          <Tooltip content={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}>
+            <button
+              onClick={onCancel}
+              className={`rounded-md border px-2 py-1 text-2xs font-medium ${
+                displayCancelAsk === 'failed'
+                  ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                  : canStopTurn
+                    ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
+                    : displayCancelAsk === 'confirm'
+                      ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                      : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
+              }`}
+            >
+              {canStopTurn
+                ? displayCancelAsk === 'failed'
+                  ? 'Cancel turn failed — retry'
+                  : 'Cancel turn'
+                : displayCancelAsk === 'confirm'
+                  ? 'Confirm cancel'
+                  : displayCancelAsk === 'failed'
+                    ? 'Cancel failed — retry'
+                    : 'Cancel'}
+            </button>
+          </Tooltip>
         )}
         <div className="relative">
-          <button
-            ref={capabilitiesButtonRef}
-            type="button"
-            onClick={() => setCapabilitiesOpen((value) => !value)}
-            title="Inspect session capabilities"
-            aria-label="Inspect session capabilities"
-            aria-expanded={capabilitiesOpen}
-            aria-haspopup="dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-          >
-            <SearchIcon size={15} />
-          </button>
+          <Tooltip content="Inspect session capabilities">
+            <button
+              ref={capabilitiesButtonRef}
+              type="button"
+              onClick={() => setCapabilitiesOpen((value) => !value)}
+              aria-label="Inspect session capabilities"
+              aria-expanded={capabilitiesOpen}
+              aria-haspopup="dialog"
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              <SearchIcon size={15} />
+            </button>
+          </Tooltip>
           <SessionCapabilitiesPopover
             sessionId={session.id}
             open={capabilitiesOpen}
@@ -1114,36 +1117,39 @@ export function SessionPane({
           />
         </div>
         {canDetach && (
-          <a
-            href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
-            target={popout ? undefined : '_blank'}
-            rel={popout ? undefined : 'noopener noreferrer'}
-            title={popout ? 'Open in full app' : 'Open in a new tab'}
-            aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-          >
-            <ExternalLinkIcon size={15} />
-          </a>
+          <Tooltip content={popout ? 'Open in full app' : 'Open session in a new tab'}>
+            <a
+              href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
+              target={popout ? undefined : '_blank'}
+              rel={popout ? undefined : 'noopener noreferrer'}
+              aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              <ExternalLinkIcon size={15} />
+            </a>
+          </Tooltip>
         )}
         {onToggleFocus && (
+          <Tooltip content={focused ? 'Collapse to split view' : 'Expand to focus view'}>
+            <button
+              onClick={onToggleFocus}
+              aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
+              aria-pressed={focused}
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip content="Close session pane">
           <button
-            onClick={onToggleFocus}
-            title={focused ? 'Collapse to split view' : 'Expand to focus view'}
-            aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
-            aria-pressed={focused}
+            onClick={closePane}
+            aria-label="Close session pane"
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
           >
-            {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
+            <XIcon />
           </button>
-        )}
-        <button
-          onClick={closePane}
-          title="Close session pane"
-          aria-label="Close session pane"
-          className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-        >
-          <XIcon />
-        </button>
+        </Tooltip>
       </header>
 
       {seatRequest && !displayTerminal && (
@@ -1739,61 +1745,63 @@ export function AnnotatedTranscriptRow({
           <EntryReferencesChip summary={references} />
         </div>
         <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-          <button
-            type="button"
-            onClick={copyEntryLink}
-            title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-            aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-            className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-              linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
-            }`}
-          >
-            {linkCopied ? <CheckIcon /> : <LinkIcon />}
-          </button>
-          {hasCopyableText && (
+          <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
             <button
               type="button"
-              onClick={copyBlockText}
-              title={textCopied ? 'Copied block text' : 'Copy block text'}
-              aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+              onClick={copyEntryLink}
+              aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
               className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-                textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
               }`}
             >
-              {textCopied ? <CheckIcon /> : <CopyIcon />}
+              {linkCopied ? <CheckIcon /> : <LinkIcon />}
             </button>
+          </Tooltip>
+          {hasCopyableText && (
+            <Tooltip content={textCopied ? 'Copied block text' : 'Copy block text'}>
+              <button
+                type="button"
+                onClick={copyBlockText}
+                aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                  textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                }`}
+              >
+                {textCopied ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </Tooltip>
           )}
           {canDiscuss && (
-            <button
-              type="button"
-              onClick={() => {
-                onDiscussEntry({
-                  handle,
-                  channelId: discussContext.channelId,
-                  threadRootEventId: discussContext.threadRootEventId,
-                  draft: `/e/${handle} `,
-                });
-              }}
-              title="Discuss"
-              aria-label="Discuss in thread"
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-            >
-              <MessageSquarePlusIcon />
-              Discuss
-            </button>
+            <Tooltip content="Discuss in thread">
+              <button
+                type="button"
+                onClick={() => {
+                  onDiscussEntry({
+                    handle,
+                    channelId: discussContext.channelId,
+                    threadRootEventId: discussContext.threadRootEventId,
+                    draft: `/e/${handle} `,
+                  });
+                }}
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+              >
+                <MessageSquarePlusIcon />
+                Discuss
+              </button>
+            </Tooltip>
           )}
           {canMarkup && (
-            <button
-              type="button"
-              onClick={() => onMarkupEntry(handle)}
-              disabled={markupLoading}
-              title="Mark up & reply"
-              aria-label="Mark up & reply"
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
-            >
-              <PenLineIcon />
-              {markupLoading ? 'Opening...' : 'Mark up'}
-            </button>
+            <Tooltip content="Mark up & reply">
+              <button
+                type="button"
+                onClick={() => onMarkupEntry(handle)}
+                disabled={markupLoading}
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+              >
+                <PenLineIcon />
+                {markupLoading ? 'Opening...' : 'Mark up'}
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>

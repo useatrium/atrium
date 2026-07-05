@@ -5,7 +5,9 @@
 // reflows beside (single swappable slot — the DevTools dock model); detach =
 // the surface in its own browser tab (/s/:id/work/:tab), the top rung.
 
+import { useEffect } from 'react';
 import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
+import { Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from '../components/a11y';
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { isDesktop } from '../desktop';
 import { SideEffectsSurface } from './SideEffectsSurface';
@@ -50,29 +52,21 @@ export const TAB_LABEL: Record<ActiveWorkTab, string> = {
 };
 
 function Tab({
-  active,
-  onClick,
+  value,
   label,
   count,
   danger = false,
 }: {
-  active: boolean;
-  onClick: () => void;
+  value: ActiveWorkTab;
   label: string;
   /** Omit to render a count-less tab (e.g. Files, which is always present). */
   count?: number;
   danger?: boolean;
 }) {
   return (
-    <button
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`flex items-center gap-1.5 border-b-2 px-2.5 py-2 text-xs font-semibold ${
-        active
-          ? 'border-accent-border-strong text-fg'
-          : 'border-transparent text-fg-muted hover:text-fg-secondary'
-      }`}
+    <TabsTrigger
+      value={value}
+      className="flex items-center gap-1.5 rounded-none border-b-2 border-transparent bg-transparent px-2.5 py-2 text-xs font-semibold text-fg-muted hover:text-fg-secondary data-[state=active]:border-accent-border-strong data-[state=active]:bg-transparent data-[state=active]:text-fg"
     >
       <span>{label}</span>
       {count != null && (
@@ -80,7 +74,7 @@ function Tab({
           · {count}
         </span>
       )}
-    </button>
+    </TabsTrigger>
   );
 }
 
@@ -159,13 +153,27 @@ export function WorkDrawer({
     ? normalizedTab
     : available[0]?.key ?? normalizedTab;
   const showDetach = canDetach && !isDesktop;
+  const pinLabel = pinned ? 'Unpin (back to overlay)' : 'Pin beside the transcript';
+  const pinAriaLabel = pinned ? 'Unpin work drawer' : 'Pin work drawer';
+  const detachLabel = `Open ${TAB_LABEL[active]} in a new tab`;
+
+  useEffect(() => {
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
+  }, [onClose]);
 
   return (
-    <div
+    <Tabs
       data-testid="work-drawer"
+      value={active}
+      onValueChange={(value) => onTab(value as ActiveWorkTab)}
       role="dialog"
       aria-label="Work"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className={
         pinned
           ? 'flex min-h-0 flex-1 flex-col bg-surface'
@@ -173,44 +181,45 @@ export function WorkDrawer({
       }
     >
       <header className="flex h-10 shrink-0 items-center border-b border-edge pr-2">
-        <div role="tablist" aria-label="Work surfaces" className="flex min-w-0 flex-1 items-center px-1">
+        <TabsList aria-label="Work surfaces" className="min-w-0 flex-1 gap-0 px-1">
           {available.map((t) => (
             <Tab
               key={t.key}
-              active={active === t.key}
-              onClick={() => onTab(t.key)}
+              value={t.key}
               label={t.label}
               count={t.count}
               danger={t.danger}
             />
           ))}
-        </div>
+        </TabsList>
         {canPin && (
-          <button
-            onClick={onTogglePin}
-            aria-pressed={pinned}
-            title={pinned ? 'Unpin (back to overlay)' : 'Pin beside the transcript'}
-            aria-label={pinned ? 'Unpin work drawer' : 'Pin work drawer'}
-            className={`rounded-md px-1.5 py-1 ${
-              pinned
-                ? 'text-accent-text-strong hover:bg-surface-overlay'
-                : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg'
-            }`}
-          >
-            {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
-          </button>
+          <Tooltip content={pinLabel}>
+            <button
+              onClick={onTogglePin}
+              aria-pressed={pinned}
+              aria-label={pinAriaLabel}
+              className={`rounded-md px-1.5 py-1 ${
+                pinned
+                  ? 'text-accent-text-strong hover:bg-surface-overlay'
+                  : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg'
+              }`}
+            >
+              {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
+            </button>
+          </Tooltip>
         )}
         {showDetach && (
-          <a
-            href={`/s/${sessionId}/work/${TAB_SLUG[active]}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`Open ${TAB_LABEL[active]} in a new tab`}
-            aria-label={`Open ${TAB_LABEL[active]} in a new tab`}
-            className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-          >
-            <ExternalLinkIcon size={15} />
-          </a>
+          <Tooltip content={detachLabel}>
+            <a
+              href={`/s/${sessionId}/work/${TAB_SLUG[active]}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={detachLabel}
+              className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              <ExternalLinkIcon size={15} />
+            </a>
+          </Tooltip>
         )}
         <button
           onClick={onClose}
@@ -220,17 +229,31 @@ export function WorkDrawer({
           <XIcon size={15} />
         </button>
       </header>
-      {active === 'conflicts' ? (
-        conflicts[0] ? (
+      <TabsContent value="conflicts" className="min-h-0 flex-1">
+        {conflicts[0] ? (
           <ConflictSurface
             conflict={conflicts[0]}
             onResolve={(choice) => onResolveConflict?.(conflicts[0]!.artifactId, choice)}
             onClose={onClose}
             embedded
           />
-        ) : null
-      ) : active === 'hubFiles' ? (
-        workspaceId ? (
+        ) : null}
+      </TabsContent>
+      <TabsContent value="changes" className="min-h-0 flex-1">
+        <WhatChangedSurface
+          changes={changes}
+          artifacts={artifacts}
+          presentations={artifactPresentations}
+          sessionId={sessionId}
+          onClose={onClose}
+          embedded
+        />
+      </TabsContent>
+      <TabsContent value="sideEffects" className="min-h-0 flex-1">
+        <SideEffectsSurface effects={effects} onClose={onClose} embedded />
+      </TabsContent>
+      <TabsContent value="hubFiles" className="min-h-0 flex-1">
+        {workspaceId ? (
           <FilesHub
             workspaceId={workspaceId}
             channelId={channelId}
@@ -240,21 +263,11 @@ export function WorkDrawer({
           />
         ) : (
           <EmptyState title="Files unavailable" hint="This session is missing workspace metadata." />
-        )
-      ) : active === 'apps' ? (
+        )}
+      </TabsContent>
+      <TabsContent value="apps" className="min-h-0 flex-1">
         <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />
-      ) : active === 'changes' ? (
-        <WhatChangedSurface
-          changes={changes}
-          artifacts={artifacts}
-          presentations={artifactPresentations}
-          sessionId={sessionId}
-          onClose={onClose}
-          embedded
-        />
-      ) : active === 'sideEffects' ? (
-        <SideEffectsSurface effects={effects} onClose={onClose} embedded />
-      ) : null}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }

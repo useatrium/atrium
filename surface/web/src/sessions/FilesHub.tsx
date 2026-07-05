@@ -3,6 +3,7 @@ import type { JSX, KeyboardEvent } from 'react';
 import { containsCriticMarkup, type FileOrigin, type HubFile, type HubFileListResult, type HubFileVersionsResponse } from '@atrium/surface-client';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import { showErrorToast } from '../components/Toasts';
+import { Tooltip } from '../components/a11y';
 import { FileIcon, SearchIcon } from '../components/icons';
 import { Lightbox, MediaPreview } from '../components/media';
 import type { LightboxCallbacks, MediaKind, PreviewFile } from '../components/media';
@@ -335,16 +336,17 @@ function FolderBreadcrumb({
         return (
           <span key={dir} className="flex min-w-0 items-center gap-1">
             <span className="text-fg-faint">/</span>
-            <button
-              type="button"
-              onClick={() => onNavigate(dir)}
-              className={`max-w-40 truncate rounded px-1.5 py-1 font-mono ${
-                isCurrent ? 'text-fg-body' : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-body'
-              }`}
-              title={dir}
-            >
-              {segment}
-            </button>
+            <Tooltip content={dir}>
+              <button
+                type="button"
+                onClick={() => onNavigate(dir)}
+                className={`max-w-40 truncate rounded px-1.5 py-1 font-mono ${
+                  isCurrent ? 'text-fg-body' : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-body'
+                }`}
+              >
+                {segment}
+              </button>
+            </Tooltip>
           </span>
         );
       })}
@@ -537,29 +539,30 @@ function FileTile({
               </span>
             </div>
           </div>
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={file.starred ? 'Unstar file' : 'Star file'}
-            title={file.starred ? 'Unstar' : 'Star'}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleStar();
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return;
-              event.preventDefault();
-              event.stopPropagation();
-              onToggleStar();
-            }}
-            className={`grid size-6 shrink-0 place-items-center rounded-md border ${
-              file.starred
-                ? 'border-warning-border bg-warning-tint text-warning-text'
-                : 'border-edge text-fg-faint hover:bg-surface-overlay hover:text-fg-muted'
-            }`}
-          >
-            *
-          </span>
+          <Tooltip content={file.starred ? 'Unstar file' : 'Star file'}>
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={file.starred ? 'Unstar file' : 'Star file'}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleStar();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                onToggleStar();
+              }}
+              className={`grid size-6 shrink-0 place-items-center rounded-md border ${
+                file.starred
+                  ? 'border-warning-border bg-warning-tint text-warning-text'
+                  : 'border-edge text-fg-faint hover:bg-surface-overlay hover:text-fg-muted'
+              }`}
+            >
+              *
+            </span>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-1">
           <span className="max-w-full truncate rounded bg-surface-overlay px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-fg-muted">

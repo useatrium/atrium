@@ -134,7 +134,7 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(link.getAttribute('href')).toBe('/s/s-b');
     expect(link.getAttribute('target')).toBeNull();
     expect(link.getAttribute('rel')).toBeNull();
-    expect(link.getAttribute('title')).toBe('Open in full app');
+    expect(link.getAttribute('aria-label')).toBe('Open in full app');
   });
 
   it('opens a session capabilities popover from the header', async () => {
@@ -475,7 +475,7 @@ describe('session pane folds the B_tooltest stream', () => {
       await new Promise((r) => setTimeout(r, 60));
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mark up & reply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark up' }));
 
     await waitFor(() => expect(api.extractEntry).toHaveBeenCalledWith('rec_item_markup123'));
     expect(await screen.findByRole('dialog', { name: 'Markup Ready' })).toBeTruthy();

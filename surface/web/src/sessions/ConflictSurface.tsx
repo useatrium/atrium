@@ -5,7 +5,7 @@
 // the caller fetches `GET .../artifacts/conflict` and wires `onResolve` to
 // `POST .../artifacts/:id/resolve`.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { XIcon } from '../components/icons';
 import { DiffView } from './fileChangeView';
 
@@ -86,6 +86,17 @@ export function ConflictSurface({
 }) {
   const [resolving, setResolving] = useState(false);
   const [merged, setMerged] = useState(conflict.markers);
+
+  useEffect(() => {
+    if (embedded) return;
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
+  }, [embedded, onClose]);
 
   async function resolve(choice: ResolveChoice) {
     if (resolving) return;
@@ -175,7 +186,6 @@ export function ConflictSurface({
       data-testid="conflict-surface"
       role="dialog"
       aria-label="Resolve conflict"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
