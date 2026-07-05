@@ -90,6 +90,7 @@ describe('MarkupEditorScreen', () => {
       workspaceId: 'ws-1',
       frontmatter: '',
       body: 'Body',
+      sourceText: null,
       mode: { kind: 'reply', channelId: 'ch-1', threadRootEventId: 42 },
     });
     routeParams = { draftId };

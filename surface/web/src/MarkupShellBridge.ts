@@ -1,11 +1,30 @@
+import type { HubFileVersion } from '@atrium/surface-client';
+
+/** Version-history operations the webview relays to native (which owns the auth token). */
+export type MarkupVersionOp = 'list' | 'content' | 'revert' | 'restore';
+
 export type MarkupShellInbound =
-  | { type: 'markup-init'; markdown: string; commentAuthor?: string }
-  | { type: 'markup-request-serialize' };
+  // native -> webview: seed the editor. `sourceText` is the live source-message text (null
+  // when there is no source message, e.g. an artifact file) so the shell can detect divergence.
+  | { type: 'markup-init'; markdown: string; commentAuthor?: string; sourceText?: string | null }
+  | { type: 'markup-request-serialize' }
+  // native -> webview: result of a markup-vh-request, correlated by reqId.
+  | {
+      type: 'markup-vh-response';
+      reqId: string;
+      ok: boolean;
+      versions?: HubFileVersion[];
+      content?: string;
+      seq?: number;
+      error?: string;
+    };
 
 export type MarkupShellOutbound =
   | { type: 'markup-shell-ready' }
   | { type: 'markup-dirty'; dirty: boolean }
-  | { type: 'markup-serialized'; markdown: string };
+  | { type: 'markup-serialized'; markdown: string }
+  // webview -> native: run a version-history op with the native auth token; reply by reqId.
+  | { type: 'markup-vh-request'; reqId: string; op: MarkupVersionOp; seq?: number };
 
 export interface ReactNativeWebViewBridge {
   postMessage(message: string): void;
@@ -20,10 +39,22 @@ export function parseMarkupShellMessage(data: unknown): MarkupShellInbound | nul
       type: 'markup-init',
       markdown: raw.markdown,
       ...(typeof raw.commentAuthor === 'string' ? { commentAuthor: raw.commentAuthor } : {}),
+      ...(typeof raw.sourceText === 'string' || raw.sourceText === null ? { sourceText: raw.sourceText } : {}),
     };
   }
   if (raw.type === 'markup-request-serialize') {
     return { type: 'markup-request-serialize' };
+  }
+  if (raw.type === 'markup-vh-response' && typeof raw.reqId === 'string' && typeof raw.ok === 'boolean') {
+    return {
+      type: 'markup-vh-response',
+      reqId: raw.reqId,
+      ok: raw.ok,
+      ...(Array.isArray(raw.versions) ? { versions: raw.versions as HubFileVersion[] } : {}),
+      ...(typeof raw.content === 'string' ? { content: raw.content } : {}),
+      ...(typeof raw.seq === 'number' ? { seq: raw.seq } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    };
   }
   return null;
 }
