@@ -23,6 +23,7 @@ import {
   parseMarkupWebViewMessage,
   submitMarkupDraft,
 } from '../../src/lib/markupAuthoring';
+import { runMarkupVersionRequest } from '../../src/lib/markupVersionRelay';
 
 export default function MarkupEditorScreen() {
   const { draftId } = useLocalSearchParams<{ draftId?: string }>();
@@ -77,6 +78,10 @@ export default function MarkupEditorScreen() {
       type: 'markup-init',
       markdown: draft.body,
       commentAuthor: chat.me.handle,
+      sourceText: draft.sourceText,
+      artifactId: draft.artifactId,
+      path: draft.path,
+      artifactSeq: draft.seq,
     });
   }, [chat.me.handle, draft, postToShell]);
 
@@ -123,11 +128,21 @@ export default function MarkupEditorScreen() {
         initShell();
       } else if (message.type === 'markup-dirty') {
         setDirty(message.dirty);
+      } else if (message.type === 'markup-vh-request' && draft) {
+        void runMarkupVersionRequest(
+          {
+            api: chat.api,
+            serverUrl: chat.serverUrl,
+            fileHeaders: chat.fileHeaders,
+            artifactId: draft.artifactId,
+          },
+          message,
+        ).then((result) => postToShell({ type: 'markup-vh-response', ...result }));
       } else if (message.type === 'markup-serialized' && waitingForSerialize) {
         void handleSerialized(message.markdown);
       }
     },
-    [handleSerialized, initShell, waitingForSerialize],
+    [chat.api, chat.fileHeaders, chat.serverUrl, draft, handleSerialized, initShell, postToShell, waitingForSerialize],
   );
 
   const requestSend = useCallback(() => {

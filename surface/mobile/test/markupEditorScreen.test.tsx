@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import React, { forwardRef, useImperativeHandle } from 'react';
+import type { HubFileVersion } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MarkupEditorScreen from '../app/(app)/markup-editor';
 import { putPendingMarkupDraft } from '../src/lib/markupAuthoring';
@@ -15,6 +16,27 @@ const routerBack = vi.fn();
 const routerReplace = vi.fn();
 const saveTextFile = vi.fn(async () => ({ seq: 4, status: 'normal' as const }));
 const postThreadMessage = vi.fn(async () => ({ event: {} }));
+const listFileVersions = vi.fn(async () => ({ versions: [] as HubFileVersion[] }));
+const revertFileVersion = vi.fn(async (artifactId: string, seq: number) => ({
+  artifactId,
+  seq,
+  tombstoned: false as const,
+}));
+const restoreFile = vi.fn(async (artifactId: string) => ({
+  artifactId,
+  tombstoned: false as const,
+}));
+
+const version: HubFileVersion = {
+  seq: 3,
+  author: 'human:u-1',
+  kind: 'modified',
+  status: 'normal',
+  createdAt: '2026-07-05T12:00:00.000Z',
+  sizeBytes: 42,
+  mime: 'text/markdown',
+  isLatest: true,
+};
 
 vi.mock('expo-router', () => ({
   Stack: {
@@ -45,8 +67,12 @@ vi.mock('../src/lib/chat', () => ({
       saveTextFile,
       postMessage: postThreadMessage,
       sendArtifactFeedback: vi.fn(),
+      listFileVersions,
+      revertFileVersion,
+      restoreFile,
     },
     serverUrl: 'https://atrium.test',
+    fileHeaders: { authorization: 'Bearer token' },
     me: { id: 'u-1', handle: 'gary', displayName: 'Gary' },
   }),
 }));
@@ -74,6 +100,9 @@ describe('MarkupEditorScreen', () => {
     routerReplace.mockClear();
     saveTextFile.mockClear();
     postThreadMessage.mockClear();
+    listFileVersions.mockClear();
+    revertFileVersion.mockClear();
+    restoreFile.mockClear();
     lastWebViewProps = {};
     routeParams = {};
   });
@@ -90,7 +119,7 @@ describe('MarkupEditorScreen', () => {
       workspaceId: 'ws-1',
       frontmatter: '',
       body: 'Body',
-      sourceText: null,
+      sourceText: 'Original source',
       mode: { kind: 'reply', channelId: 'ch-1', threadRootEventId: 42 },
     });
     routeParams = { draftId };
@@ -99,7 +128,15 @@ describe('MarkupEditorScreen', () => {
     emitWebView({ type: 'markup-shell-ready' });
 
     expect(postMessageToWebView).toHaveBeenCalledWith(
-      JSON.stringify({ type: 'markup-init', markdown: 'Body', commentAuthor: 'gary' }),
+      JSON.stringify({
+        type: 'markup-init',
+        markdown: 'Body',
+        commentAuthor: 'gary',
+        sourceText: 'Original source',
+        artifactId: 'a-1',
+        path: 'entry.md',
+        artifactSeq: 3,
+      }),
     );
 
     emitWebView({ type: 'markup-dirty', dirty: true });
@@ -121,5 +158,35 @@ describe('MarkupEditorScreen', () => {
       pathname: '/thread/[rootId]',
       params: { rootId: '42', channelId: 'ch-1' },
     });
+  });
+
+  it('relays version-history requests back to the WebView while waiting to serialize', async () => {
+    listFileVersions.mockResolvedValueOnce({ versions: [version] });
+    const draftId = putPendingMarkupDraft({
+      artifactId: 'a-2',
+      path: 'entry.md',
+      seq: 3,
+      workspaceId: 'ws-1',
+      frontmatter: '',
+      body: 'Body',
+      sourceText: null,
+      mode: { kind: 'reply', channelId: 'ch-1', threadRootEventId: 42 },
+    });
+    routeParams = { draftId };
+
+    renderWithTheme(<MarkupEditorScreen />);
+    emitWebView({ type: 'markup-shell-ready' });
+    emitWebView({ type: 'markup-dirty', dirty: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }));
+    expect(postMessageToWebView).toHaveBeenCalledWith(JSON.stringify({ type: 'markup-request-serialize' }));
+
+    emitWebView({ type: 'markup-vh-request', reqId: 'vh-1', op: 'list' });
+
+    await waitFor(() => {
+      expect(postMessageToWebView).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'markup-vh-response', reqId: 'vh-1', ok: true, versions: [version] }),
+      );
+    });
+    expect(listFileVersions).toHaveBeenCalledWith('a-2');
   });
 });
