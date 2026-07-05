@@ -249,7 +249,7 @@ function inlineChipLabel(entry: ResolvedEntryQuote): string {
   return `${actor}: “${shortExcerpt(entry.text)}”`;
 }
 
-export function EntryInlineChip({ handle }: { handle: string }) {
+export function EntryInlineChip({ handle, compact = false }: { handle: string; compact?: boolean }) {
   const [state, setState] = useState<EntryInlineChipState>({ kind: 'loading' });
 
   useEffect(() => {
@@ -268,6 +268,16 @@ export function EntryInlineChip({ handle }: { handle: string }) {
   const label =
     state.kind === 'loading' ? 'entry' : state.kind === 'resolved' ? inlineChipLabel(state.entry) : 'Atrium entry';
   const muted = state.kind !== 'resolved' || state.entry.tombstoned;
+
+  // Compact contexts (activity feed, question previews) are single-line and truncated;
+  // render the resolved label as plain accent text instead of the full bordered pill.
+  if (compact) {
+    return (
+      <a href={`/e/${handle}`} title={label} className="font-medium text-accent-text no-underline hover:underline">
+        {label}
+      </a>
+    );
+  }
 
   return (
     <a

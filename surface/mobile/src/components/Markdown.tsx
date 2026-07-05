@@ -497,6 +497,7 @@ function makeRules(
             <EntryInlineChip
               key={node.key}
               handle={handle}
+              compact={variant === 'compact'}
               resolveEntry={entryReferences.resolveEntry}
               onOpenChannel={entryReferences.onOpenChannel}
               onOpenSession={entryReferences.onOpenSession}

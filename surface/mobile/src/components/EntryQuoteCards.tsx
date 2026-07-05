@@ -295,11 +295,13 @@ export function EntryInlineChip({
   resolveEntry,
   onOpenChannel,
   onOpenSession,
+  compact = false,
 }: {
   handle: string;
   resolveEntry?: EntryResolver;
   onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
+  compact?: boolean;
 }) {
   const { colors } = useTheme();
   const [entry, setEntry] = useState<ResolvedEntry | null>(null);
@@ -325,6 +327,23 @@ export function EntryInlineChip({
   const openHandlers = { onOpenChannel, onOpenSession };
   const canOpen = entry != null && canOpenEntry(entry, openHandlers);
   const label = entry ? inlineLabelFor(entry) : 'Atrium entry';
+
+  // Compact contexts (single-line question previews) render the label as plain accent
+  // text rather than the full bordered pill.
+  if (compact) {
+    return (
+      <Text
+        accessibilityRole="button"
+        onPress={() => {
+          if (entry) openEntryReference(entry, openHandlers);
+        }}
+        style={{ color: colors.accent, fontWeight: '600' }}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    );
+  }
 
   return (
     <Pressable

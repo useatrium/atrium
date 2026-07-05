@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
-import { MessageText } from './MessageText';
+import { CompactMarkdownText, MessageText } from './MessageText';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
 
@@ -44,6 +44,19 @@ afterEach(() => {
 });
 
 describe('MessageText entry links', () => {
+  it('renders a compact entry ref as plain accent text, not the bordered pill', async () => {
+    resolveEntryMock.mockResolvedValue(entry());
+
+    render(<CompactMarkdownText text="see /e/evt_1" />);
+
+    const link = await screen.findByRole('link', { name: /Ada:/ });
+    expect(link.getAttribute('href')).toBe('/e/evt_1');
+    // compact variant must NOT carry the pill chrome
+    expect(link.className).not.toContain('border');
+    expect(link.className).not.toContain('rounded');
+    expect(link.className).toContain('text-accent-text');
+  });
+
   it('renders inline entry refs as chips and preserves sentence punctuation', async () => {
     resolveEntryMock.mockResolvedValue(entry());
 
