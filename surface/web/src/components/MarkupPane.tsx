@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '../api';
 import type { MarkupEditorHandle } from './markupPaneTypes';
+import { MarkupVersionHistory } from './MarkupVersionHistory';
 
 // Static specifier so Vite bundles the editor as a lazy chunk.
 const MarkupEditor = lazy(async () => {
@@ -16,6 +17,7 @@ export interface MarkupPaneSource {
   sessionId: string;
   frontmatter: string;
   body: string;
+  sourceText?: string | null;
 }
 
 export type MarkupPaneMode =
@@ -94,6 +96,8 @@ export function MarkupPane({
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showingSource, setShowingSource] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const title = useMemo(
     () => titleFromFrontmatter(source.frontmatter) ?? source.path,
     [source.frontmatter, source.path],
@@ -102,6 +106,8 @@ export function MarkupPane({
   const isReplyMode = effectiveMode.kind === 'reply';
   const noteFilled = note.trim().length > 0;
   const canSend = (dirty || noteFilled) && !sending;
+  const diverged = source.sourceText != null && source.sourceText.trimEnd() !== source.body.trimEnd();
+  const activeMarkdown = showingSource ? (source.sourceText ?? source.body) : source.body;
 
   const hasUnsavedWork = useCallback(() => {
     return dirty || note.trim().length > 0 || editorRef.current?.hasMarkup() === true;
@@ -111,6 +117,20 @@ export function MarkupPane({
     if (hasUnsavedWork() && !window.confirm('Discard your markup?')) return;
     onClose();
   }, [hasUnsavedWork, onClose]);
+
+  const switchMarkdownSource = useCallback(
+    (nextShowingSource: boolean) => {
+      if (hasUnsavedWork() && !window.confirm('Discard your markup?')) return;
+      setDirty(false);
+      setShowingSource(nextShowingSource);
+    },
+    [hasUnsavedWork],
+  );
+
+  const handleReverted = useCallback(() => {
+    setShowHistory(false);
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
@@ -196,6 +216,14 @@ export function MarkupPane({
             </div>
           </div>
           <button
+            type="button"
+            onClick={() => setShowHistory((showing) => !showing)}
+            aria-pressed={showHistory}
+            className="rounded-md border border-edge-strong px-2.5 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+          >
+            History
+          </button>
+          <button
             ref={closeButtonRef}
             type="button"
             onClick={requestClose}
@@ -217,11 +245,40 @@ export function MarkupPane({
             {error}
           </div>
         )}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-          <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs text-fg-muted">Loading editor...</div>}>
+        <div className="relative flex min-h-0 flex-1 flex-col gap-3 p-3">
+          {diverged && !showingSource && (
+            <div className="flex shrink-0 items-center justify-between gap-3 rounded-md border border-edge bg-surface-raised px-3 py-2 text-xs text-fg-secondary">
+              <span className="font-medium text-fg">This markup has changed since the original message.</span>
+              <button
+                type="button"
+                onClick={() => switchMarkdownSource(true)}
+                className="shrink-0 rounded-md border border-edge-strong px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+              >
+                Reset to message
+              </button>
+            </div>
+          )}
+          {showingSource && (
+            <div className="flex shrink-0 items-center justify-between gap-3 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-xs text-fg-muted">
+              <span className="font-medium text-fg-secondary">Showing the original message</span>
+              <button
+                type="button"
+                onClick={() => switchMarkdownSource(false)}
+                className="shrink-0 rounded-md border border-edge px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+              >
+                Back to latest
+              </button>
+            </div>
+          )}
+          <Suspense
+            fallback={
+              <div className="flex flex-1 items-center justify-center text-xs text-fg-muted">Loading editor...</div>
+            }
+          >
             <MarkupEditor
+              key={showingSource ? 'source' : 'body'}
               ref={editorRef}
-              initialMarkdown={source.body}
+              initialMarkdown={activeMarkdown}
               onDirtyChange={setDirty}
               className="min-h-0 flex-1"
             />
@@ -234,6 +291,18 @@ export function MarkupPane({
             aria-label={isReplyMode ? 'Say something about your changes' : 'Add a note'}
             className="h-9 shrink-0 rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent-hover"
           />
+          {showHistory && (
+            <div className="absolute inset-3 z-10 min-h-0 overflow-hidden rounded-md border border-edge-strong bg-surface shadow-2xl">
+              <MarkupVersionHistory
+                artifactId={source.artifactId}
+                path={source.path}
+                currentSeq={source.seq}
+                canManage
+                onReverted={handleReverted}
+                onClose={() => setShowHistory(false)}
+              />
+            </div>
+          )}
         </div>
       </section>
     </div>

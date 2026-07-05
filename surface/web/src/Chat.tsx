@@ -836,6 +836,7 @@ export function Chat({
           sessionId: '',
           frontmatter,
           body,
+          sourceText: extracted.sourceText ?? null,
         });
         setMarkupMode({ kind: 'reply', channelId: message.channelId, threadRootEventId });
       } catch (err) {

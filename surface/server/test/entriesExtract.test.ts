@@ -130,6 +130,7 @@ describe('POST /api/entries/:handle/extract', () => {
       path: `shared/channels/${fx.channelId}/markup/release-notes-${handle}.md`,
       seq: 1,
       workspaceId: fx.workspaceId,
+      sourceText: '# Release Notes\n\nBody text stays verbatim.',
     });
 
     const ledger = await pool.query<{
