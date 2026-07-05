@@ -2,7 +2,7 @@
 // dialog captures the harness and optional repo specs Centaur mounts into the
 // sandbox for the run.
 
-import { useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type {
   AgentProfile,
   ConnectionIdentity,
@@ -10,7 +10,10 @@ import type {
   ProviderCredentialProvider,
   ProviderCredentialStatus,
 } from '../api';
+import { Tooltip } from '../components/a11y';
 import { PlusIcon, XIcon } from '../components/icons';
+import { SHORTCUTS } from '../lib/shortcuts';
+import { useDialog } from '../useDialog';
 
 const HARNESSES: { value: string; label: string }[] = [
   { value: 'codex', label: 'Codex' },
@@ -62,6 +65,8 @@ export function SpawnDialog({
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   initialTask?: string;
 }) {
+  const containerRef = useRef<HTMLFormElement>(null);
+  const taskInputRef = useRef<HTMLTextAreaElement>(null);
   const [task, setTask] = useState(initialTask);
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
@@ -104,9 +109,18 @@ export function SpawnDialog({
     ? activeReferenceCount > 0
       ? `Working repo + ${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
       : 'Working repo'
-    : activeReferenceCount > 0
-      ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
-      : 'No repo selected';
+      : activeReferenceCount > 0
+        ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+        : 'No repo selected';
+  const titleId = 'spawn-dialog-title';
+
+  useDialog({
+    open: true,
+    containerRef,
+    initialFocusRef: taskInputRef,
+    onClose: onCancel,
+    closeOnOutsidePointer: true,
+  });
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -174,20 +188,18 @@ export function SpawnDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4"
-      onClick={onCancel}
-      onKeyDown={(e) => e.key === 'Escape' && onCancel()}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Start an agent session"
     >
       <form
-        onClick={(e) => e.stopPropagation()}
+        ref={containerRef}
         onSubmit={submit}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="mt-12 max-h-[calc(100dvh-6rem)] w-[min(520px,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-fg">New agent session</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">New agent session</h2>
             <p className="text-2xs text-fg-muted">in {channelName}</p>
           </div>
           <button
@@ -204,6 +216,7 @@ export function SpawnDialog({
           <label className="block">
             <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">Task</span>
             <textarea
+              ref={taskInputRef}
               autoFocus
               value={task}
               onChange={(e) => setTask(e.target.value)}
@@ -266,23 +279,24 @@ export function SpawnDialog({
               </span>
               <span className="flex items-center gap-2 text-2xs text-fg-muted">
                 <span>~/repos/&lt;owner&gt;/&lt;repo&gt;</span>
-                <button
-                  type="button"
-                  onClick={onConnectGitHub}
-                  title={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
-                  className="inline-flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-3xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
-                >
-                  <span
-                    className={`size-1.5 rounded-full ${
-                      githubConnection?.connected
-                        ? 'bg-success'
-                        : connectionsAvailable
-                          ? 'bg-warning'
-                          : 'bg-fg-muted/60'
-                    }`}
-                  />
-                  GitHub
-                </button>
+                <Tooltip content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}>
+                  <button
+                    type="button"
+                    onClick={onConnectGitHub}
+                    className="inline-flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-3xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+                  >
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        githubConnection?.connected
+                          ? 'bg-success'
+                          : connectionsAvailable
+                            ? 'bg-warning'
+                            : 'bg-fg-muted/60'
+                      }`}
+                    />
+                    GitHub
+                  </button>
+                </Tooltip>
               </span>
             </div>
             <div className="flex gap-3">
@@ -321,15 +335,16 @@ export function SpawnDialog({
               <span className="block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
                 Reference repos <span className="font-normal normal-case text-fg-muted">· optional</span>
               </span>
-              <button
-                type="button"
-                onClick={addReferenceRepo}
-                aria-label="Add reference repo"
-                title="Add reference repo"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg"
-              >
-                <PlusIcon size={14} />
-              </button>
+              <Tooltip content="Add reference repo">
+                <button
+                  type="button"
+                  onClick={addReferenceRepo}
+                  aria-label="Add reference repo"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg"
+                >
+                  <PlusIcon size={14} />
+                </button>
+              </Tooltip>
             </div>
             {referenceRepos.length > 0 && (
               <div className="space-y-2">
@@ -374,15 +389,16 @@ export function SpawnDialog({
                       />
                       Private
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => removeReferenceRepo(item.id)}
-                      aria-label="Remove reference repo"
-                      title="Remove reference repo"
-                      className="inline-flex h-9 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg"
-                    >
-                      <XIcon size={14} />
-                    </button>
+                    <Tooltip content="Remove reference repo">
+                      <button
+                        type="button"
+                        onClick={() => removeReferenceRepo(item.id)}
+                        aria-label="Remove reference repo"
+                        className="inline-flex h-9 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg"
+                      >
+                        <XIcon size={14} />
+                      </button>
+                    </Tooltip>
                   </div>
                 ))}
               </div>
@@ -460,13 +476,15 @@ export function SpawnDialog({
           >
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={!canSpawn}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Start session
-          </button>
+          <Tooltip content="Spawn session" shortcut={SHORTCUTS.spawnSession.keys}>
+            <button
+              type="submit"
+              disabled={!canSpawn}
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Start session
+            </button>
+          </Tooltip>
         </footer>
       </form>
     </div>

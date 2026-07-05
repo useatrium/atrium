@@ -6,6 +6,7 @@ import {
   type CodexDeviceStartResponse,
   type ProviderCredentialStatus,
 } from '../api';
+import { useDialog } from '../useDialog';
 import { XIcon } from './icons';
 
 export function CodexConnectDialog({
@@ -19,6 +20,7 @@ export function CodexConnectDialog({
   onSave: (authJson: string) => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
+  const containerRef = useRef<HTMLFormElement>(null);
   const [flow, setFlow] = useState<CodexDeviceStartResponse | null>(null);
   const [phase, setPhase] = useState<'starting' | 'waiting' | 'error' | 'expired'>('starting');
   const [busy, setBusy] = useState(false);
@@ -26,6 +28,17 @@ export function CodexConnectDialog({
   const [copied, setCopied] = useState(false);
   const completedRef = useRef(false);
   const connected = status?.connected === true;
+  const titleId = 'codex-connect-title';
+  const statusErrorId = 'codex-connect-status-error';
+  const errorId = 'codex-connect-error';
+  const waitingId = 'codex-connect-waiting';
+  const descriptionIds = [
+    phase === 'waiting' ? waitingId : null,
+    status?.lastError ? statusErrorId : null,
+    error ? errorId : null,
+  ].filter((id): id is string => Boolean(id)).join(' ');
+
+  useDialog({ open: true, containerRef, onClose: onCancel, closeOnOutsidePointer: true });
 
   const start = useCallback(async () => {
     setPhase('starting');
@@ -118,20 +131,20 @@ export function CodexConnectDialog({
   return (
     <div
       className="fixed inset-0 z-[60] flex items-start justify-center bg-surface/60 p-4"
-      onClick={onCancel}
-      onKeyDown={(e) => e.key === 'Escape' && onCancel()}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Connect Codex"
     >
       <form
-        onClick={(e) => e.stopPropagation()}
+        ref={containerRef}
         onSubmit={(e) => e.preventDefault()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionIds || undefined}
+        aria-busy={busy || phase === 'starting' || phase === 'waiting' ? 'true' : undefined}
         className="mt-28 w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-fg">Codex</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">Codex</h2>
             <p className="text-2xs text-fg-muted">
               {connected ? 'Connected' : 'Not connected'}
             </p>
@@ -179,18 +192,28 @@ export function CodexConnectDialog({
             </div>
           </div>
           {phase === 'waiting' && (
-            <div className="flex items-center gap-2 rounded-md border border-edge bg-surface px-3 py-2 text-xs text-fg-muted">
+            <div
+              id={waitingId}
+              className="flex items-center gap-2 rounded-md border border-edge bg-surface px-3 py-2 text-xs text-fg-muted"
+            >
               <span className="h-3 w-3 animate-spin rounded-full border-2 border-edge-strong border-t-transparent" />
               <span>Waiting for approval on OpenAI...</span>
             </div>
           )}
           {status?.lastError && (
-            <div className="rounded-md border border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs text-warning-text">
+            <div
+              id={statusErrorId}
+              className="rounded-md border border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs text-warning-text"
+            >
               {status.lastError}
             </div>
           )}
           {error && (
-            <div role="alert" className="space-y-2 rounded-md border border-danger-edge bg-danger-surface px-3 py-2 text-xs text-danger-text">
+            <div
+              id={errorId}
+              role="alert"
+              className="space-y-2 rounded-md border border-danger-edge bg-danger-surface px-3 py-2 text-xs text-danger-text"
+            >
               <div>{error}</div>
               {(phase === 'error' || phase === 'expired') && !completedRef.current && (
                 <button
