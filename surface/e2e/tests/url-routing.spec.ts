@@ -119,7 +119,9 @@ test('opening a session updates the URL and Back closes it without a document re
 test('switching to Files updates the URL and Back returns to chat', async ({ page }) => {
   await login(page, unique('url-files'), 'URL Files');
 
-  await page.getByRole('button', { name: 'Files' }).click();
+  // exact: the workspace can contain channels whose name starts with "files",
+  // and a non-exact name match would collide with those channel buttons.
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page).toHaveURL(/\/files$/);
   await expect(page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first()).toBeVisible();
 
