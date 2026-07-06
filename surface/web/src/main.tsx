@@ -12,6 +12,7 @@ type NotificationClickMessage = {
   channelId?: string;
   eventId?: string | number;
   sessionId?: string;
+  threadRootId?: string | number;
 };
 
 function notificationClickMessage(data: unknown): NotificationClickMessage | null {
@@ -25,6 +26,9 @@ function notificationClickMessage(data: unknown): NotificationClickMessage | nul
       ? { eventId: raw.eventId }
       : {}),
     ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
+    ...(typeof raw.threadRootId === 'string' || typeof raw.threadRootId === 'number'
+      ? { threadRootId: raw.threadRootId }
+      : {}),
   };
 }
 

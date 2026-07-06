@@ -66,6 +66,17 @@ async function registerWebPushToken(userId: string, endpoint: string, subscripti
   );
 }
 
+function webPushSubscription(endpoint: string): WebPushSubscription {
+  return {
+    endpoint,
+    keys: {
+      p256dh:
+        'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
+      auth: 'BTBZMqHH6r4Tts7J_aSIgg', // gitleaks:allow — public RFC 8291 Appendix A test vector
+    },
+  };
+}
+
 function fakeWebPushSender(
   records: Array<{
     subscription: WebPushSubscription;
@@ -211,6 +222,7 @@ describe('sendMessagePush', () => {
     expect(sent[0].to).toBe('ExponentPushToken[ben-1]');
     expect(sent[0].title).toContain('mentioned you in #general');
     expect(sent[0].data.channelId).toBe(fx.channelId);
+    expect(sent[0].data).not.toHaveProperty('threadRootId');
   });
 
   it('fans out mentioned messages to webpush tokens with badge counts', async () => {
@@ -219,14 +231,7 @@ describe('sendMessagePush', () => {
       [fx.workspaceId, benId],
     );
     await postInChannel(fx.otherChannelId, 'unread elsewhere');
-    const subscription = {
-      endpoint: 'https://push.example.test/subscriptions/ben',
-      keys: {
-        p256dh:
-          'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
-        auth: 'BTBZMqHH6r4Tts7J_aSIgg', // gitleaks:allow — public RFC 8291 Appendix A test vector
-      },
-    };
+    const subscription = webPushSubscription('https://push.example.test/subscriptions/ben');
     await registerWebPushToken(benId, subscription.endpoint, subscription);
     const records: Array<{
       subscription: WebPushSubscription;
@@ -253,6 +258,7 @@ describe('sendMessagePush', () => {
         data: { channelId: fx.channelId, eventId: ev.id },
       },
     });
+    expect(records[0]!.payload.data).not.toHaveProperty('threadRootId');
   });
 
   it('includes explicit all-message members and skips messages-off users', async () => {
@@ -341,13 +347,23 @@ describe('sendMessagePush', () => {
     await registerToken(fx.userId, 'ExponentPushToken[root]');
     await registerToken(benId, 'ExponentPushToken[prior]');
     await registerToken(caraId, 'ExponentPushToken[actor]');
+    const subscription = webPushSubscription('https://push.example.test/subscriptions/root');
+    await registerWebPushToken(fx.userId, subscription.endpoint, subscription);
     const root = await postInChannelAs(fx.channelId, fx.userId, 'root');
     await postInChannelAs(fx.channelId, benId, 'prior reply', root.id);
     const reply = await postInChannelAs(fx.channelId, caraId, 'new reply', root.id);
 
     const hub = new WsHub();
     const fetchImpl = okFetch();
-    await sendMessagePush(pool, hub, reply, fetchImpl);
+    const records: Array<{
+      subscription: WebPushSubscription;
+      payload: WebPushPayload;
+      urgency: WebPushUrgency;
+    }> = [];
+    await sendMessagePush(pool, hub, reply, {
+      fetchImpl,
+      webPushSender: fakeWebPushSender(records),
+    });
 
     const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
     expect(sent.map((m: { to: string }) => m.to).sort()).toEqual([
@@ -355,6 +371,15 @@ describe('sendMessagePush', () => {
       'ExponentPushToken[root]',
     ]);
     expect(sent.every((m: { title: string }) => m.title === 'Cara replied in #general')).toBe(true);
+    expect(
+      sent.every((m: { data: Record<string, unknown> }) => m.data.threadRootId === String(root.id)),
+    ).toBe(true);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.payload.data).toMatchObject({
+      channelId: fx.channelId,
+      eventId: reply.id,
+      threadRootId: String(root.id),
+    });
   });
 
   it('receipt pruning deletes only DeviceNotRegistered tokens', async () => {

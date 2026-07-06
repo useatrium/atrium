@@ -93,7 +93,14 @@ type NotificationClickTarget = {
   channelId?: string;
   eventId?: string | number;
   sessionId?: string;
+  threadRootId?: string | number;
 };
+
+function notificationThreadRootId(value: string | number | undefined): number | null {
+  if (value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
 
 function notificationClickTarget(input: unknown): NotificationClickTarget | null {
   if (!input || typeof input !== 'object') return null;
@@ -101,11 +108,16 @@ function notificationClickTarget(input: unknown): NotificationClickTarget | null
   const channelId = typeof raw.channelId === 'string' ? raw.channelId : undefined;
   const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : undefined;
   const eventId = typeof raw.eventId === 'string' || typeof raw.eventId === 'number' ? raw.eventId : undefined;
-  if (!channelId && !sessionId && eventId === undefined) return null;
+  const threadRootId =
+    typeof raw.threadRootId === 'string' || typeof raw.threadRootId === 'number'
+      ? raw.threadRootId
+      : undefined;
+  if (!channelId && !sessionId && eventId === undefined && threadRootId === undefined) return null;
   return {
     ...(channelId ? { channelId } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(eventId !== undefined ? { eventId } : {}),
+    ...(threadRootId !== undefined ? { threadRootId } : {}),
   };
 }
 
@@ -249,44 +261,6 @@ export function Chat({
   const [filesEventSeq, setFilesEventSeq] = useState(0);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
   const [markupMode, setMarkupMode] = useState<MarkupPaneMode | null>(null);
-
-  // === web-client additions ===
-  const openNotificationTarget = useCallback(
-    (target: NotificationClickTarget) => {
-      navigate(
-        routePath({
-          surface: 'chat',
-          channelId: target.channelId ?? null,
-          sessionId: target.sessionId ?? null,
-          focusSession: false,
-        }),
-      );
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const channelId = params.get('channel') ?? undefined;
-    const sessionId = params.get('session') ?? undefined;
-    if (!channelId && !sessionId) return;
-    openNotificationTarget({
-      ...(channelId ? { channelId } : {}),
-      ...(sessionId ? { sessionId } : {}),
-    });
-  }, [openNotificationTarget]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const onNotificationClick = (event: Event) => {
-      const target = notificationClickTarget((event as CustomEvent<unknown>).detail);
-      if (target) openNotificationTarget(target);
-    };
-    window.addEventListener('atrium:notification-click', onNotificationClick);
-    return () => window.removeEventListener('atrium:notification-click', onNotificationClick);
-  }, [openNotificationTarget]);
-  // === web-client additions ===
 
   const handleFilesChangedEvent = useCallback(
     (event: WireEvent) => {
@@ -856,6 +830,53 @@ export function Chat({
     if (!active) return;
     void openThreadInChannel(active.id, rootEventId).catch(onApiError);
   };
+
+  // === web-client additions ===
+  const openNotificationTarget = useCallback(
+    (target: NotificationClickTarget) => {
+      const threadRootEventId = notificationThreadRootId(target.threadRootId);
+      const channelId = target.channelId ?? null;
+      if (!channelId && !target.sessionId) return;
+      navigate(
+        routePath({
+          surface: 'chat',
+          channelId,
+          sessionId: target.sessionId ?? null,
+          focusSession: false,
+        }),
+      );
+      if (channelId && threadRootEventId != null) {
+        selectChannel(channelId);
+        void openThreadInChannel(channelId, threadRootEventId).catch(onApiError);
+      }
+    },
+    [onApiError, openThreadInChannel, selectChannel],
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const channelId = params.get('channel') ?? undefined;
+    const sessionId = params.get('session') ?? undefined;
+    const threadRootId = threadRootParamFromSearch(window.location.search);
+    if (!channelId && !sessionId) return;
+    openNotificationTarget({
+      ...(channelId ? { channelId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(threadRootId != null ? { threadRootId } : {}),
+    });
+  }, [openNotificationTarget]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onNotificationClick = (event: Event) => {
+      const target = notificationClickTarget((event as CustomEvent<unknown>).detail);
+      if (target) openNotificationTarget(target);
+    };
+    window.addEventListener('atrium:notification-click', onNotificationClick);
+    return () => window.removeEventListener('atrium:notification-click', onNotificationClick);
+  }, [openNotificationTarget]);
+  // === web-client additions ===
 
   const openMarkupReply = useCallback(
     async (handle: string, message: { channelId: string; id: number | null; threadRootEventId: number | null }) => {
