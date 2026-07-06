@@ -54,6 +54,7 @@ import { Tooltip } from '../components/a11y';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  CornerUpLeftIcon,
   ExpandIcon,
   ExternalLinkIcon,
   SearchIcon,
@@ -61,7 +62,14 @@ import {
   XIcon,
 } from '../components/icons';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef } from '@atrium/surface-client';
-import { formatExactTimestamp, formatTime, formatTurnTime, randomId } from '@atrium/surface-client';
+import {
+  formatExactTimestamp,
+  formatTime,
+  formatTurnTime,
+  matchSteerProvenance,
+  randomId,
+  type SteerProvenance,
+} from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
 import {
@@ -128,8 +136,33 @@ export function isTranscriptEntryHandle(handle: string | null): handle is string
   return typeof handle === 'string' && handle.startsWith('rec_');
 }
 
+function normalizeSteerEchoText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+function steerProvenanceKey(provenance: SteerProvenance): string {
+  return [
+    String(provenance.resolvedAt),
+    provenance.proposerName,
+    provenance.resolvedByName,
+    provenance.edited ? 'edited' : 'sent',
+  ].join('\u0000');
+}
+
 type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
 type OutputCounts = Record<OutputSurface, number>;
+type PendingSteer = {
+  id: string;
+  text: string;
+  ts: string;
+  delivered?: boolean;
+  provenance?: SteerProvenance;
+  acceptedByMe?: boolean;
+};
+type SteerProvenanceView = {
+  provenance: SteerProvenance;
+  acceptedByMe: boolean;
+};
 
 function outputsVisibleInTab(tab: WorkTab | null): OutputSurface[] {
   if (tab === 'conflicts') return ['conflicts'];
@@ -537,14 +570,16 @@ export function SessionPane({
   // The session steer op is not optimistic, so a sent steer would only appear
   // once the harness echoes it back as a user_message. Render it immediately and
   // drop each pending bubble when a matching echoed user_message arrives
-  // (consume-once by trimmed text). Only Codex echoes user messages — on other
+  // (consume-once by normalized text). Only Codex echoes user messages — on other
   // harnesses the bubble persists as the steer's transcript row, so once the
   // turn goes active we mark it delivered (sticky) and stop dimming it.
-  const [pendingSteers, setPendingSteers] = useState<{ id: string; text: string; ts: string; delivered?: boolean }[]>(
-    [],
-  );
+  const [pendingSteers, setPendingSteers] = useState<PendingSteer[]>([]);
+  const [optimisticProvenanceByMessageId, setOptimisticProvenanceByMessageId] = useState<
+    Map<string, { provenance: SteerProvenance; acceptedByMe: boolean }>
+  >(new Map());
   useEffect(() => {
     setPendingSteers([]);
+    setOptimisticProvenanceByMessageId(new Map());
   }, [session.id]);
   useEffect(() => {
     if (!activeTurn) return;
@@ -557,23 +592,40 @@ export function SessionPane({
     // Compute the surviving set OUTSIDE the state updater: the updater must be
     // pure (StrictMode double-invokes it), and consuming the echo map inside it
     // made the second invocation see spent counts and resurrect the bubble.
-    const echoed = new Map<string, number>();
+    const echoed = new Map<string, UserMessageItem[]>();
     for (const it of stream.items) {
       if (it.type === 'user_message') {
-        const t = it.text.trim();
-        echoed.set(t, (echoed.get(t) ?? 0) + 1);
+        const t = normalizeSteerEchoText(it.text);
+        const matches = echoed.get(t);
+        if (matches) matches.push(it);
+        else echoed.set(t, [it]);
       }
     }
+    const consumedEchoes = new Set<string>();
+    const carriedProvenance = new Map<string, { provenance: SteerProvenance; acceptedByMe: boolean }>();
     const keep = pendingSteers.filter((p) => {
-      const t = p.text.trim();
-      const n = echoed.get(t) ?? 0;
-      if (n > 0) {
-        echoed.set(t, n - 1);
+      const t = normalizeSteerEchoText(p.text);
+      const match = echoed.get(t)?.find((it) => !consumedEchoes.has(it.id));
+      if (match) {
+        consumedEchoes.add(match.id);
+        if (p.provenance) {
+          carriedProvenance.set(match.id, {
+            provenance: p.provenance,
+            acceptedByMe: p.acceptedByMe === true,
+          });
+        }
         return false;
       }
       return true;
     });
     if (keep.length !== pendingSteers.length) setPendingSteers(keep);
+    if (carriedProvenance.size > 0) {
+      setOptimisticProvenanceByMessageId((prev) => {
+        const next = new Map(prev);
+        for (const [id, provenance] of carriedProvenance) next.set(id, provenance);
+        return next;
+      });
+    }
   }, [stream.items, pendingSteers]);
 
   // ---- driver seat (Phase 3) ----
@@ -623,6 +675,40 @@ export function SessionPane({
     for (const it of stream.items) if (it.ts) m.set(it.id, formatExactTimestamp(it.ts));
     return m;
   }, [stream.items]);
+  const steerProvenanceByMessageId = useMemo(
+    () =>
+      matchSteerProvenance(
+        stream.items.filter((it): it is UserMessageItem => it.type === 'user_message'),
+        session.suggestions ?? [],
+      ),
+    [stream.items, session.suggestions],
+  );
+  const acceptedByMeProvenanceKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const suggestion of session.suggestions ?? []) {
+      if (suggestion.status !== 'sent' || suggestion.resolvedBy !== me.id) continue;
+      keys.add(
+        steerProvenanceKey({
+          proposerName: suggestion.authorName ?? suggestion.authorId,
+          resolvedByName: suggestion.resolvedByName ?? suggestion.resolvedBy ?? 'someone',
+          edited: suggestion.sentText != null,
+          resolvedAt: suggestion.resolvedAt ?? suggestion.createdAt,
+        }),
+      );
+    }
+    return keys;
+  }, [session.suggestions, me.id]);
+  const steerProvenanceForMessage = (messageId: string): SteerProvenanceView | null => {
+    const matched = steerProvenanceByMessageId.get(messageId);
+    const optimistic = optimisticProvenanceByMessageId.get(messageId);
+    const provenance = matched ?? optimistic?.provenance;
+    if (!provenance) return null;
+    return {
+      provenance,
+      acceptedByMe:
+        optimistic?.acceptedByMe === true || acceptedByMeProvenanceKeys.has(steerProvenanceKey(provenance)),
+    };
+  };
 
   // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
   // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
@@ -721,6 +807,37 @@ export function SessionPane({
       setSuggestError(text);
       reportSessionActionError(err, "Couldn't send the suggestion.", { toast: false });
     });
+  };
+  const addOptimisticSuggestionSteer = ({
+    suggestion,
+    text,
+    edited,
+  }: {
+    suggestion: NonNullable<Session['suggestions']>[number];
+    text: string;
+    edited: boolean;
+  }) => {
+    const ts = new Date().toISOString();
+    const pendingId = randomId();
+    setPendingSteers((prev) => [
+      ...prev,
+      {
+        id: pendingId,
+        text,
+        ts,
+        provenance: {
+          proposerName: suggestion.authorName ?? nameFor(suggestion.authorId),
+          resolvedByName: me.displayName,
+          edited,
+          resolvedAt: ts,
+        },
+        acceptedByMe: true,
+      },
+    ]);
+    return pendingId;
+  };
+  const removeOptimisticSteer = (pendingId: string) => {
+    setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
   };
 
   // Pending HITL answer proposals for the live question (driver decides).
@@ -1406,10 +1523,12 @@ export function SessionPane({
                       </div>
                     ) : item.type === 'user_message' ? (
                       <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                        <div className="text-sm font-semibold text-fg">
-                          {steerAuthor}
-                          <TurnTimeLabel iso={item.ts} time={turnTimes.get(item.id)} />
-                        </div>
+                        <SteerAuthorLine
+                          author={steerAuthor}
+                          iso={item.ts}
+                          time={turnTimes.get(item.id)}
+                          provenance={steerProvenanceForMessage(item.id)}
+                        />
                         <MarkupSteerCard text={item.text} />
                       </div>
                     ) : item.type === 'question' ? (
@@ -1457,10 +1576,14 @@ export function SessionPane({
                 title={formatExactTimestamp(p.ts) || undefined}
                 className={`group pt-2 pb-0.5${p.delivered ? '' : ' opacity-60'}`}
               >
-                <div className="text-sm font-semibold text-fg">
-                  {steerAuthor}
-                  <TurnTimeLabel iso={p.ts} time={formatTurnTime(p.ts)} />
-                </div>
+                <SteerAuthorLine
+                  author={steerAuthor}
+                  iso={p.ts}
+                  time={formatTurnTime(p.ts)}
+                  provenance={
+                    p.provenance ? { provenance: p.provenance, acceptedByMe: p.acceptedByMe === true } : null
+                  }
+                />
                 <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
               </div>
             ))}
@@ -1552,6 +1675,8 @@ export function SessionPane({
               suggestions={pendingSuggestions}
               isDriver={isDriver}
               nameFor={nameFor}
+              onOptimisticSend={addOptimisticSuggestionSteer}
+              onOptimisticSendFailed={removeOptimisticSteer}
               onActionError={onApiError}
             />
           )}
@@ -1713,6 +1838,66 @@ function TurnTimeLabel({ iso, time }: { iso: string | undefined; time: string | 
     >
       {time}
     </TimestampDisclosure>
+  );
+}
+
+function SteerAuthorLine({
+  author,
+  iso,
+  time,
+  provenance,
+}: {
+  author: string;
+  iso: string | undefined;
+  time: string | undefined;
+  provenance: SteerProvenanceView | null;
+}) {
+  return (
+    <div className="flex items-center text-sm font-semibold text-fg">
+      <span>{author}</span>
+      <TurnTimeLabel iso={iso} time={time} />
+      {provenance ? (
+        <SteerProvenanceIndicator provenance={provenance.provenance} acceptedByMe={provenance.acceptedByMe} />
+      ) : null}
+    </div>
+  );
+}
+
+function provenanceTimeLabel(value: string | number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return formatTime(date.toISOString());
+}
+
+function steerProvenanceLabel(provenance: SteerProvenance, acceptedByMe: boolean): string {
+  const acceptedBy = acceptedByMe ? 'you' : provenance.resolvedByName;
+  const parts = [
+    `Proposed by ${provenance.proposerName}`,
+    `Accepted & sent by ${acceptedBy}`,
+    provenanceTimeLabel(provenance.resolvedAt),
+  ].filter(Boolean);
+  if (provenance.edited) parts.push('edited before sending');
+  return parts.join(' · ');
+}
+
+function SteerProvenanceIndicator({
+  provenance,
+  acceptedByMe,
+}: {
+  provenance: SteerProvenance;
+  acceptedByMe: boolean;
+}) {
+  const label = steerProvenanceLabel(provenance, acceptedByMe);
+  return (
+    <Tooltip content={label}>
+      <button
+        type="button"
+        aria-label={label}
+        className="ml-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-fg-faint hover:bg-surface-overlay hover:text-fg-secondary focus-visible:outline focus-visible:outline-1 focus-visible:outline-edge-strong"
+      >
+        <CornerUpLeftIcon size={14} />
+      </button>
+    </Tooltip>
   );
 }
 

@@ -123,6 +123,85 @@ export interface SessionSuggestion {
   resolvedAt?: string | null;
 }
 
+// === jul6steer-prov additions ===
+export interface SteerProvenance {
+  proposerName: string;
+  resolvedByName: string;
+  edited: boolean;
+  resolvedAt: string | number;
+}
+
+export interface SteerProvenanceUserMessage {
+  id: string;
+  text: string;
+  ts?: string | number | null;
+}
+
+function normalizeSteerProvenanceText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+function steerProvenanceTime(value: string | number | null | undefined): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+export function matchSteerProvenance(
+  userMessages: readonly SteerProvenanceUserMessage[],
+  suggestions: readonly SessionSuggestion[],
+): Map<string, SteerProvenance> {
+  const consumed = new Set<string>();
+  const matched = new Map<string, SteerProvenance>();
+  const sentSuggestions = suggestions
+    .filter((suggestion) => suggestion.status === 'sent')
+    .map((suggestion) => ({
+      suggestion,
+      createdMs: steerProvenanceTime(suggestion.createdAt),
+      resolvedAt: suggestion.resolvedAt ?? suggestion.createdAt,
+      resolvedMs: steerProvenanceTime(suggestion.resolvedAt ?? suggestion.createdAt),
+      text: normalizeSteerProvenanceText(suggestion.sentText ?? suggestion.text),
+    }))
+    .filter(
+      (
+        item,
+      ): item is {
+        suggestion: SessionSuggestion;
+        createdMs: number;
+        resolvedAt: string;
+        resolvedMs: number;
+        text: string;
+      } => item.createdMs != null && item.resolvedMs != null,
+    )
+    .sort((a, b) => a.resolvedMs - b.resolvedMs);
+
+  for (const { suggestion, createdMs, resolvedAt, resolvedMs, text } of sentSuggestions) {
+    let best: { message: SteerProvenanceUserMessage; distance: number } | null = null;
+
+    for (const message of userMessages) {
+      if (consumed.has(message.id)) continue;
+      if (normalizeSteerProvenanceText(message.text) !== text) continue;
+      const messageMs = steerProvenanceTime(message.ts);
+      if (messageMs == null || messageMs < createdMs) continue;
+
+      const distance = Math.abs(messageMs - resolvedMs);
+      if (!best || distance < best.distance) best = { message, distance };
+    }
+
+    if (!best) continue;
+    consumed.add(best.message.id);
+    matched.set(best.message.id, {
+      proposerName: suggestion.authorName ?? suggestion.authorId,
+      resolvedByName: suggestion.resolvedByName ?? suggestion.resolvedBy ?? 'someone',
+      edited: suggestion.sentText != null,
+      resolvedAt,
+    });
+  }
+
+  return matched;
+}
+
 export type AnswerProposalStatus = 'pending' | 'submitted' | 'dismissed';
 
 /**
