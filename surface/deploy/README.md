@@ -190,6 +190,22 @@ Use the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` for the server and the
 `livekit` compose profile. The compose file injects them into LiveKit as
 `LIVEKIT_KEYS`, so token signing and verification share one source of truth.
 
+### Call reaping webhook
+
+Without this, a call whose participants disappear without a clean hang-up
+(crash, force-quit, dropped network) stays `ringing`/`active` forever — the
+server has no other way to learn the room ended. The committed `livekit.yaml`
+template carries a `webhook:` block that points LiveKit at the server's
+`POST /api/calls/webhook`; the server ends the call on `room_finished` /
+`participant_left` and verifies each request's signature with
+`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`. `prepare-livekit-config.sh` substitutes
+the `webhook.api_key` from `LIVEKIT_API_KEY` at render time (the same env the
+`livekit` profile signs with), so signer and verifier stay in lockstep — no
+extra `.env` value is needed. Because LiveKit runs on the host network and the
+server is published on `127.0.0.1:3001`, the webhook is loopback-only: no Caddy
+hop and no additional firewall port. If you move the server off port 3001
+(`SERVER_HOST_PORT`), update the URL in `livekit.yaml` to match.
+
 The TURN renewal helper is `surface/deploy/renew-turn-cert.sh` on the box
 (`~/atrium/surface/deploy/renew-turn-cert.sh` in the standard checkout). It runs
 certbot renewal and restarts LiveKit when certbot's deploy hook records a
@@ -214,6 +230,11 @@ Smoke checklist:
 - `curl -s https://atrium.example.com/auth/methods | jq '.calls == true'`
 - a two-browser web call can start, ring, join, and pass audio
 - a participant can reload and rejoin the active call
+- reaping webhook: start a call, hard-close every participant tab, and within a
+  few seconds `GET /api/calls/active` stops listing it (LiveKit fires
+  `room_finished` → server ends the call). `docker compose logs livekit | grep
+  -i webhook` should show the POST; a 401 means the api_key and
+  `LIVEKIT_API_KEY` disagree.
 - manual iOS smoke: an on-device build with the app killed rings through APNs
 
 Gary/OVH note: `atrium.garybasin.com` and `atrium-files.garybasin.com` route

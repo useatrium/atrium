@@ -26,6 +26,20 @@ rtc:
 # signs tokens with — so signer and verifier can never disagree. Do NOT hardcode
 # keys here.
 
+# Webhooks let LiveKit tell the server when a room finishes or a participant
+# leaves, so calls abandoned without a clean hang-up get reaped server-side
+# (POST /api/calls/webhook — the server verifies the signature with the same
+# LIVEKIT_API_KEY/SECRET). LiveKit runs on the host network and the server is
+# published on the host at 127.0.0.1:3001, so this stays loopback: no Caddy hop,
+# no extra firewall port. `api_key` MUST be an entry in `keys`; it is injected
+# from LIVEKIT_API_KEY by prepare-livekit-config.sh (the __LIVEKIT_API_KEY__
+# placeholder below is substituted at deploy time). If you change the server's
+# published port from the default 3001 (SERVER_HOST_PORT), update the URL too.
+webhook:
+  api_key: __LIVEKIT_API_KEY__
+  urls:
+    - http://127.0.0.1:3001/api/calls/webhook
+
 turn:
   enabled: true
   # TURN/UDP. Open 3478/udp on the host.
