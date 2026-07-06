@@ -33,7 +33,13 @@ interface LightboxProps extends LightboxCallbacks {
 }
 
 const iconButtonClass =
-  'grid size-8 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
+  'grid size-8 max-md:size-11 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
+
+function defaultOpenPanel(): 'info' | null {
+  if (typeof window === 'undefined') return 'info';
+  if (typeof window.matchMedia !== 'function') return 'info';
+  return window.matchMedia('(min-width: 768px)').matches ? 'info' : null;
+}
 
 function MessagePlusIcon({ size = 16, ...props }: SVGProps<SVGSVGElement> & { size?: number }) {
   return (
@@ -97,7 +103,7 @@ export function Lightbox({
   entryReferencesByFileId,
 }: LightboxProps) {
   const file = files[index];
-  const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>('info');
+  const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>(() => defaultOpenPanel());
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(file?.name ?? '');
   const [busy, setBusy] = useState(false);
@@ -331,13 +337,13 @@ export function Lightbox({
       aria-modal="true"
       aria-labelledby="lightbox-title"
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-surface-raised px-3 py-2 md:h-12 md:flex-nowrap md:py-0">
         <Tooltip content="Close">
           <button ref={closeButtonRef} type="button" className={iconButtonClass} onClick={onClose} aria-label="Close lightbox">
             <CloseIcon size={16} />
           </button>
         </Tooltip>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 max-md:order-last max-md:basis-full">
           {renaming ? (
             <>
               <h2 id="lightbox-title" className="sr-only">
@@ -387,7 +393,7 @@ export function Lightbox({
             </>
           )}
         </div>
-        <div className="shrink-0">
+        <div className="shrink-0 max-md:[&_button]:min-h-11 max-md:[&_button]:px-3">
           <EntryReferencesChip summary={entryReferences} />
         </div>
         <Tooltip content="Discuss">
@@ -402,13 +408,15 @@ export function Lightbox({
           </button>
         </Tooltip>
         {applyMarkupTarget && (
-          <ApplyMarkupMenu
-            artifactId={applyMarkupTarget.artifactId}
-            path={applyMarkupTarget.path}
-            channelId={applyMarkupTarget.channelId}
-            sessions={applyMarkupTarget.sessions}
-            onSpawnNewAgent={applyMarkupTarget.onSpawnNewAgent}
-          />
+          <div className="max-md:[&_button]:min-h-11 max-md:[&_button]:px-3">
+            <ApplyMarkupMenu
+              artifactId={applyMarkupTarget.artifactId}
+              path={applyMarkupTarget.path}
+              channelId={applyMarkupTarget.channelId}
+              sessions={applyMarkupTarget.sessions}
+              onSpawnNewAgent={applyMarkupTarget.onSpawnNewAgent}
+            />
+          </div>
         )}
         <Tooltip content="Download">
           <button
@@ -485,7 +493,7 @@ export function Lightbox({
       </header>
 
       <main className="min-h-0 flex-1" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_auto] md:grid-rows-none">
           <section className="relative flex min-h-0 bg-surface">
             {editing && conflict ? (
               <div className="flex min-h-0 flex-1 flex-col">
@@ -561,7 +569,7 @@ export function Lightbox({
           </section>
 
           {openPanel === 'info' && (
-            <aside className="flex w-[min(340px,38vw)] min-w-72 flex-col border-l border-edge bg-surface-raised">
+            <aside className="flex w-full min-w-0 flex-col border-t border-edge bg-surface-raised max-md:max-h-[45svh] max-md:overflow-y-auto md:w-[min(340px,38vw)] md:min-w-72 md:border-l md:border-t-0">
               <div className="border-b border-edge px-4 py-3">
                 <div className="text-xs font-semibold text-fg">Info</div>
                 <dl className="mt-3 grid grid-cols-[5.75rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
