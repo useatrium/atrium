@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, Text, View } from 'react-native';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
+  type Channel,
   channelLabel,
   emptyTimeline,
   type ChatMessage,
@@ -28,6 +29,18 @@ interface AttachmentLightboxState {
   initialIndex: number;
 }
 
+interface UnreadDividerSnapshot {
+  channelId: string;
+  value: number | null;
+  ready: boolean;
+}
+
+function computeUnreadDividerAfterId(channel: Pick<Channel, 'lastReadEventId' | 'latestEventId'> | null) {
+  const lastRead = channel?.lastReadEventId ?? 0;
+  const latest = channel?.latestEventId ?? 0;
+  return lastRead > 0 && latest > lastRead ? lastRead : null;
+}
+
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useChat();
@@ -36,17 +49,61 @@ export default function ChannelScreen() {
   const { calls } = chat;
   const { getDraft, setDraft } = chat;
 
-  useFocusEffect(
-    useCallback(() => {
-      if (id) chat.openChannel(id);
-      // Leaving is handled by the list screen's focus effect; threads keep focus.
-    }, [id]), // eslint-disable-line react-hooks/exhaustive-deps
-  );
-
   const channel = state.channels.find((c) => c.id === id) ?? null;
   const timeline = (id && state.timelines[id]) || emptyTimeline;
   const presentCount = id ? (state.presence[id]?.length ?? 0) : 0;
   const headerHeight = useHeaderHeight();
+  const [unreadDividerSnapshot, setUnreadDividerSnapshot] = useState<UnreadDividerSnapshot | null>(null);
+  const unreadDividerSnapshotRef = useRef<UnreadDividerSnapshot | null>(null);
+  const channelRef = useRef(channel);
+  const timelineLoadedRef = useRef(timeline.loaded);
+  channelRef.current = channel;
+  timelineLoadedRef.current = timeline.loaded;
+
+  const commitUnreadDividerSnapshot = useCallback((snapshot: UnreadDividerSnapshot) => {
+    const current = unreadDividerSnapshotRef.current;
+    if (
+      current?.channelId === snapshot.channelId &&
+      current.value === snapshot.value &&
+      current.ready === snapshot.ready
+    ) {
+      return;
+    }
+    unreadDividerSnapshotRef.current = snapshot;
+    setUnreadDividerSnapshot(snapshot);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return;
+      commitUnreadDividerSnapshot({
+        channelId: id,
+        value: computeUnreadDividerAfterId(channelRef.current),
+        ready: timelineLoadedRef.current === true,
+      });
+      chat.openChannel(id);
+      // Leaving is handled by the list screen's focus effect; threads keep focus.
+    }, [chat.openChannel, commitUnreadDividerSnapshot, id]),
+  );
+
+  useEffect(() => {
+    if (!id) return;
+    const current = unreadDividerSnapshotRef.current;
+    if (current?.channelId === id && current.ready) return;
+    commitUnreadDividerSnapshot({
+      channelId: id,
+      value: computeUnreadDividerAfterId(channel),
+      ready: timeline.loaded === true,
+    });
+  }, [channel, commitUnreadDividerSnapshot, id, timeline.loaded]);
+
+  const activeUnreadDividerSnapshot =
+    unreadDividerSnapshot?.channelId === id ? unreadDividerSnapshot : null;
+
+  const markReadAtBottom = useCallback(() => {
+    if (!id) return;
+    chat.markRead(id, timeline.lastEventId);
+  }, [chat.markRead, id, timeline.lastEventId]);
 
   // Kicked from a private channel (or it was deleted) while viewing it: the
   // channel drops out of state. Leave rather than sit on a dead screen whose
@@ -280,6 +337,7 @@ export default function ChannelScreen() {
         keyboardVerticalOffset={headerHeight}
       >
         <Timeline
+          key={id}
           messages={timeline.main}
           emptyLabel="No messages yet. Say hello — or type @agent <task> to put an agent on it."
           loaded={timeline.loaded}
@@ -302,6 +360,9 @@ export default function ChannelScreen() {
           onOpenAttachment={openAttachment}
           onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
+          unreadDividerAfterId={activeUnreadDividerSnapshot?.value ?? null}
+          dividerReady={activeUnreadDividerSnapshot?.ready === true}
+          onReachBottom={markReadAtBottom}
         />
         <TypingLine typing={chat.typing} />
         <Composer

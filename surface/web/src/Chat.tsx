@@ -225,14 +225,24 @@ export function Chat({
   stateRef.current = state;
   const authInvalidatedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
+  const [initialSyncSettled, setInitialSyncSettled] = useState(false);
   const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
+  const [dividerReady, setDividerReady] = useState(false);
+  const dividerFrozenForRef = useRef<string | null>(null);
   const locationState = useLocation();
   const selectChannel = useCallback((channelId: string) => {
-    const channel = stateRef.current.channels.find((c) => c.id === channelId);
-    const lastRead = channel?.lastReadEventId ?? 0;
-    const latest = channel?.latestEventId ?? 0;
-    setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
+    // Leaving a channel: read is now only marked at the bottom, so a channel
+    // opened but not read to the end still has a stale cursor. `select-channel`
+    // optimistically cleared its badge on open, so re-derive the outgoing
+    // channel's unread from the durable cold counters before switching — else
+    // it wrongly looks read until the next full channels-loaded. Re-deriving
+    // while it is still the active channel keeps the incoming channel (set
+    // read by the select-channel below) correct.
+    const prev = stateRef.current.activeChannelId;
+    if (prev && prev !== channelId) {
+      dispatch({ type: 'channels-loaded', channels: stateRef.current.channels });
+    }
     dispatch({ type: 'select-channel', channelId });
   }, []);
 
@@ -511,6 +521,29 @@ export function Chat({
   const activeDraftKey = active ? `channel:${active.id}` : '';
   const threadDraftKey = active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
   const activeChannelId = active?.id ?? null;
+
+  useEffect(() => {
+    const cid = state.activeChannelId;
+    if (!cid) {
+      setUnreadDividerAfterId(null);
+      setDividerReady(false);
+      dividerFrozenForRef.current = null;
+      return;
+    }
+    if (dividerFrozenForRef.current === cid) return;
+
+    setDividerReady(false);
+    const channel = state.channels.find((c) => c.id === cid);
+    const lastRead = channel?.lastReadEventId ?? 0;
+    const latest = channel?.latestEventId ?? 0;
+    setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
+
+    if (state.timelines[cid]?.loaded === true && initialSyncSettled) {
+      dividerFrozenForRef.current = cid;
+      setDividerReady(true);
+    }
+  }, [initialSyncSettled, state.activeChannelId, state.channels, state.timelines]);
+
   useEffect(() => {
     if (!activeChannelId) return;
     const channelId = activeChannelId;
@@ -639,15 +672,18 @@ export function Chat({
     return syncInFlightRef.current;
   }, [syncFromCursor]);
 
-  const syncThenFlushQueuedOps = useCallback(() => {
+  const syncThenFlushQueuedOps = useCallback((options?: { markInitialSettled?: boolean }) => {
     void runReconnectSync()
       .then(() => calls.refreshActiveCalls())
       .then(flushQueuedOps)
-      .catch(onApiError);
+      .catch(onApiError)
+      .finally(() => {
+        if (options?.markInitialSettled) setInitialSyncSettled(true);
+      });
   }, [calls.refreshActiveCalls, flushQueuedOps, onApiError, runReconnectSync]);
 
   useEffect(() => {
-    if (hydrated) syncThenFlushQueuedOps();
+    if (hydrated) syncThenFlushQueuedOps({ markInitialSettled: true });
   }, [hydrated, syncThenFlushQueuedOps]);
 
   const { clearTypingUser, onSessionTyping, onTyping, sessionTyping, typing } = useTypingIndicators({
@@ -738,9 +774,12 @@ export function Chat({
   }
 
   // ---- channel selection & history ----
-  useEffect(() => {
-    if (active) markRead(active.id, timeline.lastEventId);
-  }, [active?.id, markRead, timeline.lastEventId]);
+  const handleReachBottom = useCallback(() => {
+    const current = stateRef.current;
+    const channel = current.channels.find((c) => c.id === current.activeChannelId);
+    const currentTimeline = channel ? current.timelines[channel.id] : null;
+    if (channel && currentTimeline) markRead(channel.id, currentTimeline.lastEventId);
+  }, [markRead]);
 
   useEffect(() => {
     if (!active) return;
@@ -1842,6 +1881,7 @@ export function Chat({
           ) : (
             <EntryQuoteApplyContextProvider value={active ? { channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask } : null}>
               <Timeline
+                key={active?.id ?? 'no-channel'}
                 messages={timeline.main}
                 loaded={timeline.loaded}
                 hasMoreBefore={timeline.hasMoreBefore}
@@ -1867,6 +1907,8 @@ export function Chat({
                 resolveUser={active ? resolveActiveUser : undefined}
                 onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
                 unreadDividerAfterId={unreadDividerAfterId}
+                dividerReady={dividerReady}
+                onReachBottom={handleReachBottom}
               />
             </EntryQuoteApplyContextProvider>
           )}

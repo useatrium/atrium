@@ -89,10 +89,12 @@ interface ChatContextValue {
   channelsLoaded: boolean;
   channelsError: string | null;
   refreshChannels: () => void;
-  /** Channel screen came into focus: select it, mark read, load history. */
+  /** Channel screen came into focus: select it and load history. */
   openChannel: (channelId: string) => void;
   /** Channel screen lost focus: unreads accrue everywhere again. */
   leaveChannel: () => void;
+  /** Advance a channel's read cursor after the viewer reaches the bottom. */
+  markRead: (channelId: string, lastEventId: number) => void;
   loadEarlier: (channelId: string) => Promise<void>;
   openThread: (channelId: string, rootEventId: number) => void;
   retryThread: (channelId: string, rootEventId: number) => void;
@@ -1030,12 +1032,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     [enqueueOp, onApiError],
   );
 
-  useEffect(() => {
-    const channelId = focusedRef.current;
-    if (!channelId) return;
-    markRead(channelId, state.timelines[channelId]?.lastEventId ?? 0);
-  }, [markRead, state.timelines]);
-
   useEffect(
     () => () => {
       for (const timer of Object.values(readTimersRef.current)) clearTimeout(timer);
@@ -1067,14 +1063,16 @@ export function ChatProvider({ session, children }: { session: Session; children
     (channelId: string) => {
       focusedRef.current = channelId;
       dispatch({ type: 'select-channel', channelId });
-      markRead(channelId, stateRef.current.timelines[channelId]?.lastEventId ?? 0);
       loadHistory(channelId);
     },
-    [loadHistory, markRead],
+    [loadHistory],
   );
 
   const leaveChannel = useCallback(() => {
     focusedRef.current = null;
+    // While a channel is focused, select-channel suppresses its transient badge.
+    // Re-derive from the durable cold counters so leaving before bottom restores it.
+    dispatch({ type: 'channels-loaded', channels: stateRef.current.channels });
     dispatch({ type: 'select-channel', channelId: null });
   }, []);
 
@@ -1636,6 +1634,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       refreshChannels: loadChannels,
       openChannel,
       leaveChannel,
+      markRead,
       loadEarlier,
       openThread,
       retryThread,
@@ -1694,6 +1693,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       loadChannels,
       openChannel,
       leaveChannel,
+      markRead,
       loadEarlier,
       openThread,
       retryThread,
