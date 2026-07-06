@@ -454,12 +454,17 @@ export async function sendMessagePush(
   const text = typeof event.payload?.text === 'string' ? event.payload.text : '';
   const body = config.pushRedactContent ? 'New message' : (text || '(attachment)').slice(0, 140);
   const badges = await unreadCountsFor(pool, [...reasonByUserId.keys()]);
+  const messageData: Record<string, unknown> = {
+    channelId: event.channelId,
+    eventId: event.id,
+    ...(event.threadRootEventId != null ? { threadRootId: String(event.threadRootEventId) } : {}),
+  };
   const payloadFor = (userId: string, title: string): WebPushPayload => ({
     title,
     body,
     tag: `channel:${event.channelId ?? ''}`,
     badge: badges.get(userId) ?? 0,
-    data: { channelId: event.channelId, eventId: event.id },
+    data: messageData,
   });
   const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
     to: r.token,
@@ -467,7 +472,7 @@ export async function sendMessagePush(
     body,
     sound: 'default' as const,
     badge: badges.get(r.user_id) ?? 0,
-    data: { channelId: event.channelId, eventId: event.id },
+    data: messageData,
   }));
   const webMessages = tokens.rows
     .filter((r) => r.kind === 'webpush' && r.subscription)

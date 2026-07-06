@@ -106,6 +106,9 @@ self.addEventListener('notificationclick', (event) => {
       const params = new URLSearchParams();
       if (typeof data.channelId === 'string') params.set('channel', data.channelId);
       if (typeof data.sessionId === 'string') params.set('session', data.sessionId);
+      if (typeof data.threadRootId === 'string' || typeof data.threadRootId === 'number') {
+        params.set('threadRoot', String(data.threadRootId));
+      }
       const query = params.toString();
       const url = query ? `/?${query}` : '/';
       const opened = await self.clients.openWindow(url);
