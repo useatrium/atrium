@@ -25,7 +25,14 @@ const CH = 'ch-1';
 function wire(
   id: number,
   text: string,
-  opts: { clientMsgId?: string; threadRoot?: number; author?: typeof alice; replyCount?: number; lastReplyId?: number } = {},
+  opts: {
+    clientMsgId?: string;
+    threadRoot?: number;
+    author?: typeof alice;
+    replyCount?: number;
+    lastReplyId?: number;
+    broadcast?: boolean;
+  } = {},
 ): WireEvent {
   return {
     id,
@@ -39,10 +46,16 @@ function wire(
     author: opts.author ?? alice,
     ...(opts.replyCount !== undefined ? { replyCount: opts.replyCount } : {}),
     ...(opts.lastReplyId !== undefined ? { lastReplyId: opts.lastReplyId } : {}),
+    ...(opts.broadcast === true ? { broadcast: true } : {}),
   };
 }
 
-function pending(clientMsgId: string, text: string, threadRoot: number | null = null): ChatMessage {
+function pending(
+  clientMsgId: string,
+  text: string,
+  threadRoot: number | null = null,
+  opts: { broadcast?: boolean } = {},
+): ChatMessage {
   return {
     id: null,
     clientMsgId,
@@ -54,6 +67,7 @@ function pending(clientMsgId: string, text: string, threadRoot: number | null = 
     createdAt: new Date().toISOString(),
     replyCount: 0,
     lastReplyId: 0,
+    ...(opts.broadcast === true ? { broadcast: true } : {}),
     status: 'pending',
   };
 }
@@ -151,6 +165,51 @@ describe('threads and reply counts', () => {
     expect(t.threads[1]!).toHaveLength(2);
     expect(t.threads[1]!.at(-1)!.id).toBe(3);
     expect(t.main[0]!.replyCount).toBe(2);
+  });
+
+  it('broadcast replies land in main and loaded thread while bumping the root once', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = applyEvent(t, wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }));
+
+    expect(t.main.map((m) => m.text)).toEqual(['root', 'broadcast reply']);
+    expect(t.threads[1]!.map((m) => m.text)).toEqual(['broadcast reply']);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+    expect(t.main[1]!.replyCount).toBe(0);
+  });
+
+  it('normal replies stay out of main while bumping the root once', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = applyEvent(t, wire(2, 'thread-only reply', { threadRoot: 1 }));
+
+    expect(t.main.map((m) => m.text)).toEqual(['root']);
+    expect(t.threads[1]!.map((m) => m.text)).toEqual(['thread-only reply']);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('reconciles pending broadcast replies without double-counting the main insert', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-b', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => m.text)).toEqual(['root', 'pending broadcast']);
+    expect(t.threads[1]!.map((m) => m.text)).toEqual(['pending broadcast']);
+    expect(t.main[0]!.replyCount).toBe(1);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-b', threadRoot: 1, broadcast: true }));
+
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([
+      [1, 'root'],
+      [2, 'pending broadcast'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.text])).toEqual([[2, 'pending broadcast']]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
   });
 
   it('thread fetch materializes a session question already seen by catch-up', () => {

@@ -9,6 +9,7 @@ import {
   Keyboard,
   Platform,
   Pressable,
+  Switch,
   Text,
   TextInput,
   View,
@@ -59,6 +60,7 @@ export interface ComposerProps {
     attachments: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
     voice?: VoiceSendMeta,
+    broadcast?: boolean,
   ) => void;
   onTyping: () => void;
   /** Non-null puts the composer into edit mode for that message text. */
@@ -73,6 +75,7 @@ export interface ComposerProps {
   mentionUsers?: UserRef[] | null;
   onMentionTrigger?: () => void;
   allowAttachments?: boolean;
+  showBroadcastToggle?: boolean;
   uploadFile?: (file: {
     uri: string;
     name: string;
@@ -114,6 +117,7 @@ export function Composer({
   mentionUsers,
   onMentionTrigger,
   allowAttachments,
+  showBroadcastToggle,
   uploadFile,
 }: ComposerProps) {
   const { colors } = useTheme();
@@ -121,6 +125,7 @@ export function Composer({
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
@@ -341,11 +346,19 @@ export function Composer({
     }
     if (!canSend) return;
     lightImpactHaptic();
-    onSend(trimmed, readyMeta, readyRefs.length > 0 ? readyRefs : undefined);
+    const broadcast = showBroadcastToggle && alsoSendToChannel;
+    onSend(
+      trimmed,
+      readyMeta,
+      readyRefs.length > 0 ? readyRefs : undefined,
+      undefined,
+      broadcast ? true : undefined,
+    );
     if (draftKey) {
       onDraftTouched?.(draftKey);
       draftWriter.saveNow(draftKey, '');
     }
+    setAlsoSendToChannel(false);
     setText('');
     setAttachments([]);
   };
@@ -422,7 +435,9 @@ export function Composer({
         ],
         [{ uploadKey: meta.uploadKey }],
         { durationMs, ...(waveform ? { waveform } : {}) },
+        showBroadcastToggle && alsoSendToChannel ? true : undefined,
       );
+      setAlsoSendToChannel(false);
       lightImpactHaptic();
     } catch (err) {
       console.warn('failed to finish recording', err);
@@ -463,6 +478,21 @@ export function Composer({
           >
             <Text style={{ color: colors.textMuted, fontSize: font.xs }}>Cancel</Text>
           </Pressable>
+        </View>
+      )}
+
+      {showBroadcastToggle && !editing && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>
+            Also send to channel
+          </Text>
+          <Switch
+            accessibilityLabel="Also send to channel"
+            value={alsoSendToChannel}
+            onValueChange={setAlsoSendToChannel}
+            trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
+            thumbColor={alsoSendToChannel ? colors.onAccent : colors.switchThumbOff}
+          />
         </View>
       )}
 

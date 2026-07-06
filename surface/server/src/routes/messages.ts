@@ -52,6 +52,7 @@ const PostMessageBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
   clientMsgId: Schema.optional(Schema.Unknown),
   threadRootEventId: Schema.optional(Schema.Unknown),
+  broadcast: Schema.optional(Schema.Unknown),
   attachments: Schema.optional(Schema.Unknown),
   voice: Schema.optional(Schema.Unknown),
 });
@@ -211,6 +212,13 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
+    if (body.broadcast !== undefined && typeof body.broadcast !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'broadcast must be boolean' });
+    }
+    const broadcast = body.broadcast === true;
+    if (broadcast && threadRootEventId === null) {
+      return reply.code(400).send({ error: 'bad_request', message: 'broadcast requires threadRootEventId' });
+    }
     const voice = parseVoicePost(body.voice, attachments);
     const channel = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
       body.channelId,
@@ -225,6 +233,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       text,
       clientMsgId,
       threadRootEventId,
+      broadcast,
       attachments,
       voice,
     });

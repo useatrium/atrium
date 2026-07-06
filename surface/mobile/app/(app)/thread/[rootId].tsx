@@ -144,8 +144,8 @@ export default function ThreadScreen() {
         )}
         <Composer
           placeholder="Reply in thread"
-          onSend={(text, attachments, attachmentRefs, voice) =>
-            chat.send(channelId, text, rootId, attachments, attachmentRefs, voice)
+          onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
+            chat.send(channelId, text, rootId, attachments, attachmentRefs, voice, broadcast)
           }
           onTyping={() => chat.notifyTyping(channelId)}
           draftKey={draftKey}
@@ -162,6 +162,7 @@ export default function ThreadScreen() {
           }}
           onCancelEdit={() => setEditing(null)}
           allowAttachments
+          showBroadcastToggle
           uploadFile={chat.uploadFile}
         />
       </KeyboardAvoidingView>

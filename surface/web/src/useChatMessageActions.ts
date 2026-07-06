@@ -155,6 +155,7 @@ export function useChatMessageActions({
       attachments?: AttachmentMeta[],
       attachmentRefs?: AttachmentRef[],
       voice?: VoiceSendMeta,
+      broadcast?: boolean,
     ) => {
       if (text) {
         const task = parseAgentTask(text);
@@ -176,6 +177,7 @@ export function useChatMessageActions({
         text,
         clientMsgId,
         threadRootEventId,
+        ...(broadcast === true ? { broadcast: true } : {}),
         attachments,
         attachmentRefs,
         createdAt: new Date().toISOString(),

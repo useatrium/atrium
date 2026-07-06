@@ -32,6 +32,8 @@ export interface WireEvent {
   author: UserRef | null;
   replyCount?: number;
   lastReplyId?: number;
+  // === foundation additions: thread broadcast ===
+  broadcast?: boolean;
   /** DEV MOCK only (sessions/devMock.ts): synthetic events that must not
    * advance the catch-up cursor. Never set on real server events. */
   mock?: boolean;
@@ -49,6 +51,7 @@ export const WireEventSchema = Schema.mutable(Schema.Struct({
   author: Schema.Union(UserRefSchema, Schema.Null),
   replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
   lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
+  broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
   mock: Schema.optionalWith(Schema.Boolean, { exact: true }),
 }));
 
@@ -127,6 +130,8 @@ export interface ChatMessage {
   replyCount: number;
   /** Highest reply event id already included in replyCount. */
   lastReplyId: number;
+  // === foundation additions: thread broadcast ===
+  broadcast?: boolean;
   status: MessageStatus;
   /** Set for agent-session rows (type session.spawned / optimistic spawns):
    * the row renders as a SessionCard looked up by this id. */
@@ -248,6 +253,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
   const voice = parseVoice(payload.voice);
   const reactions = parseReactions(payload.reactions);
   const attachments = parseAttachments(payload.attachments);
+  const broadcast = ev.broadcast === true || payload.broadcast === true;
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
@@ -263,6 +269,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
     lastReplyId: ev.lastReplyId ?? 0,
+    ...(broadcast ? { broadcast: true } : {}),
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(sessionEventType !== undefined ? { sessionEventType, sessionEventPayload: payload } : {}),
@@ -385,11 +392,49 @@ function upsertConfirmed(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   return resort([...list, msg]);
 }
 
+function upsertPending(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
+  const i = list.findIndex(
+    (m) => msg.clientMsgId != null && m.status !== 'confirmed' && m.clientMsgId === msg.clientMsgId,
+  );
+  if (i < 0) return [...list, msg];
+  const copy = [...list];
+  copy[i] = msg;
+  return copy;
+}
+
+function hasPendingReply(t: ChannelTimeline, msg: ChatMessage): boolean {
+  if (msg.clientMsgId == null || msg.threadRootEventId == null) return false;
+  const matches = (m: ChatMessage) =>
+    m.status !== 'confirmed' &&
+    m.clientMsgId === msg.clientMsgId &&
+    m.threadRootEventId === msg.threadRootEventId;
+  return t.main.some(matches) || (t.threads[msg.threadRootEventId]?.some(matches) ?? false);
+}
+
+function bumpRootReplyCount(
+  main: ChatMessage[],
+  rootId: number,
+  replyId: number | null,
+  alreadyCounted = false,
+): ChatMessage[] {
+  return main.map((m) => {
+    if (m.id !== rootId) return m;
+    if (replyId != null && replyId <= m.lastReplyId) return m;
+    return {
+      ...m,
+      replyCount: alreadyCounted ? m.replyCount : m.replyCount + 1,
+      ...(replyId != null ? { lastReplyId: replyId } : {}),
+    };
+  });
+}
+
 export function addPending(t: ChannelTimeline, msg: ChatMessage): ChannelTimeline {
   if (msg.threadRootEventId != null) {
+    const main = bumpRootReplyCount(t.main, msg.threadRootEventId, null);
     const existing = t.threads[msg.threadRootEventId] ?? [];
     return {
       ...t,
+      main: msg.broadcast === true ? upsertPending(main, msg) : main,
       threads: { ...t.threads, [msg.threadRootEventId]: [...existing, msg] },
     };
   }
@@ -777,15 +822,12 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     // counts computed server-side and live increments never double-count),
     // and insert into the thread list if that thread is loaded.
     const rootId = msg.threadRootEventId;
-    const main = t.main.map((m) => {
-      if (m.id !== rootId) return m;
-      if (ev.id <= m.lastReplyId) return m;
-      return { ...m, replyCount: m.replyCount + 1, lastReplyId: ev.id };
-    });
+    const main = bumpRootReplyCount(t.main, rootId, ev.id, hasPendingReply(t, msg));
     const threads = { ...t.threads };
     const thread = threads[rootId];
     if (thread) threads[rootId] = upsertConfirmed(thread, msg);
-    return bumpLastEvent({ ...t, main, threads, seenIds }, ev.id);
+    const withBroadcast = msg.broadcast === true ? upsertConfirmed(main, msg) : main;
+    return bumpLastEvent({ ...t, main: withBroadcast, threads, seenIds }, ev.id);
   }
 
   return bumpLastEvent({ ...t, main: upsertConfirmed(t.main, msg), seenIds }, ev.id);
@@ -812,7 +854,7 @@ export function mergeHistory(
       modifiers.push(ev);
       continue;
     }
-    if (!isRowEvent(ev.type) || ev.threadRootEventId != null) continue;
+    if (!isRowEvent(ev.type) || (ev.threadRootEventId != null && ev.broadcast !== true)) continue;
     seenIds.add(ev.id);
     main = upsertConfirmed(main, messageFromEvent(ev));
   }
@@ -855,7 +897,7 @@ export function resetToLatest(
   const seenIds = new Set<number>();
   for (const m of main) if (m.id != null) seenIds.add(m.id);
   for (const ev of events) {
-    if (!isRowEvent(ev.type) || ev.threadRootEventId != null) continue;
+    if (!isRowEvent(ev.type) || (ev.threadRootEventId != null && ev.broadcast !== true)) continue;
     if (seenIds.has(ev.id)) continue;
     seenIds.add(ev.id);
     main = upsertConfirmed(main, messageFromEvent(ev));

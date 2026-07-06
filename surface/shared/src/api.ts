@@ -489,6 +489,7 @@ export function createApi(opts: ApiOptions = {}) {
       text: string;
       clientMsgId: string;
       threadRootEventId?: number;
+      broadcast?: boolean;
       /** Uploaded file ids to attach. */
       attachments?: string[];
       /** Present for voice messages: the audio is `attachments[0]`. The server

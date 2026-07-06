@@ -610,6 +610,7 @@ export const MessageRow = memo(function MessageRow({
     [resolveEntry, onOpenChannel, onOpenSession],
   );
   const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null || copyLink != null);
+  const showThreadReplyAffordance = !inThread && m.threadRootEventId != null && onOpenThread != null;
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
     ...(!tombstone && !sessionBlock && onOpenThread && !inThread
@@ -770,6 +771,20 @@ export const MessageRow = memo(function MessageRow({
             onOpenChannel={onOpenChannel}
             onOpenSession={onOpenSession}
           />
+        ) : null}
+        {showThreadReplyAffordance ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Replied to a thread"
+            accessibilityHint="Opens the parent thread"
+            onPress={() => onOpenThread(m)}
+            hitSlop={10}
+            style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '600' }}>
+              {'↳ replied to a thread'}
+            </Text>
+          </Pressable>
         ) : null}
         {failed && (
           <Pressable

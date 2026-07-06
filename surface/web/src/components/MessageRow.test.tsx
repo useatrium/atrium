@@ -40,10 +40,12 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 function renderRow({
   resolveUser,
   onReact = vi.fn().mockResolvedValue(undefined),
+  onOpenThread,
   row = message(),
 }: {
   resolveUser?: (id: string) => UserRef | undefined;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  onOpenThread?: (rootEventId: number) => void;
   row?: ChatMessage;
 } = {}) {
   render(
@@ -54,6 +56,7 @@ function renderRow({
         meId="u-1"
         meHandle="ada"
         onRetry={vi.fn()}
+        onOpenThread={onOpenThread}
         onReact={onReact}
         resolveUser={resolveUser}
       />
@@ -108,5 +111,31 @@ describe('MessageRow reactions', () => {
 
     fireEvent.mouseEnter(pill.parentElement ?? pill);
     expect(screen.queryByRole('tooltip', { name: '1 person reacted with 👍' })).toBeNull();
+  });
+});
+
+describe('MessageRow broadcast replies', () => {
+  it('opens the parent thread from the broadcast reply affordance', () => {
+    const onOpenThread = vi.fn();
+    renderRow({
+      onOpenThread,
+      row: message({
+        id: 99,
+        threadRootEventId: 42,
+        text: 'Broadcast reply',
+        reactions: [],
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '↳ replied to a thread' }));
+
+    expect(onOpenThread).toHaveBeenCalledWith(42);
+    expect(onOpenThread).not.toHaveBeenCalledWith(99);
+
+    onOpenThread.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }));
+
+    expect(onOpenThread).toHaveBeenCalledWith(42);
+    expect(onOpenThread).not.toHaveBeenCalledWith(99);
   });
 });
