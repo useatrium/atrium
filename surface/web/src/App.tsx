@@ -10,15 +10,10 @@ import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
 import { clearDesktopSession } from './desktop';
+import { initialInAppRoute } from './router';
 import { SessionPanePage } from './sessions/SessionPanePage';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
-
-/** /s/:id — session permalink; opens the app with that session's pane open. */
-function sessionIdFromPath(pathname: string): string | null {
-  const m = /^\/s\/([^/]+)$/.exec(pathname);
-  return m?.[1] ?? null;
-}
 
 /** /s/:id/work/:slug — the Detach rung: a single work surface in its own tab.
  * Returns null for an unknown slug so we fall back to the normal app shell. */
@@ -40,7 +35,7 @@ export function App() {
   const [markupShellRoute] = useState(() => isMarkupShellRoute(location.pathname));
   const [workRoute] = useState(() => workRouteFromPath(location.pathname));
   const [entryRouteHandle] = useState(() => entryHandleFromPath(location.pathname));
-  const [initialSessionId] = useState(() => sessionIdFromPath(location.pathname));
+  const [initialRoute] = useState(() => initialInAppRoute(location.pathname));
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [checked, setChecked] = useState(false);
@@ -135,6 +130,7 @@ export function App() {
             workspace={workspace}
             initialSessionId={destination.initialSessionId}
             initialChannelId={destination.initialChannelId}
+            initialMainSurface={destination.initialFileArtifactId ? 'files' : 'chat'}
             initialEntryHandle={destination.initialEntryHandle}
             onLogout={() => {
               api.logout().catch(() => {}).finally(() => {
@@ -152,7 +148,10 @@ export function App() {
       <Chat
         me={me}
         workspace={workspace}
-        initialSessionId={initialSessionId}
+        initialSessionId={initialRoute.sessionId}
+        initialChannelId={initialRoute.channelId}
+        initialMainSurface={initialRoute.surface}
+        initialSessionFocus={initialRoute.focusSession}
         initialEntryHandle={new URLSearchParams(location.search).get('entry')}
         onLogout={() => {
           // logout() first (still holds the token), then drop the keychain

@@ -1,0 +1,75 @@
+// @vitest-environment jsdom
+
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { createElement } from 'react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { navigate, parseInAppRoute, routePath, useLocation } from './router';
+
+function LocationProbe() {
+  const location = useLocation();
+  return createElement('div', { 'data-testid': 'location' }, `${location.pathname}${location.search}${location.hash}`);
+}
+
+describe('router', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('parses the in-app URL grammar', () => {
+    expect(parseInAppRoute('/')).toEqual({
+      surface: 'chat',
+      channelId: null,
+      sessionId: null,
+      focusSession: false,
+    });
+    expect(parseInAppRoute('/c/ch_1')).toMatchObject({ surface: 'chat', channelId: 'ch_1', sessionId: null });
+    expect(parseInAppRoute('/c/ch_1/s/sess_1')).toMatchObject({
+      surface: 'chat',
+      channelId: 'ch_1',
+      sessionId: 'sess_1',
+      focusSession: false,
+    });
+    // Legacy /s/:id opens the session in the default split layout (not focus) —
+    // focus is a user-driven pane toggle, matching prior permalink behavior.
+    expect(parseInAppRoute('/s/sess_1')).toMatchObject({
+      surface: 'chat',
+      channelId: null,
+      sessionId: 'sess_1',
+      focusSession: false,
+    });
+    expect(parseInAppRoute('/files')).toMatchObject({ surface: 'files' });
+    expect(parseInAppRoute('/activity')).toMatchObject({ surface: 'activity' });
+    expect(parseInAppRoute('/s/sess_1/pane')).toBeNull();
+  });
+
+  it('builds canonical in-app paths', () => {
+    expect(routePath({ surface: 'chat', channelId: null, sessionId: null, focusSession: false })).toBe('/');
+    expect(routePath({ surface: 'chat', channelId: 'ch 1', sessionId: null, focusSession: false })).toBe('/c/ch%201');
+    expect(routePath({ surface: 'chat', channelId: 'ch_1', sessionId: 'sess_1', focusSession: false })).toBe(
+      '/c/ch_1/s/sess_1',
+    );
+    expect(routePath({ surface: 'files', channelId: null, sessionId: null, focusSession: false })).toBe('/files');
+    expect(routePath({ surface: 'activity', channelId: null, sessionId: null, focusSession: false })).toBe(
+      '/activity',
+    );
+  });
+
+  it('notifies useLocation for navigate and popstate changes', async () => {
+    render(createElement(LocationProbe));
+    expect(screen.getByTestId('location').textContent).toBe('/');
+
+    navigate('/c/ch_1?s=1#top');
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/c/ch_1?s=1#top'));
+
+    navigate('/files');
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/files'));
+
+    window.history.back();
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/c/ch_1?s=1#top'));
+  });
+});
