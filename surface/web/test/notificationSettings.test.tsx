@@ -3,8 +3,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PREFS, type UserPrefs } from '@atrium/surface-client';
-import type { Channel, ProviderCredentialStatus } from '../src/api';
-import { Sidebar } from '../src/components/Sidebar';
+import type { ConnectionStatus, ProviderCredentialStatus } from '../src/api';
+import { SettingsSurface } from '../src/components/SettingsSurface';
 
 const mockTheme = vi.hoisted(() => ({
   prefs: null as UserPrefs | null,
@@ -24,46 +24,15 @@ vi.mock('../src/notify', () => ({
   toggleNotifications: vi.fn(async () => 'on'),
 }));
 
-vi.mock('../src/sessions/api', () => ({
-  sessionsApi: {
-    list: vi.fn(async () => ({ sessions: [] })),
-  },
-}));
-
-const me = { id: 'u-allan', handle: 'allann', displayName: 'Allan Niemerg' };
-
-function channel(overrides: Partial<Channel> = {}): Channel {
-  return {
-    id: 'ch-general',
-    workspaceId: 'ws-1',
-    name: 'general',
-    kind: 'public',
-    muted: false,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
-  };
-}
-
-function renderSettings() {
+function renderSettings(props: Partial<Parameters<typeof SettingsSurface>[0]> = {}) {
   render(
-    <Sidebar
-      workspaceName="atrium"
-      channels={[channel()]}
-      activeChannelId="ch-general"
-      unread={{}}
-      me={me}
-      wsStatus="open"
-      onSelect={vi.fn()}
-      onSetMute={vi.fn()}
-      onCreateChannel={async () => {}}
-      onStartDm={vi.fn()}
-      onOpenSession={vi.fn()}
-      sessionEventSeq={0}
-      providerCredentials={{} as Record<string, ProviderCredentialStatus | undefined>}
-      onLogout={vi.fn()}
+    <SettingsSurface
+      connectionsAvailable
+      claudeStatus={undefined as ProviderCredentialStatus | undefined}
+      codexStatus={undefined as ProviderCredentialStatus | undefined}
+      {...props}
     />,
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
 }
 
 beforeEach(() => {
@@ -106,5 +75,66 @@ describe('notification settings', () => {
     expect(mockTheme.setPrefs).toHaveBeenLastCalledWith({
       notifications: { messages: 'dm_mention', sessions: true, calls: false },
     });
+  });
+
+  it('shows unavailable GitHub connection state without breaking provider settings', () => {
+    renderSettings({ connectionsAvailable: false });
+
+    expect(screen.getByRole('button', { name: /Unavailable/ })).toBeTruthy();
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
+  });
+
+  it('shows explicit GitHub fallback and needs-auth states', () => {
+    renderSettings({ connectionsAvailable: true });
+    expect(screen.getByRole('button', { name: /Public read/ })).toBeTruthy();
+    cleanup();
+
+    renderSettings({
+      connectionsAvailable: true,
+      githubConnection: {
+        id: 'github:app_installation',
+        provider: 'github',
+        workspaceId: 'ws-1',
+        connected: false,
+        status: 'needs_auth',
+        tokenKind: 'app_installation',
+        accountLogin: 'acme',
+        accountLabel: 'acme',
+        scopes: [],
+        capabilities: {},
+        metadata: {},
+        identities: [],
+        lastValidatedAt: null,
+        lastError: 'token revoked',
+        updatedAt: null,
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /Needs auth/ })).toBeTruthy();
+  });
+
+  it('shows GitHub identity kind in connected state', () => {
+    const githubConnection: ConnectionStatus = {
+      id: 'github:app_installation',
+      provider: 'github',
+      workspaceId: 'ws-1',
+      connected: true,
+      status: 'connected',
+      tokenKind: 'app_installation',
+      accountLogin: 'acme',
+      accountLabel: 'acme',
+      scopes: [],
+      capabilities: {},
+      metadata: {},
+      identities: [],
+      lastValidatedAt: null,
+      lastError: null,
+      updatedAt: null,
+    };
+
+    renderSettings({ githubConnection });
+
+    expect(screen.getByRole('button', { name: /acme · App/ })).toBeTruthy();
   });
 });

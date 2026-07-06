@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export type MainSurface = 'chat' | 'files' | 'activity';
+export type MainSurface = 'chat' | 'files' | 'activity' | 'agents' | 'settings';
 
 export interface InAppRoute {
   surface: MainSurface;
@@ -85,6 +85,8 @@ export function parseInAppRoute(pathname: string): InAppRoute | null {
   if (pathname === '/') return DEFAULT_ROUTE;
   if (pathname === '/files') return { ...DEFAULT_ROUTE, surface: 'files' };
   if (pathname === '/activity') return { ...DEFAULT_ROUTE, surface: 'activity' };
+  if (pathname === '/agents') return { ...DEFAULT_ROUTE, surface: 'agents' };
+  if (pathname === '/settings') return { ...DEFAULT_ROUTE, surface: 'settings' };
 
   const legacySession = /^\/s\/([^/]+)$/.exec(pathname);
   if (legacySession) {
@@ -118,6 +120,8 @@ export function initialInAppRoute(pathname: string): InAppRoute {
 export function routePath(route: InAppRoute): string {
   if (route.surface === 'files') return '/files';
   if (route.surface === 'activity') return '/activity';
+  if (route.surface === 'agents') return '/agents';
+  if (route.surface === 'settings') return '/settings';
   if (!route.channelId) return route.sessionId ? `/s/${encodeURIComponent(route.sessionId)}` : '/';
   const channelPath = `/c/${encodeURIComponent(route.channelId)}`;
   return route.sessionId ? `${channelPath}/s/${encodeURIComponent(route.sessionId)}` : channelPath;

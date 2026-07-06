@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Channel, ProviderCredentialStatus } from '../src/api';
+import type { Channel } from '../src/api';
 import { Sidebar, sessionSidebarPreview } from '../src/components/Sidebar';
 import { sessionsApi } from '../src/sessions/api';
 import type { SessionListItem } from '../src/sessions/types';
@@ -58,7 +58,6 @@ function renderSidebar(channels: Channel[], props: Partial<Parameters<typeof Sid
         onStartDm={vi.fn()}
         onOpenSession={vi.fn()}
         sessionEventSeq={0}
-        providerCredentials={{} as Record<string, ProviderCredentialStatus | undefined>}
         onLogout={vi.fn()}
         {...props}
       />
@@ -171,6 +170,28 @@ describe('Sidebar', () => {
     expect(onOpenFiles).toHaveBeenCalledOnce();
   });
 
+  it('shows Agents as a workspace destination', () => {
+    const onOpenAgents = vi.fn();
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      { activeSurface: 'agents', activeChannelId: null, onOpenAgents },
+    );
+
+    const agents = screen.getByRole('button', { name: 'Agents' });
+    expect(agents.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(agents);
+    expect(onOpenAgents).toHaveBeenCalledOnce();
+  });
+
   it('groups sidebar navigation into workspace, conversations, and agents', () => {
     renderSidebar([
       {
@@ -185,7 +206,7 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Workspace')).toBeTruthy();
     expect(screen.getByText('Conversations')).toBeTruthy();
-    expect(screen.getByText('Agents')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeTruthy();
     expect(screen.queryByText('Sessions')).toBeNull();
   });
 
@@ -248,7 +269,7 @@ describe('Sidebar', () => {
 
     await screen.findByText('Newer queued');
 
-    const agentsSection = screen.getByText('Agents').closest('section');
+    const agentsSection = screen.getByRole('heading', { name: 'Agents' }).closest('section');
     expect(agentsSection).toBeTruthy();
     const buttons = within(agentsSection!).getAllByRole('button').map((button) => button.textContent ?? '');
 
@@ -262,7 +283,19 @@ describe('Sidebar', () => {
     expect(within(agentsSection!).queryByText('2')).toBeNull();
   });
 
-  it('shows unavailable GitHub connection state without breaking provider settings', () => {
+  it('routes the agents preview view-all affordance', async () => {
+    const onOpenAgents = vi.fn();
+    vi.mocked(sessionsApi.list).mockResolvedValue({
+      sessions: [
+        session({
+          id: 'active-session',
+          title: 'Active session',
+          status: 'running',
+          createdAt: '2026-07-03T10:00:00.000Z',
+        }),
+      ],
+    });
+
     renderSidebar(
       [
         {
@@ -274,17 +307,16 @@ describe('Sidebar', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
-      { connectionsAvailable: false },
+      { onOpenAgents },
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-
-    expect(screen.getByRole('button', { name: /Unavailable/ })).toBeTruthy();
-    expect(screen.getByText('Claude Code')).toBeTruthy();
-    expect(screen.getByText('Codex')).toBeTruthy();
+    await screen.findByText('Active session');
+    fireEvent.click(screen.getByRole('button', { name: 'View all agent sessions' }));
+    expect(onOpenAgents).toHaveBeenCalledOnce();
   });
 
-  it('shows explicit GitHub fallback and needs-auth states in settings', () => {
+  it('routes settings from the footer gear', () => {
+    const onOpenSettings = vi.fn();
     renderSidebar(
       [
         {
@@ -296,88 +328,10 @@ describe('Sidebar', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
-      { connectionsAvailable: true },
+      { onOpenSettings },
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-
-    expect(screen.getByRole('button', { name: /Public read/ })).toBeTruthy();
-    cleanup();
-
-    renderSidebar(
-      [
-        {
-          id: 'ch-general',
-          workspaceId: 'ws-1',
-          name: 'general',
-          kind: 'public',
-          muted: false,
-          createdAt: '2026-01-01T00:00:00.000Z',
-        },
-      ],
-      {
-        connectionsAvailable: true,
-        githubConnection: {
-          id: 'github:app_installation',
-          provider: 'github',
-          workspaceId: 'ws-1',
-          connected: false,
-          status: 'needs_auth',
-          tokenKind: 'app_installation',
-          accountLogin: 'acme',
-          accountLabel: 'acme',
-          scopes: [],
-          capabilities: {},
-          metadata: {},
-          identities: [],
-          lastValidatedAt: null,
-          lastError: 'token revoked',
-          updatedAt: null,
-        },
-      },
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-
-    expect(screen.getByRole('button', { name: /Needs auth/ })).toBeTruthy();
-  });
-
-  it('shows GitHub identity kind in connected settings state', () => {
-    renderSidebar(
-      [
-        {
-          id: 'ch-general',
-          workspaceId: 'ws-1',
-          name: 'general',
-          kind: 'public',
-          muted: false,
-          createdAt: '2026-01-01T00:00:00.000Z',
-        },
-      ],
-      {
-        connectionsAvailable: true,
-        githubConnection: {
-          id: 'github:app_installation',
-          provider: 'github',
-          workspaceId: 'ws-1',
-          connected: true,
-          status: 'connected',
-          tokenKind: 'app_installation',
-          accountLogin: 'acme',
-          accountLabel: 'acme',
-          scopes: [],
-          capabilities: {},
-          metadata: {},
-          identities: [],
-          lastValidatedAt: null,
-          lastError: null,
-          updatedAt: null,
-        },
-      },
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-
-    expect(screen.getByRole('button', { name: /acme · App/ })).toBeTruthy();
+    expect(onOpenSettings).toHaveBeenCalledOnce();
   });
 });

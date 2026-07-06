@@ -5,50 +5,19 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type ReactNode,
-  type RefObject,
 } from 'react';
-import { createPortal } from 'react-dom';
+import { api, type Channel } from '../api';
 import {
-  api,
-  type Channel,
-  type ConnectionStatus,
-  type ProviderCredentialProvider,
-  type ProviderCredentialStatus,
-} from '../api';
-import {
-  ACCENTS,
-  FONT_SCALES,
-  formatCost,
-  formatTime,
   isTerminalSessionStatus,
-  type Accent,
-  type FontScale,
-  type MotionPref,
-  type NotificationMessagePref,
   type SessionListItem,
-  type ThemeMode,
 } from '@atrium/surface-client';
-import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
-import { useTheme } from '../theme';
 import { Avatar } from './Avatar';
 import { Tooltip } from './a11y';
 import { BellIcon, BellOffIcon, FileIcon, GearIcon, LockIcon } from './icons';
-import { useDialog } from '../useDialog';
-
-const BELL_TITLES: Record<NotifyState, string> = {
-  on: 'Device notifications on — click to turn off',
-  off: 'Device notifications off — click to enable',
-  denied: 'Notifications blocked in browser settings',
-  unsupported: 'Notifications not supported here',
-};
-
-const SOURCE_URL = 'https://github.com/gbasin/atrium';
-const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`;
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
 const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
@@ -81,18 +50,14 @@ export function Sidebar({
   onOpenSession,
   activeSurface = 'chat',
   onOpenFiles,
+  onOpenAgents,
   // === mentions-activity additions ===
   onOpenActivity,
+  onOpenSettings,
   sessionEventSeq,
-  githubConnection,
-  connectionsAvailable = true,
-  providerCredentials,
-  onConnectGitHub,
-  onConnectProvider,
   onLogout,
   isOpen = false,
   onClose,
-  settingsRequestSeq,
   createChannelRequestSeq,
   startDmRequestSeq,
 }: {
@@ -107,20 +72,16 @@ export function Sidebar({
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
-  activeSurface?: 'chat' | 'files' | 'activity';
+  activeSurface?: 'chat' | 'files' | 'activity' | 'agents' | 'settings';
   onOpenFiles?: () => void;
+  onOpenAgents?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
+  onOpenSettings?: () => void;
   sessionEventSeq: number;
-  githubConnection?: ConnectionStatus;
-  connectionsAvailable?: boolean;
-  providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
-  onConnectGitHub?: () => void;
-  onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onLogout: () => void;
   isOpen?: boolean;
   onClose?: () => void;
-  settingsRequestSeq?: number;
   createChannelRequestSeq?: number;
   startDmRequestSeq?: number;
 }) {
@@ -128,16 +89,10 @@ export function Sidebar({
   const [name, setName] = useState('');
   const [privateChannel, setPrivateChannel] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notify, setNotify] = useState<NotifyState>(() => notificationState());
   const [dmPicking, setDmPicking] = useState(false);
   const [dmQuery, setDmQuery] = useState('');
   const [people, setPeople] = useState<UserRef[] | null>(null);
   const [selectedDmIds, setSelectedDmIds] = useState<Set<string>>(new Set());
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const settingsPopoverRef = useRef<HTMLDivElement | null>(null);
-  const firstSettingsControlRef = useRef<HTMLButtonElement | null>(null);
-  const lastSettingsRequestSeq = useRef(settingsRequestSeq);
   const lastCreateChannelRequestSeq = useRef(createChannelRequestSeq);
   const lastStartDmRequestSeq = useRef(startDmRequestSeq);
   const createChannelInputRef = useRef<HTMLInputElement | null>(null);
@@ -201,25 +156,6 @@ export function Sidebar({
       setError((err as Error).message);
     }
   };
-
-  const closeSettings = useCallback(() => {
-    setSettingsOpen(false);
-  }, []);
-
-  useDialog({
-    open: settingsOpen,
-    containerRef: settingsPopoverRef,
-    initialFocusRef: firstSettingsControlRef,
-    invokerRef: settingsButtonRef,
-    closeOnOutsidePointer: true,
-    onClose: closeSettings,
-  });
-
-  useEffect(() => {
-    if (settingsRequestSeq == null || lastSettingsRequestSeq.current === settingsRequestSeq) return;
-    lastSettingsRequestSeq.current = settingsRequestSeq;
-    setSettingsOpen(true);
-  }, [settingsRequestSeq]);
 
   useEffect(() => {
     if (createChannelRequestSeq == null || lastCreateChannelRequestSeq.current === createChannelRequestSeq) return;
@@ -301,6 +237,21 @@ export function Sidebar({
             >
               <FileIcon size={15} className="shrink-0 text-fg-muted" />
               <span className="truncate">Files</span>
+            </button>
+            <button
+              type="button"
+              aria-current={activeSurface === 'agents' ? 'page' : undefined}
+              onClick={onOpenAgents}
+              className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] ${
+                activeSurface === 'agents'
+                  ? 'bg-accent/20 font-medium text-fg'
+                  : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
+              }`}
+            >
+              <span aria-hidden="true" className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">
+                A
+              </span>
+              <span className="truncate">Agents</span>
             </button>
             {/* === mentions-activity additions === */}
             <button
@@ -507,7 +458,11 @@ export function Sidebar({
           </div>
         </section>
 
-        <SessionSidebarSection refreshKey={sessionEventSeq} onOpenSession={onOpenSession} />
+        <SessionSidebarSection
+          refreshKey={sessionEventSeq}
+          onOpenSession={onOpenSession}
+          onOpenAgents={onOpenAgents}
+        />
       </div>
 
       <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">
@@ -518,33 +473,13 @@ export function Sidebar({
         <Tooltip content="Settings">
           <button
             type="button"
-            ref={settingsButtonRef}
-            onClick={() => setSettingsOpen((v) => !v)}
+            onClick={onOpenSettings}
             aria-label="Settings"
-            aria-expanded={settingsOpen}
-            aria-haspopup="dialog"
             className="rounded-md px-1.5 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
           >
             <GearIcon />
           </button>
         </Tooltip>
-        {settingsOpen &&
-          createPortal(
-            <SettingsPopover
-              refEl={settingsPopoverRef}
-              firstControlRef={firstSettingsControlRef}
-              notify={notify}
-              setNotify={setNotify}
-              githubConnection={githubConnection}
-              connectionsAvailable={connectionsAvailable}
-              claudeStatus={providerCredentials?.['claude-code']}
-              codexStatus={providerCredentials?.codex}
-              onConnectGitHub={onConnectGitHub}
-              onConnectClaude={() => onConnectProvider?.('claude-code')}
-              onConnectCodex={() => onConnectProvider?.('codex')}
-            />,
-            document.body,
-          )}
         <button
           type="button"
           onClick={onLogout}
@@ -555,339 +490,6 @@ export function Sidebar({
       </footer>
       </nav>
     </>
-  );
-}
-
-const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-];
-
-const MOTION_OPTIONS: { value: MotionPref; label: string }[] = [
-  { value: 'system', label: 'System' },
-  { value: 'reduced', label: 'Reduced' },
-  { value: 'full', label: 'Full' },
-];
-const MESSAGE_NOTIFICATION_OPTIONS: { value: NotificationMessagePref; label: string }[] = [
-  { value: 'all', label: 'All messages' },
-  { value: 'dm_mention', label: 'DMs & mentions' },
-  { value: 'off', label: 'Off' },
-];
-
-const ACCENT_LABELS: Record<Accent, string> = {
-  indigo: 'Indigo',
-  teal: 'Teal',
-  amber: 'Amber',
-  rose: 'Rose',
-};
-
-const FONT_LABELS: Record<FontScale, string> = {
-  0.875: 'S',
-  1: 'M',
-  1.125: 'L',
-  1.25: 'XL',
-};
-
-const SWATCH_CLASSES: Record<Accent, string> = {
-  indigo: 'accent-swatch-indigo',
-  teal: 'accent-swatch-teal',
-  amber: 'accent-swatch-amber',
-  rose: 'accent-swatch-rose',
-};
-
-function SettingsPopover({
-  refEl,
-  firstControlRef,
-  notify,
-  setNotify,
-  githubConnection,
-  connectionsAvailable,
-  claudeStatus,
-  codexStatus,
-  onConnectGitHub,
-  onConnectClaude,
-  onConnectCodex,
-}: {
-  refEl: RefObject<HTMLDivElement | null>;
-  firstControlRef: RefObject<HTMLButtonElement | null>;
-  notify: NotifyState;
-  setNotify: (state: NotifyState) => void;
-  githubConnection?: ConnectionStatus;
-  connectionsAvailable: boolean;
-  claudeStatus?: ProviderCredentialStatus;
-  codexStatus?: ProviderCredentialStatus;
-  onConnectGitHub?: () => void;
-  onConnectClaude?: () => void;
-  onConnectCodex?: () => void;
-}) {
-  const { prefs, setPrefs } = useTheme();
-  const segmentButton = (active: boolean) =>
-    `h-8 flex-1 rounded px-2 text-xs font-medium ${
-      active
-        ? 'bg-accent text-on-accent'
-        : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
-    }`;
-  const toggleButton = (active: boolean) =>
-    `flex h-8 w-16 items-center rounded-full border px-1 ${
-      active
-        ? 'justify-end border-accent bg-accent text-on-accent'
-        : 'justify-start border-edge-strong bg-surface text-fg-muted'
-    }`;
-  const setNotificationMessages = (messages: NotificationMessagePref) =>
-    setPrefs({ notifications: { ...prefs.notifications, messages } });
-  const setNotificationSessions = (sessions: boolean) =>
-    setPrefs({ notifications: { ...prefs.notifications, sessions } });
-  const setNotificationCalls = (calls: boolean) =>
-    setPrefs({ notifications: { ...prefs.notifications, calls } });
-  const notificationsDisabled = notify === 'denied' || notify === 'unsupported';
-
-  return (
-    <div
-      ref={refEl}
-      role="dialog"
-      aria-label="Settings"
-      className="fixed bottom-14 left-2 z-[70] max-h-[calc(100dvh-4rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-edge-strong bg-surface-raised p-3 shadow-2xl shadow-black/30"
-    >
-      <div className="space-y-3">
-        <SettingRow label="Theme">
-          <div className="flex rounded-md border border-edge bg-surface p-0.5">
-            {THEME_OPTIONS.map((option, index) => (
-              <button
-                key={option.value}
-                ref={index === 0 ? firstControlRef : undefined}
-                type="button"
-                aria-pressed={prefs.theme === option.value}
-                onClick={() => setPrefs({ theme: option.value })}
-                className={segmentButton(prefs.theme === option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
-
-        <SettingRow label="Accent">
-          <div className="flex items-center gap-2">
-            {ACCENTS.map((accent) => (
-              <Tooltip key={accent} content={`${ACCENT_LABELS[accent]} accent`}>
-                <button
-                  type="button"
-                  aria-label={`${ACCENT_LABELS[accent]} accent`}
-                  aria-pressed={prefs.accent === accent}
-                  onClick={() => setPrefs({ accent })}
-                  className={`flex size-8 items-center justify-center rounded-md border border-edge ${
-                    prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
-                  }`}
-                >
-                  <span className={`size-4 rounded-full ${SWATCH_CLASSES[accent]}`} />
-                </button>
-              </Tooltip>
-            ))}
-          </div>
-        </SettingRow>
-
-        <SettingRow label="Text size">
-          <div className="grid grid-cols-4 rounded-md border border-edge bg-surface p-0.5">
-            {FONT_SCALES.map((fontScale) => (
-              <button
-                key={fontScale}
-                type="button"
-                aria-label={`${FONT_LABELS[fontScale]} text size`}
-                aria-pressed={prefs.fontScale === fontScale}
-                onClick={() => setPrefs({ fontScale })}
-                className={segmentButton(prefs.fontScale === fontScale)}
-              >
-                {FONT_LABELS[fontScale]}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
-
-        <SettingRow label="High contrast">
-          <button
-            type="button"
-            aria-label="High contrast"
-            aria-pressed={prefs.highContrast}
-            onClick={() => setPrefs({ highContrast: !prefs.highContrast })}
-            className={`flex h-8 w-16 items-center rounded-full border px-1 ${
-              prefs.highContrast
-                ? 'justify-end border-accent bg-accent text-on-accent'
-                : 'justify-start border-edge-strong bg-surface text-fg-muted'
-            }`}
-          >
-            <span className="size-5 rounded-full bg-current" />
-          </button>
-        </SettingRow>
-
-        <SettingRow label="Motion">
-          <div className="flex rounded-md border border-edge bg-surface p-0.5">
-            {MOTION_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={prefs.motion === option.value}
-                onClick={() => setPrefs({ motion: option.value })}
-                className={segmentButton(prefs.motion === option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
-
-        <SettingRow label="Notifications">
-          <Tooltip content={BELL_TITLES[notify]}>
-            <button
-              type="button"
-              onClick={(e) => {
-                if (notificationsDisabled) {
-                  e.preventDefault();
-                  return;
-                }
-                void toggleNotifications().then(setNotify);
-              }}
-              aria-disabled={notificationsDisabled || undefined}
-              aria-label={BELL_TITLES[notify]}
-              aria-pressed={notify === 'on'}
-              className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body aria-disabled:opacity-40"
-            >
-              {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
-              <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
-            </button>
-          </Tooltip>
-        </SettingRow>
-
-        <SettingRow label="Messages">
-          <select
-            aria-label="Message notifications"
-            value={prefs.notifications.messages}
-            onChange={(event) =>
-              setNotificationMessages(event.target.value as NotificationMessagePref)
-            }
-            className="h-8 w-full rounded-md border border-edge bg-surface px-2 text-xs text-fg-secondary"
-          >
-            {MESSAGE_NOTIFICATION_OPTIONS.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </SettingRow>
-
-        <SettingRow label="Agent sessions">
-          <button
-            type="button"
-            aria-label="Agent sessions notifications"
-            aria-pressed={prefs.notifications.sessions}
-            onClick={() => setNotificationSessions(!prefs.notifications.sessions)}
-            className={toggleButton(prefs.notifications.sessions)}
-          >
-            <span className="size-5 rounded-full bg-current" />
-          </button>
-        </SettingRow>
-
-        <SettingRow label="Calls">
-          <button
-            type="button"
-            aria-label="Call notifications"
-            aria-pressed={prefs.notifications.calls}
-            onClick={() => setNotificationCalls(!prefs.notifications.calls)}
-            className={toggleButton(prefs.notifications.calls)}
-          >
-            <span className="size-5 rounded-full bg-current" />
-          </button>
-        </SettingRow>
-
-        <SettingRow label="GitHub">
-          <Tooltip content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}>
-            <button
-              type="button"
-              onClick={onConnectGitHub}
-              className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
-            >
-              <span
-                className={`size-2 rounded-full ${
-                  githubConnection?.connected ? 'bg-success' : connectionsAvailable ? 'bg-warning' : 'bg-fg-muted/60'
-                }`}
-              />
-              <span>
-                {githubConnection?.connected
-                  ? `${githubConnection.accountLabel ?? 'Connected'} · ${githubConnectionLabel(githubConnection.tokenKind)}`
-                  : connectionsAvailable
-                    ? githubConnection?.status === 'needs_auth'
-                      ? 'Needs auth'
-                      : 'Public read'
-                    : 'Unavailable'}
-              </span>
-            </button>
-          </Tooltip>
-        </SettingRow>
-
-        <SettingRow label="Claude Code">
-          <button
-            type="button"
-            onClick={onConnectClaude}
-            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
-          >
-            <span
-              className={`size-2 rounded-full ${
-                claudeStatus?.connected ? 'bg-success' : 'bg-warning'
-              }`}
-            />
-            <span>{claudeStatus?.connected ? 'Connected' : 'Connect'}</span>
-          </button>
-        </SettingRow>
-
-        <SettingRow label="Codex">
-          <button
-            type="button"
-            onClick={onConnectCodex}
-            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
-          >
-            <span
-              className={`size-2 rounded-full ${
-                codexStatus?.connected ? 'bg-success' : 'bg-warning'
-              }`}
-            />
-            <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
-          </button>
-        </SettingRow>
-
-        <div className="border-t border-edge pt-3 text-2xs leading-5 text-fg-muted">
-          Atrium is AGPL-3.0-or-later.{' '}
-          <a
-            href={SOURCE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-accent-text hover:underline"
-          >
-            Source
-          </a>
-          {' · '}
-          <a
-            href={LICENSE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-accent-text hover:underline"
-          >
-            License
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SettingRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2">
-      <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">{label}</div>
-      <div className="min-w-0">{children}</div>
-    </div>
   );
 }
 
@@ -932,12 +534,13 @@ export function sessionSidebarPreview(
 function SessionSidebarSection({
   refreshKey,
   onOpenSession,
+  onOpenAgents,
 }: {
   refreshKey: number;
   onOpenSession: (sessionId: string) => void;
+  onOpenAgents?: () => void;
 }) {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
-  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -972,7 +575,6 @@ function SessionSidebarSection({
   const preview = useMemo(() => sessionSidebarPreview(sessions), [sessions]);
   const open = (id: string) => {
     onOpenSession(id);
-    setModalOpen(false);
   };
 
   return (
@@ -1004,7 +606,7 @@ function SessionSidebarSection({
             <li className="mx-1">
               <button
                 type="button"
-                onClick={() => setModalOpen(true)}
+                onClick={onOpenAgents}
                 className="flex min-h-7 w-full items-center rounded-md px-2 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
               >
                 View all agent sessions
@@ -1013,92 +615,6 @@ function SessionSidebarSection({
           </ul>
         </div>
       </section>
-      {modalOpen &&
-        createPortal(
-          <SessionBrowserModal
-            sessions={sessions}
-            onOpenSession={open}
-            onClose={() => setModalOpen(false)}
-          />,
-          document.body,
-        )}
     </>
   );
-}
-
-function SessionBrowserModal({
-  sessions,
-  onOpenSession,
-  onClose,
-}: {
-  sessions: SessionListItem[];
-  onOpenSession: (sessionId: string) => void;
-  onClose: () => void;
-}) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  useDialog({ open: true, containerRef: dialogRef, onClose });
-
-  return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click dismisses the dialog; Escape is handled by useDialog.
-    <div
-      className="fixed inset-0 z-[70] bg-surface/80 backdrop-blur-sm"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Browse agent sessions"
-    >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: dialog surface absorbs backdrop clicks; keyboard dismissal is handled by useDialog. */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: dialog surface click only stops propagation; Escape and Close controls handle keyboard dismissal. */}
-      <div
-        ref={dialogRef}
-        onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-24 w-[560px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
-      >
-        <h2 className="border-b border-edge px-3 py-2.5 text-sm font-semibold text-fg">
-          Agent sessions
-        </h2>
-        <div className="max-h-[60vh] overflow-y-auto py-1">
-          {sessions.map((session) => (
-            <button
-              type="button"
-              key={session.id}
-              onClick={() => onOpenSession(session.id)}
-              className="flex w-full min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-accent/20"
-            >
-              <StatusChip status={session.status} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-fg">
-                  {session.title}
-                </span>
-                <span className="block truncate text-2xs text-fg-muted">
-                  #{session.channelName} · {session.spawnerName} · {formatTime(session.createdAt)}
-                </span>
-              </span>
-              <span className="shrink-0 text-2xs tabular-nums text-fg-muted">
-                {session.costUsd > 0 ? formatCost(session.costUsd) : ''}
-              </span>
-            </button>
-          ))}
-          {sessions.length === 0 && (
-            <div className="px-3 py-8 text-center text-sm text-fg-muted">No agent sessions yet</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function githubConnectionLabel(tokenKind: ConnectionStatus['tokenKind']): string {
-  switch (tokenKind) {
-    case 'app_installation':
-      return 'App installation';
-    case 'app_user':
-      return 'GitHub user';
-    case 'pat':
-      return 'PAT';
-    case 'public_read':
-      return 'Public';
-    default:
-      return 'GitHub';
-  }
 }

@@ -431,7 +431,7 @@ test('command center: empty query shows suggested commands', async ({ page }) =>
   await login(page, unique('commander'), 'Commander');
 
   const dialog = await openCommandCenter(page);
-  for (const label of ['New agent in #general', 'Open Files', 'Open Activity', 'Open settings']) {
+  for (const label of ['New agent in #general', 'Open Files', 'Open Agents', 'Open Activity', 'Open settings']) {
     await expect(dialog.getByText(label, { exact: true })).toBeVisible();
   }
 });
