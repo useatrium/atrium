@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  type BrowserWindowConstructorOptions,
   Menu,
   Notification,
   Tray,
@@ -21,9 +22,14 @@ import {
   TRAY_ICON,
   WEB_DIST,
 } from './config.js';
+import { buildAppMenu } from './appMenu.js';
 import { clearSession, loadSession, saveSession, type DesktopSession } from './session.js';
 import { setupAutoUpdate } from './updater.js';
-import { resolveWindowOpen } from './windowOpenPolicy.js';
+import {
+  resolveSessionPopoutOpen,
+  resolveWindowOpen,
+  sessionIdFromPanePath,
+} from './windowOpenPolicy.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).
@@ -35,9 +41,16 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+const mainWindows = new Set<BrowserWindow>();
 let tray: Tray | null = null;
 let isQuitting = false;
-const popoutWindows = new Set<BrowserWindow>();
+const popoutWindows = new Map<string, BrowserWindow>();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  isQuitting = true;
+  app.quit();
+}
 
 /** Serve the bundled web build over `app://`, with SPA fallback to index.html. */
 function registerAppProtocol(): void {
@@ -64,9 +77,20 @@ function registerAppProtocol(): void {
   });
 }
 
-function createWindow(): void {
-  const preload = join(import.meta.dirname, '../preload/index.mjs');
-  mainWindow = new BrowserWindow({
+function preloadPath(): string {
+  return join(import.meta.dirname, '../preload/index.mjs');
+}
+
+function rendererTarget(): string {
+  return RENDERER_DEV_URL ?? `${APP_ORIGIN}/index.html`;
+}
+
+function devOrigin(): string | null {
+  return RENDERER_DEV_URL ? new URL(RENDERER_DEV_URL).origin : null;
+}
+
+function mainWindowOptions(preload: string): BrowserWindowConstructorOptions {
+  return {
     width: 1280,
     height: 832,
     minWidth: 880,
@@ -79,23 +103,32 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
-  });
+  };
+}
 
-  const target = RENDERER_DEV_URL ?? `${APP_ORIGIN}/index.html`;
+function createWindow(): BrowserWindow {
+  const preload = preloadPath();
+  const target = rendererTarget();
+  const main = new BrowserWindow(mainWindowOptions(preload));
+  mainWindow = main;
+  mainWindows.add(main);
 
   // Close-to-tray: the app stays alive in the background (always-on, warm WS)
   // so re-opening is instant. Quit only via the tray menu / Cmd-Q.
-  mainWindow.on('close', (event) => {
+  main.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
-      mainWindow?.hide();
+      main.hide();
     }
   });
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  main.on('closed', () => {
+    mainWindows.delete(main);
+    if (mainWindow === main) {
+      mainWindow = Array.from(mainWindows).find((window) => !window.isDestroyed()) ?? null;
+    }
   });
 
-  mainWindow.webContents.on('did-finish-load', () => {
+  main.webContents.on('did-finish-load', () => {
     console.log('[atrium] renderer loaded:', target);
     // Dev-only sanity probe: confirm the secure context + preload bridge are
     // live. Never runs in a packaged build and never touches auth/accounts.
@@ -106,19 +139,114 @@ function createWindow(): void {
       bridge: !!window.atrium,
       serverUrl: window.atrium?.serverUrl ?? null,
     })`;
-    void mainWindow?.webContents
+    void main.webContents
       .executeJavaScript(probe)
       .then((result) => console.log('[atrium] renderer probe:', result))
       .catch((err) => console.error('[atrium] probe failed:', String(err)));
   });
-  mainWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+  main.webContents.on('did-fail-load', (_event, code, desc, url) => {
     console.error('[atrium] renderer failed:', code, desc, url);
   });
 
-  const devOrigin = RENDERER_DEV_URL ? new URL(RENDERER_DEV_URL).origin : null;
-  attachWindowOpenPolicy(mainWindow.webContents, preload, devOrigin);
+  attachWindowOpenPolicy(main.webContents, preload, devOrigin());
 
-  void mainWindow.loadURL(target);
+  void main.loadURL(target);
+  return main;
+}
+
+function popoutWindowOptions(preload: string): BrowserWindowConstructorOptions {
+  return {
+    width: 1100,
+    height: 800,
+    minWidth: 720,
+    minHeight: 520,
+    backgroundColor: '#09090b',
+    autoHideMenuBar: true,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    webPreferences: {
+      preload,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  };
+}
+
+function sessionPopoutUrl(sessionId: string): string {
+  return new URL(`/s/${encodeURIComponent(sessionId)}/pane`, RENDERER_DEV_URL ?? APP_ORIGIN).toString();
+}
+
+function sessionIdFromWindowOpenUrl(url: string): string | null {
+  try {
+    return sessionIdFromPanePath(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+}
+
+function registeredPopoutState(sessionId: string | null): 'missing' | 'live' | 'destroyed' {
+  if (!sessionId) return 'missing';
+  const existing = popoutWindows.get(sessionId);
+  if (!existing) return 'missing';
+  if (!existing.isDestroyed()) return 'live';
+  popoutWindows.delete(sessionId);
+  return 'destroyed';
+}
+
+function focusBrowserWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+function focusRegisteredPopout(sessionId: string): BrowserWindow | null {
+  const existing = popoutWindows.get(sessionId);
+  if (!existing) return null;
+  if (existing.isDestroyed()) {
+    popoutWindows.delete(sessionId);
+    return null;
+  }
+  focusBrowserWindow(existing);
+  return existing;
+}
+
+function registerPopoutWindow(
+  sessionId: string,
+  popoutWindow: BrowserWindow,
+  preload: string,
+  devOrigin: string | null,
+): void {
+  popoutWindows.set(sessionId, popoutWindow);
+  popoutWindow.once('closed', () => {
+    if (popoutWindows.get(sessionId) === popoutWindow) {
+      popoutWindows.delete(sessionId);
+    }
+  });
+  attachWindowOpenPolicy(popoutWindow.webContents, preload, devOrigin);
+}
+
+function createSessionPopout(sessionId: string): BrowserWindow {
+  const preload = preloadPath();
+  const popoutWindow = new BrowserWindow(popoutWindowOptions(preload));
+  registerPopoutWindow(sessionId, popoutWindow, preload, devOrigin());
+  void popoutWindow.loadURL(sessionPopoutUrl(sessionId));
+  return popoutWindow;
+}
+
+function openOrFocusSessionPopout(sessionId: string): BrowserWindow | null {
+  const decision = resolveSessionPopoutOpen(sessionId, registeredPopoutState(sessionId));
+  if (decision.action === 'deny') return null;
+  if (decision.action === 'focus') {
+    const existing = focusRegisteredPopout(decision.sessionId);
+    if (existing) return existing;
+  }
+  return createSessionPopout(decision.sessionId);
+}
+
+function getCurrentMainWindow(): BrowserWindow | null {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  mainWindow = Array.from(mainWindows).find((window) => !window.isDestroyed()) ?? null;
+  return mainWindow;
 }
 
 /** Popout windows are real BrowserWindows and can open links of their own, so
@@ -129,35 +257,32 @@ function attachWindowOpenPolicy(
   preload: string,
   devOrigin: string | null,
 ): void {
-  contents.on('did-create-window', (childWindow) => {
-    popoutWindows.add(childWindow);
-    childWindow.on('closed', () => {
-      popoutWindows.delete(childWindow);
-    });
-    attachWindowOpenPolicy(childWindow.webContents, preload, devOrigin);
+  contents.on('did-create-window', (childWindow, details) => {
+    const sessionId = sessionIdFromWindowOpenUrl(details.url);
+    if (sessionId) {
+      registerPopoutWindow(sessionId, childWindow, preload, devOrigin);
+    } else {
+      attachWindowOpenPolicy(childWindow.webContents, preload, devOrigin);
+    }
   });
 
   contents.setWindowOpenHandler(({ url }) => {
     const decision = resolveWindowOpen(url, { appOrigin: APP_ORIGIN, devOrigin });
     switch (decision.kind) {
-      case 'popout':
+      case 'popout': {
+        const sessionId = sessionIdFromWindowOpenUrl(url);
+        const popoutDecision = resolveSessionPopoutOpen(sessionId, registeredPopoutState(sessionId));
+        if (popoutDecision.action === 'focus') {
+          if (focusRegisteredPopout(popoutDecision.sessionId)) {
+            return { action: 'deny' };
+          }
+        }
+        if (popoutDecision.action === 'deny') return { action: 'deny' };
         return {
           action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 1100,
-            height: 800,
-            minWidth: 720,
-            minHeight: 520,
-            backgroundColor: '#09090b',
-            autoHideMenuBar: true,
-            webPreferences: {
-              preload,
-              contextIsolation: true,
-              nodeIntegration: false,
-              sandbox: false,
-            },
-          },
+          overrideBrowserWindowOptions: popoutWindowOptions(preload),
         };
+      }
       case 'external':
         void shell.openExternal(url);
         return { action: 'deny' };
@@ -168,21 +293,26 @@ function attachWindowOpenPolicy(
 }
 
 function showWindow(): void {
-  if (!mainWindow) {
+  const currentMainWindow = getCurrentMainWindow();
+  if (!currentMainWindow) {
     createWindow();
     return;
   }
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  focusBrowserWindow(currentMainWindow);
 }
 
 function toggleWindow(): void {
-  if (mainWindow && mainWindow.isVisible() && mainWindow.isFocused()) {
-    mainWindow.hide();
+  const currentMainWindow = getCurrentMainWindow();
+  if (currentMainWindow && currentMainWindow.isVisible() && currentMainWindow.isFocused()) {
+    currentMainWindow.hide();
   } else {
     showWindow();
   }
+}
+
+function quitApp(): void {
+  isQuitting = true;
+  app.quit();
 }
 
 function createTray(): void {
@@ -196,10 +326,7 @@ function createTray(): void {
       { type: 'separator' },
       {
         label: 'Quit Atrium',
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        },
+        click: () => quitApp(),
       },
     ]),
   );
@@ -233,28 +360,51 @@ function wireIpc(): void {
       app.setBadgeCount(n);
     }
   });
+  ipcMain.handle('atrium:open-session-popout', (_event, sessionId: string) => {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
+    openOrFocusSessionPopout(sessionId);
+    return true;
+  });
 }
 
-app.whenReady().then(() => {
-  // Grant mic/camera (LiveKit voice/calls) + notifications to our origins.
-  const allowed = new Set(['media', 'mediaKeySystem', 'notifications']);
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(allowed.has(permission));
+if (hasSingleInstanceLock) {
+  app.on('second-instance', () => {
+    if (app.isReady()) {
+      showWindow();
+    } else {
+      void app.whenReady().then(() => showWindow());
+    }
   });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 
-  console.log('[atrium] WEB_DIST =', WEB_DIST, '| SERVER_URL =', SERVER_URL);
-  registerAppProtocol();
-  wireIpc();
-  createWindow();
-  createTray();
-  setupAutoUpdate();
+  app.whenReady().then(() => {
+    // Grant mic/camera (LiveKit voice/calls) + notifications to our origins.
+    const allowed = new Set(['media', 'mediaKeySystem', 'notifications']);
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(allowed.has(permission));
+    });
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    else showWindow();
+    console.log('[atrium] WEB_DIST =', WEB_DIST, '| SERVER_URL =', SERVER_URL);
+    registerAppProtocol();
+    wireIpc();
+    Menu.setApplicationMenu(
+      buildAppMenu({
+        createMainWindow: () => {
+          createWindow();
+        },
+        quit: quitApp,
+      }),
+    );
+    createWindow();
+    createTray();
+    setupAutoUpdate();
+
+    app.on('activate', () => {
+      if (!getCurrentMainWindow()) createWindow();
+      else showWindow();
+    });
   });
-});
+}
 
 app.on('before-quit', () => {
   isQuitting = true;
