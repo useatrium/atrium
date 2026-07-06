@@ -4,6 +4,12 @@ import { ApiError } from '../api';
 import { sessionsApi } from './api';
 import type { SessionSuggestion } from './types';
 
+type OptimisticSuggestionSend = {
+  suggestion: SessionSuggestion;
+  text: string;
+  edited: boolean;
+};
+
 /**
  * The suggestion queue: one quiet grouped object above the composer. Visible to
  * everyone (the queue teaches good steers); only the driver gets the Send /
@@ -14,12 +20,16 @@ export function SuggestionStrip({
   suggestions,
   isDriver,
   nameFor,
+  onOptimisticSend,
+  onOptimisticSendFailed,
   onActionError = () => {},
 }: {
   sessionId: string;
   suggestions: SessionSuggestion[];
   isDriver: boolean;
   nameFor: (id: string | null) => string;
+  onOptimisticSend?: (input: OptimisticSuggestionSend) => string | undefined;
+  onOptimisticSendFailed?: (pendingId: string) => void;
   onActionError?: (err: unknown) => void;
 }) {
   return (
@@ -38,6 +48,8 @@ export function SuggestionStrip({
             suggestion={suggestion}
             isDriver={isDriver}
             authorName={suggestion.authorName ?? nameFor(suggestion.authorId)}
+            onOptimisticSend={onOptimisticSend}
+            onOptimisticSendFailed={onOptimisticSendFailed}
             onActionError={onActionError}
           />
         ))}
@@ -51,12 +63,16 @@ function SuggestionRow({
   suggestion,
   isDriver,
   authorName,
+  onOptimisticSend,
+  onOptimisticSendFailed,
   onActionError,
 }: {
   sessionId: string;
   suggestion: SessionSuggestion;
   isDriver: boolean;
   authorName: string;
+  onOptimisticSend?: (input: OptimisticSuggestionSend) => string | undefined;
+  onOptimisticSendFailed?: (pendingId: string) => void;
   onActionError: (err: unknown) => void;
 }) {
   const [mode, setMode] = useState<'idle' | 'editing' | 'dismissing'>('idle');
@@ -77,11 +93,21 @@ function SuggestionRow({
   // row disabled with no way to retry.
   const resolve = (action: 'send' | 'dismiss', opts: { text?: string; note?: string } = {}) => {
     if (busy) return;
+    const sentText = action === 'send' ? (opts.text ?? suggestion.text) : null;
+    const optimisticId =
+      sentText != null
+        ? onOptimisticSend?.({
+            suggestion,
+            text: sentText,
+            edited: opts.text !== undefined && sentText !== suggestion.text,
+          })
+        : undefined;
     setBusy(true);
     setError(null);
     sessionsApi
       .resolveSuggestion(sessionId, suggestion.id, action, opts, randomId())
       .catch((err: unknown) => {
+        if (optimisticId) onOptimisticSendFailed?.(optimisticId);
         onActionError(err);
         const fallback = action === 'send' ? "Couldn't send — try again." : "Couldn't dismiss — try again.";
         setError(err instanceof ApiError && err.message ? err.message : fallback);
