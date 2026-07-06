@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 import { Stack, router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { useVoIPPushToken } from 'expo-callkit-telecom';
@@ -12,7 +12,7 @@ import {
 } from '../../src/lib/notifications';
 import { useTheme } from '../../src/lib/theme';
 import { NATIVE_CALL_UI } from '../../src/lib/nativeCallUi';
-import { GlobalCallUI } from '../../src/components/GlobalCallUI';
+import { CallBannerLayout } from '../../src/components/GlobalCallUI';
 import { useBadgeSync } from '../../src/lib/useBadgeSync';
 
 // The tap that cold-started the app fires before any listener exists; track
@@ -128,8 +128,7 @@ export default function AppLayout() {
     <ChatProvider session={session}>
       <PushBridge />
       <BadgeSyncBridge />
-      <View style={{ flex: 1 }}>
-        <GlobalCallUI />
+      <CallBannerLayout>
         <Stack
           screenOptions={{
             headerStyle: { backgroundColor: colors.bg },
@@ -139,26 +138,26 @@ export default function AppLayout() {
             contentStyle: { backgroundColor: colors.bg },
           }}
         >
-        {/* The tab group owns its own (glass) bar + per-tab headers. */}
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="channel/[id]" options={{ title: '' }} />
-        <Stack.Screen name="session/[id]" options={{ title: '' }} />
-        <Stack.Screen name="thread/[rootId]" options={{ title: 'Thread' }} />
-        <Stack.Screen
-          name="session-search"
-          options={{ title: 'Search sessions', presentation: 'modal' }}
-        />
-        <Stack.Screen
-          name="new-dm"
-          options={{ title: 'New message', presentation: 'modal' }}
-        />
-        <Stack.Screen
-          name="new-channel"
-          options={{ title: 'New channel', presentation: 'modal' }}
-        />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+          {/* The tab group owns its own (glass) bar + per-tab headers. */}
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="channel/[id]" options={{ title: '' }} />
+          <Stack.Screen name="session/[id]" options={{ title: '' }} />
+          <Stack.Screen name="thread/[rootId]" options={{ title: 'Thread' }} />
+          <Stack.Screen
+            name="session-search"
+            options={{ title: 'Search sessions', presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="new-dm"
+            options={{ title: 'New message', presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="new-channel"
+            options={{ title: 'New channel', presentation: 'modal' }}
+          />
+          <Stack.Screen name="settings" options={{ title: 'Settings' }} />
         </Stack>
-      </View>
+      </CallBannerLayout>
     </ChatProvider>
   );
 }

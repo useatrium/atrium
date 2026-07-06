@@ -10,6 +10,7 @@ import {
 } from 'livekit-client';
 import type { CallEvent, CallJoin, CallWire, UserRef } from '@atrium/surface-client';
 import { ApiError, api, type Channel } from './api';
+import { desktopApiOptions } from './desktop';
 
 export interface RemoteAudioTrackRef {
   key: string;
@@ -31,6 +32,11 @@ const AUDIO_CAPTURE_OPTIONS = {
   noiseSuppression: true,
   autoGainControl: true,
 };
+const RING_TIMEOUT_MS = 45_000;
+
+function callLeavePath(callId: string): string {
+  return `/api/calls/${encodeURIComponent(callId)}/leave`;
+}
 
 function fallbackUser(identity: string): UserRef {
   return { id: identity, handle: identity, displayName: identity };
@@ -328,6 +334,8 @@ export function useCall(me: UserRef, channels: Channel[]) {
         roomRef.current = null;
         connectPromiseRef.current = null;
         if (intentionalDisconnectRef.current) return;
+        const current = activeCallRef.current;
+        if (current) void api.leaveCall(current.call.id).catch(() => {});
         setActiveCall(null);
         setNotice('Call disconnected.');
       };
@@ -715,6 +723,65 @@ export function useCall(me: UserRef, channels: Channel[]) {
       setNotice("Couldn't leave the call cleanly.");
     }
   }, [clearRoom, me]);
+
+  const activeCallId = activeCall?.call.id ?? null;
+  const activeCallStatus = activeCall?.call.status ?? null;
+  const activeRemoteCount = activeCall
+    ? activeCall.participants.filter((participant) => participant.id !== me.id).length
+    : 0;
+
+  useEffect(() => {
+    if (!activeCallId) return;
+
+    const leaveOnPageHide = () => {
+      const options = desktopApiOptions();
+      const base = (options?.baseUrl ?? '').replace(/\/+$/, '');
+      const token = options?.getToken?.() ?? null;
+      const url = `${base}${callLeavePath(activeCallId)}`;
+      const body = '{}';
+
+      if (!token && typeof navigator.sendBeacon === 'function') {
+        const payload = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon(url, payload)) return;
+      }
+
+      void fetch(url, {
+        method: 'POST',
+        keepalive: true,
+        credentials: 'same-origin',
+        body,
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+      }).catch(() => {});
+    };
+
+    window.addEventListener('pagehide', leaveOnPageHide);
+    return () => window.removeEventListener('pagehide', leaveOnPageHide);
+  }, [activeCallId]);
+
+  useEffect(() => {
+    if (!activeCallId || activeCallStatus !== 'ringing' || activeRemoteCount !== 0) return;
+
+    const timeout = window.setTimeout(() => {
+      const current = activeCallRef.current;
+      const remoteCount = current
+        ? current.participants.filter((participant) => participant.id !== me.id).length
+        : 0;
+      if (
+        current?.call.id !== activeCallId ||
+        current.call.status !== 'ringing' ||
+        remoteCount !== 0
+      ) {
+        return;
+      }
+      setNotice('No answer.');
+      void leaveActiveCall();
+    }, RING_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeCallId, activeCallStatus, activeRemoteCount, leaveActiveCall, me.id]);
 
   useEffect(() => () => clearRoom(), [clearRoom]);
 

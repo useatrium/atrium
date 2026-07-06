@@ -10,7 +10,7 @@ import { withTx } from '../db.js';
 import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
 import { canAccessChannel, DomainError, type UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
-import type { CallTokenService } from '../livekit.js';
+import { createLiveKitWebhookReceiver, type CallTokenService } from '../livekit.js';
 import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
 import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
@@ -20,6 +20,8 @@ export interface CallRouteDeps {
   pool: Db;
   hub: WsHub;
   calls: CallTokenService | null;
+  livekitApiKey?: string;
+  livekitApiSecret?: string;
   voip: VoipPushSender;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   optionalOpId(body: unknown): string | undefined;
@@ -87,8 +89,170 @@ async function activeCallById(
   return call.rows[0] ?? null;
 }
 
+interface ParticipantLeftResult {
+  callId: string;
+  recipients: string[];
+  ended: boolean;
+  left: boolean;
+}
+
+interface EndCallResult {
+  callId: string;
+  recipients: string[];
+  ended: boolean;
+}
+
+type LiveKitWebhookEvent = {
+  event?: string;
+  room?: { name?: string };
+  participant?: { identity?: string };
+};
+
+type LiveKitWebhookResult =
+  | { type: 'participant_left'; result: ParticipantLeftResult }
+  | { type: 'room_finished'; result: EndCallResult };
+
+function callIdFromLiveKitRoom(roomName: string | undefined): string | null {
+  if (!roomName?.startsWith('call:')) return null;
+  const callId = roomName.slice('call:'.length);
+  return isUuid(callId) ? callId : null;
+}
+
+async function markParticipantLeftInCall(
+  client: DbClient,
+  call: Pick<CallRow, 'id' | 'channel_id'>,
+  userId: string,
+): Promise<ParticipantLeftResult> {
+  const left = await client.query(
+    `UPDATE call_participants
+     SET left_at = now()
+     WHERE call_id = $1 AND user_id = $2 AND left_at IS NULL
+     RETURNING 1`,
+    [call.id, userId],
+  );
+  // Not an active participant (never joined / already left): no-op, no signal.
+  if ((left.rowCount ?? 0) === 0) {
+    return { callId: call.id, recipients: [], ended: false, left: false };
+  }
+  const remaining = await client.query<{ count: string }>(
+    'SELECT COUNT(*) FROM call_participants WHERE call_id = $1 AND left_at IS NULL',
+    [call.id],
+  );
+  const shouldEnd = Number(remaining.rows[0]!.count) === 0;
+  let ended = false;
+  if (shouldEnd) {
+    const updated = await client.query(
+      `UPDATE calls
+       SET status = 'ended', ended_at = COALESCE(ended_at, now())
+       WHERE id = $1 AND status <> 'ended'
+       RETURNING 1`,
+      [call.id],
+    );
+    ended = (updated.rowCount ?? 0) > 0;
+  }
+  return {
+    callId: call.id,
+    recipients: await channelRecipientIds(client, call.channel_id),
+    ended,
+    left: true,
+  };
+}
+
+async function markParticipantLeft(
+  client: DbClient,
+  callId: string,
+  userId: string,
+): Promise<ParticipantLeftResult | null> {
+  const call = await activeCallById(client, callId);
+  if (!call) return null;
+  return markParticipantLeftInCall(client, call, userId);
+}
+
+async function endCall(client: DbClient, callId: string): Promise<EndCallResult | null> {
+  const call = await activeCallById(client, callId);
+  if (!call) return null;
+  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [
+    call.id,
+  ]);
+  const ended = await client.query(
+    `UPDATE calls
+     SET status = 'ended', ended_at = COALESCE(ended_at, now())
+     WHERE id = $1 AND status <> 'ended'
+     RETURNING 1`,
+    [call.id],
+  );
+  if ((ended.rowCount ?? 0) === 0) {
+    return { callId: call.id, recipients: [], ended: false };
+  }
+  return {
+    callId: call.id,
+    recipients: await channelRecipientIds(client, call.channel_id),
+    ended: true,
+  };
+}
+
+async function reconcileLiveKitWebhookEvent(
+  client: DbClient,
+  event: LiveKitWebhookEvent,
+): Promise<LiveKitWebhookResult | null> {
+  const callId = callIdFromLiveKitRoom(event.room?.name);
+  if (!callId) return null;
+  if (event.event === 'room_finished') {
+    const result = await endCall(client, callId);
+    return result?.ended ? { type: 'room_finished', result } : null;
+  }
+  if (event.event === 'participant_left') {
+    const userId = event.participant?.identity;
+    if (!userId || !isUuid(userId)) return null;
+    const result = await markParticipantLeft(client, callId, userId);
+    return result ? { type: 'participant_left', result } : null;
+  }
+  return null;
+}
+
 export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): void {
   const { pool, hub, calls, voip, requireUser, optionalOpId, runMutation } = deps;
+  const livekitWebhookReceiver = createLiveKitWebhookReceiver({
+    livekitApiKey: deps.livekitApiKey ?? '',
+    livekitApiSecret: deps.livekitApiSecret ?? '',
+  });
+
+  if (livekitWebhookReceiver) {
+    app.addContentTypeParser(
+      'application/webhook+json',
+      { parseAs: 'string' },
+      (_req, body, done) => done(null, body),
+    );
+
+    app.post('/api/calls/webhook', async (req, reply) => {
+      const rawBody = typeof req.body === 'string' ? req.body : '';
+      let event: LiveKitWebhookEvent;
+      try {
+        event = await livekitWebhookReceiver.receive(rawBody, req.headers.authorization);
+      } catch (err) {
+        app.log.warn({ err }, 'livekit webhook verification failed');
+        return reply
+          .code(401)
+          .send({ error: 'unauthorized', message: 'invalid LiveKit webhook signature' });
+      }
+
+      const result = await withTx(pool, (client) => reconcileLiveKitWebhookEvent(client, event));
+      if (result?.type === 'participant_left' && result.result.left) {
+        hub.publishCallToUsers(result.result.recipients, {
+          type: 'call.participant_left',
+          callId: result.result.callId,
+          userId: event.participant!.identity!,
+        });
+      }
+      if (result?.result.ended) {
+        hub.publishCallToUsers(result.result.recipients, {
+          type: 'call.ended',
+          callId: result.result.callId,
+        });
+      }
+      return { ok: true };
+    });
+  }
 
   app.get('/api/calls/active', async (req, reply) => {
     const user = requireUser(req, reply);
@@ -310,34 +474,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
       if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
         throw new DomainError(404, 'call_not_found', 'call not found');
       }
-      const left = await client.query(
-        `UPDATE call_participants
-         SET left_at = now()
-         WHERE call_id = $1 AND user_id = $2 AND left_at IS NULL
-         RETURNING 1`,
-        [call.id, user.id],
-      );
-      // Not an active participant (never joined / already left): no-op, no signal.
-      if ((left.rowCount ?? 0) === 0) {
-        return { callId: call.id, recipients: [] as string[], ended: false, left: false };
-      }
-      const remaining = await client.query<{ count: string }>(
-        'SELECT COUNT(*) FROM call_participants WHERE call_id = $1 AND left_at IS NULL',
-        [call.id],
-      );
-      const ended = Number(remaining.rows[0]!.count) === 0;
-      if (ended) {
-        await client.query(
-          "UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1",
-          [call.id],
-        );
-      }
-      return {
-        callId: call.id,
-        recipients: await channelRecipientIds(client, call.channel_id),
-        ended,
-        left: true,
-      };
+      return markParticipantLeftInCall(client, call, user.id);
     });
     if (result.left) {
       hub.publishCallToUsers(result.recipients, {

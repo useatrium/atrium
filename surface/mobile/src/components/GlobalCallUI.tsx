@@ -1,9 +1,51 @@
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CallWire, Channel, UserRef } from '@atrium/surface-client';
 import { useChat } from '../lib/chat';
 import { labelForCallChannel } from '../lib/useCall';
 import { CallNotice, InCallPanel, IncomingCallBanner, JoinCallStrip } from './CallUI';
+
+type CallState = ReturnType<typeof useChat>['calls'];
+
+function hasCallBanner(calls: CallState): boolean {
+  return !!(calls.notice || calls.incomingCall || calls.activeCall || calls.recoverableCall);
+}
+
+function CallBannerSafeArea({
+  children,
+  hasBanner,
+}: {
+  children: ReactNode;
+  hasBanner: boolean;
+}) {
+  return (
+    <SafeAreaInsetsContext.Consumer>
+      {(insets) => (
+        <SafeAreaInsetsContext.Provider
+          value={{
+            top: hasBanner ? 0 : (insets?.top ?? 0),
+            bottom: insets?.bottom ?? 0,
+            left: insets?.left ?? 0,
+            right: insets?.right ?? 0,
+          }}
+        >
+          {children}
+        </SafeAreaInsetsContext.Provider>
+      )}
+    </SafeAreaInsetsContext.Consumer>
+  );
+}
+
+export function CallBannerLayout({ children }: { children: ReactNode }) {
+  const { calls } = useChat();
+  return (
+    <View style={{ flex: 1 }}>
+      <GlobalCallUI />
+      <CallBannerSafeArea hasBanner={hasCallBanner(calls)}>{children}</CallBannerSafeArea>
+    </View>
+  );
+}
 
 function fallbackUser(id: string): UserRef {
   return { id, handle: id, displayName: id };
@@ -26,7 +68,7 @@ export function GlobalCallUI() {
   const { state, me, calls } = useChat();
   const insets = useSafeAreaInsets();
 
-  if (!calls.notice && !calls.incomingCall && !calls.activeCall && !calls.recoverableCall) {
+  if (!hasCallBanner(calls)) {
     return null;
   }
 

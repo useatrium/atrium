@@ -1741,36 +1741,45 @@ export function Chat({
             )}
           </header>
 
-          {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
-          {showIncomingCallBanner && calls.incomingCall && incomingCaller && (
-            <IncomingCallBanner
-              call={calls.incomingCall}
-              caller={incomingCaller}
-              channelName={incomingChannelName}
-              answering={calls.answering}
-              onAccept={() => void calls.acceptIncomingCall()}
-              onDecline={() => void calls.declineIncomingCall()}
-            />
-          )}
-          {activeChannelLiveCall && activeChannelLiveCaller && !calls.activeCall && (
-            <ChannelCallStrip
-              call={activeChannelLiveCall}
-              caller={activeChannelLiveCaller}
-              channelName={activeChannelLiveCallName}
-              meId={me.id}
-              joining={calls.answering}
-              onJoin={() => void calls.joinCall(activeChannelLiveCall.id)}
-              onDecline={() => void calls.declineCall(activeChannelLiveCall.id)}
-            />
-          )}
-          {calls.activeCall && (
-            <InCallPanel
-              call={calls.activeCall}
-              meId={me.id}
-              channelName={activeCallChannelName}
-              onToggleMute={() => void calls.toggleMute()}
-              onLeave={() => void calls.leaveActiveCall()}
-            />
+          {Boolean(
+            calls.notice ||
+              (showIncomingCallBanner && calls.incomingCall && incomingCaller) ||
+              (activeChannelLiveCall && activeChannelLiveCaller && !calls.activeCall) ||
+              calls.activeCall,
+          ) && (
+            <div className="shrink-0 divide-y divide-edge border-b border-edge bg-surface-raised/70">
+              {calls.notice && <CallNotice message={calls.notice} onDismiss={calls.clearNotice} />}
+              {showIncomingCallBanner && calls.incomingCall && incomingCaller && (
+                <IncomingCallBanner
+                  call={calls.incomingCall}
+                  caller={incomingCaller}
+                  channelName={incomingChannelName}
+                  answering={calls.answering}
+                  onAccept={() => void calls.acceptIncomingCall()}
+                  onDecline={() => void calls.declineIncomingCall()}
+                />
+              )}
+              {activeChannelLiveCall && activeChannelLiveCaller && !calls.activeCall && (
+                <ChannelCallStrip
+                  call={activeChannelLiveCall}
+                  caller={activeChannelLiveCaller}
+                  channelName={activeChannelLiveCallName}
+                  meId={me.id}
+                  joining={calls.answering}
+                  onJoin={() => void calls.joinCall(activeChannelLiveCall.id)}
+                  onDecline={() => void calls.declineCall(activeChannelLiveCall.id)}
+                />
+              )}
+              {calls.activeCall && (
+                <InCallPanel
+                  call={calls.activeCall}
+                  meId={me.id}
+                  channelName={activeCallChannelName}
+                  onToggleMute={() => void calls.toggleMute()}
+                  onLeave={() => void calls.leaveActiveCall()}
+                />
+              )}
+            </div>
           )}
 
           {queueStatusText && (
