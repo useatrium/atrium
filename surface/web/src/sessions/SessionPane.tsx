@@ -1049,7 +1049,10 @@ export function SessionPane({
       )}
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3 max-md:h-auto max-md:min-h-12 max-md:flex-wrap max-md:gap-1 max-md:px-2 max-md:py-1.5">
         <StatusChip status={displayStatus} stalled={stalled} />
-        <div className="min-w-0 flex-1">
+        {/* On a phone the title+metadata drop to their own full-width row below the
+            compact status/actions row, so the title stays readable instead of being
+            squeezed to a couple of characters. Desktop keeps the inline flex-1 block. */}
+        <div className="min-w-0 flex-1 max-md:order-last max-md:mt-1 max-md:basis-full">
           <h2 className="truncate text-sm font-semibold text-fg" title={session.title}>
             {session.title}
           </h2>
