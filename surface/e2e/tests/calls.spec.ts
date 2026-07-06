@@ -111,8 +111,11 @@ test('active call recovery shows ringing and rejoin affordances after navigation
 
     await activateCall(callId, bobId);
     await page.reload();
-    await expect(page.getByRole('heading', { name: '# general' })).toBeVisible();
-    await openChannel(page, room);
+    // URL is the source of truth: reload restores the call channel directly
+    // (previously the channel wasn't in the URL, so reload dropped back to
+    // #general and the room had to be re-opened). Recovery affordances must
+    // still surface for the restored channel.
+    await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
     await expect(page.getByText('Live call')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Rejoin' })).toBeVisible();
   } finally {
