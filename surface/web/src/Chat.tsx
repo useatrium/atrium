@@ -19,6 +19,7 @@ import { showNotification } from './notify';
 import { emptyTimeline, type UserRef, type WireEvent } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
+import { AgentsSurface } from './components/AgentsSurface';
 import { ActivityView } from './components/ActivityView';
 import { labelForCallChannel, userForCall } from './callPresentation';
 import { notificationForWireEvent } from './chatNotifications';
@@ -34,6 +35,7 @@ import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwitcher';
+import { SettingsSurface } from './components/SettingsSurface';
 import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
@@ -469,7 +471,6 @@ export function Chat({
   const initialPropRouteAppliedRef = useRef(false);
   const [channelMemberCache, setChannelMemberCache] = useState<Record<string, UserRef[]>>({});
   const channelMemberRequestsRef = useRef<Set<string>>(new Set());
-  const [settingsRequestSeq, setSettingsRequestSeq] = useState(0);
   const [createChannelRequestSeq, setCreateChannelRequestSeq] = useState(0);
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
@@ -1048,6 +1049,14 @@ export function Chat({
     goToRoute({ surface: 'activity', channelId: null, sessionId: null, focusSession: false });
   }, [goToRoute]);
 
+  const openAgentsSurface = useCallback(() => {
+    goToRoute({ surface: 'agents', channelId: null, sessionId: null, focusSession: false });
+  }, [goToRoute]);
+
+  const openSettingsSurface = useCallback(() => {
+    goToRoute({ surface: 'settings', channelId: null, sessionId: null, focusSession: false });
+  }, [goToRoute]);
+
   const openChatSurface = useCallback(() => {
     const channelId = stateRef.current.activeChannelId;
     goToRoute({
@@ -1226,7 +1235,7 @@ export function Chat({
         return;
       }
       // === mentions-activity additions ===
-      if (mainSurface === 'files' || mainSurface === 'activity') {
+      if (mainSurface !== 'chat') {
         openChatSurface();
         return;
       }
@@ -1341,6 +1350,15 @@ export function Chat({
         run: openFilesSurface,
       },
       {
+        id: 'open-agents',
+        label: 'Open Agents',
+        subtitle: 'Browse agent sessions',
+        group: 'Navigate',
+        keywords: ['agents', 'sessions', 'tasks', 'workspace'],
+        icon: <span className="text-xs font-bold leading-none">A</span>,
+        run: openAgentsSurface,
+      },
+      {
         id: 'open-activity',
         label: 'Open Activity',
         subtitle: 'Review mentions and updates',
@@ -1351,7 +1369,7 @@ export function Chat({
       },
     );
 
-    if (mainSurface === 'files' || mainSurface === 'activity') {
+    if (mainSurface !== 'chat') {
       list.push({
         id: 'back-to-chat',
         label: 'Back to Chat',
@@ -1383,10 +1401,7 @@ export function Chat({
         group: 'Workspace',
         keywords: ['settings', 'preferences', 'theme', 'notifications', 'connections'],
         icon: <GearIcon size={14} />,
-        run: () => {
-          if (isMobileViewport) setIsSidebarOpen(true);
-          setSettingsRequestSeq((n) => n + 1);
-        },
+        run: openSettingsSurface,
       },
       {
         id: 'create-channel',
@@ -1453,8 +1468,10 @@ export function Chat({
     mainSurface,
     me.id,
     openActivitySurface,
+    openAgentsSurface,
     openChatSurface,
     openFilesSurface,
+    openSettingsSurface,
     providerCredentials,
     startDemoSession,
     startVoiceCallForActiveChannel,
@@ -1464,8 +1481,11 @@ export function Chat({
   const showFilesSurface = mainSurface === 'files';
   // === mentions-activity additions ===
   const showActivitySurface = mainSurface === 'activity';
+  const showAgentsSurface = mainSurface === 'agents';
+  const showSettingsSurface = mainSurface === 'settings';
+  const showNonChatSurface = mainSurface !== 'chat';
   const activeChannelLiveCall =
-    !showFilesSurface && !showActivitySurface && active ? calls.liveCallForChannel(active.id) : null;
+    !showNonChatSurface && active ? calls.liveCallForChannel(active.id) : null;
   const activeChannelLiveCaller = activeChannelLiveCall
     ? userForCall(activeChannelLiveCall, state.channels, activeChannelLiveCall.initiatorId)
     : null;
@@ -1508,21 +1528,23 @@ export function Chat({
           openFilesSurface();
           setIsSidebarOpen(false);
         }}
+        onOpenAgents={() => {
+          openAgentsSurface();
+          setIsSidebarOpen(false);
+        }}
         // === mentions-activity additions ===
         onOpenActivity={() => {
           openActivitySurface();
           setIsSidebarOpen(false);
         }}
+        onOpenSettings={() => {
+          openSettingsSurface();
+          setIsSidebarOpen(false);
+        }}
         sessionEventSeq={sessionEventSeq}
-        githubConnection={githubConnection}
-        connectionsAvailable={connectionsAvailable}
-        providerCredentials={providerCredentials}
-        onConnectGitHub={() => setConnectionDialog('github')}
-        onConnectProvider={setProviderDialog}
         onLogout={onLogout}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
-        settingsRequestSeq={settingsRequestSeq}
         createChannelRequestSeq={createChannelRequestSeq}
         startDmRequestSeq={startDmRequestSeq}
       />
@@ -1545,14 +1567,30 @@ export function Chat({
             <h1
               className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none"
               aria-label={
-                showActivitySurface
-                  ? 'Activity'
-                  : showFilesSurface
-                    ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
-                    : undefined
+                showSettingsSurface
+                  ? 'Settings'
+                  : showAgentsSurface
+                    ? 'Agents'
+                    : showActivitySurface
+                      ? 'Activity'
+                      : showFilesSurface
+                        ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
+                        : undefined
               }
             >
-              {showActivitySurface ? (
+              {showSettingsSurface ? (
+                <>
+                  <GearIcon size={16} className="shrink-0 text-fg-muted" />
+                  <span className="truncate">Settings</span>
+                </>
+              ) : showAgentsSurface ? (
+                <>
+                  <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
+                    A
+                  </span>
+                  <span className="truncate">Agents</span>
+                </>
+              ) : showActivitySurface ? (
                 // === mentions-activity additions ===
                 <>
                   <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
@@ -1589,13 +1627,12 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showFilesSurface &&
-              !showActivitySurface &&
+            {!showNonChatSurface &&
               active &&
               (active.kind === 'private' || active.kind === 'gdm') && (
                 <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
               )}
-            {showFilesSurface || showActivitySurface ? (
+            {showNonChatSurface ? (
               <button
                 type="button"
                 onClick={openChatSurface}
@@ -1624,7 +1661,7 @@ export function Chat({
                 </button>
               </Tooltip>
             )}
-            {!showFilesSurface && !showActivitySurface && state.openSessionId && (
+            {!showNonChatSurface && state.openSessionId && (
               <div className="hidden md:flex">
                 <ViewToggle view={view} hasSession onSetView={setView} />
               </div>
@@ -1632,7 +1669,7 @@ export function Chat({
             {/* Calls unconfigured: keep the phone visible but grayed with a setup
               hint (tooltip + click), so the feature is discoverable instead of
               hidden — rather than a dead button that fails on click. */}
-            {!showFilesSurface && !showActivitySurface && (
+            {!showNonChatSurface && (
               <Tooltip content={voiceCallTooltip}>
                 <button
                   type="button"
@@ -1669,7 +1706,7 @@ export function Chat({
                 </kbd>
               </button>
             </Tooltip>
-            {!showFilesSurface && presentUsers.length > 0 && (
+            {!showNonChatSurface && presentUsers.length > 0 && (
               <div className="hidden items-center gap-2 md:flex" title="Viewing this channel right now">
                 <div className="flex -space-x-1.5">
                   {presentUsers.slice(0, 8).map((u) => (
@@ -1729,7 +1766,25 @@ export function Chat({
             </div>
           )}
 
-          {showActivitySurface ? (
+          {showSettingsSurface ? (
+            <SettingsSurface
+              githubConnection={githubConnection}
+              connectionsAvailable={connectionsAvailable}
+              claudeStatus={providerCredentials['claude-code']}
+              codexStatus={providerCredentials.codex}
+              onConnectGitHub={() => setConnectionDialog('github')}
+              onConnectClaude={() => setProviderDialog('claude-code')}
+              onConnectCodex={() => setProviderDialog('codex')}
+            />
+          ) : showAgentsSurface ? (
+            <AgentsSurface
+              liveSessions={state.sessions}
+              refreshKey={sessionEventSeq}
+              onOpenSession={(sessionId) => {
+                openSession(sessionId);
+              }}
+            />
+          ) : showActivitySurface ? (
             // === mentions-activity additions ===
             <ActivityView
               onSelectChannel={(channelId) => {
@@ -1790,7 +1845,7 @@ export function Chat({
             views (this block is already inside `view !== 'focus'`). Gating it on
             `!openSessionId` used to blank the composer in split view, leaving the
             channel with no way to type. */}
-          {active && !showFilesSurface && !showActivitySurface && (
+          {active && !showNonChatSurface && (
             <>
               <TypingLine typing={typing} />
               <Composer

@@ -43,6 +43,8 @@ describe('router', () => {
     });
     expect(parseInAppRoute('/files')).toMatchObject({ surface: 'files' });
     expect(parseInAppRoute('/activity')).toMatchObject({ surface: 'activity' });
+    expect(parseInAppRoute('/agents')).toMatchObject({ surface: 'agents' });
+    expect(parseInAppRoute('/settings')).toMatchObject({ surface: 'settings' });
     expect(parseInAppRoute('/s/sess_1/pane')).toBeNull();
   });
 
@@ -56,6 +58,8 @@ describe('router', () => {
     expect(routePath({ surface: 'activity', channelId: null, sessionId: null, focusSession: false })).toBe(
       '/activity',
     );
+    expect(routePath({ surface: 'agents', channelId: null, sessionId: null, focusSession: false })).toBe('/agents');
+    expect(routePath({ surface: 'settings', channelId: null, sessionId: null, focusSession: false })).toBe('/settings');
   });
 
   it('notifies useLocation for navigate and popstate changes', async () => {
