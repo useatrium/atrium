@@ -30,4 +30,7 @@ contextBridge.exposeInMainWorld('atrium', {
   clearSession: (): Promise<void> => ipcRenderer.invoke('atrium:session:clear'),
   /** Set the dock/taskbar unread badge (0 clears it). */
   setBadge: (count: number): Promise<void> => ipcRenderer.invoke('atrium:badge', count),
+  /** Open or focus the detached pane window for a session. */
+  openSessionPopout: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke('atrium:open-session-popout', sessionId).then(() => undefined),
 });

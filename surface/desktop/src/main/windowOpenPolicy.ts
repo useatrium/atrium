@@ -5,7 +5,27 @@ export interface WindowOpenPolicyContext {
   devOrigin: string | null;
 }
 
-const SESSION_PANE_PATH = /^\/s\/[^/]+\/pane$/;
+export type RegisteredPopoutState = 'missing' | 'live' | 'destroyed';
+
+export type SessionPopoutOpenDecision =
+  | { action: 'create'; sessionId: string }
+  | { action: 'focus'; sessionId: string }
+  | { action: 'deny' };
+
+const SESSION_PANE_PATH = /^\/s\/([^/]+)\/pane$/;
+
+export function sessionIdFromPanePath(pathname: string): string | null {
+  return SESSION_PANE_PATH.exec(pathname)?.[1] ?? null;
+}
+
+export function resolveSessionPopoutOpen(
+  sessionId: string | null,
+  existingWindow: RegisteredPopoutState,
+): SessionPopoutOpenDecision {
+  if (!sessionId) return { action: 'deny' };
+  if (existingWindow === 'live') return { action: 'focus', sessionId };
+  return { action: 'create', sessionId };
+}
 
 function comparableOrigin(url: URL): string {
   return url.origin === 'null' ? `${url.protocol}//${url.host}` : url.origin;
@@ -35,7 +55,7 @@ export function resolveWindowOpen(url: string, ctx: WindowOpenPolicyContext): Wi
   const isDevOrigin = devOrigin !== null && urlOrigin === devOrigin;
   const isKnownOrigin = isAppOrigin || isDevOrigin;
 
-  if (isKnownOrigin && SESSION_PANE_PATH.test(parsed.pathname)) {
+  if (isKnownOrigin && sessionIdFromPanePath(parsed.pathname)) {
     return { kind: 'popout' };
   }
 
