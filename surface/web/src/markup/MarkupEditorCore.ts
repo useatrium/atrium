@@ -104,6 +104,10 @@ export function findCodeBlockAtSelection(state: EditorState): { node: ProseMirro
 export function documentHasMarkup(doc: ProseMirrorNode): boolean {
   let found = false;
   doc.descendants((node) => {
+    if (node.type.name === 'comment_pin') {
+      found = true;
+      return false;
+    }
     if (node.type.name === 'code_block' && typeof node.attrs.comment === 'string' && node.attrs.comment.length > 0) {
       found = true;
       return false;
@@ -161,6 +165,12 @@ export function createDeletionTransaction(
   let to = selection.to;
 
   if (selection.empty) {
+    const pinRange = commentPinRangeAdjacentToSelection(state, direction);
+    if (pinRange) {
+      const transaction = state.tr.delete(pinRange.from, pinRange.to);
+      return transaction.setSelection(TextSelection.create(transaction.doc, pinRange.from));
+    }
+
     const parentOffset = selection.$from.parentOffset;
     if (direction === 'backward') {
       if (parentOffset === 0) {
@@ -181,8 +191,42 @@ export function createDeletionTransaction(
     return null;
   }
 
-  const transaction = state.tr.addMark(from, to, deletion.create());
-  return transaction.setSelection(TextSelection.create(transaction.doc, direction === 'backward' ? from : to));
+  const pinRanges = commentPinRangesBetween(state.doc, from, to);
+  let transaction = state.tr.addMark(from, to, deletion.create());
+  for (const range of pinRanges.sort((left, right) => right.from - left.from)) {
+    transaction = transaction.delete(range.from, range.to);
+  }
+
+  const selectionPos = transaction.mapping.map(direction === 'backward' ? from : to, direction === 'backward' ? -1 : 1);
+  return transaction.setSelection(TextSelection.create(transaction.doc, selectionPos));
+}
+
+function commentPinRangeAdjacentToSelection(
+  state: EditorState,
+  direction: 'backward' | 'forward',
+): { from: number; to: number } | null {
+  const { selection } = state;
+  const node = direction === 'backward' ? selection.$from.nodeBefore : selection.$from.nodeAfter;
+  if (node?.type.name !== 'comment_pin') {
+    return null;
+  }
+
+  if (direction === 'backward') {
+    return { from: selection.from - node.nodeSize, to: selection.from };
+  }
+  return { from: selection.from, to: selection.from + node.nodeSize };
+}
+
+function commentPinRangesBetween(doc: ProseMirrorNode, from: number, to: number): Array<{ from: number; to: number }> {
+  const ranges: Array<{ from: number; to: number }> = [];
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.name === 'comment_pin') {
+      ranges.push({ from: pos, to: pos + node.nodeSize });
+      return false;
+    }
+    return true;
+  });
+  return ranges;
 }
 
 export const applySuggestEdit: (replacement: string) => Command = (replacement) => (state, dispatch) => {

@@ -2,8 +2,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { redo, undo } from 'prosemirror-history';
-import { TextSelection } from 'prosemirror-state';
+import { NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
 
 import {
   createDeletionTransaction,
@@ -34,6 +35,45 @@ describe('MarkupEditorCore suggesting transactions', () => {
     state = state.apply(transaction!);
 
     expect(serializeToCriticMarkup(state.doc)).toBe('Hell{--o--}.');
+  });
+
+  it('deletes a comment pin with backspace instead of creating a tracked deletion', () => {
+    let state = createMarkupEditorState('Hello {>>note<<}world.');
+    const pinPos = findCommentPinPos(state.doc);
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pinPos + 1)));
+    const transaction = createDeletionTransaction(state, 'backward');
+    expect(transaction).not.toBeNull();
+    state = state.apply(transaction!);
+    const serialized = serializeToCriticMarkup(state.doc);
+
+    expect(serialized).toBe('Hello world.');
+    expect(serialized).not.toContain('{--');
+    expect(serialized).not.toContain('{>>note<<}');
+  });
+
+  it('deletes a selected comment pin instead of creating a tracked deletion', () => {
+    let state = createMarkupEditorState('Hello {>>note<<}world.');
+    const pinPos = findCommentPinPos(state.doc);
+    state = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, pinPos)));
+    const transaction = createDeletionTransaction(state, 'forward');
+    expect(transaction).not.toBeNull();
+    state = state.apply(transaction!);
+    const serialized = serializeToCriticMarkup(state.doc);
+
+    expect(serialized).toBe('Hello world.');
+    expect(serialized).not.toContain('{--');
+    expect(serialized).not.toContain('{>>note<<}');
+  });
+
+  it('types next to a comment pin without disturbing the pin', () => {
+    let state = createMarkupEditorState('Hello {>>note<<}world.');
+    const pinPos = findCommentPinPos(state.doc);
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pinPos + 1)));
+    const transaction = createSuggestionTextTransaction(state, state.selection.from, state.selection.to, 'new ');
+    expect(transaction).not.toBeNull();
+    state = state.apply(transaction!);
+
+    expect(serializeToCriticMarkup(state.doc)).toBe('Hello {>>note<<}{++new ++}world.');
   });
 
   it('treats backspace at the start of a paragraph as a no-op', () => {
@@ -81,3 +121,18 @@ describe('MarkupEditorCore suggesting transactions', () => {
     expect(serializeToCriticMarkup(state.doc)).toBe('Hello {~~world~>there~~}.');
   });
 });
+
+function findCommentPinPos(doc: ProseMirrorNode): number {
+  let found: number | null = null;
+  doc.descendants((node, pos) => {
+    if (node.type.name === 'comment_pin') {
+      found = pos;
+      return false;
+    }
+    return true;
+  });
+  if (found === null) {
+    throw new Error('Could not find comment pin');
+  }
+  return found;
+}

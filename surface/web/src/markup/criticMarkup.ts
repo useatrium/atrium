@@ -1,7 +1,7 @@
 import type { Mark, Node as ProseMirrorNode } from 'prosemirror-model';
 
 type InlineSegment = {
-  kind: 'normal' | 'insertion' | 'deletion' | 'comment';
+  kind: 'normal' | 'insertion' | 'deletion' | 'comment' | 'comment-pin';
   text: string;
   comment?: string;
   commentAuthor?: string | null;
@@ -38,6 +38,10 @@ function renderInline(node: ProseMirrorNode, options: SerializeCriticMarkupOptio
     }
     const next = segments[index + 1];
 
+    if (segment.kind === 'comment-pin') {
+      output += `{>>${escapeCriticText(renderStoredCommentPayload(segment.comment || '', segment.commentAuthor))}<<}`;
+      continue;
+    }
     if (segment.kind === 'deletion' && next?.kind === 'insertion') {
       output += `{~~${segment.text}~>${next.text}~~}`;
       index += 1;
@@ -74,6 +78,15 @@ function flattenInline(node: ProseMirrorNode): InlineSegment[] {
       } else {
         appendSegment(segments, { kind: 'normal', text: '\\\n' });
       }
+      return;
+    }
+    if (child.type.name === 'comment_pin') {
+      segments.push({
+        kind: 'comment-pin',
+        text: '',
+        comment: String(child.attrs.comment || ''),
+        commentAuthor: normalizeAuthor(child.attrs.author),
+      });
       return;
     }
     if (child.type.name === 'image') {
@@ -246,6 +259,11 @@ function indentMultiline(value: string, prefix: string): string {
 
 function renderCommentPayload(comment: string, author: string | null | undefined, options: SerializeCriticMarkupOptions): string {
   const resolvedAuthor = normalizeAuthor(author) ?? normalizeAuthor(options.commentAuthor);
+  return resolvedAuthor ? `@${resolvedAuthor}: ${comment}` : comment;
+}
+
+function renderStoredCommentPayload(comment: string, author: string | null | undefined): string {
+  const resolvedAuthor = normalizeAuthor(author);
   return resolvedAuthor ? `@${resolvedAuthor}: ${comment}` : comment;
 }
 

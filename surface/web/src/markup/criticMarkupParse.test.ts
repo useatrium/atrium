@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
 
 import { applyComment, applyStrike, createMarkupEditorState } from './MarkupEditorCore';
 import { parseCriticMarkupToDoc } from './criticMarkupParse';
@@ -12,10 +13,65 @@ describe('parseCriticMarkupToDoc', () => {
     ['deletion', 'Alpha {--beta--} gamma.'],
     ['substitution', 'Alpha {~~beta~>delta~~} gamma.'],
     ['comment', 'Alpha {==beta==}{>>Needs source.<<} gamma.'],
+    ['standalone comment', 'Alpha {>>Needs source.<<} gamma.'],
+    ['standalone authored comment', 'Alpha {>>@gary: Needs source.<<} gamma.'],
     ['multi-line insertion', 'Alpha {++beta\nand delta++} gamma.'],
-    ['mixed document', '# Title\n\nAlpha {--old--} {++new++} and {==note==}{>>Check this.<<}.\n\n- Item {~~one~>two~~}'],
+    [
+      'mixed document',
+      '# Title\n\nAlpha {--old--} {++new++} and {==note==}{>>Check this.<<} {>>Standalone note.<<}.\n\n- Item {~~one~>two~~}',
+    ],
+    [
+      'mixed document with authored standalone comment',
+      'Alpha {++new++} {>>@gary: Pin note.<<} {--old--} and {==span==}{>>Anchored note.<<}.',
+    ],
   ])('round-trips %s markup', (_name, source) => {
     expect(serializeToCriticMarkup(parseCriticMarkupToDoc(source))).toBe(source);
+  });
+
+  it('parses standalone comments as comment pin nodes', () => {
+    const doc = parseCriticMarkupToDoc('Alpha {>>Needs source.<<} gamma.');
+    const pins = commentPins(doc);
+
+    expect(pins).toHaveLength(1);
+    expect(pins[0]?.node.attrs).toMatchObject({ comment: 'Needs source.', author: null });
+    expect(doc.toJSON()).toMatchObject({
+      content: [
+        {
+          content: [
+            { type: 'text', text: 'Alpha ' },
+            { type: 'comment_pin', attrs: { comment: 'Needs source.', author: null } },
+            { type: 'text', text: ' gamma.' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('parses standalone comment author stamps into comment pin attrs', () => {
+    const doc = parseCriticMarkupToDoc('Alpha {>>@gary: Needs source.<<} gamma.');
+    const pins = commentPins(doc);
+
+    expect(pins).toHaveLength(1);
+    expect(pins[0]?.node.attrs).toMatchObject({ comment: 'Needs source.', author: 'gary' });
+  });
+
+  it.each([
+    ['mid-sentence', 'Alpha {>>middle<<} beta.'],
+    ['between paragraphs', 'First.\n\n{>>between<<}\n\nSecond.'],
+    ['at document start', '{>>start<<} Alpha.'],
+    ['at document end', 'Alpha. {>>end<<}'],
+  ])('places standalone comment pins %s', (_name, source) => {
+    const doc = parseCriticMarkupToDoc(source);
+
+    expect(commentPins(doc)).toHaveLength(1);
+    expect(serializeToCriticMarkup(doc)).toBe(source);
+  });
+
+  it('keeps parsed author-less standalone comment pins author-less when serializing with a comment author', () => {
+    const source = 'Alpha {>>Needs source.<<} gamma.';
+    const doc = parseCriticMarkupToDoc(source);
+
+    expect(serializeToCriticMarkup(doc, { commentAuthor: 'agent' })).toBe(source);
   });
 
   it('preserves foreign comment authors and stamps only author-less comments', () => {
@@ -34,6 +90,12 @@ describe('parseCriticMarkupToDoc', () => {
 
   it('round-trips escaped CriticMarkup-looking literals', () => {
     const source = 'Literal \\{++not a suggestion++\\} text and \\{>>not a comment<<\\}.';
+
+    expect(serializeToCriticMarkup(parseCriticMarkupToDoc(source))).toBe(source);
+  });
+
+  it('round-trips escaped standalone-comment-looking literals', () => {
+    const source = 'Literal \\{>>x<<\\} text.';
 
     expect(serializeToCriticMarkup(parseCriticMarkupToDoc(source))).toBe(source);
   });
@@ -125,4 +187,15 @@ function applyCommand(state: EditorState, command: import('prosemirror-state').C
     throw new Error('Command did not apply');
   }
   return nextState;
+}
+
+function commentPins(doc: ProseMirrorNode): Array<{ node: ProseMirrorNode; pos: number }> {
+  const pins: Array<{ node: ProseMirrorNode; pos: number }> = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name === 'comment_pin') {
+      pins.push({ node, pos });
+    }
+    return true;
+  });
+  return pins;
 }

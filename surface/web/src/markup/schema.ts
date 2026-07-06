@@ -64,8 +64,48 @@ const codeBlockWithCommentSpec: NodeSpec = {
   ],
 };
 
+export const commentPinNodeSpec: NodeSpec = {
+  inline: true,
+  atom: true,
+  selectable: true,
+  group: 'inline',
+  marks: '',
+  attrs: {
+    comment: { default: '' },
+    author: { default: null },
+  },
+  parseDOM: [
+    {
+      tag: 'span[data-comment-pin]',
+      getAttrs: (dom) => ({
+        comment: (dom as HTMLElement).getAttribute('data-comment') || '',
+        author: (dom as HTMLElement).getAttribute('data-comment-author') || null,
+      }),
+    },
+  ],
+  toDOM: (node: ProseMirrorNode) => {
+    const comment = String(node.attrs.comment || '');
+    const author = typeof node.attrs.author === 'string' && node.attrs.author.trim() ? node.attrs.author.trim() : null;
+    const title = author ? `@${author.startsWith('@') ? author.slice(1) : author}: ${comment}` : comment;
+    return [
+      'span',
+      {
+        class: 'comment-pin',
+        'data-comment-pin': 'true',
+        'data-comment': comment,
+        'data-comment-author': author || null,
+        title,
+        contenteditable: 'false',
+      },
+      '\u{1F4AC}',
+    ];
+  },
+};
+
 export const markupSchema = new Schema({
-  nodes: markdownSchema.spec.nodes.update('code_block', codeBlockWithCommentSpec),
+  nodes: markdownSchema.spec.nodes.update('code_block', codeBlockWithCommentSpec).append({
+    comment_pin: commentPinNodeSpec,
+  }),
   marks: markdownSchema.spec.marks.append({
     insertion: insertionMarkSpec,
     deletion: deletionMarkSpec,
