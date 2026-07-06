@@ -104,6 +104,7 @@ interface ChatContextValue {
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
     voice?: VoiceSendMeta,
+    broadcast?: boolean,
   ) => void;
   /** Spawn the zero-setup scripted demo agent into a channel (harness "demo"). */
   startDemoSession: (channelId: string) => void;
@@ -354,6 +355,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           text: mobilePayload.text,
           clientMsgId: mobilePayload.clientMsgId,
           threadRootEventId: mobilePayload.threadRootEventId,
+          ...(mobilePayload.broadcast === true ? { broadcast: true } : {}),
           attachments,
           voice: mobilePayload.voice,
           opId: op.opId,
@@ -594,6 +596,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         clientMsgId: msg.clientMsgId,
         channelId: msg.channelId,
         threadRootEventId: msg.threadRootEventId ?? null,
+        ...(msg.broadcast === true ? { broadcast: true } : {}),
         text: msg.text,
         edited: false,
         author: me,
@@ -1180,6 +1183,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       attachments?: AttachmentMeta[],
       attachmentRefs?: AttachmentRef[],
       voice?: VoiceSendMeta,
+      broadcast?: boolean,
     ) => {
       // Attachments can't ride along on a session spawn — let "@agent …"
       // with attachments fall through as a plain message rather than drop them.
@@ -1202,6 +1206,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         clientMsgId,
         channelId,
         threadRootEventId: threadRootEventId ?? null,
+        ...(broadcast === true ? { broadcast: true } : {}),
         text,
         edited: false,
         author: me,
@@ -1226,6 +1231,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         channelId,
         text,
         threadRootEventId,
+        ...(broadcast === true ? { broadcast: true } : {}),
         attachments,
         attachmentRefs,
         createdAt,
@@ -1264,6 +1270,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         m.attachments,
         undefined,
         m.voice ? { durationMs: m.voice.durationMs, waveform: m.voice.waveform } : undefined,
+        m.broadcast === true ? true : undefined,
       );
     },
     [send, spawnSession],

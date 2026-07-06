@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   AttachmentMeta,
   AttachmentRef,
@@ -58,6 +58,7 @@ export function ThreadPanel({
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
     voice?: Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>,
+    broadcast?: boolean,
   ) => void;
   queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   onOpenSession: (sessionId: string) => void;
@@ -74,6 +75,8 @@ export function ThreadPanel({
   onDraftTouched?: (key: string) => void;
 }) {
   const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
+  const alsoSendToChannelId = useId();
+  const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
   const paneSizing = threadPaneSizing(paneWidth);
   const paneMaxWidth =
     typeof window === 'undefined'
@@ -180,9 +183,25 @@ export function ThreadPanel({
           </div>
         )}
       </div>
+      <div className="border-t border-edge bg-surface px-3 pt-2">
+        <label htmlFor={alsoSendToChannelId} className="flex items-center gap-2 text-xs text-fg-secondary">
+          <input
+            id={alsoSendToChannelId}
+            type="checkbox"
+            checked={alsoSendToChannel}
+            onChange={(e) => setAlsoSendToChannel(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-edge-strong bg-surface-raised text-accent focus:ring-accent"
+          />
+          <span className="font-medium">Also send to channel</span>
+          <span className="text-fg-muted">Visible in the channel too</span>
+        </label>
+      </div>
       <Composer
         placeholder="Reply…"
-        onSend={onSend}
+        onSend={(text, attachments, attachmentRefs, voice) => {
+          onSend(text, attachments, attachmentRefs, voice, alsoSendToChannel);
+          setAlsoSendToChannel(false);
+        }}
         queueUpload={queueUpload}
         autoFocus
         agentAware

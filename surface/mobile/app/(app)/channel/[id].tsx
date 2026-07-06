@@ -102,8 +102,9 @@ export default function ChannelScreen() {
 
   const openThread = useCallback(
     (m: ChatMessage) => {
-      if (m.id == null || !id) return;
-      router.push({ pathname: '/thread/[rootId]', params: { rootId: String(m.id), channelId: id } });
+      const threadRootEventId = m.threadRootEventId ?? m.id;
+      if (threadRootEventId == null || !id) return;
+      router.push({ pathname: '/thread/[rootId]', params: { rootId: String(threadRootEventId), channelId: id } });
     },
     [id],
   );

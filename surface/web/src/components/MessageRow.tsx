@@ -175,7 +175,9 @@ export const MessageRow = memo(function MessageRow({
   const dim = m.status === 'pending';
   const failed = m.status === 'failed';
   const deleted = m.deleted === true;
-  const canThread = !inThread && m.id != null && onOpenThread && !deleted;
+  const isBroadcastReplyInMain = !inThread && m.threadRootEventId != null;
+  const threadTargetEventId = isBroadcastReplyInMain ? m.threadRootEventId : m.id;
+  const canThread = !inThread && threadTargetEventId != null && onOpenThread && !deleted;
   const isSessionRow = m.sessionId != null && session != null;
   const isSessionEventRow = m.sessionEventType != null;
   const explicitHandle = (m as MessageWithHandle).handle ?? null;
@@ -413,6 +415,15 @@ export const MessageRow = memo(function MessageRow({
               {formatTime(m.createdAt)}
             </TimestampDisclosure>
           </div>
+        )}
+        {isBroadcastReplyInMain && (
+          <button
+            type="button"
+            onClick={() => onOpenThread?.(m.threadRootEventId!)}
+            className="mb-0.5 text-xs text-fg-muted hover:underline"
+          >
+            ↳ replied to a thread
+          </button>
         )}
         {isSessionEventRow ? (
           <SessionEventCard message={m} onOpenSession={onOpenSession} />
@@ -733,7 +744,7 @@ export const MessageRow = memo(function MessageRow({
               <Tooltip content="Reply in thread">
                 <button
                   type="button"
-                  onClick={() => onOpenThread!(m.id!)}
+                  onClick={() => onOpenThread!(threadTargetEventId!)}
                   aria-label="Reply in thread"
                   className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
                 >

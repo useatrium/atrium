@@ -1972,8 +1972,8 @@ export function Chat({
               meId={me.id}
               meHandle={me.handle}
               onClose={() => dispatch({ type: 'close-thread' })}
-              onSend={(text, attachments, attachmentRefs, voice) =>
-                send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice)
+              onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
+                send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
               }
               queueUpload={queueUpload}
               onOpenSession={openSession}
