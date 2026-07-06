@@ -230,7 +230,7 @@ export function VersionHistoryPanel({
 
   if (!onListVersions) {
     return (
-      <aside className="flex w-[min(420px,44vw)] min-w-80 flex-col border-l border-edge bg-surface-raised">
+      <aside className="flex w-full min-w-0 flex-col border-t border-edge bg-surface-raised max-md:max-h-[45svh] md:w-[min(420px,44vw)] md:min-w-80 md:border-l md:border-t-0">
         <div className="border-b border-edge px-4 py-3">
           <div className="text-xs font-semibold text-fg">History</div>
           <div className="mt-2 text-2xs text-fg-muted">Version history is not available for this file.</div>
@@ -240,7 +240,7 @@ export function VersionHistoryPanel({
   }
 
   return (
-    <aside className="flex w-[min(460px,46vw)] min-w-80 flex-col border-l border-edge bg-surface-raised">
+    <aside className="flex w-full min-w-0 flex-col border-t border-edge bg-surface-raised max-md:max-h-[45svh] max-md:min-h-0 md:w-[min(460px,46vw)] md:min-w-80 md:border-l md:border-t-0">
       <div className="shrink-0 border-b border-edge px-4 py-3">
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
