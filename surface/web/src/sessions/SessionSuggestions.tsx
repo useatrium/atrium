@@ -93,9 +93,14 @@ function SuggestionRow({
     'rounded border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-body hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-50';
   const quietBtn =
     'rounded px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body';
+  const errorId = `suggestion-${suggestion.id}-error`;
 
   return (
-    <div data-testid="suggestion-row" className="text-xs">
+    <div
+      data-testid="suggestion-row"
+      aria-busy={busy ? 'true' : undefined}
+      className="text-xs"
+    >
       <div className="leading-relaxed">
         <span className="font-semibold text-fg">{authorName}</span>{' '}
         {mode !== 'editing' && (
@@ -110,6 +115,7 @@ function SuggestionRow({
             onChange={(event) => setDraft(event.target.value)}
             rows={2}
             aria-label="Edit suggestion"
+            aria-describedby={error && mode === 'editing' ? errorId : undefined}
             className="w-full resize-none rounded-md border border-edge-strong bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-edge-focus"
           />
           <div className="flex items-center gap-2">
@@ -140,6 +146,7 @@ function SuggestionRow({
             onChange={(event) => setNote(event.target.value)}
             placeholder="why? (optional)"
             aria-label="Dismiss reason"
+            aria-describedby={error && mode === 'dismissing' ? errorId : undefined}
             className="w-full rounded-md border border-edge-strong bg-surface px-2 py-1 text-2xs text-fg outline-none focus:border-edge-focus"
           />
           <div className="flex items-center gap-2">
@@ -178,7 +185,7 @@ function SuggestionRow({
       ) : null}
 
       {error && (
-        <div role="alert" className="mt-0.5 text-2xs text-danger-text">
+        <div id={errorId} role="alert" className="mt-0.5 text-2xs text-danger-text">
           {error}
         </div>
       )}

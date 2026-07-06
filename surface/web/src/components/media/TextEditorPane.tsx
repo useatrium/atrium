@@ -24,8 +24,13 @@ export function TextEditorPane({
     setDraft(initialText);
   }, [initialText]);
 
+  const errorId = 'text-editor-pane-error';
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+    <div
+      aria-busy={saving ? 'true' : undefined}
+      className="flex min-h-0 flex-1 flex-col gap-2 p-3"
+    >
       <div className="flex shrink-0 items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-2xs font-semibold text-fg-body" title={file.name}>
@@ -51,12 +56,13 @@ export function TextEditorPane({
         </button>
       </div>
       {error && (
-        <div role="alert" className="shrink-0 rounded-md border border-danger-border bg-danger-tint px-2 py-1.5 text-2xs text-danger-text">
+        <div id={errorId} role="alert" className="shrink-0 rounded-md border border-danger-border bg-danger-tint px-2 py-1.5 text-2xs text-danger-text">
           {error}
         </div>
       )}
       <textarea
         aria-label="File contents"
+        aria-describedby={error ? errorId : undefined}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         className="min-h-0 flex-1 resize-none rounded-md border border-edge bg-surface p-2 font-mono text-2xs leading-relaxed text-fg-body outline-none focus:border-edge-focus"
