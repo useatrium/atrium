@@ -35,10 +35,21 @@ if [[ ! "$domain" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
   exit 1
 fi
 
+# The webhook api_key must match the LIVEKIT_API_KEY the server signs/verifies
+# with, so inject it here (same env the compose file feeds LIVEKIT_KEYS). Empty
+# is fine: a keyless LiveKit means calls are disabled and the livekit profile is
+# opt-in, so the rendered config is never loaded. LiveKit keys are alphanumeric,
+# so no awk replacement-string escaping is needed.
+apikey="${LIVEKIT_API_KEY:-}"
+if [[ -z "$apikey" && -f "$SCRIPT_DIR/.env" ]]; then
+  apikey="$(read_env_value LIVEKIT_API_KEY "$SCRIPT_DIR/.env" || true)"
+fi
+
 mkdir -p "$OUT_DIR"
 tmp="$(mktemp "$OUT_DIR/livekit.yaml.XXXXXX")"
 
-awk -v domain="$domain" '
+awk -v domain="$domain" -v apikey="$apikey" '
+  { gsub(/__LIVEKIT_API_KEY__/, apikey) }
   /^turn:[[:space:]]*$/ {
     in_turn = 1
     print
